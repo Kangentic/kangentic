@@ -6,16 +6,19 @@ import { useConfigStore } from '../stores/config-store';
  * Single source of truth for "what models can this agent run".
  *
  * Returns the sorted union of:
- *   1. `capabilities.models` from the latest agent-detection result
- *      (`discoverCapabilities()` walks `--help` + `~/.claude/projects/`
- *      JSONL history for Claude).
- *   2. `config.discoveredModelsByAgent[agent]`: the persisted cache that
- *      augments via live `usage.model.id` updates and seeds itself from the
- *      capabilities walk on every `loadAgentList` call.
+ *   1. `capabilities.models` from the latest agent-detection result: what the
+ *      agent's CLI reports RIGHT NOW (Cursor runs `--list-models`, antigravity
+ *      `agy models`, Claude walks `~/.claude/projects/` plus its own picker).
+ *   2. `config.discoveredModelsByAgent[agent]`: the persisted cache of models
+ *      the user has actually RUN, fed only by live `usage.model.id` updates
+ *      through `rememberDiscoveredModel`.
  *
- * The cache survives restarts and grows automatically as the user invokes
- * new models, so the model dropdowns "learn" any model in real time without
- * a manual refresh.
+ * The union happens HERE, at read time, and (2) is deliberately not seeded
+ * from (1). Seeding made the persisted set grow-only, so a model an adapter
+ * stopped reporting could never leave a picker - that is how a hardcoded
+ * Cursor fallback list outlived its own deletion. Reading (1) live instead
+ * means a dropped model disappears, while a model the user ran still survives
+ * a restart.
  */
 export function useKnownModels(agent: string | null): string[] {
   const fromAgentList = useConfigStore(
@@ -54,9 +57,11 @@ export function useModelDisplayNames(agent: string | null): Record<string, strin
 
 /**
  * Empirically-observed context-window sizes for an agent's models, keyed by
- * BASE model id (the `[1m]`/dated suffix stripped). Learned from live
- * `status.json` telemetry (`rememberModelContextWindow`) and persisted across
- * restarts. A model is present only once its window has actually been observed
+ * BASE model id (the `[1m]`/dated suffix stripped). Learned from any adapter's
+ * live usage tick (`contextWindow.contextWindowSize`, via
+ * `rememberModelContextWindow`) and persisted across restarts. Claude sources
+ * that from its `status.json`, but the handler is generic, so an adapter that
+ * reports the 0 "unknown" sentinel instead (Gemini) simply never populates it. A model is present only once its window has actually been observed
  * on a real session, so the dropdowns badge context size without hardcoding
  * (the window is not derivable from a model id - see the store action). Reactive
  * like `useKnownModels`: the badge appears the moment the window is learned.

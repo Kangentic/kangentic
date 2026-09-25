@@ -83,10 +83,61 @@ describe('convertHtmlToMarkdown', () => {
 
   it('decodes HTML entities', () => {
     expect(convertHtmlToMarkdown('&amp; &lt; &gt; &quot; &#39; &nbsp;')).toBe('& < > " \'');
+    expect(convertHtmlToMarkdown('a &amp; b')).toBe('a & b');
+    expect(convertHtmlToMarkdown('&bogus;')).toBe('&bogus;');
   });
 
   it('decodes numeric HTML entities', () => {
     expect(convertHtmlToMarkdown('&#169;')).toBe(String.fromCharCode(169));
+    expect(convertHtmlToMarkdown('&#x27;')).toBe("'");
+  });
+
+  it('decodes each entity exactly one level, so an escaped entity survives', () => {
+    // No ordering of a chain of `.replace()` calls decodes exactly one level for
+    // every input, because whichever entity is decoded first is the one whose
+    // output can be re-read by a later call in the chain.
+    //
+    // Decoding &amp; first turns &amp;lt; into &lt; and then into <, so a work
+    // item that literally documents the &lt; entity renders as a stray angle
+    // bracket.
+    expect(convertHtmlToMarkdown('&amp;lt;')).toBe('&lt;');
+    // Moving &amp; to run last fixes that case, but then a numeric decode step
+    // that runs before it manufactures a fresh & from &#38; that the later amp
+    // step reads as the start of a new entity, so &#38;amp; decodes twice into
+    // a bare &.
+    expect(convertHtmlToMarkdown('&#38;amp;')).toBe('&amp;');
+    expect(convertHtmlToMarkdown('&amp;#39;')).toBe('&#39;');
+    expect(convertHtmlToMarkdown('&amp;amp;')).toBe('&amp;');
+    expect(convertHtmlToMarkdown('write &amp;nbsp; for a hard space')).toBe('write &nbsp; for a hard space');
+  });
+
+  it('decodes an astral numeric entity as one character, not a truncated one', () => {
+    // String.fromCharCode truncates to 16 bits, so &#128512; used to decode to
+    // U+F600 (private use) instead of U+1F600. Asserted as a code point rather
+    // than a literal so the expectation cannot silently agree with a mangled
+    // one, and length is checked because a surrogate pair is two code units.
+    expect(convertHtmlToMarkdown('&#128512;')).toBe(String.fromCodePoint(0x1f600));
+    expect(convertHtmlToMarkdown('&#x1F600;')).toBe(String.fromCodePoint(0x1f600));
+    expect(convertHtmlToMarkdown('&#128512;')).toHaveLength(2);
+    expect(convertHtmlToMarkdown('&#169;')).toBe(String.fromCodePoint(169));
+  });
+
+  it('leaves an out-of-range numeric entity as written instead of throwing', () => {
+    // fromCodePoint throws above U+10FFFF where fromCharCode silently wrapped.
+    // One absurd entity must not take the whole description down.
+    expect(convertHtmlToMarkdown('&#99999999;')).toBe('&#99999999;');
+    expect(convertHtmlToMarkdown('&#x7FFFFFFF;')).toBe('&#x7FFFFFFF;');
+  });
+
+  it('strips tags to a fixed point', () => {
+    // One pass of the tag regex is already a fixed point (a surviving `<` has
+    // no `>` after it, or is immediately followed by one, and a removal cannot
+    // introduce a `>`), so this pins the property rather than a live break. The
+    // loop guards a future edit to the pattern.
+    expect(convertHtmlToMarkdown('<scr<x>ipt>alert(1)</scr<x>ipt>')).not.toContain('<script');
+    expect(convertHtmlToMarkdown('<img src=">" onerror=alert(1)>')).not.toContain('<img');
+    const once = convertHtmlToMarkdown('<div><span>text</span></div>');
+    expect(convertHtmlToMarkdown(once)).toBe(once);
   });
 
   it('strips unknown HTML tags', () => {

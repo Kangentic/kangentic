@@ -1,13 +1,31 @@
+import { TEMPLATE_VARIABLE_PATTERN } from '../../../shared/task-template-vars';
+
 /**
  * Replace `{{key}}` placeholders in a template string with values from `vars`.
  * An unknown key's `{{...}}` is left untouched in the output.
+ *
+ * ONE pass over the shared pattern, which fixes two live bugs at once.
+ *
+ * It used to loop the vars and re-scan its OWN accumulated output, and because
+ * `resolveTaskTemplateVars` inserts in catalog order, `task_xml` substituted
+ * before `title`. So a task DESCRIPTION containing the literal text
+ * `{{title}}` was substituted a second time, on the script and webhook paths.
+ * A single pass cannot re-scan what it just wrote.
+ *
+ * It also built `new RegExp(key)` with the key unescaped, which was latent only
+ * because every name happened to be `[A-Za-z_]+`. The shared pattern matches
+ * `\w+` and the key is a plain object lookup, so a name can never be read as a
+ * regex again.
  */
 export function interpolateTemplate(template: string, vars: Record<string, string>): string {
-  let result = template;
-  for (const [key, value] of Object.entries(vars)) {
-    result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
-  }
-  return result;
+  // `String.replace` resets the global pattern's `lastIndex` itself, so the
+  // shared instance is safe to hand around.
+  return template.replace(TEMPLATE_VARIABLE_PATTERN, (placeholder, name: string) => {
+    const value = vars[name];
+    // Unknown stays literal, which is this function's documented contract and
+    // is what separates it from `interpolateTaskTemplate`'s drop-and-collapse.
+    return value === undefined ? placeholder : value;
+  });
 }
 
 /**
@@ -39,13 +57,22 @@ export function interpolateTemplate(template: string, vars: Record<string, strin
  * substituted value keeps its own surrounding whitespace.
  */
 export function interpolateTaskTemplate(template: string, vars: Record<string, string>): string {
-  const tokens = template.split(/(\{\{\w+\}\})/g);
+  // Split on the shared pattern, which is the only definition of the syntax
+  // (this function used to restate it twice more, once to tokenize and once to
+  // match). The pattern captures the NAME, and a capturing split alternates:
+  // even indices are literal text, odd indices are a captured name. That makes
+  // the second "is this a placeholder" regex unnecessary.
+  //
+  // Do not wrap it in another group to get the whole `{{name}}` back. Two
+  // groups make `split` emit two tokens per placeholder, and the bare name
+  // would land in the output as literal text.
+  const tokens = template.split(TEMPLATE_VARIABLE_PATTERN);
   const rawSegments: Array<{ type: 'text' | 'value'; content: string }> = [];
 
-  for (const token of tokens) {
-    const match = /^\{\{(\w+)\}\}$/.exec(token);
-    if (match) {
-      const value = vars[match[1]];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (index % 2 === 1) {
+      const value = vars[token];
       if (value) {
         rawSegments.push({ type: 'value', content: value });
       }

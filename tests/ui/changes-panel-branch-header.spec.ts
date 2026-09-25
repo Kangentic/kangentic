@@ -164,9 +164,135 @@ test.describe('Changes panel: branch header', () => {
     // stays at its default width.
     await expect.poll(async () => (await fileTree.boundingBox())!.width, { timeout: 5000 }).toBeLessThan(240);
 
+    // No PR is linked on this task, so the header shows no PR chip.
+    await expect(page.locator('[data-testid="changes-pr-link"]')).toHaveCount(0);
+
     // Close panel + dialog so state does not leak to other tests.
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+});
+
+// ─── Linked-PR chip in the surface header ───────────────────────────────────
+
+const PR_PROJECT_ID = 'proj-branch-header-pr';
+const PR_TASK_ID = 'task-branch-header-pr';
+const PR_SESSION_ID = 'sess-branch-header-pr';
+const PR_URL = 'https://github.com/example/example/pull/77';
+
+const prPreConfig = `
+  window.__mockBranchSummary = {
+    currentBranch: 'feature/pr-chip',
+    ahead: 1,
+    behind: 0,
+    lastCommit: { hash: 'def5678', subject: 'chip fixture commit', timestamp: new Date().toISOString() },
+  };
+
+  window.__mockPreConfigure(function (state) {
+    var ts = new Date().toISOString();
+
+    state.projects.push({
+      id: '${PR_PROJECT_ID}',
+      name: 'Branch Header PR Test',
+      path: '/mock/branch-header-pr-test',
+      github_url: null,
+      default_agent: 'claude',
+      last_opened: ts,
+      created_at: ts,
+    });
+
+    var laneIds = {};
+    state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+      var id = 'lane-' + s.name.toLowerCase().replace(/\\s+/g, '-');
+      laneIds[s.name] = id;
+      state.swimlanes.push(Object.assign({}, s, { id: id, position: i, created_at: ts }));
+    });
+
+    state.sessions.push({
+      id: '${PR_SESSION_ID}',
+      taskId: '${PR_TASK_ID}',
+      projectId: '${PR_PROJECT_ID}',
+      pid: 9996,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/branch-header-pr-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+
+    state.tasks.push({
+      id: '${PR_TASK_ID}',
+      title: 'Branch Header PR Task',
+      description: '',
+      swimlane_id: laneIds['Code Review'],
+      position: 0,
+      agent: 'claude',
+      session_id: '${PR_SESSION_ID}',
+      worktree_path: '/mock/worktrees/branch-header-pr',
+      branch_name: 'feature/pr-chip',
+      pr_number: 77,
+      pr_url: '${PR_URL}',
+      pr_state: 'open',
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    return { currentProjectId: '${PR_PROJECT_ID}' };
+  });
+`;
+
+test.describe('Changes panel: linked-PR chip', () => {
+  let prBrowser: Browser;
+  let prPage: Page;
+
+  test.beforeAll(async () => {
+    const result = await launchWithState(prPreConfig);
+    prBrowser = result.browser;
+    prPage = result.page;
+    await prPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+  });
+
+  test.afterAll(async () => {
+    await prBrowser?.close();
+  });
+
+  test('a linked PR renders the shared PrLink chip in the surface header, with its state badge, and click opens the PR URL', async () => {
+    const card = prPage
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=Branch Header PR Task')
+      .first();
+    await card.click();
+
+    const dialog = prPage.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+
+    const fileTree = prPage.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await prPage.locator('[data-testid="changes-toggle"]').click();
+    }
+
+    const surfaceHeader = prPage.locator('[data-testid="surface-header-changes"]');
+    await surfaceHeader.waitFor({ state: 'visible', timeout: 8000 });
+
+    // The chip lives in the surface header (the embed's one branch-context
+    // home) and carries the PR number and state badge. Scoping to the header
+    // also proves the task-detail header's own PR link is not being counted.
+    const chip = surfaceHeader.locator('[data-testid="changes-pr-link"]');
+    await expect(chip).toBeVisible({ timeout: 8000 });
+    await expect(chip).toContainText('PR #77');
+    await expect(chip.locator('[data-testid="pr-state-badge"]')).toContainText('open');
+
+    // Click-through records the PR URL via the mock's external-open hook.
+    await chip.click();
+    await expect
+      .poll(async () => prPage.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []), { timeout: 5000 })
+      .toContain(PR_URL);
+
+    await prPage.locator('[data-testid="changes-toggle"]').click();
+    await prPage.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 });

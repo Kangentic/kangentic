@@ -1,20 +1,17 @@
 /**
  * Detects an identity provider refusing to sign in inside an embedded browser.
  *
- * Google has rejected OAuth from embedded user agents since 2017, and the check
- * is user-agent based: a top-level Electron `BrowserWindow` popup carries the
- * same `Electron/<version>` token as the `<webview>` guest that opened it, so it
- * is refused too. Allowing popups therefore turns a dead sign-in button into a
- * visible `Error 403: disallowed_useragent`, which is a strict improvement but
- * still a dead end for the user unless someone says so.
+ * Google has rejected OAuth from embedded user agents since 2017. Allowing
+ * popups turned a dead sign-in button into a visible
+ * `Error 403: disallowed_useragent`, which is a strict improvement but still a
+ * dead end for the user unless someone says so.
  *
- * SPOOFING THE USER AGENT IS THE REJECTED FIX, deliberately, and this module is
- * the reason it does not have to be reconsidered every time someone hits the
- * wall. `<webview useragent>` is already typed and is one attribute away, but:
- * the block is a deliberate Google anti-phishing control rather than a bug; a
- * spoofed UA would misrepresent Kangentic to every site the pane visits, not
- * just to Google; and the token list it would have to defeat is a moving target.
- * See `docs/embedded-browser.md` decision 15.
+ * The pane no longer sends the `Electron/<version>` token (decision 41 in
+ * `docs/embedded-browser.md`, which reverses the rejection recorded in decision
+ * 15). It was removed because a web application firewall rejected it on
+ * ordinary pages, not to get past Google. Whether Google still refuses without
+ * it is not measured, and it may use more than the user agent string, so this
+ * detector and its prompt stay for whatever it still refuses.
  *
  * WHAT THIS CAN AND CANNOT SEE. The `disallowed_useragent` string lives in the
  * page Google renders, not in the URL, so this predicate detects "the provider

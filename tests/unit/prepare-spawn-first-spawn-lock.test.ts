@@ -207,6 +207,27 @@ describe('prepareAgentSpawn first-spawn override lock', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('DOES lock even with a session record in hand, when the swimlane is todo-role (parity with the board chokepoint)', async () => {
+    // A task sitting in To Do is unpinned by design, so this path locks the
+    // same way spawnAgent's board-side chokepoint does (see
+    // spawn-agent-lock-overrides.test.ts's matching case). hasSessionRecord
+    // alone does not settle the gate on this path any more than it does there.
+    const task = makeTask({ agent: 'claude', model_override: 'fable-5' });
+    const todoLane = makeSwimlane({ role: 'todo', auto_spawn: false });
+    const tasksUpdate = vi.fn();
+
+    const result = await runPrepare({ task, swimlane: todoLane, hasSessionRecord: true, tasksUpdate });
+
+    expect(tasksUpdate).toHaveBeenCalledWith({
+      id: TASK_ID,
+      agent_override: 'claude',
+      model_override: 'fable-5',
+      effort_override: 'xhigh',
+      permission_mode: 'acceptEdits',
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it('locks a task in override mode with nothing pinned, on the startup path too', async () => {
     // The startup chokepoint has to gate on the same persisted mode as the
     // board one: override mode pins nothing until this lock runs, so a

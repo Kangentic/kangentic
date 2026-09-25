@@ -3,12 +3,14 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import { app, type BrowserWindow } from 'electron';
 import { Terminal } from '@xterm/headless';
+import { activateUnicode11 } from '../../shared/xterm-unicode11';
 import {
   clickAtCenterOfSelector,
   dispatchKeyEvent,
   dispatchKeypress,
   dispatchMouseEvent,
   dragFromTo,
+  dropFilesOnSelector,
   getAccessibilityTree,
   getBoundingBox,
   getBoundingBoxByNodeId,
@@ -43,7 +45,13 @@ import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
 import { readTerminalTrace } from '../../main/pty/terminal-trace';
+import {
+  measureComposedCols,
+  COMPOSED_MATCH_TOLERANCE_COLUMNS,
+  type ComposedWidthMeasurement,
+} from './composed-width';
 import { detailOwnerRegistry } from '../../main/ipc/handlers/task-detail-ownership';
+import { respondCookieJar } from './cookie-jar-routes';
 
 /**
  * Localhost-only HTTP inspection bridge. Bound to a random port via
@@ -196,6 +204,44 @@ async function handleRequest(
     return respondConsole(options, url, response);
   }
 
+  // Cookie-jar rig. Dispatched HERE, before the CDP-attached gate below, because
+  // reading/copying a partition's cookies needs no CDP at all - gating it behind
+  // the debugger would make it fail with `cdp-not-attached` whenever the user has
+  // DevTools open. Behind Allow Unsafe Operations, like /eval: cookie values are
+  // credentials.
+  if (route === 'POST /cookie-jar-list' || route === 'POST /cookie-jar-copy') {
+    if (!options.getEvalEnabled()) {
+      return respondError(
+        response,
+        403,
+        'eval-disabled',
+        'Settings → Developer → Allow Unsafe Operations is off (gates the cookie-jar rig; cookie values are credentials).',
+      );
+    }
+    const body = await readJsonBody(request);
+    if (body === null) {
+      return respondError(response, 400, 'invalid-json', 'Request body must be valid JSON.');
+    }
+    return respondCookieJar(route, body, {
+      json: (statusCode, payload) => respondJson(response, statusCode, payload),
+      error: (statusCode, kind, detail) => respondError(response, statusCode, kind, detail),
+    });
+  }
+
+  // Graceful quit for tooling. scripts/dev.js posts here when a stop file asks
+  // it to shut a preview down, so Electron runs its real quit path (before-quit,
+  // the synchronous cleanup, the PTY exit-callback drain) instead of being
+  // force-killed with its PTY children orphaned, its session records left
+  // 'running', and the run reading as abrupt on the next launch. No CDP needed,
+  // so it sits above the attach gate. Responds first and quits on the next
+  // tick, so the caller has its acknowledgement before before-quit tears this
+  // server down.
+  if (route === 'POST /quit') {
+    respondJson(response, 200, { ok: true });
+    setImmediate(() => app.quit());
+    return;
+  }
+
   // CDP-backed endpoints from this point on need a main window AND an
   // attached debugger. The debugger can be externally detached at any
   // time (most commonly: the user opened DevTools, which steals the
@@ -296,6 +342,10 @@ async function handlePostRequest(
 
   if (route === 'POST /drag') {
     return respondDrag(window, body, response);
+  }
+
+  if (route === 'POST /drop-files') {
+    return respondDropFiles(window, body, response);
   }
 
   if (route === 'POST /wait') {
@@ -594,6 +644,41 @@ async function respondTerminalState(
   }
 
   const main = sessionManager.getTerminalDimensions();
+  // The third layer beside the pty-vs-grid invariants: the width the child TUI
+  // is actually composing at, read from its own byte stream. Gated on
+  // alt-screen because outside it raw pass-through content fakes widths (see
+  // composed-width.ts); non-alt-screen sessions report null rather than lie.
+  const composedBySession = new Map<string, ComposedWidthMeasurement>();
+  for (const dimensionRow of main) {
+    if (!dimensionRow.inAltScreen) continue;
+    // The live grid rides along as the fold's tie-breaker only (see
+    // resolveBaseWidth); it cannot manufacture agreement.
+    composedBySession.set(
+      dimensionRow.sessionId,
+      measureComposedCols(sessionManager.getRawScrollback(dimensionRow.sessionId), dimensionRow.ptyCols),
+    );
+  }
+  const composedFields = (
+    sessionId: string | null,
+    ptyCols: number | null,
+  ): {
+    composedCols: number | null;
+    composedColsSampleCount: number;
+    composedMatchesPty: boolean | null;
+  } => {
+    const measurement = sessionId ? composedBySession.get(sessionId) : undefined;
+    if (!measurement) {
+      return { composedCols: null, composedColsSampleCount: 0, composedMatchesPty: null };
+    }
+    return {
+      composedCols: measurement.composedCols,
+      composedColsSampleCount: measurement.sampleCount,
+      composedMatchesPty:
+        measurement.composedCols !== null && ptyCols !== null
+          ? Math.abs(measurement.composedCols - ptyCols) <= COMPOSED_MATCH_TOLERANCE_COLUMNS
+          : null,
+    };
+  };
   const evaluated = await runtimeEvaluate(
     window,
     `(() => {
@@ -631,6 +716,10 @@ async function respondTerminalState(
         mainRow && gridCols !== null && mainRow.ptyCols !== null ? mainRow.ptyCols === gridCols : null,
       colsDrift:
         mainRow && gridCols !== null && mainRow.ptyCols !== null ? mainRow.ptyCols - gridCols : null,
+      // `composedMatchesPty: false` with `ptyMatchesGrid: true` is the verdict
+      // the two-layer invariants structurally cannot reach: every Kangentic
+      // layer agrees, and the CHILD missed the geometry.
+      ...composedFields(sessionId, mainRow?.ptyCols ?? null),
     };
   });
 
@@ -638,10 +727,12 @@ async function respondTerminalState(
     ts: new Date().toISOString(),
     terminals,
     // Sessions main knows about that no mounted xterm is showing. Expected for a
-    // background session; suspicious for one the user is looking at.
+    // background session; suspicious for one the user is looking at. They carry
+    // the composed-width fields too: a background session stuck composing at
+    // its spawn width is diagnosable without mounting it.
     unmountedSessions: main
       .filter((row) => !grids.some((grid) => (grid as Record<string, unknown>).sessionId === row.sessionId))
-      .map((row) => row),
+      .map((row) => ({ ...row, ...composedFields(row.sessionId, row.ptyCols) })),
     pipeline: sessionManager.getPipelineStats(),
     // Both processes' lifecycle events on ONE timeline. The terminal bugs worth
     // debugging are orderings - which of resize / repaint / sample / replay-write
@@ -730,7 +821,7 @@ async function respondTerminalForensics(
   // capturing), but a capture taken MID-STREAM can show a legitimate
   // main-vs-renderer difference that is not loss. `serializedAt` is stamped so
   // that ambiguity is visible rather than assumed away.
-  let mainGrid: { rows: string[]; error?: string } = { rows: [] };
+  let mainGrid: { rows: string[]; error?: string };
   let serializedFrameBytes = 0;
   try {
     const frame = await sessionManager.getSerializedFrame(sessionId);
@@ -814,6 +905,9 @@ async function renderFrameToRows(frame: string, cols: number, rows: number): Pro
     rows: Math.max(1, rows),
     allowProposedApi: true,
   });
+  // Unicode 11 widths, matching the parsers this dump is used to diagnose; a
+  // V6 re-parse here would manufacture phantom row mismatches on emoji frames.
+  activateUnicode11(terminal);
   try {
     await new Promise<void>((resolve) => {
       terminal.write(frame, () => resolve());
@@ -969,6 +1063,9 @@ async function respondScreenshot(
     quality,
     fullPage,
     maxBytes,
+    // Kangentic's own window, not a <webview> guest: Chromium can grow its
+    // view for a capture, so nothing bounds it.
+    surface: null,
   };
   const result = await captureScreenshotWithBudget(window, captureOptions);
   if (!result) {
@@ -994,6 +1091,7 @@ async function respondScreenshotElement(
     format: formatParam ?? 'png',
     quality: qualityParam ? Number.parseInt(qualityParam, 10) : undefined,
     maxBytes,
+    surface: null,
   });
   if (!result) {
     return respondError(response, 500, 'screenshot-failed', 'Element clip capture returned no data.');
@@ -1370,6 +1468,46 @@ async function respondDrag(
   respondJson(response, 200, { ok: true });
 }
 
+interface DropFilesBody {
+  selector: string;
+  paths: string[];
+}
+
+async function respondDropFiles(
+  window: BrowserWindow,
+  body: unknown,
+  response: http.ServerResponse,
+): Promise<void> {
+  const params = body as DropFilesBody;
+  if (typeof params.selector !== 'string') {
+    return respondError(response, 400, 'missing-selector', '`selector` is required.');
+  }
+  if (!Array.isArray(params.paths) || params.paths.length === 0
+    || params.paths.some((entry) => typeof entry !== 'string' || entry.length === 0)) {
+    return respondError(response, 400, 'missing-paths', '`paths` must be a non-empty list of file paths.');
+  }
+  // Absolute and existing, checked here rather than left to the page: Chromium
+  // silently drops a `files` entry it cannot stat, and the page would then see
+  // a drop with fewer files than asked for, reported as success. Both halves
+  // are needed: on Windows `path.isAbsolute` accepts a bare `/mnt/c/shot.png`
+  // (a leading separator is drive-relative there), so `existsSync` is what
+  // rejects a WSL-shaped path on a Windows host.
+  const missing = params.paths.filter((entry) => !path.isAbsolute(entry) || !fs.existsSync(entry));
+  if (missing.length > 0) {
+    return respondError(
+      response,
+      400,
+      'path-not-found',
+      `Every path must be absolute and exist on disk. Not found: ${missing.join(', ')}`,
+    );
+  }
+  const ok = await dropFilesOnSelector(window, params.selector, params.paths);
+  if (!ok) {
+    return respondError(response, 404, 'selector-not-found', 'Drop target selector did not match.');
+  }
+  respondJson(response, 200, { ok: true, dropped: params.paths.length });
+}
+
 interface WaitBody {
   selector?: string;
   domText?: string;
@@ -1523,6 +1661,7 @@ async function runScriptStep(
         quality: 75,
         // Force file mode by setting a tight inline ceiling.
         inlineCeiling: 1,
+        surface: null,
       });
       if (!captured || captured.mode !== 'file') return;
       return { screenshotPath: captured.filePath, screenshotUri: captured.fileUri };
@@ -1629,7 +1768,7 @@ async function respondPtyInput(
   if (typeof params.sessionId !== 'string') {
     return respondError(response, 400, 'missing-sessionId', '`sessionId` is required.');
   }
-  let toWrite: string | null = null;
+  let toWrite: string | null;
   if (typeof params.keys === 'string') {
     toWrite = mapKeysToBytes(params.keys);
   } else if (typeof params.bytes === 'string') {

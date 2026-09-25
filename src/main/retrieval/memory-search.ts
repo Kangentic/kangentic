@@ -5,6 +5,7 @@ import type { Project } from '../../shared/types';
 import { RetrievalStore } from './retrieval-store';
 import { escapeFtsMatchQuery } from './fts-query';
 import { reciprocalRankFusion } from './fusion';
+import { trackFeatureUsed } from '../analytics/usage';
 import type { Embedder, StoredChunk } from './types';
 
 /** Per-list candidate depth before fusion. */
@@ -108,6 +109,10 @@ export async function searchConversationMemory(
       queryVector = null;
     }
   }
+  // Adoption signal for the vector path only: a search that fell back to
+  // lexical (no embedder, or an embed that failed or timed out) is not a use
+  // of semantic memory. Main dedups to once per day.
+  if (queryVector) trackFeatureUsed('semantic_memory');
 
   const allHits: TranscriptSearchHit[] = [];
   for (const project of input.projects) {

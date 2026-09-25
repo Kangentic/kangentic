@@ -19,6 +19,7 @@ export const IPC = {
   PROJECT_RELOCATE: 'project:relocate',
   PROJECT_MOVE_PROGRESS: 'project:moveProgress',
   PROJECT_PATH_MISSING: 'project:pathMissing',
+  PROJECT_LIST_CHANGED: 'project:listChanged',
 
   // Dev-only (preview): build-excluded from production via __KANGENTIC_DEV__.
   DEV_CREATE_EPHEMERAL_PROJECT: 'dev:createEphemeralProject',
@@ -57,10 +58,15 @@ export const IPC = {
   TASK_DELETED_BY_AGENT: 'task:deletedByAgent',
   TASK_SESSION_RESYNC: 'task:sessionResync',
   TASK_PR_LINK_CHANGED: 'task:prLinkChanged',
+  TASK_MOVED_BY_MOBILE: 'task:movedByMobile',
   TASK_SPAWN_BLOCKED: 'task:spawnBlocked',
+  // Non-blocking spawn anomaly: the agent still started, but from a base that
+  // could not be freshened (network/credential fetch failure).
+  TASK_SPAWN_WARNING: 'task:spawnWarning',
   TASK_AUTO_COMMAND_RESULT: 'task:autoCommandResult',
   TASK_SPAWN_PROGRESS: 'task:spawnProgress',
   TASK_GET_SPAWN_PROGRESS: 'task:getSpawnProgress',
+  TASK_UPDATE_FROM_BASE: 'task:updateFromBase',
   TASK_SET_RUNTIME_OVERRIDE: 'task:setRuntimeOverride',
   TASK_RESOLVE_PR: 'task:resolvePr',
   TASK_SET_DETAIL_VIEW_STATE: 'task:setDetailViewState',
@@ -80,16 +86,24 @@ export const IPC = {
   SWIMLANE_REORDER: 'swimlane:reorder',
   SWIMLANE_UPDATED_BY_AGENT: 'swimlane:updatedByAgent',
 
-  // Actions
-  ACTION_LIST: 'action:list',
-  ACTION_CREATE: 'action:create',
-  ACTION_UPDATE: 'action:update',
-  ACTION_DELETE: 'action:delete',
-
-  // Transitions
-  TRANSITION_LIST: 'transition:list',
-  TRANSITION_SET: 'transition:set',
-  TRANSITION_GET_FOR: 'transition:getFor',
+  // Column automations. Replaced the ACTION_* and TRANSITION_* channels, which
+  // had no renderer callers: named actions and `from -> to` transitions were
+  // never editable in the app.
+  AUTOMATION_LIST: 'automation:list',
+  AUTOMATION_REPLACE_FOR_COLUMN: 'automation:replaceForColumn',
+  AUTOMATION_RUNS_FOR_TASK: 'automation:runsForTask',
+  /**
+   * Re-run ONE automation against the task's CURRENT state, writing a fresh run
+   * row. Reached from the failure toast's Run again action and from MCP.
+   */
+  AUTOMATION_RUN_AGAIN: 'automation:runAgain',
+  /** Main -> renderer: one automation failed or was interrupted. */
+  AUTOMATION_RUN_FAILED: 'automation:runFailed',
+  /**
+   * Main -> renderer: runs left `running` by a quit were marked interrupted on
+   * project open. One summary per open, never one per row.
+   */
+  AUTOMATION_RUNS_INTERRUPTED: 'automation:runsInterrupted',
 
   // Sessions
   SESSION_SPAWN: 'session:spawn',
@@ -114,7 +128,10 @@ export const IPC = {
   SESSION_EVENT: 'session:event',
   SESSION_GET_EVENTS: 'session:getEvents',
   SESSION_GET_EVENTS_CACHE: 'session:getEventsCache',
+  SESSION_MESSAGE_TRAIL: 'session:messageTrail',
+  SESSION_GET_MESSAGE_TRAILS: 'session:getMessageTrails',
   SESSION_STATUS: 'session:status',
+  SESSION_REMOVED: 'session:removed',
   SESSION_SUSPEND: 'session:suspend',
   SESSION_RESUME: 'session:resume',
   SESSION_RECONCILE: 'session:reconcile',
@@ -125,6 +142,8 @@ export const IPC = {
   SESSION_GET_TOOL_BREAKDOWN: 'session:getToolBreakdown',
   SESSION_SPAWN_TRANSIENT: 'session:spawnTransient',
   SESSION_KILL_TRANSIENT: 'session:killTransient',
+  SESSION_SET_TRANSIENT_LABEL: 'session:setTransientLabel',
+  SESSION_SET_TRANSIENT_BRANCH: 'session:setTransientBranch',
   SESSION_SET_FOCUSED: 'session:setFocused',
   SESSION_SET_MOUNTED: 'session:setMounted',
   SESSION_NOTIFY_USER_INTERRUPT: 'session:notifyUserInterrupt',
@@ -147,6 +166,16 @@ export const IPC = {
   // (main + pop-outs) so live theme/settings changes sync across windows. Carries
   // no payload; subscribers re-fetch via config:get.
   CONFIG_CHANGED: 'config:changed',
+  // Push: a sync write to the data directory (config or one of the other small
+  // per-machine/per-project state files) failed - DESKTOP-14/DESKTOP-13. Carries
+  // the user-facing message to toast. Latched once per failing source in
+  // src/main/config/write-failure-notice.ts, so this fires at most once until a
+  // later write to that same source succeeds.
+  // Main window only (sendToRenderer, not broadcast), unlike CONFIG_CHANGED
+  // above: ToastContainer is mounted in AppLayout alone, so a pop-out window has
+  // no toast host to deliver this to. Register it in POP_OUT_SURFACES only if a
+  // pop-out ever gets one.
+  CONFIG_WRITE_FAILED: 'config:writeFailed',
 
   // Keybindings
   KEYBINDINGS_PROBE_GLOBAL: 'keybindings:probeGlobal',
@@ -184,7 +213,9 @@ export const IPC = {
   GIT_DIFF_UNSUBSCRIBE: 'git:diffUnsubscribe',
   GIT_DIFF_CHANGED: 'git:diffChanged',
   GIT_CHECK_PENDING_CHANGES: 'git:checkPendingChanges',
+  GIT_PREFETCH_REMOTES: 'git:prefetchRemotes',
   GIT_BRANCH_SUMMARY: 'git:branchSummary',
+  GIT_WORKTREE_HEAD: 'git:worktreeHead',
   GIT_COMMIT_GRAPH: 'git:commitGraph',
   GIT_FILE_HISTORY: 'git:fileHistory',
   GIT_BLAME: 'git:blame',
@@ -210,6 +241,7 @@ export const IPC = {
 
   // Analytics
   TRACK_RENDERER_ERROR: 'analytics:trackRendererError',
+  TRACK_FEATURE_USED: 'analytics:trackFeatureUsed',
 
   // App
   APP_GET_VERSION: 'app:getVersion',
@@ -330,7 +362,8 @@ export const IPC = {
 
   // Backlog Import
   BACKLOG_IMPORT_CHECK_CLI: 'backlog:importCheckCli',
-  BACKLOG_IMPORT_FETCH: 'backlog:importFetch',
+  BACKLOG_IMPORT_GET_CACHED: 'backlog:importGetCached',
+  BACKLOG_IMPORT_RECONCILE: 'backlog:importReconcile',
   BACKLOG_IMPORT_EXECUTE: 'backlog:importExecute',
   BACKLOG_IMPORT_SOURCES_LIST: 'backlog:importSourcesList',
   BACKLOG_IMPORT_SOURCES_ADD: 'backlog:importSourcesAdd',
@@ -348,8 +381,9 @@ export const IPC = {
   BACKLOG_ATTACHMENT_GET_DATA_URL: 'backlogAttachment:getDataUrl',
   BACKLOG_ATTACHMENT_OPEN: 'backlogAttachment:open',
 
-  // Clipboard
+  // Clipboard (and the pasted-image temp directory it shares with the drop path)
   CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
+  CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
   CLIPBOARD_WRITE_TEXT: 'clipboard:writeText',
 
   // Browser pane: embedded webview capture-and-send
@@ -358,12 +392,21 @@ export const IPC = {
   BROWSER_URL_SET_TASK: 'browser:urlSetTask',
   BROWSER_URL_CLEAR_TASK: 'browser:urlClearTask',
   BROWSER_CLEAR_STORAGE: 'browser:clearStorage',
+  // Sync a task's jar with the project identity jar before its guest attaches,
+  // so the pane opens already signed into shared (non-localhost) sessions.
+  BROWSER_JAR_ENSURE: 'browser:jarEnsure',
   BROWSER_ZOOM_CHANGED: 'browser:zoomChanged',
   // Register/unregister an open Browser pane's guest webContents so the
   // kangentic_browser_* MCP tools can target it. The renderer is the only
   // place that knows taskId + sessionId + the guest's getWebContentsId().
   BROWSER_PANE_REGISTER: 'browser:paneRegister',
   BROWSER_PANE_UNREGISTER: 'browser:paneUnregister',
+  // The user's Close control: retires the guest's handle with reason
+  // `user-closed` ahead of the unmount, so no hand-off lane is stood up.
+  BROWSER_PANE_USER_CLOSE: 'browser:paneUserClose',
+  // Renderer -> main: where a registered pane is on screen (showing / hidden /
+  // parked), reported through kangentic_browser_list_panes.
+  BROWSER_PANE_VISIBILITY: 'browser:paneVisibility',
   // Main -> renderer: open / close a task's Browser pane on behalf of the
   // kangentic_browser_open_pane / _close_pane MCP tools. Pane open state is
   // renderer-owned (`browserOpenTasks`), so main cannot set it directly.
@@ -387,6 +430,49 @@ export const IPC = {
   // on the host. The pane restores the user's focus if it moved.
   // See `.claude/rules/agent-driven-focus.md`.
   BROWSER_AGENT_INPUT: 'browser:agentInput',
+  // Main -> renderer: an agent set (or cleared) the viewport a Browser pane
+  // lays out against. The pane cannot see this for itself - an override is a
+  // CDP-session property main owns, and the guest's own size never changes -
+  // so without the push the user's page silently renders at a width nothing on
+  // screen accounts for. The pane shows it as a chip with a reset control,
+  // which is also the user's escape hatch when the agent that set it is gone.
+  BROWSER_VIEWPORT_OVERRIDE: 'browser:viewportOverride',
+  // Renderer -> main: the user cleared a pane's viewport override from that
+  // chip. Separate from the agent's own reset so the user is never waiting on
+  // an agent to give their pane back.
+  BROWSER_VIEWPORT_CLEAR: 'browser:viewportClear',
+  // Renderer -> main: the `<webview>` element's own size in CSS pixels.
+  // Main cannot measure it (its window is the whole app, several times the
+  // pane), and it is what a requested viewport is fitted against, so without
+  // this report a fit computes a zoom of 1 and leaves the page cropped.
+  BROWSER_PANE_WIDGET_SIZE: 'browser:paneWidgetSize',
+  // Renderer -> main: what override (if any) this guest is already under.
+  // A pane that mounts AFTER the override was set - a pop-out, or a re-register
+  // - missed the push, so it asks once on registration rather than showing
+  // nothing.
+  BROWSER_VIEWPORT_GET: 'browser:viewportGet',
+  // Main -> renderer: which tasks currently hold their one browser surface in
+  // its OFFSCREEN form. The whole set on every change, not a delta, because a
+  // renderer that missed one push would otherwise stay wrong forever.
+  //
+  // This is what makes an offscreen surface visible at all. The card globe and
+  // the task-detail Browser pill both read `browserGuestTasks`, which is
+  // written in exactly one place - `BrowserPane.tsx`, on the `<webview>`'s
+  // `dom-ready` - so a main-process offscreen `BrowserWindow` set nothing and
+  // the user had no way to know one existed, let alone close it. An agent
+  // completed a whole verification run in one with no browser anywhere on
+  // screen, which is what ended agent-requested lanes entirely.
+  BROWSER_OFFSCREEN_SURFACES: 'browser:offscreenSurfaces',
+  // Renderer -> main: the same set, asked for once on mount and after an HMR
+  // update. A push-only channel leaves a reloaded renderer blank until the next
+  // change, and an offscreen surface can sit unchanged for the whole session.
+  BROWSER_OFFSCREEN_SURFACES_GET: 'browser:offscreenSurfacesGet',
+  // Renderer -> main: the user's "Close browser" on a task whose surface is
+  // OFFSCREEN. There is no guest in `browserGuestTasks` to retire and no pane
+  // to unmount, so the ordinary close path is a silent no-op for it - which
+  // would leave a control that says Close and does nothing. Main destroys the
+  // offscreen window directly.
+  BROWSER_OFFSCREEN_CLOSE: 'browser:offscreenClose',
   // Main -> renderer: a file download started from a Browser pane has finished.
   // The pane saves silently to the OS Downloads folder (Chrome's default), so
   // this is what stops an agent-triggered download being invisible.
@@ -419,6 +505,31 @@ export const IPC = {
   UPDATE_CHECK: 'updater:check',
   UPDATE_INSTALL: 'updater:install',
   UPDATE_DOWNLOADED: 'updater:downloaded',
+  // Push: this install cannot update itself and never will until the user acts
+  // on it - today that is only the macOS read-only-volume case, DESKTOP-1A.
+  // Carries the user-facing message to toast, composed in main and latched
+  // there for the app's lifetime (`notifyReadOnlyVolume` in src/main/updater.ts),
+  // so a condition every 4-hour check rediscovers still toasts once.
+  // Main window only (the updater's own window reference, not broadcast), for
+  // the reason CONFIG_WRITE_FAILED gives above: ToastContainer is mounted in
+  // AppLayout alone, so a pop-out window has no toast host to deliver this to.
+  // Every OTHER updater failure stays silent by design - see the error handler.
+  UPDATE_BLOCKED: 'updater:blocked',
+
+  // Host memory pressure (Sentry DESKTOP-16; see src/main/diagnostics/host-memory.ts)
+  HOST_MEMORY_PRESSURE: 'hostMemory:pressure',
+  HOST_MEMORY_RECOVERED: 'hostMemory:recovered',
+
+  // How this launch is rendering, and whether the user still needs telling
+  // (Sentry DESKTOP-18/DESKTOP-W; src/main/diagnostics/gpu-health.ts)
+  //
+  // An invoke, not a push, unlike HOST_MEMORY_PRESSURE above. That one is
+  // driven by a periodic sampler, so it never fires during boot and never has
+  // to prove the renderer is listening. This is decided once, while the
+  // renderer may still be parsing its bundle, and a send with no listener
+  // registered is dropped silently - with the escalation record already
+  // cleared, so nothing would ever resend it. The renderer pulls instead.
+  GPU_HEALTH_STATUS: 'gpuHealth:status',
 
   // Announcements (remote feed poll; see src/main/announcements.ts)
   ANNOUNCEMENTS_GET: 'announcements:get',
@@ -436,6 +547,9 @@ export const IPC = {
 
   // Conversation-memory semantic-layer status (Smart-mode palette UI).
   MEMORY_STATUS: 'memory:status',
+  // Spawn + init the embedding worker ahead of the first Smart query (Quick
+  // Find open); fire-and-forget, embeds nothing.
+  MEMORY_PREWARM: 'memory:prewarm',
   // Purge the current project's conversation index and re-run the backfill sweep
   // (recovery from a corrupt/stale index; Memory settings "Rebuild index").
   MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',
@@ -491,3 +605,13 @@ export const IPC = {
  * offers the "Locate Folder..." relocation flow instead of a generic error.
  */
 export const PROJECT_PATH_MISSING_PREFIX = 'PROJECT_PATH_MISSING:';
+
+/**
+ * Sentinel prefix for "no project with this id in the global index DB".
+ * Electron wraps handler errors in its own Error, so the renderer detects
+ * this case via `error.message.includes(PROJECT_NOT_FOUND_PREFIX)` and
+ * refetches the project list instead of surfacing a raw IPC error. See
+ * Sentry DESKTOP-V: a renderer holding a stale list clicked a row main
+ * could no longer resolve, and the failure had nowhere to go.
+ */
+export const PROJECT_NOT_FOUND_PREFIX = 'PROJECT_NOT_FOUND:';

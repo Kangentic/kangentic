@@ -10,7 +10,7 @@
  * correctly. RelayClient itself is fully covered by relay-client.test.ts;
  * this file only needs to confirm the thin forwarding contract.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createTransport } from '../../../src/main/mobile-bridge/transport/transport-factory';
 import { RelayClient } from '../../../src/main/mobile-bridge/transport/relay-client';
 
@@ -52,7 +52,10 @@ describe('createTransport()', () => {
       // to have run, which happens before any await point.
       void transport.connect().catch(() => undefined);
 
-      expect(capturedUrls).toEqual(['ws://relay.example.com/?slot=my-slot-id']);
+      // `role=desktop` is the relay's metrics hint (kangentic-relay's
+      // guards/peerRole.ts): attribution only, never a gate, so the relay's
+      // waiting-peer split can tell this desktop from a phone.
+      expect(capturedUrls).toEqual(['ws://relay.example.com/?slot=my-slot-id&role=desktop']);
       transport.close();
     } finally {
       (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
@@ -63,5 +66,51 @@ describe('createTransport()', () => {
     const first = createTransport({ relayUrl: 'ws://127.0.0.1:1', slotId: 'slot-a' });
     const second = createTransport({ relayUrl: 'ws://127.0.0.1:1', slotId: 'slot-b' });
     expect(first).not.toBe(second);
+  });
+
+  it('forwards logLabel through to RelayClient, which prefixes its log lines with it', () => {
+    // RelayClient keeps its logPrefix private, and its state getter never
+    // surfaces the label either, so the forwarding contract is observed the
+    // same indirect way as the URL test above: through a line RelayClient
+    // actually writes to the console. A dial that closes before it opens logs
+    // `${logPrefix} dial failed: ...` via console.warn - see relay-client.ts's
+    // logClose().
+    const createdSockets: RecordingWebSocket[] = [];
+    class RecordingWebSocket {
+      binaryType = 'blob';
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: unknown }) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      constructor(_url: string) {
+        createdSockets.push(this);
+      }
+      close(): void {
+        // no-op: this test only drives the handlers it captured.
+      }
+    }
+    const originalWebSocket = globalThis.WebSocket;
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = RecordingWebSocket;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      const transport = createTransport({ relayUrl: 'ws://relay.example.com', slotId: 'my-slot-id', logLabel: 'abcdef12' });
+      // connect() never resolves here (the socket never fires onopen); the
+      // rejection below is expected and handled.
+      void transport.connect().catch(() => undefined);
+
+      const socket = createdSockets.at(-1);
+      if (!socket) throw new Error('expected RelayClient to have constructed a WebSocket');
+      // Simulate the dial closing before it ever opened, which is what makes
+      // RelayClient write its logPrefix-carrying line.
+      socket.onclose?.({ code: 1006, reason: '', wasClean: false } as CloseEvent);
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[mobile-bridge/relay-client abcdef12]'));
+
+      transport.close();
+    } finally {
+      warnSpy.mockRestore();
+      (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
+    }
   });
 });

@@ -23,13 +23,67 @@ Overridable via the `KANGENTIC_DATA_DIR` environment variable. When set, all dat
 
 ## Configuration
 
-All database connections are opened with three pragmas:
+All database connections are opened with three pragmas, in this order:
 
-- `journal_mode = WAL` -- concurrent reads without blocking writers
 - `busy_timeout = 5000` -- wait up to 5 seconds on locked databases before returning SQLITE_BUSY
+- `journal_mode = WAL` -- concurrent reads without blocking writers
 - `foreign_keys = ON` -- enforce referential integrity on all foreign key constraints
 
+The order matters. `busy_timeout` is a connection setting that covers only the statements after
+it, and `journal_mode = WAL` takes a lock: it creates the `-wal` and `-shm` sidecars. Setting the
+timeout second would leave the WAL switch, the one statement most likely to collide, with no retry
+window at all.
+
 All queries are synchronous via **better-sqlite3** -- they block the Node.js event loop briefly but avoid callback complexity.
+
+A connection is published to its module cache only after the pragmas and migrations have both
+succeeded. On failure the half-built handle is closed and the error is rethrown, so a retry
+reopens rather than reusing a connection that never ran migrations. `resetGlobalDb()` drops the
+cached global connection deliberately, which is what the Retry button below reopens through.
+
+## When the global database cannot be read
+
+`SQLITE_IOERR`, `SQLITE_READONLY`, and `SQLITE_BUSY` on `index.db` are environmental: an antivirus
+scan, a OneDrive or Dropbox sync lock, a read-only or full volume, or failing storage. There is
+nothing to fix in the query, so the policy is to say so rather than to retry silently or fail
+opaquely.
+
+**At startup.** `ensureGlobalDbReadable()` (`src/main/db/global-db-dialog.ts`) opens the database
+early in the `app.whenReady()` body, before the MCP server starts and before any window exists. A
+failure shows a modal naming the resolved file path, the SQLite code (or the plain error message
+when the failure carries no `SQLITE_*` code, such as a `NODE_MODULE_VERSION` mismatch), and the
+likely causes, with Retry and Quit. Retry drops the cached connection and reopens; a lock is usually over within
+seconds, so this recovers without a relaunch. Quit counts an `app_error` and calls `app.exit(0)`,
+which is correct rather than `app.quit()` because `registerAllIpc` has not run yet and
+`performShutdown` would throw reaching for a board config manager that does not exist. Under
+`NODE_ENV=test` the dialog is skipped so the E2E tier never hangs on a modal nobody can click.
+
+**While running.** Global-database reads go through `softly()` (`src/main/db/soft-db.ts`), which
+returns a fallback instead of throwing and logs once per operation. Four operations are softened:
+`project:list`, `projectGroup:list` and `project:getCurrent` in
+`src/main/ipc/handlers/projects.ts`, plus `lastOpenedProject`, which is read at two call sites
+inside `createWindow()`: once to resolve the boot project path, and again inside the
+`preloadPromise` catch block when that path turns out to be missing. Neither is an IPC handler,
+and the first is the first global-database touch on the whole boot path, which is exactly where
+DESKTOP-9 threw. Both share the one operation name, so a failure at either logs once for the pair.
+
+Only the two list reads raise the dialog, once per incident: a successful Retry re-arms it, so a
+later outage can still speak. `project:getCurrent` does not, because `project:list` already speaks
+for the pair and it answers null on the cold-boot path anyway.
+
+`createWindow()` is additionally wrapped in `try`/`finally`, because the `lastOpenedProject` read
+sits below its own `loadURL` call. A throw there used to skip `initUpdater`, `initAnnouncements`
+and `markStartupComplete`, leaving a live renderer invoking `announcements:get` with nobody
+listening (Sentry DESKTOP-3/4, the Windows event). Softening the read and making the block
+throw-proof are two layers against the same failure, not separate concerns.
+
+Writes are never softened: a mutation that swallows its failure reports a success that did not
+happen (see `.claude/rules/project-scoped-ipc.md`).
+
+Advisory tables opt out of the notification. The dev-port lease ledger degrades on every unit-tier
+CI run by design, so it passes `level: 'warn'` and no `notify`; wiring the dialog into the
+combinator itself would show it to production users and consume the one notification the project
+list needs.
 
 ## Global DB Schema
 
@@ -106,8 +160,8 @@ there is no background reclaim.
 | is_archived | INTEGER | NOT NULL | 0 |
 | permission_mode | TEXT | | NULL |
 | auto_spawn | INTEGER | NOT NULL | 1 |
-| auto_command | TEXT | | NULL |
-| auto_command_mode | TEXT | NOT NULL | 'immediate' |
+| auto_command | TEXT | | NULL (retired) |
+| auto_command_mode | TEXT | NOT NULL | 'immediate' (retired) |
 | plan_exit_target_id | TEXT | | NULL |
 | is_ghost | INTEGER | NOT NULL | 0 |
 | agent_override | TEXT | | NULL |
@@ -119,11 +173,22 @@ there is no background reclaim.
 | created_at | TEXT | NOT NULL | |
 | description | TEXT | | NULL |
 
-Valid role values: `todo`, `done`, or NULL (custom column).
+Valid role values: `todo`, `done`, or NULL (custom column). The column has no CHECK constraint, and
+roles that have since left the union (`planning`, `running`, `backlog`) genuinely shipped, so the
+value is never trusted on the way in or out: `applyBoardConfigToDb` normalizes a role arriving from
+`kangentic.json`, `SwimlaneRepository.mapRow` narrows on read via `normalizeSwimlaneRole`, and an
+unconditional migration clears any stray value already on disk (migration 59). `role` is write-once
+at create and is deliberately absent from `SwimlaneUpdateInput`.
+
+`auto_command` and `auto_command_mode` are RETIRED. The column's message to its agent is a
+`send_message` row in `column_automations` now; the automations migration moved every non-empty
+value into one, nulled the first field and reset the second, and nothing reads either any more.
+They are left in place so an older build can still open the database. The per-TASK `auto_command`
+on `tasks` is unaffected and still MCP-only.
 
 Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `docs/session-lifecycle.md` "Isolated Sessions"):
 - `session_target` (renamed from the original `session_strategy`): `main` (default, the task's main session) or `isolated` (a separate, context-isolated session keyed by the swimlane id). See `SessionTarget`.
-- `session_spawn_strategy`: `create_or_resume` (default, resume the target track's session or spawn one) or `always_spawn_new` (always spawn fresh on entry, retiring the prior session for that `(task, target)`). See `SessionSpawnStrategy`. The fresh-vs-resume default is context-aware (`resolveForceFresh`): isolated columns default to `always_spawn_new`, main columns to `create_or_resume`.
+- `session_spawn_strategy`: `create_or_resume` (default, resume the target track's session or spawn one) or `always_spawn_new` (always spawn fresh on entry, retiring the prior session for that `(task, target)`). See `SessionSpawnStrategy`. The fresh-vs-resume pairing with `session_target` is applied by the writers, not by `resolveForceFresh`: this column is `NOT NULL DEFAULT 'create_or_resume'` and `SwimlaneRepository.create` writes a concrete string, so the resolver's context-aware fallback never evaluates for a stored row. The two INTERACTIVE writers, the Column Manager and the MCP `create_column` / `update_column` handlers, route through `snapSpawnStrategyToTarget`, which moves this to `always_spawn_new` when a column becomes `isolated` and back when it returns to `main`, in both cases only while it still sits at the outgoing track's default. The `kangentic.json` sync is the exception: `apply-config.ts` applies each key exactly as the file gives it, with no pairing. That is harmless for a file the app wrote, since `build-config.ts` emits both keys whenever either is non-default, but a HAND-EDITED `kangentic.json` naming only `sessionTarget: isolated` applies as `isolated` + `create_or_resume`, which resumes one long review instead of running a fresh pass per entry. Spell both keys out when editing that file by hand.
 
 ### tasks table
 
@@ -139,11 +204,15 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | session_id | TEXT | | NULL |
 | worktree_path | TEXT | | NULL |
 | worktree_folder | TEXT | | NULL |
+| worktree_skip_reason | TEXT | | NULL |
 | branch_name | TEXT | | NULL |
 | pr_number | INTEGER | | NULL |
 | pr_url | TEXT | | NULL |
 | pr_state | TEXT | | NULL |
+| pr_merge_readiness | TEXT | | NULL |
 | head_sha | TEXT | | NULL |
+| pushed_branch | TEXT | | NULL |
+| resolved_base_branch | TEXT | | NULL |
 | external_id | TEXT | | NULL |
 | external_source | TEXT | | NULL |
 | external_url | TEXT | | NULL |
@@ -176,6 +245,18 @@ Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_di
 [Worktree Strategy](worktree-strategy.md#worktree-directory-naming) for why the name has to be
 stored rather than recomputed.
 
+`worktree_skip_reason` records WHY the task's last spawn ran without a worktree, i.e. in the shared
+project checkout: one of `'disabled' | 'not-a-repo' | 'nested-worktree' | 'no-commits' |
+'remote-agent' | 'worktree-missing'` (the `WorktreeSkipReason` union), or NULL while the task has a
+worktree or no spawn has decided yet. Written only by `TaskRepository.setWorktreeSkipReason` (spawn
+telemetry, so no `updated_at` bump) and cleared by `recordWorktree`, a To Do reset, and a Done move;
+the generic `update()` never touches it. It is the ground truth for any surface that wants to say
+"running in the checkout the app runs from" rather than infer it from a null `worktree_path`, but
+today it is recorded and exposed with no renderer reader: the 12px card glyph that drew it was
+reviewed out as too small to tell apart. The task card's marker and the detail header's "Project
+folder" chip still read `worktree_path`.
+See [Worktree Strategy](worktree-strategy.md#when-a-worktree-is-not-created).
+
 `profile_id` names a Board Profile - a team-shared, named alternate set of per-column strategy
 settings the task rides as it moves (see [Configuration > Board Profiles](configuration.md#board-profiles)).
 There is deliberately **no foreign key**: profile *definitions* live in `kangentic.json`, not this
@@ -190,8 +271,9 @@ task.
 settings applies) or `'agent_override'` (pin agent/model/effort/permission for the task's whole
 life). It is stored rather than derived from "does the task carry a pin", because Agent Override with
 all four fields left on inherit writes exactly the same nulls as Column Settings while meaning the
-opposite - the first locks all four at first spawn, the second never locks. Deriving it silently
-dropped that choice on every save. The migration backfills `'agent_override'` for any row that
+opposite - the first locks all four on first spawn or on leaving To Do, the second never locks.
+Deriving it silently dropped that choice on every save. The migration backfills `'agent_override'`
+for any row that
 already carries one of the four pins **and** has a NULL `profile_id`, reproducing the old derivation
 exactly, so upgraded boards behave identically. The `profile_id IS NULL` clause is belt-and-braces -
 a profile task cannot carry a pin, so it changes no row today - but it makes the backfill correct by
@@ -203,23 +285,125 @@ construction rather than by trusting an invariant enforced in another file.
 `run_mode = 'column_settings'`; setting any of the four (or asking for `'agent_override'` directly)
 nulls the profile and sets `run_mode = 'agent_override'`. That exclusivity is what keeps
 `lockAdvancedOverridesOnFirstSpawn` correct - a profile task is never in override mode, so the
-first-spawn lock never fires for it. `auto_command` is deliberately **not** in the exclusivity set:
+lock never fires for it. `auto_command` is deliberately **not** in the exclusivity set:
 it is an MCP-only escape hatch, so a task may carry both a profile and its own auto-command, and it
 never implies override mode.
 
-### actions table
+### schema_meta table
+
+Key/value flags for data migrations that cannot answer "have I run" from the data itself.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| key | TEXT | PRIMARY KEY | |
+| value | TEXT | NOT NULL | |
+
+One key so far, written by the automations migration. That migration is one-way and deliberately
+leaves its source rows in `actions` and `swimlane_transitions` for an older build to read, so the
+presence of converted rows proves nothing: a board could legitimately have automations and no
+transitions, or both.
+
+Distinct from `project_meta`, which holds live per-project state (the `display_id` high-water
+mark) rather than migration bookkeeping.
+
+### column_automations table
+
+What a column does when a task enters or leaves it. Replaces the `actions` + `swimlane_transitions`
+pair, which modelled a shared action referenced by N transitions; an automation belongs to exactly
+one column.
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
 | id | TEXT | PRIMARY KEY | |
+| swimlane_id | TEXT | NOT NULL, FK->swimlanes ON DELETE CASCADE | |
 | name | TEXT | NOT NULL | |
 | type | TEXT | NOT NULL | |
-| config_json | TEXT | NOT NULL | '{}' |
+| trigger | TEXT | NOT NULL | 'enter' |
+| position | INTEGER | NOT NULL | |
+| enabled | INTEGER | NOT NULL | 1 |
+| config_json | TEXT | NOT NULL | |
 | created_at | TEXT | NOT NULL | |
+| updated_at | TEXT | NOT NULL | |
 
-Valid types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `create_worktree`, `cleanup_worktree`, `create_pr`, `webhook`.
+Valid types: `send_message`, `run_script`, `webhook`, `notify`, plus legacy `spawn_agent` on boards
+that already had one. `trigger` is `enter` or `exit`. It is TEXT rather than a boolean `on_exit`
+deliberately, so a third trigger (an agent going idle, a PR merging) is a new value rather than a
+migration.
 
-### swimlane_transitions table
+`position` is assigned PER TRIGGER, so each group numbers from 0 independently and the two can
+never interleave.
+
+The foreign key is genuine and enforced (`database.ts` sets `foreign_keys = ON`). The one on
+`swimlane_transitions.from_swimlane_id` had to be dropped for its `'*'` wildcard; this table has no
+wildcard. `SwimlaneRepository.delete` also cascades explicitly, rather than relying on a pragma
+being set.
+
+Indices:
+
+- `idx_column_automations_lookup` on (swimlane_id, trigger, position) - the read the engine does on
+  every move.
+- `idx_column_automations_name` UNIQUE on (swimlane_id, name COLLATE NOCASE) - what makes per-column
+  name uniqueness TRUE rather than merely validated in the editor, so a hand-edited `kangentic.json`
+  or an MCP write cannot break it. `COLLATE NOCASE` folds ASCII only while the editor's
+  `toLowerCase()` folds Unicode, so the editor rejects a superset, which is the safe direction. The
+  migration dedupes names BEFORE creating this index, or it fails.
+
+### automation_runs table
+
+One row per execution, written `running` before the attempt and closed on every exit path. This is
+the durable record; the failure toast is the rationed interruption, following
+`auto-command-outcome.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| automation_id | TEXT | NOT NULL | |
+| automation_name | TEXT | NOT NULL | |
+| type | TEXT | NOT NULL | |
+| task_id | TEXT | NOT NULL, FK->tasks ON DELETE CASCADE | |
+| swimlane_id | TEXT | NOT NULL | |
+| trigger | TEXT | NOT NULL | |
+| status | TEXT | NOT NULL | |
+| detail | TEXT | | |
+| attempts | INTEGER | NOT NULL | 0 |
+| started_at | TEXT | NOT NULL | |
+| finished_at | TEXT | | |
+
+`status` is `running`, `succeeded`, `failed`, `skipped`, or `interrupted`. `detail` carries the skip
+reason, the error, or a one-line success (`HTTP 204`, `exit 0`).
+
+`automation_name` and `type` are DENORMALIZED and there is no foreign key to `column_automations`:
+a run log that empties itself when you rename or delete the automation is not a log.
+
+Two indices, one per question the log is asked:
+
+| Index | Columns | Serves |
+|-------|---------|--------|
+| `idx_automation_runs_task` | (task_id, started_at DESC) | A task's own run history, newest first (`automation:runsForTask`) |
+| `idx_automation_runs_automation` | (automation_id, started_at DESC) | Runs by automation, newest first, for the MCP run history tool's per-automation listing (`listForAutomation`) |
+
+**Project-open sweep.** In the same pass that runs `retryFailedDoneCleanups`, two things happen.
+`markStaleRunsInterrupted(startedBefore)` stamps every row still `running` as `interrupted`, and
+`pruneTo(200)` keeps the newest 200 rows per project, because nothing else bounds the table. The
+sweep is required for honesty: `synchronous-shutdown.md` forbids awaiting a drain on quit, so a
+`running` row at boot is a known orphan, and without this "these always run" is false on every
+restart.
+
+`startedBefore` is the process start time, and it is load-bearing rather than defensive. The sweep
+runs on a COLD project open, which includes the boot-time activation of every OTHER project five
+seconds in, and inside one project's activation block the sweep is fired without awaiting while that
+same project's auto-spawn runs. An unbounded sweep would stamp a genuinely in-flight enter
+automation as `interrupted` and raise a toast saying it did not finish.
+
+Nothing is retried automatically, ever. A fired webhook and a half-run script are not safe to repeat
+blind, so the user gets Run again on the row instead.
+
+### actions table (retired)
+
+Kept in the schema so an older build can still open the database, and never read after the
+automations migration. Was: `id`, `name`, `type`, `config_json`, `created_at`.
+
+### swimlane_transitions table (retired)
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
@@ -232,6 +416,10 @@ Valid types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `creat
 Note: `from_swimlane_id` has no foreign key constraint. This allows a wildcard value (`*`) as the source, meaning the transition fires regardless of which column the task came from.
 
 Index: `idx_transitions_from_to` on (from_swimlane_id, to_swimlane_id).
+
+Retired with `actions`, and for the same reason: it is left in place only so an older build can
+open the database. Every row was converted to a `column_automations` row on the `to` column by the
+automations migration, and nothing reads either table now.
 
 ### sessions table
 
@@ -267,7 +455,7 @@ Index: `idx_transitions_from_to` on (from_swimlane_id, to_swimlane_id).
 | tool_breakdown | TEXT | | NULL |
 | compaction_count | INTEGER | NOT NULL | 0 |
 
-Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_agent`, `aider_agent`, `cursor_agent`, `copilot_agent`, `warp_agent`, `kimi_agent`, `opencode_agent`, `droid_agent`, `ollama_agent`, `grok_agent`, `antigravity_agent`, `run_script`.
+Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_agent`, `aider_agent`, `cursor_agent`, `copilot_agent`, `warp_agent`, `kimi_agent`, `opencode_agent`, `droid_agent`, `ollama_agent`, `grok_agent`, `antigravity_agent`, `goose_agent`, `run_script`.
 
 Valid status values: `running`, `queued`, `suspended`, `exited`, `orphaned`.
 
@@ -290,6 +478,9 @@ Indexes: `idx_sessions_task_started` on (task_id, started_at DESC), `idx_session
 | recorded_at | TEXT | NOT NULL | |
 | session_started_at | TEXT | NOT NULL | |
 | session_type | TEXT | | NULL |
+| conversation_id | TEXT | | NULL |
+| cumulative_cost_usd | REAL | | NULL |
+| cumulative_duration_ms | INTEGER | | NULL |
 | total_cost_usd | REAL | NOT NULL | |
 | total_input_tokens | INTEGER | NOT NULL | 0 |
 | total_output_tokens | INTEGER | NOT NULL | 0 |
@@ -304,9 +495,19 @@ Indexes: `idx_sessions_task_started` on (task_id, started_at DESC), `idx_session
 | agent | TEXT | | NULL |
 | effort | TEXT | | NULL |
 
-Indexes: `idx_usage_history_session_started_at` on (session_started_at), `idx_usage_history_recorded_at` on (recorded_at).
+Indexes: `idx_usage_history_session_started_at` on (session_started_at), `idx_usage_history_recorded_at` on (recorded_at), `idx_usage_history_conversation` on (conversation_id, session_started_at) for the per-leg baseline lookup.
 
-Append-only ledger of finalized session usage. Decoupled from `sessions` and `tasks`: rows have no foreign keys, so they survive task deletion, bulk-archive cleanup, and revert-to-backlog. The usage dashboard's period totals (Live/Today/Week/Month/All Time), cost-per-day series, and by-model / by-agent / by-effort breakdowns read from this table via `USAGE_GET_DASHBOARD_STATS` (and the `kangentic_get_usage_stats` MCP tool) so cost and token totals reflect every session ever finalized on the project, not just the ones whose source task still exists.
+Append-only ledger of finalized session usage. Decoupled from `sessions` and `tasks`: rows have no foreign keys, so they survive task deletion, bulk-archive cleanup, and revert-to-backlog. The usage dashboard's period totals (Live/Today/Week/Month/All Time), cost-per-day series, and by-model / by-agent / by-effort breakdowns read from this table via `USAGE_GET_DASHBOARD_STATS` (and the `kangentic_get_usage_stats` MCP tool) so cost totals reflect every session ever finalized on the project, not just the ones whose source task still exists.
+
+**Cost and duration are PER-LEG DELTAS; `cumulative_*` are the raw readings and must never be summed.** The agent reports `total_cost_usd` and `total_duration_ms` as running totals for the whole CONVERSATION, and a `--resume` is a new `sessions` row and therefore a new row here, so a flat `SUM` counted the running total once per leg. Measured on the dogfooding install: $113,948 against $50,580, and one lineage carried the identical $22.16 across about 20 consecutive rows with 0 tool calls each. `conversation_id` is the session's `agent_session_id`, which tracks CLI forks (both the resume-time reconcile and the stale-ID recovery persist the agent-reported id), so a `/clear` starts a new lineage whose first leg counts in full. A NULL `conversation_id` (a row whose `sessions` row was deleted) is its own lineage and keeps its reading.
+
+The other summed columns were audited against the same ledger and are safe: `tool_call_count` and `compaction_count` are per-leg counters, the three git-churn columns are already held to one non-zero row per task by `setTaskGitStats`, and the token columns are per-capture snapshots (they sum without double-counting, but the sum is not a token count). The per-column evidence is on the `UsageHistoryRepository` class docblock; re-run that audit before adding a summed column.
+
+`costKnownCount` is the one read that deliberately does NOT use the summable column: it counts rows whose `cumulative_cost_usd` is above zero, because a resume leg that did no work has a real reading and a zero delta, and 539 of 2,434 rows on the dogfooding install are exactly that. Counting the delta would let a window of only such legs claim no agent reported any cost.
+
+`LINEAGE_DELTA_SET_SQL` in `usage-history-repository.ts` is the single definition of a delta, used by both the backfill migration and `recordSessionUsage`. The write path recomputes this leg AND every later leg of the lineage rather than deriving one delta, which is what keeps `SUM(total_cost_usd) == MAX(cumulative_cost_usd)` per lineage true even when the shutdown sweep re-captures an older leg after its successors already stored deltas. This mirrors the `setTaskGitStats` canonical-record invariant for branch-cumulative git churn, applied to a conversation lineage instead of a task lineage.
+
+**The token columns are NOT a token count.** They hold the status line's `context_window` totals, which Claude Code 2.1.132+ reports as CURRENT CONTEXT OCCUPANCY, so summing them across sessions yields the sum of each session's last context size. The dashboard's token figures read `conversation_turn_usage` instead; these columns survive for the live-overlay baseline (`sumSessionsRepresented`) and the footer parity the snapshot semantics were chosen for.
 
 `agent` records which agent (claude, codex, gemini, ...) ran the session, stamped generically from the session manager's recorded agent name at capture time; a one-shot migration backfills it from surviving `sessions` -> `tasks.agent` joins, and rows whose task was already deleted stay NULL (rendered as "(unknown)").
 
@@ -512,7 +713,7 @@ Key/value bookkeeping for the project itself, distinct from `memory_meta` (which
 
 ### conversation_turn_usage table
 
-Durable per-turn token-usage ledger. One row per assistant turn that reported usage, written by `ConversationIndexer` from the parsed transcript at index time so it persists after the agent prunes its native JSONL (unlike the in-transcript `usage` field, which is re-derived on each parse). Counts are kept as raw components so cost analysis can weight fresh input against the cheaper cache reads. Read via `ConversationUsageStore` (`getForTask` / `getForSession` / `getForTurns`, plus `getGroupedUsageSince`, the UTC-bucketed project-wide read behind the usage dashboard's burn-rate and token-trend charts - 5-minute buckets for the Live period, 15-minute otherwise, bucket-only output so the payload is O(active buckets) rather than O(sessions x buckets); each bucket carries a SQL-computed `allocatedCostUsd` (per-turn shares of each owning session's `usage_history` cost), windowed by the same `session_started_at` bounds the dashboard's other reads use).
+Durable per-turn token-usage ledger. One row per assistant turn that reported usage, written by `ConversationIndexer` from the parsed transcript at index time so it persists after the agent prunes its native JSONL (unlike the in-transcript `usage` field, which is re-derived on each parse). Counts are kept as raw components so cost analysis can weight fresh input against the cheaper cache reads. Read via `ConversationUsageStore` (`getForTask` / `getForSession` / `getForTurns`, plus `getGroupedUsageSince`, the UTC-bucketed project-wide read behind the usage dashboard's burn-rate and token-trend charts - 5-minute buckets for the Live period, 15-minute otherwise, bucket-only output so the payload is O(active buckets) rather than O(sessions x buckets); each bucket carries a SQL-computed `allocatedCostUsd` (per-turn shares of each owning session's `usage_history` cost), windowed by the same `session_started_at` bounds the dashboard's other reads use). All four are main-thread only (`subagent_id IS NULL`); `getSubagentTotalsByType` and `getTaskFanOuts` read the subagent rows. A seventh, `getEarliestTurnMs`, is filtered by NEITHER session nor subagent (`SELECT MIN(ts) ... WHERE ts IS NOT NULL`): it answers how far back per-turn capture reaches at all, which the dashboard and `kangentic_get_usage_stats` surface as `earliestTurnMs` so a range starting before that can say its token coverage is shorter than its cost coverage. See "Main-thread and subagent rows" below. Of the main-thread four, only `getGroupedUsageSince` has a production caller today (the dashboard); `getForTask` / `getForSession` / `getForTurns` are the read API a conversation view would use and are currently exercised by tests only.
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
@@ -527,8 +728,42 @@ Durable per-turn token-usage ledger. One row per assistant turn that reported us
 | cache_creation_input_tokens | INTEGER | NOT NULL | 0 |
 | cache_read_input_tokens | INTEGER | NOT NULL | 0 |
 | recorded_at | TEXT | NOT NULL | |
+| subagent_id | TEXT | | NULL |
+| agent_type | TEXT | | NULL |
+| spawn_depth | INTEGER | | NULL |
+| parent_tool_use_id | TEXT | | NULL |
 
-Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim under the same uuid; the PK dedups a replayed turn back onto one row so per-task / per-project totals never double-count a shared turn. Indices: `idx_turn_usage_task` (task_id), `idx_turn_usage_session` (session_id), `idx_turn_usage_ts` (ts). Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a durable ledger, not a rebuildable index, so token history outlives the session rows it describes.
+Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim under the same uuid; the PK dedups a replayed turn back onto one row so per-task / per-project totals never double-count a shared turn. That PK is the second of two guards, not the only one: an agent reports one API message's tokens on several transcript LINES, each with its own uuid, so the adapter attributes that usage to one line per `message.id` before any row is produced (see `parseTranscriptWindow` in [agent-integration.md](agent-integration.md)). Two lines of one message would otherwise reach this table under two different keys, which the PK cannot collapse. Indices: `idx_turn_usage_task` (task_id), `idx_turn_usage_session` (session_id), `idx_turn_usage_ts` (ts), `idx_turn_usage_agent_type` (agent_type, ts), and `idx_turn_usage_main_session` (session_id, ts, input_tokens, output_tokens) partial on `subagent_id IS NULL`, which covers the two per-session main-thread rollups the dashboard runs on every load. Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a durable ledger, not a rebuildable index, so token history outlives the session rows it describes.
+
+#### Main-thread and subagent rows
+
+`subagent_id` is the discriminator. It is NULL for a main-thread (driver) turn and set for a turn a Task-tool subagent ran, along with `agent_type` (`review-finder`, `test-builder`, `Explore`, ...), `spawn_depth`, and `parent_tool_use_id` (the tool-use id of the call that spawned it). Every row written before subagent capture existed is a main-thread turn, so NULL is also the right historical value.
+
+`parent_tool_use_id` is NOT a key of this table, and it does not always point at a main-thread row. It names a tool call, which `turn_spawn_links` maps to the turn that emitted it: a main-thread turn at depth 1, another subagent's turn deeper. Resolving a nested subagent to the fan-out that ultimately caused it therefore takes a walk, not a join, which is what `getTaskFanOuts` does.
+
+Every driver-facing reader spells `subagent_id IS NULL`: `getForTask`, `getForSession`, `getForTurns`, and `getGroupedUsageSince`. In `getGroupedUsageSince` the clause appears in BOTH the outer aggregate and the `session_tokens` CTE, because that CTE is the denominator of the per-turn cost allocation: filtering only the outer query leaves every token count correct while silently redistributing a session's cost into the subagents' time buckets. Two readers want the other set (`subagent_id IS NOT NULL`), and neither reports cost, because `usage_history.total_cost_usd` already covers the whole session tree and pricing these tokens again would double count. `getSubagentTotalsByType` groups by `agent_type` and carries the depth aggregates (`nestedTurnCount`, `nestedSubagentCount`, `maxSpawnDepth`, all computed from `spawn_depth` with no join, so they work on every historical row). `getTaskFanOuts` groups one task's subagent turns by the DRIVER TURN that started each fan-out, which the per-type rollup cannot express: a `/code-review` task spawns the same `review-finder` type from several different turns.
+
+Subagents whose parent does not resolve are returned by `getTaskFanOuts` under a null driver rather than dropped. Links only exist for sessions indexed since `turn_spawn_links` shipped, so on an older task that bucket is everything; omitting it would make the fan-out rows disagree with the per-type totals over the same task.
+
+#### turn_spawn_links table
+
+The other half of `parent_tool_use_id`. One row per subagent-spawning tool call, mapping that call's id to the turn that emitted it.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| tool_use_id | TEXT | PRIMARY KEY | |
+| turn_uuid | TEXT | NOT NULL | |
+| recorded_at | TEXT | NOT NULL | |
+
+Index: `idx_turn_spawn_links_turn` (turn_uuid), which serves the reverse direction (given a driver turn, which spawns did it make); the forward direction rides the primary key. No `sessions` DELETE cascade, for the same reason the ledger it serves has none.
+
+Deliberately minimal: `turn_uuid` joins straight back to `conversation_turn_usage`, which already carries `session_id` / `task_id` / `ts`, so denormalizing them here would only create a second copy to keep in sync. Rows are written by whichever parser saw the emitting turn - the main transcript for a depth-1 spawn, the subagent transcript for a deeper one - which is what lets a nested subagent resolve to the subagent that spawned it rather than only to a depth number.
+
+Which tool counts as a spawn is the adapter's `subagentSpawnToolName` (Claude: `Task`), not a literal in the retrieval layer. Filtering on it is what keeps the table small: a session emits thousands of tool-use ids and only the spawning ones are ever referenced.
+
+Links are collected INDEPENDENTLY of the usage fold in both parsers. Each drops turns before they reach the ledger (the main path skips an entry with no `usage`; the subagent path skips a message group whose four counts are all zero), and a link lost to either filter is lost for good, because a re-walk drops it identically and that subtree becomes permanently unattributable. Tokens are recoverable; this is not.
+
+Subagent rows are written by `ConversationIndexer.indexSubagentUsage` from the Claude adapter's `parseSubagentUsage`, which reads `~/.claude/projects/<slug>/<agentSessionId>/subagents/agent-<id>.jsonl` plus its `.meta.json` sidecar. That walk has its own `memory_index_state` row (doc id `<agentSessionId>#subagents`) because a running subagent moves no byte of the main transcript, and it runs on session finalize and the project-open sweep only, never on the live turn-boundary re-index. A `turn_uuid` there is `sub:<subagentId>:<message.id>` - stable across re-walks and disjoint from the main path's JSONL record uuids. Usage is folded field-wise max per `message.id`, not first-record-wins: subagent transcripts re-emit a message as its output grows, and taking the first record undercounts output by about 30%.
 
 Module: `src/main/retrieval/` (store `RetrievalStore`, usage ledger `ConversationUsageStore`, indexer `ConversationIndexer`, service `retrievalService`, query `searchConversationMemory`); the Memory Graph's projection lives in `src/main/retrieval/graph/` (`projection-math.ts`, `neighbor-edges.ts`, `coverage-aggregate.ts`, `cluster-labels.ts`, `projection-engine.ts`, `graph-service.ts`). Ask's prompt is built by `answer-context.ts` (the passages), `answer-tasks.ts` (the complete task table), and `answer-prompt.ts` (the rules, and the `SELECTED:` / `VIEW:` lines parsed back out of the reply). The task table's columns are declared once in `src/shared/memory-task-fields.ts` and generate the prompt header, the agent's vocabulary, the row ordering, and the rendered columns.
 
@@ -553,13 +788,29 @@ Durable activity-disposition ledger. One row per continuous span a session spent
 | exit_trigger | TEXT | | NULL |
 | recorded_at | TEXT | NOT NULL | |
 
-One row per INTERVAL, not per transition: a `permission` to `idle` crossing stays inside the same `'idle'`-disposition interval, so nothing closes and reopens. `enter_trigger` / `exit_trigger` carry the engine's own `TransitionTrigger` labels, so a consumer can tell a hook-authoritative park (`event:idle`) from a watchdog guess (`timer:stale-thinking`), and a genuine human reply (`event:prompt`) from the agent resuming itself (`event:prompt:pty-activity`). `started_at` / `ended_at` are TEXT UTC ISO 8601 mirrors of `started_ms` / `ended_ms`, written by the store from the same value so the two representations cannot drift; `ended_at` is NULL exactly when `ended_ms` is (the interval is still open). Indices: `idx_activity_intervals_task` (task_id), `idx_activity_intervals_session` (session_id), `idx_activity_intervals_started` (started_ms), `idx_activity_intervals_open` (session_id, ended_ms - resolves the one open interval per session without holding row ids across a restart). Deliberately has NO `sessions` DELETE cascade, for the same reason as `conversation_turn_usage`: it is a durable ledger, so an interval outlives the session row that produced it. A session that dies mid-interval leaves it permanently open; consumers filter `ended_ms IS NOT NULL`.
+One row per INTERVAL, not per transition: a `permission` to `idle` crossing stays inside the same `'idle'`-disposition interval, so nothing closes and reopens. `enter_trigger` / `exit_trigger` carry the engine's own `TransitionTrigger` labels, so a consumer can tell a hook-authoritative park (`event:idle`) from a watchdog guess (`timer:stale-thinking`), and a genuine human reply (`event:prompt`) from the agent resuming itself (`event:prompt:pty-activity`). `started_at` / `ended_at` are TEXT UTC ISO 8601 mirrors of `started_ms` / `ended_ms`, written by the store from the same value so the two representations cannot drift; `ended_at` is NULL exactly when `ended_ms` is (the interval is still open). Indices: `idx_activity_intervals_task` (task_id), `idx_activity_intervals_session` (session_id), `idx_activity_intervals_started` (started_ms), `idx_activity_intervals_open` (session_id, ended_ms - resolves the one open interval per session without holding row ids across a restart). Deliberately has NO `sessions` DELETE cascade, for the same reason as `conversation_turn_usage`: it is a durable ledger, so an interval outlives the session row that produced it. Both ordinary ends close the open interval: the PTY's `exit`, and `session-removed` for a direct `SessionManager.remove()`, which deletes the registry row synchronously and so lands before that exit can resolve a project (see [session-lifecycle.md](session-lifecycle.md)). Only an abrupt end that fires neither, an app crash or an OS kill, leaves an interval permanently open; consumers filter `ended_ms IS NOT NULL`.
 
-Module: `src/main/activity-engine/` (store `ActivityIntervalStore`, recorder `ActivityIntervalRecorder`). Read via the `kangentic_get_activity_intervals` MCP tool (see [mcp-server.md](mcp-server.md)) or `kangentic_query_db`; there is no desktop-facing IPC endpoint yet.
+Module: `src/main/activity-engine/` (store `ActivityIntervalStore`, recorder `ActivityIntervalRecorder`). Read directly via the `kangentic_get_activity_intervals` MCP tool (see [mcp-server.md](mcp-server.md)) or `kangentic_query_db`, and indirectly by the usage dashboard: `getActiveTotals` sums this ledger behind `usage:getDashboardStats`, backing the `activeMs` / `activeSessionsCovered` KPI pair and the per-project Avg Active column. See [activity-detection.md](activity-detection.md), which owns this ledger.
+
+### remote_item_cache table
+
+Persistent cache of remote board items for the Import dialog, keyed by `(external_source, repository, external_id)`. It lets the dialog paint instantly on open (`backlog:importGetCached`, no network) and reconcile only items changed since the cache's high-water mark (`MAX(remote_updated_at)`, via `backlog:importReconcile`). Being in the per-project DB, it survives app restart and project switch. `alreadyImported` is never stored: it is re-stamped from the live backlog (`backlog_tasks` + `tasks`) on every read.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| external_source | TEXT | NOT NULL, PK | |
+| repository | TEXT | NOT NULL, PK | |
+| external_id | TEXT | NOT NULL, PK | |
+| remote_updated_at | TEXT | NOT NULL | |
+| state_category | TEXT | NOT NULL | |
+| payload | TEXT | NOT NULL | |
+| fetched_at | TEXT | NOT NULL | |
+
+`payload` is the JSON-serialized list-level `ExternalIssue` (body is the description only; Azure DevOps comments are deferred to import time). `state_category` is the normalized `'open' | 'closed'` bucket, kept for a future SQL-level filter; the copy the dialog actually reads is `stateCategory` inside `payload`, so treat the payload as the source of truth and write both together. The column cannot simply be dropped: the table is created with `CREATE TABLE IF NOT EXISTS`, which does not reshape a database that already has it, so removing the column from the DDL would leave a NOT NULL column that every insert then omits. Retiring it needs its own migration. `remote_updated_at` mirrors `ExternalIssue.updatedAt`, canonicalized to UTC ISO 8601 on write because the column is TEXT and its MAX is compared lexicographically; that MAX is the incremental `since` watermark. `MIN(fetched_at)` is when the cache was last known complete, which is how the reconcile decides a provider with no cheap id listing is overdue for a full pass. Timestamps are UTC ISO 8601 written via `toISOString()`. The composite PK bounds every read to one source's rows (the `(external_source, repository)` prefix scan, and the MAX watermark and DESC sort within that range), so no separate index is needed at these sizes. Repository: `RemoteItemCacheRepository` (`src/main/db/repositories/remote-item-cache-repository.ts`).
 
 ## Migration Strategy
 
-Migrations run automatically on database open via `runGlobalMigrations()` (from `src/main/db/migrations/global-schema.ts`) and `runProjectMigrations()` (from `src/main/db/migrations/project-schema.ts`). Default swimlane and action seeding lives in `src/main/db/migrations/default-data.ts`. The strategy uses three approaches depending on the change:
+Migrations run automatically on database open via `runGlobalMigrations()` (from `src/main/db/migrations/global-schema.ts`) and `runProjectMigrations()` (from `src/main/db/migrations/project-schema.ts`). Default swimlane seeding lives in `src/main/db/migrations/default-data.ts`; nothing seeds actions, transitions or automations any more. The strategy uses three approaches depending on the change:
 
 - **Initial schema** uses `CREATE TABLE IF NOT EXISTS` so first-run and re-runs are idempotent.
 - **Incremental changes** use `ALTER TABLE ADD COLUMN` with existence checks via `PRAGMA table_info()` to avoid errors on already-migrated databases.
@@ -611,13 +862,13 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 35. **`external_id`, `external_source`, `external_url` columns on tasks** -- carries external origin (GitHub/Asana/etc.) onto board tasks promoted from imported backlog items, plus an `idx_tasks_external` index on (external_source, external_id). Promotion deletes the `backlog_tasks` row, so without these columns the board task loses all trace of its origin and the same issue could be re-imported. The dedup query (`findByExternalIds`) now unions `backlog_tasks` with `tasks` (archived included) so a previously imported-and-promoted issue stays "imported". Carried back through demote via `createFromTask`.
 36. **`usage_history` append-only ledger** -- creates the `usage_history` table (in the initial `CREATE TABLE IF NOT EXISTS` block) plus two query indices (`idx_usage_history_session_started_at`, `idx_usage_history_recorded_at`) for StatusBar period bucketing. Adds a one-shot guarded backfill that copies existing `sessions` rows where `total_cost_usd IS NOT NULL` into `usage_history` so installs upgrading to this version retain their lifetime totals. Backfill is wrapped in a single transaction and uses `INSERT OR IGNORE` plus a `COUNT(*) = 0` guard so re-running is safe. Rows in this table have no foreign keys to `tasks` or `sessions`, so totals survive task deletion (the original bug this feature fixes).
 37. **`pr_state` column on tasks** -- adds `pr_state TEXT DEFAULT NULL` so the authoritative branch->PR resolver can persist normalized PR state (`open`/`draft`/`merged`/`closed`) and re-resolution can reflect state changes on the card pill. Idempotent guarded `ALTER TABLE`.
-38. **`head_sha` column on tasks** -- adds `head_sha TEXT DEFAULT NULL`, the captured worktree HEAD commit SHA. An immutable anchor that lets PR resolution match by commit (`gh api repos/{owner}/{repo}/commits/{sha}/pulls`) even after the worktree is reclaimed on Done or the branch is renamed. Captured opportunistically during resolution and on worktree deletion. Idempotent guarded `ALTER TABLE`.
+38. **`head_sha` column on tasks** -- adds `head_sha TEXT DEFAULT NULL`, the captured worktree HEAD commit SHA. An immutable anchor that lets PR resolution match by commit (each PR connector's `resolveByCommit`; GitHub via `gh api repos/{owner}/{repo}/commits/{sha}/pulls`, Azure DevOps via `pullrequestquery`) even after the worktree is reclaimed on Done or the branch is renamed. Captured opportunistically during resolution, from the worktree HEAD before every cleanup path that removes the directory (the Done move, a To Do reset or delete, the `cleanup_worktree` action), and from the surviving local branch ref via `readLocalBranchSha` when only the directory is already gone (the startup worktree-missing fallbacks, the Backlog resource sweep). `tests/unit/pushed-branch-cleanup-parity.test.ts` checks that every write nulling `branch_name` carries the capture. Idempotent guarded `ALTER TABLE`.
 39. **`isolated_swimlane_id` column on sessions** - adds `isolated_swimlane_id TEXT DEFAULT NULL` so a task can hold multiple parallel, independently-resumable sessions. NULL = the task's main session; a swimlane id = the separate, context-isolated session belonging to that `isolated`-target column. Existing rows are NULL (main). Companion index `idx_sessions_task_type_isolation_started` (see migration 34) keys the resume-decision lookup. Idempotent guarded `ALTER TABLE`.
 40. **`applied_model` and `applied_effort` columns on sessions** - adds `applied_model TEXT DEFAULT NULL` and `applied_effort TEXT DEFAULT NULL`. They record the model/effort a session was actually spawned, resumed, or live-switched with (the `--model` / `--effort` flag value; NULL = agent default, no flag). Both feed the column-transition injection delta in `prepareInjectionPlan`, which injects `/model` or `/effort` only when the session's real running value differs from the destination's effective value, so a drifted column config (or a null leaving-column) no longer triggers a spurious injection. The two differ in standing: `applied_model` is the sole source for the model delta, but for effort it is a FALLBACK rather than the ground truth. `resolveSourceEffort` prefers the level the agent itself reports (`task.effort_override ?? <agent-reported effort> ?? applied_effort`), because these columns record only what Kangentic last asked for and an `/effort` typed straight into the terminal never reaches them. See [Command Injection](command-injection.md) for the canonical precedence and why model is deliberately excluded from live sourcing. Maintained by `SessionRepository.updateAppliedSettings` at spawn/resume and after every live settings switch. Distinct from `model_id` (the agent-reported model captured at exit via metrics). Both columns are idempotent guarded `ALTER TABLE`.
 41. **Per-column session model on swimlanes (`session_target` + `session_spawn_strategy`)** - renames the original `session_strategy` column to `session_target` (`main` | `isolated`, values unchanged) via a guarded `RENAME COLUMN`, and adds `session_spawn_strategy TEXT NOT NULL DEFAULT 'create_or_resume'` (`create_or_resume` | `always_spawn_new`). Idempotent across fresh DBs, DBs still on the old `session_strategy` column, and already-migrated DBs. Together they select which session track a column runs a task on and whether it resumes or always spawns fresh on entry; the fresh-vs-resume default is context-aware (`resolveForceFresh`). See `docs/session-lifecycle.md` "Isolated Sessions".
 42. **`description` column on swimlanes** - adds `description TEXT DEFAULT NULL`, a free-form, team-shared blurb describing a column's purpose. Surfaced as a header tooltip and round-trips through `kangentic.json` (`BoardColumnConfig.description`). Idempotent guarded `ALTER TABLE`.
 43. **`compaction_count` columns on sessions and usage_history** - adds `compaction_count INTEGER NOT NULL DEFAULT 0` to `sessions` (via the metrics-columns loop, migration 16) and the same to `usage_history` (in the `CREATE TABLE` block plus a guarded `ALTER TABLE` for existing DBs). Counts context compactions per CLI run (Claude `PreCompact` hook -> `EventType.Compact`, counted in `UsageAccumulator`); the per-task lifetime "sessions compacted" total is the SUM across the task's session rows. NOT NULL DEFAULT 0 so existing rows and never-compacted runs aggregate correctly.
-44. **`detail_view_state` column on tasks** - adds `detail_view_state TEXT DEFAULT NULL`, a per-task JSON blob (`TaskDetailViewState`) holding the task-detail dialog's layout (divider ratio, which side panel is open, Changes view mode, selected diff file, reviewed files, diff scope, file-tree width, selected commit in the Changes panel's history browser, commit-history region height). Hydrated into the session store on board load and saved debounced via the task-scoped `TASK_SET_DETAIL_VIEW_STATE` IPC so reopening a task restores its layout across restarts. The dedicated `setDetailViewState` writer deliberately does not bump `updated_at` (view-state churn must not reorder the board). Idempotent guarded `ALTER TABLE`.
+44. **`detail_view_state` column on tasks** - adds `detail_view_state TEXT DEFAULT NULL`, a per-task JSON blob (`TaskDetailViewState`) holding the task-detail dialog's layout (divider ratio, which side panel is open, Changes view mode, selected diff file, reviewed files, diff scope, file-tree width, selected commit in the Changes panel's history browser, and whether the rail's History section is expanded plus its height). Hydrated into the session store on board load and saved debounced via the task-scoped `TASK_SET_DETAIL_VIEW_STATE` IPC so reopening a task restores its layout across restarts. The dedicated `setDetailViewState` writer deliberately does not bump `updated_at` (view-state churn must not reorder the board). Idempotent guarded `ALTER TABLE`.
 45. **Conversation-memory index (`memory_chunks` + FTS + `memory_index_state` + `memory_meta`)** - creates the per-project retrieval store over the structured transcript: `memory_chunks` (corpus-generic chunk store, `UNIQUE(corpus, doc_id, seq)`), the `memory_chunks_fts` FTS5 external-content shadow (with `_ai`/`_ad`/`_au` sync triggers), `memory_index_state` (per-doc staleness signature + status), and `memory_meta` (chunker version). Cascade cleanup via `trg_sessions_delete_memory` on `sessions`. The `memory_chunks_vec` (vec0) table is created at runtime by `RetrievalStore.ensureVecTable()` only when the sqlite-vec extension loaded, never by migrations, and no trigger references it. Idempotent `CREATE ... IF NOT EXISTS`.
 46. **Durable per-turn token-usage ledger (`conversation_turn_usage`)** - creates the table plus its `idx_turn_usage_task` / `idx_turn_usage_session` / `idx_turn_usage_ts` indices. One row per assistant turn that reported usage, keyed by `turn_uuid` (so a `--resume` replay dedups back onto one row), populated by `ConversationIndexer` from the parsed transcript at index time so token counts survive the agent pruning its native JSONL. Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a long-lived ledger, not a rebuildable index, so token history outlives the session rows it describes. See the `conversation_turn_usage table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
 47. **`permission_mode` column on tasks** - adds `permission_mode TEXT DEFAULT NULL`, a per-task permission override mirroring `agent_override`/`model_override`/`effort_override`: settable via the New Task dialog's Advanced section and the task-detail edit form (pre-spawn or suspended only, same lock as `agent_override`). Takes precedence over the swimlane's `permission_mode` and the project's default permission mode; NULL means inherit. Idempotent guarded `ALTER TABLE`.
@@ -628,10 +879,20 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 52. **`profile_id` column on tasks** - adds `profile_id TEXT DEFAULT NULL`, naming the Board Profile a task rides: a team-shared, named alternate set of per-column strategy settings applied as the task moves (see the `tasks table` section above and [Configuration > Board Profiles](configuration.md#board-profiles)). No foreign key and no backfill: profile *definitions* live in `kangentic.json` while this assignment is per-machine, and NULL already means the synthetic "Default" (every column uses its own settings), so an existing board needs no data migration and behaves byte-identically until a profile is created. Mutually exclusive with `agent_override` / `model_override` / `effort_override` / `permission_mode`, enforced in `TaskRepository`. Idempotent guarded `ALTER TABLE`.
 53. **`run_mode` column on tasks** - adds `run_mode TEXT NOT NULL DEFAULT 'column_settings'`, recording which of the New Task / Edit dialog's two branches the user chose (`'column_settings'` | `'agent_override'`, the `TaskRunMode` union). Previously the branch was derived on mount from "does the task carry any of the four Advanced pins", which cannot represent Agent Override with all four fields left on inherit: that saves the same five nulls as Column Settings, so the choice was dropped on every save and `lockAdvancedOverridesOnFirstSpawn` never fired. Backfills `'agent_override'` for any row where `agent_override`, `model_override`, `effort_override`, or `permission_mode` is non-NULL **and** `profile_id IS NULL` - exactly the old derivation, so upgraded boards behave identically; `auto_command` is excluded (not an Advanced pin) and profile tasks carry no pins, so both stay on `'column_settings'`. The `profile_id IS NULL` clause changes no row today (the repository has enforced profile-vs-pin exclusivity since `profile_id` shipped) but makes the backfill correct by construction rather than by trusting that invariant. Joins the profile-vs-pin exclusivity set in `applyProfileExclusivity` (see the `tasks table` section above). Idempotent guarded `ALTER TABLE` + backfill `UPDATE`, both inside a single `db.transaction()`: the guard tests only for the column's existence, so a crash between the two statements would leave the column present, the guard satisfied, and the backfill never run again.
 54. **Monotonic `display_id` high-water mark (`project_meta`)** - creates the key/value `project_meta` table and seeds `display_id_high_water` from `COALESCE(MAX(display_id), 0)`. `TaskRepository.create` now allocates `max(storedHighWater, MAX(display_id)) + 1` inside a transaction instead of the bare `MAX(display_id) + 1`. Numbers previously recycled: `delete()` is a hard `DELETE`, so removing the highest-numbered task handed its number straight to the next task created. That became a correctness problem once worktree directories were named after `display_id`, because a recycled number could adopt the deleted task's leftover directory. `MAX(display_id)` stays in the calculation so the counter self-heals if the row is lost or the database is restored from an older copy. `CREATE TABLE IF NOT EXISTS` + `INSERT OR IGNORE`, so a re-run never clobbers an advanced counter.
-55. **`worktree_folder` column on tasks** - adds `worktree_folder TEXT DEFAULT NULL`, the write-once directory NAME of a task's worktree, and backfills it from `basename(worktree_path)` for every task that has one. New worktrees are named for the task's `display_id`; worktrees created before that keep their legacy `<slug>-<taskId8>` name, so nothing on disk is renamed or relocated. The column is what makes "new worktrees only" true: moving to Done nulls `worktree_path`, so moving back out is a **fresh creation**, and without a durable record a pre-existing task would be rebuilt at a different path - orphaning its agent transcript (Claude keys it by a slug of the cwd, so `--resume` reports "No conversation found") and dropping its browser cookie jar (`browserPartitionForWorktree` hashes the path). Deliberately **not** backfilled from `sessions.cwd`: `runProjectMigrations` receives only the database handle, and without the project path it cannot tell a task's own worktree cwd apart from a project that is itself checked out at a worktree path (an opened worktree, or a `/preview` ephemeral project), where a bare marker search would write a permanently wrong value into a write-once column. That case is recovered at use time instead by `TaskRepository.recoverLegacyWorktreeFolder`, which anchors on the project's own worktrees root. Idempotent guarded `ALTER TABLE` + backfill inside `db.transaction()`.
-
+55. **`worktree_folder` column on tasks** - adds `worktree_folder TEXT DEFAULT NULL`, the write-once directory NAME of a task's worktree, and backfills it from `basename(worktree_path)` for every task that has one. New worktrees are named for the task's `display_id`; worktrees created before that keep their legacy `<slug>-<taskId8>` name, so nothing on disk is renamed or relocated. The column is what makes "new worktrees only" true: moving to Done nulls `worktree_path`, so moving back out is a **fresh creation**, and without a durable record a pre-existing task would be rebuilt at a different path - orphaning its agent transcript (Claude keys it by a slug of the cwd, so `--resume` reports "No conversation found"). (The browser cookie jar, also path-keyed when this migration shipped, is now keyed by task identity - `browserPartitionForTask` - and no longer depends on path stability.) Deliberately **not** backfilled from `sessions.cwd`: `runProjectMigrations` receives only the database handle, and without the project path it cannot tell a task's own worktree cwd apart from a project that is itself checked out at a worktree path (an opened worktree, or a `/preview` ephemeral project), where a bare marker search would write a permanently wrong value into a write-once column. That case is recovered at use time instead by `TaskRepository.recoverLegacyWorktreeFolder`, which anchors on the project's own worktrees root. Idempotent guarded `ALTER TABLE` + backfill inside `db.transaction()`.
 56. **`auto_command_mode` column on swimlanes** - adds `auto_command_mode TEXT NOT NULL DEFAULT 'immediate'`, declaring WHEN a column's `auto_command` fires: `'immediate'` (inject on arrival, interrupting the agent's current turn if there is one) or `'deferred'` (hold until that turn genuinely finishes, judged by activity `idle` AND a quiet PTY - see [Command Injection](command-injection.md)). No backfill is needed: `'immediate'` is exactly the behavior every existing column already had. Team-shared, so it round-trips through `kangentic.json` as `autoCommandMode` alongside `autoCommand`. Idempotent guarded `ALTER TABLE`.
 57. **auto_command outcome columns on tasks** - adds `auto_command_state`, `auto_command_text`, `auto_command_error`, and `auto_command_at` (all `TEXT DEFAULT NULL`), recording what happened to the task's most recent auto_command injection so a failure is observable instead of a console warning nobody sees. `auto_command_state` is one of `'confirmed' | 'unconfirmed' | 'escalated' | 'failed' | 'cancelled'`; `auto_command_at` is UTC ISO 8601. `'unconfirmed'` is NOT a failure - only Claude implements a `command-injection` verifier, so on every other agent a delivery can only ever land there, and conflating the two would make the field meaningless off Claude. Written by `reportAutoCommandOutcome` outside the normal `update()` path so engine telemetry never bumps `updated_at`. Four idempotent guarded `ALTER TABLE`s.
+58. **`worktree_skip_reason` column on tasks** - adds `worktree_skip_reason TEXT DEFAULT NULL`, recording why a task's last spawn ran WITHOUT a worktree (the `WorktreeSkipReason` union: `'disabled' | 'not-a-repo' | 'nested-worktree' | 'no-commits' | 'remote-agent' | 'worktree-missing'`). `WorktreeManager.ensureWorktree` used to collapse every guard into one silent `null`, so nothing could tell the user their agent was running in the shared project checkout - the tree the app itself runs from; it now returns a `WorktreeSkipped` naming the reason, and `ensureTaskWorktree` / the `create_worktree` action / startup recovery persist it. Recorded and exposed but not yet read by any renderer surface: the 12px card glyph that drew it was reviewed out as too small to tell apart, so the card marker and the detail header's "Project folder" chip still read `worktree_path`. Written by `TaskRepository.setWorktreeSkipReason` outside the normal `update()` path (no `updated_at` bump), cleared inside `recordWorktree`'s transaction and on a To Do reset or Done move. No backfill: NULL correctly means "never evaluated". Idempotent guarded `ALTER TABLE`.
+59. **Out-of-union swimlane role repair** - unconditional data migration clearing any `swimlanes.role` that is neither `todo` nor `done`, so a column this build does not know as a system column is stored as one (role NULL). The `role` column is plain `TEXT` with no CHECK constraint, and the earlier `planning`/`running` conversions (migrations 10 and 13) each sit inside a one-shot `if (!hasColumn)` guard, so a database whose `permission_mode` and `plan_exit_target_id` columns already existed never ran them, and a role arriving later from a teammate's `kangentic.json` was never converted at all. Those values then reached the renderer's two-key role-to-icon map and rendered `<undefined />`, blanking the board (Sentry DESKTOP-D). Runs on every open, so it also repairs a role written after the schema settles. Deliberately the last statement that REPAIRS a `role`: migration 19 PROMOTES `backlog` to `todo`, and clearing it first would leave the board with no To Do role for `applyBoardConfigToDb` to find. The default seed's own INSERT runs later still, but it writes trusted literals into a fresh table rather than repairing an existing value. The placeholder list is built from `SWIMLANE_ROLES` (`src/shared/types.ts`) so it cannot drift from the union. Being unconditional rather than one-shot has an accepted cost: if a future build adds a third system role, an OLDER build opening the same project nulls it on disk. `exportFromDb` also runs on every open (`deferBoardConfigReconcile` in `ipc/handlers/projects.ts`), so that same open writes the nulled role back into the committed `kangentic.json`, and the newer build's role does not survive one open on the older build. That is the deliberate trade for repairing a role that arrives after the schema settles, which is the case migrations 10 and 13 missed.
+60. **`pushed_branch` column on tasks** - adds `pushed_branch TEXT DEFAULT NULL`, the branch a task's work was actually PUSHED to when that differs from the local `branch_name`. Agents push under a team convention (`maint/adopt-central-package-management`) while the worktree stays on the Kangentic slug, and nothing reconciled the two, so every branch-keyed PR anchor looked up a branch no PR was opened from and the card stayed bare. Written from the agent's own `git push` (the destination its command named, recorded when that call ends; `src/main/activity-engine/push-command-detector.ts`), by `kangentic_link_pr`'s `branch` argument, and opportunistically by the PR linker's Tier 6, which finds the remote branch whose tip is the task's HEAD; read back as the Tier 5 anchor. For a task created with `useWorktree: false` it is the ONLY PR anchor the app can record, since every other one is written from a worktree read. Deliberately a separate column rather than a correction to `branch_name`: that one names the LOCAL branch a restore re-attaches to, verified with `rev-parse --verify`, which does not resolve a remote-only branch, so writing a pushed-only name there would fork a fresh branch off base and orphan the work. A remote fact that outlives the local checkout, so NO cleanup path nulls it (it once was nulled alongside `branch_name`, which stranded a task whose PR had not linked before a reset); `tests/unit/pushed-branch-cleanup-parity.test.ts` enforces that the row insert is the only `pushed_branch: null` write. No backfill: NULL correctly means "never observed". Idempotent guarded `ALTER TABLE`.
+61. **`resolved_base_branch` column on tasks** - adds `resolved_base_branch TEXT DEFAULT NULL`, the base branch a task's worktree was ACTUALLY cut from, as `WorktreeManager.createWorktree` resolved it against the repo's real refs. Written by `recordWorktree` in the same transaction as `worktree_path` / `branch_name`, and read by the PR linker as `base_branch ?? resolved_base_branch ?? defaultBaseBranch ?? 'main'`, and by `kangentic_list_worktrees` through the same chain (`RequestResolver.resolveWorktreeBaseRef`) to pick the `baseRef` a worktree's ahead/behind counts are measured against. Distinct from `base_branch`, which holds only a base the USER named explicitly and is therefore NULL for most tasks: every base-relative guard in PR linking previously fell back to the project default, so a worktree cut from a long-lived integration branch was measured against the wrong branch (the unsoundness documented in [PR Integration](pr-integration.md)). Deliberately NOT a backfill of `base_branch`: `ensureTaskBranchCheckout` treats a NULL `base_branch` as "nothing to check out" and returns early, so populating that column would push non-worktree spawns into a fetch-and-checkout path they skip today, and into a guard that throws `BranchCheckoutBlockedError`. Cleared alongside `branch_name` by every cleanup path (`tests/unit/pushed-branch-cleanup-parity.test.ts`). No backfill: the resolution is gone by the time any consumer asks, so NULL correctly means "not recorded". Written only where the resolution is real: `createWorktree` reports `null` when it attached to a branch that already existed (no start point is passed, so the resolved base describes a cut that never happened), and `recordWorktree` omits the column rather than nulling it, so a later reuse cannot erase a base an earlier creation did record. Idempotent guarded `ALTER TABLE`.
+62. **`pr_merge_readiness` column on tasks** - adds `pr_merge_readiness TEXT DEFAULT NULL`, the normalized merge-readiness verdict of the linked PR (`ready` / `blocked` / `conflicting` / `queued` / `running` / `unknown`, the `PRMergeReadiness` union): would a Merge click succeed right now, and if not, is a blocking check still in flight? Computed inside each PR connector from its own platform's mergeability fields (GitHub's `mergeStateStatus` / `mergeable` / `reviewDecision` / `statusCheckRollup` plus the base branch's required checks, which turn a required check not yet reported into `queued`, and, behind `git.prBypassCountsAsReady`, the viewer's `viewerCanMergeAsAdmin`; Azure's `mergeStatus` plus, behind `git.prEvaluateBranchPolicies`, its branch-policy evaluations) and never mapped outside `src/main/pr/adapters/`. Unlike `pr_state`, the value is VIEWER-RELATIVE: with the bypass setting on, a GitHub PR still waiting on a required review (`BLOCKED`, or `BEHIND` once a sibling PR lands) reads `ready` for a viewer whose bypass would merge it and `blocked` for one whose would not, so the same PR can legitimately hold different verdicts in two people's databases. The column is plain TEXT with no CHECK constraint, so the two in-flight values landed without a migration. Orthogonal to `pr_state`, which stays the gate for the terminal short-circuits. NULL means never judged (no PR, or a link that predates this column); `unknown` means the platform was asked and has no verdict yet. Preserved by a resolve whose tier cannot judge it (the commit tier on both providers), held through a pending `unknown` on a bounded re-poll, re-polled every 30 s while `queued` / `running` on an open PR, and cleared with the other three PR columns by every writer that nulls `pr_state` (see [PR Integration](pr-integration.md#where-pr-state-is-persisted)). No backfill: NULL correctly means "never judged", and the next sweep fills it. Idempotent guarded `ALTER TABLE`.
+63. **Subagent attribution columns on `conversation_turn_usage`** - adds `subagent_id`, `agent_type`, and `parent_tool_use_id` (`TEXT DEFAULT NULL`) plus `spawn_depth` (`INTEGER DEFAULT NULL`), and creates `idx_turn_usage_agent_type` on `(agent_type, ts)`. `subagent_id` is the discriminator: NULL for every main-thread (driver) turn, set for a turn a Task-tool subagent ran. Every row written before subagent capture existed is a main-thread turn, so NULL is also the correct historical value and no backfill is needed. The index serves the project-wide by-type rollup's `GROUP BY` ordering only. It does NOT prune on `subagent_id`, which is in no index, so that predicate still runs per row; the per-task breakdown rides the existing `idx_turn_usage_task` instead. See the `conversation_turn_usage` table section above for which readers see which rows. Four idempotent guarded `ALTER TABLE`s plus one idempotent `CREATE INDEX IF NOT EXISTS`.
+64. **`turn_spawn_links`** - adds the table that makes `parent_tool_use_id` resolvable, mapping a subagent-spawning tool call's id to the turn that emitted it, plus `idx_turn_spawn_links_turn` on `(turn_uuid)` for the reverse direction. Migration 63 stored the child's half of that link and nothing stored the parent's: `conversation_turn_usage.turn_uuid` is the transcript record's own uuid for a main-thread row and `sub:<subagentId>:<messageId>` for a subagent one, and neither is a tool-use id, so the column named a key no row carried. No backfill: links accrue as sessions are indexed, and a task with none reports its fan-outs under a null driver rather than losing them. One idempotent `CREATE TABLE IF NOT EXISTS` plus one idempotent `CREATE INDEX IF NOT EXISTS`.
+65. **`remote_item_cache` table** - creates the persistent cache of remote board items for the Import dialog, keyed by `(external_source, repository, external_id)`. The dialog paints it instantly on open (`backlog:importGetCached`, no network) and reconciles only items changed since `MAX(remote_updated_at)` (`backlog:importReconcile`), so browsing a large tracker no longer re-fetches everything and no longer spawns one `az rest` per Azure DevOps work item just to render the list. `state_category` is the normalized `'open' | 'closed'` bucket, kept for a future SQL-level filter; the copy the dialog actually reads is `stateCategory` inside `payload`, which also carries `alreadyImported` forced false (re-stamped from the live backlog on read) and has Azure DevOps comments deferred to import time. See the `remote_item_cache table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
+66. **`column_automations` and `automation_runs` tables, and the actions-to-automations data migration** - creates both tables and their four indices (see the table sections above), then converts what the old `actions` + `swimlane_transitions` pair held. Every transition row becomes a `column_automations` row on its `to` column, in `(from, to, execution_order)` order, with the action's name, type and config copied; an action referenced N times becomes N independent automations, because an automation belongs to exactly one column. Names are made unique per column BEFORE the unique index is created, or its creation fails. Three types are DROPPED rather than ported, rows and all: `kill_session` (at Priority 4 the task has no active session, so the seeded `* -> Planning` row did nothing), `create_worktree` (duplicates the move path's `ensureTaskWorktree`) and `cleanup_worktree` (duplicates what a To Do move does). The seeded "Start Planning Agent" is skipped too, since its prompt equals `DEFAULT_SPAWN_PROMPT_TEMPLATE`, which the fallback spawn already uses; a `spawn_agent` row with any OTHER prompt IS copied, as the one legacy automation. Every swimlane with a non-empty `auto_command` gains a `send_message` enter row carrying the message and its mode, and both swimlane fields are then cleared. `workingDir` is dropped from `run_script` configs. Idempotent via a `schema_meta` flag, so a second run is a no-op; `tests/unit/automations-migration.test.ts` pins each of those cases.
+67. **`conversation_id` + `cumulative_*` columns on `usage_history` (per-leg deltas)** - adds `conversation_id TEXT`, `cumulative_cost_usd REAL` and `cumulative_duration_ms INTEGER` behind a guarded `ALTER TABLE`, backfills `conversation_id` from surviving `sessions.agent_session_id`, copies the existing `total_cost_usd` / `total_duration_ms` into the cumulative columns, then rewrites the two `total_*` columns to per-leg deltas via `LINEAGE_DELTA_SET_SQL`. Rewrites historical data, so it runs once inside a transaction and is idempotent: re-running recomputes the same deltas from the untouched `cumulative_*` values. Rows with a NULL `conversation_id` (105 of 2,434 on the dogfooding install, $116.68) keep their reading unchanged. Also adds `idx_usage_history_conversation`.
+68. **`idx_turn_usage_main_session` covering index on `conversation_turn_usage`** - a PARTIAL covering index on `(session_id, ts, input_tokens, output_tokens) WHERE subagent_id IS NULL`, created after the subagent-attribution columns exist (it references one of them). It serves the two per-session main-thread rollups the dashboard runs on every load: `listUsageRollup`'s `session_turns` CTE (breakdown tokens) and `getGroupedUsageSince`'s `session_tokens` CTE (the cost-allocation denominator). Both group every main-thread turn by session and sum the same two token columns, so carrying them in the index turns a full table walk into a pure index scan: measured on the dogfooding project (214k turns, 2.4k sessions) the breakdown rollup went from 93 ms to 18 ms per project, which matters because the app-wide scope runs it once per registered project on the synchronous main thread that also owns the PTYs. Partial because every reader of these aggregates is main-thread-only, and SQLite only picks a partial index up when the query repeats its predicate, which both CTEs do. `idx_turn_usage_session` stays: it serves `getForSession`, which reads a session's subagent rows too. Idempotent `CREATE INDEX IF NOT EXISTS`.
 
 ### Key Migrations (Global DB)
 
@@ -671,11 +932,16 @@ Operates on a per-project DB.
 | `list(swimlaneId?)` | Active (non-archived) tasks, optionally filtered by swimlane. Includes `attachment_count` via LEFT JOIN on `task_attachments`. |
 | `getById(id)` | Single task by ID (includes `attachment_count`) |
 | `getBySessionId(sessionId)` | Find the active (non-archived) task that owns a given PTY session |
+| `getByDisplayId(displayId)` | Single task by its `#N` display id, archived or not |
+| `getByBranchName(branchName)` | The active (non-archived) task owning a local branch, most recently updated first. Maps a branch back to a task with no live session |
+| `listByPRNumber(prNumber)` | Every task, archived included, whose `pr_number` is the given number, newest `updated_at` first. The PR linker's inferred tiers read it to refuse a PR another task on the board already holds; archived rows count because a Done task keeps its link |
+| `listByBranchOrPushedBranch(branchName)` | Every task, archived included, holding the name as its `branch_name` or its `pushed_branch`, newest first. The PR linker's remote-tip tier reads it to refuse a branch another task owns before any PR exists for it |
 | `create(input)` | Insert at the end of the target swimlane (next position). Transactional: allocates a monotonic `display_id` from `project_meta` in the same transaction as the INSERT |
 | `nextPositionInSwimlane(swimlaneId)` | The raw append position past everything in a swimlane, archived rows included. `create()`'s append anchor, and what MCP task placement resolves an out-of-range ordinal slot against |
 | `update(input)` | Partial update -- only provided fields are changed |
-| `recordWorktree(id, path, branch, folder)` | Transactional write of `worktree_path`, `branch_name` and the write-once `worktree_folder` together. Separate statements would leave a crash window where the path is set and the folder is not, which a later Done move would turn into permanent loss |
+| `recordWorktree(id, path, branch, folder, resolvedBaseBranch?)` | Transactional write of `worktree_path`, `branch_name` and the write-once `worktree_folder` together, clearing `worktree_skip_reason` in the same transaction. Separate statements would leave a crash window where the path is set and the folder is not, which a later Done move would turn into permanent loss. The 5th parameter carries `createWorktree`'s observed base into `resolved_base_branch`, and is OMITTED from the write rather than nulled when absent, so a reattach that cannot observe a base (the pre-existing-branch path reports none) never erases what an earlier real creation recorded |
 | `setWorktreeFolder(id, folder)` | Record the worktree's directory name. Write-once: guarded on `worktree_folder IS NULL`, so a task's worktree can never be relocated by a later write |
+| `setWorktreeSkipReason(id, reason)` | Record why the last spawn ran without a worktree (a `WorktreeSkipReason`), or null once it has one. Does NOT bump `updated_at`: spawn telemetry must not reorder the board |
 | `recoverLegacyWorktreeFolder(taskId, worktreesRoot)` | For a pre-numeric-scheme task whose `worktree_path` was already cleared by a Done move, recover and persist its original directory name from the newest `sessions.cwd`. Accepts only a direct child of `worktreesRoot`, so a project that is itself checked out at a worktree path cannot claim the enclosing worktree's name |
 | `move(input)` | Transactional move: shift positions in old and new swimlanes, update task |
 | `reorderWithinSwimlane(swimlaneId, orderedTaskIds)` | Dense rewrite of one swimlane's task order to 0..N-1 in a single transaction. The write behind `kangentic_reorder_tasks` and `kangentic_move_task`'s same-column `position`. Unlike `move()`'s two-shift arithmetic it heals position gaps left by archiving; a stray id from another swimlane is a no-op (`swimlane_id` guard), and re-issuing the same order writes nothing (`position != ?` guard, so `updated_at` moves only on rows that actually shift) |
@@ -684,6 +950,8 @@ Operates on a per-project DB.
 | `clearArchived(id)` | Clear `archived_at` WITHOUT moving the task. The exact inverse of `archive(id)`, used by `task-move`s move-out-of-Done path, which has already placed the row and would fight `move()`s sibling reordering if it re-ran the placement |
 | `listArchived()` | All archived tasks ordered by `archived_at` DESC |
 | `listArchivedPreview(limit)` | The newest `limit` archived tasks plus the total archived count; cheap hydration for the Done column (full list loads lazily via `listArchived`) |
+| `countAll()` | Bare `COUNT(*)` over every task, active and archived. For a caller that needs only the number: `list()` materializes every row plus the attachment-count join just to take `.length` |
+| `countArchived()` | Bare `COUNT(*)` over archived tasks, the `listArchived()` counterpart of `countAll()`. `kangentic_list_columns` and `kangentic_get_column_detail` call it to report the done column's completed count (`kangentic_board_summary` prints the same number from the `listArchived()` it already loads for its label tally). A project-wide count stands in for one lane's because `archive()` has a single caller, the move-to-Done branch in `ipc/handlers/task-move.ts`, which runs only once the task's `swimlane_id` is the `role = 'done'` lane |
 | `delete(id)` | Hard delete with position shift in the owning swimlane |
 
 ### SwimlaneRepository
@@ -699,21 +967,44 @@ Operates on a per-project DB.
 | `reorder(ids)` | Set positions from ordered array. Enforces constraints: todo must be position 0, custom columns (role=null) cannot be position 0. |
 | `delete(id)` | Delete a custom column. System columns (`todo`, `done`) cannot be deleted. Columns with tasks cannot be deleted. Also cleans up related transitions and dangling `plan_exit_target_id` references. |
 
-### ActionRepository
+### AutomationRepository
+
+Operates on a per-project DB. Takes over from `ActionRepository`, whose IPC handlers were deleted.
+
+| Method | Description |
+|--------|-------------|
+| `listAll()` | Every column's automations, which is what the renderer store holds |
+| `listForColumn(columnId)` | One column's rows, both groups, ordered by trigger then position |
+| `getForTrigger(columnId, trigger)` | That trigger's ENABLED rows in run order. The read the engine does on a move. |
+| `replaceForColumn(columnId, automations)` | Whole-column delete-and-insert. `position` is assigned PER TRIGGER, so the two groups number from 0 independently and can never interleave. A supplied `id` is kept, so a row keeps its identity and its run history across an edit. |
+| `deleteForColumn(columnId)` | Drop a column's rows. `SwimlaneRepository.delete` calls it explicitly, even though the foreign key cascades too. |
+
+### AutomationRunRepository
 
 Operates on a per-project DB.
 
 | Method | Description |
 |--------|-------------|
-| `list()` | All actions ordered by name ASC |
-| `getById(id)` | Single action by ID |
-| `create(input)` | Insert a new action |
-| `update(input)` | Partial update -- only provided fields are changed |
-| `delete(id)` | Delete action and all associated transitions |
-| `listTransitions()` | All transitions ordered by from_swimlane_id, to_swimlane_id, execution_order |
-| `getTransitionsFor(fromId, toId)` | Get transitions for a specific move. Exact source match takes priority; falls back to wildcard `*` source if no exact match exists. |
-| `getAgentSwimlaneIds()` | Returns the set of swimlane IDs that have `spawn_agent` transitions targeting them |
-| `setTransitions(fromId, toId, actionIds)` | Replace all transitions for a given from/to pair. Deletes existing, inserts new with execution_order from array index. |
+| `start(run)` | Write the `running` row before the attempt |
+| `finish(id, status, detail, attempts)` | Close it on every exit path |
+| `recordSkipped(run, reason)` | Write a row that opens and closes at once. A skip never ran, so it has no window to be interrupted in. |
+| `recordDeliveredByCaller(run, detail)` | Write a `succeeded` row for a message the move delivered itself, in the same keystroke burst as its `/model` or `/effort` change, so the run log shows it like every other run. |
+| `listForTask(taskId, limit)` | Everything that ran for one card, newest first |
+| `listForAutomation(automationId, limit)` | Every run of one automation, newest first. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
+| `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |
+| `pruneTo(limit)` | Keep the newest N rows. Nothing else bounds the table. |
+
+### ActionRepository (legacy, still present)
+
+The reader and writer for `actions` and `swimlane_transitions`. Its IPC handlers are gone with the
+`ACTION_*` and `TRANSITION_*` channels, which had zero renderer callers; `AUTOMATION_LIST` and
+`AUTOMATION_REPLACE_FOR_COLUMN` took their place, and no move path reads these two tables any more.
+
+The class itself is not deleted. Two callers remain: `apply-config.ts` still reconciles a
+`kangentic.json` that carries the legacy `actions` and `transitions` keys, and
+`automations-migration.ts` reads both tables once to convert them. A file written by an older build
+therefore still round-trips, which is why `BoardConfig.actions` and `.transitions` became optional
+rather than being removed.
 
 ### SessionRepository
 
@@ -812,13 +1103,14 @@ Operates on a per-project DB. Append-only ledger of finalized session usage. Dec
 
 | Method | Description |
 |--------|-------------|
-| `recordSessionUsage(input)` | Insert or UPSERT a history row keyed by `session_record_id`. UPSERT updates cost / tokens / duration / tool count / model / compaction-count fields on conflict but intentionally excludes git stat columns from the `DO UPDATE SET` clause (those are owned by `setTaskGitStats`). Called from `captureSessionMetrics` whenever `usage` is defined - including subscription-user sessions where `cost = 0` with real token counts. Token columns here hold the per-capture SNAPSHOT (not the transcript cumulative), so period stats summed across a session's `--resume` rows do not double-count. |
+| `recordSessionUsage(input)` | Insert or UPSERT a history row keyed by `session_record_id`. UPSERT updates cost / tokens / duration / tool count / model / compaction-count fields on conflict but intentionally excludes git stat columns from the `DO UPDATE SET` clause (those are owned by `setTaskGitStats`). Called from `captureSessionMetrics` whenever `usage` is defined - including subscription-user sessions where `cost = 0` with real token counts. Takes the agent's RAW cumulative cost/duration readings plus the conversation lineage, then rewrites this leg AND every later leg of that lineage into per-leg deltas via `LINEAGE_DELTA_SET_SQL` (see the per-leg-delta paragraph in the `usage_history` section above for why a flat SUM of the raw readings double-counted every `--resume`). Token columns hold the per-capture context-window SNAPSHOT, which is not a token count either; the dashboard reads `conversation_turn_usage` for tokens. |
 | `updateGitStats(sessionRecordId, stats)` | Update `lines_added`, `lines_removed`, `files_changed` for a single history row, unconditionally. Silent no-op if no row exists for the given `sessionRecordId`. Superseded as the churn-write entry point by `setTaskGitStats` below; kept as the low-level single-row primitive. |
 | `setTaskGitStats(recordIds, canonicalRecordId, stats)` | Write git churn to exactly ONE row per task lineage: `canonicalRecordId` gets `stats`, every other id in `recordIds` is zeroed. Called from `captureGitChurn` in `src/main/ipc/handlers/git-stats-capture.ts`, fired on every session finalization (suspend, move, handoff, respawn, natural exit) - not just move-to-Done - alongside the matching `SessionRepository.setTaskGitStats` call. Prevents the dashboard's flat SUM from double-counting a branch's cumulative churn across `--resume` records; a canonical row with no history entry (`changes === 0`) leaves siblings untouched rather than zeroing a real earlier capture. |
 | `getUsageTotals(since, until?)` | One-row SUM/COUNT/MIN/MAX aggregate over the `[since, until)` window (pass `null` since for "All Time"). Feeds the dashboard KPI totals, previous-period deltas, and per-project summaries. All read queries here filter on `session_started_at` (when work happened), not `recorded_at` (when metrics flushed), so Today/Week/Month semantics are preserved across midnight boundaries. |
-| `listUsageRollup(since, until?)` | `GROUP BY (model_id, model_display_name, agent, effort)` rollup over the window, ordered by each combo's earliest session. Feeds the by-model / by-agent / by-effort breakdowns (base-model-id merging stays in JS over O(dimension-combos) rows). |
+| `listUsageRollup(since, until?, sinceMs?, untilMs?)` | `GROUP BY (model_id, model_display_name, agent, effort)` rollup over the window, ordered by each combo's earliest session. Feeds the by-model / by-agent / by-effort breakdowns (base-model-id merging stays in JS over O(dimension-combos) rows). COST comes from `usage_history` (the per-leg deltas); TOKENS come from a `conversation_turn_usage` CTE LEFT JOINed on the session and filtered `subagent_id IS NULL`, which is why both window forms are passed: the two ledgers key their windows differently (`session_started_at` ISO here, `ts` integer there). Known gap: a turn whose session has no ledger row in the window is dropped by the join, so a breakdown's tokens can fall slightly short of the Tokens tile, which counts every turn. |
 | `listUsageCostGroups(since, until, groupMs)` | Window rows grouped to fixed UTC buckets of `groupMs` (15 minutes) per model - the cost-series input, folded to local chart buckets by `src/main/usage-stats/bucketing.ts`. |
 | `countSessionsRepresented(since, until, ids)` | COUNT of the given `session_record_id`s already in the window's ledger - the live-session dedup for the SESSIONS KPI. |
+| `sumSessionsRepresented(since, until, ids)` | The cost/token sibling of the COUNT above: how much the window's ledger ALREADY holds for those same live ids, returned as `UsageDashboardStats.liveLedgerBaseline`. The renderer subtracts it before layering its in-memory overlay, because the 45s metrics timer has already written a running session's reading into the ledger; without it the Cost tile counted every running session twice and floated above the breakdowns, which get no overlay. |
 
 The aggregation is pushed into SQL (replacing the old raw-row `listRowsAfter` + JS fold) so the synchronous main-process JS work is O(buckets), not O(historical rows); the remaining folds live in the pure functions of `src/main/usage-stats/bucketing.ts`, consumed by the `USAGE_GET_DASHBOARD_STATS` IPC handler and the `kangentic_get_usage_stats` MCP tool via `usageStatsService`.
 
@@ -867,19 +1159,25 @@ New projects are seeded with 7 default swimlanes:
 4. **Code Review**
 5. **Testing**
 6. **Merge**
-7. **Done** (role: `done`)
+7. **Done** (role: `done`, seeded `is_archived = 1`)
 
-No lane is seeded with a `description` or an `auto_command`: both are left empty for the user
-to fill in (a `description` round-trips into the project's committed `kangentic.json`, so a
-prefilled one would land in every user's repo). The seed is bound to the UI tier's mock copy by
+Done is the one lane seeded archived, and that is structural rather than a user choice: the board
+renders it as the collapsed `DoneSwimlane` instead of a normal column, and `apply-config.ts` forces
+the flag back on for the `done` role on every board-config apply. Anything that filters swimlanes on
+`is_archived` therefore drops Done unless it carves the role out, which is why the MCP read tools
+have explicit done-column handling. See
+[mcp-server.md](mcp-server.md#kangentic_list_columns).
+
+No lane is seeded with a `description`: it is left empty for the user to fill in, because a
+`description` round-trips into the project's committed `kangentic.json` and a prefilled one would
+land in every user's repo. The seed is bound to the UI tier's mock copy by
 `tests/unit/default-swimlanes-seed-parity.test.ts`.
 
-Two default actions are created:
+**No automations are seeded either, and no actions or transitions.** A fresh board starts with an
+empty automations list on every column, which is also how the old seed behaved: each of the three
+rows it created was a no-op or a duplicate of the move path. Kill Session found no active session
+at Priority 4, and Start Planning Agent carried exactly the prompt template the fallback spawn
+already uses. `seedActionsAndTransitions` and `seedDefaultActions` are gone with them.
 
-- **Start Planning Agent** (`spawn_agent`) -- wired to transitions into the Planning column.
-- **Kill Session** (`kill_session`) -- wired to transitions into the Done column.
-
-Default transitions:
-
-- **`* → Planning`** -- Kill Session (execution_order 0), Start Planning Agent (execution_order 1)
-- **`* → Done`** -- Kill Session (execution_order 0)
+Planning still opens its agent in plan mode. That comes from the column's own `permission_mode`,
+not from a seeded row.

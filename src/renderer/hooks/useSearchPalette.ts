@@ -47,7 +47,11 @@ export function useSearchPalette(options: UseSearchPaletteOptions = {}) {
     _lastIsOpen = isOpen;
   }, [isOpen]);
 
-  const open = useCallback(() => setIsOpen(true), []);
+  const open = useCallback(() => {
+    setIsOpen(true);
+    // Adoption signal; main dedups to once per day (fire-and-forget).
+    window.electronAPI?.analytics?.trackFeatureUsed('quick_find');
+  }, []);
   const close = useCallback(() => setIsOpen(false), []);
 
   // Ctrl/Cmd+Shift+F always toggles the palette.

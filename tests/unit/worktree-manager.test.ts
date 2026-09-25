@@ -167,7 +167,13 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
 }));
 
 import fs from 'node:fs';
-import { WorktreeManager, GitQueuePriority, setWorktreeRemovedListener } from '../../src/main/git/worktree-manager';
+import {
+  WorktreeManager,
+  GitQueuePriority,
+  setWorktreeRemovedListener,
+  type WorktreeRemovalOutcome,
+} from '../../src/main/git/worktree-manager';
+import type { WorktreeHolder } from '../../src/main/git/zombie-reaper';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
 import { linkNodeModules } from '../../src/main/git/node-modules-link';
@@ -495,6 +501,58 @@ describe('WorktreeManager -- fetch and base branch', () => {
     expect(worktreeAddCall![0][worktreeAddCall![0].length - 1]).toBe('main');
   });
 
+  it('reports the fetch outcome to onFetchOutcome and still creates from the verified start point on failure', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockWorktreeGit.raw.mockResolvedValue('');
+    spawnOverrides.push({
+      match: (args) => args[0] === 'fetch' && args[1] === 'origin',
+      behavior: { exitCode: 128, stderr: "fatal: unable to access 'https://github.com/acme/app.git/': Could not resolve host: github.com" },
+    });
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
+
+    const outcomes: Array<{ kind: string; reason?: string }> = [];
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Outcome test'), 'main', [], null, {
+      verifiedStartPoint: 'origin/main',
+      onFetchOutcome: (outcome) => outcomes.push(outcome),
+    });
+
+    // The verifiedStartPoint fallback makes the failure invisible in the
+    // RESULT (the worktree is still created), which is exactly why the
+    // outcome seam exists: it is the only place a caller can learn the tree
+    // was cut from the last fetched state rather than a fresh one.
+    expect(outcomes).toEqual([expect.objectContaining({ kind: 'failed', reason: 'network' })]);
+    const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
+      (c: string[][]) => c[0]?.includes('worktree') && c[0]?.includes('add'),
+    );
+    expect(worktreeAddCall).toBeDefined();
+    expect(worktreeAddCall![0][worktreeAddCall![0].length - 1]).toBe('origin/main');
+  });
+
+  it('reports a successful fetch to onFetchOutcome', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockWorktreeGit.raw.mockResolvedValue('');
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
+
+    const outcomes: Array<{ kind: string }> = [];
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Outcome ok test'), 'develop', [], null, {
+      onFetchOutcome: (outcome) => outcomes.push(outcome),
+    });
+
+    expect(outcomes).toEqual([{ kind: 'fetched' }]);
+  });
+
   it('stores kangentic.baseBranch in worktree git config', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     mockProjectGit.raw.mockImplementation((args: string[]) => {
@@ -792,16 +850,17 @@ describe('WorktreeManager -- ensureWorktree', () => {
     mockWorktreeGit.raw.mockResolvedValue('');
   });
 
-  it('returns null when the worktree_path still exists on disk', async () => {
+  it('reports a reuse when the worktree_path still exists on disk', async () => {
     // existsSync true (beforeEach) + statSync isFile=true => isInsideWorktree
-    // true => a genuine, present worktree, so no recreation.
+    // true => a genuine, present worktree, so no recreation. 'reused' is the
+    // one skip reason callers must NOT persist: the task keeps its worktree.
     vi.mocked(fs.statSync).mockReturnValue({ isFile: () => true } as ReturnType<typeof fs.statSync>);
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
       { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: '/existing' },
       gitConfig,
     );
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'reused' });
     expect(mockProjectGit.raw).not.toHaveBeenCalled();
   });
 
@@ -840,19 +899,31 @@ describe('WorktreeManager -- ensureWorktree', () => {
     );
 
     expect(createSpy).toHaveBeenCalled();
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
   });
 
-  it('returns null when worktreesEnabled is false', async () => {
+  // Each guard names its reason instead of returning a bare null, so the task
+  // row can record why its agent runs in the shared checkout. A per-task
+  // `use_worktree` can override 'disabled' but never the structural reasons.
+  it('reports disabled when worktreesEnabled is false', async () => {
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
       { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
       { ...gitConfig, worktreesEnabled: false },
     );
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'disabled' });
   });
 
-  it('returns null when project is not a git repo', async () => {
+  it('reports disabled when the task opts out despite worktreesEnabled', async () => {
+    const mgr = new WorktreeManager('/project');
+    const result = await mgr.ensureWorktree(
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null, use_worktree: 0 },
+      gitConfig,
+    );
+    expect(result).toEqual({ skipped: true, reason: 'disabled' });
+  });
+
+  it('reports not-a-repo when project is not a git repo', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
 
     const mgr = new WorktreeManager('/project');
@@ -860,20 +931,20 @@ describe('WorktreeManager -- ensureWorktree', () => {
       { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
       gitConfig,
     );
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'not-a-repo' });
     expect(isGitRepo('/project')).toBe(false);
   });
 
-  it('returns null when project is inside a worktree', async () => {
+  it('reports nested-worktree when project is inside a worktree, even with use_worktree forced on', async () => {
     // existsSync true (for .git check) + statSync returns isFile=true (worktree)
     vi.mocked(fs.statSync).mockReturnValue({ isFile: () => true } as ReturnType<typeof fs.statSync>);
 
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null, use_worktree: 1 },
       gitConfig,
     );
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'nested-worktree' });
     expect(isInsideWorktree('/project')).toBe(true);
   });
 
@@ -885,7 +956,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
       gitConfig,
     );
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
     // Branch name encodes the non-default base as a namespace prefix so the
     // worktree's origin is visible at-a-glance in git log / GitHub branch lists.
     expect(result!.branchName).toBe('develop/test-abcd1234');
@@ -895,6 +966,30 @@ describe('WorktreeManager -- ensureWorktree', () => {
       (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[2] === 'develop',
     );
     expect(fetchSpawn).toBeDefined();
+  });
+
+  it('forwards options.onFetchOutcome into its own createWorktree call', async () => {
+    // Existing tests in this file only call createWorktree directly, so a
+    // dropped forward here breaks nothing else - this pins the plumbing at the
+    // ensureWorktree level. Asserting reference identity (not that the callback
+    // fired) is deliberate: end-to-end, resolveWorktreeBase's own fetch pass
+    // could report a throttle hit instead of a fresh fetch, which would make
+    // this test about the fetch cache instead of the forward.
+    const mgr = new WorktreeManager('/project');
+    const onFetchOutcome = vi.fn();
+    const createSpy = vi
+      .spyOn(mgr, 'createWorktree')
+      .mockResolvedValue({ worktreePath: '/project/.kangentic/worktrees/test-abcd1234', branchName: 'test-abcd1234', worktreeFolder: 'test-abcd1234' });
+
+    await mgr.ensureWorktree(
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
+      gitConfig,
+      { onFetchOutcome },
+    );
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const forwardedOptions = createSpy.mock.calls[0][4] as { onFetchOutcome?: unknown };
+    expect(forwardedOptions.onFetchOutcome).toBe(onFetchOutcome);
   });
 });
 
@@ -954,12 +1049,19 @@ describe('WorktreeManager -- stale branch recovery', () => {
    * not the public removeWorktree wrapper, deliberately: the wrapper fires the
    * worktree-removed listener, and this path is about to recreate a worktree at
    * that same location. Stub the method that actually performs the removal.
+   *
+   * `holders` is what the removal could see pinning the path; an empty list is
+   * the degraded case (no holder the process scan enumerates) and keeps the
+   * generic guidance in the error message.
    */
-  const stubHuskRemovalFailure = (manager: WorktreeManager): void => {
+  const stubHuskRemovalFailure = (
+    manager: WorktreeManager,
+    holders: WorktreeHolder[] = [],
+  ): void => {
     vi.spyOn(
-      manager as unknown as { removeWorktreeInternal: () => Promise<boolean> },
+      manager as unknown as { removeWorktreeInternal: () => Promise<WorktreeRemovalOutcome> },
       'removeWorktreeInternal',
-    ).mockResolvedValue(false);
+    ).mockResolvedValue({ removed: false, timedOut: false, holders });
   };
 
   it('createWorktree reuses auto-generated branch that already exists', async () => {
@@ -1103,6 +1205,54 @@ describe('WorktreeManager -- stale branch recovery', () => {
     expect(worktreeFolderFromPath(worktreeAddArgs[worktreeIndex + 3])).toBe('7');
     expect(worktreeAddArgs[worktreeIndex + 4]).toBe('test-task-abcd1234');
     expect(worktreeAddArgs).not.toContain('-b');
+  });
+
+  it('still reuses an empty husk when the removal hit its budget rather than a hard error', async () => {
+    // The wall-clock timeout must NOT short-circuit the husk branch. An
+    // emptied-but-pinned directory is still reusable, and failing it would turn
+    // the Windows pinned-CWD case into an error the user cannot clear. The
+    // directory listing decides, exactly as it did before the budget existed.
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+    vi.mocked(fs.readdirSync).mockReturnValue([] as unknown as ReturnType<typeof fs.readdirSync>);
+    mockProjectGit.raw.mockResolvedValue('');
+
+    const mgr = new WorktreeManager('/project');
+    vi.spyOn(
+      mgr as unknown as { removeWorktreeInternal: () => Promise<WorktreeRemovalOutcome> },
+      'removeWorktreeInternal',
+    ).mockResolvedValue({ removed: false, timedOut: true, holders: [] });
+
+    const result = await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    expect(result.branchName).toBe('test-task-abcd1234');
+    const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
+      (call: string[][]) => call[0]?.includes('worktree') && call[0]?.includes('add'),
+    );
+    expect(worktreeAddCall![0]).toContain('--force');
+  });
+
+  it('names the holding process in the error when the scan found one', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+    vi.mocked(fs.readdirSync).mockReturnValue(['somefile'] as unknown as ReturnType<typeof fs.readdirSync>);
+    mockProjectGit.raw.mockResolvedValue('');
+
+    const mgr = new WorktreeManager('/project');
+    stubHuskRemovalFailure(mgr, [
+      { pid: 12345, image: 'node.exe', commandLine: 'node.exe scripts/dev.js' },
+    ]);
+
+    const error = await mgr
+      .createWorktree(worktreeTask('abcd1234-0000', 'Test task'))
+      .catch((thrown: unknown) => thrown as Error);
+
+    expect(error.message).toContain('Held by node.exe (pid 12345)');
+    // The named holder REPLACES the guess rather than following it.
+    expect(error.message).not.toContain('A process is likely holding files in it');
+    // Load-bearing prefix: describeSpawnFailure suppresses its own "Worktree
+    // setup failed" prefix for a message that already starts this way.
+    expect(error.message.startsWith('Cannot create worktree:')).toBe(true);
   });
 
   it('throws an actionable error when a non-empty stale directory cannot be removed', async () => {
@@ -1814,6 +1964,40 @@ describe('WorktreeManager - queue observability', () => {
       (call) => String(call[0]).includes('still running'),
     ).length;
     expect(after).toBe(before);
+  });
+
+  it('escalates the heartbeat to warn once a holder passes the slow threshold', async () => {
+    // A `log` line is dropped entirely on a production build, so a wedged queue
+    // used to leave nothing at all in an error-level log tail. Past 60s the
+    // same line moves to `warn`, which always persists.
+    vi.useFakeTimers();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    WorktreeManager.clearQueue('/obs-slow');
+    let release: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+
+    const job = WorktreeManager.withGitLock(
+      '/obs-slow',
+      async () => { await blocked; },
+      { label: 'create-worktree:abcd1234' },
+    );
+
+    const stillRunning = (call: unknown[]): boolean =>
+      String(call[0]).includes('create-worktree:abcd1234 still running');
+
+    // 45s: three heartbeats, all below the threshold and still at log level.
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(logSpy.mock.calls.filter(stillRunning)).toHaveLength(3);
+    expect(warnSpy.mock.calls.filter(stillRunning)).toHaveLength(0);
+
+    // 60s: the fourth heartbeat crosses the threshold.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(logSpy.mock.calls.filter(stillRunning)).toHaveLength(3);
+    expect(warnSpy.mock.calls.filter(stillRunning)).toHaveLength(1);
+
+    release!();
+    await job;
   });
 
   it('re-emits onWaitProgress every 5s while parked and stops once the job runs', async () => {

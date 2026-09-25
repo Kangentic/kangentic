@@ -87,6 +87,30 @@ test.describe('BoardManagerDialog Board Profiles', () => {
     await closeManager();
   });
 
+  // The name dialog and the Column Manager both listen for Escape on
+  // `document`, so an Escape aimed at the name dialog used to fall through and
+  // cancel the whole manager (or raise its discard confirm over the dialog the
+  // user was backing out of). Red-green: the manager's Escape guard did not
+  // know about the profile-name dialog.
+  test('Escape in the profile-name dialog closes only that dialog', async () => {
+    await openManager('Planning');
+    // Dirty the form first, so a fall-through would show up as the discard
+    // confirm rather than as a silent close.
+    await page.locator('[data-testid="board-manager-name"]').fill('Planning edited');
+
+    await page.locator('[data-testid="board-manager-profile-new"]').click();
+    const input = page.locator('[data-testid="profile-name-input"]');
+    await expect(input).toBeVisible({ timeout: 2000 });
+
+    await page.keyboard.press('Escape');
+    await expect(input).toBeHidden({ timeout: 2000 });
+    await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible();
+    await expect(page.locator('h3', { hasText: 'Discard unsaved changes?' })).toHaveCount(0);
+    await expect(page.locator('[data-testid="board-manager-name"]')).toHaveValue('Planning edited');
+
+    await closeManager();
+  });
+
   test('creating a profile selects it and swaps in its management actions', async () => {
     await openManager('Planning');
     await createProfile('Complex');

@@ -1,5 +1,6 @@
 import { Terminal, type ITerminalAddon } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { activateUnicode11 } from '../../../shared/xterm-unicode11';
 
 /**
  * Scrollback rows retained by the headless parser and included in a serialized
@@ -64,6 +65,11 @@ export class HeadlessFrameBuffer {
     });
     this.serializer = new SerializeAddon();
     this.terminal.loadAddon(this.serializer as unknown as HeadlessTerminalAddon);
+    // Unicode 11 widths, in lockstep with the renderer terminals that replay
+    // this parser's serialized frames. Needs none of the HeadlessTerminalAddon
+    // cast machinery above: the helper's structural parameter type bridges
+    // both packages.
+    activateUnicode11(this.terminal);
   }
 
   /** Feed a raw PTY chunk into the parser (the same bytes the scrollback ring receives). */
@@ -204,9 +210,19 @@ export class HeadlessFrameBuffer {
    * defaulting TERM=xterm-256color into every PTY child: still
    * `DECSTBM: gated (TMUX=unset ZELLIJ=unset TERM_PROGRAM=unset
    * TERM=xterm-256color)` behind the same XTVERSION no-reply, so the gate keys
-   * on the handshake, not on TERM alone. It can still reopen on any upgrade,
+   * on the handshake, not on TERM alone. Re-measured 2026-08-28 (claude
+   * 2.1.250): identical gate line. It can still reopen on any upgrade,
    * silently, and the resulting bug is expensive to re-diagnose - hence the
    * guard. The origin-mode branch below is NOT dormant.
+   *
+   * The same missing XTVERSION reply also makes the CLI log
+   * `DECRQM(2026): skipped (no XTVERSION reply) -> sync unsupported`, even
+   * though xterm 6.x implements DEC 2026 and the CLI emits balanced
+   * `?2026h/l` wrappers regardless (measured 2026-08-28, ~25 pairs per 256KB
+   * of live stream). Do NOT "fix" this by registering a CSI > q handler that
+   * answers XTVERSION on xterm's behalf: the one handshake gates BOTH
+   * behaviors, so unlocking sync-awareness would simultaneously ungate
+   * DECSTBM and make the replay scroll-region gap live.
    *
    * Order is load-bearing, twice over:
    *

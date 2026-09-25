@@ -10,13 +10,12 @@
  */
 
 import { IPC } from './ipc-channels';
+// Type-only, so the types.ts -> pop-out.ts import cycle stays erased at runtime.
+import type { GitDiffScope, GitDiffStatus } from './types';
 
-// `memory` rather than `memory-graph`: the registry parity test matches a kind
-// with /kind:\s*'([a-z]+)'/, so a hyphen or digit would silently fail to parse
-// and the surface would read as unregistered.
-export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'memory';
+export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'changes-file' | 'memory';
 
-export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'memory'];
+export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'changes-file', 'memory'];
 
 export function isPopOutKind(value: string): value is PopOutKind {
   return (POPOUT_KINDS as readonly string[]).includes(value);
@@ -27,11 +26,51 @@ export interface PopOutTaskParams {
   projectId: string;
 }
 
+/**
+ * Params for the per-file diff window: one file's diff, detached read-only.
+ *
+ * Beyond the identity fields (which feed the instance key), the params carry a
+ * BOOT SEED - everything the opener already knows that the window would
+ * otherwise have to re-derive from store hydration (a pop-out is a separate
+ * renderer): the git paths, the file's list-entry fields, and the task label.
+ * The seed lets the window fire its content fetch on the very first render, in
+ * parallel with the Monaco chunk, instead of serializing behind three store
+ * loads and a file-list round trip. Seed fields are point-in-time: the window's
+ * own GIT_DIFF_CHANGED reconcile corrects any staleness.
+ */
+export interface PopOutChangesFileParams extends PopOutTaskParams {
+  /** Repo-relative, '/'-separated path of the single file this window diffs. */
+  filePath: string;
+  /** Diff scope the file was opened from (mirrors GitDiffFilesInput). Ignored
+   *  when `commitOid` is set. */
+  scope?: GitDiffScope;
+  /** When set, show this file's diff within that single commit (immutable;
+   *  overrides `scope`, mirroring GitDiffFilesInput). */
+  commitOid?: string;
+  /** Boot seed: project directory (GitFileContentInput.projectPath). */
+  projectPath: string;
+  /** Boot seed: worktree directory, when the task has one. */
+  worktreePath?: string;
+  /** Boot seed: base branch the diff is against. */
+  baseBranch: string;
+  /** Boot seed: the file's status from the list entry it was opened from. */
+  status: GitDiffStatus;
+  /** Boot seed: pre-rename path, for renamed/copied entries. */
+  oldPath?: string;
+  /** Boot seed: whether the list entry is binary. */
+  binary: boolean;
+  /** Boot seed: task display number, for the window title's task anchor. */
+  taskDisplayId: number;
+  /** Boot seed: task title, for the window title's task anchor. */
+  taskTitle: string;
+}
+
 export interface PopOutParamsByKind {
   stats: Record<string, never>;
   changes: PopOutTaskParams;
   browser: PopOutTaskParams;
   monitor: Record<string, never>;
+  'changes-file': PopOutChangesFileParams;
   memory: Record<string, never>;
 }
 
@@ -69,7 +108,37 @@ export const POPOUT_ARG_PREFIX = '--kangentic-popout=';
 export function popOutInstanceKey<K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]): string {
   if (GLOBAL_KINDS.includes(kind)) return kind;
   const taskParams = params as PopOutTaskParams;
-  return `${kind}:${taskParams.projectId}:${taskParams.taskId}`;
+  const taskKey = `${kind}:${taskParams.projectId}:${taskParams.taskId}`;
+  // Per-file surface: one window per file, so the file joins the key. filePath is
+  // the LAST segment because repo-relative git paths contain '/' (never split a
+  // key on it); scope/commitOid are deliberately excluded so re-opening the same
+  // file from another scope focuses the existing window instead of spawning a
+  // sibling.
+  if (kind === 'changes-file') return `${taskKey}:${(params as PopOutChangesFileParams).filePath}`;
+  return taskKey;
+}
+
+/**
+ * Inverse of {@link popOutInstanceKey} for the TASK-SCOPED kinds: recover which kind
+ * and task a key belongs to. Returns null for a global surface (which carries no task),
+ * an unknown kind, or a malformed key.
+ *
+ * Exists because `popOut:changed` pushes the whole open-key SET with no per-key close
+ * event, so a consumer that needs to react to one window disappearing has to diff the
+ * sets and then read the vanished key back. Lives beside the builder so the two cannot
+ * drift; tests/unit/pop-out.test.ts round-trips them.
+ */
+export function parsePopOutInstanceKey(
+  key: string,
+): { kind: PopOutKind; projectId: string; taskId: string } | null {
+  // Segments 1 and 2 are always projectId/taskId, including for 'changes-file' - its
+  // filePath is deliberately the LAST segment, so extra segments never shift these two.
+  const segments = key.split(':');
+  if (segments.length < 3) return null;
+  const [kind, projectId, taskId] = segments;
+  if (!isPopOutKind(kind) || isGlobalPopOutKind(kind)) return null;
+  if (!projectId || !taskId) return null;
+  return { kind, projectId, taskId };
 }
 
 export interface PopOutSurfaceMeta {
@@ -83,6 +152,34 @@ export interface PopOutSurfaceMeta {
   needsWebview: boolean;
   /** Push channels the main process fans out to this surface's open windows. */
   channels: readonly string[];
+  /** Per-instance OS/taskbar title derived from params, falling back to `title`.
+   *  Read through `resolveSurfaceTitle` by BOTH processes (main at BrowserWindow
+   *  creation, the renderer for document.title) so the two cannot drift. */
+  resolveTitle?: (params: PopOutParams) => string;
+  /** Cap on concurrently-open windows of this kind, enforced main-side in
+   *  PopOutWindowManager.open() (which returns null at the cap - the only
+   *  chokepoint that can see every window). Omitted = the existing surfaces'
+   *  singleton-per-instance-key behavior with no kind-wide cap. */
+  maxInstances?: number;
+  /** When the kind has NO saved bounds yet, open MAXIMIZED (a diff reads best
+   *  with the whole screen; a full-height-only column was tried first and read
+   *  as an awkward strip). Un-maximizing restores defaultBounds' float, and a
+   *  user resize/move/maximize persists via popOutBounds as usual and wins
+   *  from then on - this governs only the out-of-box open. */
+  openMaximized?: boolean;
+}
+
+/** The one place a surface's per-instance title is derived, shared by main and
+ *  renderer so the OS title bar and document.title always agree. */
+export function resolveSurfaceTitle(meta: PopOutSurfaceMeta, params: PopOutParams): string {
+  return meta.resolveTitle?.(params) ?? meta.title;
+}
+
+/** The "#N task title" anchor a changes-file window's titles end with - one
+ *  builder for the taskbar form (resolveTitle's basename prefix) and the frame
+ *  header (PopOutSurfaceRoot's full-path prefix) so the two cannot drift. */
+export function formatTaskAnchor(taskDisplayId: number, taskTitle: string): string {
+  return `#${taskDisplayId} ${taskTitle}`;
 }
 
 /**
@@ -101,6 +198,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
     channels: [
       IPC.SESSION_USAGE,
       IPC.SESSION_STATUS,
+      IPC.SESSION_REMOVED,
       IPC.SESSION_ACTIVITY,
       IPC.SESSION_EXIT,
       IPC.SESSION_IDLE_TIMEOUT,
@@ -114,6 +212,34 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
     defaultBounds: { width: 1000, height: 750 },
     minSize: { width: 560, height: 400 },
     needsWebview: false,
+    channels: [IPC.GIT_DIFF_CHANGED, IPC.CONFIG_CHANGED],
+  },
+  // A single changed file's diff, detached read-only from a Changes file row
+  // (double-click, or the row's "Open in new window"). Unlike every other kind
+  // this surface is ADDITIVE - many windows per task (one per file, hence the
+  // filePath key segment and the maxInstances cap), and its in-app origin stays
+  // mounted while windows are open.
+  'changes-file': {
+    kind: 'changes-file',
+    scope: 'task',
+    title: 'File Diff',
+    defaultBounds: { width: 900, height: 700 },
+    minSize: { width: 480, height: 360 },
+    needsWebview: false,
+    maxInstances: 8,
+    openMaximized: true,
+    // "basename - #N task title": the file first so multiple diff windows stay
+    // distinguishable when the taskbar truncates, the task anchor after so the
+    // user never loses which task a window belongs to. The frame's header shows
+    // the same anchor with the FULL repo-relative path. Cast documented:
+    // PopOutSurfaceMeta is deliberately non-generic (a mapped POP_OUT_SURFACES
+    // type is not worth the union-call friction at its consumers), so the one
+    // resolver narrows inside.
+    resolveTitle: (params) => {
+      const fileParams = params as PopOutChangesFileParams;
+      const fileName = fileParams.filePath.split('/').pop() ?? 'File Diff';
+      return `${fileName} - ${formatTaskAnchor(fileParams.taskDisplayId, fileParams.taskTitle)}`;
+    },
     channels: [IPC.GIT_DIFF_CHANGED, IPC.CONFIG_CHANGED],
   },
   browser: {
@@ -143,7 +269,14 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // pushes above it is subscribe-gated, and this window subscribes on its own
       // behalf, so main is already fanning to it by the time rows exist.
       IPC.MONITOR_PEEK,
+      // The card's slot follows the Card Preview setting, and its two agent
+      // modes read the session's message trail from this window's own session
+      // store, which `syncSessions` seeds and this push keeps live.
+      IPC.SESSION_MESSAGE_TRAIL,
       IPC.SESSION_STATUS,
+      // A surface that hears a session change hears its removal too, so a
+      // hosted task detail cannot keep a row main has dropped.
+      IPC.SESSION_REMOVED,
       IPC.SESSION_EXIT,
       IPC.CONFIG_CHANGED,
       // This window can host a task detail (and therefore a live terminal) for a
@@ -160,16 +293,22 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // that hosts a terminal must declare this channel too.
       IPC.SESSION_PTY_RESIZED,
       IPC.TASK_SPAWN_PROGRESS,
+      // A hosted task detail's Browser pill lights its alive dot from the set of
+      // tasks holding their one browser surface OFFSCREEN, and only main can see
+      // those. Without this channel the pill in THIS window reads dark for a
+      // browser that exists - which is the invisibility this whole mechanism was
+      // built to remove, reappearing in one host.
+      IPC.BROWSER_OFFSCREEN_SURFACES,
     ],
   },
   memory: {
     kind: 'memory',
     scope: 'global',
     title: 'Memory Graph',
-    // Wider than tall: the surface is a canvas beside a result-card rail, and
-    // the map is far more readable with horizontal room than vertical.
+    // Wider than tall: the surface is a canvas beside the answer rail, and the
+    // map is far more readable with horizontal room than vertical.
     defaultBounds: { width: 1200, height: 820 },
-    // Below this the canvas and the card rail cannot both be useful.
+    // Below this the canvas and the answer rail cannot both be useful.
     minSize: { width: 720, height: 480 },
     needsWebview: false,
     channels: [

@@ -21,6 +21,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BoardProfile, Swimlane } from '../../src/shared/types';
 
+// Hoisted store mock - vi.mock factories run before this file's other
+// top-level statements, so mutable mock state must be created via vi.hoisted.
+// saveBoardProfiles's failure path raises a toast; mocking the store (rather
+// than driving the real one) avoids pulling in config-store's DEFAULT_CONFIG
+// dependency, matching the pattern in archived-tasks-slice.test.ts.
+const storeMocks = vi.hoisted(() => ({
+  useToastStore: { getState: vi.fn() },
+}));
+
+vi.mock('../../src/renderer/stores/toast-store', () => ({ useToastStore: storeMocks.useToastStore }));
+
+const { useToastStore } = storeMocks;
+
 // window.electronAPI stub. vitest's default (node) environment has no
 // `window`, so we attach it to globalThis before importing the slice.
 const swimlanesApi = {
@@ -95,8 +108,12 @@ function buildHarness(initial: Partial<SwimlaneSlice> = {}): { getState: () => S
   return { getState: get };
 }
 
+let addToast: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   vi.resetAllMocks();
+  addToast = vi.fn();
+  useToastStore.getState.mockReturnValue({ addToast });
 });
 
 describe('deleteSwimlane', () => {
@@ -162,5 +179,48 @@ describe('deleteSwimlane', () => {
     await getState().deleteSwimlane('lane-doomed');
 
     expect(callOrder).toEqual(['delete', 'getBoardProfiles']);
+  });
+});
+
+describe('saveBoardProfiles', () => {
+  it('resolves true and keeps the optimistic boardProfiles on a successful write', async () => {
+    // Red trigger: delete the `return true;` on the success path (or change it
+    // to `return false;`) in swimlane-slice.ts - `result` below would then be
+    // `undefined` or `false`, not `true`.
+    boardConfigApi.setBoardProfiles.mockResolvedValueOnce(undefined);
+    const profiles: BoardProfile[] = [
+      { id: 'profile-1', name: 'Heavy', columns: { 'lane-1': { modelOverride: 'opus' } } },
+    ];
+    const { getState } = buildHarness({ boardProfiles: [] });
+
+    const result = await getState().saveBoardProfiles(profiles);
+
+    expect(result).toBe(true);
+    expect(boardConfigApi.setBoardProfiles).toHaveBeenCalledWith(profiles);
+    expect(getState().boardProfiles).toEqual(profiles);
+    expect(addToast).not.toHaveBeenCalled();
+  });
+
+  it('resolves false, reloads boardProfiles, and raises an error toast on a failed write', async () => {
+    // Red trigger: delete the `return false;` in the catch (or change it to
+    // `return true;`) in swimlane-slice.ts - `result` below would then be
+    // `undefined` or `true`, not `false`.
+    boardConfigApi.setBoardProfiles.mockRejectedValueOnce(new Error('disk full'));
+    const reloadedProfiles: BoardProfile[] = [{ id: 'profile-1', name: 'Heavy', columns: {} }];
+    boardConfigApi.getBoardProfiles.mockResolvedValueOnce(reloadedProfiles);
+    const attemptedProfiles: BoardProfile[] = [
+      { id: 'profile-1', name: 'Heavy', columns: { 'lane-1': { modelOverride: 'opus' } } },
+    ];
+    const { getState } = buildHarness({ boardProfiles: [] });
+
+    const result = await getState().saveBoardProfiles(attemptedProfiles);
+
+    expect(result).toBe(false);
+    expect(boardConfigApi.getBoardProfiles).toHaveBeenCalledOnce();
+    expect(getState().boardProfiles).toEqual(reloadedProfiles);
+    expect(addToast).toHaveBeenCalledOnce();
+    const toastArgument = addToast.mock.calls[0][0] as { message: string; variant: string };
+    expect(toastArgument.variant).toBe('error');
+    expect(toastArgument.message).toContain('disk full');
   });
 });

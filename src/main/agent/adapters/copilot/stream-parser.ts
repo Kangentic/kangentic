@@ -150,6 +150,15 @@ function stripAnsiEscapes(data: string): string {
  * Order matters: more-specific patterns must come before less-specific
  * ones (`Opus 4.6 Fast` before `Opus 4.6`, `GPT-5.4 mini` before
  * `GPT-5.4`) so the first match wins.
+ *
+ * THIS IS A RECOGNIZER, NOT A PICKER, and that is why it survives the ban on
+ * curated model lists in adapters. It never reaches a dropdown and is never
+ * handed to `--model`: it reads a model name back out of Copilot's TUI text
+ * when the NDJSON path is unavailable. So going stale means a new model is
+ * unrecognized and the pill falls back to its raw label, which is a
+ * degradation - not the "we offered a model the CLI no longer serves" failure
+ * the ban exists to prevent. Allowlisted by name in
+ * `tests/unit/agent-model-tables.test.ts`; do not delete it in a future sweep.
  */
 const MODEL_PATTERNS: Array<{ id: string; displayName: string; regex: RegExp }> = [
   { id: 'claude-opus-4.6-fast', displayName: 'Claude Opus 4.6 Fast', regex: /Claude[- ]Opus[- ]4\.6[- ]Fast/i },

@@ -115,24 +115,16 @@ vi.mock('../../src/main/agent/adapters/claude/hook-manager', () => ({
 // is invisible here (this suite only counts registrations, it never invokes a
 // handler) but throws "is not a function" the moment a test calls one.
 //
-// `summarizeComponentStack` is deliberately NOT importOriginal'd here: the real
-// analytics.ts module-level-imports `@aptabase/electron/main`, a real node_modules
-// package whose own internal `from 'electron'` import is externalized by vitest
-// (bypasses the `vi.mock('electron', ...)` above entirely) and resolves to the
-// real 'electron' npm shim, which has no named exports outside a real Electron
+// Not importOriginal'd: the real analytics.ts module-level-imports
+// `@aptabase/electron/main`, a real node_modules package whose own internal
+// `from 'electron'` import is externalized by vitest (bypasses the
+// `vi.mock('electron', ...)` above entirely) and resolves to the real
+// 'electron' npm shim, which has no named exports outside a real Electron
 // process - importOriginal here throws "Named export 'ipcMain' not found" for
-// EVERY test in this file, not just the new ones. So it stays a stub, but a
-// deliberately non-constant one: it returns a fixed non-empty trail only when
-// handed a non-empty string, so the TRACK_RENDERER_ERROR handler's
-// `if (components) props.components = ...` conditional is exercised truthfully
-// in both directions without duplicating the real regex coverage already
-// pinned in tests/unit/summarize-component-stack.test.ts.
+// EVERY test in this file.
 vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
   sanitizeErrorMessage: vi.fn((message: string) => message),
-  summarizeComponentStack: vi.fn((stack: string | undefined) =>
-    typeof stack === 'string' && stack.length > 0 ? 'Foo < Bar' : ''
-  ),
   MAX_ANALYTICS_STRING_LENGTH: 180,
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
@@ -475,7 +467,7 @@ describe('registerAllIpc idempotency', () => {
       return entry[1] as TrackRendererErrorCallback;
     }
 
-    it('sends boundary, panel, and a real component trail when full context is provided', async () => {
+    it('sends boundary and panel when full context is provided, and nothing else', async () => {
       const { registerAllIpc } = await import('../../src/main/ipc/register-all');
       const { trackEvent } = await import('../../src/main/analytics/analytics');
       registerAllIpc(makeMockWindow(1));
@@ -484,22 +476,22 @@ describe('registerAllIpc idempotency', () => {
       callback({}, 'Cannot read properties of undefined (reading split)', {
         boundary: 'panel',
         panel: 'Changes panel',
-        componentStack: '    at Foo (x)\n    at Bar (y)',
       });
 
-      // `components` is produced by the REAL summarizeComponentStack (see the
-      // importOriginal mock above), not a stub - this would go red if the
-      // trail-building logic broke, not just if the call were dropped.
+      // Exactly these four: the `components` trail was removed (a minified
+      // bundle made it unreadable and Sentry owns the real stack), so a
+      // regression that reintroduced a fifth property would fail here.
       expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('app_error', {
         source: 'error_boundary',
         message: 'Cannot read properties of undefined (reading split)',
         boundary: 'panel',
         panel: 'Changes panel',
-        components: 'Foo < Bar',
       });
+      const [, props] = vi.mocked(trackEvent).mock.calls[0];
+      expect(Object.keys(props ?? {}).sort()).toEqual(['boundary', 'message', 'panel', 'source']);
     }, 30000);
 
-    it('omits boundary, panel, and components when no context argument is given', async () => {
+    it('omits boundary and panel when no context argument is given', async () => {
       const { registerAllIpc } = await import('../../src/main/ipc/register-all');
       const { trackEvent } = await import('../../src/main/analytics/analytics');
       registerAllIpc(makeMockWindow(1));
@@ -528,10 +520,11 @@ describe('registerAllIpc idempotency', () => {
       const callback = getTrackRendererErrorCallback();
       // RendererErrorContext is erased at the IPC boundary: a renderer could
       // send a payload that violates the compile-time type at runtime.
-      // `panel` as a number and `componentStack` as an object are exactly the
-      // shapes that would throw inside `.slice()` / `.split()` without the
-      // per-field typeof guards - a throw here silently drops the error
-      // report (the global uncaughtException handler swallows it).
+      // `panel` as a number is exactly the shape that would throw inside
+      // `.slice()` without the per-field typeof guard - a throw here silently
+      // drops the error report (the global uncaughtException handler swallows
+      // it). The extra field is a stale renderer still sending the retired
+      // component stack; it must be ignored, not forwarded.
       const malformedContext = {
         boundary: 'panel',
         panel: 42,
@@ -568,6 +561,67 @@ describe('registerAllIpc idempotency', () => {
       const [, props] = trackEventMock.mock.calls[0];
       expect(props?.panel).toBe(longPanel.slice(0, MAX_ANALYTICS_STRING_LENGTH));
       expect(props?.panel).toHaveLength(MAX_ANALYTICS_STRING_LENGTH);
+    }, 30000);
+  });
+
+  describe('TRACK_FEATURE_USED analytics handler', () => {
+    // register-all.ts wires a second direct `ipcMain.on(...)` call alongside
+    // TRACK_RENDERER_ERROR: a renderer-reported feature name is re-validated
+    // against the curated allowlist (isKnownAnalyticsFeature) before being
+    // forwarded to trackFeatureUsed, since the string is erased at the IPC
+    // boundary and a compromised or drifted renderer could otherwise invent
+    // event vocabulary. `analytics/usage` is left REAL (not mocked) so this
+    // exercises the actual allowlist check, not a stand-in for it; only the
+    // underlying `analytics/analytics` trackEvent sink (which usage.ts's
+    // trackFeatureUsed calls into) is mocked.
+    type TrackFeatureUsedCallback = (event: unknown, feature: string) => void;
+
+    function getTrackFeatureUsedCallback(): TrackFeatureUsedCallback {
+      const entry = mockOn.mock.calls.find((call) => call[0] === IPC.TRACK_FEATURE_USED);
+      if (!entry) {
+        throw new Error('ipcMain.on was never called with IPC.TRACK_FEATURE_USED');
+      }
+      return entry[1] as TrackFeatureUsedCallback;
+    }
+
+    it('forwards a known feature name to trackFeatureUsed', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackFeatureUsedCallback();
+      callback({}, 'quick_find');
+
+      // Red: removing the `isKnownAnalyticsFeature` guard or the
+      // `trackFeatureUsed` call in register-all.ts's TRACK_FEATURE_USED
+      // handler leaves this at 0 matching calls - trackFeatureUsed's own
+      // once-per-day dedup (usage.ts) is real here, so a single call is the
+      // correct expectation for a fresh module instance.
+      expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('feature_used', { feature: 'quick_find' });
+    }, 30000);
+
+    it('drops a non-string feature value with zero forwarding', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackFeatureUsedCallback();
+      callback({}, 123 as unknown as string);
+
+      const featureUsedCalls = vi.mocked(trackEvent).mock.calls.filter((call) => call[0] === 'feature_used');
+      expect(featureUsedCalls).toEqual([]);
+    }, 30000);
+
+    it('drops an unknown feature name with zero forwarding', async () => {
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      const { trackEvent } = await import('../../src/main/analytics/analytics');
+      registerAllIpc(makeMockWindow(1));
+
+      const callback = getTrackFeatureUsedCallback();
+      callback({}, 'made_up_feature');
+
+      const featureUsedCalls = vi.mocked(trackEvent).mock.calls.filter((call) => call[0] === 'feature_used');
+      expect(featureUsedCalls).toEqual([]);
     }, 30000);
   });
 });

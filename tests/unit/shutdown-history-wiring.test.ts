@@ -18,7 +18,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import * as ts from 'typescript';
 import type { Session } from '../../src/shared/types';
+import type { PtyKillReport } from '../../src/main/pty/shutdown/session-shutdown';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks (must appear before any import of the modules they mock)
@@ -94,6 +98,7 @@ vi.mock('../../src/main/browser/browser-lane-manager', () => ({
 
 import { syncShutdownCleanup } from '../../src/main/shutdown';
 import { destroyAllLanes } from '../../src/main/browser/browser-lane-manager';
+import { closeAll } from '../../src/main/db/database';
 
 // ---------------------------------------------------------------------------
 // Fixture factories
@@ -111,13 +116,17 @@ function buildRunningSession(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-function buildMockDependencies(sessions: Session[]) {
+function buildMockDependencies(
+  sessions: Session[],
+  ptyKillReport: PtyKillReport = { pids: [], killedCount: 0, deferredCount: 0 },
+  allowGrace = false,
+) {
   // Stable diffWatcher stub so a test can assert closeAll() ran during cleanup.
   const diffWatcher = { closeAll: vi.fn() };
   return {
     getSessionManager: vi.fn(() => ({
       listSessions: vi.fn(() => sessions),
-      killAll: vi.fn(),
+      killAll: vi.fn(() => ptyKillReport),
       dispose: vi.fn(),
       cancelAll: vi.fn(),
       getUsageCache: vi.fn(() => ({})),
@@ -136,6 +145,7 @@ function buildMockDependencies(sessions: Session[]) {
     stopAnnouncementTimers: vi.fn(),
     clearPendingTimers: vi.fn(),
     isEphemeral: false,
+    allowGrace,
   };
 }
 
@@ -193,6 +203,272 @@ describe('syncShutdownCleanup history wire-up', () => {
     const dependencies = buildMockDependencies([]);
     syncShutdownCleanup(dependencies);
     expect(dependencies.stopAnnouncementTimers).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the kill report killAll produced, so the before-quit drain has something to wait on', () => {
+    // Sentry DESKTOP-C: the drain that follows this cleanup holds the quit
+    // until these children are gone. Swallowing killAll's return value here
+    // would silently disarm it and leave every quit racing node-pty's exit
+    // callback against Node teardown again.
+    const dependencies = buildMockDependencies([], { pids: [4242, 4343], killedCount: 2 });
+    expect(syncShutdownCleanup(dependencies)).toEqual({ pids: [4242, 4343], killedCount: 2 });
+  });
+
+  it('returns a zero report when there was nothing to kill', () => {
+    const dependencies = buildMockDependencies([]);
+    expect(syncShutdownCleanup(dependencies)).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
+  });
+
+  /**
+   * killAll must hear the caller's own allowGrace decision, not a hardcoded
+   * value. The before-quit and powerMonitor routes pass true so a young
+   * session's kill can ride the drain's timer; every other route passes
+   * false so nothing is left deferred with no drain to wait for it.
+   */
+  it('forwards allowGrace: true into killAll on a route that allows a grace-period kill', () => {
+    const dependencies = buildMockDependencies([], { pids: [], killedCount: 0, deferredCount: 0 }, true);
+    const sessionManager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(sessionManager);
+
+    syncShutdownCleanup(dependencies);
+
+    expect(sessionManager.killAll).toHaveBeenCalledWith({ allowGrace: true });
+  });
+
+  it('forwards allowGrace: false into killAll on a route that must leave nothing deferred', () => {
+    const dependencies = buildMockDependencies([], { pids: [], killedCount: 0, deferredCount: 0 }, false);
+    const sessionManager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(sessionManager);
+
+    syncShutdownCleanup(dependencies);
+
+    expect(sessionManager.killAll).toHaveBeenCalledWith({ allowGrace: false });
+  });
+
+  /**
+   * The mechanical guard for runCleanupStep. The behavioural test below proves
+   * the wrapper works on ONE step; this proves nobody added an unwrapped
+   * twelfth. A bare call before the kill puts every PTY back at risk: its throw
+   * lands in the function's outer catch, killAll never runs, node-pty's
+   * ThreadSafeFunction finalizer joins the thread waiting on the child, and
+   * Electron's teardown hangs until the 6s hard failsafe force-exits with 1.
+   */
+  it('routes every pre-kill cleanup step through runCleanupStep', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, '../../src/main/shutdown.ts'),
+      'utf-8',
+    );
+
+    // A line-based regex scan only catches a bare call that opens and closes
+    // on one line. It misses a multi-line call (the closing line starts with
+    // `)` or an argument, not an identifier) and a declaration-initializer
+    // call (`const thing = dependencies.getThing();` starts with `const `,
+    // not an identifier followed by `(`). Parsing the real AST makes the scan
+    // shape-proof instead of line-proof: it classifies statements by kind, so
+    // line breaks and indentation cannot hide a call from it.
+    const sourceFile = ts.createSourceFile(
+      'shutdown.ts',
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+
+    const cleanupFunction = sourceFile.statements.find(
+      (statement): statement is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(statement) && statement.name?.text === 'syncShutdownCleanup',
+    );
+    expect(cleanupFunction, 'syncShutdownCleanup must exist').toBeDefined();
+    expect(cleanupFunction?.body, 'syncShutdownCleanup must have a function body').toBeDefined();
+
+    interface BareCallFinding {
+      line: number;
+      statementText: string;
+    }
+
+    // The one bare call the pre-kill region allows. It is not a cleanup step:
+    // a throw here leaves no manager to kill PTYs with either way, so
+    // wrapping it would only move the same outcome behind a log line (see the
+    // comment above the call site in shutdown.ts). Allowed by its exact
+    // declared name rather than by allowing every declaration - allowing all
+    // declarations would let a second `const other = dependencies.getY();`
+    // back in unwrapped, which is exactly the hole this guard exists to close.
+    const allowedBareDeclarationName = 'sessionManager';
+
+    const bareCalls: BareCallFinding[] = [];
+
+    function recordBareCall(statement: ts.Statement): void {
+      const { line } = sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile));
+      bareCalls.push({
+        line: line + 1,
+        statementText: statement.getText(sourceFile).split('\n')[0].trim(),
+      });
+    }
+
+    /**
+     * Walks a statement list depth-first, following into try blocks and if
+     * branches so a step nested one level deeper than the function body is
+     * still scanned, without descending into an already-wrapped
+     * runCleanupStep callback - that would rescan content this guard has
+     * already approved via its wrapper.
+     *
+     * Returns true once it reaches the statement that performs the PTY kill,
+     * so the caller stops scanning there: everything from that point on is
+     * the kill itself and the steps that follow it, which are out of scope
+     * for this guard.
+     */
+    function scanForBareCallsBeforeKill(statements: readonly ts.Statement[]): boolean {
+      for (const statement of statements) {
+        if (ts.isTryStatement(statement)) {
+          if (scanForBareCallsBeforeKill(statement.tryBlock.statements)) return true;
+          continue;
+        }
+        if (ts.isIfStatement(statement)) {
+          if (
+            ts.isBlock(statement.thenStatement) &&
+            scanForBareCallsBeforeKill(statement.thenStatement.statements)
+          ) {
+            return true;
+          }
+          if (
+            statement.elseStatement &&
+            ts.isBlock(statement.elseStatement) &&
+            scanForBareCallsBeforeKill(statement.elseStatement.statements)
+          ) {
+            return true;
+          }
+          continue;
+        }
+
+        // Checked before classification, and only for a leaf statement (a
+        // container's own text would already include everything nested
+        // inside it, including a kill call several statements deeper).
+        if (statement.getText(sourceFile).includes('sessionManager.killAll(')) {
+          return true;
+        }
+
+        if (ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)) {
+          const calleeText = statement.expression.expression.getText(sourceFile);
+          const isAllowedCall = calleeText === 'runCleanupStep' || calleeText.startsWith('console.');
+          if (!isAllowedCall) {
+            recordBareCall(statement);
+          }
+          continue;
+        }
+
+        if (ts.isVariableStatement(statement)) {
+          for (const declaration of statement.declarationList.declarations) {
+            if (!declaration.initializer || !ts.isCallExpression(declaration.initializer)) continue;
+            const isAllowedDeclaration =
+              ts.isIdentifier(declaration.name) &&
+              declaration.name.text === allowedBareDeclarationName;
+            if (!isAllowedDeclaration) {
+              recordBareCall(statement);
+            }
+          }
+          continue;
+        }
+      }
+      return false;
+    }
+
+    const killStatementFound = scanForBareCallsBeforeKill(cleanupFunction!.body!.statements);
+    expect(
+      killStatementFound,
+      'the PTY kill must still be a direct call, so this scan has a pre-kill region to check',
+    ).toBe(true);
+
+    expect(
+      bareCalls,
+      'every cleanup step before the PTY kill must be wrapped in runCleanupStep(name, fn); an ' +
+        'unwrapped call that throws aborts the whole try and leaves every PTY alive. Offending ' +
+        `statements: ${bareCalls.map((finding) => `line ${finding.line}: ${finding.statementText}`).join('; ')}`,
+    ).toEqual([]);
+  });
+
+  it('passes the kills it cannot probe through, not just the pids', () => {
+    // A shutdown.ts that still returned number[], or that rebuilt the report as
+    // { pids, killedCount: pids.length }, drops these three kills on the floor
+    // and the before-quit handler skips the drain for the whole shutdown.
+    const dependencies = buildMockDependencies([], { pids: [], killedCount: 3 });
+    expect(syncShutdownCleanup(dependencies)).toEqual({ pids: [], killedCount: 3 });
+  });
+
+  /**
+   * Red-green for runCleanupStep. The PTY kill is the load-bearing step: an
+   * unkilled PTY hangs Electron's teardown until the 6s hard failsafe, because
+   * node-pty's ThreadSafeFunction finalizer joins the thread waiting on the
+   * child. Before the wrapper, a throw from ANY earlier handle-closer landed in
+   * the function's outer catch and left every PTY alive.
+   */
+  it('still kills the PTYs when an earlier cleanup step throws', () => {
+    const dependencies = buildMockDependencies([], { pids: [4242], killedCount: 1 });
+    const sessionManager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(sessionManager);
+    dependencies.getDiffWatcher.mockImplementation(() => {
+      throw new Error('watcher already torn down');
+    });
+
+    expect(syncShutdownCleanup(dependencies)).toEqual({ pids: [4242], killedCount: 1 });
+    expect(sessionManager.killAll).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The four steps at the very top of syncShutdownCleanup (clearPendingTimers,
+   * stopUpdaterTimers, stopAnnouncementTimers, stopMetricsSnapshotTimer) used to
+   * run with NO try/catch around them at all - not even the outer one that
+   * guards everything else in this function. A throw from any of them
+   * propagated straight out of syncShutdownCleanup, through performShutdown()
+   * in src/main/index.ts (which only assigns this function's return value and
+   * has no try/catch of its own), and into whichever caller invoked
+   * performShutdown(): the before-quit handler's `dependencies.performShutdown()`
+   * call has no try/catch either (see before-quit-drain-wiring.test.ts). That
+   * escape would have skipped the PTY kill, the drain, and the re-quit
+   * entirely, surfacing as an uncaught exception during Electron's own quit
+   * sequence instead of a logged, contained failure.
+   *
+   * Reverting one of these four calls to a bare `dependencies.clearPendingTimers();`
+   * is already caught by the AST scan below (it walks every top-level statement
+   * in the function, not only the ones inside the try block). What the scan
+   * cannot see is `runCleanupStep('clearPendingTimers', dependencies.clearPendingTimers())` -
+   * eager invocation passed as the argument expression, which still textually
+   * calls `runCleanupStep` and passes the scan, but runs the real work OUTSIDE
+   * the try/catch runCleanupStep provides. Only a throwing mock, driven through
+   * the real function, can catch that class of regression.
+   */
+  it('does not let a step before the try block escape uncaught and skip the PTY kill entirely', () => {
+    const dependencies = buildMockDependencies([], { pids: [4242], killedCount: 1 });
+    dependencies.clearPendingTimers.mockImplementation(() => {
+      throw new Error('timer already cleared');
+    });
+
+    let report: PtyKillReport | undefined;
+    expect(() => {
+      report = syncShutdownCleanup(dependencies);
+    }).not.toThrow();
+    expect(report).toEqual({ pids: [4242], killedCount: 1 });
+  });
+
+  /**
+   * Sentry DESKTOP-9: the global index DB can be read-only. Pre-diff,
+   * `deleteProjectFromIndex` and `closeAll()` were adjacent statements inside
+   * the one big try block (see the diff for src/main/shutdown.ts), so a throw
+   * from the former jumped straight to the outer catch and `closeAll()` was
+   * never reached - leaking the open SQLite handles that keep the libuv loop
+   * alive past a clean quit, until the 6s hard failsafe force-exits with code
+   * 1. docs/session-lifecycle.md's "Steps 7 and 8 are wrapped too" note names
+   * exactly this case. No existing test asserts the database `closeAll()`
+   * (imported from db/database) is ever called at all.
+   */
+  it('still closes database connections when deleting an ephemeral project from the index throws (Sentry DESKTOP-9: a read-only global index DB)', () => {
+    const dependencies = buildMockDependencies([], { pids: [], killedCount: 0 });
+    dependencies.isEphemeral = true;
+    dependencies.getCurrentProjectId.mockReturnValue('proj-ephemeral');
+    dependencies.deleteProjectFromIndex.mockImplementation(() => {
+      throw new Error('SQLITE_READONLY: attempt to write a readonly database');
+    });
+
+    expect(() => syncShutdownCleanup(dependencies)).not.toThrow();
+    expect(closeAll).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT call captureSessionMetrics for queued sessions (never spawned - nothing to capture)', () => {

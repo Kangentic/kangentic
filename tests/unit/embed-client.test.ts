@@ -18,10 +18,12 @@ vi.mock('electron', () => ({
 }));
 
 import { EmbedClient, resolveDeviceChain } from '../../src/main/retrieval/embedder/embed-client';
+import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
+import { HEAVY_IDLE_SHUTDOWN_MS, WORKER_COMMIT_CEILING_BYTES } from '../../src/main/utility-process/commit-ceiling';
 import type { EmbeddingModelDef } from '../../src/shared/embedding-models';
 
 // Mirrors the private IDLE_SHUTDOWN_MS in embed-client.ts.
-const IDLE_SHUTDOWN_MS = 5 * 60_000;
+const IDLE_SHUTDOWN_MS = 30 * 60_000;
 
 const TEST_MODEL: EmbeddingModelDef = {
   id: 'test-model',
@@ -42,14 +44,20 @@ const TEST_MODEL: EmbeddingModelDef = {
 interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
+  /** Present only when a test forks with a piped stderr (the real shape);
+   *  absent otherwise, which the client must tolerate. */
+  stderr?: EventEmitter;
+  /** Set by the ceiling test; the real UtilityProcess carries one. */
+  pid?: number;
 }
 
 const forkedChildren: FakeChild[] = [];
 
-function makeFakeChild(): FakeChild {
+function makeFakeChild(withStderr = false): FakeChild {
   const child = new EventEmitter() as FakeChild;
   child.postMessage = vi.fn();
   child.kill = vi.fn();
+  if (withStderr) child.stderr = new EventEmitter();
   return child;
 }
 
@@ -60,6 +68,30 @@ function flush(): Promise<void> {
 
 function lastChild(): FakeChild {
   return forkedChildren[forkedChildren.length - 1];
+}
+
+/**
+ * A client whose restart policy runs on a clock the test drives.
+ *
+ * The client's real policy spaces respawns after a crash (so a crash-looping
+ * worker cannot burn its cap in one burst). Tests that want to reach the cap
+ * must therefore let time pass between crashes. Injecting the clock rather than
+ * using fake timers keeps the existing microtask-flushing helpers above working
+ * unchanged.
+ */
+function clientWithControlledClock(): { client: EmbedClient; advance: (ms: number) => void } {
+  let current = 1_000;
+  const policy = new UtilityRestartPolicy({
+    service: 'kangentic-embeddings',
+    maxCrashes: 3,
+    now: () => current,
+  });
+  return {
+    client: new EmbedClient(TEST_MODEL, 'auto', policy),
+    advance: (ms: number) => {
+      current += ms;
+    },
+  };
 }
 
 /** Bring a fresh client to the point where its worker is spawned and ready. */
@@ -150,13 +182,15 @@ describe('EmbedClient', () => {
   });
 
   it('resolves in-flight requests null on an unexpected worker exit and disables the layer after MAX_CRASHES', async () => {
-    const client = new EmbedClient(TEST_MODEL);
+    const { client, advance } = clientWithControlledClock();
 
     for (let cycle = 0; cycle < 3; cycle++) {
       const { promise, child } = await embedAfterReady(client, ['x'], { timeoutMs: 5000 });
       child.emit('exit');
       // The pending request resolves null when its worker dies.
       await expect(promise).resolves.toBeNull();
+      // Clear the post-crash backoff so the next cycle may fork at all.
+      advance(20_000);
     }
 
     // Three crashes disable the semantic layer.
@@ -166,6 +200,54 @@ describe('EmbedClient', () => {
     // Further embeds short-circuit to null without forking again.
     await expect(client.embed(['again'])).resolves.toBeNull();
     expect(mockFork).toHaveBeenCalledTimes(3);
+  });
+
+  it('refuses to respawn immediately after a crash, so a crash loop cannot burn the cap in one burst', async () => {
+    // The regression this guards: the client re-forked on the very next embed,
+    // so a worker dying during init burned all three lives in milliseconds and
+    // disabled semantic search for the whole app run with no in-app signal.
+    // That is the three-exits-in-four-seconds signature seen in the wild.
+    const { client, advance } = clientWithControlledClock();
+
+    const { promise, child } = await embedAfterReady(client, ['x'], { timeoutMs: 5000 });
+    child.emit('exit');
+    await expect(promise).resolves.toBeNull();
+    expect(mockFork).toHaveBeenCalledTimes(1);
+
+    // Immediately embedding again must NOT fork a replacement.
+    await expect(client.embed(['soon'])).resolves.toBeNull();
+    expect(mockFork).toHaveBeenCalledTimes(1);
+    expect(client.crashed).toBe(false);
+
+    // Once the backoff elapses the client recovers on its own.
+    advance(20_000);
+    const recovered = await embedAfterReady(client, ['later'], { timeoutMs: 5000 });
+    expect(mockFork).toHaveBeenCalledTimes(2);
+
+    client.dispose();
+    await recovered.promise;
+  });
+
+  it('recovers after the crash count decays, rather than staying dead until the app restarts', async () => {
+    const { client, advance } = clientWithControlledClock();
+
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const { promise, child } = await embedAfterReady(client, ['x'], { timeoutMs: 5000 });
+      child.emit('exit');
+      await expect(promise).resolves.toBeNull();
+      advance(20_000);
+    }
+    expect(client.crashed).toBe(true);
+
+    // Past the policy's 5-minute quiet window.
+    advance(5 * 60_000);
+
+    expect(client.crashed).toBe(false);
+    const recovered = await embedAfterReady(client, ['after-decay'], { timeoutMs: 5000 });
+    expect(mockFork).toHaveBeenCalledTimes(4);
+
+    client.dispose();
+    await recovered.promise;
   });
 
   it('dispose() kills the worker, resolves pending null, and refuses further work', async () => {
@@ -264,6 +346,83 @@ describe('EmbedClient', () => {
     }
   });
 
+  it('ignores a stale exit from a recycled worker after a replacement is already live, but still consumes intentionalShutdown so the replacement\'s own later crash is counted', async () => {
+    // Regression this pins: a killed worker's 'exit' arrives asynchronously,
+    // potentially after an idle recycle has already forked and tracked a
+    // replacement. Without the staleness guard in onWorkerExit(), that stale
+    // exit would null the live child and drain/resolve the replacement's
+    // in-flight request with null. The subtler half: intentionalShutdown is
+    // read and cleared ABOVE the guard, so the stale exit must still CONSUME
+    // the flag - otherwise it stays latched and the replacement's own later,
+    // genuine crash is misread as intentional and never counted.
+    vi.useFakeTimers();
+    try {
+      let currentTime = 1_000;
+      const policy = new UtilityRestartPolicy({
+        service: 'kangentic-embeddings',
+        maxCrashes: 3,
+        now: () => currentTime,
+      });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+
+      // First worker: spawn, ready, complete one request so the idle timer
+      // arms (armIdleShutdown bails out while pending.size > 0).
+      const firstPromise = client.embed(['x'], { timeoutMs: 60_000 });
+      const firstChild = lastChild();
+      firstChild.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      firstChild.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await firstPromise;
+
+      // Idle recycle fires: killChild() sets intentionalShutdown and nulls
+      // this.child synchronously, but does NOT emit 'exit' - the real
+      // utilityProcess emits it asynchronously after kill(), and the mock's
+      // kill() is a no-op, so firstChild survives as an emitter to fire later.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(firstChild.kill).toHaveBeenCalledTimes(1);
+
+      // A fresh embed forks the replacement and tracks it as the live child
+      // BEFORE the first worker's stale exit ever arrives.
+      const secondPromise = client.embed(['y'], { timeoutMs: 60_000 });
+      const secondChild = lastChild();
+      expect(secondChild).not.toBe(firstChild);
+      secondChild.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The stale exit from the recycled first worker arrives now, after the
+      // replacement is already live with a request in flight.
+      firstChild.emit('exit', 1);
+
+      // Consequence 1: the stale exit must not null the live child or drain
+      // the replacement's in-flight request - resolving it with its real
+      // result (not null) proves both.
+      const vectors = [new Float32Array([0.9])];
+      secondChild.emit('message', { type: 'result', id: 2, vectors });
+      await expect(secondPromise).resolves.toBe(vectors);
+
+      // A follow-up embed still reuses the second (live) worker rather than
+      // forking a third - further proof this.child was never nulled.
+      expect(mockFork).toHaveBeenCalledTimes(2);
+
+      // The idle recycle was already intentional before the stale exit
+      // arrived, so no crash is recorded for it either way.
+      expect(recordCrashSpy).not.toHaveBeenCalled();
+
+      // Consequence 3 (the subtle half): the stale exit must still have
+      // consumed intentionalShutdown, so the replacement's own later,
+      // GENUINE crash is counted rather than silently read as intentional.
+      secondChild.emit('exit', 1);
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      expect(recordCrashSpy).toHaveBeenCalledWith(1, expect.anything());
+      expect(client.crashed).toBe(false);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('setWarmHold(true) suppresses the idle recycle, keeping the same worker resident', async () => {
     vi.useFakeTimers();
     try {
@@ -330,6 +489,240 @@ describe('EmbedClient', () => {
       await nextPromise;
 
       expect(client.crashed).toBe(false);
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not arm the idle timer with no child, so a later worker\'s genuine crash is still counted', async () => {
+    // The latent latch: a hold released before any worker existed used to
+    // arm a timer whose killChild() set intentionalShutdown with nothing to
+    // kill, and the NEXT worker's genuine crash then consumed that flag and
+    // was never recorded.
+    vi.useFakeTimers();
+    try {
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-embeddings', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+
+      client.setWarmHold(true);
+      client.setWarmHold(false);
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 2);
+      expect(mockFork).not.toHaveBeenCalled();
+
+      const promise = client.embed(['x'], { timeoutMs: 60_000 });
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('exit', 1);
+      await expect(promise).resolves.toBeNull();
+
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('prewarm() forks + inits the worker and arms the idle timer without posting an embed', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.prewarm();
+      const child = lastChild();
+      expect(child.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'init' }));
+      child.emit('message', { type: 'ready' });
+      await promise;
+      expect(child.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'embed' }));
+
+      // A second prewarm joins the live worker rather than forking again.
+      await client.prewarm();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      // Nothing else ever touched the worker, and it still lets go on its own.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      child.emit('exit');
+      expect(client.crashed).toBe(false);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an interactive embed with timeoutMs resolves null during a cold start while the init continues, and a later embed joins it with one fork', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      // The palette's 400 ms budget against a worker still loading its model.
+      const gaveUp = client.embed(['first'], { timeoutMs: 400 });
+      const child = lastChild();
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(gaveUp).resolves.toBeNull();
+
+      // The init was not abandoned: the next query rides the same worker.
+      const later = client.embed(['second'], { timeoutMs: 400 });
+      expect(mockFork).toHaveBeenCalledTimes(1);
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      const vectors = [new Float32Array([0.2])];
+      child.emit('message', { type: 'result', id: 1, vectors });
+      await expect(later).resolves.toBe(vectors);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a background embed waits out the cold start regardless of timeoutMs', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.embed(['batch'], { timeoutMs: 400, background: true });
+      const child = lastChild();
+      let settled = false;
+      void promise.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(settled).toBe(false);
+
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      const vectors = [new Float32Array([0.3])];
+      child.emit('message', { type: 'result', id: 1, vectors });
+      await expect(promise).resolves.toBe(vectors);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waitForInteractiveIdle resolves once an interactive embed gave up inside ensureReady()', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const gaveUp = client.embed(['query'], { timeoutMs: 400 });
+      let idleResolved = false;
+      const idlePromise = client.waitForInteractiveIdle().then(() => {
+        idleResolved = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(idleResolved).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(gaveUp).resolves.toBeNull();
+      await idlePromise;
+      expect(idleResolved).toBe(true);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a worker whose only caller gave up during init is still idle-recycled once ready', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const gaveUp = client.embed(['query'], { timeoutMs: 400 });
+      const child = lastChild();
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(gaveUp).resolves.toBeNull();
+
+      // Ready lands with nobody waiting: the settle itself arms the timer.
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('setWarmHold(false) with no hold taken leaves the running idle countdown untouched', async () => {
+    // The getStatus poll shape: a "nothing to drain" pass releases a hold it
+    // never took. If that restarted the countdown, the worker could never
+    // expire while the Memory tab (which polls every 1.5 s) was open.
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - 60_000);
+      client.setWarmHold(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a worker over the commit ceiling is idle-recycled at the short window, still never while the drain holds it', async () => {
+    vi.useFakeTimers();
+    try {
+      const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? WORKER_COMMIT_CEILING_BYTES + 1 : null));
+      const client = new EmbedClient(TEST_MODEL, 'auto', undefined, { readCommitBytes });
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.pid = 4242;
+      client.setWarmHold(true);
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      // Held by the drain: the short window does not apply either.
+      await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS * 3);
+      expect(child.kill).not.toHaveBeenCalled();
+
+      client.setWarmHold(false);
+      await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS - 1);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(readCommitBytes).toHaveBeenCalledWith(4242);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a worker exactly at the commit ceiling keeps the long window - the comparison is strict', async () => {
+    // The test above only ever exercises ceiling+1, so a `>` flipped to `>=`
+    // in overCommitCeiling() would pass it unnoticed. This pins the boundary
+    // value itself.
+    vi.useFakeTimers();
+    try {
+      const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? WORKER_COMMIT_CEILING_BYTES : null));
+      const client = new EmbedClient(TEST_MODEL, 'auto', undefined, { readCommitBytes });
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.pid = 4242;
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS * 2);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - HEAVY_IDLE_SHUTDOWN_MS * 2);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(readCommitBytes).toHaveBeenCalledWith(4242);
+
       client.dispose();
     } finally {
       vi.useRealTimers();
@@ -453,6 +846,88 @@ describe('EmbedClient', () => {
     expect(mockFork).toHaveBeenCalledTimes(1);
 
     client.dispose();
+  });
+
+  it('forks the worker with stderr piped and stdin/stdout ignored so a crash can be explained', async () => {
+    // DESKTOP-H: with Electron's default `inherit`, a packaged GUI build sent
+    // the worker's uncaught-exception dump nowhere, and every report could
+    // only say "exit code 1". Dropping `pipe` silently kills the diagnostic.
+    // DESKTOP-S: putting `inherit` back in the stdout slot alongside that pipe
+    // kills the main process outright on packaged Windows (see stderr-tail.ts).
+    const client = new EmbedClient(TEST_MODEL);
+    await embedAfterReady(client, ['x']);
+
+    expect(mockFork).toHaveBeenCalledWith(
+      expect.stringContaining('embed-worker.js'),
+      [],
+      expect.objectContaining({
+        serviceName: 'kangentic-embeddings',
+        stdio: ['ignore', 'ignore', 'pipe'],
+      }),
+    );
+    client.dispose();
+  });
+
+  it("hands the worker's captured stderr to the restart policy on an unexpected exit, and exposes it as the crash reason", async () => {
+    // The mocked app is unpackaged, so the client also passes chunks through
+    // to this process's stderr; silence that for the test output.
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      mockFork.mockImplementation(() => {
+        const child = makeFakeChild(true);
+        forkedChildren.push(child);
+        return child;
+      });
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-embeddings', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+      const { promise, child } = await embedAfterReady(client, ['x'], { timeoutMs: 5000 });
+
+      child.stderr?.emit('data', Buffer.from("Error: Cannot find module 'onnxruntime-common'\n"));
+      child.stderr?.emit('data', Buffer.from('Require stack:\n'));
+      child.emit('exit', 1);
+      await expect(promise).resolves.toBeNull();
+
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      const [exitCode, stderrTail] = recordCrashSpy.mock.calls[0];
+      expect(exitCode).toBe(1);
+      expect(stderrTail?.snapshot()).toBe("Error: Cannot find module 'onnxruntime-common'\nRequire stack:");
+      expect(stderrWrite).toHaveBeenCalled();
+      expect(client.crashReason).toBe("exited with code 1: Error: Cannot find module 'onnxruntime-common'");
+    } finally {
+      stderrWrite.mockRestore();
+    }
+  });
+
+  it('degrades to null and records the crash with no stderr tail when utilityProcess.fork() itself throws', async () => {
+    // Distinct from the exit-path test above: here fork() never returns a
+    // child at all (e.g. spawn ENOENT), so there is no stderr stream to
+    // capture. recordCrash must still be reachable through the catch block
+    // with a bare exit code and no third argument. Two independent
+    // regressions land here: trying to read stderr off the not-yet-assigned
+    // `child` throws (TypeError: Cannot read properties of undefined)
+    // instead of degrading, and passing a StderrTail anyway (skipping that
+    // dereference) still fails the toHaveBeenCalledWith(null) arity check
+    // below on its own. Both were confirmed red separately against a
+    // temporarily reintroduced StderrTail in this catch branch.
+    const forkError = new Error('spawn ENOENT');
+    mockFork.mockImplementationOnce(() => {
+      throw forkError;
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const policy = new UtilityRestartPolicy({ service: 'kangentic-embeddings', maxCrashes: 3 });
+    const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+    const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+
+    await expect(client.embed(['x'])).resolves.toBeNull();
+
+    expect(mockFork).toHaveBeenCalledTimes(1);
+    expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+    expect(recordCrashSpy).toHaveBeenCalledWith(null);
+    // A single fork failure is one crash, not three - the client must not be
+    // latched off after it.
+    expect(client.crashed).toBe(false);
+    warnSpy.mockRestore();
   });
 });
 

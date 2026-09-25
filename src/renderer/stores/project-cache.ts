@@ -42,7 +42,7 @@
  *    the existing reconcileCache merge in `syncSessions` handles them.
  */
 
-import type { Task, Swimlane, BacklogTask, AppConfig, ShortcutConfig } from '../../shared/types';
+import type { Task, Swimlane, BacklogTask, AppConfig, ShortcutConfig, ColumnAutomation } from '../../shared/types';
 
 interface ProjectSnapshot {
   board: {
@@ -61,6 +61,13 @@ interface ProjectSnapshot {
      * shortcuts after a warm restore.
      */
     shortcuts: (ShortcutConfig & { source: 'team' | 'local' })[];
+    /**
+     * Per-project column automations. Snapshotted for the same reason the
+     * shortcuts are: the board column headers draw a count derived from them,
+     * so a warm restore without these shows project A's columns carrying
+     * project B's automation counts until the background load lands.
+     */
+    automations: ColumnAutomation[];
   };
   backlog: BacklogTask[];
   config: AppConfig;

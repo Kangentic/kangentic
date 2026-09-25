@@ -16,6 +16,16 @@ export function TaskTab({ globalConfig }: { globalConfig: AppConfig }) {
           <option value="comfortable">Comfortable</option>
         </Select>
       </SettingRow>
+      <SettingRow {...settingProps('cardPreview')}>
+        <Select
+          value={globalConfig.cardPreview}
+          onChange={(event) => updateGlobal({ cardPreview: event.target.value as AppConfig['cardPreview'] })}
+        >
+          <option value="agent-latest-message">Latest agent message</option>
+          <option value="agent-messages">Recent agent messages</option>
+          <option value="description">Task description</option>
+        </Select>
+      </SettingRow>
       <SettingToggleRow
         {...settingProps('showTaskNumbers')}
         checked={globalConfig.showTaskNumbers}

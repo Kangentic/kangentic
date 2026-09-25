@@ -105,8 +105,12 @@ describe('workspace serialize / deserialize', () => {
     // stamps the transient flag. It is presentation-only and must not survive a serialize.
     const restoredWindow = makeWindow('win-1', 'task-a', 'floating', HALF_LEFT);
     restoredWindow.skipEnterAnimation = true; // as a window already rebuilt by a prior restore carries
+    // Same for the park flag: the store never serializes a parked window at all,
+    // and even a window carrying the flag must not persist it.
+    restoredWindow.parked = true;
     const serialized = serializeWorkspace([restoredWindow], null, FULL, 'win-1');
     expect(serialized.windows[0]).not.toHaveProperty('skipEnterAnimation');
+    expect(serialized.windows[0]).not.toHaveProperty('parked');
 
     const windows = [
       makeWindow('win-1', 'task-a', 'floating', { x: 0.1, y: 0.1, w: 0.4, h: 0.5 }),

@@ -1,9 +1,14 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, type RefObject } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } from 'react';
 import { GitBranch, Search, Loader2, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import { Pill } from '../Pill';
 import { fetchGitBranches } from '../../utils/git-branches';
+
+// Stable empty list so the filtered-branches memo keeps a referentially
+// constant input before the first fetch lands.
+// hmr-safe: never mutated; a referential-identity sentinel for "no branches".
+const EMPTY_BRANCHES: string[] = [];
 
 interface BranchPickerProps {
   value: string;
@@ -47,56 +52,63 @@ export function BranchPicker({
     onOpenChange?.(next);
   }, [isControlled, onOpenChange]);
 
-  const [branches, setBranches] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
+  // The branch list is stored with the open it was fetched for, and `loading`
+  // is derived: the dropdown is open and no list has arrived for THIS open.
+  // Derived rather than a flag an effect sets, which the compiler rules forbid.
+  const [openGeneration, setOpenGeneration] = useState(0);
+  const [fetched, setFetched] = useState<{ openGeneration: number; branches: string[] } | null>(null);
+  const branches = fetched?.branches ?? EMPTY_BRANCHES;
+  const loading = open && fetched?.openGeneration !== openGeneration;
   const [query, setQuery] = useState('');
-  const [triggerWidth, setTriggerWidth] = useState<number>();
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Every variant portals + fixed. The chip lives inside headers and dialogs that
   // clip overflow; the 'input' variant lives in the Settings > Git panel, whose
   // body is an overflow-y-auto scroller, so an in-flow absolute dropdown there
-  // was clipped exactly like the comboboxes were. It stretches to its container's
-  // full width via a measured `width` (below) rather than an in-flow left/right 0.
+  // was clipped exactly like the comboboxes were. The input variant stretches to
+  // its container's full width via the hook's `matchTriggerWidth` (applied before
+  // the hook measures) rather than an in-flow left/right 0; the chip and segment
+  // variants keep their `w-64` class, which an inline width would override.
   const positionAnchor = anchorRef ?? containerRef;
   const { style: dropdownStyle } = usePopoverPosition(
     positionAnchor,
     dropdownRef,
     open,
-    { mode: 'dropdown', strategy: 'fixed', preferRight: false },
+    { mode: 'dropdown', strategy: 'fixed', preferRight: false, matchTriggerWidth: variant === 'input' },
   );
-
-  // Input variant: match the trigger's full width. A fixed-strategy popover is
-  // detached from the container, so `left-0 right-0` no longer stretches it.
-  useLayoutEffect(() => {
-    if (open && variant === 'input' && positionAnchor.current) {
-      setTriggerWidth(positionAnchor.current.getBoundingClientRect().width);
-    }
-  }, [open, variant, positionAnchor]);
 
   const displayBranch = value || defaultBranch || 'main';
 
-  const fetchBranches = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await fetchGitBranches();
-      setBranches(result);
-    } catch {
-      setBranches([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   // Whenever the dropdown opens (chip click OR a controlled open from the kebab),
-  // reset the query, fetch branches, and focus the search box.
+  // reset the query, fetch branches, and focus the search box. The query reset
+  // and the open generation are render-time adjustments on the open transition
+  // (React's "adjusting state when a prop changes" pattern), so the search box
+  // never paints the previous query for a frame; the fetch and the focus stay
+  // in the effect, which keys on the generation so each open fetches once.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setQuery('');
+      setOpenGeneration(openGeneration + 1);
+    }
+  }
   useEffect(() => {
     if (!open) return;
-    setQuery('');
-    fetchBranches();
+    let cancelled = false;
+    void (async () => {
+      let result: string[];
+      try {
+        result = await fetchGitBranches();
+      } catch {
+        result = [];
+      }
+      if (!cancelled) setFetched({ openGeneration, branches: result });
+    })();
     requestAnimationFrame(() => searchRef.current?.focus());
-  }, [open, fetchBranches]);
+    return () => { cancelled = true; };
+  }, [open, openGeneration]);
 
   // Close on click outside (consider both the position anchor and the dropdown).
   useEffect(() => {
@@ -181,8 +193,8 @@ export function BranchPicker({
       // `overflow-hidden` (for its rounded corners) and this button is flush to
       // its edge, so an outline is clipped on every side. Without the ring the
       // shell's `focus-within:border-accent` lights up identically for the name
-      // input, this button, and the worktree toggle, so a keyboard user cannot
-      // tell which of the three has focus. Same pattern as `CompactToggleList`.
+      // input and this button alike, so a keyboard user cannot tell which has
+      // focus. Same pattern as `CompactToggleList`.
       className={`flex w-full max-w-[170px] shrink-0 cursor-pointer items-center gap-1.5 bg-surface-control/40 px-3 text-xs transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
         open ? 'text-accent-fg' : 'text-fg-secondary'
       }`}
@@ -280,7 +292,7 @@ export function BranchPicker({
       <OverlayPopover
         open={open}
         popoverRef={dropdownRef}
-        style={variant === 'input' ? { ...dropdownStyle, width: triggerWidth } : dropdownStyle}
+        style={dropdownStyle}
         portal
         transformOrigin="top left"
         className={`fixed z-[2147483646] bg-surface-raised border border-edge-input rounded-md shadow-xl overflow-hidden ${

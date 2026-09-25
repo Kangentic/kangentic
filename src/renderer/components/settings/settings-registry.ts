@@ -1,3 +1,4 @@
+import { NAMED_THEMES } from '../../../shared/types';
 import type { SettingScope } from './setting-scope';
 
 export interface SettingDefinition {
@@ -23,7 +24,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'project.location', tabId: 'general', label: 'Project Location', description: 'Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it.', scope: 'project', keywords: ['path', 'folder', 'directory', 'move', 'relocate', 'change directory', 'locate'] },
 
   // ── Theme ──
-  { id: 'theme', tabId: 'theme', label: 'Theme', description: 'Color scheme for the interface', scope: 'project', keywords: ['color', 'dark', 'light', 'appearance'] },
+  { id: 'themeFollowsSystem', tabId: 'theme', label: 'Follow system appearance', description: 'Use one theme when the system is light and another when it is dark.', scope: 'project', keywords: ['os', 'auto', 'automatic', 'dark mode', 'light mode', 'match'] },
+  // Every theme's name is a keyword, so searching "peach" lands on the picker.
+  // `dark` and `light` stay as words because no label carries them any more (Graphite, Paper).
+  { id: 'theme', tabId: 'theme', label: 'Theme', description: 'Hover a tile to try it on the whole app, click to keep it.', scope: 'project', keywords: ['color', 'scheme', 'appearance', 'swatch', 'dark', 'light', 'kangentic', ...NAMED_THEMES.map((theme) => theme.label.toLowerCase())] },
 
   // ── Board ──
   { id: 'columnWidth', tabId: 'board', label: 'Column Width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
@@ -34,10 +38,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Board > Window ──
   { id: 'terminalPanelVisible', tabId: 'board', label: 'Terminal Panel', description: 'Show the terminal panel below the board', scope: 'global', section: 'Window', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
   { id: 'statusBarVisible', tabId: 'board', label: 'Status Bar', description: 'Show the status bar at the bottom of the window', scope: 'global', section: 'Window', keywords: ['bottom', 'bar', 'hide', 'visible'] },
-  { id: 'animationsEnabled', tabId: 'board', label: 'Animations', description: 'Enable transition and motion effects', scope: 'global', section: 'Window', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility'] },
 
   // ── Task ──
   { id: 'cardDensity', tabId: 'task', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
+  { id: 'cardPreview', tabId: 'task', label: 'Card Preview', description: "What each card shows under its title: the agent's latest message, its recent messages, or the task description.", scope: 'global', keywords: ['preview', 'messages', 'description', 'trail', 'excerpt', 'agent', 'latest'] },
   { id: 'showTaskNumbers', tabId: 'task', label: 'Ticket Numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
 
   // ── Task > Context Bar ──
@@ -61,7 +65,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'diffDefaultScope', tabId: 'changes', label: 'Default Diff Scope', description: 'Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base.', scope: 'global', keywords: ['scope', 'working', 'staged', 'branch', 'uncommitted', 'index', 'diff', 'changes', 'git', 'review'] },
   { id: 'diffIgnoreWhitespace', tabId: 'changes', label: 'Ignore Whitespace', description: 'Hide whitespace-only changes in the diff to filter reformatting noise.', scope: 'global', keywords: ['whitespace', 'trim', 'indent', 'reformat', 'diff', 'changes'] },
   { id: 'diffCollapseUnchanged', tabId: 'changes', label: 'Collapse Unchanged Regions', description: 'Fold away large unchanged spans so a big file shows only the changed hunks with a little context.', scope: 'global', keywords: ['collapse', 'fold', 'hide', 'unchanged', 'context', 'hunks', 'diff'] },
-  { id: 'diffFileSort', tabId: 'changes', label: 'File Sort', description: 'How the Changes panel orders files: by name, by status (added / modified / deleted), or by size (most changes first).', scope: 'global', keywords: ['sort', 'order', 'name', 'status', 'size', 'files', 'diff', 'changes'] },
+  { id: 'diffWrapLines', tabId: 'changes', label: 'Wrap Long Lines', description: 'Soft-wrap long lines onto the next row instead of scrolling the diff horizontally.', scope: 'global', keywords: ['wrap', 'word wrap', 'wordwrap', 'soft wrap', 'long lines', 'horizontal', 'scroll', 'diff', 'changes', 'markdown', 'prose'] },
+  { id: 'diffUseInlineWhenNarrow', tabId: 'changes', label: 'Inline When Narrow', description: 'Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns.', scope: 'global', keywords: ['inline', 'unified', 'narrow', 'side by side', 'side-by-side', 'split', 'width', 'diff', 'changes'] },
+  { id: 'diffFileSort', tabId: 'changes', label: 'File Sort', description: 'How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension.', scope: 'global', keywords: ['sort', 'order', 'name', 'status', 'size', 'extension', 'ext', 'files', 'diff', 'changes'] },
   { id: 'diffFlatList', tabId: 'changes', label: 'Flat File List', description: 'Show changed files as a flat list of full paths instead of a nested directory tree.', scope: 'global', keywords: ['flat', 'list', 'tree', 'directory', 'folder', 'nested', 'files', 'diff', 'changes'] },
 
   // ── Terminal (global-only; see the doc comments on AppConfig['terminal'] in shared/types.ts) ──
@@ -104,7 +110,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'git.copyFiles', tabId: 'git', label: 'Copy Files', description: 'Additional files copied into each worktree', scope: 'project', keywords: ['env', 'dotfiles'] },
   { id: 'git.initScript', tabId: 'git', label: 'Post-Worktree Script', description: 'Shell script to run after worktree creation. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over.', scope: 'project', keywords: ['install', 'setup', 'hook'] },
   { id: 'git.linkNodeModules', tabId: 'git', label: 'Link node_modules', description: 'Symlink the root node_modules into each worktree so agents skip a fresh install. Disable to let the Post-Worktree Script install dependencies in the worktree itself.', scope: 'project', keywords: ['symlink', 'junction', 'deps', 'install', 'node_modules'] },
-  { id: 'git.prRefreshIntervalMinutes', tabId: 'git', label: 'Auto-refresh PRs', description: 'How often to refresh linked PR state in the background', scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale'] },
+  { id: 'git.prRefreshIntervalMinutes', tabId: 'git', label: 'Auto-refresh PRs', description: 'How often to refresh linked PR state and merge readiness in the background', scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale', 'mergeable', 'ready', 'conflicts'] },
+  { id: 'git.autoFetchIntervalMinutes', tabId: 'git', label: 'Auto-fetch remote', description: 'How often to fetch remote-tracking refs in the background so behind counts stay current', scope: 'project', keywords: ['fetch', 'remote', 'origin', 'behind', 'stale', 'refresh', 'poll'] },
+  { id: 'git.prEvaluateBranchPolicies', tabId: 'git', label: 'Evaluate branch policies', description: 'Check Azure DevOps branch policies before a PR shows ready, at one extra az call per open PR per refresh.', scope: 'project', keywords: ['azure', 'devops', 'policy', 'policies', 'ready', 'mergeable', 'reviewers', 'build validation', 'pull request', 'pr'] },
+  { id: 'git.prBypassCountsAsReady', tabId: 'git', label: 'Count merge bypass as ready', description: 'Show a PR awaiting a required review as ready when your bypass would merge it, stale base or not, never past a failing or unfinished check.', scope: 'project', keywords: ['github', 'admin', 'bypass', 'review', 'ready', 'blocked', 'behind', 'stale', 'out of date', 'branch protection', 'pull request', 'pr'] },
 
   // ── Browser ──
   { id: 'browser.enabled', tabId: 'browser', label: 'Enable Browser Pane', description: 'Show the Browser pill in task detail headers, and let agents open the pane themselves. Disable for security-sensitive projects that should not embed external sites.', scope: 'project', keywords: ['webview', 'embedded', 'preview', 'disable', 'security', 'agent'] },
@@ -131,12 +140,22 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-Resume Agents on Restart', description: 'Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
   { id: 'agent.idleTimeoutMinutes', tabId: 'behavior', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', section: 'Sessions', keywords: ['suspend', 'minutes'] },
 
+  // ── Performance ──
+  // Graphics acceleration is a plain boolean and never a tri-state: an
+  // "automatic" that silently resolved to software would leave the control
+  // reading Automatic while acceleration was off. See AppConfig in
+  // shared/types.ts and the recovery path in src/main/index.ts.
+  { id: 'graphicsAccelerationEnabled', tabId: 'performance', label: 'Graphics acceleration', description: 'Hardware rendering for the app window and terminals.', scope: 'global', keywords: ['gpu', 'hardware', 'acceleration', 'graphics', 'rendering', 'webgl', 'chromium', 'software', 'driver', 'crash', 'slow'] },
+  // Moved here from Board > Window: it toggles `.no-motion` on <html>
+  // (config-store.ts), so it was never board chrome.
+  { id: 'animationsEnabled', tabId: 'performance', label: 'Animations', description: 'Transition and motion effects.', scope: 'global', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility', 'animation', 'performance'] },
+
   // ── Behavior > Windows ──
   { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task.', scope: 'global', section: 'Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
   { id: 'restoreWindowPosition', tabId: 'behavior', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', section: 'Windows', keywords: ['size', 'bounds', 'remember'] },
 
   // ── Notifications > Events ──
-  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent Idle', description: 'When an agent needs attention on a non-visible project', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
+  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent Idle', description: 'When an agent finishes its turn or needs permission', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
   { id: 'notifications.onAgentCrash', tabId: 'notifications', label: 'Agent Crash', description: 'When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too.', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'crash', 'exit', 'failed', 'ended'] },
   { id: 'notifications.onPlanComplete', tabId: 'notifications', label: 'Plan Complete', description: 'When a plan finishes and the task auto-moves', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
   { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn Stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
@@ -160,7 +179,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'memory.indexingEnabled', tabId: 'memory', label: 'Index conversations for search', description: 'Locally index agent conversation transcripts so you can search and recall them. Runs offline with no API key. Turn off to stop indexing and hide conversation search results.', scope: 'global', keywords: ['index', 'conversation', 'transcript', 'search', 'recall', 'memory', 'privacy', 'local', 'offline', 'history'] },
   { id: 'memory.semanticEnabled', tabId: 'memory', label: 'Semantic search', description: 'Match conversations by meaning, not just keywords. Downloads a small local model once, then runs fully offline. Requires conversation indexing.', scope: 'global', keywords: ['semantic', 'smart', 'embedding', 'vector', 'meaning', 'recall', 'search', 'model', 'offline', 'memory', 'download'] },
   { id: 'memory.embeddingModel', tabId: 'memory', label: 'Search quality', description: 'Faster and smaller, or slower and more accurate. The model is downloaded once and runs offline; switching re-indexes in the background.', scope: 'global', keywords: ['embedding', 'model', 'semantic', 'quality', 'size', 'accuracy', 'balanced', 'bge', 'tier', 'download'] },
-  { id: 'memory.acceleration', tabId: 'memory', label: 'Hardware acceleration', description: 'Where the semantic model runs. Auto prefers the GPU when available, otherwise CPU.', scope: 'global', keywords: ['gpu', 'cpu', 'hardware', 'acceleration', 'directml', 'webgpu', 'device', 'semantic', 'embedding', 'performance', 'offload'] },
+  // "Model acceleration", not "Hardware acceleration": Performance now owns a
+  // row called Graphics acceleration, and two settings a user would read as
+  // the same thing is worse than one slightly longer label. It stays HERE
+  // rather than moving to Performance because "Search quality" above is the
+  // other half of the same speed-versus-accuracy decision, and someone
+  // troubleshooting slow semantic search comes to this tab.
+  { id: 'memory.acceleration', tabId: 'memory', label: 'Model acceleration', description: 'Where the semantic model runs. Auto prefers the GPU when available, otherwise CPU.', scope: 'global', keywords: ['gpu', 'cpu', 'hardware', 'acceleration', 'directml', 'webgpu', 'device', 'semantic', 'embedding', 'performance', 'offload', 'model'] },
   { id: 'memory.answerAgent', tabId: 'memory', label: 'Answering agent', description: 'Which agent answers questions in the Memory Graph. Defaults to the project\'s agent.', scope: 'global', keywords: ['answer', 'ask', 'agent', 'memory', 'graph', 'question', 'claude', 'codex', 'recall', 'semantic', 'cite'] },
   { id: 'memory.answerModel', tabId: 'memory', label: 'Answering model', description: 'Model that agent answers at. A cheaper one usually does this well.', scope: 'global', keywords: ['model', 'answer', 'ask', 'memory', 'graph', 'cost', 'cheap', 'haiku', 'sonnet', 'opus', 'tokens', 'budget'] },
   // ── Privacy (synthetic) ──
@@ -225,6 +250,7 @@ export const TAB_LABELS: Record<string, string> = {
   changes: 'Changes',
   terminal: 'Terminal',
   behavior: 'Behavior',
+  performance: 'Performance',
   dictation: 'Dictation',
   memory: 'Memory',
   hotkeys: 'Hotkeys',

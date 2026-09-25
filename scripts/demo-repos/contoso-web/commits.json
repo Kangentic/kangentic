@@ -1,0 +1,30 @@
+{
+  "author": { "name": "Dev", "email": "dev@example.com" },
+  "commits": [
+    {
+      "subject": "Initial import",
+      "date": "2026-08-18T09:12:00Z",
+      "paths": [".claude/settings.json", ".gitignore", "README.md", "index.html", "package.json", "tsconfig.json", "vite.config.ts"]
+    },
+    {
+      "subject": "Add the customer portal shell with live updates",
+      "date": "2026-08-20T14:40:00Z",
+      "paths": ["src/main.tsx", "src/App.tsx", "src/lib/http-client.ts", "src/lib/websocket.ts"]
+    },
+    {
+      "subject": "Add the in-memory store and JWT sessions",
+      "date": "2026-08-27T11:05:00Z",
+      "paths": ["server/store.ts", "server/lib/jwt.ts", "tests/jwt.test.ts"]
+    },
+    {
+      "subject": "Add per-user rate limiting",
+      "date": "2026-09-03T16:22:00Z",
+      "paths": ["server/rate-limit.ts", "tests/rate-limit.test.ts"]
+    },
+    {
+      "subject": "Wire the API routes and the Express server",
+      "date": "2026-09-09T10:30:00Z",
+      "paths": ["server/routes.ts", "server/index.ts"]
+    }
+  ]
+}

@@ -5,6 +5,12 @@ import { handleCreateTask, handleUpdateTask, handleDeleteTask, handleMoveTask, h
 import { handleUpdateColumn, handleCreateColumn, handleDeleteColumn } from './column-commands';
 import { handleListColumns, handleListTasks } from './inventory-commands';
 import {
+  handleListAutomations,
+  handleSetAutomations,
+  handleGetAutomationRuns,
+  handleRunAutomation,
+} from './automation-commands';
+import {
   handleListBoardProfiles,
   handleCreateBoardProfile,
   handleUpdateBoardProfile,
@@ -38,6 +44,10 @@ export const commandHandlers: Record<string, CommandHandler> = {
   create_column: handleCreateColumn,
   delete_column: handleDeleteColumn,
   list_columns: handleListColumns,
+  list_automations: handleListAutomations,
+  set_automations: handleSetAutomations,
+  get_automation_runs: handleGetAutomationRuns,
+  run_automation: handleRunAutomation,
   list_board_profiles: handleListBoardProfiles,
   create_board_profile: handleCreateBoardProfile,
   update_board_profile: handleUpdateBoardProfile,

@@ -12,9 +12,14 @@
  *   - unknown sessionId leaves state unchanged
  *   - the map is keyed by (project, slot), so the label targets the matched
  *     session regardless of which slot owns it
+ *
+ * Also covers the `applied`-gated mirror to main (`window.electronAPI.sessions
+ * .setTransientLabel`): exactly one IPC call when the label genuinely applies,
+ * zero calls on any no-op path, and a rejected mirror call swallowed rather than
+ * thrown or left as an unhandled rejection.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the project-store so importing the slice doesn't pull in
 // useProjectStore's browser/IPC dependencies.
@@ -84,9 +89,34 @@ function entry(overrides: Partial<TransientSessionEntry> & Pick<TransientSession
   return { branch: null, ...overrides };
 }
 
+/**
+ * Stub `window.electronAPI.sessions.setTransientLabel`. In the node test env
+ * vitest provides no `window`, so we attach to globalThis (the same object the
+ * production code's `window` resolves to under jsdom); see the identical
+ * pattern in `tests/unit/auto-name-scheduler.test.ts`.
+ */
+function setupSetTransientLabelApi(
+  impl: (sessionId: string, label: string) => Promise<void>,
+): ReturnType<typeof vi.fn> {
+  const setTransientLabel = vi.fn((sessionId: string, label: string) => impl(sessionId, label));
+  (globalThis as unknown as { window: Record<string, unknown> }).window =
+    (globalThis as unknown as { window?: Record<string, unknown> }).window ?? {};
+  (globalThis as unknown as { window: { electronAPI: unknown } }).window.electronAPI = {
+    sessions: { setTransientLabel },
+  };
+  return setTransientLabel;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  // Default resolving stub so every test below can call setTransientSessionLabel
+  // without crashing on a real apply; tests that care about the mirror call
+  // shape install their own via setupSetTransientLabelApi.
+  setupSetTransientLabelApi(async () => {});
+});
 
 describe('setTransientSessionLabel', () => {
   it('sets the label on the matching transient session entry', () => {
@@ -175,5 +205,115 @@ describe('setTransientSessionLabel', () => {
     expect(getState().transientSessions[transientKey('proj-1', 'slot-1')]?.label).toBeUndefined();
     expect(getState().transientSessions[transientKey('proj-1', 'slot-2')]?.label).toBe('Second Slot Label');
     expect(getState().transientSessions[transientKey('proj-2', 'slot-1')]?.label).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setTransientSessionLabel - mirror to main, gated on `applied`
+// ---------------------------------------------------------------------------
+
+describe('setTransientSessionLabel - IPC mirror to main', () => {
+  it('mirrors to main exactly once, with the trimmed label, when the label newly applies', () => {
+    const setTransientLabel = setupSetTransientLabelApi(async () => {});
+    const { slice } = makeSliceStore({
+      transientSessions: {
+        [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1' }),
+      },
+    });
+
+    slice.setTransientSessionLabel('sess-1', '  Fix Login Flow  ');
+
+    expect(setTransientLabel).toHaveBeenCalledTimes(1);
+    expect(setTransientLabel).toHaveBeenCalledWith('sess-1', 'Fix Login Flow');
+  });
+
+  it('issues no IPC call when the entry already has a label (no-op apply)', () => {
+    const setTransientLabel = setupSetTransientLabelApi(async () => {});
+    const { slice } = makeSliceStore({
+      transientSessions: {
+        [transientKey('proj-abc', 'slot-1')]: entry({
+          projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', label: 'Existing',
+        }),
+      },
+    });
+
+    slice.setTransientSessionLabel('sess-1', 'Second Label Should Be Ignored');
+
+    expect(setTransientLabel).not.toHaveBeenCalled();
+  });
+
+  it('issues no IPC call for an unknown sessionId (no owning entry)', () => {
+    const setTransientLabel = setupSetTransientLabelApi(async () => {});
+    const { slice } = makeSliceStore({
+      transientSessions: {
+        [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1' }),
+      },
+    });
+
+    slice.setTransientSessionLabel('sess-nonexistent', 'Should Not Mirror');
+
+    expect(setTransientLabel).not.toHaveBeenCalled();
+  });
+
+  it('issues no IPC call for an empty or whitespace-only label (trimmed no-op)', () => {
+    const setTransientLabel = setupSetTransientLabelApi(async () => {});
+    const { slice } = makeSliceStore({
+      transientSessions: {
+        [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1' }),
+      },
+    });
+
+    slice.setTransientSessionLabel('sess-1', '   ');
+
+    expect(setTransientLabel).not.toHaveBeenCalled();
+  });
+
+  it('swallows a rejected mirror call without throwing or producing an unhandled rejection', async () => {
+    // Listen for Node's own unhandledRejection event directly rather than
+    // relying on the test runner to surface one: it is the only reliable way
+    // to prove the production `.catch` is doing its job, since a missing catch
+    // otherwise fails nothing observable inside this test body.
+    //
+    // Deliberately NOT a vi.fn() here (unlike every other test in this file):
+    // vi.fn's own call-tracking attaches a settle handler to the promise it
+    // returns, which itself counts as "handling" the rejection from Node's
+    // point of view - a repro confirmed a vi.fn-wrapped rejecting mock never
+    // reaches this listener even with the production `.catch` removed. A raw
+    // function is the only way this assertion can actually go red.
+    const capturedRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      capturedRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    const calls: Array<[string, string]> = [];
+    (globalThis as unknown as { window: Record<string, unknown> }).window =
+      (globalThis as unknown as { window?: Record<string, unknown> }).window ?? {};
+    (globalThis as unknown as { window: { electronAPI: unknown } }).window.electronAPI = {
+      sessions: {
+        setTransientLabel: (sessionId: string, label: string) => {
+          calls.push([sessionId, label]);
+          return Promise.reject(new Error('network down'));
+        },
+      },
+    };
+
+    try {
+      const { slice } = makeSliceStore({
+        transientSessions: {
+          [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1' }),
+        },
+      });
+
+      expect(() => slice.setTransientSessionLabel('sess-1', 'Fix Login Flow')).not.toThrow();
+      // Flush enough event-loop turns for Node to report the rejection as
+      // unhandled if nothing caught it.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(calls).toEqual([['sess-1', 'Fix Login Flow']]);
+      expect(capturedRejections).toHaveLength(0);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
   });
 });

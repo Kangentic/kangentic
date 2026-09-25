@@ -41,6 +41,53 @@ export interface TaskChangesPanelSlice {
   /** Task IDs whose Browser pane is open (persists across dialog open/close). */
   browserOpenTasks: Set<string>;
   /**
+   * Task IDs whose Browser pane is HIDDEN but kept mounted: the user put the
+   * pane away from the UI (the pill, its shortcut, or opening Changes / the
+   * Description peek over it) while the task's agent may still be driving the
+   * page. An Electron `<webview>` guest dies with its DOM node, so unmounting
+   * the pane here used to cost the agent its tab (main handed the page to a
+   * fresh offscreen lane, and showing the pane again built another fresh
+   * document). Held, the same guest stays composited at zero opacity behind the
+   * full-width terminal, and showing the pane again is a style change.
+   *
+   * Only a UI hide holds. An agent's `close_pane` (the request bridge calling
+   * `setBrowserOpen(taskId, false)`) and a hydration DISCARD: the agent asked for
+   * the tab to go. The hold ends when the pane is shown again, when the agent
+   * discards it, or when the task's session stops running (the reaper in
+   * `window-manager/bridge/window-parking.ts`), so a pane hidden a week ago
+   * never re-mounts invisibly under a later session. Never persisted, and
+   * never hydrated.
+   */
+  browserHeldTasks: Set<string>;
+  /**
+   * The guest webContents id behind each task's live Browser pane, keyed by
+   * task ID; published by `BrowserPane` when the guest registers and cleared
+   * when it unmounts. This is the renderer's "a browser is alive for this task"
+   * fact, whichever state the pane is in (showing, hidden, or parked): the
+   * Browser pill's alive dot, the task card's globe, and the kebab's "Close
+   * browser" all read it, and the Close control needs the id to retire the
+   * guest's handle in main. An empty-state pane has no guest and so no entry.
+   * Never persisted.
+   */
+  browserGuestTasks: Map<string, number>;
+  /**
+   * Tasks whose one browser surface is currently OFFSCREEN, pushed from main.
+   *
+   * The counterpart to `browserGuestTasks` for a surface no `<webview>` backs.
+   * Main opens one when no pane can mount - the user closed the task window
+   * while an agent was live, or the project is backgrounded - and only main can
+   * see it, since there is no renderer inside an offscreen `BrowserWindow` to
+   * register anything. Without this the browser existed and nothing on screen
+   * said so: an agent ran a whole verification in one with no globe, no pill
+   * and no way for the user to close it, which is what ended agent-requested
+   * lanes entirely.
+   *
+   * Read alongside `browserGuestTasks` everywhere "this task has a browser" is
+   * the question. The whole set arrives on every change, never a delta, so a
+   * missed push self-corrects on the next one. Never persisted.
+   */
+  browserOffscreenTasks: Set<string>;
+  /**
    * Per-task counter that forces `useBrowserUrl` to refetch, keyed by task ID.
    *
    * Exists for one case: `kangentic_browser_open_pane` seeds the task's URL
@@ -74,6 +121,13 @@ export interface TaskChangesPanelSlice {
    */
   changesHistoryHeight: Record<string, number>;
   /**
+   * Whether the Changes rail's History section is expanded, keyed by task ID.
+   * Absent means collapsed - the default: history is a navigation axis, not the
+   * headline, so the vertical budget goes to the file tree until the user asks
+   * for commits. Persisted (only when true) in the `detail_view_state` blob.
+   */
+  changesHistoryOpen: Record<string, boolean>;
+  /**
    * Non-task sentinel ids whose dialog is maximized (persists across dialog
    * open/close). Holds only the create dialogs ('new-task-dialog',
    * 'new-backlog-task-dialog') and the Edit Columns dialog
@@ -90,25 +144,73 @@ export interface TaskChangesPanelSlice {
    */
   hydratedDetailViewTasks: Set<string>;
   toggleChangesOpen: (taskId: string) => void;
+  /**
+   * Set an entity's Changes panel open state explicitly. `toggleChangesOpen`
+   * delegates here, and the pop-out close path drives it: when a `changes`
+   * pop-out window disappears from the `popOut:changed` open set, the panel is
+   * left CLOSED rather than reclaiming the in-app split (see
+   * renderer/pop-out/pop-out-changed.ts), where a toggle would be wrong.
+   *
+   * `projectId` is for a caller that already knows the task's project (the
+   * pop-out key carries it) and so must not depend on which board happens to be
+   * open when the window closes; it defaults to the current project like every
+   * other setter here.
+   */
+  setChangesOpen: (taskId: string, open: boolean, projectId?: string) => void;
   setChangesSelectedFile: (taskId: string, filePath: string | null) => void;
   setChangesScope: (taskId: string, scope: GitDiffScope) => void;
-  setChangesFileTreeWidth: (taskId: string, width: number) => void;
+  /** null clears the stored width (double-click-to-reset on the resizer), so
+   *  the panel returns to its proportional default. */
+  setChangesFileTreeWidth: (taskId: string, width: number | null) => void;
   toggleChangesFileViewed: (taskId: string, filePath: string) => void;
   markChangesFileViewed: (taskId: string, filePath: string) => void;
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
+  /**
+   * The UI's show / hide. Hiding HOLDS the pane (see {@link browserHeldTasks});
+   * showing ends any hold, since a visible pane needs none.
+   */
   toggleBrowserOpen: (taskId: string) => void;
   /**
    * Set a task's Browser pane open state explicitly. `toggleBrowserOpen`
    * delegates here, and the `kangentic_browser_open_pane` / `_close_pane` MCP
    * tools drive it through the browser-pane request bridge, where a toggle would
    * be wrong (an agent asking to open must not close an already-open pane).
+   *
+   * Closing here DISCARDS the pane unless `options.hold` is set: this is the
+   * agent's `close_pane` and the hydration path, neither of which is a user
+   * putting a pane out of the way. Only `toggleBrowserOpen` passes `hold`.
    */
-  setBrowserOpen: (taskId: string, open: boolean) => void;
+  setBrowserOpen: (taskId: string, open: boolean, options?: { hold?: boolean }) => void;
+  /** End a hold without touching the open flag: the reaper's call when the task's session stops. */
+  releaseBrowserHold: (taskId: string) => void;
+  /** A pane's guest registered: record its id for the task. */
+  setBrowserGuest: (taskId: string, webContentsId: number) => void;
+  /**
+   * A pane's guest went away. Clears the task's entry only when it still names
+   * THIS guest, so an in-app pane unmounting after a pop-out registered a newer
+   * guest for the same task cannot erase the newer one.
+   */
+  clearBrowserGuest: (taskId: string, webContentsId: number) => void;
+  /**
+   * Replace the offscreen-surface set from main's push (or the mount-time
+   * read). Takes the WHOLE set, never a delta: main is the only authority, and
+   * a renderer applying deltas would stay wrong forever after one missed push.
+   */
+  setBrowserOffscreenTasks: (taskIds: string[]) => void;
+  /**
+   * Read the offscreen-surface set from main. Called on mount and from the
+   * HMR `vite:afterUpdate` resync (Pattern B), because the push alone leaves a
+   * reloaded renderer blank for a surface that never changes again.
+   */
+  loadBrowserOffscreenTasks: () => Promise<void>;
   /** Force `useBrowserUrl` to refetch this task's URLs. See {@link browserUrlRefreshTokens}. */
   refreshBrowserUrl: (taskId: string) => void;
   setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
-  setChangesHistoryHeight: (taskId: string, height: number) => void;
+  /** null clears the stored height (double-click-to-reset on the resizer), so
+   *  the History section returns to its default height. */
+  setChangesHistoryHeight: (taskId: string, height: number | null) => void;
+  setChangesHistoryOpen: (taskId: string, open: boolean) => void;
   toggleMaximized: (taskId: string) => void;
   /**
    * Seed the per-task detail-view fields above from each task's persisted
@@ -157,6 +259,9 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
   if (selectedCommit) blob.changesSelectedCommit = selectedCommit;
   const historyHeight = state.changesHistoryHeight[taskId];
   if (historyHeight !== undefined) blob.changesHistoryHeight = historyHeight;
+  // Written only when true: absent = collapsed, the default. Mirrors changesOpen's
+  // asymmetry so a collapse simply drops the key from the next blob write.
+  if (state.changesHistoryOpen[taskId]) blob.changesHistoryOpen = true;
   const viewMode = state.changesViewMode[taskId];
   if (viewMode !== undefined) blob.changesViewMode = viewMode;
   const selectedFile = state.changesSelectedFile[taskId];
@@ -202,10 +307,15 @@ function isNonTaskDetailViewId(entityId: string): boolean {
  * Schedule a debounced persist of a task's detail-view layout. Captures the
  * project id at interaction time (project-scoped-ipc rule) and the latest blob.
  * Sentinel (non-task) ids are ignored - they have no `tasks` row to write.
+ *
+ * `projectIdOverride` is for a caller that already knows the task's project and
+ * so must not read the ambient one: a `changes` pop-out can be closed after the
+ * user has switched boards, and the ambient read would then write the task's
+ * blob into the wrong project's database.
  */
-function scheduleDetailViewSave(taskId: string, get: () => SessionStore): void {
+function scheduleDetailViewSave(taskId: string, get: () => SessionStore, projectIdOverride?: string): void {
   if (isNonTaskDetailViewId(taskId)) return;
-  const projectId = useProjectStore.getState().currentProject?.id ?? null;
+  const projectId = projectIdOverride ?? useProjectStore.getState().currentProject?.id ?? null;
   detailViewPendingSaves.set(taskId, { state: buildDetailViewBlob(get(), taskId), projectId });
   const existing = detailViewSaveTimers.get(taskId);
   if (existing) clearTimeout(existing);
@@ -237,38 +347,110 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   changesViewMode: {},
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
+  browserHeldTasks: new Set<string>(),
+  browserGuestTasks: new Map<string, number>(),
+  browserOffscreenTasks: new Set<string>(),
   browserUrlRefreshTokens: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
+  changesHistoryOpen: {},
   maximizedTasks: new Set<string>(),
   hydratedDetailViewTasks: new Set<string>(),
 
   toggleChangesOpen: (taskId) => {
-    const next = new Set(get().changesOpenTasks);
+    get().setChangesOpen(taskId, !get().changesOpenTasks.has(taskId));
+  },
+
+  setChangesOpen: (taskId, open, projectId) => {
+    const current = get().changesOpenTasks;
+    if (current.has(taskId) === open) return; // idempotent: no churn, no save
+    const next = new Set(current);
+    // The view mode rides the open flag: opening seeds the default split, closing
+    // drops the entry so the next open is not resurrected as 'expanded'.
     const viewMode = { ...get().changesViewMode };
-    if (next.has(taskId)) {
-      next.delete(taskId);
-      delete viewMode[taskId];
-    } else {
+    if (open) {
       next.add(taskId);
       viewMode[taskId] = 'split';
+    } else {
+      next.delete(taskId);
+      delete viewMode[taskId];
     }
     set({ changesOpenTasks: next, changesViewMode: viewMode });
-    scheduleDetailViewSave(taskId, get);
+    scheduleDetailViewSave(taskId, get, projectId);
   },
 
   toggleBrowserOpen: (taskId) => {
-    get().setBrowserOpen(taskId, !get().browserOpenTasks.has(taskId));
+    get().setBrowserOpen(taskId, !get().browserOpenTasks.has(taskId), { hold: true });
   },
 
-  setBrowserOpen: (taskId, open) => {
+  setBrowserOpen: (taskId, open, options) => {
     const current = get().browserOpenTasks;
-    if (current.has(taskId) === open) return; // idempotent: no churn, no save
-    const next = new Set(current);
-    if (open) next.add(taskId);
-    else next.delete(taskId);
-    set({ browserOpenTasks: next });
-    scheduleDetailViewSave(taskId, get);
+    const held = get().browserHeldTasks;
+    // A hold only ever accompanies a hide, and a show always ends one. Each set
+    // is replaced only when its own membership changes, so a subscriber keyed on
+    // one set's identity (the park reaper, `has()` selectors) never wakes for
+    // the other, and a redundant call is a genuine no-op: no churn, no save.
+    const nextHeld = open ? false : options?.hold === true;
+    const openChanges = current.has(taskId) !== open;
+    const heldChanges = held.has(taskId) !== nextHeld;
+    if (!openChanges && !heldChanges) return;
+    const patch: Partial<Pick<TaskChangesPanelSlice, 'browserOpenTasks' | 'browserHeldTasks'>> = {};
+    if (openChanges) {
+      const next = new Set(current);
+      if (open) next.add(taskId);
+      else next.delete(taskId);
+      patch.browserOpenTasks = next;
+    }
+    if (heldChanges) {
+      const heldNext = new Set(held);
+      if (nextHeld) heldNext.add(taskId);
+      else heldNext.delete(taskId);
+      patch.browserHeldTasks = heldNext;
+    }
+    set(patch);
+    // The hold is never persisted, so only an open-flag change is worth a save.
+    if (openChanges) scheduleDetailViewSave(taskId, get);
+  },
+
+  releaseBrowserHold: (taskId) => {
+    const held = get().browserHeldTasks;
+    if (!held.has(taskId)) return;
+    const next = new Set(held);
+    next.delete(taskId);
+    set({ browserHeldTasks: next });
+  },
+
+  setBrowserGuest: (taskId, webContentsId) => {
+    const current = get().browserGuestTasks;
+    if (current.get(taskId) === webContentsId) return;
+    const next = new Map(current);
+    next.set(taskId, webContentsId);
+    set({ browserGuestTasks: next });
+  },
+
+  clearBrowserGuest: (taskId, webContentsId) => {
+    const current = get().browserGuestTasks;
+    if (current.get(taskId) !== webContentsId) return;
+    const next = new Map(current);
+    next.delete(taskId);
+    set({ browserGuestTasks: next });
+  },
+
+  setBrowserOffscreenTasks: (taskIds) => {
+    // Replace only on a real membership change. Every card on the board
+    // subscribes to this set, so a new Set on each push would re-render the
+    // whole board every time a lane is touched.
+    const current = get().browserOffscreenTasks;
+    if (current.size === taskIds.length && taskIds.every((taskId) => current.has(taskId))) return;
+    set({ browserOffscreenTasks: new Set(taskIds) });
+  },
+
+  loadBrowserOffscreenTasks: async () => {
+    // Optional-chained for the same reason every other bootstrap read is: a
+    // Vite full reload can run this before the preload bridge is re-injected.
+    const taskIds = await window.electronAPI.browser?.getOffscreenSurfaces?.().catch(() => null);
+    if (!taskIds) return;
+    get().setBrowserOffscreenTasks(taskIds);
   },
 
   refreshBrowserUrl: (taskId) => {
@@ -282,7 +464,26 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   },
 
   setChangesHistoryHeight: (taskId, height) => {
-    set({ changesHistoryHeight: { ...get().changesHistoryHeight, [taskId]: height } });
+    if (height === null) {
+      const { [taskId]: _removed, ...rest } = get().changesHistoryHeight;
+      set({ changesHistoryHeight: rest });
+    } else {
+      set({ changesHistoryHeight: { ...get().changesHistoryHeight, [taskId]: height } });
+    }
+    scheduleDetailViewSave(taskId, get);
+  },
+
+  setChangesHistoryOpen: (taskId, open) => {
+    const current = get().changesHistoryOpen;
+    if ((current[taskId] ?? false) === open) return;
+    if (open) {
+      set({ changesHistoryOpen: { ...current, [taskId]: true } });
+    } else {
+      // Drop the key rather than storing false, so the record mirrors the blob's
+      // written-only-when-true shape and stays bounded.
+      const { [taskId]: _removed, ...rest } = current;
+      set({ changesHistoryOpen: rest });
+    }
     scheduleDetailViewSave(taskId, get);
   },
 
@@ -315,7 +516,12 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   },
 
   setChangesFileTreeWidth: (taskId, width) => {
-    set({ changesFileTreeWidth: { ...get().changesFileTreeWidth, [taskId]: width } });
+    if (width === null) {
+      const { [taskId]: _removed, ...rest } = get().changesFileTreeWidth;
+      set({ changesFileTreeWidth: rest });
+    } else {
+      set({ changesFileTreeWidth: { ...get().changesFileTreeWidth, [taskId]: width } });
+    }
     scheduleDetailViewSave(taskId, get);
   },
 
@@ -370,6 +576,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     const browserOpenTasks = new Set(get().browserOpenTasks);
     const changesSelectedCommit = { ...get().changesSelectedCommit };
     const changesHistoryHeight = { ...get().changesHistoryHeight };
+    const changesHistoryOpen = { ...get().changesHistoryOpen };
     const changesViewMode = { ...get().changesViewMode };
     const changesSelectedFile = { ...get().changesSelectedFile };
     const changesViewedFiles = { ...get().changesViewedFiles };
@@ -389,6 +596,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       if (blob.browserOpen) browserOpenTasks.add(task.id);
       if (blob.changesSelectedCommit !== undefined) changesSelectedCommit[task.id] = blob.changesSelectedCommit;
       if (blob.changesHistoryHeight !== undefined) changesHistoryHeight[task.id] = blob.changesHistoryHeight;
+      if (blob.changesHistoryOpen) changesHistoryOpen[task.id] = true;
       if (blob.changesViewMode !== undefined) changesViewMode[task.id] = blob.changesViewMode;
       if (blob.changesSelectedFile !== undefined) changesSelectedFile[task.id] = blob.changesSelectedFile;
       if (blob.changesViewedFiles && blob.changesViewedFiles.length > 0) {
@@ -404,6 +612,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       browserOpenTasks,
       changesSelectedCommit,
       changesHistoryHeight,
+      changesHistoryOpen,
       changesViewMode,
       changesSelectedFile,
       changesViewedFiles,

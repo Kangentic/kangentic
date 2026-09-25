@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 import { getProcessMetrics } from '../../diagnostics/process-metrics';
+import { PATHS } from '../../config/paths';
 import { ROTATED_FILE_SUFFIX } from '../../diagnostics/async-file-queue';
 import { enumerateWorktrees } from '../../git/worktree-list';
 import type { CrashRecord, IpcLogEntry, LogEntry } from '../../../shared/types';
@@ -30,7 +31,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_tail_logs',
     {
       description:
-        'Read recent lines from the kangentic console log at `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`. Errors and warnings are always captured; info/debug are captured only when Settings → Developer → Persist Console Logs is on. Useful for diagnosing "the action didn\'t work" or following up on a console.error trace. Pass `project` to read another project\'s logs.',
+        'Read recent lines from the kangentic console log at `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, merged with the app\'s global config-dir fallback (`<configDir>/logs/<YYYY-MM-DD>.log`, where the log mirror writes while no project is open, so global subsystems such as the mobile bridge keep their trace across the gap). Errors and warnings are always captured; info/debug are captured only when Settings → Developer → Persist Console Logs is on. Useful for diagnosing "the action didn\'t work" or following up on a console.error trace. Pass `project` to read another project\'s logs.',
       inputSchema: z.object({
         date: z
           .string()
@@ -66,8 +67,16 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       }
       const projectPath = resolved.context.getProjectPath();
       const targetDate = date ?? today();
+      // Two files: the per-project one (the normal case), and the app's
+      // global config dir, where log-mirror.ts writes while no project is
+      // open (the Welcome Screen, the gap between projects). Merged and
+      // re-sorted by timestamp so neither location is a blind spot for this
+      // tool, the same way kangentic_get_recent_crashes below merges its
+      // crash directories - see log-mirror.ts's `resolveLogDirectory`.
       const filePath = path.join(projectPath, '.kangentic', 'logs', `${targetDate}.log`);
-      const entries = readJsonLines<LogEntry>(filePath);
+      const fallbackFilePath = path.join(PATHS.configDir, 'logs', `${targetDate}.log`);
+      const entries = [...readJsonLines<LogEntry>(filePath), ...readJsonLines<LogEntry>(fallbackFilePath)];
+      entries.sort((left, right) => (left.ts < right.ts ? -1 : left.ts > right.ts ? 1 : 0));
       const filtered = entries.filter((entry) => {
         if (since && entry.ts < since) return false;
         if (level && entry.level !== level) return false;
@@ -77,7 +86,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       const tail = filtered.slice(-(limit ?? 200));
       if (tail.length === 0) {
         return textResult(
-          `No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath}.`,
+          `No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath} or ${fallbackFilePath}.`,
           { items: [] },
         );
       }
@@ -90,7 +99,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_get_recent_crashes',
     {
       description:
-        'List recent crash records from `<projectRoot>/.kangentic/logs/crashes/`. Each record contains the timestamp, kind (main-uncaught-exception, render-process-gone, preload-error, renderer-window-error, etc.), source-mapped stack, and version info captured at crash time. Always-on capture; no toggle required. Pass `project` to inspect another project\'s crashes.',
+        'List recent crash records from `<projectRoot>/.kangentic/logs/crashes/`, merged with the app\'s global config-dir fallback (crash-capture.ts writes there when no project was open at crash time, e.g. at very first launch). Each record contains the timestamp, kind (main-uncaught-exception, render-process-gone, gpu-process-gone, preload-error, renderer-window-error, etc.), source-mapped stack, and version info captured at crash time. Always-on capture; no toggle required. Pass `project` to inspect another project\'s crashes.',
       inputSchema: z.object({
         limit: z
           .number()
@@ -113,18 +122,35 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         return errorResult(resolved.error);
       }
       const projectPath = resolved.context.getProjectPath();
-      const directory = path.join(projectPath, '.kangentic', 'logs', 'crashes');
-      let files: string[];
-      try {
-        files = fs.readdirSync(directory).filter((name) => name.endsWith('.json'));
-      } catch {
+      // Two directories: the per-project one (the normal case), and the
+      // app's global config dir, where crash-capture.ts falls back when no
+      // project was open at crash time (e.g. a startup crash before any
+      // project loaded). Merged so neither location is a blind spot for
+      // this tool - see crash-capture.ts's `writeRecord`.
+      const directories = [
+        path.join(projectPath, '.kangentic', 'logs', 'crashes'),
+        path.join(PATHS.configDir, 'logs', 'crashes'),
+      ];
+      const files: { directory: string; name: string }[] = [];
+      for (const directory of directories) {
+        try {
+          for (const name of fs.readdirSync(directory)) {
+            if (name.endsWith('.json')) files.push({ directory, name });
+          }
+        } catch {
+          // Directory does not exist yet (no crash written there) - fine.
+        }
+      }
+      if (files.length === 0) {
         return textResult(`No crashes recorded${project ? ` for project ${project}` : ''}.`);
       }
       // Filenames are derived from ISO timestamps with `:` and `.` swapped to
-      // `-`. Lexicographic descending sort matches reverse-chronological.
-      files.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+      // `-`. Lexicographic descending sort matches reverse-chronological,
+      // and holds across the two directories since both use the same stamp
+      // format - only the directory differs, never the naming.
+      files.sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
       const records: CrashRecord[] = [];
-      for (const name of files) {
+      for (const { directory, name } of files) {
         if (records.length >= (limit ?? 10)) break;
         try {
           const raw = fs.readFileSync(path.join(directory, name), 'utf-8');
@@ -222,7 +248,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_list_worktrees',
     {
       description:
-        'Enumerate worktrees for one or every registered project. Each record carries path, branch, dirty flag, commits ahead/behind upstream, and last-commit timestamp. Pure read-only - useful for finding a task\'s branch, locating dirty work, or reasoning about merge state. Pass `project` to limit to one project; omit to enumerate every project.',
+        'Enumerate worktrees for one or every registered project. Each record carries path, branch, the base branch its work is based on (`baseRef`: the task\'s base, else the base it was cut from, else the project default; the main checkout included), dirty flag, commits ahead/behind that base (the branch\'s own upstream only when no base resolves), and last-commit timestamp. Pure read-only, never fetches - useful for finding a task\'s branch, locating dirty work, or checking whether a tree is behind the base it was cut from. Pass `project` to limit to one project; omit to enumerate every project.',
       inputSchema: z.object({
         project: z
           .string()
@@ -242,7 +268,12 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         }
         projectId = resolved.projectId;
       }
-      const results = await enumerateWorktrees(projectId ? { projectId } : {});
+      const results = await enumerateWorktrees({
+        ...(projectId ? { projectId } : {}),
+        // The base a tree is based on lives in the task DB and the board /
+        // config defaults; the resolver reaches both, the list module neither.
+        resolveBaseRef: (input) => resolver.resolveWorktreeBaseRef(input),
+      });
       return textResult(JSON.stringify(results, null, 2), { items: results });
     },
   );

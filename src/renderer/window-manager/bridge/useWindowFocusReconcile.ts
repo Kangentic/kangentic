@@ -13,13 +13,17 @@
 
 import { useEffect, useRef } from 'react';
 import { useWindowStore } from '../store/window-store';
+import { isWindowDormant } from '../store/types';
 
 export function useWindowFocusReconcile(): void {
   const windows = useWindowStore((state) => state.windows);
   const previousCountRef = useRef(0);
 
   useEffect(() => {
-    const entries = Object.values(windows);
+    // Only VISIBLE windows count: a park must read as a close (its terminal
+    // unmounted and orphaned focus exactly like a removal), and a dormant
+    // window has no terminal to hand focus to.
+    const entries = Object.values(windows).filter((candidate) => !isWindowDormant(candidate));
     const closed = entries.length < previousCountRef.current;
     previousCountRef.current = entries.length;
     if (!closed || entries.length === 0) return;

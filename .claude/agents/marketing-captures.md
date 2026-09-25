@@ -11,7 +11,7 @@ description: |
   </example>
 
   <example>
-  User: "The board screenshots are outdated — columns changed"
+  User: "The board screenshots are outdated - columns changed"
   -> Spawn marketing-captures to update the marketing fixture swimlanes and task distribution, regenerate all captures.
   </example>
 
@@ -25,18 +25,20 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 
 # Marketing Captures Agent
 
-You maintain Kangentic's Playwright-based screenshot and video capture framework. Your output is used on kangentic.com and in YouTube videos — it must look polished, realistic, and match the real app 1:1.
+You maintain Kangentic's Playwright-based screenshot and video capture framework. Your output is used on kangentic.com and in YouTube videos - it must look polished, realistic, and match the real app 1:1.
 
 ## Architecture Overview
 
-The capture framework lives in the `kangentic` app repo (NOT the site repo). It uses the existing Playwright `ui` project infrastructure — headless Chromium with a mock Electron API.
+The capture framework lives in the `kangentic` app repo (NOT the site repo). It uses the existing Playwright `ui` project infrastructure - headless Chromium with a mock Electron API.
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `playwright.config.ts` | `captures` project entry (workers: 1, chromium, headless) |
-| `tests/captures/helpers/resolutions.ts` | Viewport presets: hero (1920x1080@2x), inline (1024x768@2x), thumbnail (640x480@2x) |
+| `playwright.config.ts` | `captures` project entry (workers: 1, chromium, headless, 60s per still, one CI retry) |
+| `tests/captures/helpers/resolutions.ts` | Viewport presets: frame (1600x1000@2x, the site's embed size and the scene captures' default), hero (1920x1080@2x), inline (1024x768@2x), thumbnail (640x480@2x) |
+| `tests/captures/scenes.ts` | The scene registry: one still per entry, shot from the BUILT web demo by `tests/captures/features/scenes.capture.ts` through `helpers/scene-page.ts` |
+| `demo/posters.mjs` | The docs poster set: drives `scenes.capture.ts` for every scene in `clay` and `rust` at `frame`, verifies the shots against `dist/demo/scenes.json`, zips them with a manifest (`scripts/lib/demo-posters.mjs`); `release.yml` attaches the zip to every release |
 | `tests/captures/helpers/capture-page.ts` | Page launcher: sets viewport, scale, theme, font, injects mock + fixture, waits for render |
 | `tests/captures/helpers/marketing-fixture.ts` | Deterministic seed data: project, swimlanes, tasks, sessions, activity states, usage, scrollback |
 | `tests/captures/features/*.capture.ts` | Individual capture specs |
@@ -46,12 +48,20 @@ The capture framework lives in the `kangentic` app repo (NOT the site repo). It 
 ### Running Captures
 
 ```bash
-npm run capture                    # All captures
+npm run capture                    # All captures (builds dist/demo first)
 npx playwright test --project=captures --grep "agent-orchestration"  # Specific feature
-npx playwright test --project=captures --grep "task detail - dark$"  # Single test
+npx playwright test --project=captures --grep "board night frame$"   # Single scene still
+npm run demo:posters               # The docs poster set (needs dist/demo; refuses a stale build)
 ```
 
-Output goes to `captures/<feature>/<variant>.png` (gitignored during dev).
+`scenes.capture.ts` shoots the built web demo and refuses a missing `dist/demo`, so a direct
+`npx playwright test` run of it needs `npm run build:demo` first; `npm run capture` does that build
+itself. Its axes are env vars: `CAPTURE_SCENES`, `CAPTURE_THEMES` (validated against
+`SCENE_THEMES` in `helpers/scene-page.ts`), `CAPTURE_RESOLUTIONS`, and `CAPTURE_OUTPUT_ROOT`
+(replaces the timestamped output root; what `demo/posters.mjs` sets).
+
+Output goes to `captures/<timestamp>/<feature>/<variant>.png` (gitignored); the poster set goes to
+`dist/demo-posters/` and `dist/demo-posters-<version>.zip` instead.
 
 ## The Mock System
 
@@ -113,7 +123,7 @@ window.__mockConfigOverrides = {
 };
 ```
 
-**IMPORTANT:** `Object.assign` is shallow — the `terminal` object must include ALL defaults, not just overrides.
+**IMPORTANT:** `Object.assign` is shallow - the `terminal` object must include ALL defaults, not just overrides.
 
 ### Agent Version Override
 
@@ -243,7 +253,7 @@ CLAUDE_PATH=/path/to/claude node scripts/capture-claude-scrollback.js . "prompt 
 1. **No personal info.** All fixture data uses generic names (acme-saas, /home/dev/). Never hardcode real usernames, paths, or credentials.
 2. **Deterministic IDs.** Use hardcoded string IDs (not `uuid()`) and fixed timestamps for reproducible captures.
 3. **Match real app 1:1.** Every visual element must match what a real user would see. Check against the source components, not assumptions.
-4. **Single-command Bash calls only.** No `&&`, `||`, pipes, or `;` — enforced by `scripts/bash-guard.js`.
+4. **Single-command Bash calls only.** No `&&`, `||`, pipes, or `;` - enforced by `scripts/bash-guard.js`.
 5. **Don't kill processes on ports.** Other dev servers and tests may be running.
 6. **Font size is 10** for captures (set in capture-page.ts config overrides).
-7. **Test all captures before reporting done:** `npx playwright test --project=captures --grep-invert "preview"`
+7. **Test all captures before reporting done:** `npm run capture`, which builds `dist/demo` before the run so the scene captures have a current build to shoot.

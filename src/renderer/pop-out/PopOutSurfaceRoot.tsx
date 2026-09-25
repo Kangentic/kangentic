@@ -3,8 +3,8 @@ import { useBoardStore } from '../stores/board-store';
 import { getSurface } from './surface-registry';
 import { usePopOutBootstrap } from './usePopOutBootstrap';
 import { PopOutWindowFrame } from './PopOutWindowFrame';
-import { isGlobalPopOutKind } from '../../shared/pop-out';
-import type { PopOutDescriptor, PopOutTaskParams } from '../../shared/pop-out';
+import { POP_OUT_SURFACES, formatTaskAnchor, isGlobalPopOutKind, resolveSurfaceTitle } from '../../shared/pop-out';
+import type { PopOutChangesFileParams, PopOutDescriptor, PopOutTaskParams } from '../../shared/pop-out';
 import './surfaces';
 
 /** Mounted by index.tsx in place of <App/> when this renderer is a pop-out window
@@ -28,9 +28,19 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
   const taskTitle = useBoardStore((state) =>
     taskId ? state.tasks.find((task) => task.id === taskId)?.title ?? null : null,
   );
+  // The per-file surface titles by its FILE plus the task anchor: the frame
+  // header shows "full/path - #N task title" (params carry the task label as a
+  // boot seed), the taskbar the basename form of the same (resolveSurfaceTitle,
+  // the same value main gave the BrowserWindow). Needs no board hydration, so
+  // it is correct from first paint.
+  const fileParams = descriptor.kind === 'changes-file' ? (descriptor.params as PopOutChangesFileParams) : null;
   return (
     <ErrorBoundary>
-      <PopOutWindowFrame kind={descriptor.kind} title={taskTitle ?? undefined}>
+      <PopOutWindowFrame
+        kind={descriptor.kind}
+        title={fileParams ? `${fileParams.filePath} - ${formatTaskAnchor(fileParams.taskDisplayId, fileParams.taskTitle)}` : taskTitle ?? undefined}
+        documentTitle={fileParams ? resolveSurfaceTitle(POP_OUT_SURFACES[descriptor.kind], descriptor.params) : undefined}
+      >
         <surface.Root params={descriptor.params} />
       </PopOutWindowFrame>
     </ErrorBoundary>

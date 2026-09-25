@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Smile } from 'lucide-react';
+import { Search, Smile } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
-import { ALL_ICONS, ICON_REGISTRY } from '../../utils/swimlane-icons';
+import { ALL_ICONS } from '../../utils/swimlane-icons';
 
 interface IconPickerDialogProps {
   onClose: () => void;
@@ -35,8 +35,6 @@ export function IconPickerDialog({
     );
   }, [query]);
 
-  const SearchIcon = ICON_REGISTRY.get('search')!;
-
   return (
     <BaseDialog
       onClose={onClose}
@@ -49,7 +47,7 @@ export function IconPickerDialog({
       {/* Sticky search bar */}
       <div className="sticky top-0 z-10 bg-surface-raised px-4 pt-3 pb-2 border-b border-edge">
         <div className="relative">
-          <SearchIcon
+          <Search
             size={12}
             className="absolute left-2 top-1/2 -translate-y-1/2 text-fg-disabled"
           />

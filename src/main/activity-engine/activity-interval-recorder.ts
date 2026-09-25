@@ -1,4 +1,4 @@
-import type { ActivityState } from '../../shared/types';
+import type { ActivityState, Session } from '../../shared/types';
 import { dispositionOf } from '../../shared/activity-state';
 import type { SessionManager } from '../pty/session-manager';
 import { ActivityIntervalStore } from './activity-interval-store';
@@ -137,12 +137,10 @@ export class ActivityIntervalRecorder {
     // For a natural PTY exit and for killByTaskId, the registry still holds
     // the exited session at emit time (see SessionLifecycleBoardFeed's onExit
     // for the same observation), so project/transient resolution below
-    // resolves. KNOWN GAP: SessionManager.remove()/removeByTaskId() call
-    // registry.delete() synchronously while the PTY dies asynchronously, so
-    // the later 'exit' emit finds no session and this returns early, leaving
-    // that session's interval permanently open. Consumers must filter
-    // `ended_ms IS NOT NULL` for totals. Closing that gap needs the recorder
-    // to cache projectId per open interval rather than re-resolving it here.
+    // resolves. A direct SessionManager.remove()/removeByTaskId() deletes the
+    // row synchronously while the PTY dies asynchronously, so the later 'exit'
+    // finds no session here; that case is closed by handleRemoved below, which
+    // resolves the project from the removal payload instead of the registry.
     const session = this.options.sessionManager.getSession(sessionId);
     if (!session || session.transient) return;
     const projectId = this.options.sessionManager.getSessionProjectId(sessionId);
@@ -152,11 +150,33 @@ export class ActivityIntervalRecorder {
     this.options.getStore(projectId).closeOpenInterval(sessionId, Date.now(), 'session-exit');
   }
 
+  private readonly onRemoved = (sessionId: string, session: Session): void => {
+    // Same isolation as the other two listeners: a ledger write must never
+    // escape into the emit stack the removal push rides on.
+    try {
+      this.handleRemoved(sessionId, session);
+    } catch (error) {
+      console.error('[ACTIVITY-INTERVAL] recorder removal handler failed', error);
+    }
+  };
+
+  private handleRemoved(sessionId: string, session: Session): void {
+    if (this.disposed) return;
+    if (session.transient || !session.projectId) return;
+    // The removal is the last edge a torn-down session has, and it carries
+    // the row's last snapshot, so this closes the interval that used to stay
+    // open forever after a To Do reset, a task delete, or a session reset
+    // (the KNOWN GAP this recorder documented until the removal push existed).
+    // Idempotent with handleExit: the UPDATE matches zero rows the second time.
+    this.options.getStore(session.projectId).closeOpenInterval(sessionId, Date.now(), 'session-removed');
+  }
+
   start(): void {
     if (this.started || this.disposed) return;
     this.started = true;
     this.options.sessionManager.on('activity', this.onActivity);
     this.options.sessionManager.on('exit', this.onExit);
+    this.options.sessionManager.on('session-removed', this.onRemoved);
   }
 
   /** Synchronous, per synchronous-shutdown.md: detaches listeners with no async work. */
@@ -166,6 +186,7 @@ export class ActivityIntervalRecorder {
     if (this.started) {
       this.options.sessionManager.off('activity', this.onActivity);
       this.options.sessionManager.off('exit', this.onExit);
+      this.options.sessionManager.off('session-removed', this.onRemoved);
     }
   }
 }

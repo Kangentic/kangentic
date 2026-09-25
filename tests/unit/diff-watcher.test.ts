@@ -479,4 +479,103 @@ describe('DiffWatcher', () => {
       expect(mockGitRaw).toHaveBeenCalledWith(['rev-parse', '--absolute-git-dir']);
     });
   });
+
+  // ── Debounce max wait ────────────────────────────────────────────────────
+  //
+  // The debounce is trailing with no natural ceiling, so a stream arriving
+  // faster than DEBOUNCE_MS re-arms it forever and subscribers hear nothing.
+  // A dev server or test run inside the worktree clears that bar easily.
+
+  describe('debounce max wait', () => {
+    it('still fires under a continuous stream faster than the debounce', () => {
+      const callback = vi.fn();
+      watcher.subscribe('/project', callback);
+
+      // An event every 400ms never lets the 500ms trailing timer expire.
+      // Without the 2000ms cap this loop produces ZERO callbacks.
+      for (let tick = 0; tick < 6; tick++) {
+        watchCallback!('change', 'src/file.ts');
+        vi.advanceTimersByTime(400);
+      }
+
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not fire early: a normal burst still coalesces on the trailing edge', () => {
+      const callback = vi.fn();
+      watcher.subscribe('/project', callback);
+
+      watchCallback!('change', 'src/file.ts');
+      vi.advanceTimersByTime(100);
+      watchCallback!('change', 'src/other.ts');
+
+      // Still inside the debounce window, and nowhere near the cap.
+      vi.advanceTimersByTime(400);
+      expect(callback).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(100);
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens a fresh run after a capped dispatch', () => {
+      const callback = vi.fn();
+      watcher.subscribe('/project', callback);
+
+      for (let tick = 0; tick < 6; tick++) {
+        watchCallback!('change', 'src/file.ts');
+        vi.advanceTimersByTime(400);
+      }
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      // A later quiet change is debounced normally, not dispatched instantly.
+      watchCallback!('change', 'src/file.ts');
+      expect(callback).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(500);
+      expect(callback).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ── git dir cache ────────────────────────────────────────────────────────
+
+  describe('git dir cache', () => {
+    const worktreePath = '/mock/cached';
+    const fakeGitDir = '/mock/cached/.git';
+
+    async function subscribeAndFlush(): Promise<() => void> {
+      const unsubscribe = watcher.subscribe(worktreePath, vi.fn());
+      await Promise.resolve();
+      await Promise.resolve();
+      return unsubscribe;
+    }
+
+    it('resolves the git dir once across subscribe/unsubscribe cycles', async () => {
+      mockGitRaw.mockResolvedValue(`${fakeGitDir}\n`);
+
+      const unsubscribe = await subscribeAndFlush();
+      expect(mockGitRaw).toHaveBeenCalledTimes(1);
+
+      // Clicking away from a task and back tears the subscription down and
+      // rebuilds it. That must not spawn a second git process.
+      unsubscribe();
+      await subscribeAndFlush();
+
+      expect(mockGitRaw).toHaveBeenCalledTimes(1);
+      // The metadata watches are still armed off the cached value.
+      expect(watchCallbacksByPath.has(fakeGitDir)).toBe(true);
+    });
+
+    it('drops the cached git dir when the path is released', async () => {
+      mockGitRaw.mockResolvedValue(`${fakeGitDir}\n`);
+
+      await subscribeAndFlush();
+      expect(mockGitRaw).toHaveBeenCalledTimes(1);
+
+      // releaseUnder means the worktree is being deleted or moved, so the
+      // resolved git dir is no longer trustworthy.
+      watcher.releaseUnder(worktreePath);
+
+      await subscribeAndFlush();
+      expect(mockGitRaw).toHaveBeenCalledTimes(2);
+    });
+  });
 });

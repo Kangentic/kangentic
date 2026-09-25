@@ -18,6 +18,10 @@ vi.mock('../../src/main/db/database', () => ({
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   autoSpawnForTask: vi.fn(() => Promise.resolve()),
+  // The MCP delete path reaps what the session left running before it removes
+  // the worktree. Inert here: the ordering is pinned in the reap wiring tests.
+  captureSessionLeftovers: vi.fn(() => null),
+  reapSessionLeftovers: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
@@ -82,8 +86,16 @@ import {
   propagateStrategyToLiveSessions,
   buildColumnStrategyChanges,
 } from '../../src/main/ipc/handlers/strategy-propagation';
+import { reapSessionLeftovers } from '../../src/main/ipc/helpers';
+import { WorktreeManager } from '../../src/main/git/worktree-manager';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project, Swimlane } from '../../src/shared/types';
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolveFn) => { resolve = resolveFn; });
+  return { promise, resolve };
+}
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -212,6 +224,162 @@ describe('buildCommandContextForProject', () => {
     expect(typeof context!.onSwimlaneUpdated).toBe('function');
     expect(typeof context!.onBacklogChanged).toBe('function');
     expect(typeof context!.onLabelColorsChanged).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDefaultBaseBranch
+//
+// Board default first, `||` fallback to the effective config's
+// `git.defaultBaseBranch`, wrapped so an unreadable config never fails the
+// tool call it feeds. The empty-string case is the one that proves the `||`:
+// an empty board default must fall through, which a `??` would not do.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - getDefaultBaseBranch', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeBaseBranchContext(options: {
+    boardDefault?: string;
+    boardThrows?: boolean;
+    configDefault?: string;
+  }) {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const getDefaultBaseBranchForPath = vi.fn(() => {
+      if (options.boardThrows) throw new Error('board config unreadable');
+      return options.boardDefault;
+    });
+    const getEffectiveConfig = vi.fn(() => ({
+      git: { defaultBaseBranch: options.configDefault },
+    }));
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      boardConfigManager: { getDefaultBaseBranchForPath },
+      configManager: { getEffectiveConfig },
+    } as unknown as IpcContext;
+    return { ipcContext, getDefaultBaseBranchForPath, getEffectiveConfig };
+  }
+
+  it('prefers the board default over a different effective-config value', () => {
+    const { ipcContext } = makeBaseBranchContext({ boardDefault: 'develop', configDefault: 'main' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    expect(context!.getDefaultBaseBranch!()).toBe('develop');
+  });
+
+  it('falls back to the effective config when the board has no default', () => {
+    const { ipcContext } = makeBaseBranchContext({ configDefault: 'release' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    expect(context!.getDefaultBaseBranch!()).toBe('release');
+  });
+
+  it('falls through an empty-string board default to the effective config', () => {
+    const { ipcContext } = makeBaseBranchContext({ boardDefault: '', configDefault: 'qa' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    expect(context!.getDefaultBaseBranch!()).toBe('qa');
+  });
+
+  it('returns undefined instead of throwing when the board config manager throws', () => {
+    const { ipcContext } = makeBaseBranchContext({ boardThrows: true, configDefault: 'main' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    expect(() => context!.getDefaultBaseBranch!()).not.toThrow();
+    expect(context!.getDefaultBaseBranch!()).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getPrResolveOptions
+//
+// The per-resolve PR settings for the two linkPRForTask calls the MCP command
+// handlers make themselves. Same project binding and failure posture as
+// getDefaultBaseBranch: read for the TARGET project's path, and an unreadable
+// config reads as every option off rather than a failed tool call.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - getPrResolveOptions', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  function makeOptionsContext(gitConfig: Record<string, unknown> | (() => never)) {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const getEffectiveConfig = vi.fn(() => {
+      if (typeof gitConfig === 'function') return gitConfig();
+      return { git: gitConfig };
+    });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      boardConfigManager: { getDefaultBaseBranchForPath: vi.fn(() => undefined) },
+      configManager: { getEffectiveConfig },
+    } as unknown as IpcContext;
+    return { ipcContext, getEffectiveConfig };
+  }
+
+  it('reads evaluateBranchPolicies from the target project path', () => {
+    const { ipcContext, getEffectiveConfig } = makeOptionsContext({ prEvaluateBranchPolicies: true });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    // Exact shape: the same mapper the linker's own sweep uses
+    // (`prResolveOptionsFromGitConfig`), so a tool-triggered resolve and the
+    // background sweep can never write different verdicts for one PR.
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: true, bypassCountsAsReady: false });
+    expect(getEffectiveConfig).toHaveBeenCalledWith(PROJECT_PATH);
+  });
+
+  it('reads bypassCountsAsReady from the target project path', () => {
+    const { ipcContext } = makeOptionsContext({ prBypassCountsAsReady: true });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: true });
+  });
+
+  it('reads an explicit false for the default-on bypass setting as off', () => {
+    const { ipcContext } = makeOptionsContext({ prBypassCountsAsReady: false });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: false });
+  });
+
+  it('reads an absent key as off, never as undefined', () => {
+    // The stub returns the raw git block with no DEFAULT_CONFIG merge, so the
+    // default-on bypass key reads false here too; production reads its
+    // default through `getEffectiveConfig`'s merge.
+    const { ipcContext } = makeOptionsContext({ defaultBaseBranch: 'main' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: false });
+  });
+
+  it('returns every option off instead of throwing when the config is unreadable', () => {
+    const { ipcContext } = makeOptionsContext(() => { throw new Error('config unreadable'); });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(() => context!.getPrResolveOptions!()).not.toThrow();
+    expect(context!.getPrResolveOptions!()).toEqual({});
+  });
+
+  // The in-flight re-poll flag rides the same binding: an agent's own link
+  // write has to start the 30 s re-poll, since during `/pull-request` it waits
+  // on CI inside one turn and no idle arrives to start it.
+  it.each([
+    [{ prRefreshIntervalMinutes: 5 }, true],
+    [{ prRefreshIntervalMinutes: null }, false],
+    [{}, false],
+  ] as Array<[Record<string, unknown>, boolean]>)('getPrRepollInFlight reads %j as %s from the target project path', (gitConfig, expected) => {
+    const { ipcContext, getEffectiveConfig } = makeOptionsContext(gitConfig);
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrRepollInFlight!()).toBe(expected);
+    expect(getEffectiveConfig).toHaveBeenCalledWith(PROJECT_PATH);
+  });
+
+  it('getPrRepollInFlight reads off instead of throwing when the config is unreadable', () => {
+    const { ipcContext } = makeOptionsContext(() => { throw new Error('config unreadable'); });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrRepollInFlight!()).toBe(false);
   });
 });
 
@@ -584,5 +752,113 @@ describe('buildCommandContextForProject - onTasksReordered', () => {
     context.onTasksReordered(fakeSwimlane(), ['task-a']);
 
     expect(writeBackForProject).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onTaskDeleted - worktree teardown ordering (pty-teardown-grace)
+//
+// The exit promise is captured BETWEEN the kill and the remove: `remove()`
+// itself does not wait (the deferred PTY lives outside the registry row, so
+// deleting the row cannot cut its grace short), but the filesystem-touching
+// work that follows - reapSessionLeftovers and the worktree removal inside
+// worktreeManager.withLock - must wait for the real process exit, not for
+// the kill() call. The wait happens BEFORE the per-project git lock is
+// entered, so a young session's grace never head-of-line-blocks every other
+// task's worktree work in the project.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - onTaskDeleted worktree teardown ordering', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('waits for the killed session to exit before reaping leftovers or entering the worktree lock', async () => {
+    const timeline: string[] = [];
+    const exitDeferred = createDeferred();
+
+    const withLockMock = vi.fn(async (fn: () => Promise<void>) => {
+      timeline.push('withLock:enter');
+      await fn();
+      timeline.push('withLock:exit');
+    });
+    const removeWorktreeMock = vi.fn(async () => {
+      timeline.push('removeWorktree');
+      return false;
+    });
+    // A plain function expression, not an arrow function: vi.fn() invokes the
+    // implementation with `new`, and an arrow function can never be a
+    // constructor - it would throw "is not a constructor" the moment
+    // onTaskDeleted reaches `new WorktreeManager(projectPath)`.
+    vi.mocked(WorktreeManager).mockImplementationOnce(function mockWorktreeManager() {
+      return {
+        withLock: withLockMock,
+        removeWorktree: removeWorktreeMock,
+        pruneWorktrees: vi.fn(async () => {}),
+        removeBranch: vi.fn(async () => {}),
+      };
+    } as unknown as typeof WorktreeManager);
+
+    vi.mocked(reapSessionLeftovers).mockImplementationOnce(async () => {
+      timeline.push('reapSessionLeftovers');
+    });
+
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      sessionManager: {
+        kill: vi.fn((sessionId: string) => { timeline.push(`kill:${sessionId}`); }),
+        awaitExit: vi.fn((sessionId: string) => {
+          timeline.push(`awaitExit:${sessionId}`);
+          return exitDeferred.promise;
+        }),
+        remove: vi.fn((sessionId: string) => { timeline.push(`remove:${sessionId}`); }),
+        removeByTaskId: vi.fn(),
+      },
+    } as unknown as IpcContext;
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTaskDeleted({
+      id: 'task-1',
+      title: 'Task One',
+      session_id: 'session-1',
+      worktree_path: '/projects/example/.kangentic/worktrees/task-1',
+      branch_name: null,
+    } as never);
+
+    // onTaskDeleted's synchronous body (kill, capture awaitExit, remove) has
+    // already run by the time the call above returns.
+    expect(timeline).toEqual(['kill:session-1', 'awaitExit:session-1', 'remove:session-1']);
+
+    // Drain a couple of microtask ticks: the detached async IIFE must still
+    // be parked on `await sessionExited`, so neither the reap nor the
+    // worktree lock has run yet.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(timeline).toEqual(['kill:session-1', 'awaitExit:session-1', 'remove:session-1']);
+    expect(reapSessionLeftovers).not.toHaveBeenCalled();
+    expect(withLockMock).not.toHaveBeenCalled();
+
+    exitDeferred.resolve();
+    await vi.waitFor(() => {
+      expect(timeline).toContain('withLock:exit');
+    });
+
+    expect(timeline).toEqual([
+      'kill:session-1',
+      'awaitExit:session-1',
+      'remove:session-1',
+      'reapSessionLeftovers',
+      'withLock:enter',
+      'removeWorktree',
+      'withLock:exit',
+    ]);
   });
 });

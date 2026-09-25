@@ -28,6 +28,7 @@ import {
   SimulatedSessionManager,
   DEFAULT_TUI_OPTIONS,
   createStubPasteEngine,
+  createSubmissionVerifier,
   type FakeTuiOptions,
 } from './injection-tui-simulator';
 
@@ -128,6 +129,11 @@ describe('TerminalSubmit', () => {
 
       expect(sessionManager.writes).toHaveLength(0);
       expect(result.outcome).toBe('unconfirmed');
+      // The early return for an all-blank command list must carry an empty
+      // deliveries array, not an omitted or populated one: a caller (the
+      // scheduler's escalation gate) reads `deliveries` unconditionally to
+      // build its late-confirmation watermarks.
+      expect(result.deliveries).toEqual([]);
       sessionManager.dispose();
     });
 
@@ -385,6 +391,114 @@ describe('TerminalSubmit', () => {
       const clearWrites = sessionManager.writes.filter((data) => data === '\x15');
       expect(clearWrites).toHaveLength(1); // the deliberate leading clear only
       expect(sessionManager.tui.maxConsecutiveEmptyCtrlC).toBeLessThan(2);
+      sessionManager.dispose();
+    }, 20_000);
+  });
+
+  /**
+   * The #682 shape: the command DID submit on the first Enter, but the
+   * transcript only shows it later than the first attempt's window. Claude
+   * stamps the turn at submit and flushes the JSONL ~780ms or ~1830ms after
+   * (docs/command-injection.md, "Measured flush latency"). Four of four
+   * observed live skill injections were reported `failed` and then re-run by
+   * the escalation restart.
+   */
+  describe('late transcript flush', () => {
+    const enterCount = (sessionManager: SimulatedSessionManager): number =>
+      sessionManager.writes.filter((data) => data === '\r').length;
+
+    it('confirms on a later attempt when the entry flushes after the first window', async () => {
+      // 900ms: past the first 400ms window, inside the third. The stamp is
+      // the submit time, so a watermark advanced to the second Enter would
+      // already be past it and every later attempt would return false at the
+      // watermark - which is what shipped.
+      const { submit, sessionManager } = makeSubmit();
+      const verifier = createSubmissionVerifier(sessionManager.tui, { flushDelayMs: 900 });
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/merge-pull-request', verify: 'submitted' }],
+        { verifier },
+      );
+
+      expect(result.outcome).toBe('confirmed');
+      expect(result.unconfirmedCommands).toEqual([]);
+      // Exactly one real submission: the retry Enters landed on an empty
+      // prompt and submitted nothing.
+      expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['/merge-pull-request']);
+      // The watermark the burst reports is the first Enter, the one that
+      // produced the submission, not the retry that happened to see it.
+      expect(result.deliveries).toHaveLength(1);
+      const [delivery] = result.deliveries;
+      expect(delivery.text).toBe('/merge-pull-request');
+      expect(delivery.confirmed).toBe(true);
+      const firstSentAt = delivery.firstSentAt ?? Number.NaN;
+      expect(sessionManager.tui.submissions[0].at - firstSentAt).toBeGreaterThanOrEqual(0);
+      expect(sessionManager.tui.submissions[0].at - firstSentAt).toBeLessThan(150);
+      sessionManager.dispose();
+    }, 20_000);
+
+    it('confirms inside the trailing grace, without a sixth Enter, when the flush outlasts every retry', async () => {
+      // 2300ms: past all five 400ms windows (the slow flush mode plus a skill
+      // expansion). The grace polls without pressing.
+      const { submit, sessionManager } = makeSubmit();
+      const verifier = createSubmissionVerifier(sessionManager.tui, { flushDelayMs: 2300 });
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/merge-pull-request', verify: 'submitted' }],
+        { verifier },
+      );
+
+      expect(result.outcome).toBe('confirmed');
+      expect(enterCount(sessionManager)).toBe(5);
+      expect(sessionManager.tui.submissions.map((entry) => entry.text)).toEqual(['/merge-pull-request']);
+      sessionManager.dispose();
+    }, 20_000);
+
+    it('still reports failed, after the grace, when every Enter was genuinely swallowed', async () => {
+      // The negative that keeps rung 3 reachable: nothing ever submitted, so
+      // no watermark and no grace can conjure a confirmation, and the
+      // scheduler must still be told to restart.
+      const { submit, sessionManager } = makeSubmit({ eatEnterCount: 5 });
+      const verifier = createSubmissionVerifier(sessionManager.tui);
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/merge-pull-request', verify: 'submitted' }],
+        { verifier },
+      );
+
+      expect(result.outcome).toBe('failed');
+      expect(result.unconfirmedCommands).toEqual(['/merge-pull-request']);
+      expect(result.deliveries).toEqual([
+        { text: '/merge-pull-request', firstSentAt: expect.any(Number), confirmed: false },
+      ]);
+      expect(enterCount(sessionManager)).toBe(5);
+      expect(sessionManager.tui.submissions).toEqual([]);
+      sessionManager.dispose();
+    }, 20_000);
+
+    it('keeps one delivery record per command, so two identical commands in a burst do not collide', async () => {
+      // A record keyed by text would let the second command overwrite the
+      // first's watermark. Positional records keep both, each with its own
+      // first Enter, in delivery order.
+      const { submit, sessionManager } = makeSubmit();
+      const verifier = createSubmissionVerifier(sessionManager.tui);
+
+      const result = await submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: '/hello', verify: 'submitted' }, { text: '/hello', verify: 'submitted' }],
+        { verifier },
+      );
+
+      expect(result.outcome).toBe('confirmed');
+      expect(result.deliveries.map((delivery) => delivery.text)).toEqual(['/hello', '/hello']);
+      expect(result.deliveries.every((delivery) => delivery.confirmed)).toBe(true);
+      const [first, second] = result.deliveries;
+      expect(first.firstSentAt).not.toBeNull();
+      expect(second.firstSentAt).not.toBeNull();
+      expect((second.firstSentAt ?? 0) > (first.firstSentAt ?? 0)).toBe(true);
       sessionManager.dispose();
     }, 20_000);
   });

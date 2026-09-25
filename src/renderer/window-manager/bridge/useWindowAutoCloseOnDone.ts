@@ -36,6 +36,9 @@ export function useWindowAutoCloseOnDone(): void {
       // the board. Closing it would unmount the window and destroy the Browser
       // pane's <webview> guest, which is the one thing retention exists to
       // prevent. Its own project's board decides its fate when it comes back.
+      // A PARKED window of the OPEN project is deliberately NOT skipped: it is
+      // judged against the live board like a visible one, and this `closeWindow`
+      // is the deliberate drop for "its task left the board".
       if (managedWindow.retainedProjectId !== undefined) continue;
       const task = tasks.find((candidate) => candidate.id === managedWindow.anchor);
       // Close on the EARLIEST off-board signal so the window never lingers:

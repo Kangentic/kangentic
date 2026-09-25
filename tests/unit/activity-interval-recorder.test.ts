@@ -73,6 +73,79 @@ describe('ActivityIntervalRecorder', () => {
     vi.useRealTimers();
   });
 
+  describe('session-removed closes the interval a direct remove() used to strand', () => {
+    const removedRow = {
+      id: 'sess-1',
+      taskId: 'task-1',
+      projectId: 'project-1',
+      status: 'running',
+      transient: false,
+    };
+
+    it('closes the open interval, resolving the project from the removal payload', () => {
+      buildRecorder();
+
+      sessionManager.emit('session-removed', 'sess-1', removedRow);
+
+      expect(getStore).toHaveBeenCalledWith('project-1');
+      expect(storeHandle.closeOpenInterval).toHaveBeenCalledTimes(1);
+      expect(storeHandle.closeOpenInterval).toHaveBeenCalledWith(
+        'sess-1',
+        Date.parse('2026-07-22T00:00:09.000Z'),
+        'session-removed',
+      );
+    });
+
+    it('a direct remove(): the row is gone by the time the exit lands, and the removal is what closed the interval', () => {
+      // The documented gap: remove() deletes the registry row synchronously
+      // while the PTY dies asynchronously, so the later 'exit' resolves no
+      // session and used to leave the interval open forever.
+      buildRecorder();
+      sessionManager.session = undefined;
+
+      sessionManager.emit('session-removed', 'sess-1', removedRow);
+      sessionManager.emit('exit', 'sess-1', -1, true);
+
+      expect(storeHandle.closeOpenInterval).toHaveBeenCalledTimes(1);
+      expect(storeHandle.closeOpenInterval).toHaveBeenCalledWith('sess-1', expect.any(Number), 'session-removed');
+    });
+
+    it('skips a transient (Command Terminal) session removal', () => {
+      buildRecorder();
+
+      sessionManager.emit('session-removed', 'sess-cmd', { ...removedRow, id: 'sess-cmd', transient: true });
+
+      expect(storeHandle.closeOpenInterval).not.toHaveBeenCalled();
+    });
+
+    it('skips a removal payload with no resolvable project id, the other half of the guard', () => {
+      // The removal payload carries the row's own last snapshot rather than a
+      // live registry lookup, so a caller that constructs it from partial
+      // data (or a stale/never-assigned row) can hand this listener a
+      // projectId of undefined. Without the `!session.projectId` half of the
+      // guard this would call getStore(undefined), which the real production
+      // getStore (getProjectDb-backed) would throw or resolve against the
+      // wrong project for.
+      buildRecorder();
+
+      sessionManager.emit('session-removed', 'sess-1', { ...removedRow, projectId: undefined });
+
+      expect(getStore).not.toHaveBeenCalled();
+      expect(storeHandle.closeOpenInterval).not.toHaveBeenCalled();
+    });
+
+    it('dispose detaches the removal listener with the other two', () => {
+      buildRecorder();
+      expect(sessionManager.listenerCount('session-removed')).toBe(1);
+
+      recorder.dispose();
+
+      expect(sessionManager.listenerCount('session-removed')).toBe(0);
+      expect(sessionManager.listenerCount('exit')).toBe(0);
+      expect(sessionManager.listenerCount('activity')).toBe(0);
+    });
+  });
+
   it('ignores an initSession seed emit (empty recentTransitions)', () => {
     buildRecorder();
     sessionManager.recentTransitions = [];
@@ -288,6 +361,35 @@ describe('ActivityIntervalRecorder', () => {
 
     expect(() => {
       sessionManager.emit('exit', 'sess-1', 0, true);
+    }).not.toThrow();
+
+    expect(laterListener).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('a store write failure on removal never escapes into the emit stack, and later listeners still run', () => {
+    // SessionManager.remove() emits 'session-removed' synchronously to five
+    // listeners (see session-replica-contract.md); a throw in this one's
+    // store write must not abort the others or the SESSION_REMOVED broadcast
+    // that rides the same emit. Mirrors the activity/exit isolation tests
+    // above for the third listener onRemoved wraps.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    buildRecorder();
+    storeHandle.closeOpenInterval.mockImplementation(() => {
+      throw new Error('SQLITE_BUSY: database is locked');
+    });
+    const laterListener = vi.fn();
+    sessionManager.on('session-removed', laterListener);
+
+    expect(() => {
+      sessionManager.emit('session-removed', 'sess-1', {
+        id: 'sess-1',
+        taskId: 'task-1',
+        projectId: 'project-1',
+        status: 'running',
+        transient: false,
+      });
     }).not.toThrow();
 
     expect(laterListener).toHaveBeenCalledTimes(1);

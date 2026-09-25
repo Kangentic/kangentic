@@ -45,13 +45,16 @@ import { IMAGE_LONG_EDGE_CAP, resolveResizeTarget } from '../../src/shared/image
 // Hoisted mocks - must be declared before any imports that trigger them.
 // ---------------------------------------------------------------------------
 
-const { capturedHandlers, mockClipboard } = vi.hoisted(() => {
+const { capturedHandlers, mockClipboard, mockNativeImage } = vi.hoisted(() => {
   const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
   const mockClipboard = {
     writeText: vi.fn(),
     readImage: vi.fn(),
   };
-  return { capturedHandlers, mockClipboard };
+  const mockNativeImage = {
+    createFromBuffer: vi.fn(),
+  };
+  return { capturedHandlers, mockClipboard, mockNativeImage };
 });
 
 vi.mock('electron', () => ({
@@ -67,6 +70,7 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn(), openExternal: vi.fn(), showItemInFolder: vi.fn() },
   globalShortcut: { isRegistered: vi.fn(() => false), register: vi.fn(() => true), unregister: vi.fn() },
   clipboard: mockClipboard,
+  nativeImage: mockNativeImage,
 }));
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -349,5 +353,69 @@ describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
       '[clipboard] Failed to save pasted image:',
       expect.any(Error),
     );
+  });
+});
+
+describe('CLIPBOARD_SAVE_IMAGE IPC handler', () => {
+  // The drop-path twin of CLIPBOARD_READ_IMAGE: the renderer decodes a dropped
+  // image the agent cannot take as-is (a bmp) into PNG bytes, and this handler
+  // lands them in the same temp directory under the same cap and prune. The
+  // decode in main is a validity check on bytes that are already PNG.
+  let testTmpRoot: string;
+
+  function invokeClipboardSaveImageHandler(png: unknown): string | null {
+    const handler = capturedHandlers.get(IPC.CLIPBOARD_SAVE_IMAGE);
+    if (!handler) throw new Error(`Handler not registered for ${IPC.CLIPBOARD_SAVE_IMAGE}`);
+    return handler(undefined, png) as string | null;
+  }
+
+  beforeEach(() => {
+    testTmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-clipboard-handler-test-'));
+    vi.spyOn(os, 'tmpdir').mockReturnValue(testTmpRoot);
+    capturedHandlers.clear();
+    mockNativeImage.createFromBuffer.mockReset();
+    registerSystemHandlers(makeContext() as Parameters<typeof registerSystemHandlers>[0]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(testTmpRoot, { recursive: true, force: true });
+  });
+
+  it('decodes the bytes, caps the image, and writes it beside the clipboard captures', () => {
+    const { image, resizedToPng } = makeFakeNativeImage(4000, 2000);
+    mockNativeImage.createFromBuffer.mockReturnValue(image);
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+
+    const filePath = invokeClipboardSaveImageHandler(pngBytes);
+
+    expect(filePath).toBeTruthy();
+    expect(filePath as string).toContain(path.join(testTmpRoot, 'kangentic-clipboard'));
+    expect(path.basename(filePath as string)).toMatch(/^pasted-image-\d+\.png$/);
+    // The handler hands nativeImage exactly the bytes it received, as a Buffer
+    // view rather than a copy of some other slice.
+    const decoded = mockNativeImage.createFromBuffer.mock.calls[0]?.[0] as Buffer;
+    expect(Buffer.isBuffer(decoded)).toBe(true);
+    expect([...decoded]).toEqual([...pngBytes]);
+    // Same cap as the clipboard path: the oversized fake was resized and the
+    // RESIZED bytes were written.
+    expect(resizedToPng).toHaveBeenCalledOnce();
+    expect(fs.readFileSync(filePath as string)).toEqual(resizedToPng.mock.results[0]?.value);
+  });
+
+  it('returns null for bytes that do not decode, without writing anything', () => {
+    mockNativeImage.createFromBuffer.mockReturnValue({ isEmpty: () => true });
+
+    const filePath = invokeClipboardSaveImageHandler(new Uint8Array([1, 2, 3]));
+
+    expect(filePath).toBeNull();
+    expect(fs.existsSync(path.join(testTmpRoot, 'kangentic-clipboard'))).toBe(false);
+  });
+
+  it('returns null for a payload that is not a byte array, without touching nativeImage', () => {
+    expect(invokeClipboardSaveImageHandler('not bytes')).toBeNull();
+    expect(invokeClipboardSaveImageHandler(new Uint8Array(0))).toBeNull();
+    expect(invokeClipboardSaveImageHandler(undefined)).toBeNull();
+    expect(mockNativeImage.createFromBuffer).not.toHaveBeenCalled();
   });
 });

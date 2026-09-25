@@ -112,12 +112,30 @@ function decodeDirective(directive) {
   }
 }
 
+/**
+ * Cap on every field value the bridge extracts (`tool`, `detail`).
+ *
+ * Sized for a Bash `command`, which is the one field a consumer reads back
+ * for its CONTENT rather than its shape: the `git push` capture reads the
+ * destination branch out of it (src/main/git/push-command.ts), and the
+ * `--kangentic-no-activity-hold` flag is a substring match. At the old 200 a
+ * chained `git commit -m "..." && git push -u origin <branch>` lost its push,
+ * and a flag past the cut was invisible. Nothing downstream needs a tight
+ * bound: the activity log truncates with CSS, the PR-command matcher is
+ * prefix-anchored, and the per-session event cache is capped by count.
+ *
+ * `HOOK_DETAIL_CAP` in src/main/git/push-command.ts duplicates this value
+ * (this file is unbundled CommonJS and cannot import it);
+ * tests/unit/hook-detail-cap-parity.test.ts keeps the two equal.
+ */
+const FIELD_CAP = 2000;
+
 /** First non-null value of `fields` in `container`, stringified and capped. */
 function firstNonNull(container, fields) {
   if (!container || typeof container !== 'object' || !Array.isArray(fields)) return undefined;
   for (const field of fields) {
     const value = container[field];
-    if (value != null) return String(value).slice(0, 200);
+    if (value != null) return String(value).slice(0, FIELD_CAP);
   }
   return undefined;
 }
@@ -159,7 +177,7 @@ process.stdin.on('end', () => {
         // Stringify + cap like firstNonNull: a non-primitive landing on the
         // field must never embed an unbounded nested object into the JSONL.
         if (ctx && payload.field && ctx[payload.field] != null) {
-          event.tool = String(ctx[payload.field]).slice(0, 200);
+          event.tool = String(ctx[payload.field]).slice(0, FIELD_CAP);
         }
         break;
       }
@@ -172,7 +190,7 @@ process.stdin.on('end', () => {
           value = value && typeof value === 'object' ? value[segment] : undefined;
         }
         // Same stringify + cap contract as extractTool above.
-        if (value != null) event.tool = String(value).slice(0, 200);
+        if (value != null) event.tool = String(value).slice(0, FIELD_CAP);
         break;
       }
       case 'extractToolId': {
@@ -222,7 +240,7 @@ process.stdin.on('end', () => {
       }
       case 'setDetail': {
         // A fixed value, not an extraction: overwrites any prior detail by design.
-        if (payload.value != null) event.detail = String(payload.value).slice(0, 200);
+        if (payload.value != null) event.detail = String(payload.value).slice(0, FIELD_CAP);
         break;
       }
       case 'setTypeWhen': {
@@ -271,7 +289,7 @@ process.stdin.on('end', () => {
         } catch {
           logBridgeError(`invalid extractDetailPattern pattern: ${payload.pattern}`);
         }
-        if (match && match[1] != null) event.detail = String(match[1]).slice(0, 200);
+        if (match && match[1] != null) event.detail = String(match[1]).slice(0, FIELD_CAP);
         break;
       }
       case 'emitOnlyWhenDetailMatches': {

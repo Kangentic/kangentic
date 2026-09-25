@@ -31,8 +31,8 @@ export interface DriveTelemetryRecord {
   /** MCP URL caller. Subagents share their parent's, which is the open problem. */
   callerSessionId: string | undefined;
   callerTaskId: string | undefined;
-  /** The pane actually resolved, which may differ from the caller's own. */
-  resolvedSessionId: string;
+  /** The surface handle actually resolved (`pane_…` / `lane_…`), which may differ from the caller's own. */
+  resolvedHandle: string;
   resolvedTaskId: string;
   projectId: string | null;
   webContentsId: number;
@@ -59,7 +59,7 @@ export function logDrive(record: DriveTelemetryRecord): void {
   const caller = record.callerSessionId ? record.callerSessionId.slice(0, 8) : 'unattributed';
   const base =
     `[browser-drive] cap=${record.capability} caller=${caller} ` +
-    `pane=${record.resolvedSessionId.slice(0, 8)} wc=${record.webContentsId} ` +
+    `pane=${record.resolvedHandle} wc=${record.webContentsId} ` +
     `depth=${record.queueDepthAtEntry} waited=${record.waitedMs}ms ` +
     `dur=${record.durationMs}ms outcome=${record.outcome}`;
 

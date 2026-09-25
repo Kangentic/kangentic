@@ -67,10 +67,54 @@ export function getUsedIcons(swimlanes: Swimlane[], excludeId?: string): Set<str
     if (s.icon) {
       used.add(s.icon);
     } else if (s.role) {
-      used.add(ROLE_DEFAULT_NAMES[s.role]);
+      // Same two-key map as ROLE_DEFAULTS: a role from outside the union resolves to
+      // undefined, which would go into a Set<string> silently and then compare unequal
+      // to every real icon name in the picker.
+      const roleIconName = ROLE_DEFAULT_NAMES[s.role];
+      if (roleIconName) used.add(roleIconName);
     }
   }
   return used;
+}
+
+/**
+ * Resolve the icon NAME for a swimlane, for a `RegistryIcon` render.
+ * Priority: user-set icon (when registered) → role default → null (color dot).
+ */
+export function getSwimlaneIconName(swimlane: Pick<Swimlane, 'icon' | 'role'>): string | null {
+  if (swimlane.icon && ICON_REGISTRY.has(swimlane.icon)) return swimlane.icon;
+  if (swimlane.role) return ROLE_DEFAULT_NAMES[swimlane.role] ?? null;
+  return null;
+}
+
+/**
+ * Render a registry icon by name.
+ *
+ * The lookup lives in one component and goes through `createElement` on
+ * purpose. React's compiler rules read `const Icon = ICON_REGISTRY.get(name)`
+ * followed by `<Icon />` as a component created during render, which they
+ * forbid because a component created per render remounts on every render.
+ * The registry holds module-level lucide components, so the identity is in
+ * fact stable, but the rule cannot see through a `Map.get`. Routing every
+ * call site through here keeps that reasoning in one place.
+ *
+ * Renders nothing when the name is unknown and no fallback is given.
+ */
+export function RegistryIcon({
+  name,
+  fallback = null,
+  ...iconProps
+}: {
+  name: string | null | undefined;
+  /** Rendered when `name` is empty or unregistered. */
+  fallback?: IconComponent | null;
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+  style?: React.CSSProperties;
+}): React.ReactElement | null {
+  const component = (name ? ICON_REGISTRY.get(name) : undefined) ?? fallback;
+  return component ? React.createElement(component, iconProps) : null;
 }
 
 /**

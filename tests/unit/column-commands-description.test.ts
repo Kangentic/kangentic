@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { handleUpdateColumn } from '../../src/main/agent/commands/column-commands';
 import { handleGetColumnDetail } from '../../src/main/agent/commands/analytics-commands';
+import { COLUMN_ENUM_FIELDS } from '../../src/main/agent/commands/column-enums';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ interface MockSwimlaneRow {
   permission_mode: string | null;
   auto_spawn: number;
   auto_command: string | null;
+  auto_command_mode: string;
   plan_exit_target_id: string | null;
   agent_override: string | null;
   model_override: string | null;
@@ -46,6 +48,7 @@ function makeSwimlaneRow(overrides: Partial<MockSwimlaneRow> = {}): MockSwimlane
     permission_mode: null,
     auto_spawn: 1,
     auto_command: null,
+    auto_command_mode: 'immediate',
     plan_exit_target_id: null,
     agent_override: null,
     model_override: null,
@@ -67,9 +70,10 @@ function makeSwimlaneRow(overrides: Partial<MockSwimlaneRow> = {}): MockSwimlane
 //   - getById(): SELECT * FROM swimlanes WHERE id = ?
 //   - update() : UPDATE swimlanes SET ...
 //   - tasks    : SELECT ... FROM tasks ... swimlane_id = ? ...
+//   - archive  : SELECT COUNT(*) ... FROM tasks WHERE archived_at IS NOT NULL
 // ---------------------------------------------------------------------------
 
-function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] = []) {
+function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] = [], archivedCount = 0) {
   return {
     prepare: vi.fn((sql: string) => {
       // SwimlaneRepository.list() - also used by listActiveSwimlanes (resolveColumn)
@@ -97,6 +101,14 @@ function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] 
         return {
           all: vi.fn(() => taskRows),
           get: vi.fn(() => undefined),
+        };
+      }
+      // TaskRepository.countArchived() - the done column's Completed line
+      if (sql.includes('COUNT(*)') && sql.includes('archived_at IS NOT NULL')) {
+        return {
+          get: vi.fn(() => ({ count: archivedCount })),
+          all: vi.fn(() => []),
+          run: vi.fn(),
         };
       }
       // Fallback for any unexpected prepare call
@@ -287,6 +299,52 @@ describe('handleGetColumnDetail - description field', () => {
     expect((result.data as Record<string, unknown>).description).toBeNull();
   });
 
+  it('reports the session track even when every value is the default', () => {
+    // The read-back half of the isolated-column fix. These three print
+    // unconditionally, unlike the overrides around them: an agent that sets
+    // isolation and reads back nothing cannot tell a default column from a
+    // write that silently did not take.
+    const swimlaneRow = makeSwimlaneRow();
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'To Do' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Session: main (task conversation)');
+    expect(result.message).toContain('On enter: create or resume');
+    expect(result.message).toContain('Handoff context: no');
+    expect(result.data).toMatchObject({
+      sessionTarget: 'main',
+      sessionSpawnStrategy: 'create_or_resume',
+      handoffContext: false,
+    });
+  });
+
+  it('reports an isolated column as isolated', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      name: 'Code Review',
+      role: null,
+      session_target: 'isolated',
+      session_spawn_strategy: 'always_spawn_new',
+      handoff_context: 1,
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'Code Review' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Session: isolated (own conversation)');
+    expect(result.message).toContain('On enter: always spawn new');
+    expect(result.message).toContain('Handoff context: yes');
+    expect(result.data).toMatchObject({
+      sessionTarget: 'isolated',
+      sessionSpawnStrategy: 'always_spawn_new',
+      handoffContext: true,
+    });
+  });
+
   it('data.description is null when description is null', () => {
     const swimlaneRow = makeSwimlaneRow({ description: null });
     const db = createMockDb([swimlaneRow]);
@@ -318,6 +376,69 @@ describe('handleGetColumnDetail - description field', () => {
 
     expect(result.success).toBe(true);
     expect((result.data as Record<string, unknown>).description).toBe('case test');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleGetColumnDetail - the Done column
+//
+// Done is persisted `is_archived = 1` by construction, so a bare !is_archived
+// filter drops it. That is what hid it from kangentic_list_columns and sent a
+// finished task into Merge (task #642). Both surfaces here carry the same risk:
+// the not-found suggestion list, and the `Tasks: 0` that a done column always
+// reports because moving a task there archives it off the board.
+// ---------------------------------------------------------------------------
+
+describe('the Done column, across the column handlers', () => {
+  const TODO_ROW = makeSwimlaneRow({ id: 'lane-todo', name: 'To Do', role: 'todo' });
+  const DONE_ROW = makeSwimlaneRow({ id: 'lane-done', name: 'Done', role: 'done', is_archived: 1 });
+  const HIDDEN_ROW = makeSwimlaneRow({ id: 'lane-hidden', name: 'Icebox', role: null, is_archived: 1 });
+
+  it('lets handleUpdateColumn edit Done, which the Board Manager already allows', () => {
+    // Done resolved as "not found" for update_column, so MCP could not rename or
+    // recolor a column a human edits in the Board Manager. Nothing here can
+    // damage it: the handler writes neither `role` nor `is_archived`.
+    const db = createMockDb([TODO_ROW, DONE_ROW]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn({ column: 'Done', color: '#123456' }, context);
+
+    expect(result.success).toBe(true);
+    expect(context.onSwimlaneUpdated).toHaveBeenCalled();
+  });
+
+  it('names Done in the Available list on a miss, and never a user-archived lane', () => {
+    const db = createMockDb([TODO_ROW, DONE_ROW, HIDDEN_ROW]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'Nonexistent Column' }, context);
+
+    expect(result.success).toBe(false);
+    const available = (result.error ?? '').split('Available: ')[1];
+    expect(available).toBe('To Do, Done');
+  });
+
+  it('reports the archive size so Tasks: 0 does not read as an empty column', () => {
+    const db = createMockDb([TODO_ROW, DONE_ROW], [], 584);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'Done' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Tasks: 0');
+    expect(result.message).toContain('Completed: 584');
+    expect((result.data as Record<string, unknown>).completedCount).toBe(584);
+  });
+
+  it('omits the Completed line for a column that is not the done role', () => {
+    const db = createMockDb([TODO_ROW, DONE_ROW], [], 584);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'To Do' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).not.toContain('Completed:');
+    expect((result.data as Record<string, unknown>).completedCount).toBeNull();
   });
 });
 
@@ -387,5 +508,152 @@ describe('handleGetColumnDetail - taskOrder', () => {
     expect(result.message).toContain('49. #149 Task 49');
     expect(result.message).not.toContain('50. #150 Task 50');
     expect(result.message).toContain('... and 2 more (use kangentic_list_tasks for the full column)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Enum narrowing in the HANDLER, which is rule 3 of
+// .claude/rules/mcp-column-field-parity.md. The mobile bridge routes
+// update_column straight into commandHandlers and board-tool.ts checks only
+// that `params` is an object, so the zod schemas are not in that path and this
+// handler is the only narrowing in front of the write.
+// ---------------------------------------------------------------------------
+
+describe('handleUpdateColumn - enum narrowing on the unvalidated path', () => {
+  // Loops the declared map rather than listing fields, so an enum field added
+  // to COLUMN_ENUM_FIELDS and wired into the schema but NOT narrowed in the
+  // handler fails here instead of persisting a value mapRow will assert over.
+  for (const [paramName, validValues] of Object.entries(COLUMN_ENUM_FIELDS)) {
+    it(`rejects an invalid ${paramName} instead of writing it`, () => {
+      const db = createMockDb([makeSwimlaneRow()]);
+      const context = createMockContext(db);
+
+      const result = handleUpdateColumn(
+        { column: 'To Do', [paramName]: 'not-a-real-value' },
+        context,
+      );
+
+      expect(result.success).toBe(false);
+      // The error has to let a calling agent self-correct, so it names both the
+      // value it sent and the set it should have chosen from.
+      expect(result.error).toContain('not-a-real-value');
+      for (const validValue of validValues) {
+        expect(result.error).toContain(validValue);
+      }
+    });
+
+    it(`rejects a non-string ${paramName} rather than coercing it`, () => {
+      const db = createMockDb([makeSwimlaneRow()]);
+      const context = createMockContext(db);
+
+      // String(['isolated']) is 'isolated', so a coercing check would accept a
+      // caller that sent an array instead of the string and write the value as
+      // though the shape had been right.
+      const result = handleUpdateColumn(
+        { column: 'To Do', [paramName]: [validValues[0]] },
+        context,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(`Invalid ${paramName}`);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// handleGetColumnDetail - auto-command timing
+// ---------------------------------------------------------------------------
+
+// The "auto-command timing" trio that used to sit here seeded
+// `swimlanes.auto_command` / `auto_command_mode` and asserted an
+// "Auto-command timing: ..." line in the detail output. Both the source and the
+// line are gone: a column's message is its first enabled `send_message` enter
+// automation now, and `handleGetColumnDetail` reads it through
+// `AutomationRepository` + `resolveColumnMessage`, printing "Message to agent:"
+// followed by the column's On enter / On exit lists. Seeding the retired lane
+// fields would assert over a row nothing reads.
+//
+// Covered where it lives now, in `automation-commands.test.ts`: "reports a
+// column's rows with their type, trigger, and settings", "echoes back the
+// message it actually wrote, not the retired lane field", and "applies
+// autoCommandMode to the row".
+
+// ---------------------------------------------------------------------------
+// The session-track pairing, on the mock harness.
+//
+// column-commands-create-delete.test.ts covers this against a real SQLite DB,
+// but that whole file is gated on better-sqlite3 loading under the runner's
+// Node ABI, and postinstall rebuilds better-sqlite3 for ELECTRON's ABI - so it
+// skips locally and on CI alike (see the note in vitest.config.ts). These cases
+// pin the same update-path behavior somewhere that actually executes.
+// ---------------------------------------------------------------------------
+
+describe('handleUpdateColumn - session track pairing', () => {
+  it('sends a column moving to an isolated track to a fresh session per entry', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      session_target: 'main',
+      session_spawn_strategy: 'create_or_resume',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn({ column: 'To Do', sessionTarget: 'isolated' }, context);
+
+    expect(result.success).toBe(true);
+    // The write has to be explicit: the repository update is read-modify-write
+    // off the existing row, so leaving the strategy out re-persists the old one
+    // and the isolated column resumes its own previous pass.
+    expect((result.data as Record<string, unknown>).sessionSpawnStrategy).toBe('always_spawn_new');
+    expect(result.message).toContain('sessionSpawnStrategy');
+  });
+
+  it('returns a column moving back to the main track to resuming', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      session_target: 'isolated',
+      session_spawn_strategy: 'always_spawn_new',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn({ column: 'To Do', sessionTarget: 'main' }, context);
+
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).sessionSpawnStrategy).toBe('create_or_resume');
+  });
+
+  it('does not clobber a deliberate pairing when the target is merely restated', () => {
+    // An MCP caller can pass sessionTarget for a column that already has it,
+    // which the Column Manager's select never does. A persistent isolated track
+    // is one deliberate setting, not a value to be helpfully corrected.
+    const swimlaneRow = makeSwimlaneRow({
+      session_target: 'isolated',
+      session_spawn_strategy: 'create_or_resume',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn({ column: 'To Do', sessionTarget: 'isolated' }, context);
+
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).sessionSpawnStrategy).toBe('create_or_resume');
+    expect(result.message).not.toContain('sessionSpawnStrategy');
+  });
+
+  it('lets an explicit strategy win over the pairing default', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      session_target: 'main',
+      session_spawn_strategy: 'create_or_resume',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn(
+      { column: 'To Do', sessionTarget: 'isolated', sessionSpawnStrategy: 'create_or_resume' },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).sessionTarget).toBe('isolated');
+    expect((result.data as Record<string, unknown>).sessionSpawnStrategy).toBe('create_or_resume');
   });
 });

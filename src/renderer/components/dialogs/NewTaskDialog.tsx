@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { Plus, X } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
+import { describeIpcError } from '../../lib/ipc-error';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { NameFromPromptButton } from '../NameFromPromptButton';
 import { BaseDialog } from './BaseDialog';
@@ -14,10 +15,8 @@ import { TaskBranchRow } from './TaskBranchRow';
 import { PriorityLabelsRow } from './PriorityLabelsRow';
 import { DialogFooterActions } from './DialogFooterActions';
 import { AdvancedOverridesSection } from './AdvancedOverridesSection';
-import { fetchGitBranches } from '../../utils/git-branches';
-import { isValidGitBranchName } from '../../../shared/git-utils';
-import { slugify, computeAutoBranchName } from '../../../shared/slugify';
-import type { PermissionMode, TaskRunMode } from '../../../shared/types';
+import { useBranchSettings, type BranchSettingsInitial } from '../../hooks/useBranchSettings';
+import { DEFAULT_AGENT, type PermissionMode, type TaskRunMode } from '../../../shared/types';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from './AttachmentChipStrip';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from './attachment-utils';
@@ -40,6 +39,9 @@ interface NewTaskDialogProps {
 // yet), so the flag lives in the same `maximizedTasks` store set and survives HMR.
 const NEW_TASK_ENTITY_ID = 'new-task-dialog';
 
+/** A new task starts with nothing pinned: base, branch name, and worktree all inherit. */
+const EMPTY_BRANCH_SETTINGS: BranchSettingsInitial = { baseBranch: '', customBranchName: '', useWorktree: null };
+
 export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const createTask = useBoardStore((s) => s.createTask);
   const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
@@ -53,53 +55,6 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState(0);
   const [labels, setLabels] = useState<string[]>([]);
-  const [baseBranch, setBaseBranch] = useState('');
-  const [useWorktree, setUseWorktree] = useState<boolean | null>(null);
-  const effectiveWorktree = useWorktree ?? worktreesEnabled;
-  const [customBranchName, setCustomBranchName] = useState('');
-  const branchNameError = customBranchName.trim() && !isValidGitBranchName(customBranchName.trim())
-    ? 'Invalid git branch name'
-    : '';
-  const [knownBranches, setKnownBranches] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    fetchGitBranches()
-      .then(branches => setKnownBranches(new Set(branches)))
-      .catch(() => setKnownBranches(new Set()));
-  }, []);
-  const branchExists = useMemo(
-    () => customBranchName.trim() ? knownBranches.has(customBranchName.trim()) : false,
-    [customBranchName, knownBranches],
-  );
-  const effectiveBaseBranch = baseBranch.trim() || defaultBaseBranch || 'main';
-  const branchPlaceholder = (() => {
-    if (effectiveWorktree) {
-      const slug = slugify(title.trim()) || 'task-title';
-      return computeAutoBranchName(effectiveBaseBranch, defaultBaseBranch || 'main', slug, 'ab12cd34');
-    }
-    return effectiveBaseBranch;
-  })();
-  const branchHint = useMemo(() => {
-    const pill = (text: string) => (
-      <span className="font-mono text-fg-faint">{text}</span>
-    );
-    const branch = customBranchName.trim();
-    if (branch) {
-      if (branchExists) {
-        if (effectiveWorktree) {
-          return <>{pill(branch)} exists and will be checked out in a new worktree</>;
-        }
-        return <>{pill(branch)} exists and will be checked out</>;
-      }
-      if (effectiveWorktree) {
-        return <>{pill(branch)} will be created from {pill(effectiveBaseBranch)} in a new worktree</>;
-      }
-      return <>{pill(branch)} will be created from {pill(effectiveBaseBranch)}</>;
-    }
-    if (effectiveWorktree) {
-      return <>Auto-generated branch will be created from {pill(effectiveBaseBranch)} in a new worktree</>;
-    }
-    return <>Agent will work directly on {pill(effectiveBaseBranch)}</>;
-  }, [customBranchName, branchExists, effectiveWorktree, effectiveBaseBranch]);
 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<PendingAttachment | null>(null);
@@ -123,6 +78,35 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   // real form state here rather than local state inside AdvancedOverridesSection
   // - which is also what lets `isDirty` below see it.
   const [runMode, setRunMode] = useState<TaskRunMode>('column_settings');
+
+  // The Branch row: state, placeholder, hint, and the structural blockers,
+  // shared with the task-detail edit form through one hook. The remote-agent
+  // input mirrors the spawn-time skip in `ensureTaskWorktree`: the user's own
+  // pick, else the destination column's override, else the project default.
+  const destinationLane = useBoardStore((state) => state.swimlanes.find((lane) => lane.id === swimlaneId));
+  const agentExecution = useConfigStore((state) => state.config.agent.execution);
+  const resolvedAgent = agentOverride || destinationLane?.agent_override || currentProject?.default_agent || DEFAULT_AGENT;
+  const {
+    baseBranch,
+    setBaseBranch,
+    customBranchName,
+    setCustomBranchName,
+    useWorktree,
+    setUseWorktree,
+    effectiveWorktree,
+    branchPlaceholder,
+    branchNameError,
+    branchHint,
+    blocker: worktreeBlocker,
+  } = useBranchSettings({
+    title,
+    initial: EMPTY_BRANCH_SETTINGS,
+    worktreesEnabled,
+    defaultBaseBranch,
+    active: true,
+    projectPath: currentProject?.path ?? null,
+    remoteAgent: agentExecution?.[resolvedAgent]?.mode === 'remote',
+  });
 
   // Every field the user can touch, including the two that pin nothing on their
   // own: selecting Agent Override with all four inherited, or picking a Board
@@ -172,8 +156,12 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   // unmount-only cleanup revokes the CURRENT set: a [] dep captures the
   // mount-time (empty) array and leaks later previews, while an `attachments`
   // dep would revoke URLs still on screen on every add/remove.
+  // Written on commit (a layout effect), never during render, which the
+  // compiler rules forbid.
   const attachmentsRef = useRef(attachments);
-  attachmentsRef.current = attachments;
+  useLayoutEffect(() => {
+    attachmentsRef.current = attachments;
+  });
   useEffect(() => {
     return () => {
       attachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.previewUrl));
@@ -333,6 +321,17 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
         variant: 'info',
       });
       onClose();
+    } catch (error) {
+      // Previously unhandled: a rejected create (including a pending
+      // attachment write failing inside it) reached only the global
+      // unhandledrejection analytics listener, with nothing shown to the
+      // user. The dialog stays open so the title/description/attachments
+      // are not lost and the user can retry.
+      console.error('[NewTaskDialog] Failed to create task:', error);
+      useToastStore.getState().addToast({
+        message: `Couldn't create task: ${describeIpcError(error)}`,
+        variant: 'error',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -369,7 +368,6 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
             <DialogFooterActions
               onCancel={closeWithAnimation}
               submitLabel="Create"
-              busyLabel="Creating..."
               busy={submitting}
               disabled={!!branchNameError}
             />
@@ -428,6 +426,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               defaultBaseBranch={defaultBaseBranch}
               effectiveWorktree={effectiveWorktree}
               setUseWorktree={setUseWorktree}
+              worktreeBlocker={worktreeBlocker}
             />
 
             <AdvancedOverridesSection

@@ -27,6 +27,7 @@ const MUTATION_CHANNELS = new Set([
   'TASK_BULK_DELETE',
   'TASK_BULK_UNARCHIVE',
   'TASK_SWITCH_BRANCH',
+  'TASK_UPDATE_FROM_BASE',
   'TASK_SET_RUNTIME_OVERRIDE',
   'TASK_RESOLVE_PR',
   'TASK_SET_DETAIL_VIEW_STATE',
@@ -57,6 +58,9 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_GET_ACTIVITY_STATS',
   'SESSION_GET_EVENTS',
   'SESSION_GET_EVENTS_CACHE',
+  // Whole-map read of the board cards' agent message trails (unscoped, like
+  // the activity cache), for mount and HMR re-sync.
+  'SESSION_GET_MESSAGE_TRAILS',
   'SESSION_GET_SUMMARY',
   'SESSION_LIST_SUMMARIES',
   'SESSION_GET_TOOL_BREAKDOWN',
@@ -73,6 +77,13 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_INJECT_SETTINGS',
   'SESSION_SPAWN_TRANSIENT',
   'SESSION_KILL_TRANSIENT',
+  // By-session-id, and it touches no DB at all: the transient session's derived
+  // name is retained on the in-memory registry row so it survives a renderer
+  // reload. A Command Terminal has no task and no project-scoped record.
+  'SESSION_SET_TRANSIENT_LABEL',
+  // Same shape as the label: the live checkout's branch, re-derived by the
+  // renderer and mirrored onto the registry row. No DB, no project semantics.
+  'SESSION_SET_TRANSIENT_BRANCH',
 ]);
 
 interface InvokeCall {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Layers, Sliders, Bot, Repeat, Zap, Clock, Plus,
-  RotateCcw, Palette, ChevronRight, X,
+  Layers, Sliders, Bot, MessageSquare, Plus,
+  RotateCcw, Palette, ChevronRight, Trash2, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { useBoardStore } from '../../stores/board-store';
@@ -9,16 +9,43 @@ import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
-import { BaseDialog } from './BaseDialog';
+import { BaseDialog, DialogFooterActions } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
+import { SectionCard } from './board-manager/form-layout';
+import { AutomationsPane } from './board-manager/AutomationsPane';
+import { AddAutomationPicker } from './board-manager/AddAutomationPicker';
+import { EditAutomationDialog } from './board-manager/EditAutomationDialog';
+import {
+  appendRow,
+  copyAutomation,
+  describeAutomationChanges,
+  dirtyColumnIds,
+  draftsByColumn,
+  findEmptyName,
+  isColumnDirty,
+  makeNewAutomation,
+  moveRow,
+  planAutomationSave,
+  pruneColumnRows,
+  remapDraftIds,
+  removeRow,
+  replaceRow,
+  runnableAutomationCounts,
+  runnableRows,
+  setEnabled as setRowEnabled,
+  takenNamesFor,
+  type AutomationDraft,
+  type AutomationDraftsByColumn,
+} from './board-manager/automation-drafts';
+import type { AutomationTrigger, AutomationType } from '../../../shared/types';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
 import { maximizedDialogLayout, MaximizeToggleButton } from './dialog-maximize';
 import { ColumnRail, ALL_COLUMNS_ID, type RailRow } from './board-manager/ColumnRail';
-import { ColumnsOverview, formatModelName, type OverviewRow } from './board-manager/ColumnsOverview';
+import { ColumnsOverview, type OverviewRow, type OverviewValue } from './board-manager/ColumnsOverview';
 import { Pill } from '../Pill';
-import { ICON_REGISTRY, ROLE_DEFAULTS, getUsedIcons } from '../../utils/swimlane-icons';
+import { RegistryIcon, getSwimlaneIconName, getUsedIcons } from '../../utils/swimlane-icons';
 import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
@@ -39,8 +66,6 @@ import {
   type SwimlaneRole,
   type PermissionMode,
   type SessionTarget,
-  type SessionSpawnStrategy,
-  type AutoCommandMode,
   type SwimlaneCreateInput,
   type SwimlaneUpdateInput,
   type BoardProfile,
@@ -48,8 +73,20 @@ import {
 } from '../../../shared/types';
 import { ProfileBar } from './board-manager/ProfileBar';
 import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
-import { TASK_TEMPLATE_VARS } from '../../../shared/task-template-vars';
+import { templateVarsFor } from '../../../shared/task-template-vars';
+
+/**
+ * Every field this picker serves belongs to a column automation, which runs on
+ * a move, so the four move keywords resolve here and are offered. A spawn
+ * prompt is not a move and gets the shorter list; that is what `contexts`
+ * exists for, and filtering here is what makes the declaration mean something.
+ *
+ * Module scope because the list never changes, and because the picker is
+ * rendered inside a dialog that re-renders on every keystroke.
+ */
+const AUTOMATION_TEMPLATE_VARS = templateVarsFor('automation');
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
+import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
 const BOARD_MANAGER_ENTITY_ID = 'board-manager-dialog';
@@ -71,15 +108,32 @@ type SectionId = 'general' | 'agent' | 'auto';
  * present one boolean. It now sits at the end of Automation, which is what it
  * is: something that happens on its own when a task enters the column.
  *
- * `Repeat` rather than `Zap` for Automation: the lightning bolt is the glyph for
- * "run immediately" on the timing control INSIDE this section, and a section
- * heading that repeats one of its own options' icons reads as if the section is
- * about that option.
+ * The third card is CONVERSATION, not Automation: "automation" is the word for
+ * the per-column list on the right, so a settings card cannot also hold it. Both
+ * of this card's controls are about the agent's conversation, one handing the
+ * previous agent's over and one choosing which the column continues, so the name
+ * is reinforced by its own contents. `Zap` stays free for the automations card.
  */
 const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
   { id: 'general', label: 'General', icon: Sliders },
   { id: 'agent', label: 'Agent', icon: Bot },
-  { id: 'auto', label: 'Automation', icon: Repeat },
+  { id: 'auto', label: 'Conversation', icon: MessageSquare },
+];
+
+/**
+ * A session is a CHANNEL the board owns, not something a task owns: a task rides
+ * whichever channel the column it lands in selects, so an option can never be
+ * "the task's session". These are the channels, in the app's own words, the same
+ * ones `session_target`, the docs and the MCP column tools use.
+ *
+ * Module scope because `SegmentedControl` keys its measuring effect on the
+ * `options` array and this dialog re-renders on every keystroke in Name. A fresh
+ * array per render would rebuild its ResizeObserver, and force a synchronous
+ * layout read, once per character.
+ */
+const SESSION_TARGET_OPTIONS: readonly SegmentedControlOption<SessionTarget>[] = [
+  { value: 'main', label: 'Main', testId: 'column-session-target-main' },
+  { value: 'isolated', label: 'Isolated', testId: 'column-session-target-isolated' },
 ];
 
 // ────────────────────────────────────────────────────────────────────────
@@ -434,19 +488,16 @@ function ResetHint({ onClick, title }: { onClick: () => void; title: string }) {
  * container's padding. `first:` zeroes the rule/margin for General, which sits
  * flush under the identity header. Keeps the `board-manager-section-<id>` testid.
  */
-function SectionHeading({ section }: { section: typeof SECTIONS[number] }) {
-  const SectionIcon = section.icon;
+function SettingsSection({ section, children, className }: {
+  section: typeof SECTIONS[number];
+  children: React.ReactNode;
+  /** Grid placement from the column page. See the settings grid's own comment. */
+  className?: string;
+}) {
   return (
-    <div
-      data-testid={`board-manager-section-${section.id}`}
-      className="sticky top-0 z-10 -mx-7 mt-3 px-7 pt-3 pb-2 bg-surface-raised border-t border-edge/50 flex items-center gap-2 first:mt-0 first:border-t-0"
-    >
-      {/* 15, not 13: at 13 these glyphs lose their interior detail against the
-          12px uppercase label beside them. The label's cap height is unchanged,
-          so the row's height does not move. */}
-      <SectionIcon size={15} strokeWidth={1.75} className="text-fg-faint" />
-      <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">{section.label}</span>
-    </div>
+    <SectionCard id={section.id} label={section.label} icon={section.icon} className={className}>
+      {children}
+    </SectionCard>
   );
 }
 
@@ -527,7 +578,7 @@ function TemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => 
         data-testid="template-variable-menu"
       >
         <div className="max-h-72 overflow-y-auto py-1">
-          {TASK_TEMPLATE_VARS.map((templateVar) => (
+          {AUTOMATION_TEMPLATE_VARS.map((templateVar) => (
             <button
               key={templateVar.name}
               type="button"
@@ -543,6 +594,11 @@ function TemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => 
               <span className="line-clamp-1 text-[11px] text-fg-faint" title={templateVar.description}>
                 {templateVar.description}
               </span>
+              {/* Shown only where empty is the NORMAL state, not merely a
+                  possible one, so it stays a warning rather than noise. */}
+              {templateVar.availability && (
+                <span className="text-[11px] text-fg-muted">{templateVar.availability}</span>
+              )}
             </button>
           ))}
         </div>
@@ -552,8 +608,8 @@ function TemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => 
 }
 
 /**
- * Pinned identity header for the detail pane: large tinted column icon, name,
- * role badge, board position, and the Delete control (named to its target).
+ * Pinned identity header for the detail pane: tinted column icon, name, role
+ * badge, board position, and the active profile.
  */
 function DetailIdentityHeader({ draft, position, total, profileName }: {
   draft: Swimlane;
@@ -567,14 +623,14 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
    */
   profileName?: string | null;
 }) {
-  const Icon = draft.icon ? ICON_REGISTRY.get(draft.icon) : (draft.role ? ROLE_DEFAULTS[draft.role] : null);
+  const iconName = getSwimlaneIconName(draft);
   // Identity only: small tinted icon + name + role badge + position + the
-  // active profile. Delete moved to the rail's COLUMNS group, where it sits
-  // with the other structure actions (add, reorder) instead of alone here.
+  // active profile. Removal is the dialog footer's leading control, so the
+  // header carries no action and stays a plain statement of what is open.
   return (
     <div className="flex items-center gap-2.5 px-7 py-2.5 border-b border-edge/60 flex-shrink-0">
-      {Icon ? (
-        <Icon size={18} strokeWidth={1.75} style={{ color: draft.color }} className="flex-shrink-0" />
+      {iconName ? (
+        <RegistryIcon name={iconName} size={18} strokeWidth={1.75} style={{ color: draft.color }} className="flex-shrink-0" />
       ) : (
         <span className="block w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: draft.color }} />
       )}
@@ -599,6 +655,31 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
   );
 }
 
+/**
+ * The one line in the Remove column confirmation: the column drawn the way its
+ * rail row and the identity header draw it (tinted icon, name, position), so
+ * what is about to be removed needs no cross-referencing.
+ */
+function RemoveColumnTarget({ column, position, total }: {
+  column: Swimlane;
+  position: number;
+  total: number;
+}) {
+  const iconName = getSwimlaneIconName(column);
+  const name = column.name.trim() || 'Untitled';
+  return (
+    <div className="flex items-center gap-2.5 rounded bg-surface px-3 py-2 text-sm font-medium text-fg">
+      {iconName ? (
+        <RegistryIcon name={iconName} size={16} strokeWidth={1.75} style={{ color: column.color }} className="flex-shrink-0" />
+      ) : (
+        <span className="block w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: column.color }} />
+      )}
+      <span className="min-w-0 truncate" title={name} data-testid="board-manager-remove-target">{name}</span>
+      <Pill size="sm" className="ml-auto bg-surface-control/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
+    </div>
+  );
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Main dialog
 // ────────────────────────────────────────────────────────────────────────
@@ -610,29 +691,8 @@ const DIALOG_SELECT_CLASS = 'w-full appearance-none bg-surface-control border bo
 // viewport: two columns when the pane is wide enough (maximized, even on a small
 // monitor), one column when it is narrow (windowed). Columns auto-size via 1fr.
 // Short single-line controls pair up; full-width fields carry `SECTION_FULL_SPAN`.
-/**
- * Module scope, not an inline literal at the call site: `SegmentedControl` keys
- * its measuring effect on `options`, and this dialog re-renders on every
- * keystroke in any field, so a fresh array each render would tear down and
- * rebuild the control's ResizeObserver (and force a synchronous layout read)
- * on every character typed. The options are fully static, so one instance does.
- */
-const AUTO_COMMAND_MODE_OPTIONS: SegmentedControlOption<AutoCommandMode>[] = [
-  {
-    value: 'immediate',
-    label: 'Run immediately',
-    icon: <Zap size={14} />,
-    testId: 'auto-command-mode-immediate',
-  },
-  {
-    value: 'deferred',
-    label: 'Wait for current turn',
-    icon: <Clock size={14} />,
-    testId: 'auto-command-mode-deferred',
-  },
-];
 
-const SECTION_GRID_CLASS = 'grid grid-cols-1 @[720px]:grid-cols-2 gap-x-6 gap-y-3 max-w-4xl pt-2';
+const SECTION_GRID_CLASS = 'grid grid-cols-1 @[720px]:grid-cols-2 gap-x-6 gap-y-3 pt-2';
 const SECTION_FULL_SPAN = '@[720px]:col-span-2';
 
 interface BoardManagerDialogProps {
@@ -728,10 +788,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // save path can still name them and a discard restores them for free.
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set<string>());
 
-  // Set once the user drags a rail row. Tells the store-sync effect to preserve
-  // the local order instead of re-sorting from store positions. Never cleared
+  // Set once the user drags a rail row. Tells the store sync to preserve the
+  // local order instead of re-sorting from store positions. Never cleared
   // while open (once local order equals store order, "preserve" is a no-op).
-  const hasLocalReorderRef = useRef(false);
+  // State, not a ref, because the sync runs during render and may not read a
+  // ref there.
+  const [hasLocalReorder, setHasLocalReorder] = useState(false);
 
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -742,25 +804,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const [autoFocusNameId, setAutoFocusNameId] = useState<string | null>(initialState.autoFocusNameId);
 
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const autoCommandRef = useRef<HTMLTextAreaElement>(null);
 
   const projectDefaultAgent = currentProject?.default_agent ?? DEFAULT_AGENT;
   const projectDefaultAgentLabel = agentList.find((agent) => agent.name === projectDefaultAgent)?.displayName ?? projectDefaultAgent;
 
   const lastDraftRequestRef = useRef(addDraftRequest);
-
-  // Mirror state into refs so the store-sync effect can read the latest
-  // values without including them in its dependency array (which would loop,
-  // because the same effect calls setOriginals/setDrafts).
-  // Intentional: no deps array on these mirror effects - they fire on every
-  // commit so .current always points at the latest snapshot before the
-  // store-sync effect runs (effects fire in declaration order).
-  const originalsRef = useRef(originals);
-  const draftsRef = useRef(drafts);
-  const pendingDeleteIdsRef = useRef(pendingDeleteIds);
-  useEffect(() => { originalsRef.current = originals; });
-  useEffect(() => { draftsRef.current = drafts; });
-  useEffect(() => { pendingDeleteIdsRef.current = pendingDeleteIds; });
 
   // ── Sync from store ────────────────────────────────────────────────
   // When the store updates (other UI edits a column, or a column is created
@@ -769,26 +817,30 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // by this sync. After save, the store update flows back through here so
   // dirty dots clear without us re-creating the dialog state.
   //
-  // Reads originals/drafts via refs so we can compare against the latest
-  // committed state without putting them in the dep array (which would loop
-  // because the same effect calls setOriginals/setDrafts).
-  useEffect(() => {
-    const previousOriginals = originalsRef.current;
-    const previousDrafts = draftsRef.current;
-    const stagedDeletes = pendingDeleteIdsRef.current;
+  // This runs DURING RENDER, on the render where `swimlanes` first differs
+  // from the array last synced (React's "adjusting state when a prop changes"
+  // pattern), rather than in an effect. It used to be an effect reading the
+  // committed originals/drafts through mirror refs to avoid a dependency loop;
+  // in render the current state IS the committed state, so it reads it
+  // directly, and React re-renders immediately with the adjusted values
+  // before anything paints. The initial state is already derived from the
+  // mount-time `swimlanes`, so the first render never syncs.
+  const [syncedSwimlanes, setSyncedSwimlanes] = useState(swimlanes);
+  if (swimlanes !== syncedSwimlanes) {
+    setSyncedSwimlanes(swimlanes);
 
     const nextOriginals: Record<string, Swimlane> = {};
     for (const lane of swimlanes) nextOriginals[lane.id] = lane;
     setOriginals(nextOriginals);
 
-    const nextDrafts: Record<string, Swimlane> = { ...previousDrafts };
+    const nextDrafts: Record<string, Swimlane> = { ...drafts };
     for (const lane of swimlanes) {
       // A staged delete removed this lane's draft, but the row is still in the
       // store (nothing is persisted until Save), so `!previousDraft` below would
       // read as "never seen" and re-add it, resurrecting the removal.
-      if (stagedDeletes.has(lane.id)) continue;
-      const previousDraft = previousDrafts[lane.id];
-      const wasDirty = previousDraft ? isDirty(previousDraft, previousOriginals[lane.id]) : false;
+      if (pendingDeleteIds.has(lane.id)) continue;
+      const previousDraft = drafts[lane.id];
+      const wasDirty = previousDraft ? isDirty(previousDraft, originals[lane.id]) : false;
       if (!previousDraft || !wasDirty) {
         nextDrafts[lane.id] = lane;
       }
@@ -800,8 +852,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     }
     setDrafts(nextDrafts);
 
-    setLaneOrder((previousOrder) => reconcileLaneOrder(previousOrder, swimlanes, hasLocalReorderRef.current, stagedDeletes));
-  }, [swimlanes]);
+    setLaneOrder(reconcileLaneOrder(laneOrder, swimlanes, hasLocalReorder, pendingDeleteIds));
+  }
 
   // ── Refresh agent capabilities ─────────────────────────────────────
   // The agent inventory is loaded once at app bootstrap (App.tsx) and cached in
@@ -867,23 +919,21 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // under a profile without being individually rewired.
   const storeBoardProfiles = useBoardStore((state) => state.boardProfiles);
   const saveBoardProfiles = useBoardStore((state) => state.saveBoardProfiles);
-  const [profileDrafts, setProfileDrafts] = useState<BoardProfile[]>([]);
-  const [profileOriginals, setProfileOriginals] = useState<BoardProfile[]>([]);
+  // Snapshot the store's profiles once per open (lazy initializers run at the
+  // first render only, so live store changes never clobber in-progress edits).
+  // Deep-cloned so edits stay local until Save, matching how column drafts
+  // work. Hand-written profiles in kangentic.json load here like any other, so
+  // they round-trip through an edit rather than being clobbered by it.
+  const [profileDrafts, setProfileDrafts] = useState<BoardProfile[]>(
+    () => structuredClone(storeBoardProfiles) as BoardProfile[],
+  );
+  const [profileOriginals, setProfileOriginals] = useState<BoardProfile[]>(
+    () => structuredClone(storeBoardProfiles) as BoardProfile[],
+  );
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [profileNameDialog, setProfileNameDialog] = useState<
     { mode: 'new' | 'duplicate' | 'rename'; value: string } | null
   >(null);
-
-  // Snapshot the store's profiles once per open. Deep-cloned so edits stay local
-  // until Save, matching how column drafts work. Hand-written profiles in
-  // kangentic.json load here like any other, so they round-trip through an edit
-  // rather than being clobbered by it.
-  useEffect(() => {
-    const snapshot = structuredClone(storeBoardProfiles) as BoardProfile[];
-    setProfileDrafts(snapshot);
-    setProfileOriginals(structuredClone(storeBoardProfiles) as BoardProfile[]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot on mount only; live store changes must not clobber in-progress edits
-  }, []);
 
   const activeProfile = activeProfileId
     ? profileDrafts.find((profile) => profile.id === activeProfileId) ?? null
@@ -909,9 +959,66 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
   // Gates the timing control. Trimmed, so a field holding only whitespace is
   // still "no command" - the injection plan treats it that way too.
-  const hasAutoCommandDraft = Boolean(draft?.auto_command?.trim());
 
   const isOverview = activeId === ALL_COLUMNS_ID;
+
+  // ── Automations ────────────────────────────────────────────────────────
+  //
+  // A draft per column, snapshotted on mount and again while UNTOUCHED, so a
+  // board reload behind an open dialog refreshes what the user has not edited
+  // without clobbering what they have.
+  const automations = useBoardStore((s) => s.automations);
+  const [automationOriginals, setAutomationOriginals] = useState<AutomationDraftsByColumn>(() => draftsByColumn(automations));
+  const [automationDrafts, setAutomationDrafts] = useState<AutomationDraftsByColumn>(() => draftsByColumn(automations));
+  const [editing, setEditing] = useState<{ columnId: string; rowId: string; isNew: boolean } | null>(null);
+  const [pickerOpenFor, setPickerOpenFor] = useState<{ columnId: string; trigger: AutomationTrigger; anchor: HTMLElement } | null>(null);
+  const [automationsTouched, setAutomationsTouched] = useState(false);
+  // The store refresh, during render on the render where `automations` first
+  // differs from the array last synced (the same pattern as the column sync
+  // above). The originals always follow the store; the drafts only while
+  // untouched, so a store refresh never overwrites the user's edits.
+  const [syncedAutomations, setSyncedAutomations] = useState(automations);
+  if (automations !== syncedAutomations) {
+    setSyncedAutomations(automations);
+    const next = draftsByColumn(automations);
+    setAutomationOriginals(next);
+    if (!automationsTouched) setAutomationDrafts(next);
+  }
+  const loadAutomations = useBoardStore((s) => s.loadAutomations);
+  const replaceAutomationsForColumn = useBoardStore((s) => s.replaceAutomationsForColumn);
+
+  // The list only. Run history is not fetched here: the row used to print its
+  // last run under the description, which made rows in one list differ in
+  // height by history, and a failure already reaches the user as the toast
+  // with Run again.
+  useEffect(() => {
+    void loadAutomations();
+  }, [loadAutomations]);
+
+  const rowsForColumn = useCallback(
+    (columnId: string): AutomationDraft[] => automationDrafts[columnId] ?? [],
+    [automationDrafts],
+  );
+
+  const mutateRows = useCallback((columnId: string, next: (rows: AutomationDraft[]) => AutomationDraft[]) => {
+    setAutomationsTouched(true);
+    setAutomationDrafts((previous) => ({ ...previous, [columnId]: next(previous[columnId] ?? []) }));
+  }, []);
+
+  const automationDirtyColumnIds = useMemo(
+    () => dirtyColumnIds(automationOriginals, automationDrafts),
+    [automationOriginals, automationDrafts],
+  );
+  const automationsDirty = automationDirtyColumnIds.length > 0;
+
+  const automationChangeLines = useMemo(
+    () => describeAutomationChanges(
+      automationOriginals,
+      automationDrafts,
+      (columnId) => drafts[columnId]?.name?.trim() || 'Untitled column',
+    ),
+    [automationOriginals, automationDrafts, drafts],
+  );
 
   const dirtyIds = useMemo(
     () => laneOrder.filter((id) => newDraftIds.has(id) || isDirty(drafts[id], originals[id])),
@@ -927,7 +1034,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     () => JSON.stringify(profileDrafts) !== JSON.stringify(profileOriginals),
     [profileDrafts, profileOriginals],
   );
-  const hasDirty = dirtyIds.length > 0 || orderDirty || profilesDirty || pendingDeleteIds.size > 0;
+  // `automationsDirty` is load-bearing here, for the same reason
+  // `profilesDirty` is: automation edits live in `automationDrafts`, never in
+  // `drafts`, so an automation-only change leaves every column check false.
+  // Without it the Save button stays disabled and the edit cannot be saved at all.
+  const hasDirty = dirtyIds.length > 0 || orderDirty || profilesDirty || automationsDirty || pendingDeleteIds.size > 0;
 
   // Rows for the left rail. The inline override hints (agent / isolated) are
   // suppressed for role-pinned To Do / Done columns, where they never apply.
@@ -950,42 +1061,111 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         dirty: newDraftIds.has(id) || isDirty(laneDraft, originals[id]),
         agentOverrideLabel,
         isolated: applies && laneDraft.session_target === 'isolated',
+        // The DRAFT's counts, not the saved ones, so switching a row off
+        // updates the rail before Save, like every other number on this
+        // surface. Enter and exit together: the rail says how much happens
+        // here, and the two groups on the column page say which end.
+        automationCount: (() => {
+          const counts = runnableAutomationCounts(automationDrafts[id] ?? [], laneDraft);
+          return counts.enter + counts.exit;
+        })(),
       }];
     });
-  }, [laneOrder, drafts, originals, newDraftIds, agentList]);
+  }, [laneOrder, drafts, originals, newDraftIds, agentList, automationDrafts]);
 
   // Rows for the "All columns" overview grid, read from drafts so unsaved edits show.
   const overviewRows: OverviewRow[] = useMemo(() => {
     return laneOrder.flatMap((id) => {
       const laneDraft = drafts[id];
       if (!laneDraft) return [];
+
+      // Two reasons a cell can be inapplicable, and they are different facts.
+      // To Do and Done never run an agent at all; a column whose "Start an agent
+      // here" is off has no agent or session settings to inherit. Both dash, and
+      // the `title` says which.
+      const isTerminal = laneDraft.role === 'todo' || laneDraft.role === 'done';
+      const terminalName = laneDraft.role === 'todo' ? 'To Do' : 'Done';
+      const agentReason = isTerminal
+        ? `Sessions don't run in ${terminalName} columns.`
+        : 'Start an agent here is off.';
+      const agentApplies = !isTerminal && laneDraft.auto_spawn;
+
+      // A value cell: the real wording, and whether anyone chose it.
+      const value = (label: string, changed: boolean): OverviewValue =>
+        agentApplies
+          ? { label, changed, applicable: true }
+          : { label, changed: false, applicable: false, reason: agentReason };
+
       const overrideName = laneDraft.agent_override;
-      // Show the effective agent: the override's display name, or the project
-      // default's (so it reads "Claude Code", not "Default"). Muted when default.
+      // The EFFECTIVE agent, so it reads "Claude Code" rather than "Default":
+      // that is the option the select actually sits on.
       const agentLabel = overrideName
         ? (agentList.find((agent) => agent.name === overrideName)?.displayName ?? overrideName)
         : projectDefaultAgentLabel;
+      // Model and Permissions are worded by the column's OWN agent, from the
+      // same sources its form fields read, so a row never names a value the
+      // column page spells differently (a Codex column's acceptEdits is "Auto
+      // (Preset)", not Claude's "Accept Edits").
+      const laneAgentInfo = agentList.find((agent) => agent.name === (overrideName ?? projectDefaultAgent));
       const modelOverride = laneDraft.model_override?.trim();
+
+      const rows = automationDrafts[id] ?? [];
+      const counts = runnableAutomationCounts(rows, laneDraft);
+      // The tooltip names exactly the rows the number counts.
+      const nameRows = (trigger: AutomationTrigger): string =>
+        runnableRows(rows, laneDraft, trigger).map((row) => row.name).join(', ');
+
       return [{
         id,
         name: laneDraft.name,
         color: laneDraft.color,
         icon: laneDraft.icon,
         role: laneDraft.role,
-        dirty: newDraftIds.has(id) || isDirty(laneDraft, originals[id]),
-        autoSpawn: laneDraft.auto_spawn,
-        agentLabel,
-        agentIsDefault: !overrideName,
-        modelLabel: modelOverride ? formatModelName(modelOverride) : 'Default',
-        effortLabel: laneDraft.effort_override || 'Default',
-        permissionLabel: laneDraft.permission_mode
-          ? getPermissionLabel(DEFAULT_PERMISSIONS, laneDraft.permission_mode)
-          : 'Default',
-        isolated: laneDraft.session_target === 'isolated',
-        hasAutoCommand: !!laneDraft.auto_command?.trim(),
+        dirty:
+          newDraftIds.has(id)
+          || isDirty(laneDraft, originals[id])
+          || isColumnDirty(rows, automationOriginals[id] ?? []),
+        // A terminal column has no "Start an agent here" at all, so it dashes
+        // rather than showing a ghost switch in the off position, which would
+        // claim the setting exists. A normal column always has it.
+        autoSpawn: isTerminal
+          ? { on: false, applicable: false, reason: agentReason, ariaLabel: 'Start an agent here' }
+          : { on: laneDraft.auto_spawn, applicable: true, ariaLabel: 'Start an agent here' },
+        agent: value(agentLabel, !!overrideName),
+        model: value(
+          modelOverride ? modelRowLabel(modelOverride, laneAgentInfo?.capabilities?.modelDisplayNames ?? {}) : 'Default',
+          !!modelOverride,
+        ),
+        effort: value(laneDraft.effort_override || 'Default', !!laneDraft.effort_override),
+        permission: value(
+          laneDraft.permission_mode
+            ? getPermissionLabel(laneAgentInfo?.permissions ?? DEFAULT_PERMISSIONS, laneDraft.permission_mode)
+            : 'Default',
+          !!laneDraft.permission_mode,
+        ),
+        handoff: agentApplies
+          ? { on: laneDraft.handoff_context, applicable: true, ariaLabel: 'Hand off context when the agent changes' }
+          : { on: false, applicable: false, reason: agentReason, ariaLabel: 'Hand off context when the agent changes' },
+        session: value(
+          laneDraft.session_target === 'isolated' ? 'Isolated' : 'Main',
+          laneDraft.session_target === 'isolated',
+        ),
+        // The counts are what will RUN: a switched-off or blocked row is not
+        // counted and not named. This view answers "what happens when a task
+        // moves", and an off row is visible and fixable one click away.
+        //
+        // An enter row can never fire on To Do or Done, so that cell dashes
+        // there while On exit stays a real count.
+        onEnter: isTerminal
+          ? { label: '0', changed: false, applicable: false, reason: `Nothing runs when a task enters ${terminalName}.` }
+          : { label: String(counts.enter), changed: counts.enter > 0, applicable: true, reason: nameRows('enter') },
+        onExit: { label: String(counts.exit), changed: counts.exit > 0, applicable: true, reason: nameRows('exit') },
       }];
     });
-  }, [laneOrder, drafts, originals, newDraftIds, agentList, projectDefaultAgentLabel]);
+  }, [
+    laneOrder, drafts, originals, newDraftIds, agentList, projectDefaultAgent, projectDefaultAgentLabel,
+    automationDrafts, automationOriginals,
+  ]);
 
   // Effective-agent resolution for the column manager: column draft's
   // override wins over the project default. (Tasks add a fourth tier in
@@ -1031,11 +1211,18 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     );
   }, [drafts, newDraftIds, activeId]);
 
-  // Sync hexInput when the active draft's color changes.
-  useEffect(() => {
-    if (draft) setHexInput(draft.color.toLowerCase());
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-sync only when the color changes, not on every draft identity change, so editing other fields does not clobber in-progress hex input
-  }, [draft?.color]);
+  // Sync hexInput when the active draft's color changes, and only then:
+  // editing other fields must not clobber in-progress hex input. Done during
+  // render against the last color synced, so the field re-renders with the new
+  // value before anything paints.
+  const draftColor = draft?.color;
+  // Starts unsynced so the first render with a draft seeds the field, as the
+  // mount run of the old effect did.
+  const [syncedDraftColor, setSyncedDraftColor] = useState<string | undefined>(undefined);
+  if (draftColor !== syncedDraftColor) {
+    setSyncedDraftColor(draftColor);
+    if (draftColor !== undefined) setHexInput(draftColor.toLowerCase());
+  }
 
   // ── Mutators ───────────────────────────────────────────────────────
   const updateDraft = useCallback((updater: (current: Swimlane) => Swimlane) => {
@@ -1074,32 +1261,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     });
   }, [activeId, activeProfileId, drafts]);
 
-  /**
-   * Insert a `{{variable}}` at the auto-command textarea's cursor, restoring the
-   * caret after it. The rAF is load-bearing: `updateDraft` re-renders the
-   * controlled textarea, and setting the selection before that paint lands puts
-   * the caret back at the end of the old value.
-   */
-  const insertTemplateVariable = useCallback((variable: string) => {
-    const node = autoCommandRef.current;
-    const current = draft?.auto_command ?? '';
-    if (!node) {
-      updateDraft((row) => ({ ...row, auto_command: current + variable }));
-      return;
-    }
-    const start = node.selectionStart ?? current.length;
-    const end = node.selectionEnd ?? current.length;
-    updateDraft((row) => ({
-      ...row,
-      auto_command: current.slice(0, start) + variable + current.slice(end),
-    }));
-    window.requestAnimationFrame(() => {
-      node.focus();
-      const cursor = start + variable.length;
-      node.setSelectionRange(cursor, cursor);
-    });
-  }, [draft?.auto_command, updateDraft]);
-
+  
   // ── Save / cancel / delete ────────────────────────────────────────
   const requestCancel = useCallback(() => {
     if (saving) return;
@@ -1129,6 +1291,18 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       return;
     }
 
+    // The backstop for a row that never went through the Edit dialog, which is
+    // the one path that can reach Save unnamed: a copy of a copy. The dialog
+    // itself holds Done disabled on an empty name.
+    for (const columnId of Object.keys(automationDrafts)) {
+      const unnamed = findEmptyName(automationDrafts[columnId] ?? []);
+      if (!unnamed) continue;
+      setActiveId(columnId);
+      setEditing({ columnId, rowId: unnamed.id, isNew: false });
+      useToastStore.getState().addToast({ message: 'Name an automation before saving.', variant: 'error' });
+      return;
+    }
+
     const creates: string[] = [];
     const updates: string[] = [];
     for (const id of laneOrder) {
@@ -1143,7 +1317,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     // `profileDrafts`, never in `drafts`, so a profile-only change leaves the
     // three column checks false. Without it this early return closed the dialog
     // before the profile write below ever ran, silently discarding the edit.
-    if (creates.length === 0 && updates.length === 0 && !orderDirty && !profilesDirty && pendingDeleteIds.size === 0) {
+    if (creates.length === 0 && updates.length === 0 && !orderDirty && !profilesDirty && !automationsDirty && pendingDeleteIds.size === 0) {
       onClose();
       return;
     }
@@ -1310,17 +1484,34 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       }
     }
 
-    if (firstError) {
-      const savedTotal = savedUpdates + savedCreates + savedDeletes;
-      const partialNote = savedTotal > 0
-        ? ` (saved ${savedTotal} column${savedTotal > 1 ? 's' : ''} before failing)`
-        : '';
-      useToastStore.getState().addToast({
-        message: `${firstError.message}${partialNote}`,
-        variant: 'error',
-      });
-      setSaving(false);
-      return;
+    // Automations save LAST of the column writes, so a column created in this
+    // same Save already has its real id to hang them on.
+    let savedAutomationColumns = 0;
+    if (!firstError) {
+      // Re-point any rows that were drafted against a placeholder column id.
+      let plannedDrafts = automationDrafts;
+      for (const [tempId, realId] of idMap) plannedDrafts = remapDraftIds(plannedDrafts, tempId, realId);
+      // A column staged for deletion takes its rows with it; writing them back
+      // would recreate rows for a column that is gone.
+      for (const deletedId of pendingDeleteIds) plannedDrafts = pruneColumnRows(plannedDrafts, deletedId);
+
+      for (const entry of planAutomationSave(automationOriginals, plannedDrafts)) {
+        try {
+          await replaceAutomationsForColumn(entry.columnId, entry.automations);
+          savedAutomationColumns += 1;
+          setAutomationOriginals((previous) => ({
+            ...previous,
+            [entry.columnId]: plannedDrafts[entry.columnId] ?? [],
+          }));
+        } catch (error) {
+          if (!firstError) {
+            const columnName = drafts[entry.columnId]?.name ?? 'column';
+            firstError = error instanceof Error
+              ? new Error(`Could not save automations on "${columnName}": ${error.message}`)
+              : new Error(`Could not save automations on "${columnName}"`);
+          }
+        }
+      }
     }
 
     // Profiles persist AFTER the column creates above, so an entry can reference
@@ -1333,9 +1524,38 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     // that column out of the list above, and this whole-array write would
     // otherwise restore it. When nothing here is dirty we do not write at all,
     // which is correct - the delete path already pruned the on-disk copy.
-    if (profilesDirty) {
-      await saveBoardProfiles(profilesToSave);
-      setProfileOriginals(structuredClone(profilesToSave) as BoardProfile[]);
+    //
+    // Guarded and folded into `firstError` like the five steps above it, and
+    // placed BEFORE the error check rather than after so that branch owns the
+    // toast, the setSaving(false) and the return. `saveBoardProfiles` reports a
+    // failed write as `false` (it raises its own toast and reloads); before
+    // that, a failed profile write fell through to the success toast below, so
+    // the user got "saved profiles" next to "Failed to save profiles" and the
+    // dialog closed on the lie. The try/catch also covers the structuredClone.
+    if (!firstError && profilesDirty) {
+      try {
+        if (await saveBoardProfiles(profilesToSave)) {
+          setProfileOriginals(structuredClone(profilesToSave) as BoardProfile[]);
+        } else {
+          firstError = new Error('Could not save profiles');
+        }
+      } catch (error) {
+        firstError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+
+    if (firstError) {
+      const savedTotal = savedUpdates + savedCreates + savedDeletes;
+      const partialParts: string[] = [];
+      if (savedTotal > 0) partialParts.push(`${savedTotal} column${savedTotal > 1 ? 's' : ''}`);
+      if (savedAutomationColumns > 0) partialParts.push(`automations on ${savedAutomationColumns} column${savedAutomationColumns > 1 ? 's' : ''}`);
+      const partialNote = partialParts.length > 0 ? ` (saved ${partialParts.join(' and ')} before failing)` : '';
+      useToastStore.getState().addToast({
+        message: `${firstError.message}${partialNote}`,
+        variant: 'error',
+      });
+      setSaving(false);
+      return;
     }
 
     const parts: string[] = [];
@@ -1344,16 +1564,47 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     if (savedDeletes > 0) parts.push(`${parts.length === 0 ? 'Deleted' : 'deleted'} ${savedDeletes} column${savedDeletes > 1 ? 's' : ''}`);
     if (orderDirty) parts.push(parts.length === 0 ? 'Updated column order' : 'updated column order');
     if (profilesDirty) parts.push(parts.length === 0 ? 'Saved profiles' : 'saved profiles');
+    if (savedAutomationColumns > 0) parts.push(parts.length === 0 ? 'Saved automations' : 'saved automations');
     useToastStore.getState().addToast({
       message: parts.length > 0 ? parts.join(' and ') : 'No changes to save',
       variant: 'info',
     });
+    // Defensive, not a fix for a reachable path: every failure above returns
+    // through the firstError branch, so reaching here means the save landed and
+    // onClose() unmounts us. See requestSave below for what a stranded
+    // `saving === true` costs, which is why the line is worth keeping.
+    setSaving(false);
     onClose();
-  }, [saving, laneOrder, drafts, originals, newDraftIds, pendingDeleteIds, orderDirty, profilesDirty, profileDrafts, saveBoardProfiles, updateSwimlane, createSwimlane, deleteSwimlane, reorderSwimlanes, onClose]);
+  }, [saving, laneOrder, drafts, originals, newDraftIds, pendingDeleteIds, orderDirty, profilesDirty, profileDrafts, saveBoardProfiles, updateSwimlane, createSwimlane, deleteSwimlane, reorderSwimlanes, onClose,
+    automationsDirty, automationOriginals, automationDrafts, replaceAutomationsForColumn]);
+
+  /**
+   * The only way handleSave is invoked, so a throw escaping it cannot strand
+   * `saving === true`.
+   *
+   * Every failure INSIDE handleSave returns through its firstError branch, so
+   * this is a backstop rather than a live path. It is worth having because the
+   * consequence is out of all proportion to the cause: `requestCancel` bails
+   * while `saving`, so a stranded flag deadens Cancel, Escape, the header X and
+   * the backdrop as well as Save, and handleSave's own re-entrancy guard means
+   * Ctrl+S is no escape hatch either. The dialog would need a reload to close.
+   *
+   * A bare `void handleSave()` turned that into an unhandled rejection the user
+   * never saw. Catching releases the flag AND says what happened.
+   */
+  const requestSave = useCallback(() => {
+    handleSave().catch((error) => {
+      setSaving(false);
+      useToastStore.getState().addToast({
+        message: `Could not save: ${error instanceof Error ? error.message : String(error)}`,
+        variant: 'error',
+      });
+    });
+  }, [handleSave]);
 
   // Cmd/Ctrl+S to save, via the central keybinding registry. Document-level,
   // bubble phase, preventDefault only - matching the original listener.
-  useKeybinding('boardManager.save', () => void handleSave(), {
+  useKeybinding('boardManager.save', requestSave, {
     target: 'document',
     stopPropagation: false,
   });
@@ -1361,7 +1612,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // Reorder handler for the rail: local-only until Save. Flags the store-sync
   // effect to preserve this order (see hasLocalReorderRef above).
   const handleRailReorder = useCallback((nextOrder: string[]) => {
-    hasLocalReorderRef.current = true;
+    setHasLocalReorder(true);
     setLaneOrder(nextOrder);
   }, []);
 
@@ -1377,28 +1628,42 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   }, [laneOrder]);
 
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true });
-  // Suppress column cycling while a nested modal (delete confirm, icon picker, or
-  // the discard-changes confirm) is open, mirroring the Escape guard below.
-  // Otherwise a cycle changes activeId behind the modal, and since the delete
-  // confirm names drafts[confirmDeleteId] while handleDeletePersisted deletes
-  // activeId, the confirmation can name one column and delete another.
-  const columnCycleEnabled = !confirmDeleteId && !showIconPicker && !showCancelConfirm;
+  // Every modal this dialog layers over itself. Each is a BaseDialog with its
+  // own bubble-phase Escape listener on `document`, and this dialog's Escape
+  // listener below is on `document` too, so one Escape aimed at the modal on
+  // top would ALSO reach this one and cancel the whole Column Manager. The
+  // Add automation picker is absent deliberately: it stops Escape at the
+  // capture phase itself, so nothing here ever sees that press.
+  //
+  // The same set gates column cycling: a cycle behind a modal changes activeId
+  // under it, and since the remove confirm names drafts[confirmDeleteId] while
+  // handleDeletePersisted deletes activeId, the confirmation could name one
+  // column and delete another.
+  //
+  // The remove confirm's term matches its render gate exactly: the store sync
+  // above drops a draft whose lane vanished from the store, and the confirm
+  // stops rendering with it, so counting `confirmDeleteId` alone would leave
+  // Escape and cycling suppressed with no modal on screen.
+  const removeConfirmOpen = confirmDeleteId !== null && drafts[confirmDeleteId] !== undefined;
+  const nestedModalOpen = showCancelConfirm || removeConfirmOpen || showIconPicker
+    || profileNameDialog !== null || editing !== null;
+  const columnCycleEnabled = !nestedModalOpen;
   useKeybinding('boardManager.nextColumn', () => cycleColumn(1), { target: 'document', stopPropagation: false, enabled: columnCycleEnabled });
   useKeybinding('boardManager.prevColumn', () => cycleColumn(-1), { target: 'document', stopPropagation: false, enabled: columnCycleEnabled });
 
   // Escape-to-cancel stays a hand-written listener: it is a structural dialog
-  // key with conditional dismissal (suppressed while a nested confirm or picker
-  // is open) and is not rebindable. See .claude/rules/keybindings-registry.md.
+  // key with conditional dismissal (suppressed while a nested modal is open)
+  // and is not rebindable. See .claude/rules/keybindings-registry.md.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !showCancelConfirm && !confirmDeleteId && !showIconPicker) {
+      if (event.key === 'Escape' && !nestedModalOpen) {
         event.preventDefault();
         requestCancel();
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [requestCancel, showCancelConfirm, confirmDeleteId, showIconPicker]);
+  }, [requestCancel, nestedModalOpen]);
 
   const removeDraftLocally = useCallback((id: string) => {
     setDrafts((previous) => {
@@ -1415,9 +1680,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     setLaneOrder((previous) => previous.filter((entry) => entry !== id));
     setActiveId((previous) => {
       if (previous !== id) return previous;
+      // Land on the neighbour: the column that takes the removed one's place,
+      // or the one before it when the last column goes. Selection used to fall
+      // to the first remaining column, which is To Do, so removing the fifth
+      // of seven columns jumped the user to the top of the rail. Falls back to
+      // the overview so an emptied selection degrades gracefully.
+      const removedIndex = laneOrder.indexOf(id);
       const remaining = laneOrder.filter((entry) => entry !== id);
-      // Fall back to the overview so an emptied selection degrades gracefully.
-      return remaining[0] ?? ALL_COLUMNS_ID;
+      const neighbourIndex = Math.min(Math.max(removedIndex, 0), remaining.length - 1);
+      return remaining[neighbourIndex] ?? ALL_COLUMNS_ID;
     });
   }, [laneOrder]);
 
@@ -1426,32 +1697,56 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     removeDraftLocally(activeId);
   }, [isNewDraft, activeId, removeDraftLocally]);
 
+  // A column that still has tasks cannot be removed. Answered from the store's
+  // task list so the refusal is immediate; the repository re-checks at save
+  // time, so this is feedback, not the authority. Returns the refusal toast's
+  // text, or null when the removal can go ahead.
+  const removalRefusal = useCallback((id: string): string | null => {
+    const name = drafts[id]?.name.trim() || 'Untitled';
+    const taskCount = tasks.filter((task) => task.swimlane_id === id).length;
+    if (taskCount === 0) return null;
+    return `Cannot remove "${name}". Move or delete all ${taskCount} task${taskCount > 1 ? 's' : ''} first.`;
+  }, [drafts, tasks]);
+
+  // The footer's Remove column. An unsaved draft is simply discarded: it has
+  // never existed. A persisted column is checked for tasks BEFORE the confirm
+  // opens, so a column that cannot be removed refuses on the click rather than
+  // making the user confirm first and refusing after.
+  const requestRemoveColumn = useCallback(() => {
+    if (isNewDraft) {
+      handleDiscardNewDraft();
+      return;
+    }
+    const refusal = removalRefusal(activeId);
+    if (refusal) {
+      useToastStore.getState().addToast({ message: refusal, variant: 'error' });
+      return;
+    }
+    setConfirmDeleteId(activeId);
+  }, [isNewDraft, handleDiscardNewDraft, removalRefusal, activeId]);
+
   // Stages the removal; the IPC runs in handleSave alongside the creates and
-  // updates. The task-count guard stays here so the refusal is immediate rather
-  // than surfacing minutes later at save time; the repository re-checks it, so
-  // this is feedback, not the authority. `originals[id]` is deliberately left in
+  // updates. The task check runs again here because the store's task list can
+  // change while the confirm is open. `originals[id]` is deliberately left in
   // place - the save path reads the name from it, and Cancel restores the column
   // by simply dropping the staged id.
   const handleDeletePersisted = useCallback(() => {
     setConfirmDeleteId(null);
     const id = activeId;
     if (!id || newDraftIds.has(id)) return;
-    const name = drafts[id]?.name ?? 'column';
-    const taskCount = tasks.filter((task) => task.swimlane_id === id).length;
-    if (taskCount > 0) {
-      useToastStore.getState().addToast({
-        message: `Cannot delete "${name}". Move or delete all ${taskCount} task${taskCount > 1 ? 's' : ''} first.`,
-        variant: 'error',
-      });
+    const refusal = removalRefusal(id);
+    if (refusal) {
+      useToastStore.getState().addToast({ message: refusal, variant: 'error' });
       return;
     }
+    const name = drafts[id]?.name.trim() || 'Untitled';
     removeDraftLocally(id);
     setPendingDeleteIds((previous) => new Set(previous).add(id));
     useToastStore.getState().addToast({
       message: `"${name}" will be removed when you save.`,
       variant: 'info',
     });
-  }, [activeId, newDraftIds, tasks, drafts, removeDraftLocally]);
+  }, [activeId, newDraftIds, drafts, removalRefusal, removeDraftLocally]);
 
   // ── Rendering ─────────────────────────────────────────────────────
   if (!isOverview && !draft) {
@@ -1459,25 +1754,53 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     return null;
   }
 
-  // A single count of affected columns: those with field edits or a pending
-  // create, plus any whose position changed from a reorder, plus any staged for
-  // deletion. The user just wants "how many columns will change", not an
-  // order-vs-options breakdown.
-  const affectedIds = new Set(dirtyIds);
-  for (const movedId of getReorderedColumnIds(laneOrder, originals, pendingDeleteIds)) affectedIds.add(movedId);
-  for (const deletedId of pendingDeleteIds) affectedIds.add(deletedId);
-  const affectedCount = affectedIds.size;
-  const dirtySummary = affectedCount > 0 ? `${affectedCount} column${affectedCount === 1 ? '' : 's'} modified` : '';
-
-  // Windowed size. Width clears the two-column container-query threshold (~720px)
-  // without maximizing and fits the overview grid; shared by both views so
-  // toggling to the overview never resizes the dialog. A FIXED height (capped at
-  // 94vh on short screens) keeps the modal stable as the user navigates between
-  // columns of differing content height: the detail pane scrolls when a column is
-  // taller, and shorter columns show some empty space, rather than the whole
-  // modal resizing and re-centering (which reads as jank). `max-w-[95vw]` caps
-  // width on small screens, where the form falls back to a single column.
-  const windowedClass = 'w-[1180px] max-w-[95vw] h-[1236px] max-h-[94vh]';
+  // WIDE and SHORT, which is the shape the content actually wants. The column
+  // page is three columns (two of settings cards, then automations), so width is
+  // what buys layout while height only buys empty space: the tallest settings
+  // column is about 400px. The old 1180 x 1236 was the opposite of both, and on a
+  // desktop it stacked the columns while most of the screen sat empty.
+  //
+  // Height is capped rather than filled so the automations column can grow
+  // DOWNWARD into its own scroll (see the column page below) instead of making
+  // the whole modal taller as rows are added. A FIXED height also keeps the
+  // modal stable as the user navigates between columns of differing content
+  // height, rather than resizing and re-centering on every rail click.
+  //
+  // The maximize toggle STAYS, against the design's "always full window". That
+  // decision was reasoned from a one-column settings pane needing about 814px of
+  // the 919px the strip gives; the page is three columns now and its tallest
+  // settings column is about 400px, so filling the strip buys empty space. The
+  // toggle is how someone gets the full strip when they want it.
+  // Height is sized to the TALLEST column page so nothing scrolls by default,
+  // and so the space above the first card matches the space below the last.
+  //
+  // The tallest page is a PLAN-permission column with Start an agent on: its
+  // Agent card carries the After Plan Mode row, which is the one the previous
+  // measurement (a non-role column, 802px) did not include, so the dialog
+  // pinned at 2000 x 1010 on a display with room and still scrolled. Measured
+  // on Planning at the 2000px width, where the px cap is the only one that can
+  // bind: General 260 + Agent 348 + Conversation 236, plus the two 24px gaps,
+  // is 892px of settings content, which with the body's own 28px top and bottom
+  // needs a 948px scroll area; everything outside it - the title bar, the
+  // identity header, the footer - is 147px. Hence 1095, and 1120 for headroom:
+  // a theme with taller type, or a font whose metrics wrap the Session
+  // description one line further (16px at text-xs; Linux CI's fonts are wider
+  // than Segoe UI at the same width). Leftover slack lands BELOW the cards, so
+  // any excess shows up as a bottom gap wider than the top one.
+  //
+  // Re-measure this when a settings card gains a field, and measure a
+  // plan-permission column, not the first one to hand. The Session description
+  // wraps by width, but the px cap only binds at viewports over 1272px tall,
+  // and every such viewport is wide enough for the 2000px cap, so the width it
+  // was measured at is the width it runs at. `88vh` still wins on a short
+  // display, where a modal taller than the viewport is the wrong answer
+  // whatever the content wants. `tests/ui/board-manager-dialog.spec.ts` pins
+  // both halves: no overflow on a tall display, overflow on a short one.
+  //
+  // FIXED rather than `h-auto` + `max-h`, which is the original decision and
+  // still holds: a height that tracks content makes the modal resize and
+  // re-centre every time the rail moves between columns of different length.
+  const windowedClass = 'w-[min(2000px,92vw)] max-w-[95vw] h-[min(1120px,88vh)]';
   const { dialogClassName, backdropPositionClass, backdropClassName, contentRadiusClass } =
     maximizedDialogLayout(isMaximized, windowedClass);
 
@@ -1489,6 +1812,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     isTodoOrDone
       ? `Sessions don't run in ${draftRole === 'todo' ? 'To Do' : 'Done'} columns, so ${label} doesn't apply.`
       : `Turn on "Start an agent here" in the Agent section to enable ${label}.`;
+
+  // The automation row being edited, resolved in plain render code rather than
+  // an inline IIFE in the JSX: the compiler rules cannot see through an IIFE
+  // to tell the dialog's event handlers apart from render.
+  const editingColumn = editing ? drafts[editing.columnId] : undefined;
+  const editingRow = editing
+    ? rowsForColumn(editing.columnId).find((row) => row.id === editing.rowId)
+    : undefined;
 
   return (
     <>
@@ -1505,7 +1836,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       header={
         <div className="flex items-center gap-3 px-4 py-2">
           <Layers size={14} className="text-fg-muted flex-shrink-0" />
-          <h3 className="text-sm font-semibold text-fg flex-1 min-w-0">Edit Columns</h3>
+          {/* "Column Manager", which is what the codebase has called this
+              surface all along (profile-commands.ts, board-profile-references.ts,
+              ProfileBar.tsx, swimlane-slice.ts). Everything in it is a column: a
+              profile is a per-column override set, the overview is of columns,
+              and an automation belongs to exactly one column. */}
+          <h3 className="text-sm font-semibold text-fg flex-1 min-w-0">Column Manager</h3>
           <MaximizeToggleButton isMaximized={isMaximized} onToggle={handleToggleMaximized} />
           <button
             type="button"
@@ -1519,27 +1855,45 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       }
       rawBody
       footer={
-        <div className="flex items-center gap-3">
-          <span data-testid="board-manager-dirty-summary" className="text-xs text-fg-faint mr-auto">
-            {dirtySummary}
-          </span>
-          <button
-            type="button"
-            onClick={requestCancel}
-            className="px-6 py-1.5 min-w-[96px] text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={saving || !hasDirty}
-            data-testid="board-manager-save"
-            className="px-6 py-1.5 min-w-[96px] text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-        </div>
+        // The shared pair, so this dialog and the Edit automation dialog it
+        // opens cannot drift apart again. No running unsaved count: Save
+        // carries `disabled` until something is dirty, which is the same signal
+        // in one fewer place, and the per-column and per-row dots already say
+        // WHERE. The discard confirmation enumerates the changes.
+        //
+        // Save disables rather than relabels while saving, like every other
+        // dialog footer: a control must not change shape when pressed.
+        //
+        // Remove column leads the footer, where the task window keeps its
+        // Delete. It was a trash glyph on the selected rail row, too small to
+        // read as a button; and the end of the settings column, the other
+        // candidate, is out of sight for anyone whose display makes the form
+        // scroll. The footer is on screen whatever the form does. Gated the
+        // way the rail's structure actions are: never for To Do / Done, never
+        // under a profile (structure is singular across profiles), and never
+        // on the All columns page, which has no column to remove. `py-1.5`
+        // matches Cancel and Save so the footer keeps its height.
+        <DialogFooterActions
+          onCancel={requestCancel}
+          onConfirm={requestSave}
+          confirmLabel="Save"
+          confirmDisabled={saving || !hasDirty}
+          cancelTestId="board-manager-cancel"
+          confirmTestId="board-manager-save"
+          leading={!isOverview && draft && !isTodoOrDone && !activeProfileId ? (
+            <button
+              type="button"
+              onClick={requestRemoveColumn}
+              data-testid="board-manager-delete"
+              aria-label={`Remove column "${draft.name.trim() || 'Untitled'}"`}
+              title={`Remove column "${draft.name.trim() || 'Untitled'}"`}
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10 hover:border-danger/60 transition-colors"
+            >
+              <Trash2 size={14} />
+              Remove column
+            </button>
+          ) : undefined}
+        />
       }
     >
       <div className="flex flex-1 min-h-[540px] overflow-hidden">
@@ -1551,7 +1905,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           onReorder={handleRailReorder}
           onAddColumn={addNewDraft}
           structureLocked={activeProfileId !== null}
-          onDeleteColumn={isNewDraft ? handleDiscardNewDraft : () => setConfirmDeleteId(activeId)}
           profileBar={(
             <ProfileBar
               profiles={profileDrafts}
@@ -1575,7 +1928,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         {isOverview || !draft ? (
           <ColumnsOverview rows={overviewRows} onSelect={setActiveId} />
         ) : (
-          <div className="flex-1 min-w-0 flex flex-col min-h-0">
+          // `@container` HERE, not only on the scroller below, because a
+          // container query resolves against an ANCESTOR container and never
+          // against the element that declares one. The scroller declares
+          // `@container` for its panes and also carries its own `@[1100px]:`
+          // utilities; with no container above it those utilities matched
+          // nothing, so `@[1100px]:overflow-hidden` never applied and the outer
+          // stayed `overflow-y-auto` with a permanently reserved scrollbar
+          // gutter - the 8px that made the page sit off-centre.
+          <div className="flex-1 min-w-0 flex flex-col min-h-0 @container">
             <DetailIdentityHeader
               draft={draft}
               position={activePosition}
@@ -1590,7 +1951,44 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                 reserves the scrollbar's width always, so switching between a
                 short column and a taller (scrolling) one never shifts the
                 content horizontally. */}
-            <div className="flex-1 overflow-y-auto px-7 pb-4 min-w-0 @container [scrollbar-gutter:stable]">
+            {/* `p-7` on all four sides, and the top inset lives HERE rather than
+                on each pane, so the page has ONE number for its margin. It was
+                28 left, 36 right, 16 top: the panes carried their own `pt-4`,
+                and `scrollbar-gutter: stable` reserved 8px that only ever
+                appeared on the right.
+
+                The gutter is dropped from 1100px up. It exists so switching
+                between a short column and a taller one cannot shift the content
+                sideways, which is a real hazard while THIS element is the
+                scroller. From 1100px it is `overflow-hidden` and the two panes
+                scroll internally, so it reserved a gutter for a scrollbar that
+                can never appear and made the page visibly off-centre. */}
+            <div className="flex-1 min-h-0 min-w-0 overflow-y-auto @[1100px]:overflow-hidden p-7 @container [scrollbar-gutter:stable] @[1100px]:[scrollbar-gutter:auto]">
+            <div className="flex w-full max-w-[2100px] mx-auto flex-col gap-6 @[1100px]:h-full @[1100px]:min-h-0 @[1100px]:flex-row">
+            {/* One of the page's two even halves. It holds a single stacked
+                column of cards, so an even split is all it needs - no internal
+                gutter to compensate for. */}
+            <div className="flex-1 min-w-0 @container @[1100px]:min-h-0 @[1100px]:overflow-y-auto">
+            {/* All three settings cards in ONE column, which is what makes the
+                page two columns rather than three.
+
+                The width is what buys it: at two even columns a card is about
+                835px, past the `@[720px]` its own field grid measures, so
+                Agent pairs into Agent | Model and Effort | Permissions and
+                General pairs Name | Description and Icon | Color. Three columns
+                put a card at 554px, under that threshold, so every field
+                stacked one per row and the Agent card ran 492px tall.
+
+                Forcing the pair at 554px was measured and is worse than either:
+                the Color swatches wrap to a second row, the "Start an agent
+                here" toggle gets squeezed beside a select, and Permissions is
+                left orphaned on its own row. That is the same failure design
+                pass 13 recorded. */}
+            {/* `gap-6` matches the gutter between this pane and the automations
+                pane, so cards are separated by ONE distance whichever way they
+                sit. At `gap-3` the three stacked cards read as one block with
+                hairlines through it rather than as three peers. */}
+            <div className="flex flex-col gap-6">
               {/* General is column IDENTITY (name, description, color, icon),
                   which is singular across profiles - editing it under a profile
                   would silently change it for every task on the board. Hidden
@@ -1601,8 +1999,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   <DisabledSectionNotice reason="Name, description, color, and icon are shared by every profile. Switch to Default to edit them." />
                 </div>
               ) : (
-                <>
-              <SectionHeading section={SECTIONS[0]} />
+              <SettingsSection section={SECTIONS[0]}>
               <div className={SECTION_GRID_CLASS}>
                 <SettingField label="Name" className={SECTION_FULL_SPAN}>
                   <input
@@ -1611,7 +2008,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     value={draft.name}
                     placeholder="Column name"
                     onChange={(event) => updateDraft((current) => ({ ...current, name: event.target.value }))}
-                    onKeyDown={(event) => { if (event.key === 'Enter') void handleSave(); }}
+                    onKeyDown={(event) => { if (event.key === 'Enter') requestSave(); }}
                     data-testid="board-manager-name"
                     className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent"
                   />
@@ -1718,22 +2115,19 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     className="w-full flex items-center gap-2.5 bg-surface-control border border-edge-input hover:border-fg-faint rounded px-3 py-1.5 transition-colors group"
                   >
                     <div className="flex-shrink-0">
-                      {(() => {
-                        if (draft.icon) {
-                          const IconComp = ICON_REGISTRY.get(draft.icon);
-                          if (IconComp) return <IconComp size={14} strokeWidth={1.75} style={{ color: draft.color }} />;
-                        }
-                        if (draft.role) {
-                          const RoleIcon = ROLE_DEFAULTS[draft.role];
-                          return <RoleIcon size={14} strokeWidth={1.75} style={{ color: draft.color }} />;
-                        }
-                        return (
-                          <div
-                            className="w-2.5 h-2.5 rounded-full"
-                            style={{ backgroundColor: draft.color }}
-                          />
-                        );
-                      })()}
+                      {/* getSwimlaneIconName resolves the custom icon, then the role
+                          default, and returns null rather than the undefined a two-key
+                          Record<SwimlaneRole, ...> yields for a role outside the union.
+                          Rendering that undefined is React error #130, which the root
+                          ErrorBoundary turns into a blank board. */}
+                      {getSwimlaneIconName(draft) ? (
+                        <RegistryIcon name={getSwimlaneIconName(draft)} size={14} strokeWidth={1.75} style={{ color: draft.color }} />
+                      ) : (
+                        <div
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: draft.color }}
+                        />
+                      )}
                     </div>
                     <span className="text-xs text-fg-tertiary flex-1 text-left truncate">
                       {draft.icon ?? (draft.role ? `Default (${draft.role})` : 'None')}
@@ -1745,10 +2139,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                 </div>
 
               </div>
-                </>
+              </SettingsSection>
               )}
 
-              <SectionHeading section={SECTIONS[1]} />
+              <SettingsSection section={SECTIONS[1]}>
               {isTodoOrDone ? (
                 <DisabledSectionNotice reason={disabledReasonFor('Agent')} />
               ) : (
@@ -1898,123 +2292,189 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   </>)}
                 </div>
               )}
+              </SettingsSection>
 
-              <SectionHeading section={SECTIONS[2]} />
+              <SettingsSection section={SECTIONS[2]}>
               {sessionsRunHere ? (
                 <div className={SECTION_GRID_CLASS}>
-                    {/* Leads the section, following the order a column is actually
-                        configured: what the agent ARRIVES with (prior context),
-                        then which session it runs in, then what it is told to do. */}
+                    {/* Leads the card: what the agent ARRIVES with, then which
+                        session it continues. The TITLE carries the condition,
+                        because the setting does nothing at all unless a move
+                        changes the agent, and a title that read as unconditional
+                        was the whole confusion. The description then spends
+                        itself on the example and on what OFF does, which is what
+                        the reader is deciding between. */}
                     <div className={SECTION_FULL_SPAN}>
                       <ToggleCard
-                          label="Receive context from prior agent"
-                        description="On cross-agent moves into this column, hand the previous agent's conversation to the new one."
+                        label="Hand off context when the agent changes"
+                        description="Codex to Claude, for example. The new agent receives the previous one's conversation instead of starting with just the task title and description."
                         checked={draft.handoff_context}
                         onChange={(next) => updateDraft((current) => ({ ...current, handoff_context: next }))}
                         info={'When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session\'s transcript as the first message, so the new agent continues with full context instead of starting from the task description alone.\n\nSame-agent moves (e.g. Claude to Claude) resume natively via the agent\'s own session id and ignore this setting.'}
                       />
                     </div>
 
-                    <SettingField label="Session">
-                      <Select
+                    {/* The description opens by naming the DEFAULT, so the norm
+                        is stated rather than inferred from whichever option
+                        happens to be selected. Its second sentence exists
+                        because the first leaves the reader knowing what isolated
+                        does and not why they would want it. */}
+                    <SettingField
+                      label="Session"
+                      description="Columns share the main session unless you give this one its own. An isolated session is separate from the main one and starts clean on every entry, which suits an adversarial code review, or any pass that should not inherit the context of the work before it."
+                      className={SECTION_FULL_SPAN}
+                    >
+                      <SegmentedControl
+                        options={SESSION_TARGET_OPTIONS}
                         value={draft.session_target ?? 'main'}
-                        onChange={(event) => {
-                          const nextTarget = event.target.value as SessionTarget;
-                          updateDraft((current) => ({
-                            ...current,
-                            session_target: nextTarget,
-                            // Snap the spawn policy to the sensible default for the
-                            // chosen track, but only when it is still at the other
-                            // track's default - an explicit non-default choice is
-                            // preserved. Mirrors resolveForceFresh's context-aware
-                            // default (isolated => always-fresh, main => resume).
-                            session_spawn_strategy:
-                              nextTarget === 'isolated' && current.session_spawn_strategy === 'create_or_resume'
-                                ? 'always_spawn_new'
-                                : nextTarget === 'main' && current.session_spawn_strategy === 'always_spawn_new'
-                                  ? 'create_or_resume'
-                                  : current.session_spawn_strategy,
-                          }));
-                        }}
-                        wrapperClassName="relative"
-                        className={DIALOG_SELECT_CLASS}
-                        data-testid="column-session-target"
-                      >
-                        <option value="main">Main session</option>
-                        <option value="isolated">Isolated session</option>
-                      </Select>
-                    </SettingField>
-
-                    <SettingField label="On enter">
-                      <Select
-                        value={draft.session_spawn_strategy ?? 'create_or_resume'}
-                        onChange={(event) => updateDraft((current) => ({
+                        onChange={(next) => updateDraft((current) => ({
                           ...current,
-                          session_spawn_strategy: event.target.value as SessionSpawnStrategy,
+                          session_target: next,
+                          // Snap the spawn policy to the sensible default for the
+                          // chosen track. The rule is shared with the MCP column
+                          // handlers so the two writers cannot drift; see
+                          // src/shared/session-track.ts for why it lives there.
+                          //
+                          // This control no longer OFFERS the spawn strategy, but it
+                          // still has to write it. Both columns are NOT NULL with a
+                          // literal DEFAULT, so a stored lane always carries a
+                          // concrete strategy and `resolveForceFresh`'s fallback
+                          // never evaluates: leaving it untouched would strand an
+                          // isolated column on `create_or_resume`, which resumes the
+                          // previous pass instead of starting a fresh one.
+                          session_spawn_strategy: snapSpawnStrategyToTarget(
+                            current.session_target,
+                            next,
+                            current.session_spawn_strategy,
+                          ),
                         }))}
-                        wrapperClassName="relative"
-                        className={DIALOG_SELECT_CLASS}
-                        data-testid="column-session-spawn-strategy"
-                      >
-                        <option value="create_or_resume">Create or resume</option>
-                        <option value="always_spawn_new">Always spawn new</option>
-                      </Select>
+                        quiet
+                        ariaLabel="Session"
+                        testId="column-session-target"
+                      />
                     </SettingField>
 
-                <SettingField label="Message to agent" className={SECTION_FULL_SPAN}>
-                <p className={`${SETTING_DESCRIPTION_CLASS} -mt-2 mb-2`}>
-                  Sent to the agent when a task enters this column.
-                </p>
-                <textarea
-                  ref={autoCommandRef}
-                  value={draft.auto_command ?? ''}
-                  onChange={(event) => updateDraft((current) => ({ ...current, auto_command: event.target.value }))}
-                  rows={2}
-                  placeholder="Review the latest changes and fix any issues you find"
-                  data-testid="auto-command-input"
-                  className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent resize-y"
-                />
-                {/* The field's own footer row: what you can PUT in the command
-                    on the left, WHEN it runs on the right. Timing was a separate
-                    labelled field below, which read as a sibling setting when it
-                    is really part of this one - it modifies this command and
-                    means nothing without it. In the field's footer the
-                    relationship needs no explaining, and the two option labels
-                    say what the old "Timing" label plus its description did.
+                {/* Two controls are gone from this card, each for its own reason.
+                    The message field is a `send_message` automation now, and the
+                    migration moved every existing one across, so nobody arrives
+                    at an empty field wondering where it went.
+                    `session_spawn_strategy` is no longer OFFERED: `resolveForceFresh`
+                    already derives it (isolated to fresh, main to resume), so the
+                    override only reached two corners, and one of them
+                    (main + always-spawn-new) RETIRES the task's session on entry,
+                    losing everything the earlier columns did. The engine still
+                    READS the column value, so a `kangentic.json` hand edit keeps
+                    the persistent-isolated-track escape hatch. Neither leaves a
+                    note in its place: standing copy explaining a one-time change
+                    is paid on every open and learned once. */}
+                </div>
+              ) : <DisabledSectionNotice reason={disabledReasonFor('Conversation')} />}
+              </SettingsSection>
+            </div>
+            </div>
 
-                    Disabled rather than hidden when there is no command: hiding
-                    it made the form jump on the first keystroke, and left no
-                    trace that the setting exists at all. */}
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                  <TemplateVariablePicker onInsert={insertTemplateVariable} />
-                  {/* `title` on the WRAPPER, not the control: a disabled button
-                      does not fire the mouse events a tooltip needs. */}
-                  <span
-                    title={hasAutoCommandDraft
-                      ? 'Whether the message interrupts the agent or waits for it to finish its current turn.'
-                      : 'Enter a message to choose when it is sent.'}
-                  >
-                    <SegmentedControl
-                      ariaLabel="Message timing"
-                      testId="auto-command-mode"
-                      disabled={!hasAutoCommandDraft}
-                      value={draft.auto_command_mode}
-                      onChange={(next: AutoCommandMode) => updateDraft((current) => ({
-                        ...current,
-                        auto_command_mode: next,
-                      }))}
-                      options={AUTO_COMMAND_MODE_OPTIONS}
-                    />
-                  </span>
-                </div>
-                </SettingField>
-                </div>
-              ) : <DisabledSectionNotice reason={disabledReasonFor('Automation')} />}
+            {/* The fourth section, on the right because a row carries a name, a
+                type, a sentence and three controls and needs the width.
+
+                SIDE BY SIDE (from 1100px) it is one of two EVEN halves, both
+                `flex-1`. The width is not for the rows, which are a fixed
+                amount of content: it is what puts the settings cards past the
+                `@[720px]` their field grids measure, so Agent and General pair
+                their fields instead of stacking them one per row.
+
+                It used to clamp instead (`w-[clamp(340px,26%,520px)]`), which
+                left it visibly narrower than the settings beside it for no gain
+                the layout could show.
+
+                STACKED (below 1100px) it takes the full width, because nothing
+                is competing for it. It used to carry a `max-w-[680px]` that
+                `@[1100px]:max-w-none` cleared, so that cap applied in the
+                stacked case ALONE and left the card ending short of the
+                settings cards above it, with dead space down its right edge. */}
+            <div className="w-full shrink-0 @[1100px]:flex-1 @[1100px]:w-auto @[1100px]:min-w-0 @[1100px]:shrink @[1100px]:min-h-0 @[1100px]:overflow-y-auto">
+              <AutomationsPane
+                column={draft}
+                drafts={rowsForColumn(draft.id)}
+                readOnly={activeProfileId !== null}
+                isDirty={(row) => {
+                  const before = (automationOriginals[draft.id] ?? []).find((candidate) => candidate.id === row.id);
+                  return !before || isColumnDirty([before], [row]);
+                }}
+                onAdd={(trigger, anchor) => setPickerOpenFor({ columnId: draft.id, trigger, anchor })}
+                onEdit={(row) => setEditing({ columnId: draft.id, rowId: row.id, isNew: false })}
+                onDelete={(row) => mutateRows(draft.id, (rows) => removeRow(rows, row.id))}
+                onToggle={(row, enabled) => mutateRows(draft.id, (rows) => setRowEnabled(rows, row.id, enabled))}
+                onReorder={(id, trigger, index) => mutateRows(draft.id, (rows) => moveRow(rows, id, trigger, index))}
+              />
+            </div>
+            </div>
             </div>
           </div>
         )}
       </div>
     </BaseDialog>
+
+      {pickerOpenFor && (
+        <AddAutomationPicker
+          anchor={pickerOpenFor.anchor}
+          // The DRAFT, not the saved swimlane. Turning "Start an agent here"
+          // off has to disable the Send message option in the same breath, the
+          // way it disables the row's own switch: reading the saved row left
+          // the picker offering a type the column could no longer run until
+          // Save, which is the one moment the user is deciding what to add.
+          column={drafts[pickerOpenFor.columnId] ?? draft!}
+          trigger={pickerOpenFor.trigger}
+          otherColumns={laneOrder
+            .filter((id) => id !== pickerOpenFor.columnId && drafts[id])
+            .map((id) => ({ column: drafts[id]!, drafts: rowsForColumn(id) }))
+            .filter((entry) => entry.drafts.length > 0)}
+          onPickType={(type: AutomationType) => {
+            const created = makeNewAutomation(type, pickerOpenFor.trigger);
+            mutateRows(pickerOpenFor.columnId, (rows) => appendRow(rows, created));
+            // Opens straight into the dialog with the name selected: the picker
+            // adds a row before it has a real name, and leaving one behind
+            // called "New webhook" is the failure this avoids.
+            setEditing({ columnId: pickerOpenFor.columnId, rowId: created.id, isNew: true });
+            setPickerOpenFor(null);
+          }}
+          onPickCopy={(source: AutomationDraft) => {
+            const copied = copyAutomation(
+              source,
+              // The group whose "Add automation" button opened this picker, NOT
+              // the source row's own trigger. The copy list spans both groups
+              // and labels each candidate with its trigger, so copying an
+              // "On enter" row from the "On exit" Add button is a normal thing
+              // to do; taking `source.trigger` landed it back in On enter.
+              pickerOpenFor.trigger,
+              takenNamesFor(rowsForColumn(pickerOpenFor.columnId)),
+            );
+            mutateRows(pickerOpenFor.columnId, (rows) => appendRow(rows, copied));
+            setPickerOpenFor(null);
+          }}
+          onClose={() => setPickerOpenFor(null)}
+        />
+      )}
+
+      {editing && editingColumn && editingRow && (
+        <EditAutomationDialog
+          key={editing.rowId}
+          draft={editingRow}
+          column={editingColumn}
+          isNew={editing.isNew}
+          takenNames={takenNamesFor(rowsForColumn(editing.columnId), editing.rowId)}
+          templatePicker={TemplateVariablePicker}
+          onDone={(next) => {
+            mutateRows(editing.columnId, (rows) => replaceRow(rows, next));
+            setEditing(null);
+          }}
+          onCancel={() => {
+            // Cancelling a row the picker just added removes it, so a
+            // half-built automation never survives the dialog.
+            if (editing.isNew) mutateRows(editing.columnId, (rows) => removeRow(rows, editing.rowId));
+            setEditing(null);
+          }}
+        />
+      )}
 
       {showIconPicker && draft && (
         <IconPickerDialog
@@ -2065,16 +2525,26 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         />
       )}
 
-      {confirmDeleteId && (
+      {confirmDeleteId && drafts[confirmDeleteId] && (
         <ConfirmDialog
-          title={`Delete "${drafts[confirmDeleteId]?.name?.trim() || 'column'}"`}
-          message={<>
-            <p>Are you sure you want to delete this column?</p>
-            <p className="text-fg-secondary bg-surface rounded px-3 py-2 truncate" title={drafts[confirmDeleteId]?.name}>
-              {drafts[confirmDeleteId]?.name}
-            </p>
-          </>}
-          confirmLabel="Delete"
+          title="Remove column"
+          // The body is the column and nothing else. The footer button that
+          // opened this says "Remove column" with no name, so this is where the
+          // target is spelled out, and it is drawn the way its rail row is so
+          // there is nothing to cross-reference. No lead-in, no "are you sure",
+          // no consequences: the automations leaving with the column is a
+          // kangentic.json change that gets committed and reviewed, and the
+          // toast right after says the removal waits for Save. Read from
+          // `confirmDeleteId`, never `activeId`, so the modal always names what
+          // it deletes (the same concern that gates `columnCycleEnabled`).
+          message={(
+            <RemoveColumnTarget
+              column={drafts[confirmDeleteId]}
+              position={laneOrder.indexOf(confirmDeleteId) + 1}
+              total={laneOrder.length}
+            />
+          )}
+          confirmLabel="Remove"
           variant="danger"
           onConfirm={handleDeletePersisted}
           onCancel={() => setConfirmDeleteId(null)}
@@ -2097,6 +2567,19 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       <li key={id} className="flex items-baseline gap-2">
                         <span className="text-fg-faint">•</span>
                         <span className="font-medium text-fg-secondary">{drafts[id]?.name?.trim() || 'Untitled column'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {automationChangeLines.length > 0 && (
+                <>
+                  <p>Automations changed on:</p>
+                  <ul className="space-y-1">
+                    {automationChangeLines.map((line) => (
+                      <li key={line} className="flex items-baseline gap-2">
+                        <span className="text-fg-faint">&bull;</span>
+                        <span className="font-medium text-fg-secondary">{line}</span>
                       </li>
                     ))}
                   </ul>

@@ -39,12 +39,14 @@ describe('mapAsanaTasks', () => {
     expect(issue.labels).toEqual(['bug', 'regression']);
     expect(issue.assignee).toBe('Dana Dev');
     expect(issue.state).toBe('open');
+    expect(issue.stateCategory).toBe('open');
     expect(issue.alreadyImported).toBe(false);
   });
 
   it('marks completed tasks as closed', () => {
     const [issue] = mapAsanaTasks([makeTask({ completed: true })], new Set());
     expect(issue.state).toBe('closed');
+    expect(issue.stateCategory).toBe('closed');
   });
 
   it('captures the first membership section name as workItemType', () => {

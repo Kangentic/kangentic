@@ -117,6 +117,11 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
   autoSpawnForTask: vi.fn(async () => {}),
+  // The Done branch snapshots the session's process tree before suspending and
+  // reaps it before the worktree delete. Inert here; covered by
+  // session-tree-reap.test.ts and bg-shell-watcher.test.ts.
+  captureSessionLeftovers: vi.fn(() => null),
+  reapSessionLeftovers: vi.fn(async () => {}),
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: vi.fn(),
@@ -185,12 +190,18 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    // Phase 1 reconciles task.session_id against the registry before the
+    // Priority ladder; a live row for the pointed-at id keeps these fixtures
+    // on the live-session branches they exercise.
+    getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+    findLiveSessionByTaskId: vi.fn(() => null),
     // Read by resolveLiveEffort; empty means the agent reports no effort.
     getUsageCache: vi.fn((): Record<string, unknown> => ({})),
   };
   const context = {
     currentProjectId: 'proj-test',
     currentProjectPath: PROJECT_PATH,
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     sessionManager,
     configManager: { getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: 'main' } })) },
@@ -202,6 +213,10 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     tasks: taskRepo,
     swimlanes: swimlaneRepo,
     actions: { getTransitionsFor: vi.fn(() => []) },
+    // The column's message lives in its automations now, so every move reads
+    // them. Empty: these cases are about git churn, not messages.
+    automations: { listForColumn: vi.fn(() => []), getForTrigger: vi.fn(() => []) },
+    automationRuns: { start: vi.fn(), finish: vi.fn(), recordSkipped: vi.fn() },
     attachments: { deleteByTaskId: vi.fn() },
   });
   return context;
@@ -240,6 +255,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
       getById: vi.fn(() => makeTask({ swimlane_id: EXEC_LANE_ID, session_id: null })),
       move: vi.fn(),
       update: vi.fn(),
+      setWorktreeSkipReason: vi.fn(),
       archive: vi.fn(),
       list: vi.fn(() => [makeTask()]),
     };
@@ -247,7 +263,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-done', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(hoisted.resolveDefaultBaseBranch).toHaveBeenCalledWith(context, PROJECT_PATH);
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
@@ -284,7 +300,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-no-spawn', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
@@ -325,7 +341,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-review-isolated', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID }),
@@ -366,7 +382,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-codex', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID }),
@@ -408,7 +424,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
 
     await handleTaskMove(context as never, {
       taskId: TASK_ID, targetSwimlaneId: 'lane-target', targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(hoisted.captureGitChurn).toHaveBeenCalledWith(
@@ -420,5 +436,60 @@ describe('handleTaskMove git-churn capture wiring', () => {
       RESOLVED_BRANCH,
     );
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('handleTaskMove projectId threading into ensureTaskWorktree / ensureTaskBranchCheckout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.activeRecord = null;
+    hoisted.resolveDefaultBaseBranch.mockReturnValue(RESOLVED_BRANCH);
+    mockResolveTargetAgent.mockReturnValue({ agent: 'claude', isHandoff: false });
+    mockPrepareInjectionPlan.mockReturnValue(null);
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+    mockEnsureTaskBranchCheckout.mockResolvedValue(undefined);
+    mockSpawnAgent.mockResolvedValue(undefined);
+  });
+
+  it('Priority 4 (no active session): threads the explicit projectId into both git helpers\' options, not the ambient one', async () => {
+    // An explicit projectId that DIFFERS from context.currentProjectId is the
+    // discriminating case: against the ambient default the two values are
+    // identical and this test could not tell threading from fallback (see
+    // project-scoped-ipc.md).
+    const EXPLICIT_PROJECT_ID = 'proj-explicit';
+    const todoLane = makeSwimlane(EXEC_LANE_ID, { role: 'todo' });
+    const targetLane = makeSwimlane('lane-target', { role: null, auto_spawn: true });
+    const swimlaneRepo = {
+      getById: vi.fn((id: string) => (id === EXEC_LANE_ID ? todoLane : id === 'lane-target' ? targetLane : null)),
+      list: vi.fn(() => [todoLane, targetLane]),
+    };
+
+    const taskRepo = {
+      getById: vi.fn(() => makeTask({ swimlane_id: EXEC_LANE_ID, session_id: null })),
+      move: vi.fn(),
+      update: vi.fn(),
+      setWorktreeSkipReason: vi.fn(),
+      archive: vi.fn(),
+      list: vi.fn(() => [makeTask()]),
+    };
+    const context = makeContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: 'lane-target', targetPosition: 0 },
+      'renderer',
+      EXPLICIT_PROJECT_ID,
+      PROJECT_PATH,
+    );
+
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+    const worktreeOptions = mockEnsureTaskWorktree.mock.calls[0][4] as { projectId?: unknown };
+    expect(worktreeOptions.projectId).toBe(EXPLICIT_PROJECT_ID);
+    expect(worktreeOptions.projectId).not.toBe(context.currentProjectId);
+
+    expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(1);
+    const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { projectId?: unknown };
+    expect(checkoutOptions.projectId).toBe(EXPLICIT_PROJECT_ID);
+    expect(checkoutOptions.projectId).not.toBe(context.currentProjectId);
   });
 });

@@ -82,6 +82,16 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
 }));
 
+// handleTaskMove fires this itself now (it used to live at the call sites these
+// tests bypass), so without the mock every successful move here runs the real
+// helper against mocked repositories. It swallows its own errors, so the damage
+// is invisible rather than absent - the same reason the other task-move suites
+// already mock it.
+const mockAutoLinkPRForTask = vi.fn();
+vi.mock('../../src/main/pr/pr-linking', () => ({
+  autoLinkPRForTask: (...args: unknown[]) => mockAutoLinkPRForTask(...args),
+}));
+
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
@@ -143,6 +153,11 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
   deleteTaskWorktree: (...args: unknown[]) => mockDeleteTaskWorktree(...args),
   autoSpawnForTask: vi.fn(async () => {}),
+  // The Done branch snapshots the session's process tree before suspending and
+  // reaps it before the worktree delete. Inert here; covered by
+  // session-tree-reap.test.ts and bg-shell-watcher.test.ts.
+  captureSessionLeftovers: vi.fn(() => null),
+  reapSessionLeftovers: vi.fn(async () => {}),
 }));
 
 // ---------------------------------------------------------------------------
@@ -174,11 +189,14 @@ interface MockSessionManager {
   killByTaskId: ReturnType<typeof vi.fn>;
   listSessions: ReturnType<typeof vi.fn>;
   suspend: ReturnType<typeof vi.fn>;
+  getSession: ReturnType<typeof vi.fn>;
+  findLiveSessionByTaskId: ReturnType<typeof vi.fn>;
 }
 
 interface MockContext {
   currentProjectId: string;
   currentProjectPath: string;
+  boardEvents: { emitBoardChanged: ReturnType<typeof vi.fn> };
   mainWindow: {
     isDestroyed: ReturnType<typeof vi.fn>;
     webContents: { send: ReturnType<typeof vi.fn> };
@@ -248,6 +266,11 @@ function makeSessionManager(): MockSessionManager {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    // Phase 1 reconciles task.session_id against the registry before the
+    // Priority ladder; a live row for the pointed-at id keeps these fixtures
+    // on the branches they exercise.
+    getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+    findLiveSessionByTaskId: vi.fn(() => null),
   };
 }
 
@@ -277,6 +300,7 @@ function makeContext(
   const context: MockContext = {
     currentProjectId: 'proj-test',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
@@ -372,7 +396,7 @@ describe('handleTaskMove shutdown protection', () => {
     const context = makeContext(taskRepo, swimlaneRepo);
 
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).resolves.toBeUndefined();
 
     // Phase 1 forward move ran (DB write committed before shutdown checked).
@@ -381,6 +405,17 @@ describe('handleTaskMove shutdown protection', () => {
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
     expect(mockEnsureTaskBranchCheckout).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+
+    // The announce block's own shutdown gate. This is the one case where the
+    // move DID commit (taskRepo.move above) and yet must stay silent, so
+    // `moveCommitted` alone would not have suppressed it: dropping
+    // `!isShuttingDown()` from the guard makes every assertion below fail.
+    // The DB is already closed and the window is going away, but sendToRenderer
+    // would still record the push into the dev IPC log and the board-changed
+    // bus would still wake a phone subscription mid-teardown.
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+    expect(mockAutoLinkPRForTask).not.toHaveBeenCalled();
   });
 
   // =========================================================================
@@ -403,7 +438,7 @@ describe('handleTaskMove shutdown protection', () => {
     const context = makeContext(taskRepo, swimlaneRepo);
 
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).resolves.toBeUndefined();
 
     // Phase 2 ran (it's where the flag flipped).
@@ -411,6 +446,15 @@ describe('handleTaskMove shutdown protection', () => {
     expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(1);
     // Phase 3 spawn must NOT run.
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+
+    // The two announce points straddle the flip: the commit-time bus emit
+    // fired inside Phase 1, before ensureTaskWorktree flipped the flag, and
+    // the settle-time emit plus the renderer push were then gated. Exactly one
+    // emit pins that the shared closure re-reads isShuttingDown() on EVERY
+    // call rather than capturing it once: a captured value would emit twice,
+    // and dropping the commit-time emit would emit zero times.
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
     // The Phase 3 try/finally still clears spawn progress so the renderer UI
     // doesn't get stuck on "starting agent".
     expect(mockClearSpawnProgress).toHaveBeenCalledWith(

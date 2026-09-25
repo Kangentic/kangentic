@@ -37,6 +37,7 @@ export function SnapPreview() {
     <div
       ref={elementRef}
       aria-hidden
+      data-testid="snap-preview"
       // `snap-zone-active` is the Pattern-D cleanup hook (cleared on HMR).
       className="snap-zone-active absolute pointer-events-none rounded-lg border-2 border-accent bg-accent/10"
       style={{ display: 'none', zIndex: SNAP_PREVIEW_Z, transition: SNAP_PREVIEW_TRANSITION }}

@@ -69,14 +69,24 @@ export function captureSessionMetrics(
     });
 
     if (usage) {
+      // One lookup for both lineage and effort: the record is the ground truth
+      // for each, and the shutdown path runs this synchronously.
+      const record = sessionRepo.findByAnyId(recordId);
       usageHistoryRepo.recordSessionUsage({
         sessionRecordId: recordId,
         sessionStartedAt,
         sessionType,
-        totalCostUsd: usage.cost.totalCostUsd,
+        // The conversation this record is one leg of. Both the resume-time
+        // reconcile and the stale-ID recovery keep this pointed at the CLI's
+        // CURRENT id, so a `/clear` fork starts a new lineage. The repository
+        // needs it to turn the cumulative readings below into per-leg deltas.
+        conversationId: record?.agent_session_id ?? null,
+        // Cumulative for the whole conversation, not this leg - the repository
+        // does the subtraction.
+        cumulativeCostUsd: usage.cost.totalCostUsd,
         totalInputTokens: usage.contextWindow.totalInputTokens ?? 0,
         totalOutputTokens: usage.contextWindow.totalOutputTokens ?? 0,
-        totalDurationMs: usage.cost.totalDurationMs ?? null,
+        cumulativeDurationMs: usage.cost.totalDurationMs ?? null,
         toolCallCount,
         modelId: usage.model.id ?? null,
         modelDisplayName: usage.model.displayName ?? null,
@@ -88,7 +98,7 @@ export function captureSessionMetrics(
         // Last-applied effort from the session record (spawn/resume/live-switch
         // ground truth; null = agent default). Attributes the whole session to
         // its final effort - same snapshot semantics as model_id above.
-        effort: sessionRepo.findByAnyId(recordId)?.applied_effort ?? null,
+        effort: record?.applied_effort ?? null,
       });
     }
   } catch {

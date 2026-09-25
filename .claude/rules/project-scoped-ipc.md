@@ -36,8 +36,8 @@ only for main-process internal callers (engine, auto-move, MCP command handlers)
   builds on.
 
 The mutation set today: tasks `create`/`update`/`delete`/`move`/`unarchive`/`bulkDelete`/
-`bulkUnarchive`/`switchBranch`/`setRuntimeOverride`/`resolvePr`; sessions `spawn`/`suspend`/
-`resume`/`reset`/`reconcile`. Reads (`list`, `listArchived`, the `get*` probes) and
+`bulkUnarchive`/`switchBranch`/`updateFromBase`/`setRuntimeOverride`/`resolvePr`; sessions
+`spawn`/`suspend`/`resume`/`reset`/`reconcile`. Reads (`list`, `listArchived`, the `get*` probes) and
 by-session-id / project-agnostic channels (`kill`, `write`, `resize`, `cancelSpawn`, the transient
 session channels) are NOT stamped: a read against the wrong project shows stale data for a frame
 (reconciled by the warm cache), it does not corrupt the wrong project.

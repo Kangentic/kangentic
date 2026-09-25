@@ -1,6 +1,7 @@
 import type { Task, TaskMoveInput } from '../../../shared/types';
 import type { TaskSlice } from './task-slice';
 import type { SwimlaneSlice } from './swimlane-slice';
+import type { AutomationsSlice } from './automations-slice';
 import type { ArchivedTasksSlice } from './archived-tasks-slice';
 import type { TaskCompletionSlice } from './task-completion-slice';
 import type { BoardConfigSlice } from './board-config-slice';
@@ -84,4 +85,4 @@ export type PendingDoneConfirm =
 export type BoardStore = TaskSlice & SwimlaneSlice & ArchivedTasksSlice & TaskCompletionSlice
   & BoardConfigSlice & BoardHydrationSlice & TaskMoveConfirmSlice
   & DoneDropConfirmSlice & ActiveViewSlice & BoardManagerSlice & BoardFilterSlice
-  & LanePinSlice;
+  & LanePinSlice & AutomationsSlice;

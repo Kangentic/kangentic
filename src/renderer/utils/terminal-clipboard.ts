@@ -1,4 +1,7 @@
 import { Terminal } from '@xterm/xterm';
+import { escapeForDoubleQuotedShell, isCmdShell, isUnixLikeShell } from '../../shared/shell-quote';
+import type { PastedImageCapability } from '../../shared/types';
+import { useAgentDriveStore } from '../stores/agent-drive-store';
 
 // ---------------------------------------------------------------------------
 // OSC 52 clipboard sequence handling
@@ -104,16 +107,12 @@ export function copySelectionToClipboard(terminal: Terminal): void {
 
 // ---------------------------------------------------------------------------
 // Shell-aware path helpers (renderer-safe, no node:path dependency)
+//
+// The shell predicates and the double-quote escaper come from
+// `src/shared/shell-quote.ts`, which is the same code `quoteArg` runs. It is
+// split out of `src/shared/paths.ts` precisely so the renderer can share it:
+// that module imports `node:path` and cannot enter this bundle.
 // ---------------------------------------------------------------------------
-
-/**
- * True when the shell is Unix-like and expects POSIX-style paths.
- * Mirrors `isUnixLikeShell` from `src/shared/paths.ts` for renderer use.
- */
-function isUnixLikeShell(shellName: string): boolean {
-  const lower = shellName.toLowerCase();
-  return !lower.includes('cmd') && !lower.includes('powershell') && !lower.includes('pwsh');
-}
 
 /**
  * Convert a Windows path to the format expected by the target shell.
@@ -141,16 +140,19 @@ export function convertPathForShell(filePath: string, shellName: string): string
  * Quote a file path for insertion into a terminal PTY.
  *
  * - Unix-like shells: single-quotes (no variable expansion)
- * - cmd / PowerShell: double-quotes with backtick/$ escaping
+ * - cmd / PowerShell: double-quotes, escaped by `escapeForDoubleQuotedShell`
  * - No shell provided: simple space-only double-quoting (fallback)
  *
- * Mirrors `quoteArg` from `src/shared/paths.ts` for renderer use,
- * without the `node:path` or `process.platform` dependency.
+ * Shares the escaping with `quoteArg` (`src/shared/paths.ts`) but deliberately
+ * does not call it. `quoteArg` runs `sanitizeForPty`, which collapses runs of
+ * whitespace, and that would silently rewrite a legal path under a folder named
+ * `My  Docs`. It also reads `process.platform` when no shell is given, which the
+ * renderer has no access to, hence the local fallback below.
  */
 export function quoteForShell(filePath: string, shellName?: string): string {
   // Simple paths need no quoting (alphanumeric + common path chars).
   // Backslashes excluded - they're escape chars in Unix-like shells.
-  // Regex matches quoteArg() in src/shared/paths.ts:161.
+  // Regex matches quoteArg() in src/shared/paths.ts.
   if (/^[a-zA-Z0-9_./:-]+$/.test(filePath)) return filePath;
 
   if (!shellName) {
@@ -163,14 +165,13 @@ export function quoteForShell(filePath: string, shellName?: string): string {
     return `'${filePath.replace(/'/g, "'\\''")}'`;
   }
 
-  // PowerShell/cmd: double-quotes with backtick and $ escaping
-  return `"${filePath.replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '\\"')}"`;
+  return `"${escapeForDoubleQuotedShell(filePath, isCmdShell(shellName))}"`;
 }
 
 /**
- * Format the text injected into the PTY for a captured (pasted or dropped)
- * image file. With no template, this is just the bare shell-quoted path
- * (legacy behavior for adapters that have not declared
+ * Format the fallback text for a captured (pasted or dropped) image file the
+ * agent CLI cannot attach from a bare path. With no template, this is just the
+ * bare shell-quoted path (adapters that have not declared
  * `pastedImageReferenceTemplate`). With a template, `{path}` is replaced by
  * the quoted path; a template lacking `{path}` has the quoted path appended.
  */
@@ -181,19 +182,90 @@ export function formatImageReference(quotedPath: string, template?: string): str
     : `${template} ${quotedPath}`;
 }
 
+/** The extension of `filePath` (lowercase, no dot), or '' when it has none. */
+function fileExtension(filePath: string): string {
+  const base = filePath.slice(Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1);
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+}
+
+/**
+ * The text to paste for a captured image at `filePath` (`quotedPath` is the
+ * same path already shell-quoted). An extension the adapter attaches natively
+ * (`pastedImageNativeExtensions`) gets the bare quoted path: delivered as a
+ * bracketed paste, the CLI's own path scan attaches it. Every other image
+ * takes `formatImageReference` with the adapter's fallback template, which is
+ * also what an adapter declaring no native set gets for every image.
+ */
+export function resolveImagePasteText(
+  quotedPath: string,
+  filePath: string,
+  capability?: PastedImageCapability,
+): string {
+  const nativeExtensions = capability?.pastedImageNativeExtensions;
+  if (nativeExtensions && nativeExtensions.includes(fileExtension(filePath))) return quotedPath;
+  return formatImageReference(quotedPath, capability?.pastedImageReferenceTemplate);
+}
+
+/**
+ * Whether a dropped image at `filePath` should be re-encoded as PNG before it
+ * is pasted: the adapter attaches PNG natively from a pasted path but not this
+ * file's format. Chromium can decode more than any CLI attaches (a bmp, an
+ * ico), so handing the agent a PNG copy turns a fallback-text drop into a
+ * native attach. False when the format is already native (nothing to gain) or
+ * when the adapter declares no native set at all (a PNG copy would be inert
+ * text there too, so the original path and template are the better delivery).
+ *
+ * Only the drop path asks. The Ctrl+V path never needs to: `clipboard:readImage`
+ * saves every clipboard capture as PNG, which is in every declared native set.
+ */
+export function needsImageNormalization(filePath: string, capability?: PastedImageCapability): boolean {
+  const nativeExtensions = capability?.pastedImageNativeExtensions;
+  if (!nativeExtensions || !nativeExtensions.includes('png')) return false;
+  return !nativeExtensions.includes(fileExtension(filePath));
+}
+
+/**
+ * Deliver a file drop's items through the terminal's paste handle: one
+ * `pasteText` call per item, so under bracketed-paste mode each path is its own
+ * packet and the TUI's path scan sees one token per packet. A single
+ * space-joined paste would hand the scan `"a.png" "b.png"` as ONE token (its
+ * splitter looks ahead for a drive letter or `/`, never a quote) and attach
+ * neither. The separator rides inside the preceding packet (every item but the
+ * last carries a trailing space), so a shell prompt still reads
+ * `"a.png" "b.png"`. Verified against Claude Code 2.1.276: two packets in one
+ * write attach as [Image #1] [Image #2].
+ *
+ * Returns false, and pastes nothing further, when `pasteText` reports it had no
+ * terminal to land in, so a caller can skip the focus that follows a delivery.
+ */
+export function pasteDroppedItems(
+  items: readonly string[],
+  pasteText: (text: string) => boolean,
+): boolean {
+  return items.every((item, index) => pasteText(index < items.length - 1 ? `${item} ` : item));
+}
+
 /**
  * Handle Ctrl+V / Cmd+V paste in the terminal.
  *
  * Priority 1: If the clipboard contains text, paste it into xterm.
  * Priority 2: If the clipboard contains an image (and no text), save it
- *   to a temp file and write a reference to it (see `formatImageReference`)
- *   to the PTY so the agent reliably reads it as an image.
+ *   to a temp file and paste its path (see `resolveImagePasteText`) into
+ *   xterm, the way a native terminal delivers a dropped file.
+ *
+ * Both priorities end in `terminal.paste()`, so the bytes are bracketed
+ * (`ESC[200~ ... ESC[201~`) exactly when the foreground app enabled mode 2004.
+ * That is what lets an agent TUI attach the image from its path: Claude Code's
+ * path scan runs only on a paste packet, never on typed bytes. A shell prompt
+ * that never enabled the mode receives the plain quoted path, and nothing
+ * executes.
  */
 async function handlePaste(
   terminal: Terminal,
   onWrite?: (data: string) => void,
   shellName?: string,
-  getImageReferenceTemplate?: () => string | undefined,
+  getPastedImageCapability?: () => PastedImageCapability | undefined,
 ): Promise<void> {
   // Priority 1: text clipboard
   try {
@@ -206,12 +278,17 @@ async function handlePaste(
     // readText failed or denied - try image below
   }
 
-  // Priority 2: image clipboard (only useful if we can write to PTY).
+  // Priority 2: image clipboard. This path no longer writes through `onWrite`
+  // (xterm's paste feeds onData, and `useTerminal` always passes its batcher,
+  // which drops the bytes itself when no session backs the terminal), but the
+  // check stays as the cheap early-out for a caller that wired no write sink at
+  // all: such a terminal has nowhere to deliver a paste, so it should not spend
+  // a clipboard read on one. The Ctrl+Enter and Backspace paths still write
+  // through it.
   // Read the image natively in the main process (Electron clipboard), which avoids
   // the document-focus requirement of the web clipboard API and behaves identically
   // across platforms (and, unlike the agent CLI's own clipboard reader, reliably
-  // captures a Windows Snipping Tool image), then write a reference to the saved
-  // file path to the PTY so the agent picks it up as an image.
+  // captures a Windows Snipping Tool image), then paste the saved file's path.
   if (!onWrite) return;
 
   try {
@@ -219,7 +296,7 @@ async function handlePaste(
     if (!filePath) return;
     if (shellName) filePath = convertPathForShell(filePath, shellName);
     const quotedPath = quoteForShell(filePath, shellName);
-    onWrite(formatImageReference(quotedPath, getImageReferenceTemplate?.()));
+    terminal.paste(resolveImagePasteText(quotedPath, filePath, getPastedImageCapability?.()));
   } catch {
     // native clipboard read failed - silently fail
   }
@@ -259,7 +336,7 @@ export function enableTerminalClipboard(
   shellName?: string,
   sessionId?: string,
   releaseEscapeWhenPointerOutside?: boolean,
-  getImageReferenceTemplate?: () => string | undefined,
+  getPastedImageCapability?: () => PastedImageCapability | undefined,
   getBackspaceSendsCtrlH?: () => boolean,
 ): void {
   // OSC 52 clipboard writes (write-only). Claude Code's TUI copies a selection by
@@ -287,8 +364,9 @@ export function enableTerminalClipboard(
     // - pointer outside the terminal: decline the key (return false) so it
     //   bubbles to the dialog and closes it. The agent does not receive Escape.
     // - pointer over the terminal: keep Escape for the agent's TUI and
-    //   stopPropagation so the dialog's document listener does not also close it
-    //   (xterm does not stop propagation on its own).
+    //   stopPropagation so the dialog's document listener does not also close it.
+    //   xterm stops it as well, since its key map marks Escape `cancel`, so this
+    //   call states the contract here rather than relying on that detail.
     if (releaseEscapeWhenPointerOutside && event.key === 'Escape') {
       if (!el.matches(':hover')) return false;
       event.stopPropagation();
@@ -310,7 +388,7 @@ export function enableTerminalClipboard(
       ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'V');
 
     if (isPaste) {
-      handlePaste(terminal, onWrite, shellName, getImageReferenceTemplate).catch(() => { /* clipboard access denied */ });
+      handlePaste(terminal, onWrite, shellName, getPastedImageCapability).catch(() => { /* clipboard access denied */ });
       return false;
     }
 
@@ -344,6 +422,14 @@ export function enableTerminalClipboard(
     // its default \x03 behavior. Mac sends Cmd+C only as a copy
     // shortcut, never as SIGINT, so we restrict this to ctrlKey.
     if (event.ctrlKey && !event.metaKey && !event.shiftKey && event.key === 'c' && !terminal.hasSelection() && sessionId) {
+      // Release the Browser pane's drive veil NOW, locally, without waiting
+      // for the engine to agree. The engine's answer is correct but slow:
+      // measured 3067ms from this keypress to the veil clearing, which is the
+      // coordinator's 3000ms settle window. That window is right for what it
+      // does, and far too long to hold a POINTER BLOCK for - the veil makes
+      // the page unclickable, so waiting it out means the user pressed stop
+      // and then sat unable to touch their own browser for three seconds.
+      useAgentDriveStore.getState().noteUserInterrupt(sessionId);
       window.electronAPI.sessions.notifyUserInterrupt(sessionId).catch(() => {
         // Best-effort. The engine's 5-min stuck-pending-tools hatch
         // is the safety backstop if this IPC fails.

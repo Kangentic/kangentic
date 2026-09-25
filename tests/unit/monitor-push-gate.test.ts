@@ -66,7 +66,7 @@ interface FakeNavigationDetails {
 
 type InvokeHandler = (event: { sender: FakeWebContents }) => unknown;
 
-function makeContext(): { context: IpcContext; fireSessionChanged: () => void } {
+function makeContext(): { context: IpcContext; fireSessionChanged: () => void; fireSessionRemoved: () => void } {
   const sessionEvents = new EventEmitter();
   const context = {
     mainWindow: { isDestroyed: () => false },
@@ -80,6 +80,7 @@ function makeContext(): { context: IpcContext; fireSessionChanged: () => void } 
   return {
     context,
     fireSessionChanged: () => sessionEvents.emit('session-changed'),
+    fireSessionRemoved: () => sessionEvents.emit('session-removed'),
   };
 }
 
@@ -126,6 +127,23 @@ describe('monitor push gate', () => {
 
     fireSessionChanged();
     vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    expect(mockBroadcast).toHaveBeenCalledTimes(1);
+    expect(mockBroadcast.mock.calls[0][1]).toBe(IPC.MONITOR_CHANGED);
+  });
+
+  it('a session removal schedules a push, so a detached monitor re-lists and drops the row', () => {
+    // A direct remove (project delete, SESSION_RESET, an aborted spawn) has no
+    // 'exit' to ride, and the detached monitor's session store refreshes only
+    // on MONITOR_CHANGED. Dropping this subscription leaves that window holding
+    // a row main no longer has.
+    const { context, fireSessionRemoved } = makeContext();
+    registerMonitorHandlers(context);
+    getHandler(IPC.MONITOR_SUBSCRIBE)({ sender: new FakeWebContents(7) });
+    mockBroadcast.mockClear();
+
+    fireSessionRemoved();
+    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+
     expect(mockBroadcast).toHaveBeenCalledTimes(1);
     expect(mockBroadcast.mock.calls[0][1]).toBe(IPC.MONITOR_CHANGED);
   });

@@ -133,6 +133,33 @@ describe('ActivityMark <title> child renders alongside the injected mark geometr
   });
 });
 
+describe('ActivityMark keeps the injected geometry out of hit testing', () => {
+  // Re-assigning the <g>'s innerHTML on a `mark` change destroys every child under
+  // the cursor, and Chromium drops a click whose target chain is torn down
+  // mid-gesture. That shipped as "the first Stop click never registers": a press on
+  // the glyph, an activity flip during the press, and the button did nothing.
+  //
+  // The behavioral guard is tests/ui/command-terminal.spec.ts ("Stop still fires when
+  // the activity mark changes mid-press"), which drives real mousedown/mouseup in real
+  // Chromium - this tier cannot observe the bug at all, since there is no DOM here and
+  // jsdom never synthesizes a click from mousedown/mouseup anyway. What this asserts is
+  // only that the prop the fix depends on is still present.
+  it('marks the injected <g> non-hit-testable, leaving the <svg> root hittable', () => {
+    const output = ActivityMark({ mark: 'control-stop-working' });
+    if (!isElementLike(output)) throw new Error('ActivityMark did not return an element');
+
+    const markGroup = Array.isArray(output.props.children) ? output.props.children[0] : output.props.children;
+    if (!isElementLike(markGroup)) throw new Error('expected the first child to be the injected <g>');
+    expect(markGroup.type).toBe('g');
+    expect(markGroup.props.style).toEqual({ pointerEvents: 'none' });
+
+    // The root must stay hit-testable: TaskCard hangs a <title> off it for the native
+    // hover tooltip, which needs the <svg> itself to receive the pointer.
+    const rootStyle = output.props.style as { pointerEvents?: string } | undefined;
+    expect(rootStyle?.pointerEvents).toBeUndefined();
+  });
+});
+
 describe('CommandTerminalIcon showPlus precedence', () => {
   it('renders terminal-new even when tone is thinking (showPlus wins over the working mark)', () => {
     const iconElement = CommandTerminalIcon({ tone: 'thinking', showPlus: true });

@@ -2,6 +2,112 @@
 
 <!-- releases -->
 
+## [protocol-v0.15.0] - 2026-09-18
+
+Adds the `start-session` capability verb, so a phone can start a task's session
+again in the column the task is already in, and makes a verb the receiver does
+not know answerable instead of a silent drop. Both additive; `PROTOCOL_VERSION`
+stays '3'.
+
+`start-session` is appended to `CAPABILITY_VERBS` (append only: the desktop
+mirrors the tuple index for index), with `StartSessionRequestPayload` (`taskId`
+plus `projectId`), `StartSessionResponsePayload` (`{ ok, outcome: 'starting' |
+'live' }`), `StartSessionOutcome`, and the guard `parseStartSessionResponsePayload`.
+The verb answers when the start is ACCEPTED, not when the agent is up: on
+`starting` the successor's arrival reaches the phone as the board and stream
+events a column move already produces; on `live` a session was already running,
+nothing was spawned, and no event is coming, so a phone that tapped Start from a
+stale screen refreshes its board and stream itself. `live` also covers a session
+queued at the desktop's concurrency limit, so read it as "coming", not "running".
+A post-accept failure is reported on the desktop only, so the waiting screen
+needs its own timeout and a retry.
+
+`decodeMessage` now validates a capability-request's envelope (a string
+`requestId`, a string `verb`, a JSON `payload`) before verb membership, and when
+only the membership check fails it throws a typed `UnsupportedVerbError` carrying
+the `requestId` and `verb`, so a receiver can answer the request instead of
+dropping the frame. A malformed frame still throws a plain `Error` and stays a
+silent rejection. `isUnsupportedVerbError` keys on the error's name and fields
+rather than `instanceof`, because a consumer of the published dist and a
+workspace-source consumer can hold two copies of the class.
+`CapabilityResponseMessage` gains an optional `code?: CapabilityErrorCode` (one
+member today, `UNSUPPORTED_VERB_ERROR_CODE = 'unsupported-verb'`), validated by
+shape only, so a code an older peer does not know cannot cost it the `error` text
+it can still show. A desktop from this version on answers an unknown verb with
+`{ ok: false, error: 'Unsupported verb: <name>', code: 'unsupported-verb' }`
+without running any handler. A desktop older than this version still drops the
+frame and the phone times out, so the refusal helps for every verb added after
+`start-session`; a client should key its "update your desktop" copy on `code`,
+never on the `error` text.
+
+### Features
+- Add a start-session verb so the phone can start a task's session again (c910d20e)
+- Answer an unknown capability verb with a refusal instead of dropping the frame (6afe2e06)
+
+### Fixes
+- The `spawnProgressLabel` doc comment on the session-ended payload also names an in-place restart, such as a re-sent command (38f5b44d)
+
+### Other
+- `isUnsupportedVerbError` binds its field cast once (0fdfc4b6)
+
+## [protocol-v0.14.0] - 2026-09-13
+
+Adds an optional `spawnProgressLabel` to the `session-ended` activity payload,
+carrying the desktop's in-flight spawn-progress label (for example "Switching
+model..."). Additive, and `PROTOCOL_VERSION` stays '3': absent from pre-0.14.0
+desktops, and never sent as `null`.
+
+Presence means the desktop had a respawn in flight for this task when the
+session ended, so a client can tell a same-column respawn (model, agent, effort
+or session-track switch) from a genuine park. `intentional` cannot carry that
+distinction on its own, because `SessionManager.suspend()` sets
+`status = 'suspended'` before the force-kill for a respawn and a real park
+alike, and both reach a client as `intentional: true`.
+
+Read it as INTENT, not a guarantee, on the same terms `BoardColumnWire.spawns_session`
+documents. The desktop can suspend without a successor ever landing, and five
+park paths do not clear the label first, so a client MUST keep whatever timeout
+already bounds its session-swap wait and use the label only to skip a redundant
+one. The string is the desktop's own display text: treat it as untrusted, cap
+its length, and fall back to generic copy rather than parsing it.
+
+### Features
+- Add `spawnProgressLabel` to the session-ended activity payload (b528e3e6)
+
+## [protocol-v0.13.1] - 2026-09-12
+
+`BoardTaskWire.pr_merge_readiness` becomes optional (`?: string | null`),
+matching `BoardColumnWire.spawns_session`. It shipped required in 0.13.0 even
+though `parseBoardTaskWire` already reads an absent key as null, so the
+required declaration bought nothing and forced every consumer that hand-builds
+a `BoardTaskWire` literal to list a field the parser already defaults.
+
+No runtime or parse behavior changes and `PROTOCOL_VERSION` stays '3'. One
+direction is worth naming for readers: the field's type now includes
+`undefined`, so a consumer that reads it under `strict` without handling that
+case needs a check it did not need before. Producers are strictly freer.
+
+### Fixes
+- Make `BoardTaskWire.pr_merge_readiness` optional (a9624bac)
+
+## [protocol-v0.13.0] - 2026-09-11
+
+Adds `BoardTaskWire.pr_merge_readiness` and `BoardColumnWire.spawns_session`.
+Both are additive and neither moves `PROTOCOL_VERSION`: `parseBoardTaskWire`
+reads an absent readiness key as null, so a desktop that predates the field
+looks exactly like one that has never judged a PR. A client that does not
+recognise a readiness value should render the PR as plain open, which keeps
+`queued` and `running` from breaking a phone built against the first four
+values.
+
+### Features
+- Show merge readiness on the PR pill, resolved per adapter (5ab77a75)
+- Fold Azure branch policies into merge readiness and report in-flight checks (44dd7abd)
+- Narrow `BoardColumnWire.role` and add `spawns_session` (f163b588)
+
+### Fixes
+- Correct the `spawns_session` false contract and pin the wire round trip (e03fa313)
+
 ## [protocol-v0.12.0] - 2026-08-06
 
 Wire `PROTOCOL_VERSION` goes '2' -> '3'. All peers must upgrade together, and

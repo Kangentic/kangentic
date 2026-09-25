@@ -30,6 +30,10 @@ vi.mock('electron', () => ({
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       capturedHandlers.set(channel, handler);
     }),
+    // The fire-and-forget channels (`memory:prewarm`) register through `on`.
+    on: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+      capturedHandlers.set(channel, handler);
+    }),
   },
 }));
 
@@ -42,6 +46,7 @@ vi.mock('../../src/main/search/search-core', () => ({
 // ---------------------------------------------------------------------------
 
 import { registerSearchHandlers } from '../../src/main/ipc/handlers/search';
+import { retrievalService } from '../../src/main/retrieval/retrieval-service';
 import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
@@ -155,6 +160,24 @@ describe('search IPC adapter (registerSearchHandlers)', () => {
       [DEFAULT_PROJECT_ID, OTHER_PROJECT_ID].sort(),
     );
     expect(callArg.includeProjectHits).toBe(true);
+  });
+
+  it('memory:prewarm forwards to retrievalService.prewarmEmbedWorker with the IPC context (fire-and-forget)', () => {
+    const prewarmSpy = vi.spyOn(retrievalService, 'prewarmEmbedWorker').mockImplementation(() => undefined);
+    try {
+      const context = makeContext();
+      capturedHandlers.clear();
+      registerSearchHandlers(context as never);
+
+      const handler = capturedHandlers.get(IPC.MEMORY_PREWARM);
+      if (!handler) throw new Error(`Handler for ${IPC.MEMORY_PREWARM} was not registered`);
+      handler({} as Electron.IpcMainEvent);
+
+      expect(prewarmSpy).toHaveBeenCalledTimes(1);
+      expect(prewarmSpy).toHaveBeenCalledWith(context);
+    } finally {
+      prewarmSpy.mockRestore();
+    }
   });
 
   it('returns [] without calling runSearchEverything when currentProjectId matches no registered project', async () => {

@@ -140,20 +140,36 @@ test.describe('Changes panel: viewed marks', () => {
       await expect(toggleA).toHaveAttribute('aria-pressed', 'false', { timeout: 3000 });
     }
 
-    // Initially nothing is viewed: no count chip, checkbox unpressed.
+    // Initially nothing is viewed: the count reads 0/2 (always visible once
+    // files exist, so the review-marks feature is discoverable before the
+    // first mark; the word "viewed" lives in the tooltip - the 220px rail
+    // cannot afford it inline), checkbox unpressed, no progress fill.
     const viewedCount = fileTree.locator('[data-testid="changes-viewed-count"]');
-    await expect(viewedCount).toHaveCount(0);
+    await expect(viewedCount).toContainText('0/2');
+    await expect(viewedCount).toHaveAttribute('title', /files viewed/);
     await expect(toggleA).toHaveAttribute('aria-pressed', 'false');
+    await expect(fileTree.locator('[data-testid="changes-viewed-progress"]')).toHaveCount(0);
 
-    // Mark src/a.ts viewed: checkbox flips, count reads 1/2.
+    // Mark src/a.ts viewed: checkbox flips, count reads 1/2, the progress fill
+    // appears under the list header.
     await toggleA.click();
     await expect(toggleA).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 });
-    await expect(viewedCount).toContainText('1/2 viewed', { timeout: 3000 });
+    await expect(viewedCount).toContainText('1/2', { timeout: 3000 });
+    await expect(fileTree.locator('[data-testid="changes-viewed-progress"]')).toHaveCount(1);
 
-    // Un-view it: checkbox flips back, count chip disappears.
+    // Un-view it: checkbox flips back, count returns to 0/2, fill disappears.
     await toggleA.click();
     await expect(toggleA).toHaveAttribute('aria-pressed', 'false', { timeout: 3000 });
-    await expect(viewedCount).toHaveCount(0, { timeout: 3000 });
+    await expect(viewedCount).toContainText('0/2', { timeout: 3000 });
+    await expect(fileTree.locator('[data-testid="changes-viewed-progress"]')).toHaveCount(0, { timeout: 3000 });
+
+    // Small-layout guard: at the rail's default 220px width the list header
+    // must hold ONE line (count + stats + viewed chip + view buttons). It
+    // shipped wrapped to two ragged lines once; a generous height ceiling
+    // (one 12px text line + py-1.5 chrome is ~29px) catches that regression
+    // without pinning exact font metrics (cross-platform tolerance).
+    const listHeaderBox = (await fileTree.locator('[data-testid="changes-list-header"]').boundingBox())!;
+    expect(listHeaderBox.height).toBeLessThan(40);
 
     // Close panel + dialog so state does not leak to other tests.
     await page.locator('[data-testid="changes-toggle"]').click();

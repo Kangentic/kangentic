@@ -17,6 +17,73 @@ import { runGitWithTimeout, isGitTimeoutError } from './git-spawn';
 
 const fetchCache = new Map<string, number>();
 
+/**
+ * Why a failed fetch is classified: the surfaced classes (timeout / auth /
+ * network / other) mean the remote was expected to answer and did not, which
+ * is a genuine staleness risk worth telling the user about. The silent classes
+ * are either not failures at all (abort) or repos where the local ref was
+ * always going to be authoritative (no remote configured, branch not on the
+ * remote). Classification reads stderr text rather than probing remote config:
+ * the stderr already distinguishes every case without an extra shell-out, and
+ * git porcelain errors are not localized by default; an unrecognized message
+ * degrades to 'other'.
+ */
+export type FetchFailureReason =
+  | 'timeout'
+  | 'auth'
+  | 'network'
+  | 'other'
+  | 'abort'
+  | 'no-remote'
+  | 'branch-missing';
+
+/** Result of one fetchIfStale call, reported via `options.onOutcome`. */
+export type FetchIfStaleOutcome =
+  | { kind: 'fetched' }
+  | { kind: 'throttled' }
+  | { kind: 'failed'; reason: FetchFailureReason; message: string };
+
+/**
+ * Classify a rejected fetch by its error message. Exported for unit tests
+ * only; production code observes classifications through fetchIfStale's
+ * `onOutcome` callback. Keep it that way: several handler tests mock this
+ * module with factories that enumerate only the functions they stub, so a new
+ * production-imported value export would arrive as `undefined` there.
+ */
+export function classifyFetchFailure(error: unknown): FetchFailureReason {
+  if (isGitTimeoutError(error)) return 'timeout';
+  const message = error instanceof Error ? error.message : String(error);
+  if (/aborted \(external abort\)|aborted before spawn/.test(message)) return 'abort';
+  // A signal-kill from runGitWithTimeout asserts the timeout as its cause
+  // (signalKillAssertsTimeout), a shape isGitTimeoutError does not match.
+  if (/killed by signal .+ after \d+ms timeout/.test(message)) return 'timeout';
+  if (/couldn't find remote ref/i.test(message)) return 'branch-missing';
+  if (/does not appear to be a git repository|No such remote/i.test(message)) return 'no-remote';
+  // Auth before network: ssh auth failures also print the network-sounding
+  // "Could not read from remote repository", and an https 401/403 arrives
+  // wrapped in "unable to access". "Permission denied" requires the ssh
+  // parenthetical ("(publickey)", "(password)", ...): git-for-Windows emits a
+  // bare "Permission denied" for LOCAL file locks too ("unable to unlink old
+  // '...pack.idx': Permission denied" under antivirus or a live agent), and
+  // toasting "authentication failed" for those would be confidently wrong.
+  if (/authentication failed|could not read Username|Permission denied \(|publickey|Invalid username or password|terminal prompts disabled|HTTP 40[13]|returned error: 40[13]/i.test(message)) return 'auth';
+  if (/Could not resolve host|unable to access|Failed to connect|Connection (refused|timed out|reset)|Network is unreachable|Could not read from remote repository/i.test(message)) return 'network';
+  return 'other';
+}
+
+/** Deliver an outcome without letting a throwing listener change fetch semantics. */
+function reportOutcome(
+  onOutcome: ((outcome: FetchIfStaleOutcome) => void) | undefined,
+  outcome: FetchIfStaleOutcome,
+): void {
+  if (!onOutcome) return;
+  try {
+    onOutcome(outcome);
+  } catch {
+    // Observers are best-effort; the returned start point is the contract.
+  }
+}
+
 /** Skip fetch if the same project+branch was fetched within this window. */
 const FETCH_THROTTLE_MS = 30 * 1000; // 30 seconds
 
@@ -61,6 +128,31 @@ export function clearFetchCache(): void {
   inFlightAllRemoteFetches.clear();
 }
 
+/**
+ * Environment for a fetch that runs with no user gesture behind it (the
+ * background scheduler). `GIT_TERMINAL_PROMPT=0` makes git fail instead of
+ * prompting on the terminal path (stdin is already closed, so that path could
+ * only ever hang), and `GCM_INTERACTIVE=never` stops Git Credential Manager,
+ * a GUI helper that does not read stdin, from raising a credentials dialog
+ * for a repo whose token has expired. The failure classifies as `auth`, the
+ * throttle cache stays unset, and the repo degrades to "no refresh" rather
+ * than a dialog or a retry loop. User-driven fetches keep the inherited env:
+ * a prompt that follows a click is at least explicable.
+ *
+ * Those two variables cover git's own prompt and GCM only. An inherited
+ * `GIT_ASKPASS` / `SSH_ASKPASS` helper (an integrated terminal sets one), a
+ * `core.askPass` setting, and an ssh passphrase prompt are not suppressed
+ * here; the 5s timeout is what bounds those.
+ */
+export function nonInteractiveGitEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+}
+
+export interface FetchAllRemotesOptions {
+  /** Run with `nonInteractiveGitEnv()` so the fetch can never prompt. */
+  nonInteractive?: boolean;
+}
+
 function fetchCacheKey(projectPath: string, branch: string): string {
   const normalizedPath = process.platform === 'win32' ? projectPath.toLowerCase() : projectPath;
   return `${normalizedPath}:${branch}`;
@@ -80,16 +172,24 @@ function fetchCacheKey(projectPath: string, branch: string): string {
  * eslint accepts it). The timeout path requires `child_process.spawn`
  * directly so we can attach an `AbortSignal` (simple-git's `.raw()`
  * exposes no abort primitive).
+ *
+ * `options.onOutcome` reports what actually happened - fetched, throttle
+ * skip, or a classified failure - because the returned string cannot: a
+ * throttle hit returns `origin/<branch>` without fetching, and a failure's
+ * bare `<branch>` says nothing about why. Callers that surface staleness
+ * (spawn-progress notes, warning toasts) key off the outcome, never the
+ * return value.
  */
 export async function fetchIfStale(
   _git: SimpleGit,
   projectPath: string,
   branch: string,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; onOutcome?: (outcome: FetchIfStaleOutcome) => void },
 ): Promise<string> {
   const key = fetchCacheKey(projectPath, branch);
   const lastFetch = fetchCache.get(key);
   if (lastFetch && Date.now() - lastFetch < FETCH_THROTTLE_MS) {
+    reportOutcome(options?.onOutcome, { kind: 'throttled' });
     return `origin/${branch}`;
   }
 
@@ -99,11 +199,17 @@ export async function fetchIfStale(
       signal: options?.signal,
     });
     fetchCache.set(key, Date.now());
+    reportOutcome(options?.onOutcome, { kind: 'fetched' });
     return `origin/${branch}`;
   } catch (error) {
     if (isGitTimeoutError(error)) {
       console.warn(`[FETCH] timed out after ${FETCH_TIMEOUT_MS / 1000}s, falling back to local branch ${branch}`);
     }
+    reportOutcome(options?.onOutcome, {
+      kind: 'failed',
+      reason: classifyFetchFailure(error),
+      message: error instanceof Error ? error.message : String(error),
+    });
     // No remote, branch not on remote, network unavailable, timeout, or
     // abort: use local branch. Cache intentionally NOT updated so the
     // next call retries.
@@ -133,13 +239,20 @@ export async function fetchIfStale(
  * Failure semantics: this never rejects. Any failure (no remote, offline,
  * timeout, ref-lock contention) is swallowed so the probe falls back to the
  * existing local refs - the behavior before this refresh existed.
+ *
+ * The in-flight dedup is shared across callers whatever their `options`: a
+ * panel-mount fetch that lands while the scheduler's non-interactive fetch is
+ * in flight rides that promise. Acceptable, because a failure leaves the cache
+ * unset and the next user-driven call retries with prompts allowed.
  */
-export async function fetchAllRemotesIfStale(checkPath: string): Promise<void> {
+export async function fetchAllRemotesIfStale(checkPath: string, options?: FetchAllRemotesOptions): Promise<void> {
+  const env = options?.nonInteractive ? nonInteractiveGitEnv() : undefined;
   let repoIdentityPath = checkPath;
   try {
     const commonDirOutput = (
       await runGitWithTimeout(checkPath, ['rev-parse', '--git-common-dir'], {
         timeoutMs: PROBE_FETCH_TIMEOUT_MS,
+        env,
       })
     ).stdout.trim();
     if (commonDirOutput) {
@@ -166,6 +279,7 @@ export async function fetchAllRemotesIfStale(checkPath: string): Promise<void> {
     try {
       await runGitWithTimeout(checkPath, ['fetch', '--all', '--prune', '--quiet'], {
         timeoutMs: PROBE_FETCH_TIMEOUT_MS,
+        env,
       });
       fetchCache.set(cacheKey, Date.now());
     } catch (error) {

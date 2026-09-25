@@ -25,7 +25,13 @@ import type { IpcContext } from '../ipc/ipc-context';
  *     live HEAD branch resolves the PR even after the agent renamed the branch.
  *     Only active tasks have a worktree (To Do clears it, Done reclaims it), so
  *     this stays a small bounded set, further bounded by the per-task 60s TTL and
- *     the global `gh` concurrency cap.
+ *     the global `gh` concurrency cap;
+ *   - a recorded `pushed_branch` outside a Done lane - the same discovery case
+ *     for a task with NO worktree, whose only anchor is the branch its own push
+ *     named. Done is excluded because `pushed_branch` survives Done (it is a
+ *     remote fact), and a Done task that never linked would otherwise be swept
+ *     forever; the worktree anchor gets that bound for free from Done reclaiming
+ *     the directory.
  * Terminal merged/closed PRs never change and are skipped first, as are tasks
  * sitting in a To Do lane (To Do resets a task, so there is no PR to link there -
  * the same gate `autoLinkPRForTask` applies to every implicit trigger). A task
@@ -35,11 +41,12 @@ import type { IpcContext } from '../ipc/ipc-context';
  * PR URL in the description - see the ladder comment in `pr-linking.ts` for why
  * scraping prose stamped cited PRs onto unrelated tasks.
  */
-function isEligibleForRefresh(task: Task, isTodoLane: boolean): boolean {
-  if (isTodoLane) return false;
+function isEligibleForRefresh(task: Task, laneRole: { isTodo: boolean; isDone: boolean }): boolean {
+  if (laneRole.isTodo) return false;
   if (task.pr_state === 'merged' || task.pr_state === 'closed') return false;
   if (task.pr_number != null) return true;
-  return task.worktree_path != null;
+  if (task.worktree_path != null) return true;
+  return task.pushed_branch != null && !laneRole.isDone;
 }
 
 /**
@@ -56,17 +63,24 @@ export async function refreshProjectPRs(context: IpcContext, projectId: string):
   let eligible: Task[];
   try {
     const { tasks, swimlanes } = getProjectRepos(context, projectId);
-    // Resolve the To Do lanes once rather than per task - the sweep can run over
-    // every task on the board. Guarded separately from the task read: the lane
-    // gate is a filter, so losing it must degrade to "no lane is To Do" rather
-    // than take the whole sweep down with it.
+    // Resolve the To Do and Done lanes once rather than per task - the sweep can
+    // run over every task on the board. Guarded separately from the task read:
+    // the lane gate is a filter, so losing it must degrade to "no lane is To Do
+    // or Done" rather than take the whole sweep down with it.
     let todoLaneIds: Set<string>;
+    let doneLaneIds: Set<string>;
     try {
-      todoLaneIds = new Set(swimlanes.list().filter((lane) => lane.role === 'todo').map((lane) => lane.id));
+      const lanes = swimlanes.list();
+      todoLaneIds = new Set(lanes.filter((lane) => lane.role === 'todo').map((lane) => lane.id));
+      doneLaneIds = new Set(lanes.filter((lane) => lane.role === 'done').map((lane) => lane.id));
     } catch {
       todoLaneIds = new Set();
+      doneLaneIds = new Set();
     }
-    eligible = tasks.list().filter((task) => isEligibleForRefresh(task, todoLaneIds.has(task.swimlane_id)));
+    eligible = tasks.list().filter((task) => isEligibleForRefresh(task, {
+      isTodo: todoLaneIds.has(task.swimlane_id),
+      isDone: doneLaneIds.has(task.swimlane_id),
+    }));
   } catch {
     // Project DB unavailable (e.g. closed mid-switch) - nothing to refresh.
     return;

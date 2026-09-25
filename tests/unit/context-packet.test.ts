@@ -103,6 +103,7 @@ describe('buildSessionHistoryReference', () => {
       { name: 'droid', display: 'Droid' },
       { name: 'grok', display: 'Grok Build' },
       { name: 'antigravity', display: 'Antigravity CLI' },
+      { name: 'goose', display: 'Goose CLI' },
     ];
 
     for (const { name, display } of agents) {

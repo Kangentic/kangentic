@@ -22,8 +22,10 @@ vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
   return { ShellResolver: MockShellResolver };
 });
 
-vi.mock('../../src/shared/paths', () => ({
+vi.mock('../../src/shared/paths', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/shared/paths')>()),
   adaptCommandForShell: (cmd: string) => cmd,
+  buildSpawnClearPrelude: () => '',
   isUncPath: (p: string) => /^[\\/]{2}[^\\/]/.test(p),
 }));
 
@@ -240,7 +242,7 @@ describe('Session respawn (column transition)', () => {
     expect(taskSessions[0].id).toBe(second.id);
   });
 
-  it('stale status.json is deleted on respawn to prevent cached usage emission', async () => {
+  it('stale status.json is truncated on respawn to prevent cached usage emission', async () => {
     const sessionDir = path.join(tmpDir, 'sessions', 'claude-session-1');
     fs.mkdirSync(sessionDir, { recursive: true });
     const statusPath = path.join(sessionDir, 'status.json');
@@ -259,7 +261,15 @@ describe('Session respawn (column transition)', () => {
     // Respawn with the same statusOutputPath (same claudeSessionId)
     await spawnForTask('task-11', { statusOutputPath: statusPath });
 
-    // Stale file should have been deleted before the usage watcher started
-    expect(fs.existsSync(statusPath)).toBe(false);
+    // The stale CONTENT must be gone before the usage watcher starts, which is
+    // what this test is really about: every parseStatus returns null for '',
+    // so an empty file emits nothing.
+    //
+    // Truncated rather than unlinked. Leaving the file absent meant
+    // fs.watch(statusOutputPath) threw and FileWatcher fell back to watching
+    // the session DIRECTORY - and on Windows a directory watch whose target is
+    // later deleted spins a CPU core until close(). See status-file-reader.ts.
+    expect(fs.existsSync(statusPath)).toBe(true);
+    expect(fs.readFileSync(statusPath, 'utf-8')).toBe('');
   });
 });

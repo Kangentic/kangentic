@@ -10,6 +10,8 @@ import {
   parseActivityEventPayload,
 } from '../../../packages/protocol/src/events/event';
 import {
+  isDoneRole,
+  isTodoRole,
   parseBacklogItemWire,
   parseBoardColumnWire,
   parseBoardTaskWire,
@@ -25,6 +27,7 @@ import {
   parseReadBoardResponsePayload,
   parseReadDiffResponsePayload,
   parseReadStreamResponsePayload,
+  parseStartSessionResponsePayload,
   parseTranscriptWindowResponsePayload,
 } from '../../../packages/protocol/src/wire/payloads';
 import type { JsonValue } from '../../../packages/protocol/src/wire/messages';
@@ -49,6 +52,7 @@ const boardTaskFixture: JsonValue = {
   pr_number: null,
   pr_url: null,
   pr_state: null,
+  pr_merge_readiness: null,
   base_branch: 'main',
   labels: ['bug'],
   priority: 1,
@@ -167,6 +171,21 @@ describe('parseActivityEventPayload', () => {
     expect(() => parseActivityEventPayload({ type: 'session-ended', intentional: 0 })).toThrow(/intentional/);
   });
 
+  it('parses a session-ended payload carrying a spawnProgressLabel', () => {
+    const payload: JsonValue = { type: 'session-ended', intentional: true, spawnProgressLabel: 'Switching model...' };
+    expect(parseActivityEventPayload(payload)).toEqual(payload);
+  });
+
+  it('a session-ended payload without spawnProgressLabel stays label-less (pre-0.14.0 desktop)', () => {
+    const parsed = parseActivityEventPayload({ type: 'session-ended', intentional: true });
+    expect('spawnProgressLabel' in parsed).toBe(false);
+  });
+
+  it('rejects a session-ended payload with a non-string spawnProgressLabel', () => {
+    expect(() => parseActivityEventPayload({ type: 'session-ended', intentional: true, spawnProgressLabel: 42 })).toThrow(/spawnProgressLabel/);
+    expect(() => parseActivityEventPayload({ type: 'session-ended', intentional: true, spawnProgressLabel: null })).toThrow(/spawnProgressLabel/);
+  });
+
   it('rejects an invalid state', () => {
     expect(() => parseActivityEventPayload({ type: 'activity', state: 'busy', reason: { kind: 'idle' } })).toThrow(/state/);
   });
@@ -229,6 +248,17 @@ describe('board row guards', () => {
     expect(() => parseBoardTaskWire({ title: 'x' })).toThrow(/id/);
   });
 
+  it('reads a board task missing pr_merge_readiness entirely as null (pre-readiness desktop)', () => {
+    const withoutReadiness = { ...(boardTaskFixture as Record<string, JsonValue>) };
+    delete withoutReadiness.pr_merge_readiness;
+    expect(parseBoardTaskWire(withoutReadiness).pr_merge_readiness).toBeNull();
+  });
+
+  it('passes through a present pr_merge_readiness value', () => {
+    const withReadiness = { ...(boardTaskFixture as Record<string, JsonValue>), pr_merge_readiness: 'blocked' };
+    expect(parseBoardTaskWire(withReadiness).pr_merge_readiness).toBe('blocked');
+  });
+
   it('parses a column row', () => {
     const column: JsonValue = {
       id: 'lane-1',
@@ -240,8 +270,84 @@ describe('board row guards', () => {
       icon: null,
       is_archived: false,
       is_ghost: false,
+      spawns_session: false,
     };
     expect(parseBoardColumnWire(column)).toEqual(column);
+  });
+
+  it('reads a column missing spawns_session entirely as null (pre-field desktop)', () => {
+    const column: JsonValue = {
+      id: 'lane-1',
+      name: 'To Do',
+      description: null,
+      role: 'todo',
+      position: 0,
+      color: '#00ff00',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+    };
+    expect(parseBoardColumnWire(column).spawns_session).toBeNull();
+  });
+
+  it('passes through a present spawns_session value', () => {
+    const column: JsonValue = {
+      id: 'lane-1',
+      name: 'Executing',
+      description: null,
+      role: null,
+      position: 2,
+      color: '#0000ff',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+      spawns_session: true,
+    };
+    expect(parseBoardColumnWire(column).spawns_session).toBe(true);
+  });
+
+  it('reads a present but non-boolean spawns_session as null rather than coercing it', () => {
+    const column: JsonValue = {
+      id: 'lane-1',
+      name: 'Executing',
+      description: null,
+      role: null,
+      position: 2,
+      color: '#0000ff',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+      spawns_session: 'true',
+    };
+    expect(parseBoardColumnWire(column).spawns_session).toBeNull();
+  });
+
+  it('passes through an unrecognized role rather than throwing', () => {
+    const column: JsonValue = {
+      id: 'lane-1',
+      name: 'Archive',
+      description: null,
+      role: 'archive',
+      position: 3,
+      color: '#888888',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+      spawns_session: null,
+    };
+    const parsed = parseBoardColumnWire(column);
+    expect(parsed.role).toBe('archive');
+    expect(isTodoRole(parsed.role)).toBe(false);
+    expect(isDoneRole(parsed.role)).toBe(false);
+  });
+
+  it('isTodoRole and isDoneRole return false rather than throwing on null or undefined', () => {
+    expect(isTodoRole(null)).toBe(false);
+    expect(isTodoRole(undefined)).toBe(false);
+    expect(isDoneRole(null)).toBe(false);
+    expect(isDoneRole(undefined)).toBe(false);
+    expect(isTodoRole('todo')).toBe(true);
+    expect(isDoneRole('done')).toBe(true);
   });
 
   it('parses a backlog row', () => {
@@ -441,6 +547,21 @@ describe('read-* response parsers', () => {
     expect(parseReadDiffResponsePayload({ files: [], totalInsertions: 0, totalDeletions: 0 })).toEqual({ files: [], totalInsertions: 0, totalDeletions: 0 });
     expect(parseReadDiffResponsePayload({ original: 'a', modified: 'b', language: 'ts' })).toEqual({ original: 'a', modified: 'b', language: 'ts' });
   });
+
+  it('parses a start-session response to exactly its two fields, on both outcomes', () => {
+    // The two accepted shapes ask different things of the phone: `starting`
+    // waits for the successor's board / stream event, `live` refreshes at once
+    // because nothing was spawned and no event is coming.
+    expect(parseStartSessionResponsePayload({ ok: true, outcome: 'starting', extra: 1 })).toEqual({ ok: true, outcome: 'starting' });
+    expect(parseStartSessionResponsePayload({ ok: true, outcome: 'live' })).toEqual({ ok: true, outcome: 'live' });
+  });
+
+  it('rejects a start-session response with a missing ok or an unknown outcome', () => {
+    expect(() => parseStartSessionResponsePayload({ outcome: 'starting' })).toThrow(/ok/);
+    expect(() => parseStartSessionResponsePayload({ ok: true })).toThrow(/outcome/);
+    expect(() => parseStartSessionResponsePayload({ ok: true, outcome: 'restarted' })).toThrow(/outcome/);
+    expect(() => parseStartSessionResponsePayload('ok' as unknown as JsonValue)).toThrow(/object/);
+  });
 });
 
 describe('parseTranscriptEventPayload', () => {
@@ -496,6 +617,9 @@ describe('isBridgeEvent', () => {
       isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'permission', promptId: 'p', pending: true, options: ['Yes', 'No'] } }),
     ).toBe(true);
     expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'session-ended', intentional: false } })).toBe(true);
+    expect(
+      isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'session-ended', intentional: true, spawnProgressLabel: 'Switching model...' } }),
+    ).toBe(true);
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 'bytes' } })).toBe(true);
     expect(isBridgeEvent({ kind: 'terminal-resize', sessionId: 's', taskId: 't', payload: { cols: 48, rows: 26 } })).toBe(true);
     expect(isBridgeEvent({ kind: 'board', projectId: 'p', payload: { change: 'task-updated', ids: ['t-1'] } })).toBe(true);
@@ -509,6 +633,9 @@ describe('isBridgeEvent', () => {
     expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'activity', state: 'busy', reason: { kind: 'idle' } } })).toBe(false);
     expect(
       isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'permission', promptId: 'p', pending: true, options: [1] } }),
+    ).toBe(false);
+    expect(
+      isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'session-ended', intentional: true, spawnProgressLabel: 42 } }),
     ).toBe(false);
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 42 } })).toBe(false);
     expect(isBridgeEvent({ kind: 'terminal-resize', sessionId: 's', taskId: 't', payload: { cols: 0, rows: 26 } })).toBe(false);

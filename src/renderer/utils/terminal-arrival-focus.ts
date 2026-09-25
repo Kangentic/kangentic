@@ -49,9 +49,37 @@ import { allWindowManagers } from '../window-manager/store/window-store';
 import { resolveFocusedWindowTerminal, type FocusedWindowTerminal } from './dictation-target';
 import { traceTerminalRenderer } from './terminal-grid-registry';
 
-/** Backstop only. The fingerprint below is what actually supersedes a claim; this
- *  bounds the case where a claim is set and its terminal never mounts at all. */
-export const ARRIVAL_CLAIM_TTL_MS = 4000;
+/**
+ * Backstop only. The fingerprint below is what actually supersedes a claim; this
+ * bounds the one case the fingerprint cannot see - a claim set for a terminal that
+ * never mounts at all, which would otherwise deny every later arrival for as long
+ * as no window opens, focuses, or closes.
+ *
+ * It must never RACE the mount it is waiting for, which is what makes the value
+ * large rather than tight. A claim is made by a gesture naming a terminal that does
+ * not exist yet, and the gap to its arrival is a CSS transition, a React render, an
+ * xterm + WebGL construct, and an async scrollback fetch main deliberately delays
+ * 150-400ms for the TUI repaint to settle. That is roughly 250-650ms on a healthy
+ * machine, but it is work, so it stretches with load - and if the deadline lapses
+ * first, the arriving terminal is denied and the user's expand/tab click silently
+ * does not move focus.
+ *
+ * This was 4000ms and shipped as an intermittently failing CI test
+ * (`terminal-arrival-focus.spec.ts`, the panel re-expand case). Measured against
+ * that spec with CPU throttling: 238-267ms unthrottled, 3512-4023ms at 20x (right
+ * at the old edge, where the second of the two focus attempts was already being
+ * denied), and 4605-5897ms at 25x, which reproduced the failure exactly. A CI
+ * runner under load is well inside that range; a user on a slow machine is the same
+ * bug without a test to report it.
+ *
+ * So the value is chosen to be longer than any mount, not tuned to a measurement:
+ * nothing takes 30s to mount, and a user whose click produced no terminal for 30s
+ * has moved on. Do NOT tighten it back toward the observed mount times - the margin
+ * IS the fix. If a bound tighter than "clearly longer than any mount" is ever
+ * wanted, anchor it to the claimed terminal's own mount rather than to the gesture,
+ * which removes the guess instead of re-tuning it.
+ */
+export const ARRIVAL_CLAIM_TTL_MS = 30_000;
 
 /** How long one granted arrival suppresses a DIFFERENT session's arrival while
  *  nothing else resolves. Only reachable in tier 3. */
@@ -95,13 +123,32 @@ export interface ArrivalFocusDecision {
 }
 
 /**
+ * Which arrival path is asking. One mount produces several decisions, and in the
+ * trace ring they were otherwise indistinguishable - `{allow, reason}` alone
+ * cannot say whether the host's mount frame asked and was denied or never ran.
+ *
+ * `replay-watchdog` and `replay-error` are the PRE-EMPTION paths: they ask on
+ * behalf of an arrival whose own decision was cancelled before it could run. See
+ * `useTerminal`'s `focusOnArrival`.
+ */
+export type ArrivalFocusSite =
+  | 'tab-init'
+  | 'deferred-init'
+  | 'mount-replay'
+  | 'reload'
+  | 'replay-watchdog'
+  | 'replay-error';
+
+/**
  * PURE. The whole decision, with no store or DOM reads, so every tier and every
  * exclusivity edge is testable directly.
  */
 export function resolveArrivalFocus(input: ArrivalFocusInput): ArrivalFocusDecision {
   // Tier 1: a user gesture named a session. Still live only while the window
   // layers have not moved focus since (a later open/focus/close changes the
-  // fingerprint) and the backstop TTL has not lapsed.
+  // fingerprint) and the backstop TTL has not lapsed. The TTL is deliberately far
+  // longer than any mount takes, so a slow arrival is granted rather than raced;
+  // see ARRIVAL_CLAIM_TTL_MS.
   const { claim } = input;
   if (
     claim
@@ -214,9 +261,14 @@ export function windowFocusFingerprint(): string {
 export function claimArrivalFocus(sessionId: string | null): void {
   if (!sessionId) {
     arrivalClaim = null;
+    // Traced so "no claim was standing" reads as a POSITIVE fact in the ring.
+    // Inferring it from a missing entry cannot separate a gesture that cleared
+    // the claim from a gesture that never ran at all.
+    traceTerminalRenderer(null, 'arrival-claim-clear', {});
     return;
   }
   arrivalClaim = { sessionId, fingerprint: windowFocusFingerprint(), at: Date.now() };
+  traceTerminalRenderer(sessionId, 'arrival-claim', { fingerprint: arrivalClaim.fingerprint });
 }
 
 /**
@@ -235,29 +287,48 @@ export function focusIsInTypingSurface(): boolean {
 
 /**
  * The live gate. Hosts pass this down to `useTerminal` as a predicate, so the hook
- * itself stays surface-agnostic and never imports this module.
+ * itself stays surface-agnostic and holds no VALUE import of this module. It does
+ * import `ArrivalFocusSite` as a type, which is erased at build and creates no
+ * runtime edge - the hook only names which of its own arrival paths is asking, it
+ * never reads the policy.
  *
  * A null `sessionId` cannot arrive (both hosts require one before they mount a
  * terminal), so it is permitted rather than given a policy of its own.
  */
-export function mayTakeArrivalFocus(sessionId: string | null): boolean {
+export function mayTakeArrivalFocus(sessionId: string | null, site: ArrivalFocusSite): boolean {
   if (!sessionId) return true;
   const now = Date.now();
+  const claim = arrivalClaim;
+  const liveFingerprint = windowFocusFingerprint();
+  const focusedWindowTerminal = resolveFocusedWindowTerminal();
   const decision = resolveArrivalFocus({
     sessionId,
-    claim: arrivalClaim,
+    claim,
     now,
-    windowFocusFingerprint: windowFocusFingerprint(),
-    focusedWindowTerminal: resolveFocusedWindowTerminal(),
+    windowFocusFingerprint: liveFingerprint,
+    focusedWindowTerminal,
     focusIsInTypingSurface: focusIsInTypingSurface(),
     lastGrant: lastArrivalGrant,
   });
   // Dev-only ring (see traceTerminalRenderer), so this costs nothing shipped. The
   // decision is the only record of WHY a terminal did or did not take focus, and
   // the next "typed into the wrong terminal" report needs it.
+  //
+  // The INPUTS ride along because the reason alone is not diagnostic enough. A
+  // `claim-mismatch` never said WHICH session was claimed, and a tier-1 miss
+  // could not be separated into "no claim was live" and "a claim was live and its
+  // fingerprint had moved" - which is exactly the branch a real occurrence has to
+  // answer. `site` names the asking path, since one mount decides several times.
   traceTerminalRenderer(sessionId, 'arrival-focus', () => ({
     allow: decision.allow,
     reason: decision.reason,
+    site,
+    claimSessionId: claim?.sessionId ?? null,
+    claimFingerprint: claim?.fingerprint ?? null,
+    claimAgeMs: claim ? now - claim.at : null,
+    liveFingerprint,
+    focusedWindowSessionId: focusedWindowTerminal?.sessionId ?? null,
+    focusedWindowOpenedByAgent: focusedWindowTerminal?.openedByAgent ?? null,
   }));
   // Only a TIER-3 grant is recorded, because only tier 3 reads it. Tiers 1 and 2
   // are already exclusive - they deny a mismatch outright - so a burst hold adds

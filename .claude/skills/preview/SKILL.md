@@ -1,7 +1,7 @@
 ---
 description: Open dev server for previewing live code changes
 allowed-tools: Bash(node:*), Bash(npm:*)
-argument-hint: [--fresh] [--no-watch]
+argument-hint: [--fresh] [--no-watch] [--env KEY=VALUE]...
 ---
 
 # Preview
@@ -10,7 +10,7 @@ Open a new terminal window running a Kangentic dev server for previewing live co
 
 ## Instructions
 
-1. If the user passed `--fresh` (e.g. `/preview --fresh`), run `node scripts/worktree-preview.js --fresh`. Otherwise run `node scripts/worktree-preview.js`.
+1. If the user passed `--fresh` (e.g. `/preview --fresh`), run `node scripts/worktree-preview.js --fresh`. Otherwise run `node scripts/worktree-preview.js`. Forward every `--env KEY=VALUE` the user passed, verbatim and repeatable (`node scripts/worktree-preview.js --env KANGENTIC_TELEMETRY=1 --env KANGENTIC_ERROR_REPORTING=0`). That flag is the ONLY way a variable reaches the dev server: the terminal tab the launcher opens inherits the terminal host's environment, not this shell's, so a variable set in the Bash call itself is silently dropped.
 2. Report the output - it will show the assigned port, PID, and a `Watch:` command.
 3. If the command fails, report the error message and stop.
 4. Unless the user passed `--no-watch`, or the launcher reported `PID: unknown` (the watcher cannot attach without a live PID file and would exit `1` immediately), run the printed `Watch:` command (`node scripts/worktree-preview.js --wait --port=<port> --kangentic-no-activity-hold`) as a **separate Bash call with `run_in_background: true`**. Do not poll it, do not wrap it in a `Monitor`, and do not schedule a `ScheduleWakeup` fallback - it blocks until the preview exits, and the harness delivers a `<task-notification>` with its exit code on its own.
@@ -65,7 +65,9 @@ Open a new terminal window running a Kangentic dev server for previewing live co
 - When the preview terminal is closed, the worktree's `.kangentic/` and `.vite/` directories are automatically cleaned up (ephemeral mode). The node_modules junction is left in place for instant restarts.
 - Multiple `/preview` invocations can run simultaneously - each gets its own port, and each gets its own watcher.
 - Pass `--fresh` to launch without auto-opening a project (shows the Welcome Screen). Useful for testing the first-launch experience. Example: `/preview --fresh`
-- **Stopping a preview (restarts):** run `node scripts/worktree-preview.js --stop --port=<port>` instead of `taskkill`. It writes a stop file that dev.js watches, so the server cleans up and exits 0 and its terminal tab closes itself; a `taskkill /F` exits non-zero and leaves a dead "[process exited with code 1]" tab behind on every restart. `--stop` falls back to a force kill automatically if the server does not exit within 10s (e.g. an instance launched from a checkout predating the stop-file watcher). Omitting `--port` stops every preview this worktree is running.
+- Pass `--env KEY=VALUE` (repeatable) to set a variable in the dev server's environment; the launcher splices it into the terminal command, so it is visible in the process list and must not carry a secret. Values may not contain quotes, newlines, or `& | < > ^ %`. The analytics rig is the standing example (`docs/analytics.md`, "Local verification"): `/preview --env KANGENTIC_TELEMETRY=1 --env KANGENTIC_APTABASE_APP_KEY=A-DEV-0000000000 --env KANGENTIC_ERROR_REPORTING=0`.
+- **Stopping goes through Electron's real quit path.** `--stop` writes the stop file, and `dev.js` then asks the app to quit over the inspection bridge (`POST /quit`) before falling back to a kill after 8s. So a stopped preview runs its synchronous cleanup (sessions suspended, PTYs killed, the run recorded as a clean exit) instead of being terminated with its PTY children orphaned. The kill fallback still exists for an app whose bridge is off or wedged. A graceful stop takes longer than the old kill did: once Electron has exited cleanly nothing holds the two repo clones under `.kangentic/data`, so `dev.js` actually removes them (several seconds on Windows), and the launcher waits up to 45s for that before force-killing. `--stop` returning after ten or twenty seconds is the removal finishing, not a hang.
+- **Stopping a preview (restarts):** run `node scripts/worktree-preview.js --stop --port=<port>` instead of `taskkill`. It writes a stop file that dev.js watches, so the server cleans up and exits 0 and its terminal tab closes itself; a `taskkill /F` exits non-zero and leaves a dead "[process exited with code 1]" tab behind on every restart. `--stop` falls back to a force kill automatically if the server does not exit within 45s (e.g. an instance launched from a checkout predating the stop-file watcher). Omitting `--port` stops every preview this worktree is running.
 - **Watching only observes.** It never stops or restarts the preview - do not run `/preview` again automatically just because a watcher fired.
 - A notification arriving immediately after you ran `--stop` yourself is the expected confirmation of that stop, not a new event to alarm the user about.
 - The watcher holds a background task slot for the preview's whole lifetime, which can be hours. It does NOT hold the board's activity indicator, as long as it carries `--kangentic-no-activity-hold` (see step 4). Pass `--no-watch` to skip the watcher entirely and launch fire-and-forget.

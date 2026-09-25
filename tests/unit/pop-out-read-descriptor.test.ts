@@ -105,6 +105,28 @@ describe('pop-out descriptor base64 codec (main encode <-> preload decode contra
     expect(decodePopOutArg(encodePopOutDescriptor(descriptor))).toEqual(descriptor);
   });
 
+  it('round-trips a "changes-file" descriptor with a slash-and-space-bearing path, a unicode task title, and the full boot-seed field set', () => {
+    const descriptor: PopOutDescriptor = {
+      kind: 'changes-file',
+      params: {
+        taskId: 'task-77',
+        projectId: 'project-9',
+        filePath: 'src/a b/component.tsx',
+        scope: 'working',
+        commitOid: 'a1b2c3d4e5f6',
+        projectPath: 'C:\\Users\\dev\\repo',
+        worktreePath: 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\task-77',
+        baseBranch: 'main',
+        status: 'R',
+        oldPath: 'src/a b/old-component.tsx',
+        binary: false,
+        taskDisplayId: 77,
+        taskTitle: 'Fix caf\u00e9 rendering \ud83d\ude80',
+      },
+    };
+    expect(decodePopOutArg(encodePopOutDescriptor(descriptor))).toEqual(descriptor);
+  });
+
   it('degrades to null for malformed base64', () => {
     expect(decodePopOutArg(`${POPOUT_ARG_PREFIX}!!!not-valid-base64!!!`)).toBeNull();
   });

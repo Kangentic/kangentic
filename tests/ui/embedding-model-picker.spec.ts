@@ -49,6 +49,41 @@ function makePreConfig(modelState: string, progress?: number): string {
   `;
 }
 
+/** Seeds a `semantic: 'error'` status (the embed worker crashed past its
+ *  restart cap), with or without a `workerError` detail string. */
+function makeErrorPreConfig(workerError?: string): string {
+  const memoryStatus = {
+    indexingEnabled: true,
+    semantic: 'error',
+    activeBackend: undefined,
+    workerError,
+    model: {
+      id: 'bge-small',
+      displayName: 'bge small',
+      tier: 'balanced',
+      approxSizeMb: 34,
+      dimensions: 384,
+      state: 'error',
+    },
+  };
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${PROJECT_ID}', name: 'Embed Picker', path: '/mock/embed-picker',
+        github_url: null, default_agent: 'claude', position: 0, last_opened: ts, created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (template, index) {
+        state.swimlanes.push(Object.assign({}, template, { id: state.uuid(), position: index, created_at: ts }));
+      });
+      return {
+        currentProjectId: '${PROJECT_ID}',
+        memoryStatus: ${JSON.stringify(memoryStatus)},
+      };
+    });
+  `;
+}
+
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
@@ -188,6 +223,34 @@ test.describe('Embedding model picker', () => {
           }),
         )
         .toBe(PROJECT_ID);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('Semantic search error state', () => {
+  test('shows the worker error detail when semantic search fails to start', async () => {
+    const { browser, page } = await launchWithState(makeErrorPreConfig('exit 1: Cannot find module sharp'));
+    try {
+      await openMemoryTab(page);
+      const status = page.getByTestId('semantic-status');
+      await expect(status).toBeVisible();
+      await expect(status).toHaveText(
+        'Semantic search failed to start - showing keyword matches. (exit 1: Cannot find module sharp)',
+      );
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('falls back to the generic message when no worker error detail is available', async () => {
+    const { browser, page } = await launchWithState(makeErrorPreConfig());
+    try {
+      await openMemoryTab(page);
+      const status = page.getByTestId('semantic-status');
+      await expect(status).toBeVisible();
+      await expect(status).toHaveText('Semantic search failed to start - showing keyword matches.');
     } finally {
       await browser.close();
     }

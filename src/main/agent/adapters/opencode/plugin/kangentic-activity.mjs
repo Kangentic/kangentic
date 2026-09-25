@@ -55,9 +55,16 @@ export function extractSessionEvent(event, now = Date.now()) {
   return null;
 }
 
+/**
+ * Same cap as the hook bridge's `FIELD_CAP` (src/main/agent/event-bridge.js):
+ * a Bash `command` is read back for its content (the `git push` capture), so
+ * it must not be cut short.
+ */
+const FIELD_CAP = 2000;
+
 function truncate(value) {
   if (value == null) return undefined;
-  return String(value).slice(0, 200);
+  return String(value).slice(0, FIELD_CAP);
 }
 
 /**

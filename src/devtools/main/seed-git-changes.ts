@@ -170,6 +170,8 @@ function notesMarkdown(index: number, mutate: boolean): string {
     '## Highlights',
     '',
     '- rendered **bold** and _italic_ text',
+    // docs-link-ok: seeded markdown that exercises external-link routing through the shell. The
+    // host is incidental to what it tests, and a contract docs path would misrepresent it.
     '- a [link home](https://kangentic.com) routed through the shell',
     '- inline `code` plus a fenced block:',
     '',

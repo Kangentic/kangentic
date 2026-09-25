@@ -6,6 +6,11 @@ import {
   replaceDescriptionRange,
 } from '../utils/description-mentions';
 
+// Stable empty list so the derived items keep a referentially constant value
+// when there is nothing to show.
+// hmr-safe: never mutated; a referential-identity sentinel for "no results".
+const EMPTY_RESULTS: ProjectSearchEntry[] = [];
+
 interface UseDescriptionMentionsOptions {
   value: string;
   onChange: (value: string) => void;
@@ -38,19 +43,20 @@ export function useDescriptionMentions({
   textareaRef,
 }: UseDescriptionMentionsOptions): UseDescriptionMentionsResult {
   const [mentionTrigger, setMentionTrigger] = useState<ReturnType<typeof detectDescriptionMentionTrigger>>(null);
-  const [mentionResults, setMentionResults] = useState<ProjectSearchEntry[]>([]);
-  const [mentionLoading, setMentionLoading] = useState(false);
-  const [mentionError, setMentionError] = useState(false);
+  // The last search that settled, stored with the key (cwd + query) it was run
+  // for. Loading, error, and the visible items are DERIVED from it against the
+  // current key, so typing a new query reads as "loading" at once and an
+  // unsettled search never needs an effect to set a flag (the cascading-render
+  // shape React's compiler rules forbid). The previous results stay on screen
+  // while the next search runs, as they did when the flag was state.
+  const [mentionSearch, setMentionSearch] = useState<{ key: string; results: ProjectSearchEntry[]; error: boolean } | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latestRequestIdRef = useRef(0);
 
   const reset = () => {
     setMentionTrigger(null);
-    setMentionResults([]);
-    setMentionLoading(false);
-    setMentionError(false);
+    setMentionSearch(null);
     setActiveMentionIndex(0);
   };
 
@@ -93,59 +99,56 @@ export function useDescriptionMentions({
   };
 
   const mentionQuery = mentionTrigger?.query ?? null;
+  // A search runs for a non-empty query with a cwd to search in; an empty
+  // query shows the "type to search" helper and no items.
+  const searchKey = mentionQuery !== null && mentionQuery.length > 0 && mentionSearchCwd
+    ? JSON.stringify([mentionSearchCwd, mentionQuery])
+    : null;
+  const mentionSettled = searchKey !== null && mentionSearch?.key === searchKey;
+  const mentionLoading = searchKey !== null && !mentionSettled;
+  const mentionError = mentionSettled && mentionSearch.error;
+  const mentionResults: ProjectSearchEntry[] = searchKey === null ? EMPTY_RESULTS : (mentionSearch?.results ?? EMPTY_RESULTS);
 
   useEffect(() => {
-    if (mentionQuery === null || !mentionSearchCwd) {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      setMentionLoading(false);
-      return;
-    }
-
-    if (mentionQuery.length === 0) {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      setMentionResults([]);
-      setMentionLoading(false);
-      setMentionError(false);
-      setActiveMentionIndex(0);
-      return;
-    }
-
-    const requestId = ++latestRequestIdRef.current;
-    setMentionLoading(true);
-    setMentionError(false);
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-
+    if (searchKey === null || mentionQuery === null || !mentionSearchCwd) return;
+    let cancelled = false;
     // Calls window.electronAPI directly (not via a store) because this is a
     // stateless search query with no shared state to manage.
     debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = null;
       window.electronAPI.projects.searchEntries({
         cwd: mentionSearchCwd,
         query: mentionQuery,
         limit: 80,
       }).then((result) => {
-        if (latestRequestIdRef.current !== requestId) return;
-        setMentionResults(result.entries);
-        setMentionLoading(false);
-        setMentionError(false);
+        if (cancelled) return;
+        setMentionSearch({ key: searchKey, results: result.entries, error: false });
         setActiveMentionIndex(0);
       }).catch(() => {
-        if (latestRequestIdRef.current !== requestId) return;
-        setMentionResults([]);
-        setMentionLoading(false);
-        setMentionError(true);
+        if (cancelled) return;
+        setMentionSearch({ key: searchKey, results: [], error: true });
         setActiveMentionIndex(0);
       });
     }, 120);
 
     return () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      cancelled = true;
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
     };
-  }, [mentionQuery, mentionSearchCwd]);
+  }, [searchKey, mentionQuery, mentionSearchCwd]);
 
-  useEffect(() => {
-    if (!disabled) return;
-    reset();
-  }, [disabled]);
+  // Becoming disabled closes the menu. A render-time adjustment on the
+  // transition (React's "adjusting state when a prop changes" pattern) rather
+  // than an effect, so the menu never paints a frame after the field is
+  // disabled.
+  const [wasDisabled, setWasDisabled] = useState(disabled);
+  if (disabled !== wasDisabled) {
+    setWasDisabled(disabled);
+    if (disabled) reset();
+  }
 
   useEffect(() => {
     return () => {

@@ -1,6 +1,6 @@
 # Activity Detection
 
-Kangentic tracks whether each agent session is **thinking** (working on a turn), **idle** (waiting for input or done), or in a **permission** state (paused awaiting user approval). This drives the task card spinner, the desktop "task done" notification, idle-timeout suspend, and auto-focus behavior.
+Kangentic tracks whether each agent session is **thinking** (working on a turn), **idle** (waiting for input or done), or in a **permission** state (paused awaiting user approval). This drives the task card spinner, the desktop "task done" notification, the in-app idle toast, idle-timeout suspend, and auto-focus behavior.
 
 ## Why this matters
 
@@ -75,6 +75,7 @@ Surrounding infrastructure:
 | `src/main/activity-engine/user-interrupt-coordinator.ts` | 3-second settle timer for Ctrl+C; synthesizes Interrupted if engine still hot |
 | `src/main/activity-engine/usage-accumulator.ts` | Per-tool usage stats (call count, cost, tokens) |
 | `src/main/activity-engine/pr-command-detector.ts` | PR command pattern detector |
+| `src/main/activity-engine/push-command-detector.ts` | `git push` destination capture: remembers the branch a Bash push named on ToolStart, reports it on that call's ToolEnd (paired by `toolId`) as the task's `pushed_branch` PR anchor; parser in `src/main/git/push-command.ts` |
 | `src/main/activity-engine/pty-activity-tracker.ts` | PTY-byte fallback for non-hook agents |
 | `src/main/activity-engine/background-shell/watcher.ts` | Process-tree-based natural-exit detector |
 | `src/main/activity-engine/background-shell/process-tree.ts` | Cross-platform descendant enumeration; `listAllProcesses` shared once per cycle |
@@ -82,6 +83,7 @@ Surrounding infrastructure:
 | `src/main/activity-engine/background-shell/looks-like-shell-id.ts` | Shell-id shape gate |
 | `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
 | `src/main/agent/adapters/claude/hook-manager.ts` | Claude Code hook configuration |
+| `src/main/agent/adapters/claude/permission-rejection-transcript.ts` | Manual-deny detector (task #640): scans the durable transcript for a rejected `tool_result` no hook can report |
 | `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId` |
 
 ## ActivityState
@@ -96,8 +98,12 @@ Three top-level states:
 - **`idle`** - agent is truly done. Notification fires. Auto-focus / auto-suspend can act. The
   desktop notify decision (cooldown, focus gate, active-project gate, title assembly) is owned by
   `src/main/notifications/desktop-notifier.ts`, which listens to `SessionManager`'s own `activity`
-  event directly rather than a renderer round-trip.
-- **`permission`** - agent paused awaiting user approval. Distinct from `idle` so the UI can render a different affordance (lock icon vs idle dot).
+  event directly rather than a renderer round-trip. The in-app toast half lives in the renderer
+  (`src/renderer/utils/idle-toast.ts`) and fires on the opposite condition: the user is on this
+  project but is not already looking at that session's terminal. It is edge-triggered off the
+  previous state, because `session:activity` also carries reason-only refreshes that must not
+  retrigger it.
+- **`permission`** - agent paused awaiting user approval. Distinct from `idle` so the UI can render a different affordance (lock icon vs idle dot). Both notification channels bucket it WITH `idle` through `requiresUserInteraction`; only the alert text differs.
 
 ## ActivityReason (discriminated union)
 
@@ -112,6 +118,18 @@ type ActivityReason =
   | { kind: 'background-shell'; count: number; ids: readonly string[] }
   | { kind: 'turn-active' };
 ```
+
+The reason also moves WITHOUT the state moving, and it is pushed on its own when it does. A
+session stays `thinking` from before the first subagent spawns until after the last one stops, so
+a transition-only push leaves the reason frozen at whatever it was when the turn began. On a
+recorded 9-way `/code-review` fan-out (`tests/fixtures/replay/session-029-*.jsonl`) that was 3
+deliveries across 711 events while the derived kind changed 176 times. `ActivityEngine` therefore
+tracks `lastPushedReason` and calls a second callback, `onReasonChange`, whenever `reason.kind`
+differs from the last one delivered. The gate is the KIND alone: tool churn moves `currentTool`
+and `pendingCount` on nearly every event, and reporting on those would push about four times a
+second per session. `SessionManager` emits it as `activity-reason`, NOT as `activity`, because the
+notifiers, turn-completion auto-move, the terminal submit scheduler, and the interval recorder all
+read an `activity` emit as a real transition.
 
 `since` (epoch ms) is `SessionEngineState.needsUserSince`: when the session FIRST entered a
 needs-user state. It spans both `idle` and `permission` - a `permission <-> idle` crossing keeps
@@ -150,9 +168,14 @@ genuine human reply (`event:prompt`) from the agent resuming itself
 (`event:prompt:pty-activity`, `force-thinking`). `started_ms`/`ended_ms` (epoch integers, used by
 the `duration_ms` arithmetic and the `started_ms` index) are mirrored by `started_at`/`ended_at`
 (TEXT UTC ISO 8601, per `.claude/rules/utc-timestamps.md`) - the store derives the mirror from the
-same value it writes to the `_ms` column, so the two can never drift. Read via the
-`kangentic_get_activity_intervals` MCP tool (see `docs/mcp-server.md`) or `kangentic_query_db`. No
-desktop-facing IPC endpoint exists yet.
+same value it writes to the `_ms` column, so the two can never drift. Read directly via the
+`kangentic_get_activity_intervals` MCP tool (see `docs/mcp-server.md`) or `kangentic_query_db`, and
+indirectly by the usage dashboard: `ActivityIntervalStore.getActiveTotals(sinceMs, untilMs)` sums
+the CLOSED `'active'` intervals in a window behind `usage:getDashboardStats`, backing the
+`activeMs` / `activeSessionsCovered` KPI pair (the Avg Active tile) and the per-project Avg Active
+column. Those two travel together because this ledger covers FEWER sessions than `usage_history`
+does - per-interval recording shipped later - so the average is over the sessions with coverage,
+never over the Sessions count.
 
 Priority ladder: `permission > tool > subagent > background-shell > turn-active > idle`. Anchored to `state.activity` for consistency - when forced paths (Interrupted, forceIdle) commit a transition that diverges from the bare predicate (e.g. clearing all counters on Esc), the reason follows the committed state.
 
@@ -241,7 +264,7 @@ Each adapter declares one strategy via its `runtime.activity` field (constructed
 | Kind | Hooks fire? | PTY fallback? | Used by | Semantics |
 |------|-------------|---------------|---------|-----------|
 | `hooks` | Yes (sole source of truth) | No | Claude Code | Activity state is driven exclusively by hook deliveries. PTY traffic is ignored for state transitions. |
-| `pty` | No | Yes | Aider, Cursor, Warp, Droid, Codex, Kimi, Ollama (today) | No hook protocol available. The PTY tracker emits `forceIdle` after a silence window, optionally short-circuited by an adapter-supplied `detectIdle(data)` regex that matches the agent's input prompt. Kimi gets authoritative `TurnBegin`/`TurnEnd` transitions from `runtime.sessionHistory` (wire.jsonl), not the hook pipeline. |
+| `pty` | No | Yes | Aider, Cursor, Warp, Droid, Codex, Kimi, Ollama, Goose (today) | No hook protocol in use. For most of these the CLI has none; Goose is the exception, having a hook system that this adapter does not wire yet (see `docs/agent-integration.md`). The PTY tracker emits `forceIdle` after a silence window, optionally short-circuited by an adapter-supplied `detectIdle(data)` regex that matches the agent's input prompt. Kimi gets authoritative `TurnBegin`/`TurnEnd` transitions from `runtime.sessionHistory` (wire.jsonl), not the hook pipeline. |
 | `hooks_and_pty` | Yes (primary) | Yes (fallback) | Gemini, Qwen, OpenCode, Copilot, Grok, Antigravity | Hooks are authoritative when they fire; the PTY tracker is auto-suppressed on the first hook event and re-engages only if hooks stop arriving. For Grok the fallback is load-bearing by design: its project hooks are folder-trust-gated and silently skipped in an untrusted directory, so the PTY tracker carries activity until trust lands. Antigravity's hook events are `prompt` (PreInvocation), `tool_end` (PostToolUse), and `idle` (Stop); its hooks never fire in `-p` print mode, where the PTY fallback (silence timer + the `? for shortcuts` idle-footer regex) carries detection. |
 
 Both `pty` and `hooks_and_pty` may pass an optional `detectIdle(data: string) => boolean` for instant idle detection from the input-prompt regex. Without it, idle is inferred from a silence timer.
@@ -264,7 +287,7 @@ Also absent, and deliberately so: `exemptBackgroundShellIds`. See [Opting a back
 
 ### turnActive
 
-Set on any "thinking-initiating" event (`ToolStart`, `Prompt`, `SubagentStart`, `Compact`, `WorktreeCreate`, `BackgroundShellStart`). Cleared by `Interrupted`, and by `Idle` **only when `subagentDepth === 0`** (an `Idle` arriving while a subagent is live is the subagent's own inner Stop and must not end the parent turn - see [Subagent depth](#subagent-depth)). Also re-armed when a permission pause resolves (see [Permission flag](#permission-flag)). Persists across the silent gaps between tool calls so the spinner doesn't flicker.
+Set on any "thinking-initiating" event (`ToolStart`, `Prompt`, `SubagentStart`, `Compact`, `WorktreeCreate`, `BackgroundShellStart`). Cleared by `Interrupted`, and by `Idle` **only when `subagentDepth === 0`** (an `Idle` arriving while a subagent is live is the subagent's own inner Stop and must not end the parent turn - see [Subagent depth](#subagent-depth)). Also re-armed when an APPROVED permission pause resolves (see [Permission flag](#permission-flag)) - a REJECTED pause deliberately leaves it untouched instead. Persists across the silent gaps between tool calls so the spinner doesn't flicker.
 
 ### Subagent depth
 
@@ -319,9 +342,15 @@ Set when an `Idle` event fires with `detail: 'permission'`. The engine also reco
 - `ToolStart`/`ToolEnd` at `subagentDepth === 0` (main agent activity)
 - `ToolStart`/`ToolEnd` carrying `permissionAwaitedToolId`, at ANY depth (the prompt was approved and that exact tool ran - e.g. a tool inside a subagent; without this the flag stays stuck until the subagent stops, since the PTY net deliberately exempts `'permission'`)
 
+That list is every HOOK-driven clear. A manual REJECTION fires no hook at all, so it clears through a separate, out-of-band path instead - the transcript poll described below.
+
 Unrelated subagent-tool events at depth>0 (different or absent toolId) do NOT clear permission (parallel-subagent tool churn must not dismiss a prompt that is still awaiting approval). The approved-tool clear is pinned by the `session-010` replay fixture (task #194's stuck 77s window).
 
 **Resume restores `turnActive`.** A permission pause begins with `Idle{detail:'permission'}`, which clears `turnActive` (Idle is a turn-ending event). When the pause resolves, the wake is typically a depth-0 `ToolEnd` (e.g. the `AskUserQuestion` / `ExitPlanMode` tool ending after the user answers/approves) - a non-turn-initiating event that clears `permissionPending` but does not re-arm `turnActive`. The resumed turn emits no fresh `Prompt`/`ToolStart` hook, so without intervention the predicate would see no holder and drop to **idle** until the PTY force-thinking net catches up seconds later. To avoid that, `processEvent` restores `turnActive = true` whenever `permissionPending` transitions `true -> false` on a non-turn-ending event (i.e. not `Idle`/`Interrupted`, which are genuine end-of-turn). This is classified by the generic permission-clear shape, not by tool or agent name, so it covers every permission-class pause. Pinned by the `session-006`/`session-007` replay fixtures.
+
+**A manually REJECTED prompt clears through none of the above (task #640).** A deny at Claude's TUI (or from a paired phone via `answer-permission-prompt`) is not a resumed turn: the CLI does not re-invoke the model, so no `ToolStart`/`ToolEnd` ever arrives for the awaited tool. `Stop` never fires either (the turn aborted, not ended - there is no assistant turn to close). `PostToolUse` only fires "after a tool call succeeds", and `PermissionDenied` exists only for auto-mode denials, so no hook of any kind reports a manual deny. Left alone, `permissionPending` sticks until a human types something new (`Prompt` is still a clearing signal) - the mobile case (answer from the phone, put it down) never gets that. There is also no watchdog fallback: `scheduleTimer` only ever consults the hold table while `state.activity === 'thinking'` (`activity-engine.ts`'s `scheduleTimer`/`onTick`), so `permission` is the one state with no timer armed at all, by construction, not merely by the holds' own `!permissionPending` guard.
+
+The recovery is a poll against the durable transcript, mirroring the bg-shell transcript drain (task #386) for the same reason: a denial IS always appended there, as a synthetic `tool_result` user turn (`is_error: true`, content starting `"The user doesn't want to proceed with this tool use"`), even though no hook reports it. `SessionTelemetry` lazily starts a 2s poll (`ensurePermissionRejectionPollRunning`/`stopPermissionRejectionPollIfIdle`) the instant any session enters `permission`, and stops it the instant none remain - `AdapterRuntimeStrategy.permissionPrompts.reportRejectedPromptTools` (Claude: `permission-rejection-transcript.ts`) checks the awaited `toolId` against a bounded tail of the transcript, filtered to lines at or after the prompt's park time (`needsUserSince`) so a re-scanned `--resume`-extended transcript can never match a stale historical rejection under a reused id. A match calls `ActivityEngine.markPermissionRejected`, an out-of-band method (like `markBackgroundShellEnded`) rather than a synthesized event - routing it through `processEvent` would hit the resume re-arm above and pin a denied session `thinking`. It clears the flag, drops the awaited tool's now-stale `pendingToolStack` entry (mirroring the Idle clamp), and deliberately leaves `turnActive` untouched: false at the common depth-0 case (already cleared by the initiating `idle:permission`, so the predicate lands on `idle`), or still true when the prompt was raised inside a live subagent (`subagentDepth > 0` kept it set, so the predicate correctly falls back to `thinking` instead). A session whose pending stack was empty when the prompt fired (`permissionAwaitedToolId` null) has no id to check and is left exactly as it behaves today - a looser match is exactly the hazard the awaited-tool-id gate above exists to prevent. Only a REJECTION is reported; an approval already clears via the normal `ToolEnd` path, and adding an approved branch here would be the only way this poll could itself produce a false `thinking` (a poll racing a dropped `ToolEnd`). Trigger label: `event:permission-rejected:transcript`.
 
 ### Tool tracking (stack with correlation IDs + LIFO-by-name fallback)
 
@@ -349,7 +378,7 @@ When the predicate flips from `thinking` to `idle` due to a Stop event or a coun
 Bypassed by:
 - `Interrupted` (Esc - instant, no flicker concern)
 - `forceIdle` (PTY-driven; already debounced 3s in PtyActivityTracker)
-- Stale-thinking watchdog (already 180s)
+- Stale-thinking watchdog (already 180s, or 30s on a heartbeat-forced turn)
 
 Configurable via `ActivityEngineOptions.idleStabilityWindowMs`. Tests set this to 0 for deterministic timing.
 
@@ -369,7 +398,7 @@ When only ANONYMOUS bg shells (`anonymousBackgroundShellCount`, no shell_id) hol
 
 ### 3. Stale-thinking watchdog (180s)
 
-Held by `turnActive` alone (no tools, no subagent, no bg shells) for 180 seconds. The matching Idle/Stop hook never arrived. Emits synthetic `Idle/Timeout`, clears `turnActive`. Bypasses the stability window (the 180s already debounced any flicker). Anchored to the FRESHER of `lastSignalAt` and `lastPtyOutputAt` (`anchor: 'signal-or-pty-output'`, resolved in `watchdogBaseTime`). `lastSignalAt` is refreshed by every non-log-only event - including `tool_end` (a `PostToolUse` hook is proof of liveness), so a foreground tool longer than 180s that ends while the turn continues gets a fresh window instead of being force-idled the instant it ends (task #229; pinned by `session-016-false-idle-after-long-foreground-tool`). `lastPtyOutputAt` is refreshed by `markPtyOutput` (called unconditionally on every PTY chunk by the spawn flow), so a single heavy generation turn that streams output for >180s with no nested hook event and a silent status heartbeat is not force-idled either (task #246; pinned by `session-019-false-idle-tool-less-streaming-gap`). A genuinely-finished turn sits at a quiet prompt with no PTY data (a blinking cursor is xterm-rendered terminal state, not a PTY chunk), so the anchor freezes and the safety net still fires at the threshold.
+Held by `turnActive` alone (no tools, no subagent, no bg shells) for 180 seconds. The matching Idle/Stop hook never arrived. Emits synthetic `Idle/Timeout`, clears `turnActive`. Bypasses the stability window (180s already debounced any flicker, or 30s on a heartbeat-forced turn). Anchored to the FRESHER of `lastSignalAt` and `lastPtyOutputAt` (`anchor: 'signal-or-pty-output'`, resolved in `watchdogBaseTime`). `lastSignalAt` is refreshed by every non-log-only event - including `tool_end` (a `PostToolUse` hook is proof of liveness), so a foreground tool longer than 180s that ends while the turn continues gets a fresh window instead of being force-idled the instant it ends (task #229; pinned by `session-016-false-idle-after-long-foreground-tool`). `lastPtyOutputAt` is refreshed by `markPtyOutput` (called unconditionally on every PTY chunk by the spawn flow), so a single heavy generation turn that streams output for >180s with no nested hook event and a silent status heartbeat is not force-idled either (task #246; pinned by `session-019-false-idle-tool-less-streaming-gap`). A genuinely-finished turn sits at a quiet prompt with no PTY data (a blinking cursor is xterm-rendered terminal state, not a PTY chunk), so the anchor freezes and the safety net still fires at the threshold.
 
 **Exception while the agent is BELIEVED parked (`parkedAnchor: 'signal'`).** A parked Claude TUI keeps repainting its statusline (rate-limit / context meter, spinner) = real PTY bytes, so the `signal-or-pty-output` anchor stays fresh forever and the net never fires - the safety net is blinded by the same parked-TUI behavior. The hold narrows its anchor to `signal` (`lastSignalAt` only, ignoring `lastPtyOutputAt`) while ANY of three "believed parked" signals holds:
 
@@ -537,7 +566,7 @@ The activity icon on each task card is wrapped in a tooltip rendering `ActivityR
 
 ### Activity Engine Debug Overlay (Developer settings tab)
 
-A per-project setting under **Developer → Activity Engine Debug Overlay** enables a floating panel showing live engine state:
+A global setting under **Developer → Activity Engine Debug Overlay** enables a floating panel showing live engine state. Global, not per-project: Developer is a system tab, and the overlay reads `globalConfig` precisely so a project override cannot toggle it. It shows:
 - Current activity + reason for each running session
 - Raw counters (tools, subagents, bg shells)
 - **Compensation counters** (`staleThinking`, `bgShellHatch`, `stuckPendingTools`, `forceThinking`, `forceIdle`, `unmatchedBgShellEnd`, `ignoredInnerSubagentStop`, `stuckSubagent`) - monotonic tallies of silent recovery events. In a clean session all eight read 0; any non-zero value flags a watchdog / forced transition / unattributable or discarded event that did not visibly flip the activity pill. (`ignoredInnerSubagentStop` is the benign exception: non-zero is normal on any session that ran subagents - it is the count of spurious empty-detail inner stops the engine correctly discarded.)
@@ -558,6 +587,7 @@ Each entry in `recentTransitions` (the ring of 50 returned by `getStatsSnapshot`
 | `event:bg-shell-ended:transcript` | Definitive drain - the watcher observed a tracked shell's own terminal `<task-notification>` directly in the durable session transcript (task #386). Fires independent of process-tree count or output-file state; distinct from the Tier A / quiescence label above even though both are id-keyed. |
 | `event:bg-shell-ended:watcher` | Tier B count-heuristic drain - an anonymous shell reclaimed by the descendant-count drop. |
 | `event:bg-shells-adopted` | Resume reconciliation adopted living descendants as anonymous shells. |
+| `event:permission-rejected:transcript` | A manually denied permission prompt (task #640) - the transcript poll observed the awaited tool's rejection `tool_result` in the agent's durable session transcript, a signal no hook can deliver. See "Permission flag" above. |
 | `force-thinking` | PTY tracker / heartbeat recovery forced thinking (predicate saw no holder). |
 | `force-idle` | PTY silence timer, Esc, or shutdown forced idle. |
 | `timer:stability` | The 400ms idle stability window expired and committed a pending idle. |
@@ -626,9 +656,9 @@ interface ActivityEngineOptions {
 
 Plumbed through `SessionManagerOptions.activityEngineOptions` for tests.
 
-### Per-project setting
+### Global setting
 
-`developer.activityDebugOverlay: boolean` - enables the debug overlay for the current project. Default false.
+`developer.activityDebugOverlay: boolean` - enables the debug overlay for every project on this install. Global-only, with no per-project override. Default false.
 
 ### Environment variables
 

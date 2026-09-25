@@ -34,7 +34,7 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
     developerConfig.recordIpcTraffic ?? (__KANGENTIC_DEV__ && window.electronAPI.dev?.isEphemeralPreview === true);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-testid="developer-tab">
       <GroupHeading>Diagnostics</GroupHeading>
 
       <section className="space-y-2">
@@ -80,7 +80,7 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
           onChange={() => {}}
         />
         <Description>
-          Every uncaught exception, unhandled rejection, render-process-gone event, and preload error
+          Every uncaught exception, unhandled rejection, renderer or GPU process crash, and preload error
           writes one record to <Code>.kangentic/logs/crashes/&lt;ts&gt;.json</Code> with timestamp, kind,
           source-mapped stack, and version info. Read via <Code>kangentic_get_recent_crashes</Code>.
         </Description>

@@ -4,12 +4,19 @@ import { sessionOutputPaths } from '../../transition-engine/session-paths';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
-import { listActiveSwimlanes } from './column-resolver';
+import { ConversationUsageStore } from '../../retrieval/conversation/conversation-usage-store';
+import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
 import type { Task } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
+
+/** Fan-out rows printed before collapsing the tail into a "+N more" line. The
+ *  rows are heaviest-first, so the cap keeps the expensive ones. */
+const MAX_FAN_OUT_LINES = 5;
 
 export const handleGetTaskStats: CommandHandler = (
   params: Record<string, unknown>,
@@ -39,19 +46,68 @@ export const handleGetTaskStats: CommandHandler = (
       };
     }
 
+    // Subagent fan-out for this task, from the durable turn-usage ledger. It is
+    // a different measurement from `summary` above (which reads the sessions
+    // rollup's context-window snapshots) and reports NO cost: the session's
+    // total_cost_usd already covers the whole session tree, so pricing these
+    // tokens again would double count. On a /code-review or /test task this is
+    // most of the traffic, and it is the only place the board can answer which
+    // subagent was expensive.
+    const usageStore = new ConversationUsageStore(db);
+    const bySubagentType = usageStore.getSubagentTotalsByType(null, null, task.id);
+    const subagentTurns = bySubagentType.reduce((total, row) => total + row.turnCount, 0);
+    // Grouped by the driver turn that STARTED each fan-out, which the per-type
+    // rollup above cannot express: a /code-review task spawns the same
+    // `review-finder` type from several different turns, and "what did this one
+    // fan-out cost" is the question that distinguishes them.
+    const fanOuts = subagentTurns > 0 ? usageStore.getTaskFanOuts(task.id) : [];
+
+    const lines = [
+      `Stats for "${task.title}":`,
+      `  Tokens: ${summary.totalInputTokens.toLocaleString()} input + ${summary.totalOutputTokens.toLocaleString()} output = ${(summary.totalInputTokens + summary.totalOutputTokens).toLocaleString()} total`,
+      `  Cost: $${summary.totalCostUsd.toFixed(4)}`,
+      `  Duration: ${Math.round(summary.durationMs / 1000)}s`,
+      `  Tool calls: ${summary.toolCallCount}`,
+      `  Sessions compacted: ${summary.compactionCount}`,
+      `  Lines: +${summary.linesAdded} / -${summary.linesRemoved} across ${summary.filesChanged} file(s)`,
+      `  Model: ${summary.modelDisplayName}`,
+    ];
+    if (subagentTurns > 0) {
+      const subagentCount = bySubagentType.reduce((total, row) => total + row.subagentCount, 0);
+      const nestedCount = bySubagentType.reduce((total, row) => total + row.nestedSubagentCount, 0);
+      const nestedNote = nestedCount > 0 ? `, ${nestedCount} nested` : '';
+      lines.push(`  Subagents: ${subagentCount} across ${subagentTurns.toLocaleString()} turn(s)${nestedNote} (cost already included above)`);
+      for (const row of bySubagentType) {
+        const rowNested = row.nestedSubagentCount > 0 ? ` (${row.nestedSubagentCount} nested)` : '';
+        lines.push(
+          `    ${row.agentType ?? '(unknown)'}: ${row.subagentCount} x ${row.turnCount} turn(s)${rowNested}, ${(row.inputTokens + row.outputTokens).toLocaleString()} fresh tokens, ${row.cacheReadTokens.toLocaleString()} cache read`,
+        );
+      }
+      // Capped: a long review fans out many times and the caller wants the
+      // expensive ones, not a transcript. The rows are already heaviest-first.
+      if (fanOuts.length > 0) {
+        lines.push(`  Fan-outs: ${fanOuts.length}`);
+        for (const fanOut of fanOuts.slice(0, MAX_FAN_OUT_LINES)) {
+          const when = fanOut.driverTurnUuid === null
+            ? '(unlinked)'
+            : fanOut.driverTs === null
+              ? '(no timestamp)'
+              : new Date(fanOut.driverTs).toISOString().slice(11, 16);
+          const types = fanOut.agentTypes.length > 0 ? fanOut.agentTypes.join(', ') : '(unknown)';
+          lines.push(
+            `    ${when} - ${types} x${fanOut.subagentCount}, ${(fanOut.inputTokens + fanOut.outputTokens).toLocaleString()} fresh tokens, ${fanOut.cacheReadTokens.toLocaleString()} cache read`,
+          );
+        }
+        if (fanOuts.length > MAX_FAN_OUT_LINES) {
+          lines.push(`    +${fanOuts.length - MAX_FAN_OUT_LINES} more`);
+        }
+      }
+    }
+
     return {
       success: true,
-      message: [
-        `Stats for "${task.title}":`,
-        `  Tokens: ${summary.totalInputTokens.toLocaleString()} input + ${summary.totalOutputTokens.toLocaleString()} output = ${(summary.totalInputTokens + summary.totalOutputTokens).toLocaleString()} total`,
-        `  Cost: $${summary.totalCostUsd.toFixed(4)}`,
-        `  Duration: ${Math.round(summary.durationMs / 1000)}s`,
-        `  Tool calls: ${summary.toolCallCount}`,
-        `  Sessions compacted: ${summary.compactionCount}`,
-        `  Lines: +${summary.linesAdded} / -${summary.linesRemoved} across ${summary.filesChanged} file(s)`,
-        `  Model: ${summary.modelDisplayName}`,
-      ].join('\n'),
-      data: summary,
+      message: lines.join('\n'),
+      data: { ...summary, bySubagentType, fanOuts },
     };
   }
 
@@ -154,17 +210,108 @@ export const handleGetTaskStats: CommandHandler = (
   };
 };
 
+/**
+ * How many labels the board summary spells out before collapsing the tail
+ * into a "... and N more" line. A mature board accumulates a long tail of
+ * one-off labels; the head is what a caller needs to stay consistent with the
+ * vocabulary, and printing all of it would swamp the rest of the summary.
+ */
+const BOARD_SUMMARY_LABEL_LIMIT = 30;
+
+/** Soft wrap width for the label list, so a wide vocabulary stays readable. */
+const BOARD_SUMMARY_LABEL_WRAP_COLUMNS = 96;
+
+/**
+ * Tally label usage across every item that can carry one: active board tasks,
+ * archived (Done) tasks, and backlog items. Archived tasks are deliberately
+ * included - on a mature board most of the vocabulary lives in Done, so an
+ * active-only tally would report a vocabulary that barely exists.
+ *
+ * `occurrences` counts label USES (a task with three labels contributes to
+ * three of them), while `labelledItems` counts items carrying at least one
+ * label, so the two figures the summary prints reconcile for a caller that
+ * adds them up.
+ */
+export function tallyLabelUsage(
+  itemLabelLists: Array<readonly string[] | null | undefined>,
+): { counts: Map<string, number>; labelledItems: number } {
+  const counts = new Map<string, number>();
+  let labelledItems = 0;
+  for (const labels of itemLabelLists) {
+    if (!labels || labels.length === 0) continue;
+    labelledItems++;
+    for (const label of labels) {
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+  }
+  return { counts, labelledItems };
+}
+
+/**
+ * Order label entries most-used first, ties broken alphabetically. The tie
+ * break compares codepoints rather than calling `localeCompare`: ICU collation
+ * is not guaranteed identical between a developer's machine and CI, and this
+ * is machine-facing MCP output whose order the tests pin, so a locale-
+ * dependent comparator could sort two equally-used labels differently per
+ * platform.
+ *
+ * Shared by the printed block and the structured `data.labels` array so the
+ * two orderings cannot drift.
+ */
+function sortLabelEntries(counts: Map<string, number>): Array<[string, number]> {
+  return [...counts.entries()].sort(
+    (left, right) => right[1] - left[1] || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0),
+  );
+}
+
+/**
+ * Render the label vocabulary block for the board summary: most-used first,
+ * ties broken alphabetically so the output is stable across calls.
+ */
+export function formatLabelVocabulary(
+  counts: Map<string, number>,
+  labelledItems: number,
+): string[] {
+  if (counts.size === 0) {
+    return ['Labels in use: none yet.'];
+  }
+  const ordered = sortLabelEntries(counts);
+  const shown = ordered.slice(0, BOARD_SUMMARY_LABEL_LIMIT);
+  const lines = [
+    `Labels in use (${counts.size} distinct, ${labelledItems} labelled item${labelledItems === 1 ? '' : 's'}):`,
+  ];
+  let currentLine = '';
+  for (let index = 0; index < shown.length; index++) {
+    const [name, count] = shown[index];
+    const entry = `${name} (${count})${index < shown.length - 1 ? ',' : ''}`;
+    if (currentLine && `${currentLine} ${entry}`.length > BOARD_SUMMARY_LABEL_WRAP_COLUMNS) {
+      lines.push(`  ${currentLine}`);
+      currentLine = entry;
+    } else {
+      currentLine = currentLine ? `${currentLine} ${entry}` : entry;
+    }
+  }
+  if (currentLine) lines.push(`  ${currentLine}`);
+  if (ordered.length > shown.length) {
+    lines.push(`  ... and ${ordered.length - shown.length} more`);
+  }
+  return lines;
+}
+
 export const handleBoardSummary: CommandHandler = (
   _params: Record<string, unknown>,
   context: CommandContext,
 ): CommandResponse => {
   const db = context.getProjectDb();
-  const swimlaneRepo = new SwimlaneRepository(db);
   const taskRepo = new TaskRepository(db);
   const sessionRepo = new SessionRepository(db);
   const backlogRepo = new BacklogRepository(db);
 
-  const allSwimlanes = swimlaneRepo.list().filter((swimlane) => !swimlane.is_archived);
+  // listBoardColumns, not a local !is_archived filter: this is the other board
+  // orientation tool, and hiding the done lane here has the same effect it had
+  // on kangentic_list_columns - an agent reads the ladder and takes the last
+  // column it can see as the finish line.
+  const allSwimlanes = listBoardColumns(db);
   const archivedTasks = taskRepo.listArchived();
   const allSummaries = sessionRepo.listAllSummaries();
   const backlogTasks = backlogRepo.list();
@@ -172,16 +319,35 @@ export const handleBoardSummary: CommandHandler = (
   let totalActiveTasks = 0;
   let activeSessions = 0;
   const columnLines: string[] = [];
-  const columnData: Array<{ name: string; role: string | null; taskCount: number }> = [];
+  const columnData: Array<{ name: string; role: string | null; taskCount: number; completedCount?: number }> = [];
+  // Every label-bearing item on the board, gathered as we already walk each
+  // source for its counts. No extra query and no new repository method.
+  const labelLists: Array<readonly string[] | null | undefined> = [
+    ...archivedTasks.map((task) => task.labels),
+    ...backlogTasks.map((item) => item.labels),
+  ];
 
   for (const swimlane of allSwimlanes) {
     const tasks = taskRepo.list(swimlane.id);
+    for (const task of tasks) labelLists.push(task.labels);
     totalActiveTasks += tasks.length;
     const sessionsInColumn = tasks.filter((task) => task.session_id !== null).length;
     activeSessions += sessionsInColumn;
     const sessionNote = sessionsInColumn > 0 ? ` (${sessionsInColumn} active session${sessionsInColumn > 1 ? 's' : ''})` : '';
-    columnLines.push(`  ${swimlane.name}: ${tasks.length} task(s)${sessionNote}`);
-    columnData.push({ name: swimlane.name, role: swimlane.role, taskCount: tasks.length });
+    // The done lane holds no live tasks by construction, so print the archive
+    // count there instead of a `0 task(s)` that reads as an empty column. It is
+    // the same number the `Completed tasks:` line below reports; see
+    // `TaskRepository.countArchived()` for why that stands in for the lane's own.
+    const isDoneLane = swimlane.role === 'done';
+    columnLines.push(isDoneLane
+      ? `  ${swimlane.name}: ${archivedTasks.length} completed`
+      : `  ${swimlane.name}: ${tasks.length} task(s)${sessionNote}`);
+    columnData.push({
+      name: swimlane.name,
+      role: swimlane.role,
+      taskCount: tasks.length,
+      ...(isDoneLane ? { completedCount: archivedTasks.length } : {}),
+    });
   }
 
   let totalCost = 0;
@@ -196,11 +362,15 @@ export const handleBoardSummary: CommandHandler = (
     tasksWithMetrics++;
   }
 
+  const { counts: labelCounts, labelledItems } = tallyLabelUsage(labelLists);
+
   const lines = [
     `Board Summary:`,
     ``,
     `Columns:`,
     ...columnLines,
+    ``,
+    ...formatLabelVocabulary(labelCounts, labelledItems),
     ``,
     `Active tasks: ${totalActiveTasks}`,
     `Backlog tasks: ${backlogTasks.length}`,
@@ -218,6 +388,7 @@ export const handleBoardSummary: CommandHandler = (
     message: lines.join('\n'),
     data: {
       columns: columnData,
+      labels: sortLabelEntries(labelCounts).map(([name, count]) => ({ name, count })),
       totalActiveTasks,
       backlogTasks: backlogTasks.length,
       completedTasks: archivedTasks.length,
@@ -430,11 +601,19 @@ export const handleGetColumnDetail: CommandHandler = (
   );
 
   if (!matched) {
-    const available = allSwimlanes.filter((swimlane) => !swimlane.is_archived).map((swimlane) => swimlane.name).join(', ');
+    // isBoardColumn, not a bare !is_archived: the done lane is persisted
+    // archived, and a suggestion list that omits it tells an agent the board has
+    // nowhere to put finished work.
+    const available = allSwimlanes.filter(isBoardColumn).map((swimlane) => swimlane.name).join(', ');
     return { success: false, error: `Column "${columnName}" not found. Available: ${available}` };
   }
 
   const tasks = matched.is_archived ? [] : taskRepo.list(matched.id);
+  // Done always reports `Tasks: 0` - a task moved there is archived off the
+  // board - so without this the column reads as dead. See
+  // `TaskRepository.countArchived()` for why a project-wide count stands in for
+  // the lane's own.
+  const completedCount = matched.role === 'done' ? taskRepo.countArchived() : null;
 
   // Resolve plan exit target name
   let planExitTargetName: string | null = null;
@@ -449,9 +628,32 @@ export const handleGetColumnDetail: CommandHandler = (
     `  Tasks: ${tasks.length}`,
     `  Auto-spawn: ${matched.auto_spawn ? 'yes' : 'no'}`,
     `  Permission mode: ${matched.permission_mode ?? 'default (inherited)'}`,
+    // Unconditional, unlike the overrides below, because a default here is a
+    // real answer a caller needs. Printing these only when non-default is the
+    // original bug in reverse: an agent sets isolation, reads back, sees
+    // nothing, and cannot tell a default column from a failed write.
+    `  Session: ${matched.session_target === 'isolated' ? 'isolated (own conversation)' : 'main (task conversation)'}`,
+    `  On enter: ${matched.session_spawn_strategy === 'always_spawn_new' ? 'always spawn new' : 'create or resume'}`,
+    `  Handoff context: ${matched.handoff_context ? 'yes' : 'no'}`,
   ];
+  if (completedCount !== null) lines.push(`  Completed: ${completedCount}`);
   if (matched.description) lines.push(`  Description: ${matched.description}`);
-  if (matched.auto_command) lines.push(`  Auto-command: ${matched.auto_command}`);
+
+  // The column's automations, which is where its message to the agent now
+  // lives. Reported as the list rather than one command: a column can have four
+  // of these, and reporting only the message would describe a quarter of what
+  // happens when a task lands here.
+  const automations = new AutomationRepository(db).listForColumn(matched.id);
+  const columnMessage = resolveColumnMessage(automations)?.message ?? null;
+  if (columnMessage) lines.push(`  Message to agent: ${columnMessage}`);
+  for (const trigger of ['enter', 'exit'] as const) {
+    const group = automations.filter((row) => row.trigger === trigger).sort((left, right) => left.position - right.position);
+    if (group.length === 0) continue;
+    lines.push(`  On ${trigger}:`);
+    for (const row of group) {
+      lines.push(`    ${row.position + 1}. ${row.name} (${row.type})${row.enabled ? '' : ' [off]'}`);
+    }
+  }
   if (matched.agent_override) lines.push(`  Agent override: ${matched.agent_override}`);
   if (matched.model_override) lines.push(`  Model override: ${matched.model_override}`);
   if (matched.effort_override) lines.push(`  Effort override: ${matched.effort_override}`);
@@ -491,13 +693,26 @@ export const handleGetColumnDetail: CommandHandler = (
       description: matched.description,
       role: matched.role,
       taskCount: tasks.length,
+      completedCount,
       taskOrder,
       autoSpawn: matched.auto_spawn,
       permissionMode: matched.permission_mode,
-      autoCommand: matched.auto_command,
+      autoCommand: columnMessage,
+      automations: automations.map((row) => ({
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        trigger: row.trigger,
+        position: row.position,
+        enabled: row.enabled,
+        config: row.config,
+      })),
       agentOverride: matched.agent_override,
       modelOverride: matched.model_override,
       effortOverride: matched.effort_override,
+      handoffContext: matched.handoff_context,
+      sessionTarget: matched.session_target,
+      sessionSpawnStrategy: matched.session_spawn_strategy,
       planExitTarget: planExitTargetName,
       color: matched.color,
       icon: matched.icon,

@@ -12,11 +12,10 @@ type ProjectColumnKey =
   | 'tokensOut'
   | 'cost'
   | 'costShare'
-  | 'blendedRate'
   | 'lines'
   | 'files'
   | 'toolCalls'
-  | 'avgSession'
+  | 'avgActive'
   | 'topAgent'
   | 'lastActive'
   | 'sessions';
@@ -24,8 +23,7 @@ type ProjectColumnKey =
 /** Row shape with the client-derived comparison ratios attached. */
 interface ProjectComparisonRow extends ProjectUsageSummary {
   costShare: number;
-  blendedUsdPerMTokens: number | null;
-  avgSessionMs: number | null;
+  avgActiveMs: number | null;
 }
 
 /** Inline mini-bar for the cost-share column (value already 0..1). The number
@@ -53,7 +51,7 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
     key: 'tokensIn',
     label: 'Tokens In',
     align: 'right',
-    headerTitle: 'Input tokens across finalized sessions in the range (context-window snapshots)',
+    headerTitle: 'Fresh input tokens across the turns in this range (cache reads counted separately)',
     sortValue: (row) => row.inputTokens,
     render: (row) => <span className="tabular-nums">{formatTokenCount(row.inputTokens)}</span>,
   },
@@ -61,7 +59,7 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
     key: 'tokensOut',
     label: 'Tokens Out',
     align: 'right',
-    headerTitle: 'Output tokens across finalized sessions in the range (context-window snapshots)',
+    headerTitle: 'Output tokens across the turns in this range',
     sortValue: (row) => row.outputTokens,
     render: (row) => <span className="tabular-nums">{formatTokenCount(row.outputTokens)}</span>,
   },
@@ -80,18 +78,6 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
     headerTitle: "This project's share of the total cost across all projects in the range",
     sortValue: (row) => row.costShare,
     render: (row) => <CostShareCell share={row.costShare} />,
-  },
-  {
-    key: 'blendedRate',
-    label: '$/Mtok',
-    align: 'right',
-    headerTitle: 'Blended cost per million tokens (exposes expensive model mixes)',
-    sortValue: (row) => row.blendedUsdPerMTokens ?? -1,
-    render: (row) => (
-      <span className="tabular-nums">
-        {row.blendedUsdPerMTokens !== null ? formatCost(row.blendedUsdPerMTokens) : '-'}
-      </span>
-    ),
   },
   {
     key: 'lines',
@@ -124,13 +110,13 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
     render: (row) => <span className="tabular-nums">{formatTokenCount(row.toolCallCount)}</span>,
   },
   {
-    key: 'avgSession',
-    label: 'Avg Session',
+    key: 'avgActive',
+    label: 'Avg Active',
     align: 'right',
-    headerTitle: 'Average session duration (total duration / sessions)',
-    sortValue: (row) => row.avgSessionMs ?? -1,
+    headerTitle: 'Average time the agent was working per session, excluding idle. Covers only sessions with activity tracking, which is fewer than the Sessions column counts.',
+    sortValue: (row) => row.avgActiveMs ?? -1,
     render: (row) => (
-      <span className="tabular-nums">{row.avgSessionMs !== null ? formatDuration(row.avgSessionMs) : '-'}</span>
+      <span className="tabular-nums">{row.avgActiveMs !== null ? formatDuration(row.avgActiveMs) : '-'}</span>
     ),
   },
   {
@@ -164,9 +150,14 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
 ];
 
 /** Per-project comparison table for the All-Projects scope, sortable on every
- *  column. Ratios (cost share, blended $/Mtok, avg session) derive here from
- *  the payload sub-totals. Clicking a row re-scopes the dashboard to that
- *  project (without switching the app's current project). */
+ *  column. Ratios (cost share, avg active) derive here from the payload
+ *  sub-totals. Clicking a row re-scopes the dashboard to that project (without
+ *  switching the app's current project).
+ *
+ *  There is no blended $/Mtok column. Cost reaches back to a project's first
+ *  session while per-turn token capture starts later, so the ratio divided a
+ *  full-range numerator by a partial-range denominator and read high by a
+ *  multiple that varied per project. */
 export function PerProjectTable({
   projects,
   onProjectClick,
@@ -177,7 +168,6 @@ export function PerProjectTable({
   const rows = useMemo<ProjectComparisonRow[]>(() => {
     const totalCost = projects.reduce((sum, project) => sum + project.costUsd, 0);
     return projects.map((project) => {
-      const totalTokens = project.inputTokens + project.outputTokens;
       return {
         ...project,
         // Defensive: a payload cached from an older shape (or a dev server
@@ -187,14 +177,17 @@ export function PerProjectTable({
         linesRemoved: project.linesRemoved ?? 0,
         filesChanged: project.filesChanged ?? 0,
         totalDurationMs: project.totalDurationMs ?? 0,
+        activeMs: project.activeMs ?? 0,
+        activeSessionsCovered: project.activeSessionsCovered ?? 0,
         lastActiveMs: project.lastActiveMs ?? null,
         topAgent: project.topAgent ?? null,
         costShare: totalCost > 0 ? project.costUsd / totalCost : 0,
-        blendedUsdPerMTokens: totalTokens > 0 && project.costUsd > 0
-          ? (project.costUsd / totalTokens) * 1_000_000
-          : null,
-        avgSessionMs: project.sessionCount > 0 && project.totalDurationMs
-          ? project.totalDurationMs / project.sessionCount
+        // Active time per COVERED session, matching the Avg Active tile. The
+        // denominator is the interval ledger's own session count, not
+        // `sessionCount`: the two ledgers cover different session populations,
+        // and mixing them under-reports every historical range.
+        avgActiveMs: (project.activeSessionsCovered ?? 0) > 0
+          ? (project.activeMs ?? 0) / project.activeSessionsCovered
           : null,
       };
     });

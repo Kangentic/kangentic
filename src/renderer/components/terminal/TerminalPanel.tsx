@@ -184,6 +184,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
           {/* Activity tab -- visible when 1+ sessions */}
           {showActivityTab && (
             <button
+              data-testid="terminal-activity-tab"
               onClick={() => setActiveSession(ACTIVITY_TAB)}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-edge transition-colors whitespace-nowrap ${
                 isActivityActive
@@ -235,6 +236,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
 
         {/* Clickable spacer fills remaining tab bar space */}
         {onToggleCollapse && (
+          // select-none-ok: an empty spacer, so it has no text to select.
           <div
             role="presentation"
             className="flex-1 self-stretch cursor-pointer hover:bg-surface-raised/30 transition-colors"

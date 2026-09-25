@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 // Enforces .claude/rules/activity-state-classification.md. The idle-vs-active question
 // ("does this session require user interaction?") has a single source of truth in
@@ -28,7 +29,7 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
 // Comparison (=== / !==) against an ActivityState literal, either operand order.
 const ACTIVITY_LITERAL_COMPARE =
   /(===|!==)\s*['"](idle|permission|thinking)['"]|['"](idle|permission|thinking)['"]\s*(===|!==)/;
-const OK_MARKER = /activity-state-ok/;
+const OK_MARKER = 'activity-state-ok';
 
 // Paths (POSIX, relative to repo root) exempt from the scan, each with a reason.
 const ALLOWLIST_PREFIXES = [
@@ -71,11 +72,7 @@ describe('activity-state idle-vs-active bucketing goes through the shared classi
       lines.forEach((line, index) => {
         if (isCommentLine(line)) return;
         if (!ACTIVITY_LITERAL_COMPARE.test(line)) return;
-        // Allowed when the line itself or the preceding non-empty line carries the marker.
-        if (OK_MARKER.test(line)) return;
-        let previousIndex = index - 1;
-        while (previousIndex >= 0 && lines[previousIndex].trim() === '') previousIndex--;
-        if (previousIndex >= 0 && OK_MARKER.test(lines[previousIndex])) return;
+        if (hasOptOutMarker(lines, index, OK_MARKER)) return;
         offenders.push(`${relative}:${index + 1}`);
       });
     }

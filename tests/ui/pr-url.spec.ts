@@ -316,7 +316,7 @@ test.describe('PR URL in Edit Form', () => {
       }, TASK_PLANNING_CLEAR_ID);
 
       await expect.poll(findClearCall, { timeout: 5000 }).not.toBeNull();
-      expect(await findClearCall()).toMatchObject({ pr_url: null, pr_number: null, pr_state: null });
+      expect(await findClearCall()).toMatchObject({ pr_url: null, pr_number: null, pr_state: null, pr_merge_readiness: null });
     } finally {
       await browser.close();
     }
@@ -377,6 +377,9 @@ test.describe('PR URL in Edit Form', () => {
       // drops the key entirely rather than sending an explicit null - fails
       // on a named field instead of a vaguer object-shape mismatch.
       expect(capturedCall?.pr_state).toBeNull();
+      // Same shape for the verdict: a re-pointed link must not carry the old
+      // PR's merge readiness onto the new one.
+      expect(capturedCall?.pr_merge_readiness).toBeNull();
     } finally {
       await browser.close();
     }

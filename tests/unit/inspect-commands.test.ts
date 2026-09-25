@@ -840,6 +840,42 @@ describe('handleGetTranscript', () => {
 
 // --- handleQueryDb ---
 
+/**
+ * Split a rendered markdown table row into cells, respecting markdown's
+ * backslash-escaping rule: a `|` is a column separator only when the run of
+ * consecutive backslashes directly before it is even (0, 2, 4, ...); an odd
+ * run means the last backslash escapes the pipe, so it stays inside the cell.
+ *
+ * A plain `row.split('|')` cannot tell an escaped pipe from a real separator
+ * (a `\|` still contains a literal `|` character), so it would count cells
+ * wrong for exactly the bug this file guards against. This mirrors how a
+ * markdown renderer reads the row, not how `escapeMarkdownCell` produces it,
+ * so it stays a fair check of the source's escaping contract instead of a
+ * restatement of its implementation.
+ */
+function splitMarkdownRow(row: string): string[] {
+  const cells: string[] = [];
+  let current = '';
+  let backslashRun = 0;
+  for (const character of row) {
+    if (character === '\\') {
+      backslashRun += 1;
+      current += character;
+      continue;
+    }
+    if (character === '|' && backslashRun % 2 === 0) {
+      cells.push(current);
+      current = '';
+      backslashRun = 0;
+      continue;
+    }
+    backslashRun = 0;
+    current += character;
+  }
+  cells.push(current);
+  return cells;
+}
+
 describe('handleQueryDb', () => {
   it('returns error when sql is missing', () => {
     const db = createMockDb();
@@ -962,6 +998,74 @@ describe('handleQueryDb', () => {
     expect(result.success).toBe(true);
     expect(result.message).toContain('...');
     expect(result.message).not.toContain(longValue);
+  });
+
+  it('escapes a pre-existing backslash before escaping a pipe, so the two cannot combine into an unescaped pipe', () => {
+    // Raw value: a \ | b (4 characters). If the backslash step were dropped,
+    // escaping only the pipe would turn the existing backslash into an
+    // accidental escape for the very pipe this function is supposed to guard,
+    // leaving a real column separator behind. Building both the input and the
+    // expected escaped form from a backslash literal (rather than hand-counted
+    // backslashes in a string literal) keeps the intent legible.
+    const backslash = '\\';
+    const cellValue = 'a' + backslash + '|' + 'b';
+    const db = createMockDb({
+      queryResults: [{ id: '1', content: cellValue }],
+    });
+    const context = createMockContext(db);
+
+    const result = handleQueryDb({ sql: 'SELECT id, content FROM data' }, context);
+
+    expect(result.success).toBe(true);
+    const lines = (result.message ?? '').split('\n');
+    // header, separator, one data row, blank line, summary.
+    const rowLine = lines[2];
+    expect(rowLine).toBeDefined();
+
+    // Structural check: 2 columns means a correctly escaped row splits into
+    // exactly 4 parts (leading pipe, cell, cell, trailing pipe boundary). A
+    // pipe that leaked through as a real separator would split into 5.
+    expect(splitMarkdownRow(rowLine as string)).toHaveLength(4);
+
+    // Content check: the pre-existing backslash is doubled BEFORE the pipe is
+    // escaped, so the pipe ends up behind an odd (3), not even (2), run of
+    // backslashes.
+    const expectedEscapedCell = 'a' + backslash.repeat(3) + '|' + 'b';
+    expect(rowLine).toContain(expectedEscapedCell);
+  });
+
+  it('escapes pipes and newlines in the truncation branch too, not only in the untruncated path', () => {
+    // Over 120 characters, with a pipe and a newline inside the first 117
+    // (the truncation slice), so the truncation branch's escaping is what is
+    // under test, not the plain-value path already covered above.
+    const longValue = 'a|b\nc' + 'x'.repeat(150);
+    const db = createMockDb({
+      queryResults: [{ id: '1', content: longValue }],
+    });
+    const context = createMockContext(db);
+
+    const result = handleQueryDb({ sql: 'SELECT id, content FROM data' }, context);
+
+    expect(result.success).toBe(true);
+    const message = result.message ?? '';
+    const lines = message.split('\n');
+
+    // Structural check: an un-escaped newline inside the cell would split the
+    // row across two lines, changing the message's total line count (header,
+    // separator, row, blank, summary = 5). An un-escaped pipe would also
+    // split whichever line it lands in into an extra cell. Either bug is
+    // caught by the two assertions below without needing to special-case
+    // which one fired.
+    expect(lines).toHaveLength(5);
+    const rowLine = lines[2];
+    expect(rowLine).toBeDefined();
+    expect(rowLine).toContain('...');
+    expect(splitMarkdownRow(rowLine as string)).toHaveLength(4);
+
+    // Content check: the pipe is escaped and the newline is collapsed to a
+    // space, matching the same rules as the untruncated path.
+    expect(rowLine).toContain('a\\|b c');
+    expect(message).not.toContain(longValue);
   });
 
   it('formats output as markdown table', () => {

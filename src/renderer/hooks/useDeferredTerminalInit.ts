@@ -42,7 +42,7 @@
  * option changes) - a pre-existing quirk both hosts shared before the
  * extraction: the cleanup resets the flag and the next frame re-inits.
  */
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import { enqueueTerminalInit } from '../utils/terminal-init-queue';
 
 /** The two size fields the controller reads; tests pass plain objects. */
@@ -116,10 +116,14 @@ export function useDeferredTerminalInit({
   onCleanup,
 }: DeferredTerminalInitOptions): { initializedRef: RefObject<boolean> } {
   const initializedRef = useRef(false);
+  // Written on commit (a layout effect, ahead of the passive effect below that
+  // reads them), never during render, which the compiler rules forbid.
   const onInitRef = useRef(onInit);
-  onInitRef.current = onInit;
   const onCleanupRef = useRef(onCleanup);
-  onCleanupRef.current = onCleanup;
+  useLayoutEffect(() => {
+    onInitRef.current = onInit;
+    onCleanupRef.current = onCleanup;
+  });
 
   useEffect(() => {
     const element = terminalRef.current;

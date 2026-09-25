@@ -78,6 +78,7 @@ const TASK_ALPHA_ACTIVE = {
   description: 'on the board',
   swimlane_id: 'lane-todo',
   archived_at: null,
+  labels: ['mcp', 'dx'],
 };
 
 const TASK_BETA_ARCHIVED = {
@@ -87,6 +88,7 @@ const TASK_BETA_ARCHIVED = {
   description: 'alpha-search shows up only in body',
   swimlane_id: 'lane-done',
   archived_at: '2026-04-15T00:00:00Z',
+  labels: [],
 };
 
 const BACKLOG_GAMMA = {
@@ -243,6 +245,14 @@ describe('handleSearchTasks - scope', () => {
     expect(gamma).toMatchObject({ priority: 2, priorityLabel: 'Medium', labels: [] });
     const delta = data.backlog.find((item) => item.id === 'backlog-delta');
     expect(delta).toMatchObject({ priority: 1, priorityLabel: 'Low', labels: ['alpha-search'] });
+  });
+
+  it('board hits carry labels too, closing the asymmetry with backlog hits', () => {
+    const result = handleSearchTasks({ query: 'alpha-search', scope: 'board' }, makeContext());
+
+    const data = result.data as { tasks: Array<{ id: string; labels: string[] }> };
+    expect(data.tasks.find((task) => task.id === 'task-alpha')?.labels).toEqual(['mcp', 'dx']);
+    expect(data.tasks.find((task) => task.id === 'task-beta')?.labels).toEqual([]);
   });
 });
 

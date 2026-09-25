@@ -13,14 +13,20 @@ import {
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
   createTransitionEngine,
+  captureSessionLeftovers,
   cleanupTaskResources,
   deleteTaskWorktree,
+  reapSessionLeftovers,
+  reportAutomationFailures,
   spawnAgent,
 } from '../helpers';
+import { showDesktopNotification } from './system';
 import { autoLinkPRForTask } from '../../pr/pr-linking';
+import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
+import { trackMilestone } from '../../analytics/usage';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { parseModelId } from '../../../shared/model-id';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
@@ -31,16 +37,18 @@ import { abortBacklogPromotion } from './backlog';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
-import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
+import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveLiveEffort, resolveSourceEffort } from '../../transition-engine/injection-plan';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
-import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
+import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
-import { restartSessionForSettingsChange } from './session-reconcile';
-import type { Task, Swimlane, SessionRecord } from '../../../shared/types';
+import { deliverExitMessage } from '../helpers/exit-message-delivery';
+import { resolveInjectionVerifier } from '../helpers/agent-spawn';
+import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
+import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
 
 /**
  * Per-task AbortController to cancel in-flight moves when a newer move
@@ -53,11 +61,25 @@ const taskMoveControllers = new Map<string, AbortController>();
 
 /**
  * Suspend a live PTY session so Phase 3 can respawn it with new CLI flags:
- * capture metrics while caches are populated, mark the DB record suspended
- * (or exited for queued records that never started), suspend the PTY, and
- * clear task.session_id. Shared by the two same-agent respawn triggers on a
- * column move: a model change (the primary restart marker), and an effort delta
- * to a concrete target on an adapter with no live `/effort` swap.
+ * emit a spawn-progress label naming the handoff, capture metrics while
+ * caches are populated, mark the DB record suspended (or exited for queued
+ * records that never started), suspend the PTY, and clear task.session_id.
+ * Shared by all four same-column respawn triggers: a model change, an
+ * effort delta to a concrete target on an adapter with no live `/effort`
+ * swap, a session-track switch (isolated column entry/exit or
+ * `always_spawn_new`), and a cross-agent handoff.
+ *
+ * `phase` is required, not optional: every caller must name what the user
+ * is about to see instead of the suspended session's stale "Paused" state,
+ * so a future respawn branch cannot silently opt out of labeling its own
+ * window (see the flash bug this fixes - the suspend used to leave the
+ * card and task detail reading "Paused"/"Resume session" for the entire
+ * unlocked Phase 2 gap). Emitted as the FIRST statement, before the record
+ * is even marked suspended: while the session is still 'running',
+ * getTaskProgress lets it own the display (task-progress.ts:166 applies a
+ * label only when there is no session or the session is 'suspended'), so the
+ * early emit is inert until the suspend actually lands and is never a source
+ * of its own gap.
  */
 async function suspendLiveSessionForRespawn(args: {
   context: IpcContext;
@@ -70,28 +92,51 @@ async function suspendLiveSessionForRespawn(args: {
   task: Task;
   projectPath: string | null;
   defaultBaseBranch: string;
+  phase: SpawnPhase;
+  // `session_id` is excluded, not merely omitted by convention: it is spread
+  // after `session_id: null` below, so a caller that passed one would silently
+  // defeat the null-out this helper exists to guarantee.
+  additionalTaskUpdates?: Partial<Omit<TaskUpdateInput, 'id' | 'session_id'>>;
 }): Promise<void> {
-  const { context, tasks, sessionRepo, usageHistoryRepo, taskId, liveSessionId, record, task, projectPath, defaultBaseBranch } = args;
-  if (record && record.agent_session_id
-      && (record.status === 'running' || record.status === 'exited')) {
-    captureSessionMetrics(
-      context.sessionManager,
-      sessionRepo,
-      usageHistoryRepo,
-      liveSessionId,
-      record.id,
-      record.started_at,
-      record.session_type,
-    );
-    refineTranscriptTokens(context.sessionManager, sessionRepo, liveSessionId, record.id);
-    refineTranscriptToolCounts(context.sessionManager, sessionRepo, liveSessionId, record.id);
-    captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, projectPath, defaultBaseBranch);
-    markRecordSuspended(sessionRepo, record.id, 'system');
-  } else if (record && record.status === 'queued') {
-    markRecordExited(sessionRepo, record.id);
+  const { context, tasks, sessionRepo, usageHistoryRepo, taskId, liveSessionId, record, task, projectPath, defaultBaseBranch, phase, additionalTaskUpdates } = args;
+  emitSpawnProgress(context.mainWindow, taskId, phase);
+  // Everything after the emit runs in Phase 1, INSIDE the withTaskLock call.
+  // That call sits under a try whose only clause is a `finally` (the
+  // AbortController cleanup); the catch that retires labels belongs to a
+  // separate, later try covering Phase 2/3 only. So a throw here - a rejecting
+  // sessionManager.suspend, or a locked-DB markRecordSuspended / tasks.update -
+  // would escape handleTaskMove entirely and strand the label just emitted
+  // until the 120s TTL. Clear it and rethrow so the caller's behavior is
+  // otherwise unchanged.
+  //
+  // This retires the LABEL only. A throw partway through still leaves the DB
+  // half-written (record marked suspended without session_id cleared, or the
+  // reverse); Phase 1 has no rollback and that is unchanged here.
+  try {
+    if (record && record.agent_session_id
+        && (record.status === 'running' || record.status === 'exited')) {
+      captureSessionMetrics(
+        context.sessionManager,
+        sessionRepo,
+        usageHistoryRepo,
+        liveSessionId,
+        record.id,
+        record.started_at,
+        record.session_type,
+      );
+      refineTranscriptTokens(context.sessionManager, sessionRepo, liveSessionId, record.id);
+      refineTranscriptToolCounts(context.sessionManager, sessionRepo, liveSessionId, record.id);
+      captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, projectPath, defaultBaseBranch);
+      markRecordSuspended(sessionRepo, record.id, 'system');
+    } else if (record && record.status === 'queued') {
+      markRecordExited(sessionRepo, record.id);
+    }
+    await context.sessionManager.suspend(liveSessionId);
+    tasks.update({ id: taskId, session_id: null, ...additionalTaskUpdates });
+  } catch (error) {
+    clearSpawnProgress(context.mainWindow, taskId);
+    throw error;
   }
-  await context.sessionManager.suspend(liveSessionId);
-  tasks.update({ id: taskId, session_id: null });
 }
 
 /**
@@ -155,15 +200,66 @@ type MoveSpawnPlan = {
   suppressAutoCommand: boolean;
 };
 
+/**
+ * Who asked for this move. Required (not optional, and never a field on the
+ * `options` bag) so a new call site cannot forget it: adding a caller without
+ * naming its origin is a compile error, not a board that silently goes stale.
+ *
+ * This exists because `handleTaskMove` used to announce nothing at all, leaving
+ * each caller to fan out the notifications itself. Three of the four got it
+ * wrong in different ways, and the mobile bridge did neither half - a task moved
+ * from the phone left the desktop board rendering the card in its old column
+ * indefinitely.
+ */
+export type TaskMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move';
+
+/**
+ * The renderer push for each origin, or null for "say nothing".
+ *
+ * A `Record` rather than a switch so a new `TaskMoveOrigin` member is a compile
+ * error here too. The asymmetry is deliberate:
+ *
+ * - `renderer` is silent because it initiated the move and already updated
+ *   optimistically. Pushing would cost a redundant board reload, and on the
+ *   agent channel the user would toast themselves.
+ * - `mobile` gets its own QUIET channel rather than reusing
+ *   TASK_UPDATED_BY_AGENT, whose listener toasts `Task updated by agent`. No
+ *   agent touched a task the user dragged on their own phone.
+ *
+ * The board-changed bus emit is NOT part of this table: it is unconditional for
+ * every origin. See the announce block at the end of `handleTaskMove` for why.
+ */
+const MOVE_PUSH_BY_ORIGIN: Record<
+  TaskMoveOrigin,
+  ((context: IpcContext, projectId: string, input: { taskId: string; targetSwimlaneId: string }, title: string) => void) | null
+> = {
+  renderer: null,
+  agent: (context, projectId, input, title) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_UPDATED_BY_AGENT, input.taskId, title, projectId),
+  mobile: (context, projectId) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_MOBILE, projectId),
+  'auto-move': (context, projectId, input, title) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_AUTO_MOVED, input.taskId, input.targetSwimlaneId, title, projectId),
+};
+
 export async function handleTaskMove(
   context: IpcContext,
   input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
+  origin: TaskMoveOrigin,
   projectId?: string | null,
   projectPath?: string | null,
   // Kept out of `input` (which flows raw from the renderer over IPC) so the
   // renderer cannot inject prompts; only main-process callers (the plan-exit
   // listener) can pass a continuation.
-  options?: { continuationPrompt?: string },
+  //
+  // `onCommitted` fires the moment the board row is on disk (see the commit
+  // point inside Phase 1), which is long before the returned promise settles:
+  // a Done move suspends, reaps and deletes the worktree after that point, and
+  // an auto-spawn move creates a worktree and spawns. A caller that has to
+  // answer someone on a deadline (the mobile bridge verb, against the phone's
+  // 10s per-verb budget) answers on this signal and lets the tail finish behind
+  // the response. Every other caller keeps awaiting the whole move.
+  options?: { continuationPrompt?: string; onCommitted?: () => void },
 ): Promise<void> {
   // Abort any in-flight move or promotion BEFORE queueing on the lock - the
   // existing holder must see its abort and return so we can acquire the lock.
@@ -178,10 +274,63 @@ export async function handleTaskMove(
   // projects stay distinguishable in the dev terminal. Resolve the name from
   // the same id Phase 1 resolves; an unresolvable id (no project open) skips
   // the tag so the body inherits no misleading ambient context.
-  const logProjectId = projectId ?? context.currentProjectId;
-  const logProjectName = logProjectId
-    ? context.projectRepo.getById(logProjectId)?.name ?? null
+  const announceProjectId = projectId ?? context.currentProjectId;
+  const logProjectName = announceProjectId
+    ? context.projectRepo.getById(announceProjectId)?.name ?? null
     : null;
+
+  // The board-changed bus emit, shared by the two announce points: once at the
+  // commit point inside Phase 1, and once from the `finally` after the whole
+  // move has settled. The rationale for announcing at all (and for erring
+  // toward a duplicate) is on the settle-time block below; the rationale for
+  // the commit-time one is at the commit point.
+  //
+  // The shutdown gate is load-bearing rather than defensive: on that path the
+  // DB is already closed and the window is going away, but the bus would still
+  // wake a phone subscription mid-teardown. Wrapped because BoardEventBus is a
+  // plain EventEmitter that dispatches synchronously on this stack, so a
+  // subscriber that threw would either replace the error runMove is already
+  // propagating, or turn a committed move into a rejection with the rest of
+  // Phase 1 (the Done cleanup) skipped. Announcing is best-effort by design.
+  const emitBoardChanged = (): void => {
+    if (!announceProjectId || isShuttingDown()) return;
+    try {
+      context.boardEvents.emitBoardChanged({
+        projectId: announceProjectId,
+        change: 'task-updated',
+        ids: [input.taskId],
+      });
+    } catch (announceError) {
+      console.error(`[TASK_MOVE] Announce failed for task ${input.taskId.slice(0, 8)}:`, announceError);
+    }
+  };
+
+  // Whether Phase 1's DB write actually landed, and the title captured with it.
+  //
+  // Both are set INSIDE the lock, on the line after the move + archive pair,
+  // rather than where Phase 1 returns: Phase 1 crosses await boundaries after
+  // the move (see the shutdown comment on the catch below), so a throw in that
+  // window would otherwise lose a change that is already committed.
+  //
+  // The title has to be captured rather than read at announce time. `task` is
+  // scoped to the Phase 1 closure and only escapes via the returned
+  // MoveSpawnPlan, and Phase 1 returns null for every move it fully handles -
+  // so on the common paths there is no task in scope by the time we announce.
+  let moveCommitted = false;
+  let movedTaskTitle = '';
+  /**
+   * The destination column's enter rows, on a move Phase 1 fully handles.
+   *
+   * Set inside the lock by the branches that keep or suspend a session and then
+   * return, and RUN after the lock releases. Outside, deliberately: this is the
+   * SHORT lock, and the group carries the adapters' own budgets, up to the five
+   * minutes a `run_script` row can ask for. Running it inside would hold that
+   * task's lock for the whole of it, which is the exact defect the run_script
+   * rewrite removed, reached through a different door. Capping the group to the
+   * exit budget instead was the other option and is worse: a script would then
+   * mean one thing on a cold entry and another on a warm one.
+   */
+  let runEnterAutomations: (() => Promise<void>) | null = null;
   const runMove = async (): Promise<void> => {
   try {
     // === Phase 1 (locked, short) ===
@@ -196,8 +345,19 @@ export async function handleTaskMove(
       if (!resolvedProjectId) throw new Error('No project is currently open');
 
       const { tasks, swimlanes, attachments } = getProjectRepos(context, resolvedProjectId);
-      const task = tasks.getById(input.taskId);
-      if (!task) throw new Error(`Task ${input.taskId} not found`);
+      // The pointer every Priority branch below keys on, reconciled against the
+      // registry FIRST. `task.session_id` outlives the session on a natural
+      // exit: the exit listener marks the record `exited` but leaves the
+      // pointer, so a CLI that ended on its own (an `/exit`, a crash, a
+      // `--resume` whose transcript it could not read) left the task reading
+      // as "has an active session". Priority 3 then kept that dead session
+      // "alive" on every move and never spawned, with nothing but a To Do move
+      // to recover (#682's rig hit it; any failed resume does). The same
+      // helper `SESSION_RESUME` self-heals with: a pointer at a non-live row is
+      // cleared, and a live PTY the pointer lost is re-linked, so a drifted
+      // task neither skips its spawn nor spawns a duplicate. Synchronous, and
+      // this lock is the one it asks its callers to hold.
+      const { task } = reconcileTaskSessionRef(context, resolvedProjectId, input.taskId);
 
       const fromSwimlaneId = task.swimlane_id;
       const originalPosition = task.position;
@@ -264,12 +424,223 @@ export async function handleTaskMove(
         console.log(`[TASK_MOVE] Unarchived task ${input.taskId.slice(0, 8)} (moved out of Done)`);
       }
 
+      // The board row has changed on disk from here on, so it must be announced
+      // even if everything downstream fails. See the announce block after the
+      // try/catch for why "the move threw" does not imply "nothing changed".
+      moveCommitted = true;
+      movedTaskTitle = task.title;
+
+      // Commit-time announce. Everything slow in this handler comes AFTER this
+      // line, and much of it still inside this lock: the Done branch suspends,
+      // reaps leftovers and deletes the worktree before Phase 1 returns, and
+      // an auto-spawn destination pays for worktree creation and spawn in
+      // Phases 2/3. Announcing only from the settle-time `finally` meant a
+      // paired phone saw nothing until the desktop was completely done, so a
+      // phone that had moved a card optimistically had no board snapshot to
+      // settle against until its own verb timed out.
+      //
+      // Bus only. The origin-keyed renderer push stays at settle time: the
+      // `agent` and `auto-move` pushes each raise a toast per push, so pushing
+      // here too would toast the same move twice. The second bus emit from the
+      // `finally` is cheap: the Agent Monitor debounces it into the push it
+      // already scheduled, and a paired phone gets one more small board event,
+      // which it already tolerates (the session-lifecycle feed double-emits by
+      // design). That second emit is what corrects a committed-then-rolled-back
+      // move. Same row, same shape, two emits.
+      emitBoardChanged();
+
+      // Commit signal for a caller that answers on the row landing (the mobile
+      // bridge verb). Bus first, so the board event is already queued on the
+      // session before the verb response goes out. A caller's callback must
+      // never turn a committed move into a rejection with the rest of this
+      // branch (the Done cleanup) skipped, so it is fenced like the announce.
+      if (options?.onCommitted) {
+        try {
+          options.onCommitted();
+        } catch (callbackError) {
+          console.error(`[TASK_MOVE] onCommitted callback threw for task ${input.taskId.slice(0, 8)}:`, callbackError);
+        }
+      }
+
       // Within-column reorder: no side effects needed
       if (fromSwimlaneId === input.targetSwimlaneId) return null;
+
+      // === Exit automations ===
+      //
+      // The SOURCE column's exit rows, here in Phase 1, inside the short lock,
+      // after the DB write and the `board:changed` emit above and BEFORE the
+      // Priority branches below. The position is load-bearing in both
+      // directions: Priority 1 (To Do) kills the session, so an exit row that
+      // needs the agent has to find it still attached; and the commit point is
+      // already past, so a slow row cannot hold up the card the user dragged.
+      //
+      // An exit row NEVER aborts the move. The rollback at the end of this
+      // handler reverts Phase 2 and Phase 3 only, which is why the announce
+      // fires on `moveCommitted` rather than on success. Running rows here
+      // after the commit point is safe precisely because the runner isolates
+      // every row: a throw, a timeout, or the whole group failing records and
+      // the move proceeds. Hence its own try/catch rather than joining the
+      // surrounding one.
+      //
+      // The group is capped at EXIT_GROUP_BUDGET_MS in aggregate (the runner
+      // applies it from the trigger), whatever the adapters declare, because
+      // this is the SHORT lock and holding it is what wedges that task's next
+      // move. That cap is a product statement, not a fudge: exit is for quick
+      // handoffs, and long work belongs on enter, where Phase 3 already holds
+      // the lock across the spawn and has a progress spinner to show for it.
+      if (fromLane) {
+        try {
+          const exitRepos = getProjectRepos(context, resolvedProjectId);
+          const exitSessionRepo = new SessionRepository(getProjectDb(resolvedProjectId));
+          const exitEngine = createTransitionEngine(
+            context,
+            exitRepos.automations,
+            exitRepos.automationRuns,
+            exitRepos.tasks,
+            exitSessionRepo,
+            exitRepos.attachments,
+            resolvedProjectId,
+            resolvedProjectPath,
+          );
+          const exitSummary = await exitEngine.executeTransition(task, fromLane, 'exit', {
+            signal,
+            // No `startAgent`: on exit there is nothing to start. A row that
+            // needs the agent and finds no session skips with that reason,
+            // which the runner records.
+            // AWAITED, unlike the enter path's, and the Priority branches
+            // below are the reason: each opens with
+            // `terminalSubmitScheduler.cancel(task.id)` before it kills,
+            // suspends or re-points the session, so a burst merely SCHEDULED
+            // here is cancelled mid-flight by this same move. See
+            // `deliverExitMessage` for what that looked like in a preview.
+            deliverToAgent: async (message, mode, runSignal) => {
+              const liveSession = task.session_id;
+              // The runner already skips an agent-needing row when the task
+              // has no session, so reaching here without one means the row
+              // does not need the agent. Nothing to deliver into.
+              if (!liveSession) return;
+              await deliverExitMessage(
+                context,
+                task.id,
+                liveSession,
+                message,
+                mode,
+                resolveInjectionVerifier(task.agent, exitSessionRepo, task.id),
+                runSignal,
+              );
+            },
+            showNotification: (notification) => showDesktopNotification(context, notification),
+            // The card names the row that is running. Without it a 60s exit
+            // group looked like a card that simply took a long time to move.
+            onProgress: createProgressCallback(context.mainWindow, task.id),
+            fromColumn: fromLane,
+            toColumn: toLane ?? null,
+          });
+          reportAutomationFailures(context, exitSummary, task, resolvedProjectId);
+
+        } catch (exitError) {
+          // Reaching here means the LIST could not run at all (a repository
+          // read failed), not that a row failed. Either way the move goes on.
+          console.error(`[TASK_MOVE] Exit automations failed for task ${input.taskId.slice(0, 8)}:`, exitError);
+        } finally {
+          // The exit group's own label, cleared by the group that set it.
+          // Phase 3 has its own clear, but a move that returns from a Priority
+          // branch never reaches Phase 3, so relying on it would strand the
+          // last exit row's name on the card until the 120s TTL swept it.
+          clearSpawnProgress(context.mainWindow, task.id);
+        }
+      }
+
 
       const db = getProjectDb(resolvedProjectId);
       const sessionRepo = new SessionRepository(db);
       const usageHistoryRepo = new UsageHistoryRepository(db);
+
+      /**
+       * Arm the DESTINATION column's enter rows for a move Phase 1 finishes.
+       *
+       * Every branch below that keeps or suspends a session returns straight out
+       * of Phase 1, so without this the On enter group never ran on those moves
+       * at all: only the cold spawn path (Priority 4, through `agent-spawn.ts`)
+       * ever executed it. Measured in a preview: a task with a live session
+       * moved into a column holding one enabled `notify` enter row produced NO
+       * run record and no notification. A script or a webhook was equally dead.
+       * The column's first message survived only because the live injection
+       * delivers that one itself, which is exactly why its row is passed as
+       * `alreadyDelivered` rather than sent twice.
+       *
+       * ARMED here, RUN after the lock releases. See `runEnterAutomations`.
+       *
+       * Message delivery inside it is fire and forget, unlike the exit hook's:
+       * nothing after this point cancels the scheduler (Priority 3's own
+       * `cancel` already ran, above the injection), and a message queues behind
+       * that burst rather than racing it.
+       *
+       * No `startAgent`: on the keep-alive branches the session is live by
+       * construction, and on the suspending one the column cannot hold a row
+       * that needs an agent (`canColumnRun` blocks `send_message` wherever
+       * "Start an agent here" is off).
+       */
+      const armEnterAutomations = (deliveredMessageId: string | null): void => {
+        runEnterAutomations = async (): Promise<void> => {
+        if (!toLane) return;
+        try {
+          const enterRepos = getProjectRepos(context, resolvedProjectId);
+          const enterEngine = createTransitionEngine(
+            context,
+            enterRepos.automations,
+            enterRepos.automationRuns,
+            enterRepos.tasks,
+            sessionRepo,
+            enterRepos.attachments,
+            resolvedProjectId,
+            resolvedProjectPath,
+          );
+          const enterSummary = await enterEngine.executeTransition(task, toLane, 'enter', {
+            signal,
+            alreadyDelivered: deliveredMessageId ? new Set([deliveredMessageId]) : undefined,
+            deliverToAgent: async (message, mode) => {
+              // Re-read, never the Phase-1 snapshot. The enter group runs
+              // OUTSIDE withTaskLock on purpose (a run_script row would
+              // otherwise hold the lock for its whole budget), so between
+              // arming and delivering, a Pause, a kill, or a natural agent exit
+              // can take the now-free lock and null this task's session_id. The
+              // move's own AbortSignal does not cover that: it fires only for a
+              // superseding move. Delivering to the snapshot scheduled
+              // keystrokes at a dead PTY and recorded the run as sent. Mirrors
+              // agent-spawn.ts's deliverToAgent, which already re-reads.
+              const currentTask = enterRepos.tasks.getById(task.id);
+              const liveSession = currentTask?.session_id;
+              if (!liveSession) return;
+              context.terminalSubmitScheduler.scheduleKeystrokes(
+                task.id,
+                liveSession,
+                [{ text: message, verify: 'submitted' }],
+                {
+                  mode,
+                  verifier: resolveInjectionVerifier(task.agent, sessionRepo, task.id),
+                  onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
+                },
+              );
+            },
+            showNotification: (notification) => showDesktopNotification(context, notification),
+            onProgress: createProgressCallback(context.mainWindow, task.id),
+            fromColumn: fromLane ?? null,
+            toColumn: toLane,
+          });
+          reportAutomationFailures(context, enterSummary, task, resolvedProjectId);
+        } catch (enterError) {
+          // The LIST could not run at all. The move is already committed and
+          // the session is untouched, so it goes on, as on exit.
+          console.error(`[TASK_MOVE] Enter automations failed for task ${input.taskId.slice(0, 8)}:`, enterError);
+        } finally {
+          // This group runs on the WARM path only, which by definition has no
+          // spawn behind it, so Phase 3's clear never fires for it. Without
+          // this the card kept the last row's name until the TTL.
+          clearSpawnProgress(context.mainWindow, task.id);
+        }
+        };
+      };
       // Resolved once per move and threaded into every git-churn capture site
       // below so they all resolve the base branch identically.
       const effectiveDefaultBranch = resolveDefaultBaseBranch(context, resolvedProjectPath);
@@ -292,6 +663,11 @@ export async function handleTaskMove(
         if (latestSessionRecord?.model_id) {
           completeProps.model = parseModelId(latestSessionRecord.model_id).baseId;
         }
+        // The resolved mode the last session actually ran under (the task's
+        // own permission_mode is a raw override, null = inherit).
+        if (latestSessionRecord?.permission_mode) {
+          completeProps.permissionMode = latestSessionRecord.permission_mode;
+        }
         const lifetimeSummary = sessionRepo.getSummaryForTask(task.id);
         if (lifetimeSummary) {
           completeProps.durationSeconds = Math.round(lifetimeSummary.durationMs / 1000);
@@ -301,6 +677,7 @@ export async function handleTaskMove(
           completeProps.toolCalls = lifetimeSummary.toolCallCount;
         }
         trackEvent('task_complete', completeProps);
+        trackMilestone('first_task_complete');
       }
 
       // --- Priority 1: TARGET IS TO DO → full reset (kill session, remove worktree, delete branch) ---
@@ -340,6 +717,18 @@ export async function handleTaskMove(
       // --- Priority 2: TARGET IS DONE → suspend + archive (resumable on unarchive) ---
       if (toLane?.role === 'done') {
         context.terminalSubmitScheduler.cancel(task.id);
+        // A genuine park, not a respawn: retire any label a prior in-flight
+        // spawn left behind (the same reasoning as Priority 1's clear above).
+        // Without this, the renderer's suspended-row carve-out (added for the
+        // handoff flash fix) would keep showing that stale label instead of
+        // "Paused" through the whole archive below.
+        clearSpawnProgress(context.mainWindow, task.id);
+        // Taken before the suspend below: suspending kills the PTY, which
+        // orphans whatever the agent backgrounded inside the worktree. On POSIX
+        // those children reparent to init immediately, so the tree cannot be
+        // walked afterwards. Reading it costs nothing - see
+        // captureSessionLeftovers.
+        const leftovers = captureSessionLeftovers(context, task.session_id);
         if (task.session_id) {
           const record = sessionRepo.getLatestForTask(task.id);
           // Accept 'running' AND 'exited' -- exited covers Claude natural exit.
@@ -379,6 +768,13 @@ export async function handleTaskMove(
             console.log(`[TASK_MOVE] Preserved exited session ${record.id.slice(0, 8)} for future resume`);
           }
         }
+        // Kill what the session left running in the worktree before anything
+        // tries to delete it. A backgrounded dev server holds the directory as
+        // its cwd, which on Windows makes the removal below fail and leaves a
+        // husk with no git admin entry - the failure that later hangs a fresh
+        // worktree creation. Must precede deleteTaskWorktree.
+        await reapSessionLeftovers(task.id, leftovers);
+
         // Capture git churn (fire-and-forget, best-effort). In the PR flow the
         // branch is usually already merged by the time a task reaches Done, so
         // this mostly just re-confirms whatever an earlier suspend/move already
@@ -402,6 +798,13 @@ export async function handleTaskMove(
             WorktreeManager.scheduleBackgroundPrune(resolvedProjectPath);
           }
         }
+        // Done ends the spawn decision `worktree_skip_reason` describes; a task
+        // unarchived later re-decides at its next spawn, so a stale "project
+        // folder" claim must not ride along. Outside the worktree block on
+        // purpose: the task carrying a reason is the one WITHOUT a worktree.
+        if (tasks.getById(task.id)) {
+          tasks.setWorktreeSkipReason(task.id, null);
+        }
 
         // Archive already happened synchronously right after tasks.move above.
         return null;
@@ -411,6 +814,10 @@ export async function handleTaskMove(
       // → Suspend session if one exists, do NOT spawn new agent
       if (toLane && !toLane.auto_spawn) {
         context.terminalSubmitScheduler.cancel(task.id);
+        // A genuine park, not a respawn: same reasoning as Priority 2's clear
+        // above. Retires any label an in-flight spawn left behind so the
+        // renderer's suspended-row carve-out doesn't keep it alive.
+        clearSpawnProgress(context.mainWindow, task.id);
         if (task.session_id) {
           const record = sessionRepo.getLatestForTask(task.id);
           if (record && record.agent_session_id
@@ -435,6 +842,13 @@ export async function handleTaskMove(
           tasks.update({ id: task.id, session_id: null });
           console.log(`[TASK_MOVE] Suspended session for task ${task.id.slice(0, 8)} (target column has auto_spawn=false)`);
         }
+        // A non-spawning column still runs its enter rows. Only `send_message`
+        // needs the agent, and `canColumnRun` already blocks that type wherever
+        // "Start an agent here" is off, so nothing here can try to talk to the
+        // session this branch just suspended. A notify, a script or a webhook
+        // on a column the user deliberately keeps agent-free is a real and
+        // legal thing to build, and it silently never fired.
+        armEnterAutomations(null);
         return null;
       }
 
@@ -485,26 +899,19 @@ export async function handleTaskMove(
         const needsSessionSwitch = toLane !== undefined
           && (activeIsolatedSwimlaneId !== targetIsolatedSwimlaneId || targetForceFresh);
         if (needsSessionSwitch && toLane) {
-          if (activeRecord && activeRecord.agent_session_id
-              && (activeRecord.status === 'running' || activeRecord.status === 'exited')) {
-            captureSessionMetrics(
-              context.sessionManager,
-              sessionRepo,
-              usageHistoryRepo,
-              task.session_id,
-              activeRecord.id,
-              activeRecord.started_at,
-              activeRecord.session_type,
-            );
-            refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, activeRecord.id);
-            refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, activeRecord.id);
-            captureGitChurn(task, sessionRepo, usageHistoryRepo, activeRecord.id, resolvedProjectPath, effectiveDefaultBranch);
-            markRecordSuspended(sessionRepo, activeRecord.id, 'system');
-          } else if (activeRecord && activeRecord.status === 'queued') {
-            markRecordExited(sessionRepo, activeRecord.id);
-          }
-          await context.sessionManager.suspend(task.session_id);
-          tasks.update({ id: task.id, session_id: null });
+          await suspendLiveSessionForRespawn({
+            context,
+            tasks,
+            sessionRepo,
+            usageHistoryRepo,
+            taskId: task.id,
+            liveSessionId: task.session_id,
+            record: activeRecord,
+            task,
+            projectPath: resolvedProjectPath,
+            defaultBaseBranch: effectiveDefaultBranch,
+            phase: 'new-session',
+          });
           console.log(
             `[TASK_MOVE] Session switch for task ${task.id.slice(0, 8)}:`
             + ` ${activeIsolatedSwimlaneId ?? 'main'} -> ${targetIsolatedSwimlaneId ?? 'main'}`
@@ -536,26 +943,7 @@ export async function handleTaskMove(
         if (isAgentChange) {
           // (a) Cross-agent handoff: suspend and fall through to spawnAgent.
           // Cross-agent resume is impossible (agent_session_id is agent-specific).
-          const sessionRecord = activeRecord;
-          if (sessionRecord && sessionRecord.agent_session_id
-              && (sessionRecord.status === 'running' || sessionRecord.status === 'exited')) {
-            captureSessionMetrics(
-              context.sessionManager,
-              sessionRepo,
-              usageHistoryRepo,
-              task.session_id,
-              sessionRecord.id,
-              sessionRecord.started_at,
-              sessionRecord.session_type,
-            );
-            refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
-            refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
-            captureGitChurn(task, sessionRepo, usageHistoryRepo, sessionRecord.id, resolvedProjectPath, effectiveDefaultBranch);
-            markRecordSuspended(sessionRepo, sessionRecord.id, 'system');
-          } else if (sessionRecord && sessionRecord.status === 'queued') {
-            markRecordExited(sessionRepo, sessionRecord.id);
-          }
-          await context.sessionManager.suspend(task.session_id);
+          //
           // Clear per-task model/effort overrides on cross-agent handoff.
           // Override values are model-name-specific (e.g. "claude-sonnet-4-6")
           // and effort tiers are agent-specific (e.g. Claude's "xhigh" is
@@ -570,15 +958,22 @@ export async function handleTaskMove(
           // exact agent. Normally `resolveTargetAgent` returns the override
           // and `isHandoff` is false in that case, so this branch shouldn't
           // even execute - this guard is defensive against state drift.
-          const handoffUpdates: Parameters<typeof tasks.update>[0] = {
-            id: task.id,
-            session_id: null,
-          };
-          if (!task.agent_override) {
-            handoffUpdates.model_override = null;
-            handoffUpdates.effort_override = null;
-          }
-          tasks.update(handoffUpdates);
+          await suspendLiveSessionForRespawn({
+            context,
+            tasks,
+            sessionRepo,
+            usageHistoryRepo,
+            taskId: task.id,
+            liveSessionId: task.session_id,
+            record: activeRecord,
+            task,
+            projectPath: resolvedProjectPath,
+            defaultBaseBranch: effectiveDefaultBranch,
+            phase: 'switching-agent',
+            additionalTaskUpdates: task.agent_override
+              ? undefined
+              : { model_override: null, effort_override: null },
+          });
           console.log(
             `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
             + ` (agent change: ${task.agent} -> ${effectiveTargetAgent}).`
@@ -613,15 +1008,42 @@ export async function handleTaskMove(
           // dropped a task's own auto_command on this path while the spawn path
           // honored it, so the same task behaved differently on a cold spawn
           // than on a warm move into a column with a live session.
-          const effectiveAutoCommand = resolveEffectiveAutoCommand(task.auto_command, toLane?.auto_command);
+          // The column's message now lives in its first enabled `send_message`
+          // enter automation rather than in `swimlanes.auto_command`. Read
+          // through the same resolver the spawn paths use, so a warm move and a
+          // cold spawn cannot disagree about what the column sends.
+          const columnMessage = toLane
+            ? resolveColumnMessage(getProjectRepos(context, resolvedProjectId).automations.listForColumn(toLane.id))
+            : null;
+          const effectiveAutoCommand = resolveEffectiveAutoCommand(task.auto_command, columnMessage?.message);
           const interpolatedAuto = effectiveAutoCommand?.trim()
             ? interpolateTaskTemplate(effectiveAutoCommand, resolveTaskTemplateVars({
                 task,
                 defaultBaseBranch: effectiveDefaultBranch,
                 attachmentPaths: attachments.getPathsForTask(task.id),
                 devPort: getDevPortForTask(task.id),
+                projectPath: resolvedProjectPath,
+                projectName: context.projectRepo.getById(resolvedProjectId)?.name ?? null,
+                // A real move, so the move keywords resolve. The column here is
+                // the DESTINATION: this is the message that column sends on
+                // entry, injected into a session that is already live.
+                move: toLane
+                  ? { column: toLane.name, fromColumn: fromLane?.name ?? null, toColumn: toLane.name, trigger: 'enter' }
+                  : null,
               }))
             : '';
+          // Whether the burst below actually carries the COLUMN's message, as
+          // opposed to the task's own pin or nothing at all. Two things read it:
+          // the delivery mode, and the runner's skip list.
+          const deliveredColumnMessage = columnMessage !== null
+            && Boolean(interpolatedAuto)
+            && effectiveAutoCommand === columnMessage.message;
+          // The mode belongs to the row that supplied the message, never to
+          // `swimlanes.auto_command_mode`. The automations migration resets that
+          // field, so reading it here delivered every deferred column message
+          // immediately on a warm move while the cold spawn honored the row's
+          // own mode. A task-tier pin has no row and keeps the default.
+          const injectionMode: AutoCommandMode = deliveredColumnMessage ? columnMessage.mode : 'immediate';
           // Read ONCE and share with the 2b fallback below, so the plan and the
           // respawn decision cannot straddle a status update and disagree about
           // what the session is running at.
@@ -651,6 +1073,7 @@ export async function handleTaskMove(
               task,
               projectPath: resolvedProjectPath,
               defaultBaseBranch: effectiveDefaultBranch,
+              phase: 'switching-model',
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
@@ -677,7 +1100,7 @@ export async function handleTaskMove(
             const injectedSessionId = task.session_id;
             context.terminalSubmitScheduler.scheduleKeystrokes(task.id, injectedSessionId, plan.sequence, {
               verifier: plan.verifier,
-              mode: toLane?.auto_command_mode ?? 'immediate',
+              mode: injectionMode,
               // Rung 3 of the delivery ladder. Routed through the allowlisted
               // in-place restart rather than a new spawn call, so this adds no
               // spawn entry point (see spawn-entry-point-parity.md).
@@ -694,7 +1117,7 @@ export async function handleTaskMove(
                     resolvedProjectId,
                     resolvedProjectPath,
                     task.id,
-                    { resumePrompt: commands.join('\n') },
+                    { phase: 'resending-command', resumePrompt: commands.join('\n') },
                   );
                   return restarted.ok;
                 });
@@ -711,6 +1134,13 @@ export async function handleTaskMove(
               + ` into running session${plan.verifier ? ' (with command verification)' : ''}: `
               + `${plan.sequence.map((command) => command.text).join(' | ')}`,
             );
+            // Name the row the burst above actually carried, so it is not sent
+            // a second time, and let the rest of the group run after the lock.
+            // `deliveredColumnMessage` is `resolveEffectiveAutoCommand`'s own
+            // answer read back rather than re-derived: a task's MCP-set
+            // `auto_command` outranks the column, and in that case the column's
+            // row has NOT been delivered and must still run.
+            armEnterAutomations(deliveredColumnMessage ? columnMessage.id : null);
             return null;
           }
 
@@ -744,6 +1174,7 @@ export async function handleTaskMove(
               task,
               projectPath: resolvedProjectPath,
               defaultBaseBranch: effectiveDefaultBranch,
+              phase: 'applying-settings',
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
@@ -771,6 +1202,9 @@ export async function handleTaskMove(
             `[TASK_MOVE] Task ${task.id.slice(0, 8)} keeping active session alive`
             + ` (no model change; permission-only or no delta, same agent).`,
           );
+          // Nothing was injected on this branch, so nothing is pre-delivered:
+          // the whole enter group runs, message row included.
+          armEnterAutomations(null);
           return null;
         }
       }
@@ -832,14 +1266,28 @@ export async function handleTaskMove(
       };
     });
 
-    if (!plan) return; // Phase 1 fully handled the move
+    if (!plan) {
+      // Phase 1 fully handled the move. The destination's enter rows run HERE,
+      // after the lock, so a five-minute `run_script` row does not hold that
+      // task's lock for five minutes. Skipped on shutdown for the same reason
+      // Phase 2 is: the DB is closing.
+      if (runEnterAutomations && !isShuttingDown()) await runEnterAutomations();
+      return;
+    }
+
+    const { task, fromSwimlaneId, fromLane, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand } = plan;
 
     // Shutdown started while Phase 1 ran. Skip Phase 2 git work and Phase 3
     // spawn so we don't write to a closed DB. autoSpawnTasks on next launch
-    // will spawn for the destination column.
-    if (isShuttingDown()) return;
-
-    const { task, fromSwimlaneId, fromLane, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand } = plan;
+    // will spawn for the destination column. A respawn branch (model change,
+    // agent handoff, effort respawn, session switch) may have already emitted
+    // a spawn-progress label before this point (see suspendLiveSessionForRespawn);
+    // this return sits outside every try/finally below, so it must retire that
+    // label itself or it strands until the 120s TTL.
+    if (isShuttingDown()) {
+      clearSpawnProgress(context.mainWindow, task.id);
+      return;
+    }
 
     // === Phase 2 (unlocked, slow) ===
     // All async operations below receive the abort signal so a newer move
@@ -863,7 +1311,7 @@ export async function handleTaskMove(
       // back to its original column so it doesn't get stuck without a session.
       try {
         const { tasks: tasksPhase2 } = getProjectRepos(context, resolvedProjectId);
-        await ensureTaskWorktree(context, task, tasksPhase2, resolvedProjectPath, { signal, onProgress, onWaitProgress });
+        await ensureTaskWorktree(context, task, tasksPhase2, resolvedProjectPath, { signal, onProgress, onWaitProgress, projectId: resolvedProjectId });
       } catch (error) {
         // Let AbortError propagate to the outer catch for centralized handling
         if (isAbortError(error)) throw error;
@@ -911,7 +1359,15 @@ export async function handleTaskMove(
                 // candidates AND the prune / removeBranch below, leaving exactly
                 // the stale state this block exists to clear.
                 try {
-                  await worktreeManager.removeWorktree(expectedPath);
+                  // `moderate`, not the default `thorough`. Creation just failed
+                  // on this same path, so a second full-budget grind re-proves
+                  // what we already know while the user waits and the git queue
+                  // stays held: measured, the two thorough passes put the
+                  // failure toast ~62s out instead of ~34s. This block is
+                  // explicitly best-effort ("will retry on next attempt"), and a
+                  // still-pinned path is picked up by the husk-reuse and
+                  // startup-retry net either way.
+                  await worktreeManager.removeWorktree(expectedPath, { removalProfile: 'moderate' });
                 } catch (removalError) {
                   console.warn(`[TASK_MOVE] Skipped stale worktree candidate ${expectedPath}:`, removalError);
                   continue;
@@ -942,7 +1398,7 @@ export async function handleTaskMove(
         // surfaced to the renderer distinguishes worktree failures from
         // later spawn failures.
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Worktree setup failed: ${message}`);
+        throw new Error(`Worktree setup failed: ${message}`, { cause: error });
       }
 
       // Checkout the task's branch in the main repo (non-worktree tasks only).
@@ -950,7 +1406,7 @@ export async function handleTaskMove(
       // the outer catch which also handles AbortError cleanup. That includes
       // BranchCheckoutBlockedError, which reaches the user as a toast here, so
       // this is the one call site that needs no notifySpawnBlocked.
-      await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { signal, onProgress, onWaitProgress });
+      await ensureTaskBranchCheckout(context, task, resolvedProjectPath, { signal, onProgress, onWaitProgress, projectId: resolvedProjectId });
 
       // === Phase 3 (locked, short) ===
       // CAS-check invariants before spawning. If a newer move ran during our
@@ -967,7 +1423,7 @@ export async function handleTaskMove(
           // try/finally still calls clearSpawnProgress to clean the renderer UI.
           if (isShuttingDown()) return;
           signal.throwIfAborted();
-          const { tasks: tasksPhase3, actions: actionsPhase3, attachments: attachmentsPhase3 } = getProjectRepos(context, resolvedProjectId);
+          const { tasks: tasksPhase3, automations: automationsPhase3, automationRuns: automationRunsPhase3, attachments: attachmentsPhase3 } = getProjectRepos(context, resolvedProjectId);
           const current = tasksPhase3.getById(task.id);
           if (!current) {
             console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} was deleted during Phase 2 - skipping spawn`);
@@ -986,7 +1442,7 @@ export async function handleTaskMove(
           emitSpawnProgress(context.mainWindow, task.id, 'starting-agent');
           const dbPhase3 = getProjectDb(resolvedProjectId);
           const sessionRepoPhase3 = new SessionRepository(dbPhase3);
-          const engine = createTransitionEngine(context, actionsPhase3, tasksPhase3, sessionRepoPhase3, attachmentsPhase3, resolvedProjectId, resolvedProjectPath);
+          const engine = createTransitionEngine(context, automationsPhase3, automationRunsPhase3, tasksPhase3, sessionRepoPhase3, attachmentsPhase3, resolvedProjectId, resolvedProjectPath);
           if (toLane) {
             await spawnAgent({ context, engine, tasks: tasksPhase3, sessionRepo: sessionRepoPhase3, task: current, fromSwimlaneId, toLane, skipPromptTemplate, signal, projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand, settingsSourceLane: fromLane ?? null, attachments: attachmentsPhase3 });
           }
@@ -995,6 +1451,13 @@ export async function handleTaskMove(
         }
       });
     } catch (error) {
+      // clearSpawnProgress touches only in-memory maps and a guarded IPC
+      // send, never the DB, so it is safe to call unconditionally here -
+      // ahead of the shutdown bail below - rather than risk stranding a
+      // respawn branch's label (see suspendLiveSessionForRespawn) until the
+      // 120s TTL.
+      clearSpawnProgress(context.mainWindow, task.id);
+
       // Shutdown closed the DB while a Phase 1 / 2 / 3 await was in flight.
       // Both the post-await DB write inside Phase 1 (e.g. line 226's
       // tasks.update after sessionManager.suspend) and the rollback below
@@ -1006,7 +1469,6 @@ export async function handleTaskMove(
       // from firing during shutdown.
       if (isShuttingDown()) return;
 
-      clearSpawnProgress(context.mainWindow, task.id);
       const abort = isAbortError(error);
 
       // Unified rollback path for Phase 2/3 failures: clean up any partially
@@ -1049,7 +1511,72 @@ export async function handleTaskMove(
   }
   };
 
-  return logProjectName ? runWithProjectLogContext(logProjectName, runMove) : runMove();
+  let moveSucceeded = false;
+  try {
+    await (logProjectName ? runWithProjectLogContext(logProjectName, runMove) : runMove());
+    moveSucceeded = true;
+  } finally {
+    // Announce iff the DB write committed - NOT merely "iff the move succeeded".
+    //
+    // A failed move can still leave a committed change. The rollback skips the
+    // revert entirely on the abort path (`!abort &&` in its guard), skips it
+    // again when its CAS sees a concurrent move already relocated the task, and
+    // is itself best-effort inside its own try/catch. Announcing only on the
+    // success path would therefore reproduce the exact bug this whole change
+    // exists to fix: a real board change that nobody is told about.
+    //
+    // Erring toward announcing is cheap. A redundant push coalesces into the
+    // renderer's 250ms debounced board reload, the Monitor debounces too, and
+    // phones already tolerate duplicate board events (the session-lifecycle
+    // feed deliberately double-emits). A missing one is the bug.
+    //
+    // A `finally` does not swallow the rethrow, and the shutdown gate is
+    // load-bearing rather than defensive: on that path the DB is already closed
+    // and the window is going away, but sendToRenderer would still record a push.
+    if (moveCommitted && announceProjectId && !isShuttingDown()) {
+      // Every origin, including `renderer`. The subscribers here (paired phones
+      // via the mobile bridge, and the Agent Monitor) are external to whoever
+      // made the move, so a desktop drag has to reach them just as an agent's
+      // move does. Sent as 'task-updated' rather than a new 'task-moved' kind
+      // because read-board forwards `change` straight onto the wire, making a
+      // new member a phone-visible protocol change for no gain.
+      //
+      // This is the SECOND bus emit for the move (the first fired at the commit
+      // point inside Phase 1). It is not redundant: this one runs after the
+      // rollback, so it is what tells a phone that a committed-then-failed
+      // move went back. The renderer push fires here ONLY, since two of the
+      // origin channels toast per push.
+      //
+      // The push is wrapped because this runs in a `finally`: a throwing
+      // sendToRenderer would REPLACE whatever error runMove was already
+      // propagating (the rollback tests assert the original surfaces) or turn
+      // a clean move into a rejection. The bus emit fences itself the same way.
+      emitBoardChanged();
+      try {
+        MOVE_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, movedTaskTitle);
+      } catch (announceError) {
+        console.error(`[TASK_MOVE] Announce failed for task ${input.taskId.slice(0, 8)}:`, announceError);
+      }
+
+      // PR linking is deliberately SUCCESS-only, unlike the two announcements
+      // above. It used to live at the call sites, where it ran only once
+      // `await handleTaskMove` had resolved, so the TIMING is unchanged; folding
+      // it into the committed-but-failed case would newly fire gh queries for
+      // moves that blew up after writing. Gated on a branch + non-To Do lane
+      // inside the helper, and fire-and-forget so a slow query never blocks.
+      //
+      // The COVERAGE is not unchanged, and that is the one deliberate behavior
+      // change in this block: only the renderer and plan-exit call sites ever
+      // called this, so an agent's `move_task` and a phone's move never linked
+      // a PR for the lane they landed in. Both do now, which means both can
+      // spawn a `gh` query they previously did not. The helper's own lane and
+      // anchor gates plus `linkPR`'s 60s per-task throttle are what keep a
+      // scripted loop of agent moves from turning into a subprocess per move.
+      if (moveSucceeded) {
+        autoLinkPRForTask(context, input.taskId, announceProjectId);
+      }
+    }
+  }
 }
 
 export function registerTaskMoveHandlers(context: IpcContext): void {
@@ -1062,12 +1589,10 @@ export function registerTaskMoveHandlers(context: IpcContext): void {
       // ambient one. handleTaskMove keeps the ambient fallback for main-process
       // internal callers that pass undefined.
       const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-      const result = await handleTaskMove(context, input, resolvedProjectId, resolvedProjectPath);
-      // After the move's task lock has released, resolve the PR for the new lane
-      // (gated on a branch + non-To Do lane inside the helper). Fire-and-forget so
-      // a slow gh query never blocks the move response.
-      autoLinkPRForTask(context, input.taskId, resolvedProjectId ?? context.currentProjectId);
-      return result;
+      // 'renderer': the board already moved the card optimistically, so this is
+      // the one origin that sends no push. It still reaches paired phones and
+      // the Monitor via the unconditional board-changed emit inside the handler.
+      return await handleTaskMove(context, input, 'renderer', resolvedProjectId, resolvedProjectPath);
     } catch (error) {
       // Shutdown closes the DB synchronously; any handler that crossed an
       // await boundary will throw "database connection is not open" or an

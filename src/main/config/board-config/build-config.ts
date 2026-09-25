@@ -1,8 +1,15 @@
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
-import { ActionRepository } from '../../db/repositories/action-repository';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { getProjectDb } from '../../db/database';
-import type { BoardConfig, BoardColumnConfig } from '../../../shared/types';
+import type {
+  BoardConfig,
+  BoardColumnConfig,
+  BoardAutomationConfig,
+  BoardColumnAutomations,
+  ColumnAutomation,
+} from '../../../shared/types';
 import { CURRENT_VERSION } from './config-helpers';
+import { AUTOMATION_MANIFEST, isAutomationType } from '../../../shared/automation-manifest';
 
 /**
  * Build a BoardConfig object from the current SQLite state for a project.
@@ -28,14 +35,17 @@ export function buildBoardConfigFromDb(params: {
 }): BoardConfig {
   const db = getProjectDb(params.projectId);
   const swimlaneRepo = new SwimlaneRepository(db);
-  const actionRepo = new ActionRepository(db);
+  const automationRepo = new AutomationRepository(db);
 
   const lanes = swimlaneRepo.list().filter((lane) => !lane.is_ghost);
-  const actions = actionRepo.list();
-  const transitions = actionRepo.listTransitions();
 
   const laneById = new Map(lanes.map((lane) => [lane.id, lane]));
-  const actionById = new Map(actions.map((action) => [action.id, action]));
+  const automationsByLane = new Map<string, ColumnAutomation[]>();
+  for (const automation of automationRepo.listAll()) {
+    const existing = automationsByLane.get(automation.swimlane_id) ?? [];
+    existing.push(automation);
+    automationsByLane.set(automation.swimlane_id, existing);
+  }
 
   const boardConfig: BoardConfig = {
     version: CURRENT_VERSION,
@@ -52,8 +62,6 @@ export function buildBoardConfigFromDb(params: {
       if (!lane.auto_spawn && !lane.role) column.autoSpawn = false;
       if (lane.permission_mode) column.permissionMode = lane.permission_mode;
       if (lane.is_archived && lane.role !== 'done') column.archived = true;
-      if (lane.auto_command) column.autoCommand = lane.auto_command;
-      if (lane.auto_command_mode !== 'immediate') column.autoCommandMode = lane.auto_command_mode;
       if (lane.agent_override) column.agentOverride = lane.agent_override;
       if (lane.model_override) column.modelOverride = lane.model_override;
       if (lane.effort_override) column.effortOverride = lane.effort_override;
@@ -63,6 +71,9 @@ export function buildBoardConfigFromDb(params: {
       if (lane.session_target !== 'main') column.sessionTarget = lane.session_target;
       if (lane.session_spawn_strategy !== 'create_or_resume') column.sessionSpawnStrategy = lane.session_spawn_strategy;
 
+      const automations = serializeAutomations(automationsByLane.get(lane.id) ?? []);
+      if (automations) column.automations = automations;
+
       // Resolve plan_exit_target_id to target column name
       if (lane.plan_exit_target_id) {
         const target = laneById.get(lane.plan_exit_target_id);
@@ -71,36 +82,12 @@ export function buildBoardConfigFromDb(params: {
 
       return column;
     }),
-    actions: actions.map((action) => ({
-      id: action.id,
-      name: action.name,
-      type: action.type,
-      config: JSON.parse(action.config_json),
-    })),
-    transitions: [],
   };
 
-  // Group transitions by (from, to) using column/action names so the
-  // serialized form stays stable across UUID regeneration.
-  const transitionGroups = new Map<string, { from: string; to: string; actions: string[] }>();
-  for (const transition of transitions) {
-    const fromLane = transition.from_swimlane_id === '*' ? null : laneById.get(transition.from_swimlane_id);
-    const toLane = laneById.get(transition.to_swimlane_id);
-    const action = actionById.get(transition.action_id);
-
-    const fromName = transition.from_swimlane_id === '*' ? '*' : fromLane?.name;
-    const toName = toLane?.name;
-    const actionName = action?.name;
-
-    if (!fromName || !toName || !actionName) continue;
-
-    const key = `${fromName}\0${toName}`;
-    if (!transitionGroups.has(key)) {
-      transitionGroups.set(key, { from: fromName, to: toName, actions: [] });
-    }
-    transitionGroups.get(key)!.actions.push(actionName);
-  }
-  boardConfig.transitions = Array.from(transitionGroups.values());
+  // `actions` and `transitions` are no longer written. Every automation belongs
+  // to a column now, so the top-level arrays and the `from -> to` pairs have
+  // nothing left to say. They are still READ (see apply-config) so a file
+  // written by an older build still converts.
 
   // Preserve fields that aren't stored in the DB.
   //
@@ -120,4 +107,49 @@ export function buildBoardConfigFromDb(params: {
 
   boardConfig._modifiedBy = params.fingerprint;
   return boardConfig;
+}
+
+/**
+ * Serialize a column's automations into the file's two named arrays.
+ *
+ * Array order IS each row's position within its group, so the file, the UI's two
+ * groups, and the DB's per-trigger `position` are the same fact rather than
+ * three that have to be kept in step. A group with no rows is an absent key, and
+ * a column with no automations at all serializes to nothing.
+ *
+ * Only fields the type actually declares are written, so a config key left
+ * behind by a type change (a script's retired `workingDir`, a webhook body kept
+ * while the draft was briefly a notification) does not leak into a file the team
+ * reviews.
+ */
+function serializeAutomations(automations: ColumnAutomation[]): BoardColumnAutomations | undefined {
+  const onEnter = serializeGroup(automations, 'enter');
+  const onExit = serializeGroup(automations, 'exit');
+  if (onEnter.length === 0 && onExit.length === 0) return undefined;
+
+  const result: BoardColumnAutomations = {};
+  if (onEnter.length > 0) result.onEnter = onEnter;
+  if (onExit.length > 0) result.onExit = onExit;
+  return result;
+}
+
+function serializeGroup(automations: ColumnAutomation[], trigger: 'enter' | 'exit'): BoardAutomationConfig[] {
+  return automations
+    .filter((automation) => automation.trigger === trigger)
+    .sort((left, right) => left.position - right.position)
+    .map((automation) => {
+      const row: BoardAutomationConfig = { name: automation.name, type: automation.type };
+      // Only `false` is written: an absent key means enabled, which keeps the
+      // common row to two keys plus its fields.
+      if (!automation.enabled) row.enabled = false;
+
+      const fields = isAutomationType(automation.type) ? AUTOMATION_MANIFEST[automation.type].fields : [];
+      for (const field of fields) {
+        const value = (automation.config as Record<string, unknown>)[field.key];
+        if (value === undefined || value === null || value === '') continue;
+        if (typeof value === 'object' && Object.keys(value as object).length === 0) continue;
+        row[field.key] = value;
+      }
+      return row;
+    });
 }

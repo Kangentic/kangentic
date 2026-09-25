@@ -56,6 +56,8 @@ describe('ensureWorktreeTrust', () => {
     const entries = Object.values(projects);
     expect(entries).toHaveLength(1);
     expect(entries[0].hasTrustDialogAccepted).toBe(true);
+    // The write ran under Claude's own ~/.claude.json.lock and released it.
+    expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
   });
 
   it('creates trust entry when file exists but has no projects key', async () => {

@@ -44,7 +44,7 @@ describe('parseAnnouncementsFeed', () => {
         id: 'mobile-launch-status-2026-08',
         title: 'Try Kangentic Mobile',
         body: 'Status of both platforms.',
-        links: [{ label: 'Blog post', url: 'https://kangentic.com/blog' }],
+        links: [{ label: 'Blog post', url: 'https://kangentic.com/blog/' }],
         sections: [
           { heading: 'iOS', body: 'In **review**.' },
           {
@@ -64,7 +64,7 @@ describe('parseAnnouncementsFeed', () => {
       id: 'mobile-launch-status-2026-08',
       title: 'Try Kangentic Mobile',
       body: 'Status of both platforms.',
-      links: [{ label: 'Blog post', url: 'https://kangentic.com/blog' }],
+      links: [{ label: 'Blog post', url: 'https://kangentic.com/blog/' }],
       sections: [
         { heading: 'iOS', body: 'In **review**.' },
         {

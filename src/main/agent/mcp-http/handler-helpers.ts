@@ -151,6 +151,29 @@ export async function withProject(
 }
 
 /**
+ * Append a standalone notice line to the first text block, the mirror of
+ * `annotateWithProject`'s prepend. Used for advisory follow-ups that are not
+ * errors: the call succeeded, and the line tells the agent what to do next.
+ *
+ * Left untouched on an `isError` result, so a refusal is never diluted by an
+ * advisory note about a write that did not happen.
+ */
+export function appendNoticeLine(result: McpToolResult, notice: string): McpToolResult {
+  if (result.isError) return result;
+  const firstBlock = result.content[0];
+  if (!firstBlock || firstBlock.type !== 'text') {
+    return { ...result, content: [...result.content, { type: 'text' as const, text: notice }] };
+  }
+  return {
+    ...result,
+    content: [
+      { type: 'text' as const, text: `${firstBlock.text}\n\n${notice}` },
+      ...result.content.slice(1),
+    ],
+  };
+}
+
+/**
  * Strip characters that would corrupt a single-line embedding of the
  * project name (newlines, brackets) and cap length so a pathologically
  * long project name can't swamp the tool response or instructions

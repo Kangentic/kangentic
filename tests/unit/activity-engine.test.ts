@@ -850,6 +850,147 @@ describe('ActivityEngine', () => {
       // thinking (not stuck idle) after the depth-0 gate clears the flag.
       expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
     });
+
+    describe('markPermissionRejected (task #640 - manual deny from the transcript poll)', () => {
+      it('no-ops when there is no toolId match (stale or unrelated report)', () => {
+        engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Bash', toolId: 'tool-awaited' }));
+        engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+        transitions.length = 0;
+
+        engine.markPermissionRejected(SESSION_ID, 'some-other-toolId');
+        expect(engine.getState(SESSION_ID)?.permissionPending).toBe(true);
+        expect(engine.getState(SESSION_ID)?.activity).toBe('permission');
+        expect(transitions).toHaveLength(0);
+      });
+
+      it('no-ops for an unknown session id (never throws)', () => {
+        expect(() => engine.markPermissionRejected('no-such-session', 'tool-awaited')).not.toThrow();
+      });
+
+      it('no-ops when permissionPending is already false (a rejection reported after the flag self-healed)', () => {
+        engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Bash', toolId: 'tool-awaited' }));
+        engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+        engine.processEvent(SESSION_ID, event(EventType.Prompt));
+        transitions.length = 0;
+
+        engine.markPermissionRejected(SESSION_ID, 'tool-awaited');
+        expect(transitions).toHaveLength(0);
+      });
+
+      it('clears a top-level (depth-0) denied prompt: flag cleared, stale pending-tool entry dropped, commits idle', () => {
+        engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Write', toolId: 'tool-awaited' }));
+        engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+        expect(engine.getState(SESSION_ID)?.activity).toBe('permission');
+        expect(engine.getState(SESSION_ID)?.pendingToolCount).toBe(1);
+        transitions.length = 0;
+
+        engine.markPermissionRejected(SESSION_ID, 'tool-awaited');
+
+        const state = engine.getState(SESSION_ID)!;
+        expect(state.permissionPending).toBe(false);
+        expect(state.permissionAwaitedToolId).toBeNull();
+        expect(state.pendingToolCount).toBe(0);
+        expect(state.pendingToolStack).toHaveLength(0);
+        expect(state.currentTool).toBeNull();
+        // The turn aborted rather than ending - turnActive was already false
+        // from the initiating idle:permission event, and this must not
+        // re-arm it (unlike an APPROVAL, which does).
+        expect(state.turnActive).toBe(false);
+        // Commits immediately, no stability-window delay: permission -> idle
+        // is not a thinking -> idle crossing.
+        expect(transitions).toHaveLength(1);
+        expect(transitions[0].activity).toBe('idle');
+      });
+
+      it('a denied prompt raised inside a LIVE subagent falls back to thinking, not idle (does not kill the parent turn)', () => {
+        // Mirrors the session-010 shape: a subagent's own tool raised the
+        // permission prompt. subagentDepth > 0 kept turnActive true through
+        // the initiating idle:permission event. A rejection must not force
+        // the parent's turn to end while the subagent may still be live.
+        engine.processEvent(SESSION_ID, event(EventType.Prompt));
+        engine.processEvent(SESSION_ID, event(EventType.SubagentStart));
+        engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'PowerShell', toolId: 'tool-awaited' }));
+        engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+        expect(engine.getState(SESSION_ID)?.activity).toBe('permission');
+        expect(engine.getState(SESSION_ID)?.turnActive).toBe(true);
+        transitions.length = 0;
+
+        engine.markPermissionRejected(SESSION_ID, 'tool-awaited');
+
+        const state = engine.getState(SESSION_ID)!;
+        expect(state.permissionPending).toBe(false);
+        expect(state.subagentDepth).toBe(1);
+        expect(transitions).toHaveLength(1);
+        expect(transitions[0].activity).toBe('thinking');
+      });
+
+      it('recovers from thinking via the stuck-subagent watchdog once the awaited tool is spliced out (does not trade a stuck permission for a stuck thinking)', () => {
+        // markPermissionRejected deliberately leaves turnActive untouched and
+        // falls back to `thinking` (not `idle`) at depth>0 - see the prior
+        // test and the doc comment on markPermissionRejected. That is only a
+        // correct trade if the session can still LEAVE thinking afterwards.
+        // It can, because clearing permissionPending AND splicing the
+        // awaited tool out of pendingToolStack (dropping pendingToolCount to
+        // 0) is exactly what makes the `stuck-subagent` watchdog hold's
+        // predicate match (subagentDepth>0, pendingToolCount===0, no bg
+        // shells, !permissionPending - see engine/watchdog.ts). While parked
+        // in `permission` no timer is armed at all (scheduleTimer only arms
+        // for `activity === 'thinking'`), so clearing the flag is what makes
+        // this hold reachable in the first place.
+        engine.processEvent(SESSION_ID, event(EventType.Prompt));
+        engine.processEvent(SESSION_ID, event(EventType.SubagentStart));
+        engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'PowerShell', toolId: 'tool-awaited' }));
+        engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+        transitions.length = 0;
+
+        engine.markPermissionRejected(SESSION_ID, 'tool-awaited');
+        expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+        expect(engine.getState(SESSION_ID)?.pendingToolCount).toBe(0);
+        transitions.length = 0;
+
+        vi.advanceTimersByTime(TEST_BG_SHELL_HATCH_MS + TEST_STABILITY_WINDOW_MS + 50);
+
+        // Same idiom as the "recovers a subagentDepth stuck > 0" test in the
+        // sibling "5-min stuck-subagent watchdog" describe block below: the
+        // synthesized idle commits via the stability window (its own
+        // transition is labeled 'timer:stability'), so the hold that fired
+        // is identified by its compensation counter, not the last
+        // transition's trigger label.
+        const state = engine.getState(SESSION_ID)!;
+        expect(state.activity).toBe('idle');
+        expect(state.subagentDepth).toBe(0);
+        expect(state.turnActive).toBe(false);
+        expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(1);
+      });
+
+      it('emits the transcript trigger label', () => {
+        engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Write', toolId: 'tool-awaited' }));
+        engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+        transitions.length = 0;
+
+        engine.markPermissionRejected(SESSION_ID, 'tool-awaited');
+
+        const snapshot = engine.getStatsSnapshot(SESSION_ID);
+        const lastTransition = snapshot?.recentTransitions[snapshot.recentTransitions.length - 1];
+        expect(lastTransition?.trigger).toBe('event:permission-rejected:transcript');
+      });
+
+      it('a permission state with no rejection report stays permission indefinitely - no blind timeout regression', () => {
+        // permission has no watchdog net by design (see engine/watchdog.ts):
+        // the five holds are only ever consulted while activity === 'thinking'.
+        // Advancing far past every other hold's threshold must never clear a
+        // genuinely open, unanswered prompt on its own.
+        engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Write', toolId: 'tool-awaited' }));
+        engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+        transitions.length = 0;
+
+        vi.advanceTimersByTime(TEST_BG_SHELL_HATCH_MS * 10);
+
+        expect(engine.getState(SESSION_ID)?.activity).toBe('permission');
+        expect(engine.getState(SESSION_ID)?.permissionPending).toBe(true);
+        expect(transitions).toHaveLength(0);
+      });
+    });
   });
 
   describe('force paths', () => {

@@ -1,0 +1,173 @@
+/**
+ * No `use`-prefixed LOCAL variables in renderer components.
+ *
+ * react-refresh's Babel transform treats a call to any identifier starting with
+ * `use` as a custom hook, and records it in the component's refresh signature so
+ * it can tell whether a hot update may preserve state. A signature entry has to
+ * resolve to a stable binding; a local variable cannot, so the transform falls
+ * back to `forceReset: true` - and React then REMOUNTS the component on every
+ * Fast Refresh of its module instead of preserving its state.
+ *
+ * That is invisible in almost every component (a remount just re-runs effects),
+ * which is why `const useStore = useLayerStore()` survived review five times. It
+ * is not invisible in the window manager: a remounted task-detail window rebuilds
+ * its Browser pane, an Electron `<webview>` guest dies with its DOM node, and the
+ * browser an agent was driving is destroyed - with no page reload and no Fast
+ * Refresh bailout to point at. See `.claude/rules/hmr-patterns.md`, and measure
+ * with `scripts/hmr-guest-probe.mjs`.
+ *
+ * MODULE-SCOPE `use*` consts are the legitimate case (`export const useBoardStore =
+ * create(...)`) and are not matched: the scan looks only at INDENTED declarations,
+ * which is what makes a binding local.
+ */
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
+
+const RENDERER_DIR = path.resolve(__dirname, '../../src/renderer');
+const REPO_ROOT = path.resolve(__dirname, '../..');
+
+function collectSourceFiles(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...collectSourceFiles(full));
+    else if (entry.isFile() && /\.tsx?$/.test(entry.name)) found.push(full);
+  }
+  return found;
+}
+
+// Indented (so: inside a function body) `const`/`let` whose name starts with
+// `use` followed by an uppercase letter - the shape react-refresh mistakes for
+// a custom hook. The optional `: Type` segment is load-bearing: an annotated
+// `const useStore: WindowManager['store'] = useLayerStore()` is the identical
+// hazard, and a pattern demanding `=` straight after the name walks right past
+// it. `[^=\n]` keeps that segment on the declaration's own line, so the scan
+// cannot span newlines to some later `=` and invent a match.
+// A destructure (`const { useX } = ...`) is not matched and has
+// never occurred here; extend the pattern if it does.
+const HOOK_SHAPED_LOCAL = /^[ \t]+(?:const|let)\s+(use[A-Z][A-Za-z0-9_]*)\s*(?::[^=\n]+)?=/gm;
+
+interface HookShapedLocal {
+  file: string;
+  line: number;
+  name: string;
+  suppressed: boolean;
+}
+
+// Takes the source text (plus a label) rather than only a path, so the marker
+// handling can be driven directly over known input below. Without this, the
+// `hook-local-ok` opt-out's positive path (a marker actually suppressing a
+// match) is exercised only if the live tree happens to carry one, which it
+// does not today - a wiring regression here (wrong marker name, wrong line
+// index) would report nothing and the whole suite would still pass.
+function scanSource(fileLabel: string, source: string): HookShapedLocal[] {
+  const pattern = HOOK_SHAPED_LOCAL;
+  const lines = source.split('\n');
+  const found: HookShapedLocal[] = [];
+  pattern.lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const lineNumber = source.slice(0, match.index).split('\n').length;
+    found.push({
+      file: fileLabel,
+      line: lineNumber,
+      name: match[1],
+      // Per-line opt-out for a local that genuinely IS a hook resolved from a
+      // stable binding and has been checked against the probe.
+      suppressed: hasOptOutMarker(lines, lineNumber - 1, 'hook-local-ok'),
+    });
+  }
+  return found;
+}
+
+describe('hook-shaped local variables', () => {
+  // The scan below is vacuously green whenever the tree happens to be clean, so
+  // the PATTERN is what actually has to be pinned. This is not hypothetical: the
+  // sibling Pattern E check in hmr-resync.test.ts passed for a long time on a
+  // wildcard that could not fail, and the un-annotated form of this very regex
+  // shipped blind to `const useStore: T = ...`.
+  it('matches the hook-shaped forms it exists to catch, and nothing else', () => {
+    const matches = (source: string): boolean => {
+      HOOK_SHAPED_LOCAL.lastIndex = 0;
+      return HOOK_SHAPED_LOCAL.test(source);
+    };
+
+    // Caught.
+    expect(matches('  const useStore = useLayerStore();'), 'plain local').toBe(true);
+    expect(matches("  const useStore: WindowManager['store'] = useLayerStore();"), 'type-annotated local').toBe(true);
+    expect(matches('  let useThing: Foo<A, B> = bar();'), 'annotated generic').toBe(true);
+    expect(matches('  const useX: Record<string, () => void> = {};'), 'annotation containing =>').toBe(true);
+
+    // Not caught.
+    expect(matches('export const useBoardStore = create(x);'), 'module-scope store hook').toBe(false);
+    expect(matches('  const layerStore = useLayerStore();'), 'the corrected name').toBe(false);
+    expect(matches('  const used = 1;'), 'lowercase after use').toBe(false);
+    // The `\n` in `[^=\n]` is what stops the annotation clause running off the
+    // declaration's line to reach an `=` further down the file. Drop it and this
+    // case matches, inventing a violation that is not there.
+    expect(
+      matches('  const useThing: Foo\n  bar = 1;'),
+      'annotation clause must not span a newline to a later =',
+    ).toBe(false);
+  });
+
+  it('no renderer file binds a `use`-prefixed name to a local variable', () => {
+    const violations = collectSourceFiles(RENDERER_DIR).flatMap((file) => {
+      const relative = path.relative(REPO_ROOT, file).replace(/\\/g, '/');
+      return scanSource(relative, fs.readFileSync(file, 'utf-8'))
+        .filter((local) => !local.suppressed)
+        .map((local) => `${local.file}:${local.line} -> ${local.name}`);
+    });
+
+    expect(
+      violations,
+      'A `use`-prefixed LOCAL variable makes react-refresh set forceReset, so React\n'
+      + 'REMOUNTS the component on every Fast Refresh - which destroys live Browser\n'
+      + 'pane <webview> guests in the window manager. Rename it (e.g. `useStore` ->\n'
+      + '`layerStore`), or add `// hook-local-ok: <reason>`:\n'
+      + violations.map((violation) => `  - ${violation}`).join('\n'),
+    ).toEqual([]);
+  });
+});
+
+// The test above can stay green while the `hook-local-ok` opt-out is wired wrong -
+// no live marker exercises its positive path today (see the comment on scanSource).
+// These drive it over known input instead.
+describe('the hook-local-ok opt-out', () => {
+  it('suppresses a marked hook-shaped local', () => {
+    const found = scanSource('probe.tsx', [
+      'function Component() {',
+      '  // hook-local-ok: resolved from a stable binding, checked against the probe.',
+      '  const useThing = resolveStableHook();',
+      '  return null;',
+      '}',
+    ].join('\n'));
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 3, name: 'useThing', suppressed: true }]);
+  });
+
+  it('does not suppress an unmarked hook-shaped local', () => {
+    const found = scanSource('probe.tsx', [
+      'function Component() {',
+      '  const useThing = resolveStableHook();',
+      '  return null;',
+      '}',
+    ].join('\n'));
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 2, name: 'useThing', suppressed: false }]);
+  });
+
+  it('does not suppress a bare marker with no reason after the colon', () => {
+    const found = scanSource('probe.tsx', [
+      'function Component() {',
+      '  // hook-local-ok:',
+      '  const useThing = resolveStableHook();',
+      '  return null;',
+      '}',
+    ].join('\n'));
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 3, name: 'useThing', suppressed: false }]);
+  });
+});

@@ -91,6 +91,19 @@ vi.mock('../../src/main/pr/pr-refresh-scheduler', () => ({
   },
 }));
 
+// The remote-fetch scheduler is a STATIC import in system.ts. Left unmocked,
+// its startForProject would defer a real sweep onto the `class {}` stub this
+// file installs for WorktreeManager (withGitLock is not a function there), and
+// that TypeError fires inside a setImmediate callback, uncaught, failing the
+// whole shard. Same spy shape as the PR scheduler above.
+const fetchStartForProjectSpy = vi.fn();
+vi.mock('../../src/main/git/git-fetch-scheduler', () => ({
+  gitFetchScheduler: {
+    startForProject: (...args: unknown[]) => fetchStartForProjectSpy(...args),
+    stop: vi.fn(),
+  },
+}));
+
 // Same treatment for the sibling lazy import inside CONFIG_SET_PROJECT_BY_PATH:
 // system.ts re-runs the conversation-memory sweep via
 // `void import('../../retrieval/retrieval-service')`. Left unmocked, the real
@@ -116,6 +129,7 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
+import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -143,8 +157,12 @@ function makeConfigManager(overrides?: {
       agent: { maxConcurrentSessions: 5, idleTimeoutMinutes: 30 },
       terminal: { shell: null },
     })),
-    save: vi.fn(),
-    saveProjectOverrides: vi.fn(),
+    // Default to a successful write, matching real ConfigManager.save()'s
+    // return value on the happy path. Tests below override this per case to
+    // exercise the failure path (save()/saveProjectOverrides() now degrade
+    // rather than throw - see write-failure-notice.ts).
+    save: vi.fn(() => true),
+    saveProjectOverrides: vi.fn(() => true),
     loadProjectOverrides: vi.fn(() => null),
     currentProjectPath: overrides?.currentProjectPath ?? null,
   };
@@ -229,6 +247,92 @@ describe('CONFIG_SET IPC handler - applyRuntimeConfig wiring', () => {
       context.configManager,
       null,
     );
+  });
+});
+
+describe('CONFIG_SET IPC handler - broadcasts config:changed even when the write fails', () => {
+  // ConfigManager.save() no longer throws (write-failure-notice.ts); a failed
+  // write still changed the in-memory config, so every window's optimistic
+  // read should still match. A DESKTOP-13-shaped regression would skip this
+  // broadcast on a falsy return, leaving open pop-outs on a stale config with
+  // no way to notice.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+  });
+
+  it('still calls broadcast(CONFIG_CHANGED) when configManager.save() returns false', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    (context.configManager.save as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { theme: 'dark' });
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.CONFIG_CHANGED);
+  });
+});
+
+describe('config write handlers - report whether the write reached disk', () => {
+  // Sentry DESKTOP-1C. The boolean ConfigManager.save() already returned was
+  // discarded here, so the settings panel could not tell a stored setting from a
+  // dropped one. It cannot be decided in the handler - config:set also carries
+  // window layouts, model caches and announcement dismissals - so it is returned
+  // and the ONE caller that represents a user gesture acts on it.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+  });
+
+  it('config:set returns { persisted: true } on a write that reached disk', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:set', { theme: 'dark' })).toEqual({ persisted: true });
+  });
+
+  it('config:set returns { persisted: false } when the write failed', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    (context.configManager.save as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:set', { theme: 'dark' })).toEqual({ persisted: false });
+  });
+
+  it('config:setProject reports the project-override write too', () => {
+    // The project-scoped half is the one most likely to be missed: the settings
+    // panel routes every per-project tab through it, so leaving it returning
+    // undefined would make those tabs silently unreportable.
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    (context.configManager.saveProjectOverrides as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:setProject', { theme: 'dark' })).toEqual({ persisted: false });
+  });
+
+  it('config:setProjectByPath reports for the currently-open project', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main', projectPaths: ['/repo/main'] });
+    (context.configManager.saveProjectOverrides as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:setProjectByPath', '/repo/main', { theme: 'dark' }))
+      .toEqual({ persisted: false });
+  });
+
+  it('config:setProjectByPath reports for a background project too', () => {
+    // The early-return branch for a non-current project skips applyRuntimeConfig
+    // and the broadcast; it must not also skip the result, or a write from the
+    // project-settings dialog for a background project reports nothing.
+    const context = makeContext({
+      currentProjectPath: '/repo/main',
+      projectPaths: ['/repo/main', '/repo/other'],
+    });
+    (context.configManager.saveProjectOverrides as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:setProjectByPath', '/repo/other', { theme: 'dark' }))
+      .toEqual({ persisted: false });
   });
 });
 
@@ -445,6 +549,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     capturedOnHandlers.clear();
     applyRuntimeConfigSpy.mockClear();
     startForProjectSpy.mockClear();
+    fetchStartForProjectSpy.mockClear();
   });
 
   it('calls startForProject with (context, project) when path is the currently-open project', async () => {
@@ -466,6 +571,22 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     expect(projectArg.path).toBe(projectPath);
   });
 
+  it('re-arms the remote-fetch scheduler too, so a changed git.autoFetchIntervalMinutes takes effect at once', () => {
+    const projectPath = '/repo/active';
+    const context = makeContext({
+      currentProjectPath: projectPath,
+      projectPaths: [projectPath],
+    });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:setProjectByPath', projectPath, { git: { autoFetchIntervalMinutes: 2 } });
+
+    // Static import, so the re-arm is synchronous with the handler.
+    expect(fetchStartForProjectSpy).toHaveBeenCalledTimes(1);
+    const [_contextArg, projectArg] = fetchStartForProjectSpy.mock.calls[0] as [unknown, { path: string }];
+    expect(projectArg.path).toBe(projectPath);
+  });
+
   it('does NOT call startForProject for a background (non-current) project', async () => {
     const backgroundPath = '/repo/other';
     const currentPath = '/repo/active';
@@ -484,6 +605,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     await Promise.resolve();
 
     expect(startForProjectSpy).not.toHaveBeenCalled();
+    expect(fetchStartForProjectSpy).not.toHaveBeenCalled();
     // saveProjectOverrides is still called for background projects.
     expect(context.configManager.saveProjectOverrides).toHaveBeenCalledWith(
       backgroundPath,
@@ -550,6 +672,25 @@ describe('CONFIG_SYNC_DEFAULT_TO_PROJECTS IPC handler - applyRuntimeConfig wirin
 
     expect(result).toBe(3);
   });
+
+  it('does not count a project whose write failed, and still syncs the rest', () => {
+    const context = makeContext({
+      currentProjectPath: '/repo/current',
+      projectPaths: ['/repo/a', '/repo/unwritable', '/repo/current'],
+    });
+    (context.configManager.saveProjectOverrides as ReturnType<typeof vi.fn>).mockImplementation(
+      (projectPath: string) => projectPath !== '/repo/unwritable',
+    );
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    const result = invokeHandler('config:syncDefaultToProjects', { agent: { maxConcurrentSessions: 2 } });
+
+    // One unwritable project's directory must not abort the sync for its
+    // siblings, and must not count as "updated" - saveProjectOverrides()
+    // still ran for every project, but only 2 of the 3 succeeded.
+    expect(context.configManager.saveProjectOverrides).toHaveBeenCalledTimes(3);
+    expect(result).toBe(2);
+  });
 });
 
 describe('CONFIG_SET_SYNC IPC handler - synchronous quit-flush wiring', () => {
@@ -595,5 +736,20 @@ describe('CONFIG_SET_SYNC IPC handler - synchronous quit-flush wiring', () => {
     expect(capturedHandlers.has('config:setSync')).toBe(false);
     // Confirm it IS in the sync on-handler map.
     expect(capturedOnHandlers.has('config:setSync')).toBe(true);
+  });
+
+  it('sets event.returnValue to false when the write fails, instead of leaving it unassigned', () => {
+    // Before this fix, a throwing save() left returnValue unassigned entirely
+    // (DESKTOP-14's shape one layer up: an ipcMain.on throw is an uncaught
+    // exception, not a rejection), and the renderer's blocking sendSync got
+    // undefined back with no way to tell success from failure.
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    (context.configManager.save as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    const fakeEvent: Record<string, unknown> = {};
+    invokeOnHandler('config:setSync', fakeEvent, { workspaceByProject: {} });
+
+    expect(fakeEvent.returnValue).toBe(false);
   });
 });

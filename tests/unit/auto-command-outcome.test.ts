@@ -26,6 +26,7 @@ function makeReport(overrides: Partial<InjectionReport> = {}): InjectionReport {
     commands: ['/code-review'],
     outcome: 'confirmed',
     unconfirmedCommands: [],
+    deliveries: [],
     discardedDraft: null,
     interruptedTurn: false,
     escalated: false,

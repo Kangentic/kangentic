@@ -106,7 +106,7 @@ export async function resolveSessionTranscript(
   // full re-parse.
   if (adapter?.parseTranscript && record.agent_session_id) {
     const agentSessionId = record.agent_session_id;
-    let entries: TranscriptEntry[] = [];
+    let entries: TranscriptEntry[];
     let sourcePath: string | null = null;
     try {
       const cached = await getCachedTranscript(

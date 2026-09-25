@@ -1,15 +1,38 @@
 /**
  * Cross-platform path normalization and shell-specific conversions.
  *
- * SINGLE SOURCE OF TRUTH for all path ↔ shell interop in Kangentic.
- * Every module that touches file paths across platforms or shells
- * MUST use these utilities instead of ad-hoc `.replace(/\\/g, '/')`.
+ * SINGLE SOURCE OF TRUTH for Node-side path/shell interop in Kangentic.
+ * Every main-process module that touches file paths across platforms or
+ * shells MUST use these utilities instead of ad-hoc `.replace(/\\/g, '/')`.
+ * The renderer cannot import this file (it pulls in `node:path`), so the
+ * parts it shares live in `./shell-quote` and are re-exported below.
  *
  * Key invariant: Claude Code stores paths with forward slashes on ALL
  * platforms (e.g. "C:/Users/dev/..."), so any path written to or
  * compared against ~/.claude.json must go through `toForwardSlash()`.
  */
 import path from 'node:path';
+import {
+  escapeForDoubleQuotedShell,
+  isCmdShell,
+  isPowerShellShell,
+  isUnixLikeShell,
+  sanitizeForPty,
+} from './shell-quote';
+
+// The shell predicates, `sanitizeForPty`, and the double-quote escaper live in
+// `./shell-quote`, which has no Node imports so the renderer can share them.
+// The predicates and `sanitizeForPty` are re-exported because this module is the
+// documented single source of truth for path/shell interop and 40-odd call sites
+// import them by this path. `escapeForDoubleQuotedShell` is NOT: `quoteArg` is
+// the only main-process caller and the renderer imports it from `./shell-quote`
+// directly, so a re-export here would just add a second name for it.
+export {
+  isCmdShell,
+  isPowerShellShell,
+  isUnixLikeShell,
+  sanitizeForPty,
+};
 
 // ---------------------------------------------------------------------------
 // Path normalisation
@@ -34,6 +57,22 @@ export function toForwardSlash(p: string): string {
  */
 export function resolveForwardSlash(p: string): string {
   return toForwardSlash(path.resolve(p));
+}
+
+/**
+ * Whether two paths name the same on-disk location, whatever separators or
+ * drive-letter case each side used. Both sides are resolved, and case-folded
+ * on Windows, where the filesystem is case-insensitive. Use for comparing a
+ * path git printed (forward slashes, e.g. `git worktree list --porcelain`)
+ * against one Node wrote (backslashes), which a plain string compare never
+ * matches on Windows.
+ */
+export function isSamePath(left: string, right: string): boolean {
+  const normalize = (value: string): string => {
+    const resolved = path.resolve(value);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(left) === normalize(right);
 }
 
 /**
@@ -99,34 +138,34 @@ export function toWslPath(windowsPath: string): string {
 }
 
 /**
- * True when the shell is Unix-like (bash, zsh, fish, nu, wsl) and
- * expects POSIX-style paths.
+ * The shell-native "clear the screen" statement to prefix onto a typed
+ * agent-spawn command, so the SHELL erases its own startup preamble and
+ * command echo the instant it executes - before the agent's first byte.
  *
- * False for cmd.exe (Windows native); PowerShell is handled separately
- * because it needs the `& ` call operator rather than path conversion.
+ * This is the spawn-boundary strategy that stays out of the heuristics
+ * business: the pre-agent noise (ConPTY init, prompt, echoed command line)
+ * is bytes Kangentic does not control and pwsh/ConPTY updates keep
+ * reshaping (pwsh 7.6 started emitting \x1b[?25l and \x1b[2J in its startup
+ * preamble, which broke every marker that tried to INFER where the shell
+ * ends and the agent begins). A clear emitted BY the shell rides the real
+ * byte stream, so the live terminal, the scrollback ring, the headless
+ * parser, every replay, and the phone all clean themselves natively with
+ * zero Kangentic-side parsing - and it hands the buffer manager's pre-TUI
+ * strip (PtyBufferManager.pendingPreTuiScrollbackClear) a deterministic
+ * clear to anchor on, emitted by us rather than guessed from TUI behavior.
+ *
+ * Statement separators are deliberate per family: `;` continues after the
+ * clear in PowerShell and POSIX-ish shells (bash, zsh, fish, nu, git-bash,
+ * WSL all ship a `clear` builtin/binary), cmd chains with `&`.
  */
-export function isUnixLikeShell(shellName: string): boolean {
-  const lower = shellName.toLowerCase();
-  return (
-    !lower.includes('cmd') &&
-    !lower.includes('powershell') &&
-    !lower.includes('pwsh')
-  );
-}
-
-/**
- * True when the shell is cmd.exe (Windows native).
- *
- * cmd terminates the command line on a literal newline mid-quote, so
- * multi-line quoted args have to be flattened before delivery.
- *
- * Match is anchored on the basename (stripped of `.exe`) to avoid false
- * positives on unrelated paths that contain the substring `cmd` (e.g. a
- * tool installed under `/usr/local/cmd-something/`).
- */
-export function isCmdShell(shellName: string): boolean {
-  const basename = shellName.toLowerCase().split(/[\\/]/).pop() ?? '';
-  return basename.replace(/\.exe$/, '') === 'cmd';
+export function buildSpawnClearPrelude(shellName: string): string {
+  if (isPowerShellShell(shellName)) {
+    return 'Clear-Host; ';
+  }
+  if (isCmdShell(shellName)) {
+    return 'cls & ';
+  }
+  return 'clear; ';
 }
 
 /**
@@ -150,7 +189,7 @@ export function adaptCommandForShell(
 
   const lower = shellName.toLowerCase();
 
-  if (lower.includes('powershell') || lower.includes('pwsh')) {
+  if (isPowerShellShell(lower)) {
     return '& ' + cmd;
   }
 
@@ -160,21 +199,6 @@ export function adaptCommandForShell(
   }
 
   return cmd;
-}
-
-// ---------------------------------------------------------------------------
-// PTY-safe text sanitisation
-// ---------------------------------------------------------------------------
-
-/**
- * Sanitise text before writing to a PTY.
- *
- * Newlines are interpreted as Enter (submit) by terminal emulators,
- * tabs can trigger autocomplete, and consecutive whitespace is noise.
- * This function collapses all of these into tidy single spaces.
- */
-export function sanitizeForPty(text: string): string {
-  return text.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -190,10 +214,14 @@ export function sanitizeForPty(text: string): string {
  *
  * When `shell` is provided, quoting style is chosen by shell type:
  *  - Unix-like shells (bash, zsh, fish, WSL): single-quotes (no expansion)
- *  - PowerShell/cmd: double-quotes with backtick, `$`, and `"` escaping
+ *  - PowerShell: double-quotes, backtick escaping, backslash left alone
+ *  - cmd.exe: double-quotes, C-runtime backslash escaping, backtick left alone
+ *
+ * The two Windows branches are NOT interchangeable; `escapeForDoubleQuotedShell`
+ * in `./shell-quote` carries the measured round-trips.
  *
  * When `shell` is omitted, falls back to platform detection:
- *  - Windows: double-quotes with backtick, `$`, and `"` escaping
+ *  - Windows: the PowerShell branch
  *  - Unix:    single-quotes, escaped `'`
  *
  * Pass `{ multiline: true }` for prompt-style content where newlines must
@@ -210,12 +238,28 @@ export function sanitizeForPty(text: string): string {
  *    physical line and let PowerShell's escape parser produce the newlines.
  *  - cmd.exe: no escape syntax for embedded newlines; falls back to the
  *    sanitised single-line form.
+ *
+ * The PowerShell strategy holds only while PowerShell launches the target
+ * binary itself. When the command head is a `.cmd` / `.bat` shim (an npm
+ * global install on Windows), PowerShell expands the escapes and hands the
+ * result to cmd.exe, whose command line ends at the first newline, so the
+ * agent sees the first line only (#353). The spawn chokepoints route such
+ * heads through `resolveShimLaunch` (src/main/agent/shared/shim-launch.ts)
+ * before any builder runs, so builders may keep relying on this contract.
+ *
+ * A bare `--` is quoted for PowerShell hosts. PowerShell's parameter binder
+ * consumes an unquoted `--` before a `.ps1` script (the npm shim
+ * `resolveShimLaunch` prefers) sees `$args`, while the quoted form reaches
+ * native commands and cmd.exe as a plain `--` on every route.
  */
 export function quoteArg(
   arg: string,
   shell?: string,
   options?: { multiline?: boolean },
 ): string {
+  if (arg === '--' && shell !== undefined && isPowerShellShell(shell)) {
+    return '"--"';
+  }
   if (/^[a-zA-Z0-9_./:-]+$/.test(arg)) {
     return arg;
   }
@@ -228,11 +272,10 @@ export function quoteArg(
   const preserveNewlines = options?.multiline === true && shell !== undefined && !isCmd;
 
   if (useDoubleQuotes) {
-    // PowerShell: ` is escape char, $ triggers variable/subexpression expansion.
-    // Escape backticks first (` → ``), then $ ($ → `$), then quotes (" → \").
-    // cmd.exe: $ is not special, `` and `$ are harmless literal text.
+    // Per-shell escaping, because cmd.exe and PowerShell disagree about the
+    // backslash: see escapeForDoubleQuotedShell for the measured round-trips.
     const source = preserveNewlines ? arg : sanitizeForPty(arg);
-    let escaped = source.replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '\\"');
+    let escaped = escapeForDoubleQuotedShell(source, isCmd);
     if (preserveNewlines) {
       // Convert real newlines/tabs to PowerShell escape sequences. These are
       // NEW backticks (not literal content), so the parser interprets them as

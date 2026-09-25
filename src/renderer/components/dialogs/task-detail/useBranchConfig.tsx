@@ -1,98 +1,50 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useTaskDetailHost } from './task-detail-host';
-import { fetchGitBranches } from '../../../utils/git-branches';
-import { isValidGitBranchName } from '../../../../shared/git-utils';
-import { slugify, computeAutoBranchName } from '../../../../shared/slugify';
-import type { Task } from '../../../../shared/types';
+import { useBranchSettings } from '../../../hooks/useBranchSettings';
+import { DEFAULT_AGENT, type Task } from '../../../../shared/types';
 
+/**
+ * The edit form's Branch row state, fed from the HOSTING project: a worktree
+ * for a background project's task must branch from that project's default
+ * base, probe that project's folder, and check that project's agent execution
+ * mode, never the open board's. The state machine itself is the shared
+ * `useBranchSettings`, so the New Task dialog cannot drift from this form.
+ */
 export function useBranchConfig(task: Task, title: string, isInTodo: boolean) {
-  // Git settings of the HOSTING project: a worktree for a background project's
-  // task must branch from that project's default base, not the open board's.
-  const { config: { worktreesEnabled, defaultBaseBranch } } = useTaskDetailHost();
+  const {
+    config: { worktreesEnabled, defaultBaseBranch, agentExecution },
+    projectPath,
+    defaultAgent,
+    swimlanes,
+  } = useTaskDetailHost();
 
-  const [baseBranch, setBaseBranch] = useState(task.base_branch || '');
-  const [customBranchName, setCustomBranchName] = useState(task.branch_name || '');
-  const [useWorktree, setUseWorktree] = useState<boolean | null>(
-    task.use_worktree != null ? Boolean(task.use_worktree) : null,
-  );
-  const [knownBranches, setKnownBranches] = useState<Set<string>>(new Set());
+  // The agent this task would spawn on: its own override, else the column's,
+  // else the project default. Same chain the spawn preamble resolves, minus
+  // the profile fold; the main process records the real outcome after spawn.
+  const laneAgent = swimlanes.find((lane) => lane.id === task.swimlane_id)?.agent_override ?? null;
+  const resolvedAgent = task.agent_override ?? laneAgent ?? defaultAgent ?? DEFAULT_AGENT;
+  const remoteAgent = agentExecution[resolvedAgent]?.mode === 'remote';
 
-  const effectiveWorktree = useWorktree ?? worktreesEnabled;
-  const effectiveBaseBranch = baseBranch.trim() || defaultBaseBranch || 'main';
+  const initial = useMemo(() => ({
+    baseBranch: task.base_branch || '',
+    customBranchName: task.branch_name || '',
+    useWorktree: task.use_worktree != null ? Boolean(task.use_worktree) : null,
+  }), [task.base_branch, task.branch_name, task.use_worktree]);
 
-  useEffect(() => {
-    if (isInTodo) {
-      fetchGitBranches()
-        .then(branches => setKnownBranches(new Set(branches)))
-        .catch(() => setKnownBranches(new Set()));
-    }
-  }, [isInTodo]);
-
-  const branchExists = useMemo(
-    () => customBranchName.trim() ? knownBranches.has(customBranchName.trim()) : false,
-    [customBranchName, knownBranches],
-  );
-
-  const branchNameError = useMemo(
-    () => customBranchName.trim() && !isValidGitBranchName(customBranchName.trim())
-      ? 'Invalid git branch name'
-      : '',
-    [customBranchName],
-  );
-
-  const branchPlaceholder = useMemo(() => {
-    if (effectiveWorktree) {
-      const slug = slugify(title.trim()) || 'task-title';
-      return computeAutoBranchName(effectiveBaseBranch, defaultBaseBranch || 'main', slug, 'ab12cd34');
-    }
-    return effectiveBaseBranch;
-  }, [effectiveWorktree, title, effectiveBaseBranch, defaultBaseBranch]);
-
-  const branchHint = useMemo(() => {
-    const pill = (text: string) => (
-      <span className="font-mono text-fg-faint">{text}</span>
-    );
-    const branch = customBranchName.trim();
-    if (branch) {
-      if (branchExists) {
-        if (effectiveWorktree) {
-          return <>{pill(branch)} exists and will be checked out in a new worktree</>;
-        }
-        return <>{pill(branch)} exists and will be checked out</>;
-      }
-      if (effectiveWorktree) {
-        return <>{pill(branch)} will be created from {pill(effectiveBaseBranch)} in a new worktree</>;
-      }
-      return <>{pill(branch)} will be created from {pill(effectiveBaseBranch)}</>;
-    }
-    if (effectiveWorktree) {
-      return <>Auto-generated branch will be created from {pill(effectiveBaseBranch)} in a new worktree</>;
-    }
-    return <>Agent will work directly on {pill(effectiveBaseBranch)}</>;
-  }, [customBranchName, branchExists, effectiveWorktree, effectiveBaseBranch]);
-
-  const resetToTask = () => {
-    setBaseBranch(task.base_branch || '');
-    setCustomBranchName(task.branch_name || '');
-    setUseWorktree(task.use_worktree != null ? Boolean(task.use_worktree) : null);
-  };
-
-  return {
-    baseBranch,
-    setBaseBranch,
-    customBranchName,
-    setCustomBranchName,
-    useWorktree,
-    setUseWorktree,
-    effectiveWorktree,
-    effectiveBaseBranch,
+  const settings = useBranchSettings({
+    title,
+    initial,
+    worktreesEnabled,
     defaultBaseBranch,
-    branchPlaceholder,
-    branchHint,
-    branchExists,
-    branchNameError,
-    resetToTask,
-  };
+    active: isInTodo,
+    projectPath: projectPath || null,
+    remoteAgent,
+  });
+
+  const { reset } = settings;
+  const resetToTask = useCallback(() => reset(initial), [reset, initial]);
+
+  return { ...settings, resetToTask };
 }
 
 export type BranchConfigState = ReturnType<typeof useBranchConfig>;

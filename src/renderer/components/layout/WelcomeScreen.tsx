@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleAlert, Copy, Loader2, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
+import { DOCS_URLS } from '../../../shared/docs-links';
 import { useConfigStore } from '../../stores/config-store';
 import { agentInstallUrl, agentLoginCommand, RECOMMENDED_AGENT_ORDER } from '../../utils/agent-display-name';
 import { useAddProject } from '../../hooks/useAddProject';
@@ -12,12 +13,10 @@ import { OverseerMascot } from '../onboarding/OverseerMascot';
 // fixed id, which would collide if inlined more than once per document.
 import brandLogoUrl from '@kangentic/branding/assets/brandmark-small.svg?url';
 
-const SETUP_GUIDE_URL = 'https://www.kangentic.com/getting-started/';
-const MOBILE_PAIRING_URL = 'https://www.kangentic.com/mobile/pairing/';
 const CURATED_NOT_FOUND_LIMIT = 3;
 
 /** Reusable detection row used for both the Git and agent entries */
-function DetectionRow({ name, testId, found, version, installUrl, loading, authenticated, loginCommand }: {
+function DetectionRow({ name, testId, found, version, installUrl, loading, authenticated, loginCommand, className }: {
   name: string;
   testId?: string;
   found: boolean;
@@ -26,6 +25,8 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
   loading: boolean;
   authenticated?: boolean | null;
   loginCommand?: string;
+  /** Extra classes for the row's root, such as a grid span. */
+  className?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,7 +54,7 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
     : 'border-edge';
 
   return (
-    <div className={`border rounded-lg p-3 ${borderClass}`} data-testid={testId}>
+    <div className={`border rounded-lg p-3 ${borderClass}${className ? ` ${className}` : ''}`} data-testid={testId}>
       <div className="flex items-start gap-2">
         <div className="w-4 h-5 flex items-center justify-center shrink-0">
           {loading ? (
@@ -159,7 +160,12 @@ export function WelcomeScreen() {
   const detectionResolved = gitInfo !== null && agentListLoaded;
 
   const foundAgents = agentList.filter((agent) => agent.found);
-  const signedOutAgent = foundAgents.find((agent) => agent.authenticated === false);
+  // A signed-out row carries "Not signed in" plus a control to copy the login command, which is
+  // wider than a third of the grid and wrapped over the agent's name there. It is also the one row
+  // the readiness line asks the reader to act on, so it leads the grid at full width.
+  const signedOutAgents = foundAgents.filter((agent) => agent.authenticated === false);
+  const orderedFoundAgents = [...signedOutAgents, ...foundAgents.filter((agent) => agent.authenticated !== false)];
+  const signedOutAgent = signedOutAgents[0];
   const gitReady = gitInfo?.found ?? false;
   const readyToRun = detectionResolved && gitReady && foundAgents.length > 0 && !signedOutAgent;
   const blocked = detectionResolved && !readyToRun;
@@ -371,7 +377,7 @@ export function WelcomeScreen() {
                   </>
                 ) : (
                   <>
-                    {foundAgents.map((agent) => (
+                    {orderedFoundAgents.map((agent) => (
                       <DetectionRow
                         key={agent.name}
                         name={agent.displayName}
@@ -382,6 +388,7 @@ export function WelcomeScreen() {
                         loading={refreshing}
                         authenticated={agent.authenticated}
                         loginCommand={agentLoginCommand(agent.name)}
+                        className={agent.authenticated === false ? 'col-span-full' : undefined}
                       />
                     ))}
                     {visibleNotFound.map((agent) => (
@@ -451,9 +458,9 @@ export function WelcomeScreen() {
         <div className="mt-6 mb-8 flex items-center justify-center gap-4 text-sm">
           <button
             type="button"
-            onClick={() => window.electronAPI.shell.openExternal(SETUP_GUIDE_URL)}
+            onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.gettingStarted)}
             className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
-            title={SETUP_GUIDE_URL}
+            title={DOCS_URLS.gettingStarted}
             data-testid="welcome-setup-guide"
           >
             Read the setup guide
@@ -461,9 +468,9 @@ export function WelcomeScreen() {
           </button>
           <button
             type="button"
-            onClick={() => window.electronAPI.shell.openExternal(MOBILE_PAIRING_URL)}
+            onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.mobilePairing)}
             className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
-            title={MOBILE_PAIRING_URL}
+            title={DOCS_URLS.mobilePairing}
             data-testid="welcome-pair-phone"
           >
             Pair a phone

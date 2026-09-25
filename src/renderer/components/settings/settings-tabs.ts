@@ -72,6 +72,13 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   // project's spawn/resume could silently pick up the wrong shell.
   { id: 'terminal', label: 'Terminal', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'behavior', label: 'Behavior', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
+  // Chromium rendering and app-wide motion. Neither had an honest home:
+  // Animations lived under Board > Window despite toggling .no-motion on
+  // <html>, and graphics acceleration (Sentry DESKTOP-18/DESKTOP-W) had
+  // nowhere at all. Core rather than Advanced because Advanced is opt-in
+  // subsystems (Dictation, Memory, MCP Server, Agent Browser, Mobile), and
+  // because a recovery toast sends users straight here.
+  { id: 'performance', label: 'Performance', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'hotkeys', label: 'Hotkeys', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'notifications', label: 'Notifications', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   // -- Shared settings: Advanced tier --

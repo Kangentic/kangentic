@@ -16,6 +16,11 @@
  *   - ENOENT absorbed by `force: true`
  *   - Exhaustion: last error is rethrown after the full
  *     0/200/500/1000/2000ms schedule (5 outer attempts)
+ *
+ * The second half covers BUDGETED mode (`budgetMs`), where one wall clock owns
+ * the call: Node's per-path retry is off and this loop drives every retry until
+ * the deadline. The unbudgeted cases above are also the guard that adding the
+ * mode changed nothing for callers that do not pass a budget.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -133,5 +138,100 @@ describe('removeWithRetry', () => {
     await expect(resultPromise).rejects.toThrow(/persistent lock/);
     // Five outer attempts in [0, 200, 500, 1000, 2000].
     expect(mockFsRm).toHaveBeenCalledTimes(5);
+  });
+});
+
+/**
+ * Budgeted mode. The bug this closes: without a clock the ceiling scales with
+ * the TREE, because Node applies `{ maxRetries, retryDelay }` per locked path.
+ * One observed worktree removal ground for 402716ms while it held the
+ * per-project git queue.
+ */
+describe('removeWithRetry - budgeted mode', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('disables Node per-file retry so this loop owns the whole clock', async () => {
+    mockFsRm.mockResolvedValue(undefined);
+
+    await expect(removeWithRetry('/tmp/target', { budgetMs: 30_000 })).resolves.toBeUndefined();
+
+    // Exact match, not objectContaining: `retryDelay` must be ABSENT. A
+    // surviving inner ladder is what makes the bound soft, since a single
+    // `fs.rm` pass could then outlive the deadline by seconds per locked path.
+    expect(mockFsRm).toHaveBeenCalledWith('/tmp/target', {
+      recursive: true,
+      force: true,
+      maxRetries: 0,
+    });
+  });
+
+  it('gives up at the deadline with a typed timeout carrying the last errno error', async () => {
+    vi.useFakeTimers();
+    mockFsRm.mockRejectedValue(eperm('persistent lock'));
+
+    const resultPromise = removeWithRetry('/tmp/locked', { budgetMs: 5_000 });
+    resultPromise.catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    const error = await resultPromise.catch((thrown: unknown) => thrown) as Error & {
+      budgetMs: number;
+      cause: NodeJS.ErrnoException;
+    };
+    expect(error.name).toBe('WorktreeRemovalTimeoutError');
+    expect(error.message).toMatch(/gave up on \/tmp\/locked/);
+    expect(error.budgetMs).toBe(5_000);
+    // The cause is the diagnostic the caller logs; the timeout itself only
+    // says that we stopped.
+    expect(error.cause.code).toBe('EPERM');
+  });
+
+  it('keeps retrying past the five-entry ladder, saturating at its last delay', async () => {
+    vi.useFakeTimers();
+    mockFsRm.mockRejectedValue(eperm('persistent lock'));
+
+    const resultPromise = removeWithRetry('/tmp/locked', { budgetMs: 30_000 });
+    resultPromise.catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(40_000);
+
+    await expect(resultPromise).rejects.toMatchObject({ name: 'WorktreeRemovalTimeoutError' });
+    // Unbudgeted mode stops at five. A 30s budget with the ladder saturating at
+    // 2000ms is many more passes than that, which is what replaces the per-path
+    // retry coverage the mode gives up.
+    expect(mockFsRm.mock.calls.length).toBeGreaterThan(5);
+  });
+
+  it('does not sleep past the deadline', async () => {
+    vi.useFakeTimers();
+    mockFsRm.mockRejectedValue(eperm('locked'));
+
+    // Budget 100ms. The first attempt runs immediately; the next ladder delay
+    // is 200ms, which would overrun, so it is skipped rather than waited out.
+    const resultPromise = removeWithRetry('/tmp/locked', { budgetMs: 100 });
+    resultPromise.catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    const error = await resultPromise.catch((thrown: unknown) => thrown) as Error & {
+      elapsedMs: number;
+    };
+    expect(error.name).toBe('WorktreeRemovalTimeoutError');
+    expect(mockFsRm).toHaveBeenCalledTimes(1);
+    expect(error.elapsedMs).toBeLessThan(200);
+  });
+
+  it('attempts once even when the budget is already spent', async () => {
+    mockFsRm.mockResolvedValue(undefined);
+
+    await expect(removeWithRetry('/tmp/target', { budgetMs: 0 })).resolves.toBeUndefined();
+
+    expect(mockFsRm).toHaveBeenCalledTimes(1);
   });
 });

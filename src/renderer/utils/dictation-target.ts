@@ -7,7 +7,9 @@
 // hand a second instance to a mounted tree (hmr-patterns Pattern E).
 import { boardWindowManager, commandWindowManager, memoryWindowManager, monitorWindowManager } from '../window-manager/store/window-store';
 import { isLayerMounted } from '../window-manager/store/layer-mount-registry';
+import { isWindowDormant } from '../window-manager/store/types';
 import { useSessionStore } from '../stores/session-store';
+import { findSessionForTask } from '../stores/session-store/session-index';
 import { useProjectStore } from '../stores/project-store';
 import { derivePanelSessionId } from './focused-sessions';
 import { transientKey, type TransientSessionEntry } from '../stores/session-store/transient-session-slice';
@@ -142,9 +144,10 @@ export function resolveFocusedWindowTerminal(): FocusedWindowTerminal | null {
     if (!focusedId) continue;
     const focusedWindow = state.windows[focusedId];
     if (!focusedWindow || focusedWindow.kind === 'conversation') continue;
-    // Defensive: `retainWindows` already clears `focusedWindowId` when the focused
-    // window becomes retained, so a retained window cannot be focused today.
-    if (focusedWindow.retainedProjectId !== undefined) continue;
+    // Defensive: `retainWindows` and `parkWindow` both clear `focusedWindowId`
+    // when the focused window goes dormant, and `focusWindow` refuses a parked
+    // one, so a dormant window cannot be focused today.
+    if (isWindowDormant(focusedWindow)) continue;
 
     if (focusedWindow.kind === 'command-terminal') {
       const sessionState = useSessionStore.getState();
@@ -165,9 +168,7 @@ export function resolveFocusedWindowTerminal(): FocusedWindowTerminal | null {
 
     const toTaskId = manager.options.anchorToTaskId;
     const taskId = toTaskId ? toTaskId(focusedWindow.anchor) : focusedWindow.anchor;
-    const session = useSessionStore
-      .getState()
-      .sessions.find((candidate) => candidate.taskId === taskId);
+    const session = findSessionForTask(useSessionStore.getState().sessions, taskId);
     return { sessionId: session?.id ?? null, openedByAgent: focusedWindow.openedByAgent === true };
   }
   return null;

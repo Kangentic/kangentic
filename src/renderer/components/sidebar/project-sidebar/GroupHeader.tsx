@@ -52,6 +52,8 @@ export function GroupHeader({
   };
 
   return (
+    // select-none-ok: scoped to the group name span below, so it never reaches
+    // the rename input this row swaps in.
     <div
       ref={setNodeRef}
       onClick={handleRowClick}

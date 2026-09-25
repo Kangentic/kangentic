@@ -8,7 +8,7 @@
  * SessionFrameKind wrap/unwrap the production code uses to disambiguate
  * handshake frames from application frames on the shared connection.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import {
   createKKHandshake,
   decodeMessage,
@@ -29,6 +29,8 @@ import {
 } from '@kangentic/protocol';
 import { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
 import type { BridgeIdentity } from '../../../src/main/mobile-bridge/identity';
+import type { RedialOptions } from '../../../src/main/mobile-bridge/transport/relay-client';
+import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from '../../../src/main/mobile-bridge/session/forced-redial-reason';
 
 function testIdentity(): BridgeIdentity {
   return {
@@ -182,6 +184,146 @@ function createReconnectableLoopback(): {
 }
 
 /**
+ * Models kangentic-relay's actual behavior for an unpaired ("parked") slot
+ * (its SlotTable, src/rendezvous.ts), which createReconnectableLoopback above
+ * does not: a parked connection's frames are BUFFERED (SlotTable.park() /
+ * connection.ts's onMessage `pending` array), never dropped, and the whole
+ * buffer is delivered to the phone, in order, the instant it attaches
+ * (SlotTable.pair()'s flush) - before any live traffic. The relay also closes
+ * a parked socket after its own PARK_TIMEOUT_MS (60s) and force-closes BOTH
+ * sides of a pair the instant either drops, so on every phone departure the
+ * desktop's transport bounces reconnecting -> connected (RelayClient's
+ * INITIAL_BACKOFF_MS, 500ms) into a BRAND NEW, empty park - never a resumed
+ * one. This is the harness gap #635 exposed: the drop-based double above
+ * cannot reproduce a burst of buffered msg1s flushed together on arrival.
+ */
+/** kangentic-relay's PARK_TIMEOUT_MS: how long it holds an unpaired slot before closing it. */
+const MOCK_RELAY_PARK_TIMEOUT_MS = 60 * 1000;
+
+/** RelayClient's INITIAL_BACKOFF_MS: how long it waits before redialing a closed socket. */
+const MOCK_RELAY_REDIAL_BACKOFF_MS = 500;
+
+function createParkingRelayLoopback(options: { disableParkTimeout?: boolean } = {}): {
+  desktop: Transport;
+  device: Transport;
+  /** Delivers the parked buffer to the device's listeners, in order, then leaves the desktop forwarding live - SlotTable.pair(). */
+  attachPhone: () => void;
+  /** The relay force-closing both sides on the phone's departure - bounces the desktop into a fresh, empty park (500ms later). */
+  detachPhone: () => void;
+} {
+  // Models a self-hosted relay with no PARK_TIMEOUT_MS (armRehandshakeTimer()'s
+  // own comment calls this case out): the connection can stay parked and
+  // unanswered indefinitely, past even REHANDSHAKE_INTERVAL_MS, instead of
+  // kangentic-relay's real 60s park timeout redialing first and masking that
+  // path.
+  const disableParkTimeout = options.disableParkTimeout ?? false;
+  const desktopStateListeners = new Set<(state: TransportState) => void>();
+  const desktopFrameListeners = new Set<(frame: Uint8Array) => void>();
+  const deviceFrameListeners = new Set<(frame: Uint8Array) => void>();
+  let desktopState: TransportState = 'connected';
+  let attached = false;
+  let pending: Uint8Array[] = [];
+  let parkTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const setDesktopState = (state: TransportState): void => {
+    desktopState = state;
+    for (const listener of desktopStateListeners) listener(state);
+  };
+
+  const clearParkTimer = (): void => {
+    if (!parkTimer) return;
+    clearTimeout(parkTimer);
+    parkTimer = null;
+  };
+
+  // SlotTable.park(): a connection with no live peer waiting is parked and
+  // given PARK_TIMEOUT_MS (60s) before the relay closes it outright,
+  // discarding whatever it buffered. Disabled entirely when
+  // disableParkTimeout is set, so armPark() and redial() (which re-arms it
+  // on every fresh park) both become no-ops and the connection just stays
+  // parked forever.
+  const armPark = (): void => {
+    if (disableParkTimeout) return;
+    clearParkTimer();
+    parkTimer = setTimeout(() => {
+      parkTimer = null;
+      pending = [];
+      redial();
+    }, MOCK_RELAY_PARK_TIMEOUT_MS);
+    parkTimer.unref?.();
+  };
+
+  // The relay closing the desktop's socket (park timeout, or the mirrored
+  // force-close on the phone's own departure) and RelayClient redialing
+  // ~500ms later (INITIAL_BACKOFF_MS) into a brand-new connection, which the
+  // relay parks fresh since no phone is there yet.
+  const redial = (): void => {
+    attached = false;
+    setDesktopState('reconnecting');
+    setTimeout(() => {
+      setDesktopState('connected');
+      armPark();
+    }, MOCK_RELAY_REDIAL_BACKOFF_MS);
+  };
+
+  armPark();
+
+  const desktop: Transport = {
+    get state() {
+      return desktopState;
+    },
+    connect: () => Promise.resolve(),
+    send: (frame) => {
+      if (desktopState !== 'connected') return;
+      if (attached) {
+        for (const listener of deviceFrameListeners) listener(frame);
+        return;
+      }
+      // Parked: buffered, not dropped - the crux of #635.
+      pending.push(frame);
+    },
+    close: () => undefined,
+    onFrame: (listener) => {
+      desktopFrameListeners.add(listener);
+      return () => desktopFrameListeners.delete(listener);
+    },
+    onStateChange: (listener) => {
+      desktopStateListeners.add(listener);
+      return () => desktopStateListeners.delete(listener);
+    },
+  };
+
+  const device: Transport = {
+    state: 'connected',
+    connect: () => Promise.resolve(),
+    send: (frame) => {
+      for (const listener of desktopFrameListeners) listener(frame);
+    },
+    close: () => undefined,
+    onFrame: (listener) => {
+      deviceFrameListeners.add(listener);
+      return () => deviceFrameListeners.delete(listener);
+    },
+    onStateChange: () => () => undefined,
+  };
+
+  const attachPhone = (): void => {
+    clearParkTimer();
+    attached = true;
+    const buffered = pending;
+    pending = [];
+    // SlotTable.pair(): the whole buffer, in order, before any live traffic.
+    for (const frame of buffered) for (const listener of deviceFrameListeners) listener(frame);
+  };
+
+  const detachPhone = (): void => {
+    redial();
+  };
+
+  return { desktop, device, attachPhone, detachPhone };
+}
+
+/**
  * The phone's behavior: a fresh responder KK handshake for every inbound
  * handshake message-1 (SessionManager creates a new responder per initiation),
  * counting each completed establishment.
@@ -278,6 +420,125 @@ describe('BridgeSession', () => {
     const rejection = await rejectedPromise;
     expect(rejection).toBeInstanceOf(Error);
     session.dispose();
+  });
+
+  describe('a capability-request for a verb this build does not know', () => {
+    /**
+     * Seals a raw JSON object as an application frame on the device's send
+     * stream, bypassing encodeMessage's typing: the point is a verb that is
+     * NOT a CapabilityVerb, which the typed encoder cannot express. This is
+     * exactly what a newer phone does against an older desktop.
+     */
+    function sendRawRequest(responder: SimulatedDeviceResponder, transport: Transport, value: unknown): void {
+      if (!responder.streams) throw new Error('responder not established');
+      const frame = responder.streams.send.seal(new TextEncoder().encode(JSON.stringify(value)));
+      transport.send(wrapSessionFrame(SessionFrameKind.Application, frame));
+    }
+
+    async function establishedPair() {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const [desktopTransport, deviceTransport] = createLoopbackTransportPair();
+      const responder = new SimulatedDeviceResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, deviceTransport);
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(),
+        transport: desktopTransport,
+      });
+      const established = new Promise<void>((resolve) => session.once('established', resolve));
+      session.start();
+      await established;
+      return { session, responder, deviceTransport, desktopTransport };
+    }
+
+    it('is answered with an ok:false refusal carrying the unsupported-verb code, not dropped', async () => {
+      const { session, responder, deviceTransport } = await establishedPair();
+      const rejected = vi.fn();
+      const delivered = vi.fn();
+      const unsupported = vi.fn();
+      session.on('frameRejected', rejected);
+      session.on('message', delivered);
+      session.on('unsupportedVerb', unsupported);
+
+      sendRawRequest(responder, deviceTransport, {
+        type: 'capability-request', requestId: 'r-1', verb: 'time-travel', payload: {},
+      });
+      await Promise.resolve();
+
+      // Pre-fix this frame surfaced only as frameRejected and the phone heard
+      // nothing until its per-verb timeout. The refusal is what lets it tell
+      // an old desktop from an unreachable one.
+      expect(responder.receivedMessages).toEqual([{
+        type: 'capability-response',
+        requestId: 'r-1',
+        ok: false,
+        error: 'Unsupported verb: time-travel',
+        code: 'unsupported-verb',
+      }]);
+      expect(unsupported).toHaveBeenCalledWith({ requestId: 'r-1', verb: 'time-travel' });
+      // Answered, not dropped: the rejected edge stays for frames nobody can
+      // answer. And no 'message' is emitted, so the router never sees it and
+      // no handler can run for a verb outside the tuple.
+      expect(rejected).not.toHaveBeenCalled();
+      expect(delivered).not.toHaveBeenCalled();
+      session.dispose();
+    });
+
+    it('still emits unsupportedVerb, without throwing or emitting frameRejected, when the refusal itself cannot be sent', async () => {
+      const { session, responder, deviceTransport, desktopTransport } = await establishedPair();
+      const rejected = vi.fn();
+      const unsupported = vi.fn();
+      session.on('frameRejected', rejected);
+      session.on('unsupportedVerb', unsupported);
+
+      // Simulates the transport dropping between the open and the send: the
+      // desktop side is what refuseUnsupportedVerb calls to answer, so this
+      // is what a relay hiccup at exactly the wrong moment looks like.
+      vi.spyOn(desktopTransport, 'send').mockImplementation(() => {
+        throw new Error('transport closed');
+      });
+
+      // Red on the try/catch removed from refuseUnsupportedVerb: the mocked
+      // send throws synchronously inside the frame-handler call stack, and
+      // this call itself would throw out of the loopback transport's send
+      // loop rather than returning quietly.
+      expect(() => {
+        sendRawRequest(responder, deviceTransport, {
+          type: 'capability-request', requestId: 'r-2', verb: 'time-travel', payload: {},
+        });
+      }).not.toThrow();
+      await Promise.resolve();
+
+      expect(unsupported).toHaveBeenCalledWith({ requestId: 'r-2', verb: 'time-travel' });
+      // The frame was still answered in spirit (a refusal was attempted), not
+      // dropped, so this stays the same edge as the happy path above.
+      expect(rejected).not.toHaveBeenCalled();
+      // The dropped send means the responder never actually received anything.
+      expect(responder.receivedMessages).toEqual([]);
+      session.dispose();
+    });
+
+    it('stays a silent frameRejected when the request is malformed, even with the same unknown verb', async () => {
+      const { session, responder, deviceTransport } = await establishedPair();
+      const rejected = vi.fn();
+      const unsupported = vi.fn();
+      session.on('frameRejected', rejected);
+      session.on('unsupportedVerb', unsupported);
+
+      // No requestId: there is nothing to answer, and answering unstructured
+      // input would hand the sender a probe.
+      sendRawRequest(responder, deviceTransport, {
+        type: 'capability-request', verb: 'time-travel', payload: {},
+      });
+      await Promise.resolve();
+
+      expect(rejected).toHaveBeenCalledTimes(1);
+      expect(unsupported).not.toHaveBeenCalled();
+      expect(responder.receivedMessages).toEqual([]);
+      session.dispose();
+    });
   });
 
   it('sendMessage() throws before the session is established', () => {
@@ -566,7 +827,7 @@ describe('BridgeSession', () => {
  *
  * The constants mirror the private ones in bridge-session.ts (not exported):
  * PEER_PRESENCE_TIMEOUT_MS 5s, PEER_PRESENCE_FAILURES_BEFORE_ABSENT 2,
- * PEER_PROBE_INTERVAL_MS 15s, RECONNECT_GRACE_MS 2s.
+ * RECONNECT_GRACE_MS 2s.
  */
 describe('BridgeSession.connectionState', () => {
   function startSession(transport: Transport, desktopIdentity: BridgeIdentity, devicePublicKey: Uint8Array): BridgeSession {
@@ -736,24 +997,26 @@ describe('BridgeSession.connectionState', () => {
     }
   });
 
-  it('recovers to "connected" when the phone comes back, without waiting out the rekey interval', () => {
+  it('recovers to "connected" when the phone comes back, picked up immediately from the parked msg1 rather than a re-probe loop', () => {
     vi.useFakeTimers();
     try {
       const desktopIdentity = testIdentity();
       const deviceStatic = generateX25519KeyPair();
-      const { desktop, device } = createReconnectableLoopback();
+      const { desktop, device, attachPhone } = createParkingRelayLoopback();
       const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
 
       vi.advanceTimersByTime(10 * 1000);
       expect(session.connectionState).toBe('offline');
 
-      // The phone reattaches to the slot. It waits passively for the desktop to
-      // initiate, so without the absent-probe loop this would stay "offline"
-      // until the 2-minute rekey tick.
-      new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
-      vi.advanceTimersByTime(15 * 1000);
+      // The phone attaches to the still-parked slot: the relay flushes the
+      // ONE msg1 the desktop parked (see createParkingRelayLoopback and
+      // beginHandshake()'s guard) the instant it arrives, so recovery is
+      // immediate - there is no separate re-probe loop to wait out.
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
 
       expect(session.connectionState).toBe('connected');
+      expect(responder.establishedCount).toBe(1);
 
       session.dispose();
     } finally {
@@ -800,6 +1063,44 @@ describe('BridgeSession.connectionState', () => {
     }
   });
 
+  /**
+   * The exact mirror of the test above: a phone that dies silently rather
+   * than one that keeps serving. Nothing sends a Final frame and no
+   * application traffic arrives, so the desktop's `streams` are never
+   * nulled - only the presence probe budget (spent over the dropped rekey)
+   * concludes the peer is gone. This is the precondition the push
+   * presence-suppression fix depends on: connectionState must reach
+   * 'offline' here even though isEstablished stays true.
+   */
+  it('reports "offline" once a rekey goes unanswered and the phone sends nothing back (a silent death)', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device } = createReconnectableLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(session.connectionState).toBe('connected');
+
+      // From here the phone is gone: the relay swallows the rekey and
+      // nothing ever answers or sends again.
+      responder.dropHandshakes = true;
+      vi.advanceTimersByTime(2 * 60 * 1000); // the rekey tick fires and arms the probe
+      vi.advanceTimersByTime(15 * 1000); // past both 5s probe failures (10s) with margin
+
+      expect(session.connectionState).toBe('offline');
+      expect(session.transportState).toBe('connected');
+      // The streams are still held - nothing on this path nulls them, which
+      // is exactly the window push presence suppression must not read as
+      // "still watching".
+      expect(session.isEstablished).toBe(true);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports "offline" immediately on an explicit remote close', () => {
     vi.useFakeTimers();
     try {
@@ -817,6 +1118,13 @@ describe('BridgeSession.connectionState', () => {
       device.send(wrapSessionFrame(SessionFrameKind.Application, responderStreams.send.seal(new Uint8Array(0), FrameTag.Final)));
 
       expect(session.connectionState).toBe('offline');
+      // The streams are left intact by markPeerAbsent (see the class doc):
+      // clearing them here would break the independent send path for no
+      // benefit, since connectionState already moved to 'offline' on
+      // peerPresence alone. This is exactly the window push presence
+      // suppression must read connectionState rather than this raw flag
+      // to avoid treating the device as still watching.
+      expect(session.isEstablished).toBe(true);
 
       session.dispose();
     } finally {
@@ -886,8 +1194,8 @@ describe('BridgeSession.connectionState', () => {
     // Every test above calls dispose() only as its last line, never followed
     // by a timer advance. This pins the actual teardown contract: a presence
     // probe armed by start()'s initial (unanswered) handshake must not go on
-    // to retry, spend the probe budget, schedule an absent-reprobe, or emit
-    // 'connectionState' after the session is torn down.
+    // to retry, spend the probe budget, or emit 'connectionState' after the
+    // session is torn down.
     vi.useFakeTimers();
     try {
       const desktopIdentity = testIdentity();
@@ -911,8 +1219,7 @@ describe('BridgeSession.connectionState', () => {
       // make a leftover timer's eventual firing a no-op.
       expect(vi.getTimerCount()).toBe(timerCountBeforeSession);
 
-      // Well past the presence timeout (5s), the absent-probe interval (15s)
-      // that a spent budget would schedule, and the rehandshake interval
+      // Well past the presence timeout (5s) and the rehandshake interval
       // (2min): every timer a live session would still be driving.
       vi.advanceTimersByTime(3 * 60 * 1000);
 
@@ -923,19 +1230,21 @@ describe('BridgeSession.connectionState', () => {
     }
   });
 
-  it('dispose() stops a scheduled absent-reprobe from ever firing again', () => {
-    // Distinct from the presence-probe test above: after the probe budget is
-    // fully spent (two unanswered timeouts), the session schedules a SEPARATE
-    // absent-reprobe timer (scheduleAbsentProbe) rather than leaving the
-    // presence timer pending. dispose() must clear that one too.
+  it('dispose() clears the rekey interval left running after the peer goes absent, with no further sends', () => {
+    // Distinct from the presence-probe test above: once the probe budget is
+    // fully spent (two unanswered timeouts) and markPeerAbsent() fires, the
+    // ONLY timer left running is the REHANDSHAKE_INTERVAL_MS interval armed
+    // by the original beginHandshake() call. There is no separate re-probe
+    // loop while absent (see beginHandshake()'s parked-slot guard: a spent
+    // presence budget's markPeerAbsent() does not re-arm anything). dispose()
+    // must still clear that rekey interval.
     vi.useFakeTimers();
     try {
       const desktopIdentity = testIdentity();
       const deviceStatic = generateX25519KeyPair();
       const { desktop } = createReconnectableLoopback();
       const timerCountBeforeSession = vi.getTimerCount();
-      // No responder: spend the full two-probe budget (5s each) to reach
-      // 'offline' and arm the absent-reprobe timer.
+      // No responder: spend the full two-probe budget (5s each) to reach 'offline'.
       const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
       vi.advanceTimersByTime(2 * 5 * 1000);
       expect(session.connectionState).toBe('offline');
@@ -947,12 +1256,11 @@ describe('BridgeSession.connectionState', () => {
       session.dispose();
 
       // The falsifying assertion: dispose() must leave no pending timer
-      // behind (the rehandshake interval is cleared unconditionally above
-      // this block, so any leftover here is the absent-reprobe timer).
+      // behind - the only candidate at this point is the rehandshake interval.
       expect(vi.getTimerCount()).toBe(timerCountBeforeSession);
 
-      // Well past the absent-reprobe interval (15s) and the rehandshake
-      // interval (2min): every timer a live session would still be driving.
+      // Well past the rehandshake interval (2min): every timer a live
+      // session would still be driving.
       vi.advanceTimersByTime(3 * 60 * 1000);
 
       expect(sendSpy).not.toHaveBeenCalled();
@@ -992,6 +1300,382 @@ describe('BridgeSession.connectionState', () => {
 
       expect(sendSpy).not.toHaveBeenCalled();
       expect(connectionStateEvents).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+/**
+ * #635: while the relay has the desktop's connection parked (no phone
+ * attached yet), every msg1 it sends accumulates in the relay's park buffer
+ * rather than being dropped or delivered - so a phone attaching mid-park
+ * used to receive a burst of buffered handshakes at once (one 'established'
+ * plus a rekey per extra msg1) instead of the single handshake it started
+ * with. `createParkingRelayLoopback` is the harness fix: the earlier
+ * drop-based doubles cannot reproduce this because they never buffer
+ * anything for an absent peer.
+ *
+ * This block also covers the rest of #635's fix to the same guard: the
+ * un-blocking `!peerSeenOnThisConnection` term (a lost rekey msg1 IS
+ * re-sent once a live peer proves the slot is paired) and the resulting
+ * armPresenceTimer()/beginHandshake() ordering in onPresenceProbeTimeout().
+ * Those two need a live peer proving the slot paired, not an absent one
+ * buffering, so they drive `createReconnectableLoopback` instead.
+ */
+describe('BridgeSession park-buffer behavior (#635)', () => {
+  it('parks a fresh connection and buffers only ONE msg1, so an arriving phone establishes in a single handshake', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone } = createParkingRelayLoopback();
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(['read-board']) as CapabilitySet,
+        transport: desktop,
+      });
+
+      session.start(); // msg1 #1 buffered by the park.
+
+      // Well past the presence-probe window (10s) and the old absent-probe
+      // cadence (15s x 2 = 30s), still inside the relay's 60s park timeout.
+      vi.advanceTimersByTime(30 * 1000);
+
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+
+      // Exactly one handshake - the buffered msg1 - completed. Before the
+      // fix this was 3 (msg1 sent at t=0, t=5s, t=25s, all buffered and
+      // flushed together), which forced the phone through 2 spurious
+      // rekeys and left the desktop's own session unestablished until the
+      // 3s failure retry that follows a stale msg2.
+      expect(responder.establishedCount).toBe(1);
+      expect(session.isEstablished).toBe(true);
+      expect(session.connectionState).toBe('connected');
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends exactly one msg1 while the relay has it parked, not one per probe tick', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop } = createParkingRelayLoopback();
+      const sendSpy = vi.spyOn(desktop, 'send');
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(),
+        transport: desktop,
+      });
+
+      session.start();
+      // Just short of the relay's 60s park timeout, so this is still the
+      // same parked connection throughout.
+      vi.advanceTimersByTime(55 * 1000);
+
+      const handshakeFrames = sendSpy.mock.calls.filter(([frame]) => unwrapSessionFrame(frame).kind === SessionFrameKind.Handshake);
+      expect(handshakeFrames).toHaveLength(1);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the relay closing a parked socket after PARK_TIMEOUT_MS starts a fresh park with its own single msg1', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone } = createParkingRelayLoopback();
+      const sendSpy = vi.spyOn(desktop, 'send');
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(),
+        transport: desktop,
+      });
+
+      session.start();
+
+      // Assert WHILE the first park is still alive, not only after
+      // attachPhone(): the post-attach assertions below hold whether the
+      // parked window sent one msg1 (this guard) or several (a failed-probe
+      // loop that kept re-initiating into the same buffer), because the
+      // relay's park timeout below discards whatever accumulated either way
+      // and attachPhone() only ever sees the ONE fresh msg1 sent after the
+      // redial. Checked just short of the 60s park timeout, so this is still
+      // the same parked connection the whole time.
+      vi.advanceTimersByTime(MOCK_RELAY_PARK_TIMEOUT_MS - 1000);
+      const parkedHandshakeFrames = sendSpy.mock.calls.filter(([frame]) => unwrapSessionFrame(frame).kind === SessionFrameKind.Handshake);
+      expect(parkedHandshakeFrames).toHaveLength(1);
+
+      // Past the relay's park timeout (60s) plus the redial backoff (500ms):
+      // the FIRST parked connection is closed and its buffer discarded, and
+      // a fresh one dials in and is parked again.
+      vi.advanceTimersByTime(1000 + MOCK_RELAY_REDIAL_BACKOFF_MS);
+
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+
+      expect(responder.establishedCount).toBe(1);
+      expect(session.isEstablished).toBe(true);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reaches "offline" while parked, even though beginHandshake() is blocked from re-sending', () => {
+    // The falsifying test for splitting the probe-budget bookkeeping off of
+    // the send: without onPresenceProbeTimeout's unconditional
+    // armPresenceTimer() call, blocking the re-send would also stop the
+    // budget from ever reaching PEER_PRESENCE_FAILURES_BEFORE_ABSENT, and
+    // the badge would rest on 'connecting' forever instead of reaching
+    // 'offline'.
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop } = createParkingRelayLoopback();
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(['read-board']) as CapabilitySet,
+        transport: desktop,
+      });
+      const peerAbsentEvents = vi.fn();
+      session.on('peerAbsent', peerAbsentEvents);
+
+      session.start();
+      vi.advanceTimersByTime(10 * 1000);
+
+      expect(session.connectionState).toBe('offline');
+      expect(peerAbsentEvents).toHaveBeenCalledTimes(1);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-parks with an empty buffer on a clean departure, so re-attaching does not force an extra rekey', () => {
+    // The falsifying test for guarding on peerSeenOnThisConnection rather
+    // than on peerPresence: a phone that just left cleanly leaves
+    // peerPresence === 'present' behind (nothing demotes it on the way
+    // down), so a guard keyed off THAT would sail a second msg1 into the
+    // fresh park's buffer the moment the first presence probe (5s) timed
+    // out - two rekeys on the very next arrival, in the most common
+    // departure there is.
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone, detachPhone } = createParkingRelayLoopback();
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(['read-board']) as CapabilitySet,
+        transport: desktop,
+      });
+
+      session.start();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+      expect(responder.establishedCount).toBe(1);
+      expect(session.connectionState).toBe('connected');
+
+      // The phone leaves; the relay force-closes the desktop's socket too
+      // and it redials into a fresh, empty park.
+      detachPhone();
+      vi.advanceTimersByTime(MOCK_RELAY_REDIAL_BACKOFF_MS);
+
+      // Idle well past the first presence-probe timeout (5s) in the fresh
+      // park, and past the second (10s) that would demote peerPresence to
+      // 'absent' on its own.
+      vi.advanceTimersByTime(30 * 1000);
+
+      attachPhone();
+
+      // 1 from the first live session, 1 from this second park - never 3.
+      expect(responder.establishedCount).toBe(2);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-keys a still-parked connection on the REHANDSHAKE_INTERVAL_MS tick by REPLACING the outstanding msg1, not skipping it', () => {
+    // Pins armRehandshakeTimer()'s `this.beginHandshake(true)` call
+    // specifically: reverting it to a plain `this.beginHandshake()` leaves
+    // the whole suite green today, because kangentic-relay's own 60s park
+    // timeout always redials - and re-initiates via onTransportState()'s
+    // 'connected' branch - well before the 120s rekey tick could ever land
+    // on the same still-outstanding handshake. A self-hosted relay with no
+    // park timeout (the case armRehandshakeTimer()'s own comment calls out)
+    // has no such redial to mask it, so this test disables the double's park
+    // timeout to reach that path directly.
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop } = createParkingRelayLoopback({ disableParkTimeout: true });
+      const sendSpy = vi.spyOn(desktop, 'send');
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(),
+        transport: desktop,
+      });
+
+      // No responder is ever attached: the connection stays parked,
+      // unanswered, for the whole test - there is nothing to reply and clear
+      // this.handshake, so it is still outstanding when the rekey tick fires.
+      session.start();
+
+      vi.advanceTimersByTime(2 * 60 * 1000);
+
+      const handshakeFrames = sendSpy.mock.calls.filter(([frame]) => unwrapSessionFrame(frame).kind === SessionFrameKind.Handshake);
+      // One at start(), one from the rekey tick REPLACING it. Without
+      // replaceOutstanding the second would be blocked by beginHandshake()'s
+      // own parked-slot guard, leaving this at 1.
+      expect(handshakeFrames).toHaveLength(2);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-sends a lost rekey msg1 on every probe timeout once the peer has proven the slot is live, not just once', () => {
+    // Pins the `!this.peerSeenOnThisConnection` term of beginHandshake()'s
+    // guard, specifically for its UN-blocking direction: dropping that term
+    // (leaving only `this.handshake && !replaceOutstanding`) makes the guard
+    // strictly MORE restrictive, and the existing "keeps reporting
+    // 'connected' while a lost rekey drains the probe budget" test above
+    // never notices, because it only asserts connectionState and a decoded-
+    // message count - both hold whether or not the presence-probe path
+    // actually re-sends anything. A live peer proven on a PAIRED slot (an
+    // application frame the desktop can still open) is proof a dropped msg1
+    // is genuinely lost rather than merely parked, so beginHandshake() must
+    // keep re-sending it on every probe timeout while that evidence holds.
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device } = createReconnectableLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(),
+        transport: desktop,
+      });
+
+      session.start();
+      expect(session.isEstablished).toBe(true);
+
+      // From here the relay swallows our initiations, so the rekey below
+      // never gets a reply and this.handshake stays outstanding - but the
+      // phone keeps serving on its original streams, so it can still prove
+      // the slot is live.
+      responder.dropHandshakes = true;
+      vi.advanceTimersByTime(2 * 60 * 1000); // The rekey tick sends the now-lost msg1.
+
+      // Isolate the probe-driven re-initiations from the rekey tick's own
+      // send above: only what happens from here is under test.
+      const sendSpy = vi.spyOn(desktop, 'send');
+      // Each iteration proves the slot is live just before its
+      // presence-probe window (PEER_PRESENCE_TIMEOUT_MS, 5s) expires, so the
+      // probe budget never spends and every window's beginHandshake() call
+      // is the one under test.
+      for (let tick = 0; tick < 4; tick += 1) {
+        responder.sendApplicationMessage({ type: 'heartbeat' } as BridgeMessage);
+        vi.advanceTimersByTime(5 * 1000);
+      }
+
+      const handshakeFrames = sendSpy.mock.calls.filter(([frame]) => unwrapSessionFrame(frame).kind === SessionFrameKind.Handshake);
+      // One per probe window, not just once on the first timeout - the test
+      // name's "on every probe timeout" claim, pinned exactly rather than
+      // merely "more than one".
+      expect(handshakeFrames).toHaveLength(4);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('arms a fresh presence timer BEFORE re-initiating, not after, so a synchronous establishment cannot strand a stray probe on a healthy session', () => {
+    // Pins the ORDER of armPresenceTimer() before beginHandshake() inside
+    // onPresenceProbeTimeout(). On any in-process transport whose send()
+    // resolves a handshake synchronously (every test double in this file),
+    // calling beginHandshake() first lets handleHandshakeFrame()'s
+    // clearPresenceTimer() run before the trailing armPresenceTimer() ever
+    // executes. That trailing arm then has nothing to consume and leaves a
+    // probe running on an ALREADY-ESTABLISHED session, which re-initiates and
+    // re-arms itself again on its own timeout - rekeying a healthy session
+    // every PEER_PRESENCE_TIMEOUT_MS (5s) forever instead of settling.
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device } = createReconnectableLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      // The FIRST msg1 goes unanswered, so a presence probe is genuinely
+      // pending when the garbage frame below lands.
+      responder.dropHandshakes = true;
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(),
+        transport: desktop,
+      });
+
+      session.start();
+      expect(session.isEstablished).toBe(false);
+
+      // A frame that fails unwrapSessionFrame outright - its first byte is
+      // not a valid SessionFrameKind - unlike the "recovers from a garbled
+      // handshake frame" test above, which wraps its garbage as a Handshake
+      // frame and so sets this.handshake = null and schedules its own retry.
+      // This one leaves this.handshake untouched while still proving, via
+      // onFrame()'s unconditional peerSeenOnThisConnection = true, that the
+      // slot is live.
+      device.send(new Uint8Array([9, 9, 9, 9, 9]));
+
+      // The relay is live again from here, so the probe timeout's
+      // re-initiation below is answered synchronously.
+      responder.dropHandshakes = false;
+
+      vi.advanceTimersByTime(5 * 1000);
+      expect(session.isEstablished).toBe(true);
+      expect(responder.establishedCount).toBe(1);
+
+      // Well past several more PEER_PRESENCE_TIMEOUT_MS windows. A correctly
+      // cleared probe stays quiet; a stray one re-establishes every 5s.
+      vi.advanceTimersByTime(30 * 1000);
+
+      expect(responder.establishedCount).toBe(1);
+
+      session.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -1088,5 +1772,647 @@ describe('BridgeSession.sendGoodbye', () => {
     const applicationFrames = sendSpy.mock.calls.filter(([frame]) => unwrapSessionFrame(frame).kind === SessionFrameKind.Application);
     expect(applicationFrames).toEqual([]);
     expect(responder.receivedGoodbyes).toBe(0);
+  });
+});
+
+/** REHANDSHAKE_INTERVAL_MS in bridge-session.ts: the rekey tick that is the only thing that writes into a long-lived socket. */
+const MOCK_REHANDSHAKE_INTERVAL_MS = 2 * 60 * 1000;
+
+/**
+ * Models the socket a router restart leaves behind (2026-09-18): the relay
+ * reaped it (keepalive, no pong) while the network was down, so from the
+ * relay's side the desktop is gone, but on the desktop the socket still
+ * reads 'connected' and nothing the OS reports ever changes that. After
+ * killNetwork() every frame the desktop sends vanishes (not even the park
+ * buffer sees it), every frame the device sends is lost, and the relay's
+ * park-timeout close can never arrive - that close is exactly what the
+ * hosted relay cannot deliver to a socket it already terminated.
+ *
+ * The desktop side is a RedialableTransport whose redialNow is a plain
+ * recorder: a test that wants the redial to actually recover installs
+ * simulateRedial() on it. The two production doubles above stay plain
+ * Transports on purpose, so the redial branch is dead code across every
+ * existing test (the #635 block in particular) and this double is the only
+ * one that lights it.
+ */
+function createZombieRelayLoopback(): {
+  desktop: Transport & { redialNow: Mock<(options?: RedialOptions) => void> };
+  device: Transport;
+  /** SlotTable.pair(): flushes the park buffer to the device and forwards live from then on. */
+  attachPhone: () => void;
+  /** The router restart: the socket stays 'connected' here while nothing crosses it in either direction. */
+  killNetwork: () => void;
+  /** The network back, with the relay holding a fresh empty park for whatever connects next. */
+  restoreNetwork: () => void;
+  /** A frame that reaches the desktop regardless of killNetwork(): the blind relay injecting bytes. */
+  injectFrame: (frame: Uint8Array) => void;
+  /** What a real RelayClient.redialNow({ force }) does: 'reconnecting' now, a fresh empty park 500ms later, with the network back. */
+  simulateRedial: () => void;
+  setDesktopState: (state: TransportState) => void;
+} {
+  const desktopStateListeners = new Set<(state: TransportState) => void>();
+  const desktopFrameListeners = new Set<(frame: Uint8Array) => void>();
+  const deviceFrameListeners = new Set<(frame: Uint8Array) => void>();
+  let desktopState: TransportState = 'connected';
+  let attached = false;
+  let networkDead = false;
+  let pending: Uint8Array[] = [];
+
+  const setDesktopState = (state: TransportState): void => {
+    desktopState = state;
+    for (const listener of desktopStateListeners) listener(state);
+  };
+
+  const desktop = {
+    get state() {
+      return desktopState;
+    },
+    connect: () => Promise.resolve(),
+    send: (frame: Uint8Array) => {
+      if (desktopState !== 'connected' || networkDead) return;
+      if (attached) {
+        for (const listener of deviceFrameListeners) listener(frame);
+        return;
+      }
+      pending.push(frame);
+    },
+    close: () => undefined,
+    onFrame: (listener: (frame: Uint8Array) => void) => {
+      desktopFrameListeners.add(listener);
+      return () => desktopFrameListeners.delete(listener);
+    },
+    onStateChange: (listener: (state: TransportState) => void) => {
+      desktopStateListeners.add(listener);
+      return () => desktopStateListeners.delete(listener);
+    },
+    redialNow: vi.fn<(options?: RedialOptions) => void>(),
+  };
+
+  const device: Transport = {
+    state: 'connected',
+    connect: () => Promise.resolve(),
+    send: (frame) => {
+      if (networkDead) return;
+      for (const listener of desktopFrameListeners) listener(frame);
+    },
+    close: () => undefined,
+    onFrame: (listener) => {
+      deviceFrameListeners.add(listener);
+      return () => deviceFrameListeners.delete(listener);
+    },
+    onStateChange: () => () => undefined,
+  };
+
+  const attachPhone = (): void => {
+    attached = true;
+    const buffered = pending;
+    pending = [];
+    for (const frame of buffered) for (const listener of deviceFrameListeners) listener(frame);
+  };
+
+  const killNetwork = (): void => {
+    networkDead = true;
+  };
+
+  const restoreNetwork = (): void => {
+    networkDead = false;
+    attached = false;
+    pending = [];
+  };
+
+  const injectFrame = (frame: Uint8Array): void => {
+    for (const listener of desktopFrameListeners) listener(frame);
+  };
+
+  const simulateRedial = (): void => {
+    setDesktopState('reconnecting');
+    setTimeout(() => {
+      restoreNetwork();
+      setDesktopState('connected');
+    }, MOCK_RELAY_REDIAL_BACKOFF_MS);
+  };
+
+  return { desktop, device, attachPhone, killNetwork, restoreNetwork, injectFrame, simulateRedial, setDesktopState };
+}
+
+/**
+ * The spent-budget redial: the one liveness verdict the transport cannot
+ * reach on its own. A socket the relay reaped never receives the park-timeout
+ * close the presence machinery used to wait for, so a spent budget on a
+ * socket that carried nothing inbound for the whole episode, and that the
+ * park timeout could not have been about to recycle anyway, closes the socket
+ * itself. Two grounds, pinned separately: the phone had answered on this
+ * socket (paired then silent), or a rekey tick found it still open past the
+ * park timeout (a parked zombie). A fresh park whose phone is simply away
+ * matches neither and keeps the relay's 60s churn, which is what preserves
+ * #635's one initiation per parked connection.
+ *
+ * Constants mirror bridge-session.ts: PEER_PRESENCE_TIMEOUT_MS 5s,
+ * PEER_PRESENCE_FAILURES_BEFORE_ABSENT 2, REHANDSHAKE_INTERVAL_MS 2min.
+ */
+describe('BridgeSession spent-budget redial', () => {
+  function startSession(transport: Transport, desktopIdentity: BridgeIdentity, devicePublicKey: Uint8Array): BridgeSession {
+    const session = new BridgeSession({
+      identity: desktopIdentity,
+      deviceId: 'device-1',
+      remoteStaticPublicKey: devicePublicKey,
+      capabilities: new Set(['read-board']) as CapabilitySet,
+      transport,
+    });
+    session.start();
+    return session;
+  }
+
+  function countHandshakeFrames(sendSpy: ReturnType<typeof vi.spyOn<Transport, 'send'>>): number {
+    return sendSpy.mock.calls.filter(([frame]) => unwrapSessionFrame(frame).kind === SessionFrameKind.Handshake).length;
+  }
+
+  it('redials a paired socket that went silent, at the absent edge, and re-establishes on the fresh park', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone, killNetwork, simulateRedial } = createZombieRelayLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(responder.establishedCount).toBe(1);
+      expect(session.connectionState).toBe('connected');
+
+      desktop.redialNow.mockImplementation(simulateRedial);
+      const events: string[] = [];
+      session.on('peerAbsent', () => events.push('peerAbsent'));
+      session.on('forcedRedial', () => events.push('forcedRedial'));
+      session.on('transportState', (state: TransportState) => events.push(`transport:${state}`));
+
+      // The router restart. The socket still reads 'connected'; nothing
+      // crosses it, and no close will ever arrive.
+      killNetwork();
+
+      // The rekey tick writes into the dead socket, and the two presence
+      // windows it opens go unanswered. One millisecond short of the second
+      // expiry nothing has happened yet.
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 10 * 1000 - 1);
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      expect(desktop.redialNow).toHaveBeenCalledTimes(1);
+      expect(desktop.redialNow).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
+      // The absence edge is announced BEFORE the transport is torn down, and
+      // presence is already 'absent' when the leave-connected edge lands, so
+      // no reconnect grace holds a stale 'connected'.
+      expect(events).toEqual(['peerAbsent', 'forcedRedial', 'transport:reconnecting']);
+      expect(session.connectionState).toBe('reconnecting');
+
+      // The fresh park's 'connected' edge sends one msg1 into an empty
+      // buffer; the phone arriving finds exactly that one.
+      vi.advanceTimersByTime(MOCK_RELAY_REDIAL_BACKOFF_MS);
+      attachPhone();
+      expect(responder.establishedCount).toBe(2);
+      expect(session.connectionState).toBe('connected');
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits forcedRedial with the paired-silent reason and passes its description to redialNow, for a socket the phone had answered on', () => {
+    // Today both this and the parked-zombie case below only assert
+    // objectContaining({ force: true }) and an event call count - swapping
+    // the two ForcedRedialReason strings, or the peerSeenOnThisConnection
+    // ternary that picks between them, leaves the whole suite green. This
+    // pins the actual reason value on both the event payload and the string
+    // handed to redialNow.
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone, killNetwork, simulateRedial } = createZombieRelayLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(responder.establishedCount).toBe(1);
+
+      desktop.redialNow.mockImplementation(simulateRedial);
+      const forcedRedialReasons: ForcedRedialReason[] = [];
+      session.on('forcedRedial', (reason: ForcedRedialReason) => forcedRedialReasons.push(reason));
+
+      killNetwork();
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 10 * 1000);
+
+      expect(forcedRedialReasons).toEqual(['paired-silent']);
+      expect(desktop.redialNow).toHaveBeenCalledWith({
+        force: true,
+        reason: FORCED_REDIAL_DESCRIPTIONS['paired-silent'],
+      });
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not redial a fresh park whose phone is simply away', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop } = createZombieRelayLoopback();
+      // No phone: the initiation sits in the park buffer unanswered.
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      const peerAbsentEvents = vi.fn();
+      session.on('peerAbsent', peerAbsentEvents);
+
+      vi.advanceTimersByTime(10 * 1000);
+      expect(session.connectionState).toBe('offline');
+      expect(peerAbsentEvents).toHaveBeenCalledTimes(1);
+      // A connect-edge episode on a never-answered socket is the ordinary
+      // "phone is away" park: the relay's own timeout recycles it at 60s,
+      // and redialing here would turn that into a 10s dial cycle.
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(49 * 1000);
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('redials a parked zombie at the first exhaustion after the rekey tick, riding the non-edge absence', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop } = createZombieRelayLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      const peerAbsentEvents = vi.fn();
+      session.on('peerAbsent', peerAbsentEvents);
+      const forcedRedialEvents = vi.fn();
+      session.on('forcedRedial', forcedRedialEvents);
+
+      // The hosted relay would have closed a live park at 60s. This one is
+      // still open at the 120s tick, so the tick is proof the close never
+      // came; the pinned budget spends on the first window, at +5s.
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 5 * 1000 - 1);
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      expect(desktop.redialNow).toHaveBeenCalledTimes(1);
+      expect(desktop.redialNow).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
+      expect(forcedRedialEvents).toHaveBeenCalledTimes(1);
+      // Absence was concluded at 10s and never changed; the redial rides
+      // the non-edge exhaustion, not a second edge.
+      expect(peerAbsentEvents).toHaveBeenCalledTimes(1);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits forcedRedial with the parked-stale reason and passes its description to redialNow, for a rekey unanswered past the park timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop } = createZombieRelayLoopback();
+      // No phone ever attaches: the rekey tick's msg1 sits unanswered.
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+
+      const forcedRedialReasons: ForcedRedialReason[] = [];
+      session.on('forcedRedial', (reason: ForcedRedialReason) => forcedRedialReasons.push(reason));
+
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 5 * 1000);
+
+      expect(forcedRedialReasons).toEqual(['parked-stale']);
+      expect(desktop.redialNow).toHaveBeenCalledWith({
+        force: true,
+        reason: FORCED_REDIAL_DESCRIPTIONS['parked-stale'],
+      });
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stands down when any frame, even a garbled one, arrived during the episode', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, injectFrame } = createZombieRelayLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      const frameRejectedEvents = vi.fn();
+      session.on('frameRejected', frameRejectedEvents);
+
+      // Into the tick-opened episode, inside its first window.
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 2 * 1000);
+      // Bytes that fail unwrapSessionFrame outright: not a reply, but proof
+      // the relay is forwarding on this socket, which is all that matters.
+      injectFrame(new Uint8Array([9, 9, 9, 9, 9]));
+      expect(frameRejectedEvents).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(3 * 1000);
+      expect(session.connectionState).toBe('offline');
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('redials once per episode: the fresh park waits for the next tick, never loops on its own budget', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone, killNetwork, simulateRedial } = createZombieRelayLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(responder.establishedCount).toBe(1);
+      desktop.redialNow.mockImplementation(simulateRedial);
+      killNetwork();
+
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 10 * 1000);
+      expect(desktop.redialNow).toHaveBeenCalledTimes(1);
+
+      // The redial lands on a fresh park with the phone still away. Its own
+      // budget spends at +10s on a connect-edge episode, which is the
+      // ordinary park and not grounds to redial again.
+      vi.advanceTimersByTime(MOCK_RELAY_REDIAL_BACKOFF_MS);
+      expect(session.transportState).toBe('connected');
+      vi.advanceTimersByTime(10 * 1000);
+      expect(session.connectionState).toBe('offline');
+      expect(desktop.redialNow).toHaveBeenCalledTimes(1);
+
+      // The next redial is the parked-zombie path: the tick armed by the
+      // fresh park's initiation, plus one pinned window.
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS - 10 * 1000 + 5 * 1000 - 1);
+      expect(desktop.redialNow).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1);
+      expect(desktop.redialNow).toHaveBeenCalledTimes(2);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never redials on the phone\'s deliberate goodbye', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone } = createZombieRelayLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(responder.establishedCount).toBe(1);
+      if (!responder.streams) throw new Error('responder never established');
+
+      // The unpair Final. It demotes presence through the same method the
+      // spent budget uses, and that path must never turn into a redial.
+      device.send(wrapSessionFrame(SessionFrameKind.Application, responder.streams.send.seal(new Uint8Array(0), FrameTag.Final)));
+      expect(session.connectionState).toBe('offline');
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(15 * 1000);
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never redials a transport that stopped reading "connected" mid-episode', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, setDesktopState } = createZombieRelayLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 2 * 1000);
+      // The transport noticed on its own (a late close finally arrived):
+      // the ordinary reconnect owns recovery from here.
+      setDesktopState('reconnecting');
+      vi.advanceTimersByTime(10 * 1000);
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a forced dial that fails leaves the session in the transport\'s hands, and the next connected edge re-initiates', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone, killNetwork, restoreNetwork, setDesktopState } = createZombieRelayLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(responder.establishedCount).toBe(1);
+      // The incident's actual shape: the budget spends while the network is
+      // still down, so the forced dial fails at once and RelayClient sits in
+      // its backoff ladder. Modelled as 'reconnecting' with nothing after it.
+      desktop.redialNow.mockImplementation(() => setDesktopState('reconnecting'));
+      killNetwork();
+
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 10 * 1000);
+      expect(desktop.redialNow).toHaveBeenCalledTimes(1);
+      expect(session.connectionState).toBe('reconnecting');
+
+      // Nothing the session owns fires while the transport is down: no
+      // probe, no second redial, no stray timer of its own.
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      expect(desktop.redialNow).toHaveBeenCalledTimes(1);
+      expect(session.connectionState).toBe('reconnecting');
+
+      // The ladder finally lands: one fresh initiation into the empty park,
+      // and the phone arriving completes exactly that one.
+      const sendSpy = vi.spyOn(desktop, 'send');
+      restoreNetwork();
+      setDesktopState('connected');
+      expect(countHandshakeFrames(sendSpy)).toBe(1);
+      attachPhone();
+      expect(responder.establishedCount).toBe(2);
+      expect(session.connectionState).toBe('connected');
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumeFromSleep() redials a session with no phone attached and only probes one whose phone was present', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+
+      // Parked, phone away: nobody to bounce, so the redial is free and the
+      // ~125s the rekey tick would take is pure delay.
+      const parked = createZombieRelayLoopback();
+      const parkedSession = startSession(parked.desktop, desktopIdentity, deviceStatic.publicKey);
+      vi.advanceTimersByTime(10 * 1000);
+      expect(parkedSession.connectionState).toBe('offline');
+      expect(parkedSession.resumeFromSleep('resume')).toBe('redialed');
+      expect(parked.desktop.redialNow).toHaveBeenCalledWith(expect.objectContaining({ force: true, reason: 'resume' }));
+      parkedSession.dispose();
+
+      // Present: a forced redial would bounce a phone that may still be
+      // there (a standby short enough for the socket to survive), so the
+      // session probes and lets the budget decide.
+      const paired = createZombieRelayLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, paired.device);
+      paired.attachPhone();
+      const pairedSession = startSession(paired.desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(responder.establishedCount).toBe(1);
+      expect(pairedSession.resumeFromSleep('resume')).toBe('probed');
+      expect(paired.desktop.redialNow).not.toHaveBeenCalled();
+      // The socket was alive: the probe was answered and nothing else moves.
+      expect(responder.establishedCount).toBe(2);
+      vi.advanceTimersByTime(30 * 1000);
+      expect(paired.desktop.redialNow).not.toHaveBeenCalled();
+
+      // The socket was dead: the probe goes unanswered, the budget spends,
+      // and the spent-budget redial takes over ~10s later.
+      paired.killNetwork();
+      expect(pairedSession.resumeFromSleep('resume')).toBe('probed');
+      vi.advanceTimersByTime(10 * 1000 - 1);
+      expect(paired.desktop.redialNow).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(paired.desktop.redialNow).toHaveBeenCalledTimes(1);
+      pairedSession.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumeFromSleep() returns "skipped" for a disposed session, without touching the transport', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop } = createZombieRelayLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      session.dispose();
+
+      expect(session.resumeFromSleep('resume')).toBe('skipped');
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumeFromSleep() returns "skipped" for a transport that cannot redial', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      // A plain in-process Transport double, with no redialNow method at all.
+      const { desktop } = createReconnectableLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+
+      expect(session.resumeFromSleep('resume')).toBe('skipped');
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumeFromSleep() returns "skipped" when the peer is present but the guarded probe is a no-op on an already-buffered msg1', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device, attachPhone, setDesktopState, restoreNetwork } = createZombieRelayLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      attachPhone();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(responder.establishedCount).toBe(1);
+      expect(session.connectionState).toBe('connected');
+
+      // The phone's silent departure into a fresh, empty park - peerPresence
+      // stays 'present' since nothing demotes it on the way down (the same
+      // silent-departure shape as the #635 re-park test above). The fresh
+      // park's own 'connected' edge already sent one msg1 into the buffer,
+      // so a probe from here must be blocked by beginHandshake()'s
+      // parked-slot guard.
+      setDesktopState('reconnecting');
+      restoreNetwork();
+      setDesktopState('connected');
+
+      const sendSpy = vi.spyOn(desktop, 'send');
+      expect(session.resumeFromSleep('resume')).toBe('skipped');
+      expect(countHandshakeFrames(sendSpy)).toBe(0);
+      expect(desktop.redialNow).not.toHaveBeenCalled();
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('redialTransport() forces the transport to redial and probePresenceNow() sends the guarded initiation', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+
+      // A parked slot with its initiation still buffered: the probe is a
+      // no-op, exactly as beginHandshake()'s parked-slot guard demands.
+      const parked = createZombieRelayLoopback();
+      const parkedSession = startSession(parked.desktop, desktopIdentity, deviceStatic.publicKey);
+      const parkedSendSpy = vi.spyOn(parked.desktop, 'send');
+      expect(parkedSession.probePresenceNow()).toBe(false);
+      expect(countHandshakeFrames(parkedSendSpy)).toBe(0);
+      parkedSession.redialTransport('test');
+      expect(parked.desktop.redialNow).toHaveBeenCalledTimes(1);
+      expect(parked.desktop.redialNow).toHaveBeenCalledWith(expect.objectContaining({ force: true, reason: 'test' }));
+      parkedSession.dispose();
+
+      // A paired slot: the probe is one rekey the phone answers at once.
+      const paired = createZombieRelayLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, paired.device);
+      paired.attachPhone();
+      const pairedSession = startSession(paired.desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(responder.establishedCount).toBe(1);
+      const pairedSendSpy = vi.spyOn(paired.desktop, 'send');
+      // Answered synchronously by the loopback responder, and still
+      // reported as sent: the return tracks initiations that left, not the
+      // handshake object, which a synchronous reply has already retired.
+      expect(pairedSession.probePresenceNow()).toBe(true);
+      expect(countHandshakeFrames(pairedSendSpy)).toBe(1);
+      expect(responder.establishedCount).toBe(2);
+
+      // A paired zombie whose rekey msg1 is already outstanding: the probe
+      // gets through (the phone had answered on this socket) and adds one
+      // msg1 that goes nowhere, without disturbing the budget already
+      // running - the redial still lands exactly where the tick put it.
+      paired.killNetwork();
+      vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS);
+      expect(countHandshakeFrames(pairedSendSpy)).toBe(2);
+      pairedSession.probePresenceNow();
+      expect(countHandshakeFrames(pairedSendSpy)).toBe(3);
+      vi.advanceTimersByTime(10 * 1000 - 1);
+      expect(paired.desktop.redialNow).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(paired.desktop.redialNow).toHaveBeenCalledTimes(1);
+      pairedSession.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

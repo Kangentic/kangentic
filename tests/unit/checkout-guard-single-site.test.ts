@@ -41,12 +41,25 @@ describe('checkout-occupancy guard lives in exactly one place', () => {
     // The distinguishing shape of the old inline copies: enumerate sessions,
     // exclude this task, keep the running/queued ones. Reading listSessions for
     // other purposes (counting, lookup by id) is untouched by this.
+    //
+    // Gate on a CALL (a receiver dot), not the bare substring: every consumer
+    // reaches it as `sessionManager.listSessions()` / `this.registry.…`, while
+    // `session-registry.ts` and `session-manager.ts` contain the text only in
+    // their own `listSessions(): Session[] {` declarations. Matching those made
+    // the registry an offender the moment it grew any own-task liveness query
+    // that mentions both statuses (`hasLiveSessionForTask`), which is the
+    // INVERSE of the shape hunted here: it keeps the caller's own task, where
+    // the checkout guard keeps every OTHER task. Known boundary: a copy inlined
+    // inside the registry itself over `this.sessions.values()` would not be
+    // seen. That is acceptable because the guard is about directory occupancy,
+    // which the registry knows nothing about, and its real copies lived at
+    // consumer sites (task-move.ts, agent-spawn.ts).
     const offenders: string[] = [];
     for (const file of files) {
       const relative = path.relative(MAIN_ROOT, file);
       if (relative === CANONICAL_SITE) continue;
       const source = fs.readFileSync(file, 'utf8');
-      if (!source.includes('listSessions()')) continue;
+      if (!/\.listSessions\(\)/.test(source)) continue;
       const filtersOutOwnTaskAmongLive = /session\.taskId\s*!==/.test(source)
         && /'running'/.test(source)
         && /'queued'/.test(source);
@@ -59,10 +72,13 @@ describe('checkout-occupancy guard lives in exactly one place', () => {
     const source = fs.readFileSync(path.join(MAIN_ROOT, CANONICAL_SITE), 'utf8');
     expect(source).toContain('assertNoOtherAgentInDirectory');
     expect(source).toContain('BranchCheckoutBlockedError');
-    // Both checkout arms must be covered: the custom-branch arm is the one the
-    // old guard missed entirely.
+    // Both checkout arms must be covered, and each arm asserts TWICE: at entry,
+    // and again after its fetch await (the entry assert is point-in-time, and a
+    // session that never enters the git queue can start during the fetch's
+    // timeout budget - re-running the synchronous in-memory scan right before
+    // the mutation closes that window for free).
     const guardCallCount = (source.match(/assertNoOtherAgentInDirectory\(context,/g) ?? []).length;
-    expect(guardCallCount).toBe(2);
+    expect(guardCallCount).toBe(4);
   });
 
   it('no longer exports the removed handler-side guard', () => {

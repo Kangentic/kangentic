@@ -27,6 +27,8 @@ const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 const hoisted = vi.hoisted(() => ({
   updateAppliedSettings: vi.fn(),
   restartSessionForSettingsChange: vi.fn(async () => ({ ok: true })),
+  /** When set, the reconcile mock treats the task's pointer as a dead session. */
+  stalePointer: { value: false },
 }));
 
 vi.mock('electron', () => ({
@@ -58,6 +60,23 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
   restartSessionForSettingsChange: (...args: unknown[]) =>
     hoisted.restartSessionForSettingsChange(...args),
+  // The handler reconciles task.session_id against the registry before it
+  // acts. These fixtures set `session_id` only when the session is live, so a
+  // set pointer IS the live session here.
+  reconcileTaskSessionRef: (_context: unknown, _projectId: string, taskId: string) => {
+    const repos = mockGetProjectRepos() as { tasks: { getById: (id: string) => MockTask | null; update?: (patch: unknown) => void } };
+    const task = repos.tasks.getById(taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    if (hoisted.stalePointer.value && task.session_id) {
+      // What the real reconcile does for a pointer at an exited row.
+      repos.tasks.update?.({ id: taskId, session_id: null });
+      return { task: { ...task, session_id: null }, liveSession: null };
+    }
+    return {
+      task,
+      liveSession: task.session_id ? { id: task.session_id, taskId, status: 'running' } : null,
+    };
+  },
 }));
 
 const mockBuildCommandInjectionVerifier = vi.fn(() => null);
@@ -160,6 +179,8 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     taskRepo = {
       getById: vi.fn((_id: string) => task),
       updateOverrides: vi.fn(),
+      // Written by the reconcile mock when it clears a stale pointer.
+      update: vi.fn(),
     };
     swimlaneRepo = {
       getById: vi.fn(() => ({
@@ -264,6 +285,28 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
+  it('returns mode:"persisted" when the task\'s pointer names a session that is no longer live (#682 follow-up)', async () => {
+    // The pointer outlives a CLI that ended by itself. On the raw pointer a
+    // model pick restarted a dead session and an effort pick scheduled
+    // keystrokes into a PTY that was gone; the reconcile clears it first, so
+    // both land here with the override saved for the next spawn.
+    hoisted.stalePointer.value = true;
+    try {
+      task = createMockTask({ session_id: 'dead-session' });
+      taskRepo.getById.mockReturnValue(task);
+      mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => ['/model sonnet']) });
+
+      const result = await callHandler({ taskId: 'task-1', model: 'sonnet' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(taskRepo.update).toHaveBeenCalledWith({ id: 'task-1', session_id: null });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    } finally {
+      hoisted.stalePointer.value = false;
+    }
+  });
+
   it('returns mode:"persisted" without further work when the spec is a no-op delta', async () => {
     // Task already has model_override='sonnet'; user picks 'sonnet' again.
     task = createMockTask({ model_override: 'sonnet' });
@@ -293,6 +336,7 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
       'proj-1',
       '/mock/project',
       'task-1',
+      { phase: 'switching-model' },
     );
     // Live slash injection must NOT fire on a model restart.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
@@ -347,6 +391,7 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
       'proj-1',
       '/mock/project',
       'task-1',
+      { phase: 'switching-model' },
     );
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
     // The cleared override (null) is persisted, not the resolved effective value.
@@ -406,6 +451,7 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
       'proj-1',
       '/mock/project',
       'task-1',
+      { phase: 'switching-model' },
     );
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
@@ -431,6 +477,7 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
       'proj-1',
       '/mock/project',
       'task-1',
+      { phase: 'switching-model' },
     );
     // No live-switch slash should fire on the restart path.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
@@ -462,12 +509,15 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     expect(result).toEqual({ ok: true, mode: 'restart' });
 
     // restartSessionForSettingsChange must have been called with the correct
-    // project context - this is the key assertion the gap was about.
+    // project context - this is the key assertion the gap was about. An
+    // effort-only restart labels itself as a settings change, not a model
+    // switch.
     expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
       expect.anything(),
       'proj-1',
       '/mock/project',
       'task-1',
+      { phase: 'applying-settings' },
     );
 
     // Live slash injection must NOT fire (adapter returned empty sequence).

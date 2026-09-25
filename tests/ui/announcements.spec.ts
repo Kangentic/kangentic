@@ -130,7 +130,7 @@ test.describe('Announcements banner and dialog', () => {
           links: [{ label: 'Become a tester', url: 'https://play.google.com/apps/testing/com.kangentic.mobile', qr: true }],
         },
       ],
-      links: [{ label: 'Read the blog post', url: 'https://kangentic.com/blog' }],
+      links: [{ label: 'Read the blog post', url: 'https://kangentic.com/blog/' }],
     });
     await fireAnnouncements([announcement]);
 

@@ -223,6 +223,69 @@ describe('ClaudeSessionHistoryParser.parse', () => {
   });
 });
 
+/**
+ * Regression guard for the context-window readout when subagent token capture
+ * is switched on.
+ *
+ * The card's context bar is a property of the MAIN THREAD: it answers "how full
+ * is this conversation's window". Subagent turns run in their own contexts, so
+ * folding them in would make the readout meaningless - a review session's bar
+ * would read several hundred percent. The ledger work that captures those turns
+ * is a different concern with its own path (ConversationIndexer ->
+ * conversation_turn_usage), and these tests pin that this parser stays out of it.
+ */
+describe('ClaudeSessionHistoryParser context window vs subagent capture', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reports the same occupancy whether or not the session has a populated subagents directory', () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-claude-subagent-ctx-'));
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
+    try {
+      const agentSessionId = 'review-session';
+      const cwd = '/mock/project';
+      const projectDir = path.join(tempHome, '.claude', 'projects', claudeProjectSlug(cwd));
+      fs.mkdirSync(projectDir, { recursive: true });
+      // A review-shaped main transcript: modest, believable occupancy.
+      const content = [
+        assistantLine({ model: 'claude-opus-5', input: 2000, cacheRead: 244_769, output: 500, id: 'main-1' }),
+        assistantLine({ model: 'claude-opus-5', input: 1200, cacheRead: 246_769, output: 800, id: 'main-2' }),
+      ].join('\n');
+      fs.writeFileSync(path.join(projectDir, `${agentSessionId}.jsonl`), content);
+
+      const before = ClaudeSessionHistoryParser.parse(content, 'append').usage as SessionUsage;
+
+      // Now give the session a real fan-out on disk, with contexts far larger
+      // than the driver's - the shape that would blow the bar past 100% if this
+      // parser ever started reading it.
+      const subagentsDir = path.join(projectDir, agentSessionId, 'subagents');
+      fs.mkdirSync(subagentsDir, { recursive: true });
+      for (const subagentId of ['agent-a1', 'agent-a2', 'agent-a3']) {
+        fs.writeFileSync(
+          path.join(subagentsDir, `${subagentId}.jsonl`),
+          [
+            assistantLine({ model: 'claude-sonnet-5', input: 300_000, cacheRead: 16_200_000, output: 11_800, id: `${subagentId}-1`, isSidechain: true }),
+            assistantLine({ model: 'claude-sonnet-5', input: 334_200, cacheRead: 15_260_000, output: 23_000, id: `${subagentId}-2`, isSidechain: true }),
+          ].join('\n'),
+        );
+        fs.writeFileSync(
+          path.join(subagentsDir, `${subagentId}.meta.json`),
+          JSON.stringify({ agentType: 'review-finder', spawnDepth: 1, toolUseId: `toolu_${subagentId}` }),
+        );
+      }
+
+      const after = ClaudeSessionHistoryParser.parse(content, 'append').usage as SessionUsage;
+
+      expect(after).toEqual(before);
+      // The driver's own latest turn, not a subagent's and not a sum.
+      expect(after.contextWindow.usedTokens).toBe(1200 + 246_769);
+    } finally {
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('ClaudeSessionHistoryParser.locate', () => {
   afterEach(() => {
     vi.restoreAllMocks();

@@ -37,6 +37,18 @@
  * Subscribers are tracked per renderer id because the detached monitor window is
  * a second, independent subscriber; the listener's lifetime follows the union.
  *
+ * ## The per-session gate
+ *
+ * A subscriber names WHICH sessions it will actually draw a peek for. Since the
+ * card's slot follows the Card Preview setting, that is only the rows with no
+ * agent message trail to show (a Command Terminal, an agent that has not spoken
+ * yet, or every row in the description mode that has no description), and no
+ * row at all in the list and table layouts. Output from any other session is
+ * dropped at the tap (one Set lookup) before it can dirty anything, the sampler
+ * reads only wanted grids, and a subscriber wanting nothing keeps the listener
+ * and the timer off entirely. `null` means every session, for a caller that
+ * does not narrow.
+ *
  * ## Why the push is cross-project and fanned out
  *
  * Peeks for EVERY session in EVERY registered project go to every subscribed
@@ -72,8 +84,11 @@ export class MonitorPeekTracker {
   private readonly sessionManager: SessionManager;
   private readonly emit: (peeks: Record<string, string[]>) => void;
 
-  /** Renderer ids currently showing a monitor. The listener follows this set. */
-  private readonly subscribers = new Set<number>();
+  /** Renderer ids currently showing a monitor, each with the sessions it draws a
+   *  peek for (`null` = every session). The listener follows the union. */
+  private readonly wantedByRenderer = new Map<number, ReadonlySet<string> | null>();
+  /** Union of every subscriber's wanted set; `null` when any subscriber wants all. */
+  private wantedUnion: ReadonlySet<string> | null = new Set();
   /** Sessions that produced output since the last sample. */
   private readonly dirty = new Set<string>();
   /** Last peek pushed per session, for the change-gate. */
@@ -83,6 +98,7 @@ export class MonitorPeekTracker {
   private listening = false;
 
   private readonly onDataTap = (sessionId: string): void => {
+    if (!this.isWanted(sessionId)) return;
     this.dirty.add(sessionId);
   };
 
@@ -111,31 +127,61 @@ export class MonitorPeekTracker {
   }
 
   /**
-   * Subscribe a renderer. Idempotent per id.
+   * Subscribe a renderer, or re-state which sessions it wants. Idempotent per id.
    *
-   * Seeds the caller with a full pass over every live session, because an IDLE
-   * session emits no output and would otherwise show a blank card until it
+   * Seeds the caller with a pass over the sessions it NEWLY wants, because an
+   * IDLE session emits no output and would otherwise show a blank card until it
    * happened to speak. The seed bypasses the change-gate for the same reason: a
    * newly subscribed renderer has never received these peeks even though this
-   * process may already have sent them to someone else.
+   * process may already have sent them to someone else. A re-statement with the
+   * same set seeds nothing; one that adds a session seeds only that session.
    */
-  subscribe(rendererId: number): void {
-    this.subscribers.add(rendererId);
-    this.attach();
-    this.sampleAll();
+  subscribe(rendererId: number, wanted: ReadonlySet<string> | null = null): void {
+    const previous = this.wantedByRenderer.has(rendererId) ? this.wantedByRenderer.get(rendererId) ?? null : undefined;
+    this.wantedByRenderer.set(rendererId, wanted);
+    this.recomputeWanted();
+    this.seed(previous, wanted);
   }
 
   /** Unsubscribe a renderer; the listener and timer stop with the last one. */
   unsubscribe(rendererId: number): void {
-    this.subscribers.delete(rendererId);
-    if (this.subscribers.size === 0) this.detach();
+    this.wantedByRenderer.delete(rendererId);
+    this.recomputeWanted();
   }
 
   /** Full teardown, for app shutdown. */
   dispose(): void {
-    this.subscribers.clear();
-    this.detach();
+    this.wantedByRenderer.clear();
+    this.recomputeWanted();
     this.lastSent = new Map();
+  }
+
+  private isWanted(sessionId: string): boolean {
+    return this.wantedUnion === null || this.wantedUnion.has(sessionId);
+  }
+
+  /** Rebuild the union and attach or detach to match it: the listener and timer
+   *  run only while some subscriber wants at least one session. */
+  private recomputeWanted(): void {
+    let union: Set<string> | null = new Set();
+    for (const wanted of this.wantedByRenderer.values()) {
+      if (wanted === null) {
+        union = null;
+        break;
+      }
+      for (const sessionId of wanted) union.add(sessionId);
+    }
+    this.wantedUnion = union;
+    if (union === null || union.size > 0) {
+      this.attach();
+      // A session that stopped being wanted while dirty must not be sampled on
+      // the next tick just because it was queued before the set shrank.
+      if (union !== null) {
+        for (const sessionId of [...this.dirty]) if (!union.has(sessionId)) this.dirty.delete(sessionId);
+      }
+    } else {
+      this.detach();
+    }
   }
 
   private attach(): void {
@@ -158,12 +204,23 @@ export class MonitorPeekTracker {
     this.dirty.clear();
   }
 
-  /** Resample every live session and push, ignoring the change-gate. */
-  private sampleAll(): void {
+  /**
+   * Resample the live sessions a subscriber newly wants and push them, ignoring
+   * the change-gate. `previous` is `undefined` for a first subscribe (everything
+   * wanted is new), `null` when the renderer previously wanted every session.
+   */
+  private seed(previous: ReadonlySet<string> | null | undefined, wanted: ReadonlySet<string> | null): void {
+    const isNewlyWanted = (sessionId: string): boolean => {
+      if (wanted !== null && !wanted.has(sessionId)) return false;
+      if (previous === undefined) return true;
+      if (previous === null) return false;
+      return !previous.has(sessionId);
+    };
     const peeks: Record<string, string[]> = {};
     const live = new Set<string>();
     for (const summary of this.sessionManager.listManagedSummaries()) {
       live.add(summary.id);
+      if (!isNewlyWanted(summary.id)) continue;
       const lines = this.sessionManager.getOutputPeek(summary.id);
       if (lines.length === 0) continue;
       this.lastSent.set(summary.id, lines);
@@ -176,7 +233,7 @@ export class MonitorPeekTracker {
     for (const sessionId of [...this.lastSent.keys()]) {
       if (!live.has(sessionId)) this.lastSent.delete(sessionId);
     }
-    this.dirty.clear();
+    for (const sessionId of Object.keys(peeks)) this.dirty.delete(sessionId);
     if (Object.keys(peeks).length > 0) this.emit(peeks);
   }
 
@@ -188,6 +245,7 @@ export class MonitorPeekTracker {
 
     const changed: Record<string, string[]> = {};
     for (const sessionId of sampling) {
+      if (!this.isWanted(sessionId)) continue;
       const lines = this.sessionManager.getOutputPeek(sessionId);
       if (lines.length === 0) continue;
       const previous = this.lastSent.get(sessionId);

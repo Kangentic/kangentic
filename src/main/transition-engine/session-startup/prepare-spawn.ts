@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { agentRegistry } from '../../agent/agent-registry';
+import { trackEvent } from '../../analytics/analytics';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
@@ -15,6 +16,7 @@ import { isResumeConversationAbsent } from '../resume-conversation-guard';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
+import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 
 /**
  * Fully-prepared agent spawn: the adapter has been resolved, the CLI
@@ -148,7 +150,10 @@ export async function prepareAgentSpawn(input: {
     tasks: input.tasks,
   });
   const adapter = agentRegistry.get(agent);
-  if (!adapter) return { ok: false, reason: 'unknown-agent' };
+  if (!adapter) {
+    trackEvent('spawn_failed', { agent, reason: 'unknown_agent' });
+    return { ok: false, reason: 'unknown-agent' };
+  }
 
   // Model/effort ids are adapter-specific, so the project-level default only
   // applies when this spawn actually runs the project's default agent.
@@ -156,9 +161,22 @@ export async function prepareAgentSpawn(input: {
 
   const cliPathOverride = config.agent.cliPaths[agent] ?? null;
   const detection = await adapter.detect(cliPathOverride);
-  if (!detection.found || !detection.path) return { ok: false, reason: 'cli-not-found' };
+  if (!detection.found || !detection.path) {
+    trackEvent('spawn_failed', { agent, reason: 'cli_not_found' });
+    return { ok: false, reason: 'cli-not-found' };
+  }
 
   await adapter.ensureTrust(cwd);
+
+  // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head
+  // under a PowerShell or Git Bash host is swapped for the sibling shim that
+  // shell can run. This path never carries a prompt, but a crash-recovered
+  // session must launch through the same head the board spawn used.
+  const launch = await resolveShimLaunch({
+    agentPath: detection.path,
+    shell: input.resolvedShell,
+    prompt: undefined,
+  });
 
   // "Plan always wins, else task -> lane -> global" - the rule lives in
   // resolveEffectivePermissionMode (spawn-preamble.ts).
@@ -208,11 +226,18 @@ export async function prepareAgentSpawn(input: {
 
   const sessionRecordId = randomUUID();
   const sessionDir = path.join(projectPath, '.kangentic', 'sessions', sessionRecordId);
+  // sync-write-ok: this must throw, not degrade - a spawn with no session
+  // directory has nowhere to write status/events, so the CLI would come up
+  // with no activity tracking and no way to tell the renderer it is ready.
+  // Both callers (resume-suspended.ts, auto-spawn.ts) already wrap their
+  // per-record prepareAgentSpawn() call in a try/catch that logs, retires or
+  // skips just that one record, and continues the batch - a throw here never
+  // aborts recovery for every other task.
   fs.mkdirSync(sessionDir, { recursive: true });
   const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
   const commandOptions = {
-    agentPath: detection.path,
+    agentPath: launch.agentPath,
     taskId: task.id,
     prompt: undefined,
     cwd,

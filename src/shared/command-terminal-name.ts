@@ -16,6 +16,17 @@
  * Numbering is unconditional rather than "only once a second terminal exists",
  * again for stability: a conditional number changes the title of a window that
  * did not change.
+ *
+ * ONE case renumbers, deliberately. A renderer reload destroys the (project,
+ * slot) pairing map while main keeps every PTY alive, so recovery re-pairs
+ * survivors from the slot main recorded (`planTransientRecovery`). If a terminal
+ * spawned after the reload has already taken that slot, the survivor cannot have
+ * it back and moves to the lowest free one, so a conversation that was "Command
+ * Terminal 1" returns as "Command Terminal 2". That breaks the stability rule
+ * above, and it is still the right trade: the alternative is one of the two PTYs
+ * being left with no window at all, unreachable with its question pending. The
+ * rule holds everywhere else - nothing renumbers because a sibling opened or
+ * closed.
  */
 
 export const COMMAND_TERMINAL_BASE_TITLE = 'Command Terminal';

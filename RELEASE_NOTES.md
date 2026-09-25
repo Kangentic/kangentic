@@ -1,16 +1,9 @@
-## What's New
-
-- **Two new agent adapters: Grok Build (xAI) and Antigravity.** Both ship with the full Claude-parity harness: caller-owned session resume, hook-driven activity detection, Kangentic MCP wiring, folder trust, and usage telemetry. Kangentic now supports 14 agent CLIs.
-- **Verified auto_command delivery for six more agents.** A task's opening prompt is now confirmed delivered rather than fired and forgotten, with a warning toast naming the command and reason when delivery fails.
-- **In-app announcements got a home.** A megaphone in the title bar carries an unread badge and opens a browsable history, so an announcement you dismissed is still readable later.
-- **Mobile companion pairing is honest in both directions.** The desktop announces a revoked pairing, and acts immediately when the phone unpairs from its side.
-- **The Kangentic MCP server is now wired into Codex, Gemini, and Droid**, so agents on those CLIs can read and drive their own board.
-
 ## Bug Fixes
 
-- Agent TUIs render in color again: sessions now default `TERM` and no longer inherit a leaked `NO_COLOR`.
-- WSL sessions spawn as `wsl.exe`, and single-quoted CLI paths convert correctly for unix-like shells.
-- Cursor is detected by its own `cursor-agent` binary instead of the generic `agent` shim that other CLIs also install.
-- An agent running background subagents no longer reads as idle while a turn is retrying.
-- Pasted images are capped at the measured size clamp, and the clipboard temp directory is pruned instead of growing without bound.
-- The announcement history panel keeps a stable floor, and a preview run no longer relights the unread badge.
+- Error reports sent to Sentry no longer carry breadcrumbs holding your file paths, agent command lines, task titles, column prompts, or branch names. Both the main process and the renderer now drop or redact each breadcrumb before it leaves the app.
+- On macOS, a program an agent starts from a terminal no longer hands its crashes to Kangentic's crash reporter, and neither do the login-shell probe, shortcuts, run-script automations, or the worktree init script. Those crashes used to arrive as Kangentic crashes. A crash from another program that still reaches the crash database is now one grouped warning, with that program's memory dump removed.
+- The pull request pill now settles within about 30 seconds of a PR's checks finishing, instead of waiting for the five-minute refresh. A required check that has not started yet reads as queued rather than blocked.
+- An agent's key presses in the Browser pane could land in your terminal when the pane did not have focus, so an Escape meant for a web page could interrupt the agent that sent it. The pane now refuses keys it would not receive. Typed text also no longer doubles characters in a terminal or drops a trailing Enter.
+- With animations turned off, a dialog, panel, or popover could occasionally stay open and ignore Escape, the close button, and backdrop clicks. It now always closes.
+- On Linux, a GPU process that fails to launch now leaves a record behind, so the next launch switches to software rendering instead of hitting the same crash.
+- In the web demo, Escape now closes an open task window and then leaves the demo, instead of doing nothing while the pointer rests over the task's terminal.

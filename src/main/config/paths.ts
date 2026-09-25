@@ -76,8 +76,17 @@ export const PATHS = {
   get embeddingModelsDir() { return path.join(this.modelCacheDir, 'embeddings'); },
 };
 
+// These are raw mkdirSync calls, not a guard, and each of its callers already
+// has its own reason to see a failure: ConfigManager.load() wraps its call and
+// degrades to defaults (write-failure-notice.ts); getGlobalDb()/getProjectDb()
+// (db/database.ts) let it propagate into the SAME "can't read database"
+// dialog a failed `new Database(...)` open would trigger right afterward
+// either way.
 export function ensureDirs(): void {
+  // sync-write-ok: deliberately left throwing - see the function docblock above.
   fs.mkdirSync(PATHS.configDir, { recursive: true });
+  // sync-write-ok: deliberately left throwing - see the function docblock above.
   fs.mkdirSync(PATHS.projectsDir, { recursive: true });
+  // sync-write-ok: deliberately left throwing - see the function docblock above.
   fs.mkdirSync(PATHS.modelsDir, { recursive: true });
 }

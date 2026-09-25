@@ -12,12 +12,13 @@
  *    counter and adds a second new-draft tab.
  * 7. Discard confirm bullet rendering (1 dirty = 1 li, 3 dirty = 3 li each
  *    with the column name; untitled new drafts render as "Untitled column").
- * 8. Delete control names its target - the delete button's aria-label/title
- *    is `Delete "<column name>"`, and the confirm dialog it opens reuses the
- *    same string as its title (was the static "Delete column").
+ * 8. The removal names its target - the footer's Remove column button carries
+ *    `Remove column "<column name>"` as its aria-label/title, and the confirm
+ *    it opens draws the column (icon, name, position) as its body under the
+ *    plain "Remove column" title.
  */
 import { test, expect } from '@playwright/test';
-import { launchPage, waitForBoard, createProject } from './helpers';
+import { launchPage, waitForBoard, createProject, clickPastDragSwallow } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
@@ -44,6 +45,18 @@ async function openManagerByHeader(columnName: string) {
   const column = page.locator(`[data-swimlane-name="${columnName}"]`);
   await column.locator(`text=${columnName}`).click();
   await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 3000 });
+}
+
+/** Replace the mock's agent-list overrides and reload the config store's agent list, so a dialog opened afterwards reads them. */
+async function setAgentListOverrides(overrides: Record<string, unknown>) {
+  await page.evaluate(async (nextOverrides) => {
+    const testWindow = window as unknown as {
+      __mockAgentListOverrides?: Record<string, unknown>;
+      __zustandStores?: { config: { getState: () => { loadAgentList: () => Promise<void> } } };
+    };
+    testWindow.__mockAgentListOverrides = nextOverrides;
+    await testWindow.__zustandStores?.config.getState().loadAgentList();
+  }, overrides);
 }
 
 async function closeManager() {
@@ -191,12 +204,12 @@ test.describe('BoardManagerDialog extended', () => {
   // of Automation - so it is asserted through that toggle's presence rather than
   // through a notice of its own.
 
-  test('To Do column collapses Agent/Automation to inline explanations', async () => {
+  test('To Do column collapses Agent/Conversation to inline explanations', async () => {
     await openManagerByHeader('To Do');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
     await expect(dialog.getByText("Sessions don't run in To Do columns, so Agent doesn't apply.")).toBeVisible();
-    await expect(dialog.getByText("Sessions don't run in To Do columns, so Automation doesn't apply.")).toBeVisible();
+    await expect(dialog.getByText("Sessions don't run in To Do columns, so Conversation doesn't apply.")).toBeVisible();
 
     // The collapsed sections render no fields, the handoff toggle among them.
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
@@ -240,8 +253,8 @@ test.describe('BoardManagerDialog extended', () => {
     // back to it.
     await expect(dialog.locator('[role="switch"][aria-label="Start an agent here"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
-    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Automation.')).toBeVisible();
-    // Handoff rides inside Automation now, so it collapses with it.
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Conversation.')).toBeVisible();
+    // Handoff rides inside Conversation, so it collapses with it.
     await expect(dialog.locator('[role="switch"][aria-label="Receive context from prior agent"]')).toHaveCount(0);
 
     // Close before cleanup, then delete the test column.
@@ -256,17 +269,17 @@ test.describe('BoardManagerDialog extended', () => {
   // ── Gap 4: "Start an agent here" toggle expands / collapses sections in place ─
   //
   // "Start an agent here" leads the Agent section and gates the agent-behavior
-  // config. The one-scroll form renders every section at once; toggling it off
-  // hides the agent fields (the toggle itself stays) and collapses Automation
+  // config. The column page renders every section at once; toggling it off
+  // hides the agent fields (the toggle itself stays) and collapses Conversation
   // to its inline explanation; toggling it back on restores the fields.
 
   test('toggling "Start an agent here" expands and collapses the dependent sections in place', async () => {
     await openManagerByHeader('Code Review'); // auto_spawn=true
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    // With it on, the Agent field is present and the Automation hint is absent.
+    // With it on, the Agent field is present and the Conversation hint is absent.
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toBeVisible();
-    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Automation.')).toHaveCount(0);
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Conversation.')).toHaveCount(0);
 
     const autoSpawnSwitch = dialog.locator('[role="switch"][aria-label="Start an agent here"]');
     await expect(autoSpawnSwitch).toHaveAttribute('aria-checked', 'true');
@@ -276,7 +289,7 @@ test.describe('BoardManagerDialog extended', () => {
     // The agent fields unmount (the toggle stays) and the downstream hint appears.
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
     await expect(autoSpawnSwitch).toBeVisible();
-    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Automation.')).toBeVisible();
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Conversation.')).toBeVisible();
 
     // Toggle back on: the field returns (net no change, so the dialog stays clean).
     await autoSpawnSwitch.click();
@@ -421,24 +434,37 @@ test.describe('BoardManagerDialog extended', () => {
     await dialog.waitFor({ state: 'detached', timeout: 2000 });
   });
 
-  // ── Gap 8: Delete control names its target ────────────────────────────────
+  // ── Gap 8: the removal names its target ───────────────────────────────────
   //
-  // DetailIdentityHeader's delete button carries an aria-label/title of
-  // `Delete "<column name>"`, and the ConfirmDialog it opens reuses that same
-  // string as its title (previously a static "Delete column").
+  // The footer's Remove column button reads "Remove column" with no name, so
+  // its aria-label/title carry `Remove column "<column name>"`, and the
+  // ConfirmDialog it opens draws the column itself as its body (icon, name,
+  // position), the way its rail row does. The confirm's title is the plain
+  // action; the body line is what says which column.
 
-  test('delete control aria-label/title name the column; confirm dialog title matches', async () => {
+  test('remove control aria-label/title name the column; confirm body shows the column', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
     const deleteButton = dialog.locator('[data-testid="board-manager-delete"]');
-    await expect(deleteButton).toHaveAttribute('aria-label', 'Delete "Code Review"');
-    await expect(deleteButton).toHaveAttribute('title', 'Delete "Code Review"');
+    await expect(deleteButton).toHaveAttribute('aria-label', 'Remove column "Code Review"');
+    await expect(deleteButton).toHaveAttribute('title', 'Remove column "Code Review"');
 
     await deleteButton.click();
-    await expect(page.locator('h3', { hasText: 'Delete "Code Review"' })).toBeVisible({ timeout: 1500 });
+    const confirmTitle = page.locator('h3', { hasText: 'Remove column' });
+    await expect(confirmTitle).toBeVisible({ timeout: 1500 });
+    const target = page.locator('[data-testid="board-manager-remove-target"]');
+    await expect(target).toHaveText('Code Review');
+    // The position pill sits on the same line: "<n> of <total>" over the
+    // fixture's seven columns. The number is read from the rail rather than
+    // hardcoded so a fixture reorder does not fail this.
+    const railNames = await dialog.locator('[data-testid="board-manager-tab"]').evaluateAll(
+      (tabs) => tabs.map((tab) => tab.getAttribute('data-tab-name')),
+    );
+    const position = railNames.indexOf('Code Review') + 1;
+    await expect(target.locator('..')).toContainText(`${position} of ${railNames.length}`);
 
-    // Cancel out via Escape rather than a "Cancel" button click: the delete
+    // Cancel out via Escape rather than a "Cancel" button click: the remove
     // ConfirmDialog's own Cancel button shares its accessible name with the
     // manager dialog's own footer Cancel button (both render underneath the
     // confirm's z-[60] overlay), so a plain role/name locator would be
@@ -447,9 +473,9 @@ test.describe('BoardManagerDialog extended', () => {
     // set (see the `!confirmDeleteId` check in BoardManagerDialog.tsx), and
     // its own BaseDialog's Escape effect no-ops under preventBackdropClose,
     // so only the ConfirmDialog's Escape handler fires, closing just the
-    // confirm and leaving the manager open with nothing deleted.
+    // confirm and leaving the manager open with nothing removed.
     await page.keyboard.press('Escape');
-    await expect(page.locator('h3', { hasText: 'Delete "Code Review"' })).toBeHidden({ timeout: 1500 });
+    await expect(confirmTitle).toBeHidden({ timeout: 1500 });
     await expect(dialog).toBeVisible();
 
     const stillExists = await page.evaluate(async () => {
@@ -459,6 +485,37 @@ test.describe('BoardManagerDialog extended', () => {
     expect(stillExists).toBe(true);
   });
 
+  // A column's name can be cleared to whitespace in the General card without
+  // saving (Save blocks an empty name, but nothing stops the user from
+  // opening Remove column while the field sits blank). The footer control's
+  // aria-label/title and the confirm's body both fall back to "Untitled",
+  // the same fallback the identity header already uses.
+
+  test('the removal control falls back to "Untitled" when the column name is blank', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    await page.locator('[data-testid="board-manager-name"]').fill('   ');
+
+    const deleteButton = dialog.locator('[data-testid="board-manager-delete"]');
+    await expect(deleteButton).toHaveAttribute('aria-label', 'Remove column "Untitled"');
+    await expect(deleteButton).toHaveAttribute('title', 'Remove column "Untitled"');
+
+    await deleteButton.click();
+    const confirmTitle = page.locator('h3', { hasText: 'Remove column' });
+    await expect(confirmTitle).toBeVisible({ timeout: 1500 });
+    await expect(page.locator('[data-testid="board-manager-remove-target"]')).toHaveText('Untitled');
+
+    // Escape rather than a role/name locator, for the same reason as the
+    // sibling test above: the confirm's own Cancel shares an accessible name
+    // with the manager's footer Cancel underneath it.
+    await page.keyboard.press('Escape');
+    await expect(confirmTitle).toBeHidden({ timeout: 1500 });
+    await expect(dialog).toBeVisible();
+    // The blank name is still dirty and never saved; afterEach's Cancel ->
+    // Discard flow (already run for every test in this describe) reverts it.
+  });
+
   // ── Session target + spawn strategy selects ──────────────────────────────
   //
   // The Automation tab exposes two Selects: "Session" (session_target: main /
@@ -466,25 +523,32 @@ test.describe('BoardManagerDialog extended', () => {
   // always_spawn_new). Verify the defaults, the isolated -> always-spawn-new
   // snap, and that both persist.
 
-  test('Automation tab: session target + spawn strategy default and save', async () => {
+  // ── Conversation card: Session ───────────────────────────────────────────
+  //
+  // One control, a two-option radiogroup. The spawn-strategy Select that used to
+  // sit beside it is gone from the UI: `resolveForceFresh` already derives it
+  // (isolated to fresh, main to resume), so the override only reached two
+  // corners and one of them retires the task's session on entry. The engine
+  // still READS the column value, which is why the last assertion here checks
+  // that saving does not disturb it.
+
+  test('Conversation: Session is a two-option radiogroup that saves, carrying the spawn strategy with it', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    // Code Review has auto_spawn=true, so the Automation section renders its
-    // fields inline in the one-scroll form (no section nav to click).
-    const targetSelect = dialog.locator('[data-testid="column-session-target"]');
-    const spawnSelect = dialog.locator('[data-testid="column-session-spawn-strategy"]');
-    await expect(targetSelect).toBeVisible();
-    await expect(spawnSelect).toBeVisible();
+    const session = dialog.locator('[data-testid="column-session-target"]');
+    await expect(session).toBeVisible();
+    await expect(session).toHaveAttribute('role', 'radiogroup');
+    // The retired control is not merely hidden, it is not rendered at all.
+    await expect(dialog.locator('[data-testid="column-session-spawn-strategy"]')).toHaveCount(0);
 
-    // Defaults: main + create_or_resume.
-    await expect(targetSelect).toHaveValue('main');
-    await expect(spawnSelect).toHaveValue('create_or_resume');
+    const main = dialog.locator('[data-testid="column-session-target-main"]');
+    const isolated = dialog.locator('[data-testid="column-session-target-isolated"]');
+    await expect(main).toHaveAttribute('aria-checked', 'true');
 
-    // Choosing Isolated snaps the spawn Select to always_spawn_new.
-    await targetSelect.selectOption('isolated');
-    await expect(targetSelect).toHaveValue('isolated');
-    await expect(spawnSelect).toHaveValue('always_spawn_new');
+    await isolated.click();
+    await expect(isolated).toHaveAttribute('aria-checked', 'true');
+    await expect(main).toHaveAttribute('aria-checked', 'false');
 
     await dialog.locator('[data-testid="board-manager-save"]').click();
     await dialog.waitFor({ state: 'detached', timeout: 3000 });
@@ -495,13 +559,23 @@ test.describe('BoardManagerDialog extended', () => {
       return { target: lane?.session_target, spawn: lane?.session_spawn_strategy };
     });
     expect(saved.target).toBe('isolated');
+    // Carried, not left alone. This control no longer OFFERS the spawn strategy,
+    // and the first version of this test read that as "writes only the target".
+    // It is not: both columns are NOT NULL with a literal DEFAULT, so a stored
+    // lane always holds a concrete strategy and `resolveForceFresh`'s fallback
+    // never fires for one. Leaving it would strand an isolated column on
+    // `create_or_resume`, which resumes the previous pass instead of running a
+    // fresh one, the exact bug `snapSpawnStrategyToTarget` exists to stop.
+    //
+    // A deliberate pairing still survives, because the snap only moves a
+    // strategy sitting at the OTHER track's default, and only on a real change.
     expect(saved.spawn).toBe('always_spawn_new');
 
-    // Cleanup: restore the defaults.
+    // Cleanup: restore the default.
     await page.evaluate(async () => {
       const lanes = await window.electronAPI.swimlanes.list();
       const lane = lanes.find((s) => s.name === 'Code Review');
-      if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, session_target: 'main', session_spawn_strategy: 'create_or_resume' });
+      if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, session_target: 'main' });
     });
   });
 
@@ -545,11 +619,18 @@ test.describe('BoardManagerDialog extended', () => {
     });
     expect(saved).toBe('claude');
 
-    // Cleanup: restore to inherit.
+    // Cleanup: restore to inherit. A raw electronAPI call bypasses the board
+    // store (the mock has no push - same reasoning as the loadBoard() sync
+    // above), so without the resync the store's cached swimlanes list keeps
+    // serving the stale 'claude' override to every later test that reopens
+    // this dialog on the same worker's page, even though the mock's own
+    // swimlanes array is correctly reset.
     await page.evaluate(async () => {
       const lanes = await window.electronAPI.swimlanes.list();
       const lane = lanes.find((s) => s.name === 'Code Review');
       if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, agent_override: null });
+      const store = (window as unknown as { __zustandStores?: { board: { getState: () => { loadBoard: () => void } } } }).__zustandStores;
+      if (store?.board) store.board.getState().loadBoard();
     });
   });
 
@@ -599,21 +680,169 @@ test.describe('BoardManagerDialog extended', () => {
     // Dirty edit is discarded by afterEach.
   });
 
-  // ── Footer dirty summary ─────────────────────────────────────────────────
-
-  test('footer summarises the number of modified columns', async () => {
+  // The table's first row is the band row (Agent / Conversation / Automations), whose colspan
+  // cells carry no width, and under table-layout: fixed the first row is what sizes the columns.
+  // Until DataTable carried the widths in a <colgroup>, every column was an equal tenth of the
+  // table and "Plan (Read-Only)" was cut mid-glyph. Relative, not pixel-exact: Permissions is
+  // declared at more than twice Start's share, so an even split fails it by a wide margin.
+  test('overview gives each column its declared share of the width', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
-    const summary = dialog.locator('[data-testid="board-manager-dirty-summary"]');
+    await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+    await expect(dialog.locator('[data-testid="board-manager-overview-row"]').first()).toBeVisible();
 
-    await expect(summary).toBeEmpty();
+    const widths = await dialog.locator('table thead tr:last-child th').evaluateAll((cells) => {
+      const byLabel: Record<string, number> = {};
+      for (const cell of cells) byLabel[(cell.textContent ?? '').trim()] = cell.getBoundingClientRect().width;
+      return byLabel;
+    });
+    expect(widths.Start).toBeGreaterThan(0);
+    expect(widths.Permissions).toBeGreaterThan(widths.Start * 1.5);
+    expect(widths.Agent).toBeGreaterThan(widths.Start * 1.5);
+  });
+
+  // A cell prints what the column's own form prints. The form labels a model the way its agent's
+  // picker does (a reported display name, else the raw id) and a permission in its agent's own
+  // words, so the table must too: it used to humanize every id with its own formatter ("Gpt 5.5")
+  // and word every agent's permission in Claude's terms. Codex's 'default' is also longer than the
+  // Permissions column, which is what pins the ellipsis and the full text in the tooltip.
+  test('overview labels a column the way its form does, and ellipsizes what does not fit', async () => {
+    await setAgentListOverrides({
+      codex: { found: true, capabilities: { supportsModelOverride: true, models: ['gpt-5.5'], effortLevels: [] } },
+    });
+
+    try {
+      await openManagerByHeader('Code Review');
+      const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+      // Page-scoped option locators: every combobox menu portals to document.body.
+      await dialog.locator('input[data-testid="column-agent-override"]').click();
+      await page.locator('[data-testid="column-agent-override-option-codex"]').click();
+      const modelInput = dialog.locator('input[data-testid="column-model-override"]');
+      await modelInput.click();
+      await page.locator('[data-model-option][title="gpt-5.5"]').click();
+      await expect(modelInput).toHaveValue('gpt-5.5');
+      const permissionInput = dialog.locator('input[data-testid="column-permission-mode"]');
+      await permissionInput.click();
+      await page.locator('[data-testid="column-permission-mode-option-default"]').click();
+      await expect(permissionInput).toHaveValue('Automatically Edit, Ask for Untrusted');
+
+      await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+      const cells = dialog.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' }).locator('td');
+      // Column order: name, Start, Agent, Model, Effort, Permissions.
+      await expect(cells.nth(2)).toHaveText('Codex CLI');
+      await expect(cells.nth(3)).toHaveText('gpt-5.5');
+      // Effort is never set here, so its cell stays unchanged and reads 'Default'. An unchanged
+      // value carries its full text in `title` too, the same as the changed Permissions value below.
+      const effort = cells.nth(4).locator('[data-state="unchanged"]');
+      await expect(effort).toHaveText('Default');
+      await expect(effort).toHaveAttribute('title', 'Default');
+      const permission = cells.nth(5).locator('[data-state="changed"]');
+      await expect(permission).toHaveAttribute('title', 'Automatically Edit, Ask for Untrusted');
+      const label = await permission.locator('span').evaluate((element) => ({
+        textOverflow: getComputedStyle(element).textOverflow,
+        clipped: element.scrollWidth > element.clientWidth,
+      }));
+      expect(label).toEqual({ textOverflow: 'ellipsis', clipped: true });
+      // The draft is discarded by afterEach, so no column keeps Codex.
+    } finally {
+      await setAgentListOverrides({});
+    }
+  });
+
+  // The test above drives the OVERRIDE half of `laneAgentInfo`'s lookup
+  // (`overrideName ?? projectDefaultAgent`, BoardManagerDialog.tsx). This
+  // drives the fallback half: a column with no agent_override of its own
+  // still has an effective agent, the PROJECT's default. Before this diff
+  // the Permissions cell always spelled a value in Claude's own words
+  // (`DEFAULT_PERMISSIONS`, unconditionally) - invisible in every other spec
+  // here because every other project defaults to Claude, whose mock
+  // `permissions` list is byte-identical to `DEFAULT_PERMISSIONS`. A project
+  // whose default agent is NOT Claude is the only way to tell the fix from
+  // the bug it fixed.
+  test('overview permission cell reads the project default agent, not Claude, when no column override is set', async () => {
+    const projectId = await page.evaluate(async () => (await window.electronAPI.projects.list())[0].id);
+
+    async function setProjectDefaultAgent(agent: string): Promise<void> {
+      const resolved = await page.evaluate(async ({ id, agentName }) => {
+        await window.electronAPI.projects.setDefaultAgent(id, agentName);
+        const projectStore = (window as unknown as {
+          __zustandStores?: { project: { getState: () => { loadCurrent: () => Promise<void>; currentProject: { default_agent?: string } | null } } };
+        }).__zustandStores?.project;
+        await projectStore?.getState().loadCurrent();
+        return projectStore?.getState().currentProject?.default_agent ?? null;
+      }, { id: projectId, agentName: agent });
+      if (resolved !== agent) {
+        throw new Error(`setProjectDefaultAgent: expected default_agent "${agent}" after loadCurrent(), got "${String(resolved)}"`);
+      }
+    }
+
+    await setProjectDefaultAgent('codex');
+    try {
+      await openManagerByHeader('Code Review');
+      const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+      // No agent override on this column (the fixture's Code Review lane
+      // ships agent_override: null): the effective agent already falls back
+      // to the project's now-Codex default, so the Permission field already
+      // lists Codex's own modes with no override step needed first.
+      const permissionInput = dialog.locator('input[data-testid="column-permission-mode"]');
+      await permissionInput.click();
+      await page.locator('[data-testid="column-permission-mode-option-default"]').click();
+      await expect(permissionInput).toHaveValue('Automatically Edit, Ask for Untrusted');
+
+      await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+      const cells = dialog.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' }).locator('td');
+      // Column order: name, Start, Agent, Model, Effort, Permissions.
+      const permission = cells.nth(5).locator('[data-state="changed"]');
+      await expect(permission).toHaveText('Automatically Edit, Ask for Untrusted');
+
+      await closeManager();
+    } finally {
+      await setProjectDefaultAgent('claude');
+    }
+  });
+
+  // The overview has no single column to remove, so the footer's Remove
+  // column control is gated on `!isOverview` the same way it is gated on
+  // To Do / Done and on an active profile. It must reappear the moment a
+  // real column is selected again.
+
+  test('Remove column is absent on the All columns overview, and returns when a column is selected', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    await expect(dialog.locator('[data-testid="board-manager-delete"]')).toBeVisible();
+
+    await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+    await expect(dialog.locator('[data-testid="board-manager-overview-row"]').first()).toBeVisible();
+    await expect(dialog.locator('[data-testid="board-manager-delete"]')).toHaveCount(0);
+
+    await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Code Review"]').click();
+    await expect(dialog.locator('[data-testid="board-manager-delete"]')).toBeVisible();
+  });
+
+  // ── Save enables on the first change ─────────────────────────────────────
+  //
+  // Replaces the footer's running "N columns modified" readout, which was
+  // removed: Save's own disabled state carries the same signal in one fewer
+  // place, and the rail's per-column dot says WHICH, which a count never did.
+
+  test('Save is disabled until something changes, and stays enabled across columns', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    const save = dialog.locator('[data-testid="board-manager-save"]');
+
+    await expect(save).toBeDisabled();
 
     await dialog.locator('[data-testid="board-manager-name"]').fill('One');
-    await expect(summary).toHaveText('1 column modified');
+    await expect(save).toBeEnabled();
 
+    // A change on a SECOND column keeps it enabled: the flip is about the draft
+    // as a whole, not about the column currently selected.
     await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Testing"]').click();
     await dialog.locator('[data-testid="board-manager-name"]').fill('Two');
-    await expect(summary).toHaveText('2 columns modified');
+    await expect(save).toBeEnabled();
     // Dirty edits are discarded by afterEach.
   });
 
@@ -730,10 +959,10 @@ test.describe('BoardManagerDialog extended', () => {
     await page.mouse.up();
   }
 
-  test('drag reorder counts toward the modified summary and persists on save', async () => {
+  test('drag reorder marks the board dirty and persists on save', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
-    const summary = dialog.locator('[data-testid="board-manager-dirty-summary"]');
+    const save = dialog.locator('[data-testid="board-manager-save"]');
 
     const readOrder = () =>
       dialog.locator('[data-testid="board-manager-tab"]').evaluateAll((els) =>
@@ -749,13 +978,20 @@ test.describe('BoardManagerDialog extended', () => {
     }
 
     await expect.poll(async () => (await readOrder()).join(',')).not.toBe(orderBefore.join(','));
-    // A reorder counts the moved columns toward the affected-column summary.
-    await expect(summary).toContainText('modified');
+    // A reorder is a change like any other: it enables Save on its own, with
+    // no field edited.
+    await expect(save).toBeEnabled();
     const orderAfterDrag = await readOrder();
 
     // Save persists the new order (risk-7 preservation across the save flow's
     // own store churn is covered deterministically by reconcileLaneOrder units).
-    await dialog.locator('[data-testid="board-manager-save"]').click();
+    // This click comes straight off the rail drop, so it has to survive a
+    // swallowed first click; the waitFor below is still what decides the test.
+    await clickPastDragSwallow(
+      dialog.locator('[data-testid="board-manager-save"]'),
+      dialog,
+      'detached',
+    );
     await dialog.waitFor({ state: 'detached', timeout: 3000 });
 
     const persisted = await page.evaluate(async () =>
@@ -769,81 +1005,5 @@ test.describe('BoardManagerDialog extended', () => {
       const ids = names.map((name) => (name ? byName.get(name) : undefined)).filter((id): id is string => !!id);
       if (ids.length === names.length) await window.electronAPI.swimlanes.reorder(ids);
     }, orderBefore);
-  });
-
-  // ── Auto-command: gated timing + the template-variable picker ────────────
-  //
-  // Timing modifies the auto-command and means nothing without one, so with an
-  // empty field it is DISABLED rather than hidden: hiding it made the form jump
-  // on the first keystroke and left no trace the setting existed. The variable
-  // picker replaced a row of ten always-on chips; it portals to the body because
-  // the detail form is a scroll container (`popover-escapes-clipping.md`).
-
-  test('auto-command timing is disabled until a command is set, then persists', async () => {
-    await openManagerByHeader('Code Review');
-    const dialog = page.locator('[data-testid="board-manager-dialog"]');
-
-    const autoCommand = dialog.locator('[data-testid="auto-command-input"]');
-    const timing = page.locator('[data-testid="auto-command-mode"]');
-    const immediate = page.locator('[data-testid="auto-command-mode-immediate"]');
-    const deferred = page.locator('[data-testid="auto-command-mode-deferred"]');
-
-    // No command: present (so the setting stays discoverable) but inert.
-    await autoCommand.fill('');
-    await expect(timing).toBeVisible();
-    await expect(immediate).toBeDisabled();
-    await expect(deferred).toBeDisabled();
-
-    await autoCommand.fill('/code-review');
-    await expect(timing).toBeVisible();
-    await expect(deferred).toBeEnabled();
-    // Immediate is the default, preserving the pre-existing behavior.
-    await expect(page.locator('[data-testid="auto-command-mode-immediate"]')).toHaveAttribute('aria-checked', 'true');
-
-    await page.locator('[data-testid="auto-command-mode-deferred"]').click();
-    await expect(page.locator('[data-testid="auto-command-mode-deferred"]')).toHaveAttribute('aria-checked', 'true');
-
-    await dialog.locator('[data-testid="board-manager-save"]').click();
-    await dialog.waitFor({ state: 'detached', timeout: 3000 });
-
-    const saved = await page.evaluate(async () => {
-      const lanes = await window.electronAPI.swimlanes.list();
-      const lane = lanes.find((s) => s.name === 'Code Review');
-      return { command: lane?.auto_command, mode: lane?.auto_command_mode };
-    });
-    expect(saved.command).toBe('/code-review');
-    expect(saved.mode).toBe('deferred');
-
-    await page.evaluate(async () => {
-      const lanes = await window.electronAPI.swimlanes.list();
-      const lane = lanes.find((s) => s.name === 'Code Review');
-      if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, auto_command: null, auto_command_mode: 'immediate' });
-    });
-  });
-
-  test('the template-variable picker portals out of the form and inserts at the cursor', async () => {
-    await openManagerByHeader('Code Review');
-    const dialog = page.locator('[data-testid="board-manager-dialog"]');
-
-    const autoCommand = dialog.locator('[data-testid="auto-command-input"]');
-    await autoCommand.fill('/review ');
-
-    await dialog.locator('[data-testid="template-variable-trigger"]').click();
-    const menu = page.locator('[data-testid="template-variable-menu"]');
-    await expect(menu).toBeVisible();
-
-    // The structural property: portaled to the body, NOT nested inside the
-    // dialog's scrolling form, which would clip it. Geometry checks cannot see
-    // this - `boundingBox()` ignores overflow clipping.
-    const nestedInDialog = await menu.evaluate(
-      (node) => !!node.closest('[data-testid="board-manager-dialog"]'),
-    );
-    expect(nestedInDialog).toBe(false);
-
-    await menu.getByText('{{title}}', { exact: true }).click();
-    await expect(menu).toBeHidden();
-    await expect(autoCommand).toHaveValue('/review {{title}}');
-
-    await closeManager();
   });
 });

@@ -109,3 +109,24 @@ describe('handleListTasks position reporting', () => {
     expect(positions).toEqual(['To Do:0', 'To Do:1', 'To Do:2', 'Review:0', 'Review:1']);
   });
 });
+
+/**
+ * Labels were write-only on the board surface: settable via create/update,
+ * stored, and returned by no read tool at all. A listing that shows them lets a
+ * caller see how the board is labelled without a second call per task.
+ */
+describe('handleListTasks label reporting', () => {
+  it('reports each task\'s labels', () => {
+    mockSwimlaneRepoList.mockReturnValue([TODO_LANE]);
+    mockTaskRepoList.mockReturnValue([
+      { ...GAPPED_TODO_TASKS[0], labels: ['mcp', 'dx'] },
+      { ...GAPPED_TODO_TASKS[1], labels: [] },
+    ]);
+
+    const response = handleListTasks({ column: 'To Do' }, makeContext());
+
+    expect(response.success).toBe(true);
+    const labels = (response.data as Array<{ labels: string[] }>).map((task) => task.labels);
+    expect(labels).toEqual([['mcp', 'dx'], []]);
+  });
+});

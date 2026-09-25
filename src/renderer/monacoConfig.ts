@@ -1,11 +1,13 @@
 import { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import { errorHandler } from 'monaco-editor/esm/vs/base/common/errors';
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
-import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
-import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
-import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
+// Deep specifiers omit the `esm/vs/` prefix: monaco 0.56 maps `./*` to
+// `./esm/vs/*.js` in its exports, so the old full paths no longer resolve.
+import { errorHandler } from 'monaco-editor/base/common/errors';
+import editorWorker from 'monaco-editor/editor/editor.worker?worker';
+import jsonWorker from 'monaco-editor/language/json/json.worker?worker';
+import cssWorker from 'monaco-editor/language/css/css.worker?worker';
+import htmlWorker from 'monaco-editor/language/html/html.worker?worker';
+import tsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import { isBenignRendererError } from '../shared/benign-renderer-errors';
 
 self.MonacoEnvironment = {

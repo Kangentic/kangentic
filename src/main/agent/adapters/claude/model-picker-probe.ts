@@ -15,6 +15,19 @@
  * and uses a dedicated scratch cwd pre-trusted via trust-manager so the
  * workspace-trust dialog cannot appear.
  *
+ * It also runs on the CLASSIC renderer (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`,
+ * the first row of Claude's documented renderer precedence, so it holds under
+ * `--safe-mode` too). The fullscreen renderer keeps a boot canary in
+ * `~/.claude.json` (`fullscreenBootPending[pid]`, withdrawn 10 s after the
+ * first frame or on a graceful exit) and counts a pid that died inside that
+ * window as a strike: one strike runs the next launch on the classic renderer,
+ * two make it sticky for every Kangentic session on the machine. This probe
+ * lives about two seconds and used to be hard-killed, so it was a strike
+ * generator; the classic renderer never arms the canary. Belt and suspenders,
+ * the teardown also exits Claude with `/exit` and waits for the process before
+ * the fallback kill. The picker text is identical in both renderers, and the
+ * parser predates fullscreen (2.1.170).
+ *
  * Failure contract matches the rest of capability discovery: any failure
  * (CLI missing, layout change, timeout) resolves to undefined and is never
  * surfaced to the user. Results are cached: a successful probe is reused for
@@ -51,6 +64,11 @@ interface ProbeTimings {
   settleIntervalMs: number;
   /** Hard cap on the whole probe, spawn to parse. */
   overallTimeoutMs: number;
+  /**
+   * After `/exit`, how long the teardown waits for the CLI's own exit before
+   * the fallback kill. Same figure as SessionManager's exit-sequence grace.
+   */
+  exitGraceMs: number;
 }
 
 const DEFAULT_TIMINGS: ProbeTimings = {
@@ -58,7 +76,11 @@ const DEFAULT_TIMINGS: ProbeTimings = {
   typeDelayMs: 400,
   settleIntervalMs: 250,
   overallTimeoutMs: 15000,
+  exitGraceMs: 1500,
 };
+
+/** Forces Claude's classic renderer, which never arms the fullscreen boot canary. */
+export const PROBE_CLASSIC_RENDERER_ENV_KEY = 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN';
 
 let timings: ProbeTimings = DEFAULT_TIMINGS;
 
@@ -139,7 +161,52 @@ function spawnEnvironment(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === 'string') environment[key] = value;
   }
+  // Classic renderer: no alt screen, no boot canary to trip (see the module
+  // comment). Set unconditionally - a user's `/tui fullscreen` is for their
+  // sessions, and this hidden one has no renderer preference to honor.
+  environment[PROBE_CLASSIC_RENDERER_ENV_KEY] = '1';
   return environment;
+}
+
+/**
+ * Exit the probe's CLI the way a user would (`/exit`), then wait for the
+ * process itself before falling back to a kill. Detached from the probe's
+ * result on purpose: the models are already parsed, and the dropdown rescan
+ * that awaits them must not pay the grace.
+ *
+ * The caller has just written Esc to close the picker. `/exit` must NOT follow
+ * in the same input burst: the TUI reads `\x1b/` as an escape-prefixed key
+ * sequence, the text never reaches the input box, and the fallback kill ends
+ * up doing the whole teardown (measured with the canary rig: the CLI was still
+ * in the picker's alt screen when the kill landed). The same type delay that
+ * paces `/model` and Enter separates the two.
+ */
+async function exitProbeGracefully(
+  probeProcess: pty.IPty,
+  exited: Promise<void>,
+  settleMs: number,
+  graceMs: number,
+): Promise<void> {
+  await delay(settleMs);
+  try {
+    probeProcess.write('/exit\r');
+  } catch {
+    // Already dead.
+  }
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  const exitedInTime = await Promise.race([
+    exited.then(() => true),
+    new Promise<boolean>((resolve) => {
+      graceTimer = setTimeout(() => resolve(false), graceMs);
+    }),
+  ]);
+  if (graceTimer !== undefined) clearTimeout(graceTimer);
+  if (exitedInTime) return;
+  try {
+    probeProcess.kill();
+  } catch {
+    // EACCES/ESRCH when the process exited between the race and the kill.
+  }
 }
 
 /**
@@ -182,9 +249,17 @@ async function runModelPickerProbe(cliPath: string): Promise<string[] | undefine
   }
 
   let exited = false;
+  let resolveExited: () => void = () => undefined;
+  const exitedPromise = new Promise<void>((resolve) => {
+    resolveExited = resolve;
+  });
+  // Set once the input box has rendered: only then is a typed `/exit` a
+  // command rather than a keystroke into whatever dialog is showing.
+  let promptSeen = false;
   probeProcess.onData((data) => screen.write(data));
   probeProcess.onExit(() => {
     exited = true;
+    resolveExited();
   });
 
   const deadline = Date.now() + timings.overallTimeoutMs;
@@ -205,6 +280,7 @@ async function runModelPickerProbe(cliPath: string): Promise<string[] | undefine
   try {
     // The '❯' prompt marker appears when the input box is ready for keys.
     if (!(await waitForScreen('❯'))) return undefined;
+    promptSeen = true;
     await delay(timings.typeDelayMs);
     probeProcess.write('/model');
     await delay(timings.typeDelayMs);
@@ -241,10 +317,20 @@ async function runModelPickerProbe(cliPath: string): Promise<string[] | undefine
     } catch {
       // Already dead.
     }
-    try {
-      probeProcess.kill();
-    } catch {
-      // EACCES/ESRCH when the process already exited - nothing to clean up.
+    if (promptSeen && !exited) {
+      // `/exit` then wait for the CLI's own exit (cmd exits with its child on
+      // Windows; POSIX runs the CLI directly), kill only as the fallback. Not
+      // awaited: the result above is final and the caller must not wait.
+      void exitProbeGracefully(probeProcess, exitedPromise, timings.typeDelayMs, timings.exitGraceMs);
+    } else {
+      // No prompt was ever reached (trust dialog, early exit, timeout before
+      // the input box): a typed Enter here could accept the trust dialog, so
+      // this stays the plain kill. Nothing booted far enough to arm a canary.
+      try {
+        probeProcess.kill();
+      } catch {
+        // EACCES/ESRCH when the process already exited - nothing to clean up.
+      }
     }
   }
 }

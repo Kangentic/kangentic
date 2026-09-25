@@ -3,9 +3,36 @@ import {
   COMPRESSION_THRESHOLD,
   decodeMessage,
   encodeMessage,
+  isUnsupportedVerbError,
   MAX_DECODED_LENGTH,
+  UNSUPPORTED_VERB_ERROR_CODE,
+  UnsupportedVerbError,
 } from '../../../packages/protocol/src/wire/framing';
 import type { BridgeMessage } from '../../../packages/protocol/src/wire/messages';
+// The rest of this file deliberately reaches into wire/framing directly so a
+// throw's concrete shape can be asserted without the package's public
+// barrel in the way. isUnsupportedVerbError and UNSUPPORTED_VERB_ERROR_CODE
+// are ALSO consumed through the '@kangentic/protocol' alias by production
+// code (bridge-session.ts) and so are already proven re-exported end to end
+// by bridge-session.test.ts - but UnsupportedVerbError (the class) has no
+// such consumer, so nothing catches it dropping out of
+// packages/protocol/src/index.ts's barrel re-export. Confirmed by removing
+// it from that export list: every other unit suite stayed green.
+import { UnsupportedVerbError as UnsupportedVerbErrorFromEntry } from '@kangentic/protocol';
+
+/** The thrown value of a decode that is expected to fail. */
+function decodeFailure(bytes: Uint8Array): unknown {
+  try {
+    decodeMessage(bytes);
+  } catch (error) {
+    return error;
+  }
+  throw new Error('decodeMessage was expected to throw');
+}
+
+function rawJsonFrame(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
+}
 
 describe('wire message framing', () => {
   it('round-trips a heartbeat message', () => {
@@ -124,11 +151,98 @@ describe('wire message framing', () => {
     expect(() => decodeMessage(bytes)).toThrow();
   });
 
-  it('rejects a capability-request with an unknown verb', () => {
-    const bytes = new TextEncoder().encode(
-      JSON.stringify({ type: 'capability-request', requestId: 'r', verb: 'run-shell-command', payload: {} }),
+  it('rejects a capability-request with an unknown verb, naming the request so the receiver can answer it', () => {
+    // A bare toThrow() stayed green while checking nothing: the point of the
+    // typed error is that it carries the envelope a refusal needs.
+    const error = decodeFailure(
+      rawJsonFrame({ type: 'capability-request', requestId: 'r', verb: 'run-shell-command', payload: {} }),
     );
-    expect(() => decodeMessage(bytes)).toThrow();
+    expect(isUnsupportedVerbError(error)).toBe(true);
+    expect(error).toBeInstanceOf(UnsupportedVerbError);
+    expect(error).toMatchObject({ requestId: 'r', verb: 'run-shell-command' });
+  });
+
+  it('still rejects a malformed request with an unknown verb as a plain, unanswerable error', () => {
+    // Only a WELL-FORMED request earns the typed error. Each of these is one
+    // envelope field away from it, and each stays a silent rejection: there is
+    // no request to answer, and replying to unstructured input hands whoever
+    // sent it a probe.
+    const missingRequestId = decodeFailure(
+      rawJsonFrame({ type: 'capability-request', verb: 'run-shell-command', payload: {} }),
+    );
+    expect(missingRequestId).toBeInstanceOf(Error);
+    expect(isUnsupportedVerbError(missingRequestId)).toBe(false);
+
+    const nonStringVerb = decodeFailure(
+      rawJsonFrame({ type: 'capability-request', requestId: 'r', verb: 42, payload: {} }),
+    );
+    expect(isUnsupportedVerbError(nonStringVerb)).toBe(false);
+
+    const nonJsonPayload = decodeFailure(
+      rawJsonFrame({ type: 'capability-request', requestId: 'r', verb: 'run-shell-command' }),
+    );
+    expect(isUnsupportedVerbError(nonJsonPayload)).toBe(false);
+  });
+
+  it('isUnsupportedVerbError keys on the error name and fields, not the class identity', () => {
+    // The mobile app resolves the published dist while the desktop consumes
+    // source, so a bundler can hold two copies of the class. A structurally
+    // identical error from "the other copy" must still be recognized.
+    const foreignCopy = Object.assign(new Error('from another bundle'), {
+      name: 'UnsupportedVerbError',
+      requestId: 'r-2',
+      verb: 'time-travel',
+    });
+    expect(isUnsupportedVerbError(foreignCopy)).toBe(true);
+    expect(isUnsupportedVerbError(new Error('UnsupportedVerbError'))).toBe(false);
+    expect(isUnsupportedVerbError(Object.assign(new Error('x'), { name: 'UnsupportedVerbError' }))).toBe(false);
+  });
+
+  it('re-exports UnsupportedVerbError through the public @kangentic/protocol entry point, not only wire/framing', () => {
+    // isUnsupportedVerbError and UNSUPPORTED_VERB_ERROR_CODE both have a real
+    // consumer that imports them through the '@kangentic/protocol' alias
+    // (bridge-session.ts), so a dropped re-export of either already fails
+    // bridge-session.test.ts. The class itself has no such consumer - nothing
+    // in src/ imports UnsupportedVerbError by name through the alias - so it
+    // is the one name in the barrel's `export { ... } from './wire/framing'`
+    // whose presence in packages/protocol/src/index.ts had no test at all.
+    // Red on that export dropped from index.ts: the entry-point import above
+    // resolves to undefined, and this identity check fails.
+    expect(UnsupportedVerbErrorFromEntry).toBe(UnsupportedVerbError);
+  });
+
+  it('round-trips a capability-response carrying an error code', () => {
+    const message: BridgeMessage = {
+      type: 'capability-response',
+      requestId: 'req-1',
+      ok: false,
+      error: 'Unsupported verb: time-travel',
+      code: UNSUPPORTED_VERB_ERROR_CODE,
+    };
+    expect(decodeMessage(encodeMessage(message))).toEqual(message);
+  });
+
+  it('decodes a capability-response with no code as code undefined (an older peer sent it)', () => {
+    const decoded = decodeMessage(
+      rawJsonFrame({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'not authorized' }),
+    );
+    expect(decoded).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'not authorized' });
+    expect((decoded as { code?: unknown }).code).toBeUndefined();
+  });
+
+  it('keeps a code this build does not know, rather than failing the whole response', () => {
+    // The union is the sender-side contract; a newer peer's code must not cost
+    // an older peer the `error` text it can still show.
+    const decoded = decodeMessage(
+      rawJsonFrame({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'nope', code: 'from-the-future' }),
+    );
+    expect(decoded).toMatchObject({ ok: false, error: 'nope', code: 'from-the-future' });
+  });
+
+  it('rejects a capability-response with a non-string code', () => {
+    expect(() => decodeMessage(
+      rawJsonFrame({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'nope', code: 7 }),
+    )).toThrow(/non-string "code"/);
   });
 
   it('rejects a transcript event missing sessionId', () => {

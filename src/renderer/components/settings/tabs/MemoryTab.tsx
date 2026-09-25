@@ -29,7 +29,9 @@ function semanticPlatformNote(status: MemoryStatus | null): string | null {
       : 'Vector search is unavailable on this platform - showing keyword matches.';
   }
   if (status.semantic === 'error') {
-    return 'Semantic search failed to start - showing keyword matches.';
+    return status.workerError
+      ? `Semantic search failed to start - showing keyword matches. (${status.workerError})`
+      : 'Semantic search failed to start - showing keyword matches.';
   }
   return null;
 }
@@ -72,12 +74,19 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
 
   // Poll the semantic-layer status while the feature is on so the model-download
   // progress and readiness update live. Cleared on unmount / when turned off.
-  const [status, setStatus] = useState<MemoryStatus | null>(null);
+  // Derived to "no status" while the feature is off, and reset on the enable
+  // edge during render (React's "adjusting state when a prop changes"
+  // pattern), so a stale status from an earlier enable never shows before the
+  // first poll lands. No effect sets state to clear anything.
+  const [polledStatus, setStatus] = useState<MemoryStatus | null>(null);
+  const [seenSemanticEnabled, setSeenSemanticEnabled] = useState(semanticEnabled);
+  if (semanticEnabled !== seenSemanticEnabled) {
+    setSeenSemanticEnabled(semanticEnabled);
+    if (semanticEnabled) setStatus(null);
+  }
+  const status = semanticEnabled ? polledStatus : null;
   useEffect(() => {
-    if (!semanticEnabled) {
-      setStatus(null);
-      return;
-    }
+    if (!semanticEnabled) return;
     let active = true;
     const poll = () => {
       window.electronAPI.memory

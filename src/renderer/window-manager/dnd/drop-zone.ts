@@ -53,7 +53,7 @@
  *  - `resolveDockTarget` is what a drag calls: the travel budget in front of it.
  */
 
-import type { FractionalRect, ManagedWindow, TileNode } from '../store/types';
+import { isWindowDormant, type FractionalRect, type ManagedWindow, type TileNode } from '../store/types';
 import type { ContainerSize, PixelRect } from '../store/geometry';
 import { fractionalToPixels } from '../store/geometry';
 import { resolveTileLayout } from '../tiling/resolve-layout';
@@ -127,6 +127,13 @@ export function collectCandidatePanes(
   for (const managedWindow of Object.values(windows)) {
     if (managedWindow.id === draggedWindowId) continue;
     if (tiledWindowIds.has(managedWindow.id)) continue; // already added as a tiled pane
+    // A dormant window (parked after the user closed it, or retained for a
+    // backgrounded project) is still in the map at its old geometry, invisible
+    // and inert. It must never be a drop target: dragging a window across the
+    // half of the screen a parked window used to occupy docked the drag INTO
+    // that ghost, and the survivor came out tiled beside an invisible partner
+    // it could neither see nor drag away from (observed live).
+    if (isWindowDormant(managedWindow)) continue;
     const geometry = managedWindow.state === 'maximized' ? { x: 0, y: 0, w: 1, h: 1 } : managedWindow.geometry;
     candidates.push({ windowId: managedWindow.id, zIndex: managedWindow.zIndex, rect: fractionalToPixels(geometry, container) });
   }

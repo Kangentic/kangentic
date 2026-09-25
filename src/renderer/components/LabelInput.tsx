@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
-import { Pill } from './Pill';
+import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from './Pill';
 import { OverlayPopover } from './OverlayPopover';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
 
@@ -20,7 +20,6 @@ interface LabelInputProps {
 export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, testId }: LabelInputProps) {
   const [labelInput, setLabelInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [triggerWidth, setTriggerWidth] = useState<number>();
   const labelInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -37,18 +36,15 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
   // Portaled to document.body (see render below), so measure and position against
   // the visible field rather than relying on an in-flow absolute offset that would
   // be clipped by an ancestor `overflow: hidden` / `overflow-y-auto`.
+  // `matchTriggerWidth` replaces the old `left-0 right-0` in-flow stretch; the
+  // hook applies it before it measures.
   const { style: popoverStyle, placement } = usePopoverPosition(containerRef, suggestionsRef, suggestionsOpen, {
     mode: 'dropdown',
     strategy: 'fixed',
     preferVertical: 'below',
     preferRight: false,
+    matchTriggerWidth: true,
   });
-
-  useLayoutEffect(() => {
-    if (suggestionsOpen && containerRef.current) {
-      setTriggerWidth(containerRef.current.getBoundingClientRect().width);
-    }
-  }, [suggestionsOpen]);
 
   // Close suggestions on click outside. The popover is portaled OUT of
   // containerRef, so a click inside it must also count as "inside".
@@ -109,14 +105,25 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
             <Pill
               key={label}
               size="sm"
-              className={color ? 'bg-surface-control/60 font-medium' : 'bg-surface-raised text-fg-secondary font-medium border border-edge-input'}
-              style={color ? { color } : undefined}
+              // A configured label used to get `surface-control/60`, which is 60 percent of the
+              // SAME token as the field it sits in, and no border: the pill was painted its own
+              // background and vanished. It now carries the tint its colour gives it, matching
+              // the pill on a card. An unconfigured label keeps the solid fill and edge below,
+              // since it has no colour to tint with.
+              className={color ? 'font-medium border' : 'bg-surface-raised text-fg-secondary font-medium border border-edge-input'}
+              style={color ? { color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE } : undefined}
             >
+              {/* The text is centered by `Pill` itself (it trims bare text to
+                  its cap height, see `trimTextChildren`). The button is a flex
+                  container so the icon is a flex item rather than an inline svg
+                  parked on the baseline of an empty line box, which had it
+                  sitting ~1px high while the text sat ~2px low. */}
               {label}
               <button
                 type="button"
                 onClick={() => removeLabel(label)}
-                className="ml-px rounded-full hover:bg-black/20 p-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                className="ml-px flex items-center justify-center rounded-full hover:bg-black/20 p-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                aria-label={`Remove ${label}`}
               >
                 <X size={12} />
               </button>
@@ -152,7 +159,7 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
       <OverlayPopover
         open={suggestionsOpen}
         popoverRef={suggestionsRef}
-        style={{ ...popoverStyle, width: triggerWidth }}
+        style={popoverStyle}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
         className="fixed z-[2147483646] bg-surface-raised border border-edge rounded-lg shadow-xl py-1 max-h-[150px] overflow-y-auto"

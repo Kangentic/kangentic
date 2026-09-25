@@ -36,10 +36,14 @@ interface CommitGraphSvgProps {
   layout: CommitGraphLayout;
   /** Full hash of the HEAD tip commit, highlighted with a ring. */
   tipHash: string | null;
+  /** Cap the rendered gutter at this many lanes (the compact rail rendering);
+   *  nodes and edges beyond it clip at the SVG edge. Absent = all lanes. */
+  maxLanes?: number;
 }
 
-export const CommitGraphSvg = memo(function CommitGraphSvg({ layout, tipHash }: CommitGraphSvgProps) {
-  const width = Math.max(LANE_WIDTH_PX, layout.laneCount * LANE_WIDTH_PX);
+export const CommitGraphSvg = memo(function CommitGraphSvg({ layout, tipHash, maxLanes }: CommitGraphSvgProps) {
+  const renderedLaneCount = maxLanes !== undefined ? Math.min(layout.laneCount, maxLanes) : layout.laneCount;
+  const width = Math.max(LANE_WIDTH_PX, renderedLaneCount * LANE_WIDTH_PX);
   const height = layout.nodes.length * ROW_HEIGHT_PX;
 
   return (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { resolveTerminalBackground, useTerminal } from '../../hooks/useTerminal';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from './FileDropOverlay';
@@ -9,7 +9,7 @@ import { LaunchOverlay } from '../LaunchOverlay';
 import { useTerminalOverlay } from '../../utils/task-progress';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
-import { mayTakeArrivalFocus } from '../../utils/terminal-arrival-focus';
+import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
 
 const FIT_DELAY_MS = 100;
 
@@ -67,11 +67,13 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     ),
   );
   const sessionAgent = useBoardStore((s) => s.tasks.find((t) => t.id === sessionTaskId)?.agent ?? null);
-  // Adapter-declared: this agent needs an explicit reference (not a bare path)
-  // to reliably read a pasted/dropped image. Never branch on agent name here -
-  // see .claude/rules/agent-adapters-boundary.md.
-  const pasteImageTemplate = useConfigStore(
-    (s) => s.agentList.find((a) => a.name === sessionAgent)?.pastedImageReferenceTemplate,
+  // Adapter-declared image-paste capability (which extensions this agent
+  // attaches natively from a pasted path, and the fallback text for the rest).
+  // The agent's list entry is selected whole: it is a stable reference until
+  // the list reloads, where a fresh object literal would churn every render.
+  // Never branch on agent name here - see .claude/rules/agent-adapters-boundary.md.
+  const pasteImageCapability = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === sessionAgent),
   );
 
   const { overlayLabel } = useTerminalOverlay(taskId, sessionId);
@@ -80,11 +82,17 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // Terminal is "ready" once startup noise has been cleared. Until then,
   // an overlay hides the raw command line and suppressDataRef prevents
   // PTY output from accumulating in xterm behind the overlay.
-  const [terminalReady, setTerminalReady] = useState(() => hasFirstOutput || hasUsage);
-  // The same predicate the state is seeded from, kept in a ref so the init effect's
-  // cleanup can consult it without re-running on every output/usage change.
-  const hasOutputRef = useRef(hasFirstOutput || hasUsage);
-  hasOutputRef.current = hasFirstOutput || hasUsage;
+  //
+  // Lifted when Claude Code's TUI activates the alternate screen buffer
+  // (first-output), when usage data arrives (fallback), or when the session
+  // exits before either (Ctrl+C, a crash), so the terminal is never stuck
+  // behind the shimmer. Derived from the store rather than held as state an
+  // effect set: every host keys this component by session id, and each of the
+  // three signals is monotonic for a session, so it can never flip back. That
+  // is also what retires the StrictMode-remount reset the state needed - the
+  // derived value is right on every mount, synthetic or real, with nothing to
+  // re-seed and no frame at the wrong value.
+  const terminalReady = hasFirstOutput || hasUsage || sessionStatus === 'exited';
 
   // For an already-running session, terminalReady starts true so the
   // LaunchOverlay never shows - which used to leave the whole mount-time
@@ -101,9 +109,12 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // pass `active` hardcoded true, so `active` carries no information about which
   // surface the user is actually on - the arbiter answers that from user-intent
   // state instead. See terminal-arrival-focus.ts.
-  const mayFocusOnArrival = useCallback(() => mayTakeArrivalFocus(sessionId), [sessionId]);
+  const mayFocusOnArrival = useCallback(
+    (site: ArrivalFocusSite) => mayTakeArrivalFocus(sessionId, site),
+    [sessionId],
+  );
 
-  const { terminalRef, initTerminal, fit, flushResize, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, paste, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -111,14 +122,19 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     colors: config.terminal.colors,
     shellName: sessionShell,
     releaseEscapeWhenPointerOutside,
-    pasteImageTemplate,
+    pasteImageCapability,
     backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
     onScrollbackSettled: handleScrollbackSettled,
     mayTakeArrivalFocus: mayFocusOnArrival,
   });
 
-  // Sync suppressDataRef with overlay state: suppress all PTY data while overlay is showing.
-  suppressDataRef.current = !terminalReady;
+  // Sync suppressDataRef with overlay state: suppress all PTY data while the
+  // overlay is showing. Written on commit (a layout effect), never during
+  // render, which the compiler rules forbid; the PTY data handler that reads
+  // it is attached by initTerminal on a later frame, so it never runs ahead.
+  useLayoutEffect(() => {
+    suppressDataRef.current = !terminalReady;
+  });
 
   // Relative wrapper that hosts the xterm div and its overlays.
   const containerRef = useRef<HTMLDivElement>(null);
@@ -142,65 +158,29 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   const { initializedRef: initialized } = useDeferredTerminalInit({
     terminalRef,
     initTerminal,
-    onCleanup: () => {
-      // Reset ONLY when the overlay would genuinely be wanted on the next mount, i.e.
-      // a session that has not produced anything yet. If the store still holds
-      // firstOutput/usage for this session, resetting re-shows "Starting agent..." for
-      // an agent that has been running for minutes, and the lifting effect then clears
-      // it a frame later - a visible flash.
-      //
-      // This was previously guarded on `getIsHmrReload()` alone, which named the right
-      // reason ("the store still has firstOutput/usage data") but only covered the HMR
-      // path. StrictMode's mount -> unmount -> remount runs this cleanup on EVERY dev
-      // open, which is the flash reported on opening an already-running task. Traced:
-      // seeded `ready true`, cleanup set it false, one render at false, then true
-      // again. Keying on the data itself covers both paths and matches the seed.
-      if (!hasOutputRef.current) {
-        setTerminalReady(false);
-      }
-    },
   });
-
-  // Lift overlay when Claude Code's TUI activates the alternate screen buffer
-  // (first-output) or when usage data arrives (fallback). No clear() needed:
-  // the fresh xterm has no stale content, and suppressDataRef blocked all
-  // noise while the overlay was showing.
-  useEffect(() => {
-    if ((hasFirstOutput || hasUsage) && !terminalReady) {
-      setTerminalReady(true);
-      if (taskId && pendingCommandLabel) {
-        useSessionStore.getState().clearPendingCommandLabel(taskId);
-      }
-    }
-  }, [hasFirstOutput, hasUsage, terminalReady, taskId, pendingCommandLabel]);
 
   // When the overlay lifts (terminalReady transitions false -> true), reload
   // scrollback from the PTY buffer. While the overlay was showing, all PTY
   // output (including the TUI's initial full-screen draw) was suppressed.
   // The PTY buffer still contains that output, so re-fetching it populates
-  // the terminal with the current TUI state.
+  // the terminal with the current TUI state. No clear() needed: the fresh
+  // xterm has no stale content, and suppressDataRef blocked all noise while
+  // the overlay was showing. The same transition retires the pending-command
+  // label the launch overlay was showing.
   const wasReadyRef = useRef(terminalReady);
   useEffect(() => {
     const wasReady = wasReadyRef.current;
     wasReadyRef.current = terminalReady;
-    if (terminalReady && !wasReady && initialized.current) {
-      reloadScrollback();
+    if (!terminalReady || wasReady) return;
+    if (initialized.current) reloadScrollback();
+    if (taskId && pendingCommandLabel) {
+      useSessionStore.getState().clearPendingCommandLabel(taskId);
     }
     // `initialized` is the stable ref returned by useDeferredTerminalInit -
     // listed for exhaustive-deps (which cannot see through the hook), never
     // a re-run trigger.
-  }, [terminalReady, reloadScrollback, initialized]);
-
-  // If session exits (Ctrl+C, crash, etc.) before usage arrives, clear the overlay
-  // so the terminal isn't stuck behind the shimmer indefinitely.
-  useEffect(() => {
-    if (!terminalReady && sessionStatus === 'exited') {
-      setTerminalReady(true);
-      if (taskId && pendingCommandLabel) {
-        useSessionStore.getState().clearPendingCommandLabel(taskId);
-      }
-    }
-  }, [sessionStatus, terminalReady, taskId, pendingCommandLabel]);
+  }, [terminalReady, reloadScrollback, initialized, taskId, pendingCommandLabel]);
 
   // Re-fit and focus when the tab becomes active. Tabs that start with
   // display:none initialize late (via the init effect's ResizeObserver), so we
@@ -220,7 +200,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       // `initialized` already true, so it focuses about one frame after mount -
       // well before any replay settles. Gating only the replay would therefore
       // leave the race intact, just decided earlier.
-      if (initialized.current && mayFocusOnArrival()) {
+      if (initialized.current && mayFocusOnArrival('tab-init')) {
         focus();
       }
     });
@@ -261,7 +241,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     onDeferredResizeSettled: handleDeferredResizeSettled,
   });
 
-  const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell, pasteImageTemplate);
+  const fileDrop = useTerminalFileDrop(sessionId, focus, paste, sessionShell, pasteImageCapability);
   const terminalBackground = resolveTerminalBackground(config.terminal.colors);
 
   return (

@@ -117,6 +117,12 @@ const ADAPTER_CLASSES = [
     verifiesSlashSubmission: false, requiresAgentSessionId: true,
     reason: 'measured 2026-08-16 vs agy 1.1.13: 84ms worst transcript append (submit-time flush); slash text is rejected client-side and never recorded',
   },
+  {
+    name: 'goose', importPath: '../../src/main/agent/adapters/goose/goose-adapter', className: 'GooseAdapter',
+    commandInjection: 'null', escalates: false,
+    verifiesSlashSubmission: true, requiresAgentSessionId: true,
+    reason: 'the adapter parses no history at all, so there is nothing to verify against. Goose DOES have hooks and a session store, so this null is a "not wired yet", and wiring either one needs the flush measurement before a verifier lands here',
+  },
 ] as const;
 
 function reasonFor(name: string): string {
@@ -301,6 +307,27 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       if (adapter.canVerifySlashSubmission === undefined) continue;
       expect(typeof adapter.canVerifySlashSubmission()).toBe('boolean');
     }
+  });
+
+  it('every registered adapter has a row in ADAPTER_CLASSES', async () => {
+    // Without this, the table above is opt-in and the file's whole premise
+    // ("`null` is a DECLARED ANSWER, not an omission") holds only for adapters
+    // someone remembered to add. Goose shipped absent from it and every
+    // assertion here still passed, because each one is an `it.each` OVER the
+    // table: an adapter that is not in the table is not tested, so its
+    // escalation tier could be flipped without evidence and nothing would go
+    // red. Adding an adapter to the registry now forces a row, which forces
+    // the reason string, which forces the measurement.
+    const { agentRegistry } = await import('../../src/main/agent/agent-registry');
+    const tabledNames = ADAPTER_CLASSES.map((entry) => entry.name);
+    // The registry keys qwen-code as 'qwen'; the table matches it by that name.
+    const missing = agentRegistry.list().filter((name) => !tabledNames.includes(name));
+    expect(
+      missing,
+      `Adapter(s) ${JSON.stringify(missing)} are registered but have no ADAPTER_CLASSES row, `
+      + 'so their verifier verdict and escalation tier are unpinned. Add a row with the '
+      + 'evidence for each value (see this file\'s docstring and docs/command-injection.md).',
+    ).toEqual([]);
   });
 
   it('every registered adapter implements getSubmissionVerifier', async () => {

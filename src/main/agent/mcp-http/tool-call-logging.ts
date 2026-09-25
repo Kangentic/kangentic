@@ -17,6 +17,36 @@
  */
 export const LARGE_DESCRIPTION_WARN_THRESHOLD = 1000;
 
+/** The two tools whose received arguments this module inspects. */
+export type InspectedToolName = 'kangentic_create_task' | 'kangentic_update_task';
+
+/**
+ * Per-request record of what `logMcpToolArguments` noticed about the RAW
+ * arguments, so the tool layer can tell the calling agent something the
+ * console warn alone never reached it with.
+ *
+ * `labelsAbsentWithLargeDescription` maps a tool name to the description
+ * length that triggered it. Keyed by tool because one batch body can carry
+ * both a create and an update. Note the keying is per TOOL, not per message:
+ * a batch carrying two creates, only one of which tripped, reports the notice
+ * on both. Distinguishing them would need request-id keying through the SDK,
+ * and a batch of same-tool calls is not a shape any client emits today.
+ *
+ * The distinction this exists to preserve is ABSENT vs EMPTY: by the time
+ * arguments reach a handler, Kangentic has normalized a missing field to null
+ * and "the client never sent labels" is indistinguishable from "the caller
+ * deliberately sent none". Only the raw body knows, which is why the signal
+ * has to ride from here rather than be re-derived downstream.
+ */
+export interface ToolArgumentNotices {
+  labelsAbsentWithLargeDescription: Partial<Record<InspectedToolName, number>>;
+}
+
+/** Build an empty notices record for one HTTP request. */
+export function createToolArgumentNotices(): ToolArgumentNotices {
+  return { labelsAbsentWithLargeDescription: {} };
+}
+
 /**
  * Diagnostic for the "labels dropped on a large description" bug
  * (task #229). Logs the arguments that actually arrived in the request body
@@ -36,7 +66,7 @@ export const LARGE_DESCRIPTION_WARN_THRESHOLD = 1000;
  *   - params is missing or not an object
  *   - params.name is neither 'kangentic_create_task' nor 'kangentic_update_task'
  */
-export function logMcpToolArguments(parsedBody: unknown): void {
+export function logMcpToolArguments(parsedBody: unknown, notices?: ToolArgumentNotices): void {
   const messages = Array.isArray(parsedBody) ? parsedBody : [parsedBody];
   for (const message of messages) {
     if (!message || typeof message !== 'object') continue;
@@ -54,6 +84,10 @@ export function logMcpToolArguments(parsedBody: unknown): void {
     const description = argumentsObject.description;
     const descriptionLength = typeof description === 'string' ? description.length : 0;
     if (!hasLabels && descriptionLength >= LARGE_DESCRIPTION_WARN_THRESHOLD) {
+      // Record before logging so a console failure cannot cost the caller the
+      // in-response notice, which is the only form of this signal an agent
+      // ever sees.
+      if (notices) notices.labelsAbsentWithLargeDescription[toolName] = descriptionLength;
       console.warn(
         `[mcp-http] ${toolName}: 'labels' absent in received arguments alongside a ${descriptionLength}-char description. ` +
         'If labels were expected on this call, this is the known large-payload drop upstream of Kangentic ' +

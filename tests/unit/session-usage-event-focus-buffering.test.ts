@@ -24,7 +24,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Hoisted mocks (must be declared before any imports of the mocked modules)
 // ---------------------------------------------------------------------------
 
-const capturedSessionEventHandlers = new Map<string, (...args: unknown[]) => unknown>();
+// EVERY handler per event, not the last one: registerSessionHandlers subscribes
+// more than one listener to 'event' (the buffering listener under test and the
+// message-trail tracker), and a real EventEmitter delivers to all of them. A
+// last-wins map silently swapped the listener these tests drive.
+const capturedSessionEventHandlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -128,8 +132,11 @@ function createMockContext() {
       getSessionAgentName: vi.fn(() => 'claude'),
       getFocusedSessions: vi.fn(() => new Set<string>()),
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
-        capturedSessionEventHandlers.set(event, handler);
+        const handlers = capturedSessionEventHandlers.get(event) ?? [];
+        handlers.push(handler);
+        capturedSessionEventHandlers.set(event, handlers);
       }),
+      listSessions: vi.fn(() => []),
       off: vi.fn(),
     },
     configManager: {
@@ -142,15 +149,15 @@ function createMockContext() {
 }
 
 function fireUsage(context: ReturnType<typeof createMockContext>, sessionId: string, data: unknown): void {
-  const handler = capturedSessionEventHandlers.get('usage');
-  if (!handler) throw new Error('usage handler was not registered');
-  handler(sessionId, data);
+  const handlers = capturedSessionEventHandlers.get('usage');
+  if (!handlers || handlers.length === 0) throw new Error('usage handler was not registered');
+  for (const handler of handlers) handler(sessionId, data);
 }
 
 function fireEvent(context: ReturnType<typeof createMockContext>, sessionId: string, event: unknown): void {
-  const handler = capturedSessionEventHandlers.get('event');
-  if (!handler) throw new Error('event handler was not registered');
-  handler(sessionId, event);
+  const handlers = capturedSessionEventHandlers.get('event');
+  if (!handlers || handlers.length === 0) throw new Error('event handler was not registered');
+  for (const handler of handlers) handler(sessionId, event);
 }
 
 describe('sessions.ts isFocusedSession gate for usage/event background buffering', () => {

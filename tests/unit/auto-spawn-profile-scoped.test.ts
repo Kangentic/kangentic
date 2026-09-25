@@ -55,16 +55,17 @@ vi.mock('../../src/main/transition-engine/session-startup/prepare-spawn', () => 
 }));
 
 import { autoSpawnTasks } from '../../src/main/transition-engine/session-startup/auto-spawn';
-import type { BoardProfile } from '../../src/shared/types';
+import type { BoardProfile, SwimlaneRole } from '../../src/shared/types';
 
 const TASK_ID = 'task-001';
 const QUIET_LANE = 'lane-quiet';
 const LOUD_LANE = 'lane-loud';
 
-function lane(id: string, autoSpawn: boolean) {
+function lane(id: string, autoSpawn: boolean, role: SwimlaneRole | null = null) {
   return {
     id,
     name: id,
+    role,
     auto_spawn: autoSpawn,
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',
@@ -169,5 +170,43 @@ describe('autoSpawnTasks: auto_spawn is resolved per task, not per lane', () => 
     // pre-profile cost is preserved rather than paying a full-board task scan.
     expect(mockTaskList).toHaveBeenCalledTimes(1);
     expect(mockTaskList).toHaveBeenCalledWith(LOUD_LANE);
+  });
+
+  it('excludes a raw auto_spawn=true lane whose role is todo (never-auto-spawn invariant)', async () => {
+    const TODO_LANE = 'lane-todo';
+    mockSwimlaneList.mockReturnValue([lane(LOUD_LANE, true), lane(TODO_LANE, true, 'todo')]);
+    mockTaskList.mockImplementation((laneId: string) => (laneId === LOUD_LANE
+      ? [{ id: 'task-loud', swimlane_id: LOUD_LANE, profile_id: null, worktree_path: null }]
+      : [{ id: 'task-todo', swimlane_id: TODO_LANE, profile_id: null, worktree_path: null }]));
+
+    await runAutoSpawn([]);
+
+    // The todo lane is never scanned at all: NEVER_AUTO_SPAWN_ROLES filters it
+    // out at the lane level, before any task inside it is looked up.
+    expect(mockTaskList).toHaveBeenCalledTimes(1);
+    expect(mockTaskList).toHaveBeenCalledWith(LOUD_LANE);
+    expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
+    const input = mockPrepareAgentSpawn.mock.calls[0][0] as unknown as { task: { id: string } };
+    expect(input.task.id).toBe('task-loud');
+  });
+
+  it('excludes a done-role lane even when a profile turns auto_spawn ON for it', async () => {
+    const DONE_LANE = 'lane-done';
+    mockSwimlaneList.mockReturnValue([lane(LOUD_LANE, true), lane(DONE_LANE, false, 'done')]);
+    mockTaskList.mockImplementation((laneId: string) => (laneId === LOUD_LANE
+      ? [{ id: 'task-loud', swimlane_id: LOUD_LANE, profile_id: null, worktree_path: null }]
+      : [{ id: 'task-done', swimlane_id: DONE_LANE, profile_id: 'p1', worktree_path: null }]));
+
+    await runAutoSpawn([
+      { id: 'p1', name: 'Eager', columns: { [DONE_LANE]: { autoSpawn: true } } },
+    ]);
+
+    // Without the role guard, laneIdsSomeProfileEnables would pull the done
+    // lane into the scan even though its own auto_spawn is off.
+    expect(mockTaskList).toHaveBeenCalledTimes(1);
+    expect(mockTaskList).toHaveBeenCalledWith(LOUD_LANE);
+    expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
+    const input = mockPrepareAgentSpawn.mock.calls[0][0] as unknown as { task: { id: string } };
+    expect(input.task.id).toBe('task-loud');
   });
 });

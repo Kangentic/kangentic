@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { Field } from '../Field';
 import { BranchPicker } from './BranchPicker';
-import { WorktreeChip } from './WorktreeChip';
+import { WorktreePlacementControl } from './WorktreePlacementControl';
+import { describeWorktreeBlocker, type WorktreeBlocker } from '../../utils/worktree-placement';
 
 interface TaskBranchRowProps {
   /**
@@ -25,18 +26,31 @@ interface TaskBranchRowProps {
   defaultBaseBranch: string;
   effectiveWorktree: boolean;
   setUseWorktree: (value: boolean) => void;
-  /** Hide the worktree segment (a task that already has a worktree on disk). */
+  /** Hide the Worktree | Project control (a task that already has a worktree on disk). */
   showWorktree?: boolean;
+  /**
+   * The project cannot have a worktree at all; the Worktree option renders
+   * disabled with the reason as its tooltip and Project reads selected, instead
+   * of offering a worktree the spawn would ignore.
+   */
+  worktreeBlocker?: WorktreeBlocker | null;
 }
 
 /**
- * The Branch field, as ONE composed control rather than five loose ones.
+ * The Branch field: a composed shell for the branch (name + base), and beside
+ * it, with a gap, the Worktree | Project choice as the shared `SegmentedControl`.
  *
- * It used to be `[input] from [pill] | [pill]`: a text input, a bare "from", a
- * rounded-full branch pill, a hand-drawn divider, and a rounded-full worktree
- * pill, at three radii and two heights. Now it is a single bordered shell with
- * flush segments and internal dividers, which is the shape `Combobox` already
- * uses in this same dialog for its chevron button.
+ * The shell used to be `[input] from [pill] | [pill]`: a text input, a bare
+ * "from", a rounded-full branch pill, a hand-drawn divider, and a rounded-full
+ * worktree pill, at three radii and two heights. Now it is a single bordered
+ * shell with flush segments and internal dividers, which is the shape `Combobox`
+ * already uses in this same dialog for its chevron button.
+ *
+ * The worktree choice is NOT a segment of that shell. It was, first as an on/off
+ * button and then as a two-option pair, and inside the shell a two-way choice
+ * read as part of the branch name rather than as its own decision. The shell
+ * composes one thing (which branch); where the task runs is another, so it
+ * stands apart in the app's one idiom for a small choice among named options.
  *
  * The bare "from" is gone rather than restyled. The hint line underneath already
  * says "will be created from `main`", so the word was stating the relationship a
@@ -58,6 +72,7 @@ export function TaskBranchRow({
   effectiveWorktree,
   setUseWorktree,
   showWorktree = true,
+  worktreeBlocker = null,
 }: TaskBranchRowProps) {
   const editableName = setCustomBranchName !== undefined;
 
@@ -82,19 +97,23 @@ export function TaskBranchRow({
           comes first changes with `editableName`.
 
           Without a name input there is nothing to stretch, so the shell
-          shrink-wraps (inline-flex) instead of running the full width with dead
+          shrink-wraps (no flex-1) instead of running the full width with dead
           space where the input used to be.
 
-          The shell border does NOT light on focus. Each of the three segments is
-          separately focusable and separately actionable, so a border that lights
-          for all of them says "something in here has focus" without saying what -
-          and it was redundant besides, since the two buttons already draw their
-          own inset ring. Focus is indicated locally, on the segment that has it. */}
+          The shell border does NOT light on focus. Each segment is separately
+          focusable and separately actionable, so a border that lights for all of
+          them says "something in here has focus" without saying what - and it
+          was redundant besides, since the button already draws its own inset
+          ring. Focus is indicated locally, on the segment that has it.
+
+          `task-branch-row` is the whole row (shell + placement), a direct child
+          of the Field, so the hint stays its sibling for tests. */}
+      <div className="flex items-center gap-2" data-testid="task-branch-row">
       <div
-        className={`${editableName ? 'flex' : 'inline-flex'} min-h-[34px] items-stretch divide-x divide-edge-input overflow-hidden rounded border bg-surface-control transition-colors ${
+        className={`flex ${editableName ? 'flex-1' : ''} min-h-[34px] items-stretch divide-x divide-edge-input overflow-hidden rounded border bg-surface-control transition-colors ${
           branchNameError ? 'border-danger' : 'border-edge-input'
         }`}
-        data-testid="task-branch-row"
+        data-testid="task-branch-shell"
       >
         {editableName && (
           <input
@@ -116,12 +135,14 @@ export function TaskBranchRow({
           defaultBranch={defaultBaseBranch || 'main'}
           onChange={setBaseBranch}
         />
-        {showWorktree && (
-          <WorktreeChip
-            enabled={effectiveWorktree}
-            onToggle={() => setUseWorktree(effectiveWorktree ? false : true)}
-          />
-        )}
+      </div>
+      {showWorktree && (
+        <WorktreePlacementControl
+          value={effectiveWorktree ? 'worktree' : 'project'}
+          onChange={(placement) => setUseWorktree(placement === 'worktree')}
+          blockedReason={worktreeBlocker ? describeWorktreeBlocker(worktreeBlocker) : null}
+        />
+      )}
       </div>
     </Field>
   );

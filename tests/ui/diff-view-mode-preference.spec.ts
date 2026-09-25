@@ -281,6 +281,8 @@ test.describe('diffViewMode: Changes settings tab reflects and drives the same v
 
     // Open Settings panel.
     await page.locator('[data-testid="settings-button"]').click();
+    const settingsPanel = page.locator('[data-testid="settings-panel"]');
+    await settingsPanel.waitFor({ state: 'visible', timeout: 3000 });
     await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 
     // Navigate to the Changes tab.
@@ -297,8 +299,25 @@ test.describe('diffViewMode: Changes settings tab reflects and drives the same v
     await diffViewSelect.selectOption('split');
     await expect.poll(() => getDiffViewMode(), { timeout: 3000 }).toBe('split');
 
-    // Close the settings panel via Escape.
-    await page.keyboard.press('Escape');
-    await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 2000 });
+    // Close the settings panel by driving the config store directly, instead
+    // of `page.keyboard.press('Escape')`. Escape's dismissal goes through
+    // `SettingsPanelShell`'s document-level handler -> `useOverlayPhase`'s
+    // `requestClose()` -> the 150ms `overlay-panel-out` CSS animation ->
+    // `animationend` -> `onClose()`. Under CI's sharded-worker contention that
+    // `animationend` dispatch can stall well past the animation's own
+    // duration (observed: CI run 33273015411, "waiting for locator to be
+    // hidden" timing out at 2000ms after every real assertion in this test
+    // had already passed - a pure cleanup-step flake, not a behavior bug).
+    // `setSettingsOpen(false)` unmounts `<SettingsPanel />` on the very next
+    // React commit (`AppLayout.tsx` gates it on `{settingsOpen &&
+    // <SettingsPanel />}`), bypassing the exit-animation path entirely, so
+    // there is nothing left in the wait for a stalled main thread to starve.
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: { config?: { getState: () => { setSettingsOpen: (open: boolean) => void } } };
+      }).__zustandStores;
+      stores?.config?.getState().setSettingsOpen(false);
+    });
+    await settingsPanel.waitFor({ state: 'hidden', timeout: 3000 });
   });
 });

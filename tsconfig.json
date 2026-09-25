@@ -18,7 +18,8 @@
     "paths": {
       "@shared/*": ["src/shared/*"],
       "@kangentic/protocol": ["packages/protocol/src/index.ts"],
-      "@kangentic/protocol/*": ["packages/protocol/src/*"]
+      "@kangentic/protocol/*": ["packages/protocol/src/*"],
+      "monaco-editor": ["node_modules/monaco-editor/esm/vs/index.d.ts"]
     }
   },
   "include": ["src/**/*", "packages/protocol/src/**/*"],

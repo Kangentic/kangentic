@@ -4,8 +4,13 @@ import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readPopOutDescriptor } from './pop-out/read-descriptor';
 import { PopOutSurfaceRoot } from './pop-out/PopOutSurfaceRoot';
+import { initRendererErrorReporting } from './error-reporting';
 import faviconHref from '@kangentic/branding/assets/brandmark-small.svg?url';
 import './index.css';
+
+// Before any listener or render, so the SDK's global handlers see everything.
+// No-op unless main initialized Sentry (see error-reporting.ts).
+initRendererErrorReporting();
 
 window.addEventListener('unhandledrejection', (event) => {
   const message = event.reason instanceof Error ? event.reason.message : String(event.reason);

@@ -31,6 +31,7 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type {
+  AgentProjectExecution,
   ShortcutConfig,
   Swimlane,
   Task,
@@ -48,6 +49,12 @@ export interface TaskDetailHostConfig {
   defaultBaseBranch: string;
   /** Whether this project creates worktrees at all. */
   worktreesEnabled: boolean;
+  /**
+   * Per-agent execution mode for this project. The branch hint reads it to
+   * say a remote agent gets no local worktree, mirroring the spawn-time skip
+   * in `ensureTaskWorktree`.
+   */
+  agentExecution: Record<string, AgentProjectExecution>;
   /** Whether the embedded Browser pane is offered. */
   browserEnabled: boolean;
 }

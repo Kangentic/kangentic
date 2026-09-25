@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  applyProjectScope,
   bucketOf,
   filterRows,
   groupRows,
+  isLiveBucket,
+  monitorSlotKind,
   sortRows,
   summarize,
   toRenderUnits,
@@ -10,6 +13,7 @@ import {
 } from '../../src/renderer/components/monitor/monitor-view-model';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { MonitorSessionRow, MonitorView } from '../../src/shared/types';
+import { stripMarkdown } from '../../src/renderer/utils/strip-markdown';
 
 /**
  * The monitor's whole decision surface (bucketing, filtering, sorting, grouping,
@@ -76,6 +80,82 @@ describe('bucketOf', () => {
   });
 });
 
+describe('isLiveBucket', () => {
+  it('counts an agent waiting on the user as live, and nothing parked', () => {
+    // The whole point: an agent that needs you is still ON the task. This is the
+    // condition the activity mark renders for, so the slot and the glyph agree.
+    expect(isLiveBucket('working')).toBe(true);
+    expect(isLiveBucket('needs-you')).toBe(true);
+    expect(isLiveBucket('idle')).toBe(false);
+    expect(isLiveBucket('finished')).toBe(false);
+  });
+
+  it('agrees with the buckets that draw an ActivityMark', () => {
+    // Pinned as a pair rather than by eye: `stateGlyphContent` draws a mark for
+    // `working` and `needs-you` and a lucide glyph for the rest, and a card that
+    // showed agent output under a paused glyph is the bug this prevents.
+    for (const bucket of BUCKET_ORDER) {
+      expect(isLiveBucket(bucket)).toBe(bucket === 'working' || bucket === 'needs-you');
+    }
+  });
+});
+
+describe('monitorSlotKind', () => {
+  const running = { status: 'running', activity: 'thinking' } as const;
+  const paused = { status: 'suspended', activity: null } as const;
+
+  it('gives a live row its trail, and the terminal peek when it has not spoken', () => {
+    expect(monitorSlotKind(makeRow(running), 'latest', true)).toBe('trail');
+    expect(monitorSlotKind(makeRow(running), 'latest', false)).toBe('peek');
+    // Both render in the same well, so a live card always has one.
+    expect(monitorSlotKind(makeRow({ ...running, description: 'A task' }), 'latest', false)).toBe('peek');
+  });
+
+  it('sends a stopped row back to its description even when it still holds a trail', () => {
+    // The case the live gate exists for. A trail outlives its session, so this
+    // row genuinely has one; the card must still print what the TASK is.
+    expect(monitorSlotKind(makeRow({ ...paused, description: 'A task' }), 'latest', true)).toBe('description');
+    expect(monitorSlotKind(makeRow({ status: 'exited', description: 'A task' }), 'latest', true)).toBe('description');
+  });
+
+  it('falls to the peek when a stopped row has no description, as a Command Terminal has none', () => {
+    expect(monitorSlotKind(makeRow({ ...paused, description: null }), 'latest', true)).toBe('peek');
+  });
+
+  it('treats a missing or empty description as no description', () => {
+    // `makeRow` omits the field, which is `undefined` rather than `null`. A
+    // `!== null` test let that through and rendered an empty description slot.
+    expect(makeRow(paused).description).toBeUndefined();
+    expect(monitorSlotKind(makeRow(paused), 'latest', false)).toBe('peek');
+    expect(monitorSlotKind(makeRow({ ...paused, description: '' }), 'latest', false)).toBe('peek');
+  });
+
+  it('honours the description preview on every row, live or not', () => {
+    // Card Preview `description` is an explicit request, so it outranks the
+    // live/stopped split entirely.
+    expect(monitorSlotKind(makeRow({ ...running, description: 'A task' }), null, true)).toBe('description');
+    expect(monitorSlotKind(makeRow({ ...paused, description: 'A task' }), null, true)).toBe('description');
+    expect(monitorSlotKind(makeRow({ ...running, description: null }), null, true)).toBe('peek');
+  });
+
+  it('counts a markdown-only description as a description, not a fall-through to the peek', () => {
+    // hasDescription is tested against the RAW field, before stripMarkdown: a
+    // description that is nothing but markdown syntax still counts as one, so
+    // the card prints the (visually empty) stripped result instead of a
+    // terminal peek the user did not ask for. Confirmed empirically against
+    // remove-markdown that this literal strips to '' - a rewrite to
+    // `stripMarkdown(row.description).length > 0` would still pass every other
+    // case in this file but flip this one to 'peek'.
+    const markdownOnly = '**  **';
+    expect(stripMarkdown(markdownOnly)).toBe('');
+    expect(monitorSlotKind(makeRow({ ...paused, description: markdownOnly }), null, false)).toBe('description');
+  });
+
+  it('never returns a trail for a row whose trail is empty', () => {
+    expect(monitorSlotKind(makeRow(running), 'lines', false)).not.toBe('trail');
+  });
+});
+
 describe('filterRows', () => {
   const rows = [
     makeRow({ sessionId: 'a', activity: 'idle' }),
@@ -93,6 +173,16 @@ describe('filterRows', () => {
     const mixed = [makeRow({ sessionId: 'a' }), makeRow({ sessionId: 'b', projectId: 'project-2' })];
     const kept = filterRows(mixed, { ...VIEW, projectFilter: ['project-2'] });
     expect(kept.map((row) => row.sessionId)).toEqual(['b']);
+  });
+
+  it('keeps a chosen SUBSET of projects, not just one', () => {
+    const mixed = [
+      makeRow({ sessionId: 'a' }),
+      makeRow({ sessionId: 'b', projectId: 'project-2' }),
+      makeRow({ sessionId: 'c', projectId: 'project-3' }),
+    ];
+    const kept = filterRows(mixed, { ...VIEW, projectFilter: ['project-1', 'project-3'] });
+    expect(kept.map((row) => row.sessionId)).toEqual(['a', 'c']);
   });
 
   it('an empty projectFilter means every project, not none', () => {
@@ -113,6 +203,29 @@ describe('filterRows', () => {
     expect(filterRows(searchable, { ...VIEW, textFilter: 'LANDING' }).map((r) => r.sessionId)).toEqual(['a']);
     expect(filterRows(searchable, { ...VIEW, textFilter: 'crypto' }).map((r) => r.sessionId)).toEqual(['b']);
     expect(filterRows(searchable, { ...VIEW, textFilter: '#999' }).map((r) => r.sessionId)).toEqual(['c']);
+  });
+});
+
+describe('applyProjectScope', () => {
+  const rows = [
+    makeRow({ sessionId: 'a' }),
+    makeRow({ sessionId: 'b', projectId: 'project-2' }),
+    makeRow({ sessionId: 'c', projectId: 'project-3' }),
+  ];
+
+  it('returns the SAME array reference for an empty filter', () => {
+    // Load-bearing, not an optimisation nicety: MonitorSummaryCards is memoized
+    // on the rows identity, so the common unscoped path must not allocate.
+    expect(applyProjectScope(rows, [])).toBe(rows);
+  });
+
+  it('keeps only rows from the named project', () => {
+    expect(applyProjectScope(rows, ['project-2']).map((row) => row.sessionId)).toEqual(['b']);
+  });
+
+  it('keeps rows from EACH project of a multi-project filter', () => {
+    const scoped = applyProjectScope(rows, ['project-1', 'project-3']);
+    expect(scoped.map((row) => row.sessionId)).toEqual(['a', 'c']);
   });
 });
 

@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseCapabilityRequestPayload } from '../../../packages/protocol/src/wire/payloads';
 import type { JsonValue } from '../../../packages/protocol/src/wire/messages';
-import type { CapabilityVerb } from '../../../packages/protocol/src/capabilities/verbs';
+import { CAPABILITY_VERBS, type CapabilityVerb } from '../../../packages/protocol/src/capabilities/verbs';
 
 describe('parseCapabilityRequestPayload', () => {
   it('read-stream: parses a valid subscribe payload', () => {
@@ -110,6 +110,26 @@ describe('parseCapabilityRequestPayload', () => {
       projectId: 'p-1',
     });
     expect(parsed).toEqual({ taskId: 't-1', targetSwimlaneId: 'lane-1', targetPosition: 2, projectId: 'p-1' });
+  });
+
+  it('start-session: parses a valid payload to exactly the trusted fields', () => {
+    const parsed = parseCapabilityRequestPayload('start-session', {
+      taskId: 't-1',
+      projectId: 'p-1',
+      // A phone cannot smuggle a prompt or a target column into a start:
+      // the verb is keyed by task and project and nothing else survives.
+      resumePrompt: 'do something else',
+      targetSwimlaneId: 'lane-9',
+    });
+    expect(parsed).toEqual({ taskId: 't-1', projectId: 'p-1' });
+  });
+
+  it('start-session: rejects a missing taskId', () => {
+    expect(() => parseCapabilityRequestPayload('start-session', { projectId: 'p-1' })).toThrow(/taskId/);
+  });
+
+  it('start-session: rejects a missing projectId', () => {
+    expect(() => parseCapabilityRequestPayload('start-session', { taskId: 't-1' })).toThrow(/projectId/);
   });
 
   it('answer-permission-prompt: rejects a missing promptId', () => {
@@ -248,8 +268,12 @@ describe('parseCapabilityRequestPayload', () => {
   });
 
   it('rejects a non-object payload for every verb', () => {
-    expect(() => parseCapabilityRequestPayload('read-board', 'not-an-object' as unknown as JsonValue)).toThrow();
-    expect(() => parseCapabilityRequestPayload('move-task', null as unknown as JsonValue)).toThrow();
+    // Looped over the tuple rather than a hand-picked sample, so a verb added
+    // with a parser that forgets its isRecord check fails here on arrival.
+    for (const verb of CAPABILITY_VERBS) {
+      expect(() => parseCapabilityRequestPayload(verb, 'not-an-object' as unknown as JsonValue), verb).toThrow();
+      expect(() => parseCapabilityRequestPayload(verb, null as unknown as JsonValue), verb).toThrow();
+    }
   });
 
   it('rejects an array payload (an array is not a record, even for the all-optional read-board shape)', () => {

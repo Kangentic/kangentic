@@ -8,6 +8,7 @@ import type {
   SessionStatus,
   StreamOutputParser,
 } from '../../shared/types';
+import { isLiveSessionStatus } from '../../shared/session-liveness';
 
 /**
  * Internal per-session state owned by the main process. The subset
@@ -57,6 +58,17 @@ export interface ManagedSession {
    * not a live read of HEAD.
    */
   commandTerminalBranch?: string | null;
+  /**
+   * For a transient session, the name auto-derived from its first prompt.
+   * Undefined for task agents and until one is derived.
+   *
+   * Main does not compute this and does not use it: the renderer derives it (via
+   * the adapter's `summarize`) and pushes it here so it OUTLIVES the renderer.
+   * The pairing map that holds it is renderer-only memory, so without this a
+   * reload loses every terminal's name, and the auto-namer then re-derives from
+   * whatever prompt comes next. Same reason the slot and branch live here.
+   */
+  commandTerminalLabel?: string | null;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at
@@ -98,6 +110,30 @@ export interface ManagedSession {
    *  status: a hard reset stays 'exited', not 'suspended'. */
   intentionalExit?: boolean;
   /**
+   * True when a resize was APPLIED to the live PTY while the session's
+   * stream was NOT in the alternate screen buffer. ConPTY only delivers a
+   * resize to a connected client, so a resize landing in the spawn window
+   * (the fit lands ~140ms after pty.spawn, while the shell/interop chain is
+   * still booting the agent) can be lost: the child then composes rows at
+   * the spawn width for the whole turn while every pty-vs-grid invariant
+   * reads healthy. The criterion is alt-screen entry rather than the
+   * first-output latch because a shell preamble (pwsh 7.6 emits the
+   * cursor-hide escape adapters match) can trip first-output seconds before
+   * the agent exists. `reassertGeometryForBootingChild` consumes this from
+   * two triggers (first-output and alt-screen entry) and re-delivers the
+   * geometry, which a running child cannot miss. Lazily set; dies with the
+   * registry entry.
+   *
+   * Note the criterion is the CURRENT alt-screen state, not a once-ever
+   * latch: a booted TUI that drops to the normal buffer (`\x1b[?1049l`, or
+   * an RIS `\x1bc`) and is resized during that excursion re-arms, and the
+   * next re-entry jiggles a child that was never booting. That costs one
+   * redundant repaint of geometry the child already has, so it is tolerated
+   * rather than tracked - but it is why this reads "was not in the alt
+   * buffer" rather than "had never entered" it.
+   */
+  resizeAppliedBeforeTuiReady?: boolean;
+  /**
    * Exit code to report INSTEAD of the one the OS gives, when Kangentic ends a
    * session on the agent's behalf. Named "override" rather than "reported"
    * because it genuinely MASKS the real code: after it is applied,
@@ -110,6 +146,16 @@ export interface ManagedSession {
    * which suppresses the crash toast but does not affect the code.
    */
   overrideExitCode?: number;
+  /**
+   * Epoch ms of the stream's FIRST alt-screen entry (the TUI's first composed
+   * frame), set once by the buffer manager's `onAltScreenEnter` and never
+   * updated. `kill()` reads it to decide whether the agent is still inside
+   * Claude Code's fullscreen boot-canary window (first frame plus 10 s), in
+   * which case the force-kill waits for the exit sequence to land instead of
+   * cutting the withdrawal short. See `lifecycle/deferred-kill.ts`. Lazily
+   * set; dies with the registry entry.
+   */
+  altScreenEnteredAt?: number;
 }
 
 /**
@@ -156,6 +202,14 @@ export function toSession(session: ManagedSession): Session {
     exitCode: session.exitCode,
     resuming: session.resuming,
     transient: session.transient || undefined,
+    // The renderer pairs a Command Terminal window to its PTY by (project, slot)
+    // in renderer-only memory, which a full page reload destroys. These two are
+    // main's authoritative copy of that pairing, so `syncSessions` can re-pair a
+    // survivor exactly instead of guessing. Dropping them here is what used to
+    // orphan a live terminal on every reload.
+    commandTerminalSlot: session.commandTerminalSlot ?? null,
+    commandTerminalBranch: session.commandTerminalBranch ?? null,
+    commandTerminalLabel: session.commandTerminalLabel ?? null,
     isolatedSwimlaneId: session.isolatedSwimlaneId,
     agentSessionId: session.agentSessionId ?? null,
   };
@@ -177,7 +231,7 @@ export function toSession(session: ManagedSession): Session {
  * the meaning here would clash with that established term.
  */
 export function isLiveSession(session: Session | undefined): boolean {
-  return !!session && (session.status === 'running' || session.status === 'queued');
+  return !!session && isLiveSessionStatus(session.status);
 }
 
 /**
@@ -270,6 +324,24 @@ export class SessionRegistry {
   }
 
   /**
+   * Every registry row for a task, in insertion order.
+   *
+   * The registry is meant to hold ONE row per task (the task's current
+   * session; the DB keeps its other resumable records), and every writer
+   * enforces that at insertion. This is the query those writers drain with:
+   * a spawn that evicted only `findByTaskId`'s first match could never catch
+   * up with a second stale row, and the survivor masked the live PTY in the
+   * renderer.
+   */
+  listByTaskId(taskId: string): ManagedSession[] {
+    const rows: ManagedSession[] = [];
+    for (const session of this.sessions.values()) {
+      if (session.taskId === taskId) rows.push(session);
+    }
+    return rows;
+  }
+
+  /**
    * Find the first live (running/queued) Session DTO for a task. Used by
    * reconcileTaskSessionRef to heal cases where the DB pointer
    * (`task.session_id`) is null or points at a now-suspended entry while
@@ -283,8 +355,7 @@ export class SessionRegistry {
    */
   findLiveSessionByTaskId(taskId: string): Session | undefined {
     for (const session of this.sessions.values()) {
-      if (session.taskId === taskId
-          && (session.status === 'running' || session.status === 'queued')) {
+      if (session.taskId === taskId && isLiveSessionStatus(session.status)) {
         return toSession(session);
       }
     }
@@ -293,6 +364,58 @@ export class SessionRegistry {
 
   hasSessionForTask(taskId: string): boolean {
     return this.findByTaskId(taskId) !== undefined;
+  }
+
+  /**
+   * Whether the task has an agent worth preserving state for: a live
+   * (running / queued) session that is NOT already being killed.
+   *
+   * `findLiveSessionByTaskId` answers "is there a running row", which is the
+   * wrong question for anything deciding to keep a browser alive for the agent:
+   * `kill()` stamps `intentionalExit` synchronously and the PTY exits later, so
+   * for that gap the row still reads running while the agent is on its way
+   * out. The `Session` DTO deliberately drops the flag, hence this query.
+   */
+  hasLiveSessionForTask(taskId: string): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.taskId !== taskId) continue;
+      if (!isLiveSessionStatus(session.status)) continue;
+      if (session.intentionalExit === true) continue;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Whether this session's teardown - suspend()'s or kill()'s exit-sequence
+   * write into the live PTY, possibly followed by a force-kill - is already
+   * under way. `status` flips away from 'running' (suspend(), before
+   * `gracefulPtyShutdown` writes the sequence) or `intentionalExit` is
+   * stamped (kill(), before `writeExitSequence`) SYNCHRONOUSLY, strictly
+   * before either writes a byte, so this is true from the moment teardown
+   * begins - not only once the final 'exit' event fires later.
+   *
+   * A read-only consumer that streams raw PTY bytes to a live viewer (the
+   * mobile bridge's terminal tap) uses this to stop forwarding once teardown
+   * starts, rather than waiting for the exit event: the exit sequence itself
+   * (Ctrl+C, `/exit`) and the fullscreen TUI's repaint as it leaves the
+   * alternate screen are real PTY content, and a viewer that keeps receiving
+   * it sees the agent's own teardown - a mostly-blank screen behind whatever
+   * shell it was launched in - rather than a frozen last frame. The `Session`
+   * DTO deliberately drops `intentionalExit` (see `hasLiveSessionForTask`
+   * above), hence this query.
+   *
+   * The true branch is deliberately wider than "teardown in progress", since
+   * every state in it is one a raw-byte forwarder must stop forwarding for:
+   * `suspended` and `exited`, `intentionalExit` on a row still reading
+   * `running`, a missing session (nothing left to receive bytes for), and
+   * `queued` - which `hasLiveSessionForTask` counts as LIVE, but which has no
+   * PTY yet and so produces no bytes to forward either way.
+   */
+  isSessionTeardownInFlight(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) return true;
+    return session.status !== 'running' || session.intentionalExit === true;
   }
 
   getSessionProjectId(sessionId: string): string | undefined {
@@ -323,6 +446,11 @@ export class SessionRegistry {
    * widening the DTO would ripple through every existing consumer). Returns a
    * narrow projection rather than `ManagedSession` so callers still cannot
    * reach the pty handle, parsers, or adapter attachment.
+   *
+   * `commandTerminalSlot` / `commandTerminalBranch` used to be in that same
+   * monitor-only category and no longer are: `toSession` carries them too, because
+   * the renderer needs the slot to re-pair a surviving Command Terminal PTY to its
+   * window after a page reload. `agentName` remains the narrow-DTO example.
    */
   listManagedSummaries(): ManagedSessionSummary[] {
     return Array.from(this.sessions.values(), (session) => ({
@@ -371,6 +499,21 @@ export class SessionRegistry {
    * before app restart. The placeholder has no PTY but gives the
    * renderer a "Paused" state and exposes the "Resume session" button.
    *
+   * Idempotent per task, returning null when it inserts nothing:
+   *
+   * - A `running`, `queued`, or `suspended` row blocks the insert. A live row
+   *   must never be displaced by a placeholder, and a suspended row already
+   *   offers Resume (it may also be mid-`suspend()`, which holds the row
+   *   across its awaited graceful shutdown and emits on it afterwards).
+   *   Recovery runs once per project per process, but not only once: an
+   *   explicit open during startup activation runs it again, and every pass
+   *   used to add a fresh placeholder. The spawn that eventually replaced them
+   *   drained one, and the survivor masked the live session in the renderer.
+   * - An `exited` row is evicted (map only; the manager clears its caches)
+   *   and replaced. An exited row offers no Resume control, while the DB
+   *   record the caller just upgraded to `suspended` says the task is
+   *   resumable, so leaving it would strand the task.
+   *
    * Callers should go through `SessionManager.registerSuspendedPlaceholder`
    * (not this method directly) so the `session-changed` event fires and
    * the renderer's onStatus listener evicts any stale prior session entry
@@ -378,7 +521,12 @@ export class SessionRegistry {
    * the manager wrapper leaves the renderer dependent on the next
    * `syncSessions()` to learn about the placeholder.
    */
-  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session {
+  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session | null {
+    const existingRows = this.listByTaskId(input.taskId);
+    if (existingRows.some((row) => row.status !== 'exited')) return null;
+    for (const exitedRow of existingRows) {
+      this.sessions.delete(exitedRow.id);
+    }
     const id = uuidv4();
     const session: ManagedSession = {
       id,

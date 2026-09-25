@@ -204,6 +204,11 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    // Phase 1 reconciles task.session_id against the registry before the
+    // Priority ladder; a live row for the pointed-at id keeps these fixtures
+    // on the live-session branches they exercise.
+    getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+    findLiveSessionByTaskId: vi.fn(() => null),
     // Read by resolveLiveEffort. Empty = the agent reports no effort, so the
     // effort delta sources from the session record, as these cases assume.
     getUsageCache: vi.fn((): Record<string, unknown> => ({})),
@@ -211,6 +216,7 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
   const context = {
     currentProjectId: 'proj-test',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     sessionManager,
     configManager: {
@@ -227,6 +233,11 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     tasks: taskRepo,
     swimlanes: swimlaneRepo,
     actions: { getTransitionsFor: vi.fn(() => []) },
+    // The column's message lives in its automations now, so the live-inject
+    // branch reads them through `resolveColumnMessage`. An empty list is the
+    // right default here: these cases drive model/effort deltas, not messages.
+    automations: { listForColumn: vi.fn(() => []), getForTrigger: vi.fn(() => []) },
+    automationRuns: { start: vi.fn(), finish: vi.fn(), recordSkipped: vi.fn() },
     // getPathsForTask is required by the live-inject branch (resolveTaskTemplateVars'
     // attachmentPaths); real code always has this from getProjectRepos.
     attachments: { deleteByTaskId: vi.fn(), getPathsForTask: vi.fn(() => []) },
@@ -237,6 +248,51 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
 const PLANNING_LANE_ID = 'lane-planning';
 const EXECUTING_LANE_ID = 'lane-executing';
 const DONE_LANE_ID = 'lane-done';
+
+/**
+ * The destination column's message to its agent.
+ *
+ * It lives in a `send_message` enter automation now rather than in
+ * `swimlanes.auto_command`, and the live-injection path reads it through
+ * `resolveColumnMessage`. The cases below are about INTERPOLATING that message,
+ * so they seed the row the path actually reads.
+ */
+function messageAutomation(message: string) {
+  return [{
+    id: 'row-message',
+    swimlane_id: EXECUTING_LANE_ID,
+    name: 'Message',
+    type: 'send_message',
+    trigger: 'enter',
+    position: 0,
+    enabled: true,
+    config: { message },
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }];
+}
+
+/** Re-point the repos mock with a seeded column message, keeping the rest. */
+function seedColumnMessage(
+  taskRepo: unknown,
+  swimlaneRepo: unknown,
+  message: string,
+  getPathsForTask: () => string[] = () => [],
+): void {
+  mockGetProjectRepos.mockReturnValue({
+    tasks: taskRepo,
+    swimlanes: swimlaneRepo,
+    actions: { getTransitionsFor: vi.fn(() => []) },
+    automations: {
+      listForColumn: vi.fn(() => messageAutomation(message)),
+      // Empty: the ENTER GROUP runs separately from the message the injection
+      // burst carries, and these cases are about the burst.
+      getForTrigger: vi.fn(() => []),
+    },
+    automationRuns: { start: vi.fn(), finish: vi.fn(), recordSkipped: vi.fn() },
+    attachments: { deleteByTaskId: vi.fn(), getPathsForTask },
+  });
+}
 
 function makeLanes(executingOverrides: Partial<Swimlane> = {}) {
   const planningLane = makeSwimlane(PLANNING_LANE_ID, { permission_mode: 'plan' });
@@ -348,7 +404,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Permission-only delta: keep alive.
     expect(markRecordSuspended).not.toHaveBeenCalled();
@@ -376,7 +432,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'rec-main', 'system');
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
@@ -409,7 +465,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Live injection: slash fires, no suspend, no spawn.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
@@ -447,7 +503,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as {
@@ -478,6 +534,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     await handleTaskMove(
       context as never,
       { taskId: 'task-aaa00001', targetSwimlaneId: EXECUTING_LANE_ID, targetPosition: 0 },
+      'renderer',
       undefined,
       undefined,
       { continuationPrompt: continuation },
@@ -503,7 +560,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { continuationPrompt?: string };
@@ -522,7 +579,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { suppressAutoCommand?: boolean };
@@ -546,7 +603,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { suppressAutoCommand?: boolean };
@@ -576,7 +633,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(hoisted.updateAppliedSettings).toHaveBeenCalledWith('active-session-1', { effort: 'xhigh' });
@@ -600,7 +657,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(hoisted.updateAppliedSettings).not.toHaveBeenCalled();
@@ -629,7 +686,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // applied_effort='xhigh' == destination effort_override='xhigh' -> no delta -> no respawn.
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
@@ -650,7 +707,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Delta exists: applied='low', target='xhigh' -> respawn.
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
@@ -677,7 +734,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
@@ -706,7 +763,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
     const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { liveEffort?: string | null };
@@ -730,7 +787,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
@@ -755,7 +812,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
@@ -775,7 +832,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
     expect(markRecordSuspended).not.toHaveBeenCalled();
@@ -797,7 +854,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
 // (spawn-agent-isolated-auto-command.test.ts) and send_command
 // (transition-engine.test.ts).
 // =============================================================================
-describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-template-vars-parity fix)', () => {
+describe('handleTaskMove live-inject: template variable resolution ({{baseBranch}}, {{attachments}}, {{projectPath}}; task-template-vars-parity fix)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hoisted.activeRecord = null;
@@ -816,19 +873,17 @@ describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-t
     // effective project default ('main', from configManager.getEffectiveConfig
     // in makeContext) via the real interpolateTaskTemplate drop-and-collapse
     // semantics: '/merge-back main'.
-    const { swimlaneRepo } = makeLanes({
-      permission_mode: null,
-      auto_command: '/merge-back {{baseBranch}}',
-    });
+    const { swimlaneRepo } = makeLanes({ permission_mode: null });
     setActiveRecord('acceptEdits');
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
+    seedColumnMessage(taskRepo, swimlaneRepo, '/merge-back {{baseBranch}}');
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
     const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
@@ -839,26 +894,18 @@ describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-t
   });
 
   it('threads the task attachments repo into {{attachments}} resolution via getPathsForTask', async () => {
-    const { swimlaneRepo } = makeLanes({
-      permission_mode: null,
-      auto_command: '/code-review {{attachments}}',
-    });
+    const { swimlaneRepo } = makeLanes({ permission_mode: null });
     setActiveRecord('acceptEdits');
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
     const getPathsForTask = vi.fn(() => ['/mock/project/screenshot.png']);
-    mockGetProjectRepos.mockReturnValue({
-      tasks: taskRepo,
-      swimlanes: swimlaneRepo,
-      actions: { getTransitionsFor: vi.fn(() => []) },
-      attachments: { deleteByTaskId: vi.fn(), getPathsForTask },
-    });
+    seedColumnMessage(taskRepo, swimlaneRepo, '/code-review {{attachments}}', getPathsForTask);
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001',
       targetSwimlaneId: EXECUTING_LANE_ID,
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Wiring: the destructured `attachments` repo (added by this diff to
     // handleTaskMove's getProjectRepos call) reaches resolveTaskTemplateVars
@@ -870,5 +917,42 @@ describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-t
     expect(getPathsForTask).toHaveBeenCalledWith('task-aaa00001');
     const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
     expect(planArg.autoCommand).toContain('/mock/project/screenshot.png');
+  });
+
+  // Coverage hole (see the {{projectPath}} addition to task-template-vars.ts):
+  // this call site's `projectPath: resolvedProjectPath` (task-move.ts ~line 694)
+  // had no test asserting the INTERPOLATED value. An explicit projectPath
+  // ('/mock/explicit-project') is passed as the 5th positional arg (see
+  // resolveProjectContext / `resolvedProjectPath = projectPath !== undefined
+  // ? projectPath : context.currentProjectPath`), distinct from BOTH
+  // context.currentProjectPath ('/mock/project', the ambient ipc-context ---
+  // resolving to that instead would be exactly the project-scoped-ipc.md bug:
+  // a cross-project move silently reading the wrong project's checkout) and
+  // task.worktree_path ('/mock/project/.kangentic/worktrees/my-task', the
+  // raw-read {{worktreePath}} keyword this must never fall back to). Three
+  // distinct candidate values means a regression that swapped in any one of
+  // the other two, or dropped the field (resolving ''), cannot pass this
+  // assertion vacuously.
+  it('interpolates {{projectPath}} to the resolved project path, never the ambient currentProjectPath or task.worktree_path', async () => {
+    const { swimlaneRepo } = makeLanes({ permission_mode: null });
+    setActiveRecord('acceptEdits');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    seedColumnMessage(taskRepo, swimlaneRepo, '/code-review {{projectPath}}');
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    }, 'renderer', undefined, '/mock/explicit-project');
+
+    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
+    // Red: swapping `projectPath: resolvedProjectPath` for
+    // `context.currentProjectPath` makes this '/code-review /mock/project';
+    // for `task.worktree_path` it makes
+    // '/code-review /mock/project/.kangentic/worktrees/my-task'; dropping the
+    // field makes it '/code-review'.
+    expect(planArg.autoCommand).toBe('/code-review /mock/explicit-project');
   });
 });

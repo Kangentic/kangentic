@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PATHS } from '../../../config/paths';
 import { decryptSecret, encryptSecret } from '../../shared';
+import { safeWriteJson } from '../../../safe-write';
 
 /**
  * Personal Access Token persisted for the Asana integration. Stored globally
@@ -54,10 +55,15 @@ export function loadAsanaCredential(): AsanaCredential | null {
 }
 
 export function saveAsanaCredential(credential: AsanaCredential): void {
-  fs.mkdirSync(PATHS.configDir, { recursive: true });
   const encrypted = encryptSecret(JSON.stringify(credential));
   const payload: StoredShape = { encrypted };
-  fs.writeFileSync(storePath(), JSON.stringify(payload, null, 2));
+  // mode 0o600 matches saveBridgeIdentity: the payload is already
+  // safeStorage-encrypted, and this narrows who can read the ciphertext at
+  // rest (no-op on Windows, honored on POSIX at create time). Degrades rather
+  // than throws (see safe-write.ts) - an unwritable config directory must not
+  // reject "Connect Asana", and the shared write-failure-notice latch tells
+  // the user once.
+  safeWriteJson(storePath(), payload, 'asana_credential', { mode: 0o600 });
 }
 
 export function clearAsanaCredential(): void {

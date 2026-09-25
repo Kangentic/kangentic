@@ -142,6 +142,15 @@ export function maybeLabelTransientSession(sessionId: string, event: SessionEven
   const transientSessions = useSessionStore.getState().transientSessions;
   const owningEntry = Object.values(transientSessions).find((entry) => entry.sessionId === sessionId);
   if (!owningEntry) return;
+  // Already named, so this prompt is not the first one - the in-memory guard
+  // above only covers this renderer, and a reload clears it while recovery
+  // restores the label from main. Without this check the reloaded renderer pays
+  // a summarize call on the next prompt and `setTransientSessionLabel` discards
+  // the answer, since first-prompt-wins.
+  if (owningEntry.label) {
+    autoNameLabeledTransient.add(sessionId);
+    return;
+  }
 
   const promptText = (event.detail ?? '').trim();
   if (!promptText) return;

@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       # Trusted publishing (OIDC) needs npm >= 11.5.1, which Node 24 ships
       # (11.16+). See release.yml's publish-npm job for why this pins Node 24
@@ -52,7 +52,7 @@ jobs:
       # publish after that first one goes through this workflow via OIDC,
       # with no stored npm token.
       - name: Set up Node.js 24
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org

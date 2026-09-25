@@ -111,6 +111,15 @@ function selectFile(page: Page, namePattern: RegExp) {
 
 test.describe('Changes panel: collapse unchanged regions', () => {
   test('toggling collapse folds the large unchanged region of an open diff', async () => {
+    // Four Monaco diff loads (initial mount, the scope switch, other.ts, back to
+    // big.ts) plus a menu toggle and two next-change jumps. The per-step polls
+    // below declare roughly 55s of patience, which the ui project's 15s test
+    // budget makes unreachable - the test timeout always fires first, so those
+    // timeouts are not the real gate. On a loaded runner the whole test lands
+    // right at the budget and the last poll gets cut off (observed on CI:
+    // failed at 14.9s reading a stale lineChangeCount, passed on retry at
+    // 14.8s). Opt into the 3x budget so the per-step timeouts decide.
+    test.slow();
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Collapse Task').first();
     await card.click();
 
@@ -137,7 +146,17 @@ test.describe('Changes panel: collapse unchanged regions', () => {
     expect(before.hiddenWidgets).toBe(0);
 
     // Toggle collapse on - the open diff's large unchanged region must fold.
-    await page.locator('[data-testid="diff-collapse-unchanged"]').click();
+    // The rendering preferences live behind the labelled "View options" menu,
+    // so open it, flip the item, and close it again so the portaled menu never
+    // overlaps the next/prev-change buttons clicked below.
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+    const collapseItem = optionsMenu.locator('[data-testid="diff-collapse-unchanged"]');
+    await collapseItem.click();
+    await expect(collapseItem).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
+    await expect(optionsMenu).not.toBeVisible({ timeout: 5000 });
     await expect.poll(async () => (await readMonaco(page)).hiddenWidgets, { timeout: 5000 }).toBeGreaterThan(0);
 
     // Next/prev-change navigation jumps between the two hunks (field10 near line

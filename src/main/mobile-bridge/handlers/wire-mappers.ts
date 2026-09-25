@@ -26,6 +26,7 @@ import {
   type TranscriptEntryWire,
 } from '@kangentic/protocol';
 import { isJsonValue } from '@kangentic/protocol';
+import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import type {
   ActivityReason,
   BacklogTask,
@@ -257,6 +258,31 @@ export function toSessionEventWire(event: SessionEvent): SessionEventWire {
   };
 }
 
+/**
+ * Whether moving a task into this column would spawn a successor agent
+ * session, per `BoardColumnWire.spawns_session`. Derived from the same
+ * `NEVER_AUTO_SPAWN_ROLES` gate `task-move.ts` Priority 1/2 and
+ * `auto-spawn-reconcile.ts` already enforce - a role in that set never
+ * spawns, whatever `auto_spawn` says.
+ *
+ * The role half is exact, because `applyProfileToLane` passes a lane's role
+ * through untouched and Priority 1/2 read it before anything else. The
+ * `auto_spawn` half is the column's BASE value only: Priority 2.5 gates on
+ * the profile-folded lane, and `resolveColumnStrategy` lets a task's Board
+ * Profile set `autoSpawn` either way for this column. A column-shaped wire
+ * field cannot see a per-task profile, so the wire type documents this half
+ * as intent rather than a promise in both directions.
+ *
+ * Returns a real boolean, never `undefined`: `swimlane.auto_spawn` is a
+ * required field, but a malformed row must still resolve to a defined
+ * answer, or the wire's `nullableBoolean` reader would silently read it back
+ * as "unknown desktop" instead of "does not spawn".
+ */
+export function columnSpawnsSession(swimlane: Swimlane): boolean {
+  if (swimlane.role !== null && NEVER_AUTO_SPAWN_ROLES.has(swimlane.role)) return false;
+  return swimlane.auto_spawn === true;
+}
+
 export function toBoardColumnWire(swimlane: Swimlane): BoardColumnWire {
   return {
     id: swimlane.id,
@@ -268,6 +294,7 @@ export function toBoardColumnWire(swimlane: Swimlane): BoardColumnWire {
     icon: swimlane.icon,
     is_archived: swimlane.is_archived,
     is_ghost: swimlane.is_ghost,
+    spawns_session: columnSpawnsSession(swimlane),
   };
 }
 
@@ -286,6 +313,7 @@ export function toBoardTaskWire(task: Task): BoardTaskWire {
     pr_number: task.pr_number,
     pr_url: task.pr_url,
     pr_state: task.pr_state,
+    pr_merge_readiness: task.pr_merge_readiness,
     base_branch: task.base_branch,
     labels: task.labels,
     priority: task.priority,

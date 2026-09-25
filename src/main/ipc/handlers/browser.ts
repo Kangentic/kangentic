@@ -1,15 +1,30 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ipcMain, session } from 'electron';
+import { app, ipcMain, session, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import { BROWSER_PARTITION, browserPartitionForWorktree } from '../../../shared/browser-partition';
-import type { BrowserCaptureInput, BrowserPaneRegisterInput } from '../../../shared/types';
+import { browserPartitionForTask } from '../../../shared/browser-partition';
+import { BROWSER_PANE_VISIBILITIES } from '../../../shared/types';
+import type {
+  BrowserCaptureInput,
+  BrowserPaneRegisterInput,
+  BrowserPaneVisibility,
+  BrowserViewportOverride,
+} from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
-import { setBrowserPaneOpenerHost } from '../../browser/browser-pane-opener';
+import { setBrowserPaneOpenerHost, offscreenSurfaceUrl } from '../../browser/browser-pane-opener';
 import { installLaneHandoff } from '../../browser/browser-lane-handoff';
+import { destroyLane, laneTaskIds, setLaneChangeListener } from '../../browser/browser-lane-manager';
+import { broadcast } from '../../pop-out/window-broadcast';
+import { enumerateProjectPartitions } from '../../browser/browser-partition-cleanup';
+import { syncJarFromIdentity } from '../../browser/jar-seeder';
+import { releaseViewportOverride } from '../../browser/viewport-override';
+import {
+  getViewportOverride,
+  type ViewportOverrideRecord,
+} from '../../browser/viewport-override-store';
 
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -80,29 +95,41 @@ export function registerBrowserHandlers(context: IpcContext): void {
     hasLiveSession: (taskId) => {
       try {
         // Live (running/queued) specifically, not merely registered: a
-        // suspended or exited session has no agent to keep a browser for.
-        return context.sessionManager.findLiveSessionByTaskId(taskId) !== undefined;
+        // suspended or exited session has no agent to keep a browser for. And
+        // not a kill already in flight either: `kill()` stamps the session
+        // synchronously, before the PTY actually exits, and the renderer flips
+        // it to exited at the same moment - which drops a PARKED window, whose
+        // pane then unregisters while the registry still says running. Handing
+        // that pane off would stand a lane up for an agent that is being
+        // stopped, only for session end to tear it down moments later
+        // (observed live).
+        return context.sessionManager.hasLiveSessionForTask(taskId);
       } catch {
         // Never let a lookup failure decide policy: no hand-off is the safe
         // answer, since a spurious one would open a browser nobody asked for.
         return false;
       }
     },
-    getTaskWorktreePath: (taskId, projectId) => {
-      try {
-        // The PANE's project, handed in by the caller - never
-        // `context.currentProjectId`. A retained pane outlives a project switch,
-        // so the open project at close time is routinely not the task's, and an
-        // ambient lookup would miss in the wrong project's DB and hand back
-        // null. `openLane` turns a null path into the LEGACY SHARED cookie jar,
-        // which is a silently wrong answer: the agent meets a sign-in wall for
-        // an app the user is already authenticated into.
-        if (!projectId) return null;
-        return getProjectRepos(context, projectId).tasks.getById(taskId)?.worktree_path ?? null;
-      } catch {
-        return null;
-      }
-    },
+  });
+
+  // Make an offscreen surface VISIBLE in the UI.
+  //
+  // Not cosmetic. The card globe and the task-detail Browser pill both read
+  // `browserGuestTasks`, which is written in exactly one place -
+  // `BrowserPane.tsx`, on the `<webview>`'s `dom-ready` - so an offscreen
+  // `BrowserWindow` set nothing and the user had no way to know their task had
+  // a browser at all, let alone close it. That is what ended agent-requested
+  // lanes; this push is what lets the remaining fallback stay honest.
+  //
+  // `broadcast` rather than `webContents.send`, and the reason is the MONITOR
+  // pop-out, not a detached task detail (there is no task-detail pop-out
+  // surface). `PopOutMonitorRoot` mounts `MonitorDetailLayer`, so a task detail
+  // - and its Browser pill - renders in that window's own renderer, which never
+  // mounts App.tsx and so has none of its subscriptions. `broadcast` reaches a
+  // pop-out only if its surface declares the channel, so the monitor surface
+  // lists `BROWSER_OFFSCREEN_SURFACES` and seeds the set in its own bootstrap.
+  setLaneChangeListener(() => {
+    broadcast(context.mainWindow, IPC.BROWSER_OFFSCREEN_SURFACES, laneTaskIds());
   });
 
   ipcMain.handle(IPC.BROWSER_CAPTURE_SEND, async (_event, input: BrowserCaptureInput) => {
@@ -190,11 +217,21 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // project's browser-urls.json. Nothing surfaced the mix-up; the task just
   // reopened on a page from a different project.
   ipcMain.handle(IPC.BROWSER_URL_GET, (_event, taskId: string, projectId?: string | null) => {
-    const { projectPath } = resolveProjectContext(context, projectId);
-    if (!projectPath) return { projectDefault: null, taskOverride: null };
+    const { projectId: resolvedProjectId, projectPath } = resolveProjectContext(context, projectId);
+    if (!projectPath || !resolvedProjectId) return { projectDefault: null, taskOverride: null };
     const overrides = context.configManager.loadProjectOverrides(projectPath);
     const projectDefault = overrides?.browser?.defaultUrl ?? null;
-    const taskOverride = browserUrlStore.get(projectPath, taskId);
+    // An OFFSCREEN surface's live URL outranks the saved one, and this is what
+    // makes the reclaim land on the right page.
+    //
+    // A pane asking for its URL while the task's surface is offscreen is a pane
+    // about to REPLACE that surface: the registration it is heading for
+    // destroys it (`browser-lane-handoff.ts`). So the honest answer to "what
+    // was this task last looking at" is where the agent left the offscreen
+    // surface, which the sidecar cannot know - it is written by the PANE on its
+    // own `did-navigate`, and an offscreen surface has no renderer to write it.
+    const taskOverride =
+      offscreenSurfaceUrl(taskId, resolvedProjectId) ?? browserUrlStore.get(projectPath, taskId);
     // Deliberately does NOT report a reserved dev-server port. A reservation is
     // not evidence anything is serving there - the project decides its own ports
     // - so pointing the pane at one renders a blank page for a server nobody
@@ -221,33 +258,18 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // AppConfig.browser.defaultUrl) and are intentionally left alone. Those
   // are workflow state, not browsing identity.
   //
-  // Per-worktree isolation means a project has one jar per worktree, so clear
+  // Per-task isolation means a project has one jar per task, so clear
   // them all: the legacy shared jar (data left from before the upgrade, plus
-  // no-worktree panes), the project-root jar, and every worktree jar under
-  // `.kangentic/worktrees/`. Enumerated from disk so no DB / registry coupling.
+  // no-project panes), the project's identity jar, and every task jar the project
+  // owns on disk (`kng-<projectId>-*`). Enumerated by prefix from the Partitions
+  // directory, so no DB is touched.
   ipcMain.handle(IPC.BROWSER_CLEAR_STORAGE, async () => {
-    const partitions = new Set<string>([BROWSER_PARTITION]);
-    const projectRoot = context.currentProjectPath;
-    if (projectRoot) {
-      partitions.add(browserPartitionForWorktree(projectRoot));
-      const worktreesDir = path.join(projectRoot, '.kangentic', 'worktrees');
-      let entries: fs.Dirent[] = [];
-      try {
-        entries = fs.readdirSync(worktreesDir, { withFileTypes: true });
-      } catch {
-        // No worktrees directory yet - just the root + legacy jars.
-      }
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          partitions.add(browserPartitionForWorktree(path.join(worktreesDir, entry.name)));
-        }
-      }
-    }
+    const partitions = enumerateProjectPartitions(context.currentProjectId, app.getPath('userData'));
     // Clear the partitions concurrently: they are independent session stores, so
     // the three-call sequence per partition stays ordered while the (legacy +
-    // root + N worktree) jars clear in parallel rather than serially.
+    // identity + N task) jars clear in parallel rather than serially.
     await Promise.all(
-      [...partitions].map(async (partition) => {
+      partitions.map(async (partition) => {
         const browserSession = session.fromPartition(partition);
         await browserSession.clearStorageData({
           storages: ['cookies', 'localstorage', 'indexdb', 'shadercache', 'cachestorage', 'serviceworkers'],
@@ -256,6 +278,26 @@ export function registerBrowserHandlers(context: IpcContext): void {
         await browserSession.clearAuthCache();
       }),
     );
+  });
+
+  // Sync a task's jar with the project identity jar before its guest attaches, so
+  // the pane opens already signed into shared non-localhost (IdP) sessions. A
+  // load-boundary hook: runs on every pane mount, never rejects (a failed or slow
+  // sync must never wedge the pane; the renderer also caps it with a timeout).
+  // See jar-seeder.ts for the share-identity / isolate-localhost model.
+  ipcMain.handle(IPC.BROWSER_JAR_ENSURE, async (_event, taskId: string, projectId?: string | null) => {
+    try {
+      // No ambient-project fallback on purpose: the pane computes its partition
+      // from its OWN projectId prop (legacy shared jar when null), so seeding
+      // `kng-<currentProject>-<task>` here would sync a jar the guest never
+      // binds. A null projectId means the pane bound the legacy jar, which is a
+      // hub partition and needs no seeding.
+      if (!projectId || !taskId) return;
+      const partition = browserPartitionForTask(projectId, taskId);
+      await syncJarFromIdentity(partition, projectId);
+    } catch (error) {
+      console.warn('[browser-pane] ensureJar failed:', error);
+    }
   });
 
   // === Pane registry: track an open Browser pane's guest webContents so the
@@ -277,29 +319,140 @@ export function registerBrowserHandlers(context: IpcContext): void {
     // refuses cross-project targets by comparing against this field.
     const resolvedProjectId =
       context.sessionManager.getSessionProjectId(input.sessionId) ?? input.projectId ?? null;
-    browserPaneRegistry.register({
-      sessionId: input.sessionId,
+    // The registry mints (or, for a guest it already knows, keeps) the surface
+    // handle; the renderer's `sessionId` is the agent session that OWNS the pane.
+    const entry = browserPaneRegistry.register({
+      ownerSessionId: input.sessionId,
       taskId: input.taskId,
       projectId: resolvedProjectId,
       webContentsId: input.webContentsId,
       url: input.url ?? null,
+      visibility: isPaneVisibility(input.visibility) ? input.visibility : undefined,
     });
-  });
 
-  ipcMain.handle(IPC.BROWSER_PANE_UNREGISTER, (_event, sessionId: string, webContentsId?: number) => {
-    // Mirror the register handler's input guard (a registered sessionId always
-    // passed it). A bad key would be a harmless Map no-op, but validating keeps
-    // the two sibling handlers symmetric.
-    if (!isValidSessionId(sessionId)) return;
-    // When the caller passes the webContentsId it registered with (every
-    // BrowserPane instance does), scope the unregister to that exact guest so
-    // an out-of-order unmount across the in-app pane and its pop-out cannot
-    // clobber a newer registration for the same sessionId. Falls back to the
-    // unconditional unregister for any caller that omits it.
-    if (typeof webContentsId === 'number' && Number.isInteger(webContentsId) && webContentsId > 0) {
-      browserPaneRegistry.unregisterIfMatches(sessionId, webContentsId);
-    } else {
-      browserPaneRegistry.unregister(sessionId);
+    // Diagnostic (main-side, because the renderer console never persists to
+    // .kangentic/logs): record the jar this pane bound. Derived from the pane's
+    // OWN projectId (the value its partition was computed from), NOT the
+    // registry-resolved one above, so the trace names the jar the guest actually
+    // attached to even if the two ever diverge. The jar is keyed by task
+    // identity now, so the path-change logout it used to guard against cannot
+    // occur; this stays only as a lightweight "which jar did it bind" trace.
+    if (input.projectId) {
+      console.log(
+        `[browser-pane] pane bound partition=${browserPartitionForTask(input.projectId, input.taskId)} `
+          + `task=${input.taskId.slice(0, 8)} owner=${input.sessionId.slice(0, 8)} handle=${entry.sessionId} wc=${input.webContentsId}`,
+      );
     }
   });
+
+  ipcMain.handle(IPC.BROWSER_PANE_UNREGISTER, (_event, webContentsId: number) => {
+    // The renderer unregisters the exact guest it registered, never a session:
+    // an out-of-order unmount across the in-app pane and its pop-out can then
+    // only remove its own guest, and a newer registration for the same task
+    // (a different guest) is untouched. A malformed id is a harmless no-op.
+    if (typeof webContentsId !== 'number' || !Number.isInteger(webContentsId) || webContentsId <= 0) return;
+    browserPaneRegistry.unregisterByWebContentsId(webContentsId, 'renderer-unmount');
+  });
+
+  // The user's Close control. The renderer sends this BEFORE it unmounts the
+  // pane, so the handle retires with `user-closed` (the hand-off allowlist does
+  // not include it, so no lane is stood up - the user closed it to get the
+  // memory back) and the agent's next call is told who closed it. The unmount
+  // that follows unregisters a guest this registry no longer knows: a no-op.
+  ipcMain.handle(IPC.BROWSER_PANE_USER_CLOSE, (_event, webContentsId: number) => {
+    if (typeof webContentsId !== 'number' || !Number.isInteger(webContentsId) || webContentsId <= 0) return;
+    browserPaneRegistry.unregisterByWebContentsId(webContentsId, 'user-closed');
+  });
+
+  // Where a registered pane is on the user's screen, for list_panes. Validated
+  // against the shared enum: an unknown value is dropped rather than stored,
+  // since it would be echoed verbatim to every agent that lists panes.
+  ipcMain.handle(IPC.BROWSER_PANE_VISIBILITY, (_event, webContentsId: number, visibility: unknown) => {
+    if (typeof webContentsId !== 'number' || !Number.isInteger(webContentsId) || webContentsId <= 0) return;
+    if (!isPaneVisibility(visibility)) return;
+    browserPaneRegistry.setVisibility(webContentsId, visibility);
+  });
+
+  // The pane element's own size, which only the renderer can measure. Fitting
+  // a requested viewport needs it; see BrowserPaneEntry.widgetSize.
+  ipcMain.handle(
+    IPC.BROWSER_PANE_WIDGET_SIZE,
+    (_event, webContentsId: number, width: unknown, height: unknown) => {
+      if (!isGuestId(webContentsId)) return;
+      if (typeof width !== 'number' || typeof height !== 'number') return;
+      if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+      browserPaneRegistry.setWidgetSize(webContentsId, width, height);
+    },
+  );
+
+  // What override this guest is already under. A pane that mounts after one was
+  // set (a pop-out window, or a re-register) never saw the push, so it asks
+  // once rather than showing nothing while the page renders at a width the user
+  // cannot account for.
+  ipcMain.handle(IPC.BROWSER_VIEWPORT_GET, (_event, webContentsId: number) => {
+    if (!isGuestId(webContentsId)) return null;
+    const record = getViewportOverride(webContentsId);
+    if (!record) return null;
+    return toRendererOverride(record);
+  });
+
+  // The user taking their pane back, from the chip in the pane's own toolbar.
+  //
+  // Deliberately NOT routed through the agent's `withGuest` chokepoint: that
+  // path gates on the automation capability config and serializes behind
+  // whatever drive currently holds the guest, and neither may stand between a
+  // user and undoing something an agent did to their screen. The automatic
+  // counterpart runs when the agent's session ends, which can be hours away.
+  ipcMain.handle(IPC.BROWSER_VIEWPORT_CLEAR, async (_event, webContentsId: number) => {
+    if (!isGuestId(webContentsId)) return false;
+    const guest = webContents.fromId(webContentsId);
+    if (!guest) return false;
+    await releaseViewportOverride(guest);
+    return true;
+  });
+
+  // Which tasks hold their one browser surface offscreen, asked for on mount
+  // and after an HMR update. The push keeps it current from there; this is the
+  // initial read, because a surface can sit unchanged for a whole session and
+  // a reloaded renderer would otherwise show no browser for a task that has
+  // one.
+  ipcMain.handle(IPC.BROWSER_OFFSCREEN_SURFACES_GET, () => laneTaskIds());
+
+  // The user's Close on a task whose surface is offscreen.
+  //
+  // `closeBrowserForTask`'s ordinary path retires a guest id and clears the
+  // pane's open flag, and an offscreen surface has neither - so without this
+  // the kebab's "Close browser" was a control that said Close and did nothing.
+  // Scoped through `getByTaskId(taskId, projectId)` rather than by task id
+  // alone, per `.claude/rules/project-scoped-ipc.md`.
+  ipcMain.handle(IPC.BROWSER_OFFSCREEN_CLOSE, (_event, taskId: string, projectId?: string | null) => {
+    const { projectId: resolvedProjectId } = resolveProjectContext(context, projectId);
+    if (!resolvedProjectId) return false;
+    let closed = false;
+    for (const entry of browserPaneRegistry.getByTaskId(taskId, resolvedProjectId)) {
+      if (entry.kind !== 'lane') continue;
+      if (destroyLane(entry.sessionId)) closed = true;
+    }
+    return closed;
+  });
+}
+
+function isGuestId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+/** The main-side record minus the bookkeeping the renderer has no use for
+ *  (which session owns it), so the chip cannot accidentally render an id. */
+function toRendererOverride(record: ViewportOverrideRecord): BrowserViewportOverride {
+  return {
+    mechanism: record.mechanism,
+    requested: record.requested,
+    measured: record.measured,
+    deviceScaleFactor: record.deviceScaleFactor,
+    appliedAt: record.appliedAt,
+  };
+}
+
+function isPaneVisibility(value: unknown): value is BrowserPaneVisibility {
+  return typeof value === 'string' && (BROWSER_PANE_VISIBILITIES as readonly string[]).includes(value);
 }

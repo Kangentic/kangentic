@@ -265,7 +265,7 @@ export function extractAntigravityUserTurn(line: string): UserTurnRecord | null 
  *
  * Built on the shared bounded tail scan (`scanForSubmittedText` over the
  * cached `readTranscriptTailLines`), NOT a full-file read: the caller polls
- * every 25ms for up to ~2s per submission, so a whole-file parse here would
+ * every 25ms for up to ~4s per submission, so a whole-file parse here would
  * grow with conversation length and block the main process on every poll.
  * The backward scan also means that of two identical texts inside the slack
  * window, the most recent record - the current submission's - wins.

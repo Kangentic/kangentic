@@ -33,10 +33,17 @@ export class BacklogAttachmentRepository {
     const diskName = attachmentDiskName(id, filename);
 
     const attachDir = path.join(projectPath, '.kangentic', 'backlog', backlogTaskId, 'attachments');
+    // sync-write-ok: this write precedes the INSERT below, so it must throw
+    // rather than degrade - swallowing it would leave a DB row pointing at a
+    // file that was never written. Reached from savePendingAttachments()
+    // inside the BACKLOG_CREATE / BACKLOG_UPDATE handlers (backlog.ts),
+    // whose throw rejects the invoke; NewBacklogTaskDialog.tsx's handleSubmit
+    // now catches that rejection and toasts it.
     fs.mkdirSync(attachDir, { recursive: true });
 
     const filePath = path.join(attachDir, diskName);
     const buffer = Buffer.from(base64Data, 'base64');
+    // sync-write-ok: same reason as the mkdir above.
     fs.writeFileSync(filePath, buffer);
 
     const attachment: BacklogAttachment = {

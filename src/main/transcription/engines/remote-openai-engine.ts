@@ -1,23 +1,11 @@
-import type { DictationEngineInfo, DictationRemoteEndpoint } from '../../../shared/types';
+import type { DictationRemoteEndpoint } from '../../../shared/types';
 import type {
   CreateSessionOptions,
   ResolvedModel,
   TranscriptionEngine,
   TranscriptionEngineSession,
 } from './transcription-engine';
-
-export const REMOTE_OPENAI_INFO: DictationEngineInfo = {
-  id: 'remote-openai',
-  displayName: 'Cloud (live preview + remote final)',
-  // The local streaming Zipformer drives the live preview (see engine-registry,
-  // where Cloud is built as a hybrid), so the cloud path is streaming too.
-  streaming: true,
-  punctuation: true,
-  license: 'remote',
-  // The ~70 MB transducer for the live preview is downloaded; the cloud endpoint
-  // produces the final.
-  requiresModelDownload: true,
-};
+import { REMOTE_OPENAI_INFO } from './engine-infos';
 
 /** Build a 16 kHz mono 16-bit PCM WAV from the buffered Int16 frames. */
 function encodeWav(frames: Int16Array[]): Buffer {

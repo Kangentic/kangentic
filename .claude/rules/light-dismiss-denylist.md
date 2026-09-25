@@ -72,9 +72,13 @@ to decide dismissal (that would make styling silently change behavior):
 - **Test (action cursors):** `tests/unit/light-dismiss-action-cursor.test.ts` fails on any renderer
   file using an action cursor without `data-no-dismiss` / `data-task-id` /
   `data-dismissable-layer`, unless it is portal-protected or carries a
-  `// light-dismiss-ok: <reason>` marker. It also pins that the pointer-cursor heuristic and the
-  `.xterm` exclusion still exist, since its own scope assumes both. Runs in CI via
-  `npm run test:unit`.
+  `// light-dismiss-ok: <reason>` marker. That marker is FILE-SCOPED: the real exemption usually
+  sits on an ancestor and reaches the element through `closest()`, which no static walk can
+  follow, so one marker waives the whole file. It reads through `hasFileScopedOptOut` in
+  `tests/unit/helpers/opt-out-marker.ts`, the loosest of that helper's three rules; every other
+  marker routed through the helper takes one of the two line-scoped rules instead. It also pins
+  that the pointer-cursor heuristic and the `.xterm` exclusion still exist, since its own scope
+  assumes both. Runs in CI via `npm run test:unit`.
 - **Test (scope markers):** `tests/unit/window-layer-isolation.test.ts` pins the four marker sites,
   fails on a bare unscoped `data-dismiss-layer`, and fails if the retired `data-dismiss-surface`
   returns. The site list is what stops the bare-attribute scan passing vacuously if a marker is

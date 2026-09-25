@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { comboFromEvent, heldMouseTokens, formatCombo, IS_MAC, MODIFIER_KEY_NAMES } from '../../../utils/keybindings';
 import { normalizeCombo } from '../../../../shared/keybindings';
 import { setRebindCaptureActive } from '../../../utils/rebind-state';
@@ -52,9 +52,13 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
   // click-away or Escape during the probe cancels instead of committing.
   const capturingRef = useRef(false);
   // Latest onCommit, read by the document pointer listeners without re-arming
-  // them every render (the effect depends only on `capturing`).
+  // them every render (the effect depends only on `capturing`). Written on
+  // commit (a layout effect), never during render, which the compiler rules
+  // forbid.
   const onCommitRef = useRef(onCommit);
-  onCommitRef.current = onCommit;
+  useLayoutEffect(() => {
+    onCommitRef.current = onCommit;
+  });
 
   const stopCapturing = () => {
     setCapturing(false);

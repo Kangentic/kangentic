@@ -1,11 +1,11 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcut, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcut, clipboard, nativeImage } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
 import { WorktreeManager } from '../../git/worktree-manager';
+import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { isGitRepo } from '../../git/git-checks';
 import { deepMergeConfig } from '../../../shared/object-utils';
 import { getProjectDb } from '../../db/database';
@@ -14,10 +14,13 @@ import { syncProjectMcpConfig } from './projects';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { listAgents, invalidateAgentListCache } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
+import { agentCliNotFoundMessage } from '../../agent/shared/agent-cli-not-found';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
-import { capClipboardImage, pruneClipboardTempDir } from '../helpers/clipboard-image';
+import { writePastedImage } from '../helpers/clipboard-image';
+import { openPathBounded } from '../helpers/open-path';
+import { resolveShellLaunch } from '../../pty/spawn/shell-launch';
 import type {
   NotificationInput,
   AgentCommand,
@@ -104,7 +107,14 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.CONFIG_GET_GLOBAL, () => context.configManager.load());
 
   ipcMain.handle(IPC.CONFIG_SET, (_, config) => {
-    context.configManager.save(config);
+    // `persisted` is returned rather than discarded so the ONE caller that represents a
+    // deliberate user gesture - the settings panel's `updateSetting` - can say "this
+    // setting did not save". It cannot be decided here: this channel also carries the
+    // window-layout blobs, the discovered-model caches, and announcement dismissals, so
+    // treating every CONFIG_SET as user-initiated would just move the bounds-timer spam
+    // up a layer. The machine-level condition is reported separately and once, through
+    // config:writeFailed (see write-failure-notice.ts).
+    const persisted = context.configManager.save(config);
     applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
     // Invalidate cached detection for all agents so the next detect() call picks up new cliPaths,
     // and drop the cached agents.list() result so it rebuilds against the new config.
@@ -146,7 +156,13 @@ export function registerSystemHandlers(context: IpcContext): void {
     // stays in theme/settings sync (they subscribe through config.onChanged in
     // usePopOutBootstrap). The main window is a harmless extra recipient: it does not
     // subscribe, updating its own config store optimistically at the config.set call site.
+    //
+    // Fires regardless of whether the write reached disk: the in-memory config changed
+    // either way (configManager.save() keeps serving it - see write-failure-notice.ts),
+    // so every window's optimistic read should still match. A write failure is reported
+    // separately, through config:writeFailed, not by skipping this broadcast.
     broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
+    return { persisted };
   });
 
   // Synchronous sibling of CONFIG_SET for the renderer's quit/unload flush: an async
@@ -154,9 +170,14 @@ export function registerSystemHandlers(context: IpcContext): void {
   // so the final window-layout write goes through sendSync, which blocks the renderer until
   // configManager.save() (a synchronous fs write) has persisted it. Intentionally minimal:
   // no runtime re-apply or detection invalidation, both irrelevant during shutdown.
+  //
+  // returnValue carries whether the write actually reached disk (previously hardcoded
+  // true): a throw here used to leave returnValue unassigned, so the channel reported
+  // success and failure identically. Nothing reads it yet: the preload bridge discards the
+  // sendSync result and `ElectronAPI.config.setSync` returns void. The user-facing half is
+  // the CONFIG_WRITE_FAILED toast safeWriteJson already pushes.
   ipcMain.on(IPC.CONFIG_SET_SYNC, (event, config) => {
-    context.configManager.save(config);
-    event.returnValue = true;
+    event.returnValue = context.configManager.save(config);
   });
 
   ipcMain.handle(IPC.CONFIG_GET_PROJECT, () => {
@@ -166,12 +187,14 @@ export function registerSystemHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.CONFIG_SET_PROJECT, (_, overrides) => {
     if (!context.currentProjectPath) throw new Error('No project open');
-    context.configManager.saveProjectOverrides(context.currentProjectPath, overrides);
+    const persisted = context.configManager.saveProjectOverrides(context.currentProjectPath, overrides);
     applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
     // A per-project override changes the EFFECTIVE config open pop-outs read (the Changes
     // surface reads git.defaultBaseBranch, which is project-overridable), so fan the same
     // bare signal CONFIG_SET does so they re-fetch instead of diffing a stale base branch.
+    // Same "fires either way" reasoning as CONFIG_SET's broadcast above.
     broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
+    return { persisted };
   });
 
   ipcMain.handle(IPC.CONFIG_GET_PROJECT_BY_PATH, (_, projectPath: string) => {
@@ -183,7 +206,7 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.CONFIG_SET_PROJECT_BY_PATH, (_, projectPath: string, overrides) => {
     const project = context.projectRepo.list().find((p) => p.path === projectPath);
     if (!project) throw new Error('Unknown project path');
-    context.configManager.saveProjectOverrides(projectPath, overrides);
+    const persisted = context.configManager.saveProjectOverrides(projectPath, overrides);
     // Background projects pick up changes when they next open; only the
     // currently-open project needs its in-memory state refreshed now.
     if (projectPath === context.currentProjectPath) {
@@ -199,22 +222,36 @@ export function registerSystemHandlers(context: IpcContext): void {
       void import('../../pr/pr-refresh-scheduler').then(({ prRefreshScheduler }) => {
         prRefreshScheduler.startForProject(context, project);
       });
+      // Re-arm the background remote-fetch timer for the same reason. A static
+      // import: the scheduler's graph (worktree manager, fetch throttle) is
+      // already part of this module's, so there is no runtime to keep out.
+      gitFetchScheduler.startForProject(context, project);
       // Re-run the conversation-memory sweep so toggling memory.indexingEnabled
       // on takes effect without reopening the project.
       void import('../../retrieval/retrieval-service').then(({ retrievalService }) => {
         retrievalService.startForProject(context, project);
       });
     }
+    return { persisted };
   });
 
+  // Left returning a bare count on purpose, not { persisted }: one user click here writes
+  // one file PER PROJECT, so routing it through the settings panel's failure toast would
+  // fire N times for a single condition. It already reports honestly - the per-project
+  // check below keeps `updatedCount` truthful when some projects are unwritable.
   ipcMain.handle(IPC.CONFIG_SYNC_DEFAULT_TO_PROJECTS, (_, partial) => {
     const projects = context.projectRepo.list();
     let updatedCount = 0;
     for (const project of projects) {
       const existing = context.configManager.loadProjectOverrides(project.path) || {};
       const merged = deepMergeConfig(existing, partial);
-      context.configManager.saveProjectOverrides(project.path, merged);
-      updatedCount++;
+      // One unwritable project's directory must not abort the sync for its siblings,
+      // and must not count as "updated" - saveProjectOverrides() no longer throws
+      // (see write-failure-notice.ts), so this loop needs its own per-project check
+      // to keep the returned count honest.
+      if (context.configManager.saveProjectOverrides(project.path, merged)) {
+        updatedCount++;
+      }
     }
     if (context.currentProjectPath) {
       applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
@@ -364,7 +401,7 @@ export function registerSystemHandlers(context: IpcContext): void {
         const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
         const info = await adapter.detect(cliPathOverride);
         if (!info.found || !info.path) {
-          return { ok: false, reason: `${adapter.displayName} CLI not found` };
+          return { ok: false, reason: agentCliNotFoundMessage(adapter.displayName) };
         }
 
         const cwd = context.currentProjectPath ?? process.cwd();
@@ -531,8 +568,10 @@ export function registerSystemHandlers(context: IpcContext): void {
 
   // Normalize so a path the renderer joined with forward slashes (git paths use
   // '/') opens correctly on Windows, which needs native backslash separators -
-  // matching the SHELL_SHOW_ITEM_IN_FOLDER handler below.
-  ipcMain.handle(IPC.SHELL_OPEN_PATH, (_, dirPath: string) => shell.openPath(path.normalize(dirPath)));
+  // matching the SHELL_SHOW_ITEM_IN_FOLDER handler below. Bounded because a
+  // raw shell.openPath can outlive this invoke on Linux, where it waits on
+  // xdg-open, and Electron then raises "reply was never sent" in the renderer.
+  ipcMain.handle(IPC.SHELL_OPEN_PATH, (_, dirPath: string) => openPathBounded(path.normalize(dirPath)));
   // shell.openExternal is ShellExecute on Windows and will launch any
   // registered protocol handler, so this is a process trust boundary -
   // reject anything outside the allowlist instead of passing it straight to
@@ -559,9 +598,12 @@ export function registerSystemHandlers(context: IpcContext): void {
       throw new Error(`shell:exec requires a valid cwd directory (got "${cwd}")`);
     }
     console.log(`[shell:exec] command="${command}" cwd="${cwd}"`);
-    const child = spawn(command, [], {
+    // Detached and never killed, so a dev server started here can outlive the
+    // app. resolveShellLaunch keeps it from holding Crashpad's port on macOS.
+    const launch = resolveShellLaunch({ command });
+    const child = spawn(launch.file, launch.args, {
       cwd,
-      shell: true,
+      shell: launch.shell,
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
@@ -645,24 +687,28 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.CLIPBOARD_READ_IMAGE, (): string | null => {
     const image = clipboard.readImage();
     if (image.isEmpty()) return null;
-    const tempDir = path.join(os.tmpdir(), 'kangentic-clipboard');
-    try {
-      fs.mkdirSync(tempDir, { recursive: true });
-      // Nothing used to delete these, so the directory grew for the life of the
-      // install. Disk hygiene only - it does not change what an agent is billed.
-      pruneClipboardTempDir(tempDir);
-      const filePath = path.join(tempDir, `pasted-image-${Date.now()}.png`);
-      fs.writeFileSync(filePath, capClipboardImage(image).toPNG());
-      return filePath;
-    } catch (error) {
-      // Degrade to the same null an empty clipboard returns rather than
-      // rejecting the renderer's invoke. The disk can be full, a Windows
-      // antivirus scanner can hold a just-created temp file, and on a shared
-      // Linux /tmp the directory can already belong to another user. None of
-      // those should turn a Ctrl+V into an unhandled rejection.
-      console.error('[clipboard] Failed to save pasted image:', error);
-      return null;
-    }
+    // A write failure degrades to the same null an empty clipboard returns
+    // rather than rejecting the renderer's invoke (see writePastedImage).
+    return writePastedImage(image);
+  });
+
+  // Save PNG bytes the renderer decoded from a dropped image file into the same
+  // temp directory, under the same cap and prune, and return the path. This is
+  // the drop-path twin of CLIPBOARD_READ_IMAGE for a format the agent CLI cannot
+  // take from a path (a bmp: outside Claude Code's native paste scan, and its
+  // Read tool refuses the file as binary). The renderer decodes because it
+  // already holds the dropped File and Chromium reads every format `<img>`
+  // does; main's `nativeImage` decodes only PNG and JPEG, so the bytes arrive
+  // here already PNG and the decode below is a validity check, not a
+  // conversion. Null for anything that is not a decodable image, so the
+  // renderer falls back to the path it had.
+  ipcMain.handle(IPC.CLIPBOARD_SAVE_IMAGE, (_event, pngBytes: unknown): string | null => {
+    if (!(pngBytes instanceof Uint8Array) || pngBytes.byteLength === 0) return null;
+    const image = nativeImage.createFromBuffer(
+      Buffer.from(pngBytes.buffer, pngBytes.byteOffset, pngBytes.byteLength),
+    );
+    if (image.isEmpty()) return null;
+    return writePastedImage(image);
   });
 
   // Write text to the clipboard natively in the main process rather than via the web

@@ -123,9 +123,22 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain('BROWSER VERIFICATION (kangentic_browser_* tools):');
     // Guidance paragraph: the agent should prefer the browser tools over Playwright.
     expect(instructions).toContain('kangentic_browser_list_panes');
-    // Steering: prefer the in-app pane over an external/desktop browser tool
-    // (e.g. a Chrome-extension browser MCP), not just over a Playwright script.
-    expect(instructions).toContain('external or desktop browser-automation tool');
+    // Steering away from a DIFFERENT browser, named by tool prefix rather
+    // than described. "A Chrome-extension browser MCP" asked the agent to
+    // infer which tools were meant; `mcp__claude-in-chrome__*` is a literal
+    // it can match. Reported from live use: agents reaching for Chrome when
+    // the user wanted the in-app pane.
+    expect(instructions).toContain('mcp__claude-in-chrome__*');
+    expect(instructions).toContain('Playwright/Puppeteer/Selenium');
+    // Open the pane, and do not treat "the user closed it" as a reason not to.
+    expect(instructions).toContain('OPEN THE PANE.');
+    // One surface per task, stated so the agent does not go looking for a
+    // second one. The `isolated` argument came out on 2026-09-21 because an
+    // offscreen surface is unsupervisable, so the instructions must not
+    // advertise it - an agent passing a parameter zod does not know gets a
+    // schema error instead of a browser.
+    expect(instructions).toContain('exactly ONE browser surface');
+    expect(instructions).not.toContain('isolated: true');
     // Guard against proactive driving (the "do not drive" contract).
     expect(instructions).toContain('Do not drive the browser proactively');
     // The way out of "no pane open" must be something the AGENT can do. This

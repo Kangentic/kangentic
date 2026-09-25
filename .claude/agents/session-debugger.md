@@ -1,6 +1,9 @@
 ---
 name: session-debugger
 model: sonnet
+effort: medium
+skills:
+  - session-lifecycle
 description: |
   Session state machine debugger for diagnosing terminal, PTY, and session lifecycle issues. Use when debugging symptoms like: terminal not showing output, session didn't resume, task stuck in a state, terminal blank after dialog close, duplicate sessions, or generation counter mismatches.
 
@@ -20,7 +23,6 @@ description: |
   User reports: "I see two terminals running for the same task."
   -> Spawn session-debugger to check generation counter guards and spawn deduplication.
   </example>
-model: opus
 tools: Read, Glob, Grep
 ---
 
@@ -30,9 +32,7 @@ You are a specialist debugger for the Kangentic session lifecycle -- the most co
 
 ## First Step: Load Context
 
-Before analyzing any symptom, read the session lifecycle skill for the authoritative state machine reference:
-
-- `.claude/skills/session-lifecycle/SKILL.md`
+The session-lifecycle skill (the authoritative state machine reference) is preloaded into your context via the `skills:` frontmatter - consult it directly; re-Read `.claude/skills/session-lifecycle/SKILL.md` only if the preloaded content appears missing.
 
 Then read the key implementation files:
 

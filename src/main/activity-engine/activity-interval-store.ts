@@ -158,4 +158,51 @@ export class ActivityIntervalStore {
       .all(sessionId) as ActivityIntervalRow[];
     return rows.map(toInterval);
   }
+
+  /**
+   * Total ACTIVE milliseconds in a window, and how many distinct sessions
+   * contributed any interval to it - the usage dashboard's Avg Active pair.
+   *
+   * Active means the agent was working (`ACTIVITY_DISPOSITION` maps `thinking`
+   * to `active`; `idle` and `permission` are both idle). That is the metric
+   * Claude Code itself publishes as `claude_code.active_time.total`, described
+   * as "actual time spent actively using Claude Code, excluding idle time".
+   * The alternative the dashboard used to show, summed agent-reported wall
+   * clock, counts every hour a session sat open: on the dogfooding install
+   * active time is 39% of tracked wall clock.
+   *
+   * The session count is deliberately returned with it. This ledger does not
+   * cover every session (per-interval recording shipped later than the usage
+   * ledger), so the average has to be over sessions WITH coverage rather than
+   * over the Sessions tile's count. Dividing one ledger's numerator by
+   * another's denominator is the mixed-population bug this whole area was
+   * audited for.
+   *
+   * Open intervals (`ended_ms IS NULL`, a session still in that state or one
+   * killed mid-interval) carry a NULL `duration_ms` and are excluded, matching
+   * the MCP reader in `activity-interval-commands.ts`.
+   *
+   * Bounds are on `started_ms`, matching the turn ledger's `ts` filtering.
+   */
+  getActiveTotals(sinceMs: number | null, untilMs: number | null): {
+    activeMs: number;
+    sessionsCovered: number;
+  } {
+    const clauses = ["disposition = 'active'", 'duration_ms IS NOT NULL'];
+    const params: number[] = [];
+    if (sinceMs !== null) {
+      clauses.push('started_ms >= ?');
+      params.push(sinceMs);
+    }
+    if (untilMs !== null) {
+      clauses.push('started_ms < ?');
+      params.push(untilMs);
+    }
+    return this.db.prepare(`
+      SELECT COALESCE(SUM(duration_ms), 0) AS activeMs,
+             COUNT(DISTINCT session_id) AS sessionsCovered
+        FROM session_activity_intervals
+       WHERE ${clauses.join(' AND ')}
+    `).get(...params) as { activeMs: number; sessionsCovered: number };
+  }
 }

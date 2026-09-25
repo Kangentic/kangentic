@@ -116,14 +116,14 @@ function monitorPreConfig(): string {
     window.__mockMonitorRows = [
       {
         // The one labelled row in the fixture. Every other row here has
-        // labels: [], which meant only PEEK_ROWS_WITHOUT_LABELS (the 4-row
-        // well) and the unconditional label block ever rendered - the
-        // narrower 2-row well and the now-conditional LabelPills block
-        // (row.labels.length > 0 && ...) went unexercised. Put on
-        // sess-working rather than a new row: a new row would shift every
-        // count-based assertion in this file (cards/tableRows/liveOnly
-        // counts), while adding a label to an existing row changes nothing
-        // any other test checks.
+        // labels: [], so the conditional LabelPills block
+        // (row.labels.length > 0 && ...) went unexercised without it. It also
+        // gives the density test a labelled card to compare against an
+        // unlabelled one, which is what proves the well no longer sizes itself
+        // off label presence. Put on sess-working rather than a new row. A new
+        // row would shift every count-based assertion in this file
+        // (cards/tableRows/liveOnly counts), while adding a label to an
+        // existing row changes nothing any other test checks.
         sessionId: 'sess-working', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
         taskId: 'task-a', taskTitle: 'Fix PTY capture race', outputPeek: ['npm run typecheck', 'no errors'], displayId: 142,
         columnName: 'Testing', commandTerminalBranch: null, labels: ['bug'], prUrl: null, prNumber: null, prState: null,
@@ -167,6 +167,90 @@ function monitorPreConfig(): string {
   `;
 }
 
+/**
+ * Exactly one project has ever had a session, and its Projects filter is
+ * already persisted. Exercises the visibility gate's OR-clause: with a single
+ * represented project the "2+ options" half can never fire, so only a
+ * persisted `projectFilter` naming that lone project keeps the control (and
+ * its Clear) reachable.
+ */
+function singleProjectMonitorPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${PROJECT_A}',
+        name: 'Monitor Alpha',
+        path: '/mock/monitor-a',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+
+      state.DEFAULT_SWIMLANES.forEach(function (lane, index) {
+        state.swimlanes.push({
+          id: 'lane-monitor-single-' + index,
+          name: lane.name,
+          role: lane.role,
+          color: lane.color,
+          icon: lane.icon,
+          is_archived: lane.is_archived,
+          permission_strategy: lane.permission_strategy || null,
+          auto_spawn: lane.auto_spawn || false,
+          position: index,
+          created_at: ts,
+        });
+      });
+
+      state.tasks.push({
+        id: 'task-single-a',
+        title: 'Solo project task',
+        description: '',
+        display_id: 501,
+        swimlane_id: 'lane-monitor-single-0',
+        position: 0,
+        labels: [],
+        priority: 0,
+        run_mode: 'agent',
+        archived_at: null,
+        created_at: ts,
+        updated_at: ts,
+      });
+
+      state.sessions.push({
+        id: 'sess-single-a',
+        taskId: 'task-single-a',
+        projectId: '${PROJECT_A}',
+        pid: 5300,
+        status: 'running',
+        shell: 'bash',
+        cwd: '/mock/monitor-a',
+        startedAt: ts,
+        exitCode: null,
+      });
+
+      // Persisted ahead of any snapshot, exactly the boot-order scenario the
+      // toolbar's numerator/denominator comment describes.
+      state.config.monitor.projectFilter = ['${PROJECT_A}'];
+
+      return { currentProjectId: '${PROJECT_A}' };
+    });
+
+    window.__mockMonitorRows = [
+      {
+        sessionId: 'sess-single-a', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
+        taskId: 'task-single-a', taskTitle: 'Solo project task', outputPeek: [], displayId: 501,
+        columnName: 'To Do', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
+        agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'medium', permissionMode: 'auto',
+        startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
+        status: 'running', activity: 'thinking', activityReason: null,
+        lastEvent: null, contextPercent: null, isolated: false, isCommandTerminal: false
+      }
+    ];
+  `;
+}
+
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
@@ -181,6 +265,16 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
   return { browser, page };
+}
+
+/** Write a global config field through the real path the settings controls use. */
+async function setConfig(page: Page, partial: Record<string, string>): Promise<void> {
+  await page.evaluate((value) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { config: { getState: () => { updateConfig: (partial: Record<string, string>) => Promise<void> } } };
+    }).__zustandStores;
+    return stores?.config.getState().updateConfig(value);
+  }, partial);
 }
 
 async function openMonitor(page: Page): Promise<void> {
@@ -359,26 +453,124 @@ test.describe('agent monitor', () => {
       }));
 
       await expect(peek).toContainText('newest line');
-      // No labels on this row, so it gets the wider form and all three fit.
-      await expect(peek).toHaveAttribute('data-rows', '4');
+      // Three at the default density, which is the board card's clamp.
+      await expect(peek).toHaveAttribute('data-rows', '3');
       await expect(peek).toContainText('oldest line');
     } finally {
       await browser.close();
     }
   });
 
-  test('a labelled row gets the narrower two-row peek, and its labels still render beside it', async () => {
-    // sess-working is the fixture's one labelled row (see the comment on its
-    // seed). Everything else here has labels: [], so PEEK_ROWS_WITH_LABELS
-    // and the conditional LabelPills block (`row.labels.length > 0 && ...`)
-    // never ran before this test - a revert of either would go unnoticed.
+  test('the peek follows card density, the same setting the board card uses, not label presence', async () => {
+    // This used to be two rows on a labelled card and four on an unlabelled one,
+    // so two cards on the same grid showed different amounts for a reason the
+    // user never chose. sess-working is the fixture's one labelled row (see the
+    // comment on its seed); it must now match its unlabelled neighbour at every
+    // density, and its labels must still render beside the well.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
 
+      const labelled = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-peek"]');
+      const unlabelled = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-peek"]');
+      await expect(labelled).toHaveAttribute('data-rows', '3');
+      await expect(unlabelled).toHaveAttribute('data-rows', '3');
+      await expect(page.locator('[data-session-id="sess-working"]').getByText('bug', { exact: true })).toBeVisible();
+
+      await setConfig(page, { cardDensity: 'comfortable' });
+      await expect(labelled).toHaveAttribute('data-rows', '5');
+      await expect(unlabelled).toHaveAttribute('data-rows', '5');
+
+      await setConfig(page, { cardDensity: 'compact' });
+      await expect(labelled).toHaveAttribute('data-rows', '1');
+      await expect(unlabelled).toHaveAttribute('data-rows', '1');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the card slot follows Card Preview: the latest message, recent messages, the description, and the peek', async () => {
+    // Parity with the board card: the Task tab's Card Preview setting decides
+    // what this slot prints. A LIVE row shows what the agent is doing, its trail
+    // if it has spoken and the raw terminal peek otherwise; both render in the
+    // same well, so a live card always has one.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
       const card = page.locator('[data-session-id="sess-working"]');
-      await expect(card.locator('[data-testid="monitor-card-peek"]')).toHaveAttribute('data-rows', '2');
-      await expect(card.getByText('bug', { exact: true })).toBeVisible();
+      const terminalCard = page.locator('[data-session-id="sess-command-terminal"]');
+      await expect(card.locator('[data-testid="monitor-card-peek"]')).toContainText('npm run typecheck');
+
+      const setCardPreview = (value: string) => page.evaluate((cardPreview) => {
+        const stores = (window as unknown as {
+          __zustandStores?: { config: { getState: () => { updateConfig: (partial: { cardPreview: string }) => Promise<void> } } };
+        }).__zustandStores;
+        return stores?.config.getState().updateConfig({ cardPreview });
+      }, value);
+
+      // A trail lands for the task agent: the peek gives way to the agent's
+      // latest message (the default), wrapped to three rows at the default
+      // density, in the SAME well the peek was using. The Command Terminal has
+      // no trail, so its peek stays.
+      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-working', [
+        { uuid: 'm1', ts: 1, text: 'Reading the buffer manager.' },
+        { uuid: 'm2', ts: 2, text: 'Found the race in the drain path.' },
+        { uuid: 'm3', ts: 3, text: 'Adding the guard now.' },
+      ]));
+      const trail = card.locator('[data-testid="monitor-card-trail"]');
+      // Two levels down: the trail root is the well, whose one child is the
+      // fixed-height box the lines sit in.
+      const trailLines = trail.locator('> div > div');
+      await expect(trail).toHaveAttribute('data-mode', 'latest');
+      await expect(trail).toHaveAttribute('data-lines', '3');
+      await expect(trailLines).toHaveText(['Adding the guard now.']);
+      await expect(trailLines).toHaveClass(/line-clamp-3/);
+      await expect(card.locator('[data-testid="monitor-card-peek"]')).toHaveCount(0);
+      await expect(terminalCard.locator('[data-testid="monitor-card-peek"]')).toContainText('nothing to commit');
+
+      // The trail and the peek are one container, which is the point: a reader
+      // scanning this grid sees one box meaning "the agent", not two.
+      await expect(trail).toHaveAttribute('data-terminal', 'true');
+      const wellClass = async (locator: ReturnType<Page['locator']>) => (await locator.getAttribute('class')) ?? '';
+      expect(await wellClass(trail)).toContain('bg-surface-hover/50');
+      expect(await wellClass(terminalCard.locator('[data-testid="monitor-card-peek"]'))).toContain('bg-surface-hover/50');
+
+      // The cost gate follows the slot: once this row draws the trail, the
+      // renderer stops asking main to sample its terminal, while the Command
+      // Terminal (which still draws a peek) stays named.
+      const lastWanted = () => page.evaluate(() => {
+        const calls = (window.electronAPI.monitor as unknown as { __peekWantedCalls: Array<string[] | null> })
+          .__peekWantedCalls;
+        return calls.length === 0 ? null : calls[calls.length - 1];
+      });
+      await expect.poll(lastWanted).not.toContain('sess-working');
+      await expect.poll(lastWanted).toContain('sess-command-terminal');
+
+      // Recent messages: one line each, newest last, in the same three rows.
+      await setCardPreview('agent-messages');
+      await expect(trail).toHaveAttribute('data-mode', 'lines');
+      await expect(trailLines).toHaveText([
+        'Reading the buffer manager.',
+        'Found the race in the drain path.',
+        'Adding the guard now.',
+      ]);
+
+      // Task description: the row carries one after this snapshot, so the card
+      // prints it in place of the trail; the terminal row has none and keeps
+      // its peek.
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-working'
+          ? Object.assign({}, row, { description: 'Fix the PTY capture race in the buffer manager.' })
+          : row
+      ))));
+      await setCardPreview('description');
+      await expect(card.locator('[data-testid="monitor-card-description"]')).toContainText('Fix the PTY capture race');
+      await expect(card.locator('[data-testid="monitor-card-trail"]')).toHaveCount(0);
+      await expect(terminalCard.locator('[data-testid="monitor-card-peek"]')).toContainText('nothing to commit');
+
+      // Back to the default: the trail returns.
+      await setCardPreview('agent-latest-message');
+      await expect(trail).toHaveAttribute('data-mode', 'latest');
     } finally {
       await browser.close();
     }
@@ -402,22 +594,87 @@ test.describe('agent monitor', () => {
     }
   });
 
-  test('the monitor card footer draws no rule above it, unlike the board card default', async () => {
-    // ContextUsageFooter's `divider` prop defaults to true (the board card's
-    // rule); MonitorCard passes divider={false} because its peek well already
-    // closes the content region above the footer. Nothing asserted that
-    // before this - reverting the prop passed silently. The board-card
-    // default (divider omitted, so `border-t` present) is proven by
-    // tests/ui/task-card-context-window.spec.ts's usageBar locator, which
-    // already renders that exact footer; adding the complementary assertion
-    // there is out of scope for this file.
+  test('the monitor card footer draws the same rule the board card does', async () => {
+    // This used to be the opposite assertion. MonitorCard passed divider={false}
+    // on the grounds that its peek well already closed the content region, which
+    // stopped being true once a card could show a plain description instead and
+    // land with nothing between its text and the model line. The two cards are
+    // one design, so the footer is the board card's, prop for prop.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
 
       const footer = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage"]');
       await expect(footer).toBeVisible();
-      await expect(footer).not.toHaveClass(/border-t/);
+      await expect(footer).toHaveClass(/border-t/);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a paused row keeps its trail in the store but the card falls back to its description', async () => {
+    // The monitor half of the board card's live gate. A trail outlives its
+    // session, so without this a paused card printed agent prose under a
+    // CirclePause glyph with no activity mark and no filling bar to say so.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-paused'
+          ? Object.assign({}, row, { description: 'Paused: an Obsidian-like graph over the memory index.' })
+          : row
+      ))));
+      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-paused', [
+        { uuid: 'p1', ts: 1, text: 'Parking this until the retrieval index lands.' },
+      ]));
+
+      const card = page.locator('[data-session-id="sess-paused"]');
+      await expect(card.locator('[data-testid="monitor-card-description"]')).toContainText('Obsidian-like graph');
+      await expect(card.locator('[data-testid="monitor-card-trail"]')).toHaveCount(0);
+      await expect(card).not.toContainText('Parking this until');
+
+      // The same trail on a RUNNING row does show, so this is the live gate and
+      // not the trail simply failing to arrive.
+      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-working', [
+        { uuid: 'w1', ts: 1, text: 'Parking this until the retrieval index lands.' },
+      ]));
+      await expect(
+        page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-trail"]'),
+      ).toContainText('Parking this until');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a suspended row with no description keeps its peek sampled after it gains a trail', async () => {
+    // The other half of the live gate, at the wanted-list level rather than the
+    // render level. sess-paused has no description, so monitorSlotKind resolves
+    // it to 'peek' whether or not it holds a trail, and MonitorBody must keep
+    // asking main to sample its terminal output (a Command Terminal is the real
+    // case: it can be suspended/exited and never has a description at all). The
+    // old wanted-list check (`if (trailMode && trail && trail.length > 0)
+    // continue;`) dropped ANY trailed row regardless of live-ness, which is the
+    // regression this pins.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const lastWanted = () => page.evaluate(() => {
+        const calls = (window.electronAPI.monitor as unknown as { __peekWantedCalls: Array<string[] | null> })
+          .__peekWantedCalls;
+        return calls.length === 0 ? null : calls[calls.length - 1];
+      });
+
+      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-paused', [
+        { uuid: 'sp1', ts: 1, text: 'Should never render: this row is not live.' },
+      ]));
+      await page.evaluate(() => window.__mockFireMonitorPeek({ 'sess-paused': ['queued build output'] }));
+
+      const card = page.locator('[data-session-id="sess-paused"]');
+      await expect(card.locator('[data-testid="monitor-card-peek"]')).toContainText('queued build output');
+      await expect(card.locator('[data-testid="monitor-card-trail"]')).toHaveCount(0);
+      await expect.poll(lastWanted).toContain('sess-paused');
     } finally {
       await browser.close();
     }
@@ -582,6 +839,292 @@ test.describe('agent monitor', () => {
     }
   });
 
+  test('the Projects filter scopes the list and the tiles, and never narrows its own options', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const cards = page.locator('[data-testid="monitor-card"]');
+      await expect(cards).toHaveCount(4);
+      await expect(page.locator('[data-testid="monitor-summary-projects-value"]')).toHaveText('2');
+
+      // The trigger sits in the secondary tier and reads as live scope state,
+      // not a static label ("Projects" beside the Group control's own "Project"
+      // option read as more grouping); the menu portals to body.
+      const trigger = page.locator('[data-testid="monitor-project-filter"] button');
+      await expect(trigger).toHaveText('All projects');
+      await trigger.click();
+      const menu = page.locator('[data-testid="filter-menu-projects"]');
+      await expect(menu).toBeVisible();
+
+      // Left-anchored to the trigger (align="left"), because in this toolbar the
+      // LEFT edge is the stable one: the trigger text widens as selections
+      // toggle, and the menu's position is computed once at open, so a
+      // right-anchored menu visibly detached from the moving edge.
+      const triggerBoxAtOpen = await trigger.boundingBox();
+      const menuBox = await menu.boundingBox();
+      if (!triggerBoxAtOpen || !menuBox) throw new Error('missing geometry for the alignment check');
+      expect(Math.abs(menuBox.x - triggerBoxAtOpen.x)).toBeLessThanOrEqual(2);
+      // Options are (id, name) pairs: the testid carries the project id, the
+      // rendered text the display name.
+      const optionAlpha = page.locator(`[data-testid="filter-option-projects-${PROJECT_A}"]`);
+      const optionBeta = page.locator(`[data-testid="filter-option-projects-${PROJECT_B}"]`);
+      await expect(optionAlpha).toContainText('Monitor Alpha');
+      await expect(optionBeta).toContainText('Monitor Beta');
+
+      await optionAlpha.click();
+      await expect(cards).toHaveCount(2);
+      await expect(trigger).toHaveText('1 of 2 projects');
+      // The toggle changed the trigger's text width; the open menu must stay
+      // glued to the trigger's (stable) left edge regardless.
+      const triggerBoxAfterToggle = await trigger.boundingBox();
+      const menuBoxAfterToggle = await menu.boundingBox();
+      if (!triggerBoxAfterToggle || !menuBoxAfterToggle) throw new Error('missing geometry for the alignment check');
+      expect(Math.abs(menuBoxAfterToggle.x - triggerBoxAfterToggle.x)).toBeLessThanOrEqual(2);
+      await expect(page.locator('[data-session-id="sess-other-project"]')).toHaveCount(0);
+      // The "N of M" chip is what explains where the missing sessions went.
+      const visibleCount = page.locator('[data-testid="monitor-visible-count"]');
+      await expect(visibleCount).toBeVisible();
+      await expect(visibleCount.locator('span').first()).toHaveText('2');
+      // The tiles follow the scope: Alpha alone is one project with one active
+      // and one paused session.
+      await expect(page.locator('[data-testid="monitor-summary-projects-value"]')).toHaveText('1');
+      await expect(page.locator('[data-testid="monitor-summary-working-value"]')).toHaveText('1');
+      await expect(page.locator('[data-testid="monitor-summary-idle-value"]')).toHaveText('1');
+
+      // The option list derives from the UNFILTERED rows: scoping to Alpha must
+      // not drop Beta from the menu, or the selection could never be widened
+      // again. (The menu also stays open across a toggle.)
+      await expect(menu).toBeVisible();
+      await expect(optionBeta).toBeVisible();
+      await expect(optionAlpha.locator('input')).toBeChecked();
+      await expect(optionBeta.locator('input')).not.toBeChecked();
+
+      // Clear restores every project, retires the chip, and resets the trigger.
+      await menu.getByText('Clear').click();
+      await expect(cards).toHaveCount(4);
+      await expect(visibleCount).toHaveCount(0);
+      await expect(trigger).toHaveText('All projects');
+      await expect(page.locator('[data-testid="monitor-summary-projects-value"]')).toHaveText('2');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('unchecking one of two selected projects removes only that project from the filter', async () => {
+    // Drives the REMOVE branch of toggleProject with something ELSE already
+    // selected: every other test here either adds a single project to an
+    // empty filter or clears the whole thing via Clear, so a toggleProject
+    // that always appended (never removed on an already-checked option)
+    // would still pass every one of them - only re-checking a box while a
+    // sibling stays checked exercises the `.filter(...)` branch at all.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const cards = page.locator('[data-testid="monitor-card"]');
+      const trigger = page.locator('[data-testid="monitor-project-filter"] button');
+      await trigger.click();
+
+      const optionAlpha = page.locator(`[data-testid="filter-option-projects-${PROJECT_A}"]`);
+      const optionBeta = page.locator(`[data-testid="filter-option-projects-${PROJECT_B}"]`);
+
+      await optionAlpha.click();
+      await expect(trigger).toHaveText('1 of 2 projects');
+      await optionBeta.click();
+      await expect(trigger).toHaveText('2 of 2 projects');
+      // Both projects selected covers every row in the fixture.
+      await expect(cards).toHaveCount(4);
+
+      // Re-click the ALREADY-CHECKED Alpha option: this is the remove branch.
+      await optionAlpha.click();
+      await expect(trigger).toHaveText('1 of 2 projects');
+      await expect(optionAlpha.locator('input')).not.toBeChecked();
+      await expect(optionBeta.locator('input')).toBeChecked();
+
+      // Only Beta's rows remain: sess-other-project and sess-command-terminal.
+      // A broken remove branch that always appends would still show all 4.
+      // Scoped to the card testid, not a bare data-session-id: sess-working is
+      // PROJECT_A's live session, and it is ALSO the id on the bottom terminal
+      // panel's own tab (see "the bottom panel yields its terminal..." below),
+      // which stays mounted regardless of what the monitor's filter hides.
+      await expect(cards).toHaveCount(2);
+      await expect(page.locator('[data-session-id="sess-other-project"]')).toBeVisible();
+      await expect(page.locator('[data-session-id="sess-command-terminal"]')).toBeVisible();
+      await expect(page.locator('[data-testid="monitor-card"][data-session-id="sess-working"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="monitor-card"][data-session-id="sess-paused"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the trigger text intersects the filter with representable projects, not a raw count', async () => {
+    // Pins `representableSelectionCount`: the numerator is the filter
+    // INTERSECTED with `projectOptions`, not `view.projectFilter.length`
+    // directly. Every other test in this file keeps the two counts equal at
+    // every assertion point (a fresh toggle, or a boot-time id that has
+    // already been reconciled away by the time any assertion runs), so a raw
+    // `.length` read would pass them all too. Driving the divergence through
+    // `setView` (not `applySnapshot`, which is what reconciles stale ids
+    // against rows) lands a steady-state case with no boot-order race: the
+    // filter holds 'proj-gone', which projectOptions can never represent,
+    // alongside PROJECT_A, which it can.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const trigger = page.locator('[data-testid="monitor-project-filter"] button');
+      await expect(trigger).toHaveText('All projects');
+
+      await page.evaluate((projectId) => {
+        window.__zustandStores?.monitor?.getState().setView({
+          projectFilter: ['proj-gone', projectId],
+        });
+      }, PROJECT_A);
+
+      // A raw projectFilter.length (2) would read "2 of 2 projects" here; the
+      // intersection with the two representable options reads "1 of 2".
+      await expect(trigger).toHaveText('1 of 2 projects');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Projects control stays reachable with only one project, reading singular "1 of 1 project"', async () => {
+    // With only one project ever represented, `projectOptions.length >= 2` can
+    // never be true - only the OR-clause's second half (a persisted filter
+    // naming that lone represented project) keeps Clear reachable. Deleting
+    // that clause hides the control here without failing any other test,
+    // since every other fixture in this file seeds two projects.
+    const { browser, page } = await launchWithState(singleProjectMonitorPreConfig());
+    try {
+      await openMonitor(page);
+      await expect(page.locator('[data-testid="monitor-card"]')).toHaveCount(1);
+
+      const control = page.locator('[data-testid="monitor-project-filter"]');
+      await expect(control).toBeVisible();
+      await expect(control.locator('button')).toHaveText('1 of 1 project');
+
+      // Still fully undoable from here - after Clear there is nothing left to
+      // subset (one project, no filter), so the control retires itself.
+      await control.locator('button').click();
+      await page.locator('[data-testid="filter-menu-projects"]').getByText('Clear').click();
+      await expect(page.locator('[data-testid="monitor-project-filter"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a persisted Projects filter with zero sessions anywhere hides the control entirely', async () => {
+    // The other edge of the same gate: with no rows at all, projectOptions is
+    // empty, so neither half of the OR-clause can be true - a persisted filter
+    // naming a project that currently has no session must not resurrect a
+    // control with nothing to show and nothing to undo.
+    const preConfig = `${singleProjectMonitorPreConfig()}
+      window.__mockMonitorRows = [];
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMonitor(page);
+      await expect(page.locator('[data-testid="monitor-empty"]')).toBeVisible();
+      await expect(page.locator('[data-testid="monitor-project-filter"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a persisted project filter is honoured on boot, and stale ids reconcile away', async () => {
+    // The red-green for removing hydrateView's unconditional wipe: before the
+    // Projects control existed, the persisted filter was force-cleared on every
+    // launch, which would now read as the control losing its state on restart.
+    const preConfig = monitorPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        state.config.monitor.projectFilter = ['${PROJECT_A}', 'proj-gone'];
+        return {};
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMonitor(page);
+      const cards = page.locator('[data-testid="monitor-card"]');
+      // Only Alpha's two sessions: the persisted scope survived the boot.
+      await expect(cards).toHaveCount(2);
+      await expect(page.locator('[data-session-id="sess-other-project"]')).toHaveCount(0);
+
+      // The id naming no current project is dropped against the first snapshot
+      // and the trim persists through the normal debounced setView path.
+      await expect.poll(async () => page.evaluate(async () => {
+        const api = (window as unknown as {
+          electronAPI: { config: { getGlobal: () => Promise<{ monitor?: { projectFilter?: string[] } }> } };
+        }).electronAPI;
+        const config = await api.config.getGlobal();
+        return config.monitor?.projectFilter ?? [];
+      }), { timeout: 10000 }).toEqual([PROJECT_A]);
+
+      // And the surviving scope is still fully undoable from the control.
+      await page.locator('[data-testid="monitor-project-filter"] button').click();
+      await page.locator('[data-testid="filter-menu-projects"]').getByText('Clear').click();
+      await expect(cards).toHaveCount(4);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('clicking a Projects option leaves an open monitor detail window alone', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const monitorWindows = () => page.evaluate(
+        () => document.querySelectorAll('#monitor-detail-layer-root [data-testid^="window-frame-"]').length,
+      );
+      // An Alpha task's detail, so its row stays listed once the scope narrows
+      // to Alpha below.
+      await page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-title"]').click();
+      await expect.poll(monitorWindows, { timeout: 10000 }).toBe(1);
+
+      // The window spawns over the toolbar, which would block the trigger click
+      // (Playwright refuses a click the window would swallow). Drag it to the
+      // lower half first - the same title-bar drag window-drag-free-move.spec.ts
+      // uses - after polling the entrance animation settled.
+      const titleBar = page.locator(
+        '#monitor-detail-layer-root [data-testid^="window-frame-"] [data-testid="task-detail-titlebar"]',
+      );
+      await titleBar.waitFor({ state: 'visible', timeout: 10000 });
+      let titleBarBox = await titleBar.boundingBox();
+      await expect.poll(async () => {
+        const nextBox = await titleBar.boundingBox();
+        const settled = !!titleBarBox && !!nextBox
+          && Math.abs(nextBox.x - titleBarBox.x) < 1 && Math.abs(nextBox.y - titleBarBox.y) < 1;
+        titleBarBox = nextBox;
+        return settled;
+      }, { timeout: 5000 }).toBe(true);
+      const overlayBox = await page.locator('[data-testid="monitor-page"]').boundingBox();
+      if (!titleBarBox || !overlayBox) throw new Error('missing geometry for the window drag');
+      await page.mouse.move(titleBarBox.x + titleBarBox.width / 2, titleBarBox.y + titleBarBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        overlayBox.x + overlayBox.width * 0.55,
+        overlayBox.y + overlayBox.height * 0.8,
+        { steps: 12 },
+      );
+      await page.mouse.up();
+      await expect.poll(monitorWindows, { timeout: 10000 }).toBe(1);
+
+      // The menu portals to document.body - OUTSIDE the monitor's
+      // data-dismiss-layer subtree - and OverlayPopover marks it
+      // data-dismissable-layer, so a real click on an option applies the filter
+      // and nothing else (.claude/rules/light-dismiss-denylist.md).
+      await page.locator('[data-testid="monitor-project-filter"] button').click();
+      await page.locator(`[data-testid="filter-option-projects-${PROJECT_A}"]`).click();
+      await expect(page.locator('[data-testid="monitor-card"]')).toHaveCount(2);
+
+      // Intentional fixed wait - a wrongly-scheduled dismiss has nothing to poll
+      // for; give it time to fire, then assert it did not (the same
+      // non-occurrence pattern as window-click-outside-close.spec.ts).
+      await page.waitForTimeout(400);
+      expect(await monitorWindows()).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
   /**
    * Asserts each layout actually RENDERS differently, not merely that the
    * `data-layout` attribute flipped. An earlier version of this spec checked only
@@ -595,10 +1138,21 @@ test.describe('agent monitor', () => {
       const cards = page.locator('[data-testid="monitor-card"]');
       const tableRows = page.locator('[data-testid="monitor-table-row"]');
 
+      // The session ids the renderer last told main it wants a peek for
+      // (MonitorBody's `wantedPeekKey`, keyed on layout + Card Preview + each
+      // row's trail/description). None of the fixture's rows carry a trail or
+      // a description here, so cards layout wants every row.
+      const lastWantedPeek = () => page.evaluate(() => {
+        const calls = (window.electronAPI.monitor as unknown as { __peekWantedCalls: Array<string[] | null> })
+          .__peekWantedCalls;
+        return calls.length === 0 ? null : calls[calls.length - 1];
+      });
+
       // Cards: roomy cards, no table.
       await expect(cards).toHaveCount(4);
       await expect(tableRows).toHaveCount(0);
       await expect(cards.first()).not.toHaveAttribute('data-dense', 'true');
+      await expect.poll(lastWantedPeek).toHaveLength(4);
 
       // Table: real table rows, no cards. Grouping still applies - a <table>
       // cannot interleave section headers, so each group gets its own table
@@ -614,12 +1168,18 @@ test.describe('agent monitor', () => {
       // Effort and permission mode are surfaced as their own sortable columns.
       await expect(page.locator('th', { hasText: 'Effort' }).first()).toBeVisible();
       await expect(page.locator('th', { hasText: 'Permission' }).first()).toBeVisible();
+      // No row in the table layout draws the peek/trail slot at all, so main
+      // is told to want nothing: the listener and sampling timer go idle even
+      // though the monitor is still open (MonitorBody's `isCardsLayout` gate).
+      await expect.poll(lastWantedPeek).toEqual([]);
 
       // List: cards again, but dense and forced to a single column.
       await page.locator('[data-testid="monitor-layout-list"]').click();
       await expect(tableRows).toHaveCount(0);
       await expect(cards.first()).toHaveAttribute('data-dense', 'true');
       await expect(page.locator('[data-testid="monitor-grid"]')).toHaveAttribute('data-columns', '1');
+      // The dense list card has no peek/trail slot either.
+      await expect.poll(lastWantedPeek).toEqual([]);
 
       // Back to cards: the column count must RECOVER. Switching layout does not
       // resize the container, so a resize-observer-only implementation stays
@@ -630,6 +1190,9 @@ test.describe('agent monitor', () => {
         async () => Number(await page.locator('[data-testid="monitor-grid"]').getAttribute('data-columns')),
         { timeout: 10000 },
       ).toBeGreaterThanOrEqual(2);
+      // The wanted set recovers too, so a card back in view draws its peek
+      // again rather than staying starved from the table/list detour.
+      await expect.poll(lastWantedPeek).toHaveLength(4);
     } finally {
       await browser.close();
     }

@@ -3,6 +3,7 @@ import type {
   ExternalSource,
   FileAttachmentRef,
   ImportCheckCliResult,
+  ImportExecuteInput,
   ImportFetchInput,
   ImportFetchResult,
   Task,
@@ -124,6 +125,24 @@ export interface BoardAdapter {
     input: ImportFetchInput,
     findAlreadyImported: (source: ExternalSource, externalIds: string[]) => Set<string>,
   ): Promise<ImportFetchResult>;
+
+  /**
+   * Fetch per-item detail (e.g. Azure DevOps comments) for the SELECTED import
+   * set and fold it into each item's body, returning the enriched issues. Called
+   * only at import time, so expensive per-item work is deferred off the list
+   * render. Providers whose list body is already complete (GitHub) omit this.
+   */
+  hydrateForImport?(
+    repository: string,
+    issues: ImportExecuteInput['issues'],
+  ): Promise<ImportExecuteInput['issues']>;
+
+  /**
+   * List every current external id for a source, cheaply (ids only). The
+   * reconcile uses it to prune cache rows the remote no longer has. Providers
+   * with no cheap id listing omit this; their deletions clear on a full reconcile.
+   */
+  listExternalIds?(input: { source: ExternalSource; repository: string }): Promise<string[]>;
 
   /** Download inline images referenced in a markdown body. */
   downloadImages(markdownBody: string): Promise<{

@@ -1,5 +1,7 @@
 import type { WebContents } from 'electron';
 import type { QueryAllResult } from './types';
+import { keyboardFocusIsInHost, KeyboardFocusNotInGuestError } from './keyboard-focus';
+import { MODIFIER_FLAGS, parseKeyCombo } from './key-combo';
 
 /**
  * Wraps `webContents.debugger.attach('1.3')` and exposes typed helpers
@@ -20,16 +22,87 @@ import type { QueryAllResult } from './types';
 
 const CDP_VERSION = '1.3';
 const CONSOLE_RING_SIZE = 500;
+/** Smaller than the console ring: a page makes far fewer dialogs than logs,
+ *  and a dialog is only interesting for the call or two after it fired. */
+const DIALOG_RING_SIZE = 20;
+/** Network is chattier than console on a dev server (every chunk, font and
+ *  source map), but the interesting entries are the recent ones. */
+const NETWORK_RING_SIZE = 300;
 
 interface AttachedState {
   webContents: WebContents;
   consoleRing: ConsoleEntry[];
-  consoleListener: (event: Electron.Event, method: string, params: unknown) => void;
+  /** Dialogs this session intercepted, newest last. See `dialogResponse`. */
+  dialogRing: DialogEntry[];
+  /**
+   * How the NEXT `javascriptDialogOpening` is answered.
+   *
+   * There is always an answer, and that is the point. Enabling the `Page`
+   * domain moves dialogs off Chromium's native UI and onto the debugger, so
+   * once we listen we OWN every dialog: failing to respond leaves the page
+   * blocked forever with nothing on screen to dismiss. Dismiss is the default
+   * because it is the safe direction for all four types - cancel a `confirm`,
+   * decline a `prompt`, and stay on the page for a `beforeunload`.
+   *
+   * Pre-ARMED rather than answered reactively, which is forced rather than
+   * chosen: a pending dialog blocks the renderer, so the tool call that would
+   * answer it could never run. The agent arms the response, then takes the
+   * action that triggers it.
+   */
+  dialogResponse: DialogResponse;
+  networkRing: NetworkEntry[];
+  /**
+   * In-flight requests by CDP requestId, promoted into `networkRing` when the
+   * response or failure lands.
+   *
+   * The start timestamp is held BESIDE the entry rather than on it, so nothing
+   * internal can reach the agent-facing payload: `getNetworkEntries` returns
+   * pending entries too, and a `startedAt` stashed on the entry itself shipped
+   * an undocumented field in the tool response. CDP timestamps are a monotonic
+   * clock with an arbitrary origin, so only the DIFFERENCE between two of them
+   * means anything, which is why the raw value is never reported.
+   */
+  networkPending: Map<string, { entry: NetworkEntry; startedAt: number | null }>;
+  /**
+   * Settles once `Page.enable` has been acknowledged, which is when dialog
+   * interception actually starts working.
+   *
+   * Load-bearing, and it took a live agent to find it. The domain enables are
+   * fire-and-forget and `attachDebugger` is synchronous, so `withGuest` used to
+   * attach and run the tool body in the same tick. On the FIRST drive against
+   * a guest that left `Page.enable` in flight - and if that first drive was a
+   * click that opened a `confirm()`, the dialog raced ahead of the interceptor,
+   * Chromium showed its own native modal, and the pane wedged with no agent
+   * path to recovery. Every later drive was fine, which is exactly what made it
+   * look like it worked: a sweep that calls a dozen tools before clicking never
+   * reproduces it.
+   *
+   * Never rejects: a guest that refuses the command still resolves, because a
+   * failed enable is not a reason to fail every drive. It only means dialogs
+   * fall back to Chromium's own UI, which is where they were before.
+   */
+  interceptionReady: Promise<void>;
+  messageListener: (event: Electron.Event, method: string, params: unknown) => void;
   detachListener: (event: Electron.Event, reason: string) => void;
   /** `Emulation.setFocusEmulationEnabled` has been sent for THIS CDP session.
    *  Lives on the attached state, not in a module Set, so it resets with the
    *  session for free: the detach listener drops this whole entry. */
   focusEmulated: boolean;
+  /** The device-metrics override currently applied to THIS CDP session, or
+   *  null. Not a boolean like `focusEmulated` above, because metrics are
+   *  re-settable: holding the values makes a re-set idempotent, lets
+   *  `clearDeviceMetrics` no-op when nothing is set, and lets a caller read
+   *  back what it asked for. Rides the same WeakMap entry, so a detach
+   *  re-arms it for free. */
+  deviceMetrics: DeviceMetrics | null;
+}
+
+export interface DeviceMetrics {
+  width: number;
+  height: number;
+  /** 0 means "keep the system default", which is what a Retina user's pane
+   *  should stay at unless the caller explicitly asks otherwise. */
+  deviceScaleFactor: number;
 }
 
 export interface ConsoleEntry {
@@ -38,6 +111,46 @@ export interface ConsoleEntry {
   text: string;
   url: string | null;
   lineNumber: number | null;
+}
+
+/** A JavaScript dialog the page raised, and what we answered it with. */
+export interface DialogEntry {
+  ts: string;
+  type: 'alert' | 'confirm' | 'prompt' | 'beforeunload';
+  message: string;
+  /** The `prompt()` default, when the page supplied one. */
+  defaultPrompt: string | null;
+  url: string | null;
+  /** True when we accepted (OK), false when we dismissed (Cancel). */
+  accepted: boolean;
+  /** Text sent for a `prompt()`, or null. */
+  promptText: string | null;
+}
+
+export interface DialogResponse {
+  accept: boolean;
+  promptText?: string;
+  /** True for a one-shot arm, consumed by the next dialog. A persistent arm
+   *  survives until the session detaches or it is armed again. */
+  once: boolean;
+}
+
+/** The safe default: cancel a confirm, decline a prompt, stay on the page. */
+const DEFAULT_DIALOG_RESPONSE: DialogResponse = { accept: false, once: false };
+
+export interface NetworkEntry {
+  ts: string;
+  method: string;
+  url: string;
+  /** The CDP resource type (Document, XHR, Fetch, Script, ...), when known. */
+  resourceType: string | null;
+  /** Null while the request is still in flight or if it failed before a
+   *  response. */
+  status: number | null;
+  /** Set when the request failed rather than returning a status. */
+  errorText: string | null;
+  /** Milliseconds from request to response or failure; null while pending. */
+  durationMs: number | null;
 }
 
 const attached = new WeakMap<WebContents, AttachedState>();
@@ -52,8 +165,16 @@ export function attachDebugger(webContents: WebContents): boolean {
   const state: AttachedState = {
     webContents,
     focusEmulated: false,
+    deviceMetrics: null,
     consoleRing: [],
-    consoleListener: (_event, method, params) => {
+    dialogRing: [],
+    dialogResponse: { ...DEFAULT_DIALOG_RESPONSE },
+    networkRing: [],
+    networkPending: new Map(),
+    // Replaced below with the real `Page.enable` promise. Seeded resolved so
+    // the field is never undefined for a reader that races construction.
+    interceptionReady: Promise.resolve(),
+    messageListener: (_event, method, params) => {
       if (method === 'Console.messageAdded') {
         const message = (params as { message: ConsoleMessage }).message;
         state.consoleRing.push({
@@ -66,6 +187,99 @@ export function attachDebugger(webContents: WebContents): boolean {
         while (state.consoleRing.length > CONSOLE_RING_SIZE) {
           state.consoleRing.shift();
         }
+        return;
+      }
+      // ANSWER EVERY DIALOG. With `Page` enabled, Chromium routes dialogs here
+      // instead of showing its own, so a dialog we do not answer blocks the
+      // renderer with nothing on screen for the user to dismiss - every later
+      // CDP command then queues behind it until the drive lock times out, and
+      // the pane is wedged for good. This handler is the whole reason enabling
+      // `Page` is safe.
+      if (method === 'Page.javascriptDialogOpening') {
+        const opening = params as {
+          type?: string;
+          message?: string;
+          defaultPrompt?: string;
+          url?: string;
+        };
+        const response = state.dialogResponse;
+        if (response.once) state.dialogResponse = { ...DEFAULT_DIALOG_RESPONSE };
+        const promptText = response.accept ? response.promptText ?? '' : undefined;
+        state.dialogRing.push({
+          ts: new Date().toISOString(),
+          type: normalizeDialogType(opening.type),
+          message: opening.message ?? '',
+          defaultPrompt: opening.defaultPrompt ?? null,
+          url: opening.url ?? null,
+          accepted: response.accept,
+          promptText: promptText ?? null,
+        });
+        while (state.dialogRing.length > DIALOG_RING_SIZE) state.dialogRing.shift();
+        void webContents.debugger
+          .sendCommand('Page.handleJavaScriptDialog', {
+            accept: response.accept,
+            ...(promptText === undefined ? {} : { promptText }),
+          })
+          .catch(() => {
+            // Nothing left to try. The dialog stays up and the pane is wedged,
+            // which is why this is logged rather than swallowed silently.
+            console.warn('[browser-cdp] could not answer a JavaScript dialog; the pane may be blocked');
+          });
+        return;
+      }
+      if (method === 'Network.requestWillBeSent') {
+        const sent = params as {
+          requestId?: string;
+          request?: { url?: string; method?: string };
+          type?: string;
+          timestamp?: number;
+        };
+        if (!sent.requestId) return;
+        state.networkPending.set(sent.requestId, {
+          entry: {
+            ts: new Date().toISOString(),
+            method: sent.request?.method ?? 'GET',
+            url: sent.request?.url ?? '',
+            resourceType: sent.type ?? null,
+            status: null,
+            errorText: null,
+            durationMs: null,
+          },
+          startedAt: typeof sent.timestamp === 'number' ? sent.timestamp : null,
+        });
+        // BOUND the pending map. The ring is capped, but a request that never
+        // settles is never deleted from here - an aborted fetch, a long poll,
+        // or anything still in flight when the page navigates away. Over a
+        // long session against a dev server that is a slow leak, so the oldest
+        // unsettled request is dropped once there are more of them than the
+        // ring itself would hold. Insertion order makes the first key the
+        // oldest.
+        while (state.networkPending.size > NETWORK_RING_SIZE) {
+          const oldest = state.networkPending.keys().next();
+          if (oldest.done) break;
+          state.networkPending.delete(oldest.value);
+        }
+        return;
+      }
+      if (method === 'Network.responseReceived' || method === 'Network.loadingFailed') {
+        const settled = params as {
+          requestId?: string;
+          response?: { status?: number };
+          errorText?: string;
+          timestamp?: number;
+        };
+        if (!settled.requestId) return;
+        const pending = state.networkPending.get(settled.requestId);
+        if (!pending) return;
+        state.networkPending.delete(settled.requestId);
+        const entry = pending.entry;
+        entry.status = settled.response?.status ?? null;
+        entry.errorText = settled.errorText ?? null;
+        if (pending.startedAt !== null && typeof settled.timestamp === 'number') {
+          entry.durationMs = Math.round((settled.timestamp - pending.startedAt) * 1000);
+        }
+        state.networkRing.push(entry);
+        while (state.networkRing.length > NETWORK_RING_SIZE) state.networkRing.shift();
       }
     },
     detachListener: (_event, _reason) => {
@@ -81,7 +295,7 @@ export function attachDebugger(webContents: WebContents): boolean {
       attached.delete(state.webContents);
     },
   };
-  webContents.debugger.on('message', state.consoleListener);
+  webContents.debugger.on('message', state.messageListener);
   webContents.debugger.on('detach', state.detachListener);
   // Enable the domains we use. Each `sendCommand` is fire-and-forget;
   // failures during enable are non-fatal and the corresponding endpoint
@@ -92,8 +306,40 @@ export function attachDebugger(webContents: WebContents): boolean {
   void webContents.debugger.sendCommand('DOM.enable').catch(() => {});
   void webContents.debugger.sendCommand('Runtime.enable').catch(() => {});
   void webContents.debugger.sendCommand('CSS.enable').catch(() => {});
+  // `Network` is always on rather than enabled by the first `network` call,
+  // and the cost is accepted deliberately. A dev server is chatty, so this is
+  // two events per request crossing into main for the life of the pane - but
+  // the ring and the in-flight map are both bounded, and the alternative was
+  // measured to be worse in practice: enabling on demand makes the FIRST call
+  // return an empty list for a page that has already loaded, which reads as
+  // "no requests were made" rather than "I started watching just now". That
+  // exact confusion happened during this tool's own bring-up.
+  void webContents.debugger.sendCommand('Network.enable').catch(() => {});
+  // `Page` is what moves JavaScript dialogs onto the debugger, and the
+  // listener above is what keeps that safe - see `dialogResponse`. Enabling it
+  // without answering every dialog would be strictly worse than not enabling
+  // it at all.
+  //
+  // This one is AWAITED by callers (see `interceptionReady`) rather than being
+  // fire-and-forget like its neighbours, because until it is acknowledged a
+  // dialog still goes to Chromium's own modal and wedges the pane.
+  state.interceptionReady = webContents.debugger
+    .sendCommand('Page.enable')
+    .then(() => undefined)
+    .catch(() => undefined);
   attached.set(webContents, state);
   return true;
+}
+
+/**
+ * Wait until this guest's dialog interception is actually live.
+ *
+ * Called by `withGuest` before it runs a tool body, so no drive can outrun
+ * `Page.enable`. Resolves immediately for a guest that is already attached,
+ * which is every call after the first.
+ */
+export async function waitForDialogInterception(webContents: WebContents): Promise<void> {
+  await attached.get(webContents)?.interceptionReady;
 }
 
 export function detachDebugger(webContents: WebContents): void {
@@ -103,7 +349,7 @@ export function detachDebugger(webContents: WebContents): void {
   const state = attached.get(webContents);
   if (!state) return;
   try {
-    webContents.debugger.removeListener('message', state.consoleListener);
+    webContents.debugger.removeListener('message', state.messageListener);
     webContents.debugger.removeListener('detach', state.detachListener);
     webContents.debugger.detach();
   } catch {
@@ -158,6 +404,81 @@ export function ensureFocusEmulation(webContents: WebContents): void {
     .catch(() => {});
 }
 
+/**
+ * Override the viewport the page lays out against, leaving the real widget
+ * alone.
+ *
+ * This is the ONLY way to change a docked `<webview>` pane's viewport without
+ * destroying it. The pane is sized by CSS flex inside the task-detail split row
+ * and has no programmatic bounds API, and the tree above it cannot change shape
+ * without remounting the element - which kills the guest, its `sessionStorage`,
+ * and the agent's surface handle (`.claude/rules/retained-pane-never-remounts.md`).
+ * An override costs none of that: no reload, no new handle, same document.
+ *
+ * Deliberately does NOT send the `scale` parameter. `Input.dispatchMouseEvent`
+ * takes coordinates a real mouse would produce, and the whole click path
+ * (`resolveClickPoint` -> `contentCentroid` -> `dispatchMouseEvent`) carries no
+ * scale term. At the default scale of 1 blink's widget genuinely IS `width`
+ * wide, so a box-model centroid hit-tests correctly and that question never
+ * arises; at scale < 1 it would, silently, for every interact tool. Callers
+ * that want the whole emulated layout visible in a smaller widget set the zoom
+ * factor instead, which Chromium has always accounted for in hit-testing.
+ *
+ * `mobile` is mandatory in the CDP call and stays false: this is a desktop
+ * viewport override, not device emulation with a mobile viewport meta and touch
+ * event emulation.
+ *
+ * The override is CDP-session scoped, not document scoped, so it survives a
+ * navigation. Clearing is the caller's job; see `viewport-override.ts` for who
+ * owns that and when.
+ *
+ * Unlike the fire-and-forget calls above this one REPORTS failure, because a
+ * caller that thinks it set a 1920px viewport and did not will report a
+ * measurement taken at the wrong width.
+ */
+export async function setDeviceMetrics(
+  webContents: WebContents,
+  metrics: DeviceMetrics,
+): Promise<boolean> {
+  const state = attached.get(webContents);
+  if (!state) return false;
+  try {
+    await webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+      width: metrics.width,
+      height: metrics.height,
+      deviceScaleFactor: metrics.deviceScaleFactor,
+      mobile: false,
+    });
+  } catch {
+    return false;
+  }
+  state.deviceMetrics = { ...metrics };
+  return true;
+}
+
+/** The override currently applied to this CDP session, or null. */
+export function getDeviceMetrics(webContents: WebContents): DeviceMetrics | null {
+  const state = attached.get(webContents);
+  return state?.deviceMetrics ? { ...state.deviceMetrics } : null;
+}
+
+/**
+ * Drop the override and let the page lay out against its real widget again.
+ * A no-op when nothing is set, so a blanket clear on teardown costs one map
+ * lookup rather than a CDP roundtrip.
+ */
+export async function clearDeviceMetrics(webContents: WebContents): Promise<boolean> {
+  const state = attached.get(webContents);
+  if (!state || !state.deviceMetrics) return false;
+  try {
+    await webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride');
+  } catch {
+    return false;
+  }
+  state.deviceMetrics = null;
+  return true;
+}
+
 interface ConsoleMessage {
   level?: string;
   text?: string;
@@ -184,6 +505,50 @@ export function getConsoleEntries(webContents: WebContents): ConsoleEntry[] {
   return state ? [...state.consoleRing] : [];
 }
 
+function normalizeDialogType(value: string | undefined): DialogEntry['type'] {
+  return value === 'confirm' || value === 'prompt' || value === 'beforeunload' ? value : 'alert';
+}
+
+/** Dialogs this session intercepted and answered, oldest first. */
+export function getDialogEntries(webContents: WebContents): DialogEntry[] {
+  const state = attached.get(webContents);
+  return state ? [...state.dialogRing] : [];
+}
+
+/**
+ * Arm how the next dialog (or every later one) is answered.
+ *
+ * Armed AHEAD of the action rather than answered after it, because a pending
+ * dialog blocks the renderer: the tool call that would answer it could not
+ * run. So an agent that wants to get through a `confirm()` arms accept, then
+ * clicks.
+ */
+export function setDialogResponse(webContents: WebContents, response: DialogResponse): boolean {
+  const state = attached.get(webContents);
+  if (!state) return false;
+  state.dialogResponse = response;
+  return true;
+}
+
+export function getDialogResponse(webContents: WebContents): DialogResponse | null {
+  return attached.get(webContents)?.dialogResponse ?? null;
+}
+
+/**
+ * Network activity this session saw, oldest first, settled requests followed
+ * by anything still in flight.
+ *
+ * Pending requests are reported rather than hidden: a request that never
+ * settles is usually the answer an agent is looking for (a dev server that
+ * accepted the connection and went quiet), and omitting it would make the
+ * list say the page finished loading when it did not.
+ */
+export function getNetworkEntries(webContents: WebContents): NetworkEntry[] {
+  const state = attached.get(webContents);
+  if (!state) return [];
+  return [...state.networkRing, ...[...state.networkPending.values()].map((p) => p.entry)];
+}
+
 // ---------------------------------------------------------------------------
 // Page / Screenshot
 // ---------------------------------------------------------------------------
@@ -191,8 +556,11 @@ export function getConsoleEntries(webContents: WebContents): ConsoleEntry[] {
 export interface ScreenshotOptions {
   format?: 'png' | 'jpeg';
   quality?: number;
+  /** DIP (CSS pixels times the page zoom), document-relative. See `capture-bounds.ts`. */
   clip?: { x: number; y: number; width: number; height: number; scale?: number };
   fullPage?: boolean;
+  /** Paint outside the viewport. Defaults to `fullPage`. */
+  captureBeyondViewport?: boolean;
 }
 
 /**
@@ -234,7 +602,7 @@ export async function captureScreenshot(
     clip: options.clip
       ? { ...options.clip, scale: options.clip.scale ?? 1 }
       : undefined,
-    captureBeyondViewport: options.fullPage ?? false,
+    captureBeyondViewport: options.captureBeyondViewport ?? options.fullPage ?? false,
   }) as Promise<{ data: string }>;
   const bounded = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new ScreenshotNotComposited()), SCREENSHOT_TIMEOUT_MS);
@@ -675,7 +1043,7 @@ export async function getAccessibilityTree(
 // Input (mouse + keyboard)
 // ---------------------------------------------------------------------------
 
-export type MouseEventType = 'mousePressed' | 'mouseReleased' | 'mouseMoved';
+export type MouseEventType = 'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel';
 export type MouseButton = 'none' | 'left' | 'middle' | 'right';
 
 export interface MouseEventOptions {
@@ -684,19 +1052,68 @@ export interface MouseEventOptions {
   y: number;
   button?: MouseButton;
   clickCount?: number;
+  /** `mouseWheel` only: the scroll delta in CSS pixels. Ignored otherwise. */
+  deltaX?: number;
+  deltaY?: number;
 }
 
 export async function dispatchMouseEvent(
   webContents: WebContents,
   options: MouseEventOptions,
 ): Promise<void> {
+  // A wheel event is a POINTER event with no button, like a move: Chromium
+  // rejects `Input.dispatchMouseEvent` outright if `mouseWheel` arrives
+  // carrying `button: 'left'`, and the deltas are required rather than
+  // optional for it.
+  const pressless = options.type === 'mouseMoved' || options.type === 'mouseWheel';
   await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
     type: options.type,
     x: options.x,
     y: options.y,
-    button: options.button ?? (options.type === 'mouseMoved' ? 'none' : 'left'),
-    clickCount: options.clickCount ?? (options.type === 'mouseMoved' ? 0 : 1),
+    button: options.button ?? (pressless ? 'none' : 'left'),
+    clickCount: options.clickCount ?? (pressless ? 0 : 1),
+    ...(options.type === 'mouseWheel'
+      ? { deltaX: options.deltaX ?? 0, deltaY: options.deltaY ?? 0 }
+      : {}),
   });
+}
+
+/**
+ * How long a mouse move waits for its acknowledgement before the sequence
+ * carries on. Chromium queues a mouse move until the next animation frame, so
+ * a visible window acknowledges it within one frame (16ms at 60Hz) and this
+ * bound never fires there: the move still precedes the press by a frame and a
+ * hover-gated element still renders open before the press lands, exactly as
+ * before. A hidden window (minimized, or fully occluded, which is where a
+ * preview an agent is driving usually sits) produces no frames, and the
+ * acknowledgement then waits on a fallback timer instead. Measured on
+ * Electron 41 with the window minimized: 5.0s per selector click, every one
+ * reported as a timeout at the MCP layer even though each landed, while a
+ * coordinate click (no move) took 1-3ms; a drag paid the same 5s per
+ * intermediate step. The move stays queued after the bound and is dispatched
+ * in order when the press or release flushes the queue, so nothing is lost.
+ *
+ * A bounded wait rather than no wait at all: un-awaited moves sent back to
+ * back arrive inside one frame, where Chromium coalesces consecutive moves
+ * into one, which would change what a drag-and-drop library sees in a VISIBLE
+ * window. The bound leaves the visible case byte-identical.
+ */
+const MOUSE_MOVE_ACK_TIMEOUT_MS = 100;
+
+async function dispatchMouseMoveBounded(webContents: WebContents, x: number, y: number): Promise<void> {
+  // The catch is required: a move whose acknowledgement outlives the bound
+  // can still reject later (the window closing mid-sequence), and by then
+  // nothing awaits it, so it would surface as an unhandled rejection in main.
+  const acknowledged = dispatchMouseEvent(webContents, { type: 'mouseMoved', x, y }).catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bounded = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, MOUSE_MOVE_ACK_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([acknowledged, bounded]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -760,10 +1177,130 @@ export async function clickAtCenterOfSelector(
   // Without it a page never sees `mouseover` / `mouseenter`, so hover-gated UI
   // (dropdown menus, hover-revealed action buttons, tooltips) is not open when
   // the press arrives and the click hits whatever is underneath instead.
-  await dispatchMouseEvent(webContents, { type: 'mouseMoved', x: point.x, y: point.y });
+  await dispatchMouseMoveBounded(webContents, point.x, point.y);
   await dispatchMouseEvent(webContents, { type: 'mousePressed', x: point.x, y: point.y });
   await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: point.x, y: point.y });
   return true;
+}
+
+/**
+ * Move the pointer over an element without pressing.
+ *
+ * `click` already sends a `mouseMoved` before its press, for the same reason
+ * this exists standalone: hover-gated UI (a dropdown, a tooltip, a
+ * hover-revealed button) is not open until the pointer arrives. Verifying that
+ * UI is a separate act from clicking it, and there was no way to do it.
+ */
+export async function hoverSelector(webContents: WebContents, selector: string): Promise<boolean> {
+  const point = await resolveClickPoint(webContents, selector);
+  if (!point) return false;
+  await dispatchMouseMoveBounded(webContents, point.x, point.y);
+  return true;
+}
+
+/**
+ * Scroll the page, or an element, by a wheel delta.
+ *
+ * The family had no scroll at all until a live agent run hit it: `eval`
+ * (`window.scrollBy`) is gated off by default, and the only key that moved the
+ * page was ArrowDown at about 40px a press, so "scroll down 600px" was fifteen
+ * calls. `mouseWheel` is the primitive a real wheel produces, and it was
+ * already MEASURED working against a guest during the lane spike (see
+ * `browser-lane-manager.ts`) - it simply had no caller.
+ *
+ * Dispatched at an element's centroid when a selector is given, so a scrollable
+ * panel scrolls rather than the page behind it. With no selector it goes to the
+ * viewport centre, which is where a user's pointer effectively is for a page
+ * scroll.
+ */
+export async function scrollBy(
+  webContents: WebContents,
+  options: { selector?: string; deltaX?: number; deltaY?: number },
+): Promise<boolean> {
+  let point: { x: number; y: number };
+  if (options.selector) {
+    const resolved = await resolveClickPoint(webContents, options.selector);
+    if (!resolved) return false;
+    point = resolved;
+  } else {
+    const metrics = await getLayoutMetrics(webContents);
+    // Falls back to a modest fixed point rather than refusing: a guest that
+    // cannot report metrics can still be scrolled, and the centre of a small
+    // viewport is inside every larger one.
+    point = metrics
+      ? { x: Math.round(metrics.viewportWidth / 2), y: Math.round(metrics.viewportHeight / 2) }
+      : { x: 200, y: 200 };
+  }
+  await dispatchMouseEvent(webContents, {
+    type: 'mouseWheel',
+    x: point.x,
+    y: point.y,
+    deltaX: options.deltaX ?? 0,
+    deltaY: options.deltaY ?? 0,
+  });
+  return true;
+}
+
+/**
+ * Choose an option in a native `<select>`.
+ *
+ * Click cannot do this, which is why it needs its own primitive: the dropdown
+ * a `<select>` opens is OS chrome drawn outside the page, so a synthesized
+ * mouse press reaches the control and then has nothing to aim at. Any form
+ * with a dropdown was untestable.
+ *
+ * Sets the value and fires `input` + `change`, which is what a real choice
+ * produces and what every framework listens for. `Runtime.callFunctionOn`
+ * against the resolved node rather than a page-wide evaluate, so this stays a
+ * scoped DOM operation on one element and does NOT need the `eval` capability
+ * - the same reasoning that lets `type` write text without it.
+ */
+export async function selectOptionOnSelector(
+  webContents: WebContents,
+  selector: string,
+  choice: { value?: string; label?: string; index?: number },
+): Promise<{ ok: true; value: string } | { ok: false; reason: 'not-found' | 'not-a-select' | 'no-match' }> {
+  const nodeId = await resolveSelector(webContents, selector);
+  if (!nodeId) return { ok: false, reason: 'not-found' };
+  let objectId: string | undefined;
+  try {
+    const resolved = (await webContents.debugger.sendCommand('DOM.resolveNode', { nodeId })) as {
+      object?: { objectId?: string };
+    };
+    objectId = resolved.object?.objectId;
+  } catch {
+    return { ok: false, reason: 'not-found' };
+  }
+  if (!objectId) return { ok: false, reason: 'not-found' };
+
+  const declaration = `function (value, label, index) {
+    if (this.tagName !== 'SELECT') return { ok: false, reason: 'not-a-select' };
+    var options = Array.prototype.slice.call(this.options);
+    var match = null;
+    if (typeof index === 'number') match = options[index] || null;
+    else if (typeof value === 'string') match = options.filter(function (o) { return o.value === value; })[0] || null;
+    else if (typeof label === 'string') match = options.filter(function (o) { return o.text.trim() === label.trim(); })[0] || null;
+    if (!match) return { ok: false, reason: 'no-match' };
+    this.value = match.value;
+    this.dispatchEvent(new Event('input', { bubbles: true }));
+    this.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true, value: match.value };
+  }`;
+  try {
+    const result = (await webContents.debugger.sendCommand('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: declaration,
+      arguments: [{ value: choice.value }, { value: choice.label }, { value: choice.index }],
+      returnByValue: true,
+    })) as { result?: { value?: { ok: boolean; reason?: string; value?: string } } };
+    const value = result.result?.value;
+    if (!value || !value.ok) {
+      return { ok: false, reason: value?.reason === 'not-a-select' ? 'not-a-select' : 'no-match' };
+    }
+    return { ok: true, value: value.value ?? '' };
+  } catch {
+    return { ok: false, reason: 'not-found' };
+  }
 }
 
 export async function dragFromTo(
@@ -777,13 +1314,24 @@ export async function dragFromTo(
   // silently does nothing. Source first, then target, because scrolling to the
   // target can move the source - so the source is re-measured last, once the
   // page has settled where the drag will actually run.
-  const fromNodeId = await resolveSelector(webContents, fromSelector);
+  //
+  // A node id is only valid until the next `DOM.getDocument`, which re-issues
+  // every id, and a CSS resolve calls it each time. So the source id is
+  // resolved twice: once to scroll it, and again after the target has been
+  // resolved and scrolled, right before it is measured. Holding the first id
+  // across the target's resolve made every two-selector drag fail with
+  // "selector did not match" (the stale id's box read as null), which the
+  // caller could not tell apart from a real miss.
+  const scrolledFromNodeId = await resolveSelector(webContents, fromSelector);
+  if (!scrolledFromNodeId) return false;
+  await scrollNodeIntoView(webContents, scrolledFromNodeId);
   const toNodeId = await resolveSelector(webContents, toSelector);
-  if (!fromNodeId || !toNodeId) return false;
-  await scrollNodeIntoView(webContents, fromNodeId);
+  if (!toNodeId) return false;
   await scrollNodeIntoView(webContents, toNodeId);
-  const fromBox = await getBoundingBoxByNodeId(webContents, fromNodeId);
   const toBox = await getBoundingBoxByNodeId(webContents, toNodeId);
+  const fromNodeId = await resolveSelector(webContents, fromSelector);
+  if (!fromNodeId) return false;
+  const fromBox = await getBoundingBoxByNodeId(webContents, fromNodeId);
   const source = fromBox ? contentCentroid(fromBox) : null;
   const target = toBox ? contentCentroid(toBox) : null;
   if (!source || !target) return false;
@@ -796,58 +1344,123 @@ export async function dragFromTo(
   await dispatchMouseEvent(webContents, { type: 'mousePressed', x: sourceX, y: sourceY });
   for (let stepIndex = 1; stepIndex <= steps; stepIndex++) {
     const fraction = stepIndex / steps;
-    await dispatchMouseEvent(webContents, {
-      type: 'mouseMoved',
-      x: sourceX + (targetX - sourceX) * fraction,
-      y: sourceY + (targetY - sourceY) * fraction,
-    });
+    // Bounded per step (see MOUSE_MOVE_ACK_TIMEOUT_MS): a ten-step drag in a
+    // hidden window took 50s with each step awaiting its frame.
+    await dispatchMouseMoveBounded(
+      webContents,
+      sourceX + (targetX - sourceX) * fraction,
+      sourceY + (targetY - sourceY) * fraction,
+    );
   }
   await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: targetX, y: targetY });
+  return true;
+}
+
+/**
+ * Drop OS files on an element, the way a drag out of the file manager lands.
+ *
+ * `Input.dispatchDragEvent` carries a `DragData` whose `files` are absolute
+ * paths; Chromium turns them into the real `File` objects a page's `drop`
+ * handler reads from `dataTransfer.files`, each backed by its path, which is
+ * what Electron's `webUtils.getPathForFile` resolves. That is the one hop no
+ * in-page simulation can reach: a `new File()` dispatched from script has no
+ * path, and the bridge object is frozen, so it could never be faked.
+ *
+ * The three events mirror a real drag. `dragEnter` is what lets a page arm a
+ * drop target at all (Kangentic's terminal overlay switches its
+ * `pointer-events` on the document's `dragenter`), `dragOver` is what sets
+ * the drop effect, and `drop` delivers the files. Each is dispatched at the
+ * element's viewport centroid, after the scroll-into-view every other input
+ * helper here performs, for the same below-the-fold reason.
+ */
+export async function dropFilesOnSelector(
+  webContents: WebContents,
+  selector: string,
+  filePaths: readonly string[],
+): Promise<boolean> {
+  const point = await resolveClickPoint(webContents, selector);
+  if (!point) return false;
+  // dragOperationsMask 1 = copy, the operation a file-manager drag offers.
+  const data = { items: [], files: [...filePaths], dragOperationsMask: 1 };
+  for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
+    await webContents.debugger.sendCommand('Input.dispatchDragEvent', {
+      type,
+      x: point.x,
+      y: point.y,
+      data,
+    });
+  }
   return true;
 }
 
 export interface KeyEventOptions {
   type: 'keyDown' | 'keyUp' | 'char' | 'rawKeyDown';
   text?: string;
+  unmodifiedText?: string;
   key?: string;
   code?: string;
   windowsVirtualKeyCode?: number;
   modifiers?: number;
 }
 
+/**
+ * Send one key event, or throw `KeyboardFocusNotInGuestError` without sending
+ * it when keyboard focus is in the guest's host.
+ *
+ * Every key the driver sends passes through here (`typeText`,
+ * `dispatchKeypress`, and the tools' own Backspace), so this is the one place
+ * that stops an agent's key landing in the user's terminal. The check and the
+ * `sendCommand` call run in the same turn with no `await` between them, so
+ * focus cannot move between the answer and the hand-off. Each
+ * event is checked, not just the first, so a user who clicks into their
+ * terminal partway through a `type` stops the rest of the text rather than
+ * receiving it. See `keyboard-focus.ts`.
+ */
 export async function dispatchKeyEvent(
   webContents: WebContents,
   options: KeyEventOptions,
 ): Promise<void> {
+  if (keyboardFocusIsInHost(webContents)) throw new KeyboardFocusNotInGuestError();
   await webContents.debugger.sendCommand('Input.dispatchKeyEvent', options);
 }
 
 /**
  * Type a string, one character at a time, as a real keyboard would.
  *
- * Each character sends `keyDown` / `char` / `keyUp` rather than a bare `char`.
- * The bare `char` alone delivers the text and nothing else, so a page that does
- * ANY of its work in a `keydown` handler never reacts: React inputs that filter
- * or transform keys, search-as-you-type boxes, form libraries that validate per
- * keystroke, and editors with hotkeys. Those pages took the text into the DOM
- * and then behaved as though nothing had been typed, which reads as "the agent
- * typed but the app ignored it".
+ * Each character is a `keyDown` CARRYING its text, then a `keyUp`, which is how
+ * Chromium's own keyboard and Puppeteer deliver a keystroke. The keyDown fires
+ * the page's `keydown` handlers first, so React inputs that filter keys,
+ * search-as-you-type boxes, per-keystroke validation and editor hotkeys all
+ * react, and it inserts the text only if no handler called `preventDefault`.
  *
- * ONLY THE `char` CARRIES `text`, deliberately. In CDP a `keyDown` with a
- * non-empty `text` performs the insertion by itself (it is how Puppeteer types),
- * so carrying `text` on both would insert every character TWICE. Splitting the
- * roles - `keyDown` to fire handlers, `char` to insert - keeps the insertion
- * path exactly the one that has always worked here and adds the missing events
- * around it, so this cannot regress typing that works today.
+ * DO NOT SPLIT THE TEXT ONTO A SEPARATE `char` EVENT. It was split once, as
+ * keyDown (no text) / char (the text) / keyUp, on the reasoning that a keyDown
+ * with text inserts by itself. Measured on Electron 41 against a live guest
+ * (task #720), the split broke three things:
+ *  - the `char` inserted even after a keydown handler cancelled the key, so a
+ *    field that filters keys received them anyway;
+ *  - a page that handles printable keys on keydown got every character TWICE.
+ *    xterm.js does, which covers Kangentic's own terminal;
+ *  - a newline lost its Enter: `"query\n"` submitted no form, and `"a\nb"`
+ *    reached a textarea as `ab`.
+ * Plain inputs, `input` events, contenteditable and non-ASCII text behaved the
+ * same under both encodings.
  *
- * Special keys (Enter, Tab, arrows) still go through `dispatchKeypress`, which
- * owns the virtual-key-code mapping.
+ * A newline is Enter carrying `\r`, the text a real Enter produces. A `\r\n`
+ * pair is one newline, so a CRLF line ending presses Enter once and submits a
+ * form once. Other special keys (Tab, arrows) go through `dispatchKeypress`,
+ * which owns the virtual-key-code mapping.
  */
 export async function typeText(webContents: WebContents, text: string): Promise<void> {
-  for (const character of text) {
+  for (const character of text.replace(/\r\n/g, '\n')) {
     const keyIdentity = printableKeyIdentity(character);
-    await dispatchKeyEvent(webContents, { type: 'keyDown', ...keyIdentity });
-    await dispatchKeyEvent(webContents, { type: 'char', text: character });
+    const insertedText = character === '\n' ? '\r' : character;
+    await dispatchKeyEvent(webContents, {
+      type: 'keyDown',
+      ...keyIdentity,
+      text: insertedText,
+      unmodifiedText: insertedText,
+    });
     await dispatchKeyEvent(webContents, { type: 'keyUp', ...keyIdentity });
   }
 }
@@ -882,26 +1495,6 @@ function printableKeyIdentity(character: string): {
   return { key: character, windowsVirtualKeyCode: upper.charCodeAt(0) };
 }
 
-const SPECIAL_KEY_MAP: Record<string, { code: string; key: string; vk: number }> = {
-  Enter: { code: 'Enter', key: 'Enter', vk: 13 },
-  Escape: { code: 'Escape', key: 'Escape', vk: 27 },
-  Tab: { code: 'Tab', key: 'Tab', vk: 9 },
-  Backspace: { code: 'Backspace', key: 'Backspace', vk: 8 },
-  ArrowUp: { code: 'ArrowUp', key: 'ArrowUp', vk: 38 },
-  ArrowDown: { code: 'ArrowDown', key: 'ArrowDown', vk: 40 },
-  ArrowLeft: { code: 'ArrowLeft', key: 'ArrowLeft', vk: 37 },
-  ArrowRight: { code: 'ArrowRight', key: 'ArrowRight', vk: 39 },
-  Space: { code: 'Space', key: ' ', vk: 32 },
-};
-
-const MODIFIER_FLAGS: Record<string, number> = {
-  Alt: 1,
-  Ctrl: 2,
-  Meta: 4,
-  Shift: 8,
-  Cmd: 4, // alias for Meta
-};
-
 /**
  * Parse a chord like `Ctrl+Shift+P` and dispatch the keyDown / keyUp
  * pair. Single-character segments fall through to `typeText` so
@@ -911,26 +1504,25 @@ export async function dispatchKeypress(
   webContents: WebContents,
   combo: string,
 ): Promise<boolean> {
-  const parts = combo.split('+').map((part) => part.trim());
-  if (parts.length === 0) return false;
-  const target = parts[parts.length - 1];
-  const modifiers = parts.slice(0, -1);
+  const parsed = parseKeyCombo(combo);
+  if (!parsed) return false;
+  const { target, modifierFlags, special } = parsed;
 
-  let modifierFlags = 0;
-  for (const modifier of modifiers) {
-    const flag = MODIFIER_FLAGS[modifier];
-    if (flag === undefined) return false;
-    modifierFlags |= flag;
-  }
-
-  const special = SPECIAL_KEY_MAP[target];
   if (special) {
+    // A key that produces text carries it on the keyDown, exactly as `typeText`
+    // does, so Enter submits a form and starts a textarea line the way a real
+    // Enter does. Without it Enter reached a form's input and submitted
+    // nothing (measured, task #720). Only Shift keeps the text: any other
+    // modifier makes the press a shortcut, which types nothing on a real
+    // keyboard either.
+    const producesText = special.text !== undefined && (modifierFlags & ~MODIFIER_FLAGS.Shift) === 0;
     await dispatchKeyEvent(webContents, {
       type: 'keyDown',
       key: special.key,
       code: special.code,
       windowsVirtualKeyCode: special.vk,
       modifiers: modifierFlags,
+      ...(producesText ? { text: special.text, unmodifiedText: special.text } : {}),
     });
     await dispatchKeyEvent(webContents, {
       type: 'keyUp',
@@ -960,23 +1552,28 @@ export async function dispatchKeypress(
     // Scoped to ASCII letters deliberately. `Shift+1` is `!` on a US layout and
     // something else on most others, and this has no keyboard-layout map, so
     // guessing would be a lie. Use `kangentic_browser_type` for symbols.
-    const isShiftedLetter = modifierFlags === MODIFIER_FLAGS.Shift
-      && /^[a-zA-Z]$/.test(target);
+    const isLetter = /^[a-zA-Z]$/.test(target);
+    const isShiftedLetter = modifierFlags === MODIFIER_FLAGS.Shift && isLetter;
     const shiftedText = isShiftedLetter ? upper : null;
+    // `key` follows the physical keyboard, not the spelling of the chord: a real
+    // Ctrl+V press reports `key: 'v'`, and Ctrl+Shift+V reports `key: 'V'`.
+    // Handlers compare on it (xterm's paste chord is `key === 'v'`, its
+    // Ctrl+Shift+V form is `shiftKey && key === 'V'`), so `Ctrl+V` spelled with
+    // a capital used to arrive as an unknown chord and do nothing, silently.
+    const shiftHeld = (modifierFlags & MODIFIER_FLAGS.Shift) !== 0;
+    const key = isLetter ? (shiftHeld ? upper : target.toLowerCase()) : target;
     await dispatchKeyEvent(webContents, {
       type: 'keyDown',
-      key: shiftedText ?? target,
+      key,
       code: `Key${upper}`,
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,
+      // On the keyDown, never on a separate `char`: see `typeText`.
+      ...(shiftedText ? { text: shiftedText, unmodifiedText: shiftedText } : {}),
     });
-    if (shiftedText) {
-      // Same split as `typeText`: the keyDown fires handlers, the char inserts.
-      await dispatchKeyEvent(webContents, { type: 'char', text: shiftedText });
-    }
     await dispatchKeyEvent(webContents, {
       type: 'keyUp',
-      key: shiftedText ?? target,
+      key,
       code: `Key${upper}`,
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,

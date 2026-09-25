@@ -1,0 +1,1679 @@
+{
+ "$comment": "Captured by scripts/capture-demo-history.mjs from scripts/demo-repos/contoso-web built with its commits.json. Re-run when the scaffold or its plan changes.",
+ "project": "contoso-web",
+ "branch": "main",
+ "tipHash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+ "commits": [
+  {
+   "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+   "shortHash": "04a80e9",
+   "parents": [
+    "03997a194313a0ef3e1d83dee95fb65684de5f44"
+   ],
+   "authorName": "Dev",
+   "authorTimestamp": "2026-09-09T10:30:00Z",
+   "subject": "Wire the API routes and the Express server"
+  },
+  {
+   "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+   "shortHash": "03997a1",
+   "parents": [
+    "fb6019ee70e3bafdfa103dc0019733f9f9a8faca"
+   ],
+   "authorName": "Dev",
+   "authorTimestamp": "2026-09-03T16:22:00Z",
+   "subject": "Add per-user rate limiting"
+  },
+  {
+   "hash": "fb6019ee70e3bafdfa103dc0019733f9f9a8faca",
+   "shortHash": "fb6019e",
+   "parents": [
+    "44a3619ce20c88b4e8dd9671ee433555fbb276eb"
+   ],
+   "authorName": "Dev",
+   "authorTimestamp": "2026-08-27T11:05:00Z",
+   "subject": "Add the in-memory store and JWT sessions"
+  },
+  {
+   "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+   "shortHash": "44a3619",
+   "parents": [
+    "afd393157b9170d39e63f345dd3dafb4c2b0eb37"
+   ],
+   "authorName": "Dev",
+   "authorTimestamp": "2026-08-20T14:40:00Z",
+   "subject": "Add the customer portal shell with live updates"
+  },
+  {
+   "hash": "afd393157b9170d39e63f345dd3dafb4c2b0eb37",
+   "shortHash": "afd3931",
+   "parents": [],
+   "authorName": "Dev",
+   "authorTimestamp": "2026-08-18T09:12:00Z",
+   "subject": "Initial import"
+  }
+ ],
+ "diffs": {
+  "04a80e909d1fd6a12f5b6552bf28b012b78cde43": {
+   "files": [
+    {
+     "path": "server/index.ts",
+     "status": "A",
+     "insertions": 12,
+     "deletions": 0,
+     "original": "",
+     "modified": "import express from 'express';\nimport { router } from './routes.ts';\n\nconst app = express();\napp.use(express.json());\napp.use('/api', router);\napp.use((_req, res) => res.status(404).json({ error: 'Not found' }));\n\nconst port = Number(process.env.PORT ?? 4000);\napp.listen(port, () => {\n  console.log(`contoso-web api listening on http://localhost:${port}`);\n});\n",
+     "language": "typescript"
+    },
+    {
+     "path": "server/routes.ts",
+     "status": "A",
+     "insertions": 67,
+     "deletions": 0,
+     "original": "",
+     "modified": "import { Router, type Request, type Response, type NextFunction } from 'express';\nimport { signJwt, verifyJwt, type JwtClaims } from './lib/jwt.ts';\nimport { checkRateLimit } from './rate-limit.ts';\nimport { findUserByEmail, listInvoices, listSubscriptions } from './store.ts';\n\nexport const router = Router();\n\ntype AuthedRequest = Request & { user?: JwtClaims };\n\nrouter.post('/login', (req: Request, res: Response) => {\n  const { email, password } = req.body as { email?: string; password?: string };\n  const user = email ? findUserByEmail(email) : undefined;\n  if (!user || user.password !== password) {\n    return res.status(401).json({ error: 'Invalid email or password' });\n  }\n  return res.json({ token: signJwt({ sub: user.id, role: user.role }) });\n});\n\nrouter.get('/me', (req: AuthedRequest, res: Response) => {\n  const token = req.headers.authorization?.replace(/^Bearer /, '');\n  if (!token) return res.status(401).json({ error: 'Unauthorized' });\n  try {\n    req.user = verifyJwt(token);\n  } catch (error) {\n    return res.status(401).json({ error: (error as Error).message });\n  }\n  return res.json({ id: req.user.sub, role: req.user.role });\n});\n\nrouter.get('/subscriptions', (req: AuthedRequest, res: Response) => {\n  const token = req.headers.authorization?.replace(/^Bearer /, '');\n  if (!token) return res.status(401).json({ error: 'Unauthorized' });\n  try {\n    req.user = verifyJwt(token);\n  } catch (error) {\n    return res.status(401).json({ error: (error as Error).message });\n  }\n  if (!checkRateLimit(req.user.sub, 'read')) return res.status(429).json({ error: 'Too many requests' });\n  return res.json(listSubscriptions(req.user.sub));\n});\n\nrouter.get('/invoices', (req: AuthedRequest, res: Response) => {\n  const token = req.headers.authorization?.replace(/^Bearer /, '');\n  if (!token) return res.status(401).json({ error: 'Unauthorized' });\n  try {\n    req.user = verifyJwt(token);\n  } catch (error) {\n    return res.status(401).json({ error: (error as Error).message });\n  }\n  if (!checkRateLimit(req.user.sub, 'read')) return res.status(429).json({ error: 'Too many requests' });\n  return res.json(listInvoices(req.user.sub));\n});\n\nrouter.post('/subscriptions/:id/cancel', (req: AuthedRequest, res: Response, next: NextFunction) => {\n  const token = req.headers.authorization?.replace(/^Bearer /, '');\n  if (!token) return res.status(401).json({ error: 'Unauthorized' });\n  try {\n    req.user = verifyJwt(token);\n  } catch (error) {\n    return res.status(401).json({ error: (error as Error).message });\n  }\n  if (!checkRateLimit(req.user.sub, 'write')) return res.status(429).json({ error: 'Too many requests' });\n  const subscription = listSubscriptions(req.user.sub).find((entry) => entry.id === req.params.id);\n  if (!subscription) return next();\n  subscription.status = 'cancelled';\n  return res.json(subscription);\n});\n",
+     "language": "typescript"
+    }
+   ],
+   "totalInsertions": 79,
+   "totalDeletions": 0
+  },
+  "03997a194313a0ef3e1d83dee95fb65684de5f44": {
+   "files": [
+    {
+     "path": "server/rate-limit.ts",
+     "status": "A",
+     "insertions": 33,
+     "deletions": 0,
+     "original": "",
+     "modified": "/**\n * Per-user rate limiting: 100 reads and 20 writes per minute.\n *\n * Fixed windows keyed by user and kind. A window is opened on the first request and counts\n * requests until it expires.\n */\nconst LIMITS: Record<'read' | 'write', number> = { read: 100, write: 20 };\nconst WINDOW_MS = 60_000;\n\ninterface Window {\n  openedAt: number;\n  count: number;\n}\n\nconst windows = new Map<string, Window>();\n\nexport function checkRateLimit(userId: string, kind: 'read' | 'write', now = Date.now()): boolean {\n  const key = `${userId}:${kind}`;\n  const current = windows.get(key);\n  if (!current) {\n    windows.set(key, { openedAt: now, count: 1 });\n    return true;\n  }\n  if (now - current.openedAt > WINDOW_MS) {\n    current.count = 0;\n  }\n  current.count += 1;\n  return current.count <= LIMITS[kind];\n}\n\nexport function resetRateLimits(): void {\n  windows.clear();\n}\n",
+     "language": "typescript"
+    },
+    {
+     "path": "tests/rate-limit.test.ts",
+     "status": "A",
+     "insertions": 17,
+     "deletions": 0,
+     "original": "",
+     "modified": "import { beforeEach, describe, expect, it } from 'vitest';\nimport { checkRateLimit, resetRateLimits } from '../server/rate-limit.ts';\n\ndescribe('checkRateLimit', () => {\n  beforeEach(() => resetRateLimits());\n\n  it('allows up to the read limit inside one window', () => {\n    for (let index = 0; index < 100; index++) expect(checkRateLimit('u_1', 'read', 1000)).toBe(true);\n    expect(checkRateLimit('u_1', 'read', 1000)).toBe(false);\n  });\n\n  it('keeps read and write windows separate', () => {\n    for (let index = 0; index < 20; index++) expect(checkRateLimit('u_1', 'write', 1000)).toBe(true);\n    expect(checkRateLimit('u_1', 'write', 1000)).toBe(false);\n    expect(checkRateLimit('u_1', 'read', 1000)).toBe(true);\n  });\n});\n",
+     "language": "typescript"
+    }
+   ],
+   "totalInsertions": 50,
+   "totalDeletions": 0
+  },
+  "fb6019ee70e3bafdfa103dc0019733f9f9a8faca": {
+   "files": [
+    {
+     "path": "server/lib/jwt.ts",
+     "status": "A",
+     "insertions": 34,
+     "deletions": 0,
+     "original": "",
+     "modified": "import { createHmac, timingSafeEqual } from 'node:crypto';\n\nexport interface JwtClaims {\n  sub: string;\n  role: 'admin' | 'member' | 'viewer';\n  exp?: number;\n}\n\nconst SECRET = process.env.CONTOSO_JWT_SECRET ?? 'development-only-secret';\n\nfunction base64url(input: string | Buffer): string {\n  return Buffer.from(input).toString('base64url');\n}\n\nexport function signJwt(claims: JwtClaims, ttlSeconds = 3600): string {\n  const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));\n  const payload = base64url(JSON.stringify({ ...claims, exp: Math.floor(Date.now() / 1000) + ttlSeconds }));\n  const signature = createHmac('sha256', SECRET).update(`${header}.${payload}`).digest('base64url');\n  return `${header}.${payload}.${signature}`;\n}\n\nexport function verifyJwt(token: string): JwtClaims {\n  const [header, payload, signature] = token.split('.');\n  if (!header || !payload || !signature) throw new Error('Malformed token');\n  const expected = createHmac('sha256', SECRET).update(`${header}.${payload}`).digest('base64url');\n  const expectedBuffer = Buffer.from(expected);\n  const signatureBuffer = Buffer.from(signature);\n  if (expectedBuffer.length !== signatureBuffer.length || !timingSafeEqual(expectedBuffer, signatureBuffer)) {\n    throw new Error('Invalid signature');\n  }\n  const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as JwtClaims;\n  if (claims.exp !== undefined && claims.exp < Math.floor(Date.now() / 1000)) throw new Error('Token expired');\n  return claims;\n}\n",
+     "language": "typescript"
+    },
+    {
+     "path": "server/store.ts",
+     "status": "A",
+     "insertions": 50,
+     "deletions": 0,
+     "original": "",
+     "modified": "export interface User {\n  id: string;\n  email: string;\n  password: string;\n  role: 'admin' | 'member' | 'viewer';\n}\n\nexport interface Subscription {\n  id: string;\n  userId: string;\n  plan: 'starter' | 'team' | 'enterprise';\n  status: 'active' | 'past_due' | 'cancelled';\n  renewsAt: string;\n}\n\nexport interface Invoice {\n  id: string;\n  userId: string;\n  amountCents: number;\n  issuedAt: string;\n  paid: boolean;\n}\n\nconst users: User[] = [\n  { id: 'u_1001', email: 'ada@example.com', password: 'correct horse battery staple', role: 'admin' },\n  { id: 'u_1002', email: 'bea@example.com', password: 'hunter2', role: 'member' },\n];\n\nconst subscriptions: Subscription[] = [\n  { id: 'sub_501', userId: 'u_1001', plan: 'team', status: 'active', renewsAt: '2026-10-01' },\n  { id: 'sub_502', userId: 'u_1002', plan: 'starter', status: 'past_due', renewsAt: '2026-09-14' },\n];\n\nconst invoices: Invoice[] = [\n  { id: 'inv_9001', userId: 'u_1001', amountCents: 4900, issuedAt: '2026-08-01', paid: true },\n  { id: 'inv_9002', userId: 'u_1001', amountCents: 4900, issuedAt: '2026-09-01', paid: false },\n  { id: 'inv_9003', userId: 'u_1002', amountCents: 1900, issuedAt: '2026-09-01', paid: false },\n];\n\nexport function findUserByEmail(email: string): User | undefined {\n  return users.find((user) => user.email.toLowerCase() === email.toLowerCase());\n}\n\nexport function listSubscriptions(userId: string): Subscription[] {\n  return subscriptions.filter((subscription) => subscription.userId === userId);\n}\n\nexport function listInvoices(userId: string): Invoice[] {\n  return invoices.filter((invoice) => invoice.userId === userId);\n}\n",
+     "language": "typescript"
+    },
+    {
+     "path": "tests/jwt.test.ts",
+     "status": "A",
+     "insertions": 14,
+     "deletions": 0,
+     "original": "",
+     "modified": "import { describe, expect, it } from 'vitest';\nimport { signJwt, verifyJwt } from '../server/lib/jwt.ts';\n\ndescribe('jwt', () => {\n  it('round-trips the claims', () => {\n    const token = signJwt({ sub: 'u_1001', role: 'admin' });\n    expect(verifyJwt(token)).toMatchObject({ sub: 'u_1001', role: 'admin' });\n  });\n\n  it('rejects a tampered signature', () => {\n    const token = signJwt({ sub: 'u_1001', role: 'admin' });\n    expect(() => verifyJwt(`${token.slice(0, -2)}xx`)).toThrow('Invalid signature');\n  });\n});\n",
+     "language": "typescript"
+    }
+   ],
+   "totalInsertions": 98,
+   "totalDeletions": 0
+  },
+  "44a3619ce20c88b4e8dd9671ee433555fbb276eb": {
+   "files": [
+    {
+     "path": "src/App.tsx",
+     "status": "A",
+     "insertions": 40,
+     "deletions": 0,
+     "original": "",
+     "modified": "import { useEffect, useState } from 'react';\nimport { apiFetch } from './lib/http-client';\nimport { LiveUpdates } from './lib/websocket';\n\ninterface Subscription {\n  id: string;\n  plan: string;\n  status: string;\n  renewsAt: string;\n}\n\nexport function App() {\n  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);\n  const [status, setStatus] = useState('loading');\n\n  useEffect(() => {\n    apiFetch<Subscription[]>('/subscriptions')\n      .then((rows) => { setSubscriptions(rows); setStatus('ready'); })\n      .catch(() => setStatus('error'));\n    const live = new LiveUpdates(`ws://${window.location.host}/live`);\n    live.connect();\n    const unsubscribe = live.subscribe((event) => {\n      const update = JSON.parse(event.data) as Subscription;\n      setSubscriptions((current) => current.map((row) => (row.id === update.id ? update : row)));\n    });\n    return () => { unsubscribe(); live.close(); };\n  }, []);\n\n  return (\n    <main>\n      <h1>Contoso</h1>\n      <p>{status === 'loading' ? 'Loading subscriptions' : `${subscriptions.length} subscriptions`}</p>\n      <ul>\n        {subscriptions.map((row) => (\n          <li key={row.id}>{row.plan} ({row.status}) renews {row.renewsAt}</li>\n        ))}\n      </ul>\n    </main>\n  );\n}\n",
+     "language": "typescript"
+    },
+    {
+     "path": "src/lib/http-client.ts",
+     "status": "A",
+     "insertions": 30,
+     "deletions": 0,
+     "original": "",
+     "modified": "export interface RetryOptions {\n  maxRetries: number;\n  backoff: 'linear' | 'exponential';\n  baseDelayMs?: number;\n}\n\nconst sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));\n\nexport async function retryWithBackoff<T>(request: () => Promise<T>, options: RetryOptions): Promise<T> {\n  const baseDelayMs = options.baseDelayMs ?? 200;\n  let attempt = 0;\n  for (;;) {\n    try {\n      return await request();\n    } catch (error) {\n      attempt += 1;\n      if (attempt > options.maxRetries) throw error;\n      const delay = options.backoff === 'exponential' ? baseDelayMs * 2 ** (attempt - 1) : baseDelayMs * attempt;\n      await sleep(delay);\n    }\n  }\n}\n\nexport async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {\n  return retryWithBackoff(async () => {\n    const response = await fetch(`/api${path}`, init);\n    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);\n    return (await response.json()) as T;\n  }, { maxRetries: 3, backoff: 'exponential' });\n}\n",
+     "language": "typescript"
+    },
+    {
+     "path": "src/lib/websocket.ts",
+     "status": "A",
+     "insertions": 39,
+     "deletions": 0,
+     "original": "",
+     "modified": "type Listener = (event: MessageEvent) => void;\n\n/**\n * The live-updates socket for the dashboard. Opens once; a dropped connection is reported to\n * the listeners and never reopened, which is the gap the reconnection work closes.\n */\nexport class LiveUpdates {\n  private socket: WebSocket | null = null;\n  private readonly listeners = new Set<Listener>();\n\n  constructor(private readonly url: string) {}\n\n  connect(): void {\n    this.socket = new WebSocket(this.url);\n    this.socket.addEventListener('message', (event) => {\n      this.listeners.forEach((listener) => listener(event));\n    });\n    this.socket.addEventListener('close', () => {\n      this.socket = null;\n    });\n  }\n\n  subscribe(listener: Listener): () => void {\n    this.listeners.add(listener);\n    return () => this.listeners.delete(listener);\n  }\n\n  send(payload: unknown): void {\n    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {\n      throw new Error('Live updates are not connected');\n    }\n    this.socket.send(JSON.stringify(payload));\n  }\n\n  close(): void {\n    this.socket?.close();\n    this.socket = null;\n  }\n}\n",
+     "language": "typescript"
+    },
+    {
+     "path": "src/main.tsx",
+     "status": "A",
+     "insertions": 4,
+     "deletions": 0,
+     "original": "",
+     "modified": "import { createRoot } from 'react-dom/client';\nimport { App } from './App';\n\ncreateRoot(document.getElementById('root')!).render(<App />);\n",
+     "language": "typescript"
+    }
+   ],
+   "totalInsertions": 113,
+   "totalDeletions": 0
+  },
+  "afd393157b9170d39e63f345dd3dafb4c2b0eb37": {
+   "files": [
+    {
+     "path": ".claude/settings.json",
+     "status": "A",
+     "insertions": 12,
+     "deletions": 0,
+     "original": "",
+     "modified": "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(npm test:*)\",\n      \"Bash(npm run:*)\",\n      \"Bash(npx:*)\",\n      \"PowerShell(npm test:*)\",\n      \"PowerShell(npm run:*)\",\n      \"PowerShell(npx:*)\"\n    ]\n  }\n}\n",
+     "language": "json"
+    },
+    {
+     "path": ".gitignore",
+     "status": "A",
+     "insertions": 2,
+     "deletions": 0,
+     "original": "",
+     "modified": "node_modules/\ndist/\n",
+     "language": null
+    },
+    {
+     "path": "README.md",
+     "status": "A",
+     "insertions": 19,
+     "deletions": 0,
+     "original": "",
+     "modified": "# contoso-web\n\nThe Contoso customer portal: a React front end (`src/`) served by Vite, and an Express API\n(`server/`) that handles login, subscriptions, and invoices.\n\n## Scripts\n\n- `npm run dev` starts the Vite dev server on port 5173.\n- `npm run server` starts the API on port 4000.\n- `npm test` runs the Vitest suite.\n- `npm run typecheck` runs the TypeScript compiler with no emit.\n\n## Layout\n\n- `src/lib/websocket.ts` keeps the live-updates socket for the dashboard.\n- `src/lib/http-client.ts` wraps fetch with retries.\n- `server/routes.ts` registers every API route.\n- `server/lib/jwt.ts` signs and verifies the session tokens.\n- `server/rate-limit.ts` is the per-user rate limiter.\n",
+     "language": "markdown"
+    },
+    {
+     "path": "index.html",
+     "status": "A",
+     "insertions": 11,
+     "deletions": 0,
+     "original": "",
+     "modified": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <title>Contoso</title>\n  </head>\n  <body>\n    <div id=\"root\"></div>\n    <script type=\"module\" src=\"/src/main.tsx\"></script>\n  </body>\n</html>\n",
+     "language": "html"
+    },
+    {
+     "path": "package.json",
+     "status": "A",
+     "insertions": 28,
+     "deletions": 0,
+     "original": "",
+     "modified": "{\n  \"name\": \"contoso-web\",\n  \"version\": \"1.8.0\",\n  \"private\": true,\n  \"description\": \"Contoso customer portal: a React front end with an Express API\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"server\": \"node --experimental-strip-types server/index.ts\",\n    \"test\": \"vitest run\",\n    \"typecheck\": \"tsc --noEmit\"\n  },\n  \"dependencies\": {\n    \"express\": \"^5.1.0\",\n    \"react\": \"^19.2.0\",\n    \"react-dom\": \"^19.2.0\"\n  },\n  \"devDependencies\": {\n    \"@types/express\": \"^5.0.3\",\n    \"@types/react\": \"^19.2.0\",\n    \"@types/react-dom\": \"^19.2.0\",\n    \"@vitejs/plugin-react\": \"^5.0.0\",\n    \"typescript\": \"^5.9.0\",\n    \"vite\": \"^7.1.0\",\n    \"vitest\": \"^3.2.0\"\n  }\n}\n",
+     "language": "json"
+    },
+    {
+     "path": "tsconfig.json",
+     "status": "A",
+     "insertions": 14,
+     "deletions": 0,
+     "original": "",
+     "modified": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"allowImportingTsExtensions\": true,\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n    \"types\": [\"vitest/globals\"]\n  },\n  \"include\": [\"src\", \"server\", \"tests\"]\n}\n",
+     "language": "json"
+    },
+    {
+     "path": "vite.config.ts",
+     "status": "A",
+     "insertions": 12,
+     "deletions": 0,
+     "original": "",
+     "modified": "import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\n\nexport default defineConfig({\n  plugins: [react()],\n  server: {\n    proxy: { '/api': 'http://localhost:4000' },\n  },\n  test: {\n    include: ['tests/**/*.test.ts'],\n  },\n});\n",
+     "language": "typescript"
+    }
+   ],
+   "totalInsertions": 98,
+   "totalDeletions": 0
+  }
+ },
+ "blame": {
+  "sess-cw-middleware": {
+   "server/routes.ts": {
+    "lines": [
+     {
+      "line": 1,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 2,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 3,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 4,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 5,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 6,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 7,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 8,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 9,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 10,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 11,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 12,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 13,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 14,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 15,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 16,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 17,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 18,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 19,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 20,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 21,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 22,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 23,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 24,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 25,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 26,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 27,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 28,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 29,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 30,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 31,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 32,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 33,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 34,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 35,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 36,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 37,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 38,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 39,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 40,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 41,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     },
+     {
+      "line": 42,
+      "hash": "04a80e909d1fd6a12f5b6552bf28b012b78cde43",
+      "shortHash": "04a80e9",
+      "author": "Dev",
+      "date": "2026-09-09T10:30:00.000Z"
+     }
+    ]
+   }
+  },
+  "sess-cw-integration": {},
+  "sess-cw-api-client": {
+   "src/App.tsx": {
+    "lines": [
+     {
+      "line": 1,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 2,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 3,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 4,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 5,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 6,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 7,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 8,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 9,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 10,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 11,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 12,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 13,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 14,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 15,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 16,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 17,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 18,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 19,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 20,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 21,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 22,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 23,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 24,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 25,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 26,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 27,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 28,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 29,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 30,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 31,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 32,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 33,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 34,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     }
+    ]
+   },
+   "src/lib/http-client.ts": {
+    "lines": [
+     {
+      "line": 1,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 2,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 3,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 4,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 5,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 6,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 7,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 8,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 9,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 10,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 11,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 12,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 13,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 14,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 15,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 16,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 17,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 18,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 19,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 20,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 21,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 22,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 23,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 24,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 25,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 26,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 27,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 28,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 29,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 30,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 31,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 32,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 33,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 34,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 35,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 36,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 37,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 38,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 39,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 40,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 41,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 42,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 43,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 44,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 45,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 46,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 47,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 48,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 49,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 50,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 51,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 52,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 53,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 54,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 55,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 56,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 57,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 58,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 59,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 60,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 61,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 62,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 63,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 64,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     },
+     {
+      "line": 65,
+      "hash": "44a3619ce20c88b4e8dd9671ee433555fbb276eb",
+      "shortHash": "44a3619",
+      "author": "Dev",
+      "date": "2026-08-20T14:40:00.000Z"
+     }
+    ]
+   }
+  },
+  "sess-cw-rate-limit": {
+   "server/rate-limit.ts": {
+    "lines": [
+     {
+      "line": 1,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 2,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 3,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 4,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 5,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 6,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 7,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 8,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 9,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 10,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 11,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 12,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 13,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 14,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 15,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 16,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 17,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 18,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 19,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 20,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 21,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 22,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 23,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 24,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 25,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 26,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 27,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 28,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 29,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 30,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 31,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 32,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 33,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 34,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     }
+    ]
+   },
+   "tests/rate-limit.test.ts": {
+    "lines": [
+     {
+      "line": 1,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 2,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 3,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 4,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 5,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 6,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 7,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 8,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 9,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 10,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 11,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 12,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 13,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 14,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 15,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 16,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     },
+     {
+      "line": 17,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 18,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 19,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 20,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 21,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 22,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 23,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 24,
+      "hash": "",
+      "shortHash": "",
+      "author": "",
+      "date": ""
+     },
+     {
+      "line": 25,
+      "hash": "03997a194313a0ef3e1d83dee95fb65684de5f44",
+      "shortHash": "03997a1",
+      "author": "Dev",
+      "date": "2026-09-03T16:22:00.000Z"
+     }
+    ]
+   }
+  }
+ }
+}

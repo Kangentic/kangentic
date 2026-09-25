@@ -51,7 +51,9 @@ export class GuestBusyError extends Error {
   constructor(waitedMs: number) {
     super(
       `Another agent has been driving this Browser pane for more than ${Math.round(waitedMs / 1000)}s. ` +
-        'Retry, or call kangentic_browser_open_pane with isolated: true to get your own pane so you are not sharing one.',
+        'Retry. A task has exactly one browser surface, so there is no second one to take: if this ' +
+        'keeps happening, the agents working on this task need to coordinate rather than each ' +
+        'assume exclusive control.',
     );
     this.name = 'GuestBusyError';
   }

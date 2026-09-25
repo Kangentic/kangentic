@@ -10,9 +10,21 @@ import { candidateWorktreePathsFor, legacyAutoBranchNameFor } from '../git/task-
 import { removeNodeModulesPath } from '../git/node-modules-link';
 import { removeWithRetry } from '../git/rm-with-retry';
 import { WorktreeManager, GitQueuePriority } from '../git/worktree-manager';
+import { readLocalBranchSha } from '../git/worktree-head';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
+import type { AutomationRunRepository } from '../db/repositories/automation-run-repository';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * When this main process started, as the boundary for the automation-run sweep.
+ *
+ * Module scope because it must be the PROCESS's start, not the sweep's: a run
+ * started after boot belongs to this process and is live, whatever project the
+ * user has since switched to. Read once so a later switch cannot advance it and
+ * start sweeping this process's own live runs.
+ */
+const PROCESS_STARTED_AT = new Date().toISOString();
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -41,9 +53,13 @@ export async function cleanupStaleResources(
   swimlaneRepo: SwimlaneRepository,
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
+  automationRunRepo: AutomationRunRepository,
+  onRunsInterrupted: (count: number) => void = () => {},
 ): Promise<void> {
   await pruneOrphanedWorktreeTasks(projectPath, taskRepo, sessionRepo, sessionManager);
-  await cleanupStaleResourcesAsync(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
+  await cleanupStaleResourcesAsync(
+    projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager, automationRunRepo, onRunsInterrupted,
+  );
 }
 
 /**
@@ -59,10 +75,55 @@ export async function cleanupStaleResourcesAsync(
   swimlaneRepo: SwimlaneRepository,
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
+  automationRunRepo: AutomationRunRepository,
+  /**
+   * Told how many runs the sweep found mid-flight, so one notice can be raised
+   * for the whole project open. Required rather than optional, for the same
+   * reason `automationRunRepo` is: `tsc` then names every call site instead of
+   * letting one silently drop the report.
+   */
+  onRunsInterrupted: (count: number) => void,
 ): Promise<void> {
   await cleanBacklogTaskResources(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
   await retryFailedDoneCleanups(projectPath, taskRepo, swimlaneRepo);
   await pruneOrphanedDirectories(projectPath, taskRepo, sessionRepo, sessionManager);
+  const interrupted = sweepAutomationRuns(automationRunRepo);
+  if (interrupted > 0) onRunsInterrupted(interrupted);
+}
+
+/**
+ * Close out the automation runs a shutdown left open, and bound the table.
+ *
+ * Required, not optional, so `tsc` names every project-open site rather than
+ * letting one silently skip it.
+ *
+ * The first half is about honesty. `synchronous-shutdown.md` forbids awaiting a
+ * drain on quit, so an in-flight run cannot be finished at shutdown and a row
+ * still `running` at boot is a KNOWN orphan. Without this sweep, "these
+ * automations always run" is false on every restart and the row sits saying
+ * `running` forever. There is deliberately NO automatic retry: a fired webhook
+ * and a half-run script are not safe to repeat blind, so the user gets the
+ * honest `interrupted` state instead.
+ *
+ * The second half is about size. Nothing else bounds the table, and a run row
+ * is written per automation per move.
+ *
+ * Returns how many rows were marked interrupted, so a caller can say so once
+ * rather than once per row.
+ */
+export function sweepAutomationRuns(automationRunRepo: AutomationRunRepository): number {
+  try {
+    const interrupted = automationRunRepo.markStaleRunsInterrupted(PROCESS_STARTED_AT);
+    automationRunRepo.pruneTo();
+    if (interrupted > 0) {
+      console.log(`[automations] Marked ${interrupted} interrupted run(s) from a previous session`);
+    }
+    return interrupted;
+  } catch (sweepError) {
+    // A project that cannot sweep is still a usable project.
+    console.warn('[automations] Run sweep failed:', sweepError);
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -217,9 +278,20 @@ async function cleanBacklogTaskResources(
     if (task.branch_name) branchesToDelete.push(task.branch_name);
     if (expectedBranch !== task.branch_name) branchesToDelete.push(expectedBranch);
 
-    // Clear DB fields
+    // Clear DB fields. The directory is already gone, so the tip is captured
+    // from the local branch ref (still present: branches are deleted after this
+    // loop) into `head_sha`, the anchor that outlives the checkout.
+    // `pushed_branch` is kept for the same reason, like `pr_number`.
     if (hasStaleDbFields) {
-      taskRepo.update({ id: task.id, worktree_path: null, branch_name: null, session_id: null });
+      const capturedSha = task.branch_name ? await readLocalBranchSha(projectPath, task.branch_name) : null;
+      taskRepo.update({
+        id: task.id,
+        worktree_path: null,
+        branch_name: null,
+        resolved_base_branch: null,
+        session_id: null,
+        ...(capturedSha ? { head_sha: capturedSha } : {}),
+      });
     }
     cleaned++;
   }
@@ -312,7 +384,7 @@ export async function retryFailedDoneCleanups(
       // caller with no per-iteration guard, so an unhandled throw here would
       // propagate out of withTaskLock and abandon every REMAINING Done task in
       // the pass, not just the one with the bad row.
-      let removed = false;
+      let removed: boolean;
       try {
         removed = await worktreeManager.withLock(
           () => worktreeManager.removeWorktree(current.worktree_path!, { timeoutMs: 3000, removalProfile: 'fast' }),

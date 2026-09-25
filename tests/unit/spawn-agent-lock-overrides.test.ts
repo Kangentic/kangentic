@@ -29,6 +29,19 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { get: vi.fn(() => ({ sessionType: 'claude_agent' })) },
 }));
 
+// agent-spawn.ts imports ONLY `trackEvent` from analytics/analytics (not
+// sanitizeErrorMessage or any other export), so this mock is a complete
+// replacement, not a partial one that would silently drop an export the
+// other describe blocks in this file rely on.
+const mockTrackEvent = vi.fn();
+vi.mock('../../src/main/analytics/analytics', () => ({
+  trackEvent: (...args: unknown[]) => mockTrackEvent(...args),
+}));
+const mockReportHandledError = vi.fn();
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
+}));
+
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
 
 const TASK_ID = 'task-lock-001';
@@ -132,8 +145,22 @@ function makeDeps(args: { latestSession: unknown; task: Task }) {
     getLatestForTask: vi.fn(() => args.latestSession),
     getLatestForTaskByTypeAndIsolation: vi.fn(() => undefined),
   };
+  // `executeTransition` takes an options object now, not a positional
+  // `agentOverride`. The resolved agent still reaches this leg, inside the
+  // `legacySpawnAgent` closure the runner calls for a legacy `spawn_agent` row,
+  // so the fake invokes that closure and records the agent it forwards.
+  const runLegacySpawnAgent = vi.fn(async () => {});
   const engine = {
-    executeTransition: vi.fn(async () => {}),
+    executeTransition: vi.fn(async (
+      _task: unknown,
+      _lane: unknown,
+      _trigger: string,
+      runOptions: { legacySpawnAgent: (config: Record<string, unknown>) => Promise<void> },
+    ) => {
+      await runOptions.legacySpawnAgent({});
+      return { outcomes: [], failures: [], startedAgent: false };
+    }),
+    runLegacySpawnAgent,
     resumeSuspendedSession: vi.fn(async () => {}),
   };
   const context = {
@@ -177,6 +204,41 @@ async function runSpawn(
     ...extraOptions,
   });
 }
+
+describe('spawnAgent: a To Do or Done column never spawns, whatever its flag says', () => {
+  // Lives here for the harness: this file runs the real spawnAgent end to
+  // end. The flag can land on a role lane over MCP (`update_column` has no
+  // role guard) or through a Board Profile fold, and this chokepoint used to
+  // honor it for a task created, promoted, or restored straight into To Do,
+  // spawning a live agent behind a card the renderer treats as sessionless
+  // (#661). The move path never reaches here for a todo target
+  // (task-move.ts branches on role first), so this is the create-shaped hole.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([['todo'], ['done']] as const)('neither spawns nor locks overrides into a %s column with auto_spawn on', async (role) => {
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+
+    await runSpawn(task, makeSwimlane({ name: 'Role lane', role, auto_spawn: true }), deps);
+
+    // Pre-fix both fired: the engine spawned and the preamble locked the
+    // task's overrides on what it took to be a first spawn.
+    expect(deps.engine.executeTransition).not.toHaveBeenCalled();
+    expect(deps.engine.resumeSuspendedSession).not.toHaveBeenCalled();
+    expect(deps.tasks.update).not.toHaveBeenCalled();
+  });
+
+  it('still spawns into a custom column (role null) with auto_spawn on', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: undefined, task });
+
+    await runSpawn(task, makeDestinationLane(), deps);
+
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
   beforeEach(() => {
@@ -332,14 +394,43 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
     expect(deps.tasks.update).not.toHaveBeenCalled();
   });
 
-  it('does not re-lock a task reset to To Do and redragged (task.agent survives the reset)', async () => {
-    // No session record (wiped by the To-Do reset), but task.agent is still
-    // set from its original first spawn - this must NOT be mistaken for a
-    // fresh first-ever spawn.
+  it('DOES re-lock a task reset to To Do and redragged, because it is leaving a todo-role settings lane', async () => {
+    // No session record (wiped by the To-Do reset), and task.agent is still
+    // set from its original first spawn - so this is NOT a fresh first-ever
+    // spawn. It locks anyway: a task sitting in To Do is unpinned by design
+    // (kangentic.com #80), so departing a todo-role settings lane triggers the
+    // lock exactly like a genuine first-ever spawn does. Before this gate
+    // widened, a task in this exact shape (past its first spawn, switched to
+    // Agent Override while sitting in To Do) could never lock again - its
+    // inherited fields stayed dynamic for the rest of the task's life, so the
+    // Advanced dialog's placeholder and the next spawn's actual model could
+    // permanently disagree.
     const task = makeTask({ agent: 'claude', model_override: 'fable-5' });
     const deps = makeDeps({ latestSession: undefined, task });
 
     await runSpawn(task, makeDestinationLane(), deps, makeSwimlane({ id: FROM_LANE_ID, role: 'todo' }));
+
+    expect(deps.tasks.update).toHaveBeenCalledWith({
+      id: TASK_ID,
+      agent_override: 'claude',
+      model_override: 'fable-5',
+      effort_override: 'xhigh',
+      permission_mode: 'auto',
+    });
+  });
+
+  it('does NOT lock a task past its first spawn when the settings lane is a non-todo working column', async () => {
+    // The other half of the gate: leaving To Do locks, but a move between two
+    // ordinary working columns (neither first-ever-spawn nor departing To Do)
+    // must not. Otherwise every drag of an already-pinned task would silently
+    // re-lock it, which defeats "leaves the task alone once it has spawned"
+    // for the common case (Planning -> Executing -> Code Review, none of
+    // which is To Do).
+    const task = makeTask({ agent: 'claude', model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    const workingSettingsLane = makeSwimlane({ id: FROM_LANE_ID, name: 'Executing', role: null });
+
+    await runSpawn(task, makeDestinationLane(), deps, workingSettingsLane);
 
     expect(deps.tasks.update).not.toHaveBeenCalled();
   });
@@ -361,10 +452,11 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
     expect(deps.tasks.update).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID, agent_override: 'codex' }),
     );
-    // The resolved agent reaches the engine on BOTH legs: the transition
-    // (agentOverride is the 7th argument) and the fallback resume (6th).
+    // The resolved agent reaches the engine on BOTH legs: the transition (now
+    // through the legacySpawnAgent closure, 5th argument) and the fallback
+    // resume (6th).
     expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
-    expect(deps.engine.executeTransition.mock.calls[0][6]).toBe('codex');
+    expect(deps.engine.runLegacySpawnAgent.mock.calls[0][4]).toBe('codex');
     expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
     expect(deps.engine.resumeSuspendedSession.mock.calls[0][5]).toBe('codex');
   });
@@ -385,7 +477,7 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
 
     expect(deps.tasks.update).not.toHaveBeenCalled();
     expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
-    expect(deps.engine.executeTransition.mock.calls[0][6]).toBe('claude');
+    expect(deps.engine.runLegacySpawnAgent.mock.calls[0][4]).toBe('claude');
     expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
     expect(deps.engine.resumeSuspendedSession.mock.calls[0][5]).toBe('claude');
   });
@@ -432,5 +524,112 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn -- project model/eff
       effort_override: 'xhigh',
       permission_mode: 'auto',
     });
+  });
+});
+
+/**
+ * spawnAgent's fallback resume is "the deepest silent failure on the board
+ * path" (see the comment at its call site): nothing else reaches the user
+ * when it throws, so the analytics/error-reporting instrumentation there is
+ * the only signal that a resume failed at all. Two things can silently
+ * regress: the `isAbortError` guard moving BELOW the new instrumentation
+ * (which would report a user cancellation as a failure and page Sentry for
+ * it), and the instrumentation being dropped from the non-abort path
+ * entirely (which would make resume failures invisible again).
+ */
+describe('spawnAgent - resume failure analytics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reports spawn_failed and forwards the handled error when resumeSuspendedSession rejects, without letting it propagate', async () => {
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    const resumeError = new Error('CLI exited unexpectedly');
+    deps.engine.resumeSuspendedSession = vi.fn(async () => {
+      throw resumeError;
+    });
+
+    // Must resolve (not reject) - the catch swallows the error.
+    await runSpawn(task, makeDestinationLane(), deps);
+
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'resume' });
+    expect(mockReportHandledError).toHaveBeenCalledWith(resumeError, {
+      source: 'spawn',
+      reason: 'resume',
+      agent: 'claude',
+    });
+  });
+
+  it('notifies the user that the agent did not start, so the card no longer lies', async () => {
+    // The #538 symptom on the spawn step: the task moved, no session existed,
+    // and nothing but a console line said so. notifySpawnBlocked is NOT mocked
+    // here, so this asserts the real IPC push reaches the window.
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    deps.engine.resumeSuspendedSession = vi.fn(async () => {
+      throw new Error('worktree is locked');
+    });
+
+    await runSpawn(task, makeDestinationLane(), deps);
+
+    const send = deps.context.mainWindow.webContents.send as ReturnType<typeof vi.fn>;
+    const blockedCall = send.mock.calls.find((call) => call[0] === 'task:spawnBlocked');
+    expect(blockedCall, 'expected a task:spawnBlocked push').toBeDefined();
+    expect(blockedCall?.[3]).toBe('Agent did not start: worktree is locked');
+  });
+
+  it('surfaces a missing agent CLI with its remedy, counts it, but keeps it OUT of Sentry', async () => {
+    // The DESKTOP-5 contract in one case: a missing CLI is user configuration,
+    // so it must reach the USER (with the path-override pointer) and the
+    // Aptabase counter, but never the issue stream. reportHandledError is
+    // mocked in this suite, so the exclusion itself is asserted in
+    // error-reporting-switch.test.ts; here we assert the call still happens
+    // with the typed error, which is what that exclusion keys on.
+    const { AgentCliNotFoundError } = await import(
+      '../../src/main/agent/shared/agent-cli-not-found'
+    );
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    const cliError = new AgentCliNotFoundError('codex', 'Codex CLI');
+    deps.engine.resumeSuspendedSession = vi.fn(async () => {
+      throw cliError;
+    });
+
+    await runSpawn(task, makeDestinationLane(), deps);
+
+    // Volume signal survives - this is where "how often are users hitting a
+    // missing CLI" gets answered.
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'resume' });
+    // Handed to the reporter as the TYPED error, which is what lets
+    // reportHandledError drop it.
+    expect(mockReportHandledError).toHaveBeenCalledWith(cliError, {
+      source: 'spawn',
+      reason: 'resume',
+      agent: 'claude',
+    });
+
+    const send = deps.context.mainWindow.webContents.send as ReturnType<typeof vi.fn>;
+    const blockedCall = send.mock.calls.find((call) => call[0] === 'task:spawnBlocked');
+    expect(blockedCall?.[3]).toBe(cliError.message);
+    expect(blockedCall?.[3]).toContain('Settings > Agent');
+    expect(blockedCall?.[3]).not.toMatch(/CLI CLI/i);
+  });
+
+  it('rethrows an AbortError WITHOUT reporting spawn_failed or forwarding to Sentry', async () => {
+    // The ordering contract: `if (isAbortError(error)) throw error;` sits
+    // ABOVE the trackEvent/reportHandledError calls. A user-cancelled spawn
+    // (project close, task deleted mid-spawn) must never count as a failure.
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    const abortError = new DOMException('The operation was aborted', 'AbortError');
+    deps.engine.resumeSuspendedSession = vi.fn(async () => {
+      throw abortError;
+    });
+
+    await expect(runSpawn(task, makeDestinationLane(), deps)).rejects.toBe(abortError);
+
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+    expect(mockReportHandledError).not.toHaveBeenCalled();
   });
 });

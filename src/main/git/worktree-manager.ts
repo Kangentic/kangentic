@@ -2,17 +2,28 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import path from 'node:path';
 import fs from 'node:fs';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
+import type { WorktreeSkipReason } from '../../shared/types';
 import { worktreeFolderFromPath } from '../../shared/worktree-folder';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
 import { worktreesRootFor } from './task-worktree-folder';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
 import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
-import { fetchIfStale } from './fetch-throttle';
-import { removeWithRetry, type RemoveWithRetryOptions } from './rm-with-retry';
+import { fetchIfStale, type FetchIfStaleOutcome } from './fetch-throttle';
+import {
+  removeWithRetry,
+  isRemovalTimeoutError,
+  type RemoveWithRetryOptions,
+  type WorktreeRemovalTimeoutError,
+} from './rm-with-retry';
 import { runGitWithTimeout as runGitWithTimeoutShared } from './git-spawn';
 import { runInitScript, INIT_SCRIPT_TIMEOUT_MS } from './run-init-script';
-import { reapProcessesForWorktree } from './zombie-reaper';
+import {
+  reapProcessesForWorktree,
+  describeWorktreeHolders,
+  describeHolder,
+  type WorktreeHolder,
+} from './zombie-reaper';
 
 /**
  * Re-emit the `init-script` progress label this often while the init script
@@ -32,12 +43,72 @@ const INIT_SCRIPT_PROGRESS_HEARTBEAT_MS = 30_000;
 const GIT_REMOVAL_TIMEOUT_MS = 15_000;
 
 /**
+ * Wall-clock budget for the file-deletion work of one `thorough` removal
+ * attempt (the node_modules step plus the manual-rm fallback plus the git calls
+ * between them).
+ *
+ * Without it the manual fallback is bounded by the TREE, not the clock: Node
+ * applies its `{ maxRetries, retryDelay }` ladder per locked path, so a
+ * directory pinned by a live process ground for 402716ms in one observed
+ * incident while the `create-worktree` job held the per-project git queue and
+ * nothing reached the UI or the error log. A stray directory is recoverable and
+ * an indefinite hang is not, so the removal now gives up and the create fails
+ * with a message naming the path. The trade is deliberate: a case that used to
+ * "succeed" after several minutes of grinding now fails in under a minute.
+ */
+const THOROUGH_REMOVAL_BUDGET_MS = 30_000;
+
+/**
+ * Budget for the removal retry that follows a successful orphan reap. Once the
+ * holder is dead the removal should complete immediately; if it does not,
+ * nothing else on this path will help, so the second attempt gets a short
+ * budget rather than a second full one.
+ */
+const POST_REAP_REMOVAL_BUDGET_MS = 10_000;
+
+/**
+ * Sub-cap on the node_modules step, which runs FIRST inside every removal
+ * attempt and is the one step that can silently spend the whole budget:
+ * `removeNodeModulesPath` swallows its own errors, so a locked node_modules
+ * grinds to its deadline and then returns normally. Without this cap
+ * `git worktree remove` and the manual rm would both inherit a spent clock and
+ * run at the 1s floor, which turns git's real verdict ("is not a working tree",
+ * the line that tells you what happened) into a timeout abort.
+ *
+ * Clamped to half the remaining budget as well, so the steps after it always
+ * keep at least half. Grinding here is the least valuable place to spend the
+ * clock anyway: node_modules removal only exists to make the git removal cheap,
+ * and the manual fallback has to walk the same tree regardless.
+ */
+const NODE_MODULES_REMOVAL_BUDGET_MS = 10_000;
+
+/**
+ * Cap on the worktree-removing listener. It is a local handle release that
+ * takes milliseconds, but it is awaited AHEAD of every `[WORKTREE]` log line,
+ * so a listener that hangs there produces no diagnostic output at all and
+ * silently reproduces the hang this file is bounding.
+ */
+const REMOVING_LISTENER_TIMEOUT_MS = 2_000;
+
+/**
+ * A git-queue holder older than this logs its heartbeat at `warn` instead of
+ * `log`. Only warn and error survive `shouldPersist` on a production build
+ * (`src/main/diagnostics/log-mirror.ts`), so this is what puts a wedged queue
+ * into an error-level log tail instead of leaving it invisible.
+ */
+const GIT_QUEUE_SLOW_WARN_MS = 60_000;
+
+/**
  * How hard to try when removing a worktree's files. The same enum tunes both
  * the node_modules step and the manual-removal fallback.
  *
- *   thorough - full backoff (the historical default). Used where a failure
+ *   thorough - full backoff (the historical default), under a
+ *              THOROUGH_REMOVAL_BUDGET_MS wall clock. Used where a failure
  *              surfaces an error to the user (worktree CREATE, project delete),
- *              so it is worth grinding through transient Windows locks.
+ *              so it is worth grinding through transient Windows locks - but
+ *              only for as long as a transient lock plausibly lasts. It is the
+ *              only profile with a clock, because it is the only one whose
+ *              retry budget was otherwise unbounded.
  *   moderate - a pinned path fails in a few seconds, but bulk deletion of an
  *              unpinned tree is unaffected. Used on the user-facing Done-move
  *              and cleanup paths so a held handle can never hold the git queue
@@ -59,13 +130,149 @@ export interface WorktreeCreateResult {
   worktreePath: string;
   branchName: string;
   worktreeFolder: string;
+  /**
+   * The base branch this worktree was ACTUALLY cut from, after
+   * `resolveWorktreeBase` picked it against the repo's real refs. Callers
+   * persist it (`tasks.resolved_base_branch`) because `tasks.base_branch` is
+   * only ever set when a user names one explicitly, so most tasks record no
+   * base at all and every base-relative guard downstream falls back to the
+   * project default. That is what made the PR linker's commits-ahead-of-base
+   * guard unsound for a worktree cut from a long-lived integration branch.
+   *
+   * NULL when the worktree attached to a branch that ALREADY EXISTED. That path
+   * passes no start point to `git worktree add`, so the branch keeps whatever
+   * base it was originally cut from and the resolved value describes a
+   * creation that did not happen. Reporting it anyway would be worse than
+   * reporting nothing: `resolved_base_branch` is what promotes a base from a
+   * guess to a KNOWN one, and the linker treats a known base as licence to run
+   * Tier 6 and to score `disambiguate`'s base-match bonus. A task attached to a
+   * long-lived `feature/x` and stamped with `main` would sit on `feature/x`'s
+   * tip, fail the base-tip bail against the wrong branch, and magnet onto
+   * `feature/x`'s own PR - the exact mislink that bail exists to prevent.
+   */
+  baseBranch: string | null;
 }
 
+/**
+ * `ensureWorktree` created nothing, and this is why. `'reused'` means the task
+ * already has a live worktree on disk and keeps it (the caller should not
+ * persist that). Every other reason means the agent will run in the shared
+ * project checkout; callers persist it via
+ * `TaskRepository.setWorktreeSkipReason` so a surface can eventually say so
+ * (nothing reads it back yet, see `WorktreeSkipReason`). This used
+ * to be a bare `null` for all of them, which is how "running unisolated in the
+ * checkout the app runs from" stayed invisible.
+ */
+export interface WorktreeSkipped {
+  skipped: true;
+  reason: WorktreeSkipReason | 'reused';
+}
+
+export type EnsureWorktreeResult = WorktreeCreateResult | WorktreeSkipped;
+
 const REMOVAL_PROFILE_OPTIONS: Record<WorktreeRemovalProfile, RemoveWithRetryOptions | undefined> = {
-  thorough: undefined,
+  thorough: { budgetMs: THOROUGH_REMOVAL_BUDGET_MS },
   moderate: { delays: [0, 500], innerMaxRetries: 2 },
   fast: { delays: [0], innerMaxRetries: 0 },
 };
+
+/**
+ * Retry options for one step of a removal, with the budget narrowed to what is
+ * left of `deadline`. Steps run in sequence (node_modules, then git, then the
+ * manual rm), so each has to inherit the REMAINING budget rather than a fresh
+ * copy of the profile's; otherwise a three-step removal costs three budgets.
+ *
+ * A profile with no `budgetMs` gets no deadline and is returned untouched, so
+ * `moderate` and `fast` keep exactly the shape they had before.
+ */
+function removalOptionsFor(
+  profile: WorktreeRemovalProfile,
+  deadline: number | undefined,
+): RemoveWithRetryOptions | undefined {
+  const base = REMOVAL_PROFILE_OPTIONS[profile];
+  if (deadline === undefined) return base;
+  return { ...base, budgetMs: Math.max(0, deadline - Date.now()) };
+}
+
+/**
+ * The deadline a removal attempt should run under, or undefined when the
+ * profile is already bounded by its own retry shape.
+ */
+function removalDeadlineFor(
+  profile: WorktreeRemovalProfile,
+  budgetMs: number,
+): number | undefined {
+  return REMOVAL_PROFILE_OPTIONS[profile]?.budgetMs === undefined
+    ? undefined
+    : Date.now() + budgetMs;
+}
+
+/**
+ * The deadline the node_modules step runs under: the smaller of
+ * NODE_MODULES_REMOVAL_BUDGET_MS and half of what the attempt has left. See
+ * that constant for why this step in particular needs its own ceiling.
+ */
+function nodeModulesDeadline(deadline: number | undefined): number | undefined {
+  if (deadline === undefined) return undefined;
+  const remaining = Math.max(0, deadline - Date.now());
+  return Date.now() + Math.min(NODE_MODULES_REMOVAL_BUDGET_MS, Math.floor(remaining / 2));
+}
+
+/**
+ * Narrow a git call's timeout to what is left of the removal deadline. The 1s
+ * floor keeps a nearly-expired deadline from handing `spawnWithAbort` a zero or
+ * negative timeout; it is also the only way the overall budget can be overrun,
+ * and then by at most a second per call.
+ */
+function gitTimeoutWithin(timeoutMs: number, deadline: number | undefined): number {
+  if (deadline === undefined) return timeoutMs;
+  return Math.max(1_000, Math.min(timeoutMs, deadline - Date.now()));
+}
+
+/**
+ * Compact holder summary for the removal's warn-level log line. The local log
+ * file keeps it. Sentry never does: `[WORKTREE]` is not a breadcrumb tag
+ * (src/shared/sentry-breadcrumbs.ts), because the line carries the worktree
+ * path and each holder's command line.
+ */
+function formatHolderLog(holders: readonly WorktreeHolder[]): string {
+  if (holders.length === 0) return ' holders=none';
+  const described = holders
+    .map((holder) => `pid=${holder.pid} cmd=${holder.commandLine.slice(0, 200)}`)
+    .join(' | ');
+  return ` holders=${holders.length} ${described}`;
+}
+
+/**
+ * Race `promise` against a timer. The loser keeps running (there is no way to
+ * cancel it), but `Promise.race` has already attached a handler to it, so a
+ * late rejection cannot surface as an unhandled rejection.
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    timer.unref?.();
+  });
+  return Promise.race([promise, guard]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
+/**
+ * What a removal attempt did. `removed` is the historical boolean; the rest
+ * exists so `createWorktree` can tell the user WHY the path is still there.
+ */
+export interface WorktreeRemovalOutcome {
+  removed: boolean;
+  /** The file-deletion work hit its wall-clock budget rather than a hard error. */
+  timedOut: boolean;
+  /**
+   * Processes whose command line references the path. Empty when none were
+   * found, when the scan failed, or under NODE_ENV=test where it never runs.
+   */
+  holders: WorktreeHolder[];
+}
 
 /**
  * Scan timeout for the pre-removal orphan reap, per profile. `fast` (background
@@ -153,14 +360,26 @@ export function assertRemovableWorktreePath(projectPath: string, worktreePath: s
   }
 }
 
-function staleWorktreeError(worktreePath: string, reason: 'not-empty' | 'unreadable'): string {
+function staleWorktreeError(
+  worktreePath: string,
+  reason: 'not-empty' | 'unreadable',
+  holders: readonly WorktreeHolder[] = [],
+): string {
   const detail = reason === 'not-empty'
     ? 'could not be removed and is not empty'
     : 'could not be removed and could not be inspected';
-  return `Cannot create worktree: a stale directory at ${worktreePath} ${detail}. `
-    + `A process is likely holding files in it. Close anything using this `
-    + `path (an open agent terminal or editor, the Kangentic /preview dev server, or `
-    + `antivirus/search indexing) and retry.`;
+  // Naming the holder is the whole point of the scan, so it replaces the guess
+  // rather than following it. The generic list stays for the (common) case
+  // where the holder is an image the scan does not enumerate.
+  const blame = holders.length > 0
+    ? `Held by ${holders.map(describeHolder).join(', ')}. Close it and retry.`
+    : `A process is likely holding files in it. Close anything using this `
+      + `path (an open agent terminal or editor, the Kangentic /preview dev server, or `
+      + `antivirus/search indexing) and retry.`;
+  // The `Cannot create worktree:` prefix is load-bearing: describeSpawnFailure
+  // in ipc/helpers/task-git.ts suppresses its own "Worktree setup failed"
+  // prefix for a message that already starts this way.
+  return `Cannot create worktree: a stale directory at ${worktreePath} ${detail}. ${blame}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -380,9 +599,18 @@ export class WorktreeManager {
     console.log(`[GIT_QUEUE] start ${job.label} (waited ${startedAt - job.enqueuedAt}ms, ${queue.waiting.length} waiting)`);
 
     // Heartbeat so a multi-minute holder is visible in logs (stuck vs slow).
-    // `.unref()` so it never keeps the process alive on its own.
+    // `.unref()` so it never keeps the process alive on its own. Past
+    // GIT_QUEUE_SLOW_WARN_MS it escalates to `warn`, because a `log` line is
+    // dropped entirely on a production build and a wedged queue that leaves no
+    // trace in an error-level tail is how one stayed invisible for 6.7 minutes.
     const heartbeat = setInterval(() => {
-      console.log(`[GIT_QUEUE] ${job.label} still running (${Math.round((Date.now() - startedAt) / 1000)}s, ${queue.waiting.length} waiting)`);
+      const elapsedMs = Date.now() - startedAt;
+      const line = `[GIT_QUEUE] ${job.label} still running (${Math.round(elapsedMs / 1000)}s, ${queue.waiting.length} waiting)`;
+      if (elapsedMs >= GIT_QUEUE_SLOW_WARN_MS) {
+        console.warn(line);
+      } else {
+        console.log(line);
+      }
     }, GIT_QUEUE_HEARTBEAT_MS);
     heartbeat.unref?.();
 
@@ -437,15 +665,26 @@ export class WorktreeManager {
   }
 
   /**
-   * Guard + create worktree in one call. Returns null if any guard fails
-   * (already has a live worktree on disk, worktrees disabled, not a git repo,
-   * is a worktree).
+   * Guard + create worktree in one call. Every guard that stops short of
+   * creating returns a `WorktreeSkipped` naming WHY, so callers can persist the
+   * reason to `task.worktree_skip_reason` instead of inferring it from a bare
+   * null (recorded for any surface that wants to say "running in the checkout
+   * the app runs from"; no renderer reads it back yet):
+   *   - 'reused': a live worktree already exists on disk and is kept as is.
+   *   - 'disabled': `use_worktree` (per task) or `worktreesEnabled` (project) is off.
+   *   - 'not-a-repo': the project path has no `.git`.
+   *   - 'nested-worktree': the project path is itself a worktree; git cannot nest them.
+   *   - 'no-commits': unborn HEAD, so there is no ref to branch from.
+   * The `shouldUseWorktree` check runs before the three structural guards, so a
+   * per-task `use_worktree: 1` can force worktrees on in a project where they
+   * are off but can never override a structural reason. An unresolvable base
+   * branch throws instead (see `resolveWorktreeBase`).
    */
   async ensureWorktree(
     task: { id: string; title: string; display_id: number; worktree_path: string | null; worktree_folder?: string | null; branch_name?: string | null; base_branch?: string | null; use_worktree?: number | null },
     gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string; copyFiles: string[]; initScript?: string | null; linkNodeModules?: boolean },
-    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
-  ): Promise<WorktreeCreateResult | null> {
+    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal; onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void },
+  ): Promise<EnsureWorktreeResult> {
     // Trust worktree_path only if the worktree still genuinely exists on disk.
     // A Done cleanup that could not delete the directory (Windows pinned-CWD)
     // leaves worktree_path set pointing at an emptied husk with no `.git` file;
@@ -453,14 +692,14 @@ export class WorktreeManager {
     // A missing or husk directory falls through to createWorktree, which
     // recomputes the identical (deterministic) path and recreates the worktree.
     if (task.worktree_path && fs.existsSync(task.worktree_path) && isInsideWorktree(task.worktree_path)) {
-      return null;
+      return { skipped: true, reason: 'reused' };
     }
     const shouldUseWorktree = task.use_worktree != null
       ? Boolean(task.use_worktree)
       : gitConfig.worktreesEnabled;
-    if (!shouldUseWorktree) return null;
-    if (!isGitRepo(this.projectPath)) return null;
-    if (isInsideWorktree(this.projectPath)) return null;
+    if (!shouldUseWorktree) return { skipped: true, reason: 'disabled' };
+    if (!isGitRepo(this.projectPath)) return { skipped: true, reason: 'not-a-repo' };
+    if (isInsideWorktree(this.projectPath)) return { skipped: true, reason: 'nested-worktree' };
 
     // Resolve the base branch against the repo's ACTUAL refs before ever calling
     // `git worktree add`, instead of handing it a name that may not exist. A `master`-only
@@ -472,15 +711,15 @@ export class WorktreeManager {
     // initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's very
     // next action is usually a task move. Running in the project directory is the honest answer;
     // worktrees start working on their own once there is a first commit. Living here (rather than
-    // at each `ensureWorktree` caller) means the `create_worktree` transition action gets the
-    // same guard as the normal task-move path.
+    // at each `ensureWorktree` caller) means every entry point gets the same guard as the
+    // normal task-move path.
     const resolution = await resolveWorktreeBase(
       this.projectPath,
       task.base_branch ?? null,
       gitConfig.defaultBaseBranch || 'main',
       { signal: options?.signal },
     );
-    if (resolution.kind === 'no-commits') return null;
+    if (resolution.kind === 'no-commits') return { skipped: true, reason: 'no-commits' };
     if (resolution.kind === 'unresolvable') {
       throw new Error(describeUnresolvableBase(resolution));
     }
@@ -494,6 +733,9 @@ export class WorktreeManager {
       ? resolution.baseBranch
       : (gitConfig.defaultBaseBranch || 'main');
 
+    // The fetch outcome is NOT threaded into resolveWorktreeBase's own fetch
+    // pass: a candidate miss there either resolves via another candidate (not
+    // a stale-base event) or ends in the already-loud unresolvable throw above.
     return this.createWorktree(task, resolution.baseBranch, gitConfig.copyFiles, task.branch_name, {
       onProgress: options?.onProgress,
       signal: options?.signal,
@@ -501,6 +743,7 @@ export class WorktreeManager {
       initScript: gitConfig.initScript,
       linkNodeModules: gitConfig.linkNodeModules,
       verifiedStartPoint: resolution.startPoint,
+      onFetchOutcome: options?.onFetchOutcome,
     });
   }
 
@@ -529,8 +772,9 @@ export class WorktreeManager {
    * `worktree_path`, so moving back out is a FRESH creation; if it landed at a
    * different path, the agent's transcript would be orphaned (Claude keys it by
    * a slug of the cwd, `~/.claude/projects/<slug-of-cwd>/<id>.jsonl`, so
-   * `--resume` reports "No conversation found") and the worktree's browser
-   * cookie jar would be dropped (`browserPartitionForWorktree` hashes the path).
+   * `--resume` reports "No conversation found"). The browser cookie jar is NOT a
+   * reason here any more: it is keyed by task identity (`browserPartitionForTask`),
+   * so a path change no longer drops it - only the transcript keeps this invariant.
    *
    * Callers must wrap with `withLock()` to serialize concurrent operations
    * on the same project and prevent git lock contention.
@@ -555,6 +799,15 @@ export class WorktreeManager {
        * plain fetch-or-bare-name behavior.
        */
       verifiedStartPoint?: string;
+      /**
+       * Observes the base fetch's real outcome (fetched / throttled / a
+       * classified failure). The `verifiedStartPoint` fallback below makes a
+       * failed fetch invisible in the RESULT - the worktree is still created,
+       * just from the last fetched state - so callers that surface staleness
+       * need this seam. WorktreeManager stays IPC-agnostic; the caller decides
+       * what a failure means to the user.
+       */
+      onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void;
     },
   ): Promise<WorktreeCreateResult> {
     const shortId = task.id.slice(0, 8);
@@ -596,7 +849,7 @@ export class WorktreeManager {
       await fs.promises.mkdir(worktreesDir, { recursive: true });
     } catch (err) {
       console.error(`[WORKTREE] Failed to create worktrees directory: ${worktreesDir}`, err);
-      throw new Error(`Cannot create worktrees directory at ${worktreesDir}: ${(err as Error).message}`);
+      throw new Error(`Cannot create worktrees directory at ${worktreesDir}: ${(err as Error).message}`, { cause: err });
     }
 
     // Fetch the latest from origin so worktrees start from up-to-date code.
@@ -605,7 +858,10 @@ export class WorktreeManager {
     // in the queue flips from the "Waiting..." label to "Fetching latest..."
     // the instant it actually starts the fetch.
     options?.onProgress?.('fetching');
-    const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, { signal: options?.signal });
+    const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, {
+      signal: options?.signal,
+      onOutcome: options?.onFetchOutcome,
+    });
     // A fetch that actually landed `origin/<branch>` wins (freshest code). Otherwise fall back
     // to a ref already OBSERVED to resolve, because both of fetchIfStale's other outcomes give
     // a start point that can fail `git worktree add`: on failure it returns the bare branch
@@ -642,8 +898,8 @@ export class WorktreeManager {
       // "this path no longer holds a worktree", which is not true a moment
       // later here, so it must not fire (Codex would drop the directory's
       // trust table immediately before the new worktree starts using it).
-      const removed = await this.removeWorktreeInternal(worktreePath);
-      if (!removed) {
+      const outcome = await this.removeWorktreeInternal(worktreePath);
+      if (!outcome.removed) {
         // The directory could not be deleted. On Windows a process holding it
         // as its current directory (an agent terminal, an open editor, the
         // Kangentic /preview dev server, or antivirus) blocks the final rmdir
@@ -652,6 +908,11 @@ export class WorktreeManager {
         // add` accepts an existing EMPTY directory, so reuse the husk in place
         // rather than failing the move-back. Only the genuinely-stuck case
         // (real files still held) is fatal.
+        //
+        // A removal that hit its budget rather than a hard error does NOT
+        // short-circuit this: an emptied-but-pinned directory is still a
+        // reusable husk, and failing it would regress the pinned-CWD case above
+        // into an error the user cannot clear. The listing decides, as before.
         let leftover: string[];
         try {
           leftover = fs.readdirSync(worktreePath);
@@ -661,10 +922,10 @@ export class WorktreeManager {
             `[WorktreeManager] Could not inspect stale worktree dir: ${worktreePath} `
             + `(code=${errnoError.code ?? 'unknown'} errno=${errnoError.errno ?? '?'} syscall=${errnoError.syscall ?? '?'}): ${errnoError.message}`
           );
-          throw new Error(staleWorktreeError(worktreePath, 'unreadable'));
+          throw new Error(staleWorktreeError(worktreePath, 'unreadable', outcome.holders), { cause: error });
         }
         if (leftover.length > 0) {
-          throw new Error(staleWorktreeError(worktreePath, 'not-empty'));
+          throw new Error(staleWorktreeError(worktreePath, 'not-empty', outcome.holders));
         }
         reuseEmptyHusk = true;
       }
@@ -788,7 +1049,15 @@ export class WorktreeManager {
       }
     }
 
-    return { worktreePath, branchName, worktreeFolder: folderName };
+    // `branchExists` took the no-start-point form of `worktree add` above, so
+    // `baseBranch` describes a cut that never happened. Report nothing rather
+    // than a guess (see `WorktreeCreateResult.baseBranch`).
+    return {
+      worktreePath,
+      branchName,
+      worktreeFolder: folderName,
+      baseBranch: branchExists ? null : baseBranch,
+    };
   }
 
   /**
@@ -852,7 +1121,7 @@ export class WorktreeManager {
     worktreePath: string,
     options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
   ): Promise<boolean> {
-    const removed = await this.removeWorktreeInternal(worktreePath, options);
+    const { removed } = await this.removeWorktreeInternal(worktreePath, options);
     // Single notification point for the whole app. There are seven call sites
     // for worktree removal (Done move, task delete, archive, MCP delete,
     // project close, startup retry, branch-switch cleanup), and they are
@@ -866,9 +1135,17 @@ export class WorktreeManager {
   private async removeWorktreeInternal(
     worktreePath: string,
     options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
-  ): Promise<boolean> {
+  ): Promise<WorktreeRemovalOutcome> {
     assertRemovableWorktreePath(this.projectPath, worktreePath);
-    if (!fs.existsSync(worktreePath)) return true;
+
+    // Release our own OS handles under this path first. Deliberately ahead of
+    // the existsSync bail: a path that is ALREADY gone is exactly the case
+    // where a watcher left armed on it is spinning right now, so that is the
+    // one call we least want to skip. Bounded, because it is also ahead of
+    // every log line below.
+    await notifyWorktreeRemoving(worktreePath);
+
+    if (!fs.existsSync(worktreePath)) return { removed: true, timedOut: false, holders: [] };
 
     const timeoutMs = options?.timeoutMs ?? GIT_REMOVAL_TIMEOUT_MS;
     const profile = options?.removalProfile ?? 'thorough';
@@ -877,10 +1154,17 @@ export class WorktreeManager {
 
     // Happy path: clear node_modules + git remove (manual-rm fallback). No
     // process scan, so a clean Done-move pays nothing for the reap machinery.
-    if (await this.tryGitRemoval(worktreePath, profile, timeoutMs)) {
+    const first = await this.tryGitRemoval(
+      worktreePath,
+      profile,
+      timeoutMs,
+      removalDeadlineFor(profile, THOROUGH_REMOVAL_BUDGET_MS),
+    );
+    if (first.removed) {
       console.log(`[WORKTREE] remove finished: ${worktreePath} removed=true total=${Date.now() - removeStartedAt}ms`);
-      return true;
+      return { removed: true, timedOut: false, holders: [] };
     }
+    let timedOut = first.timedOut;
 
     // Removal failed: a process is holding the directory. The usual culprit is
     // an orphaned app-under-test (zombie Electron/node from E2E or /preview)
@@ -894,20 +1178,43 @@ export class WorktreeManager {
         scanTimeoutMs: REAP_SCAN_TIMEOUT_MS[profile],
       });
       console.log(`[WORKTREE] remove step=reap done in ${Date.now() - reapStartedAt}ms (killed=${reaped.length})`);
-      if (reaped.length > 0 && await this.tryGitRemoval(worktreePath, profile, timeoutMs)) {
-        console.log(`[WORKTREE] remove finished: ${worktreePath} removed=true total=${Date.now() - removeStartedAt}ms`);
-        return true;
+      if (reaped.length > 0) {
+        // The holder is dead, so this should be immediate. A short budget, not
+        // a second full one: if it is still stuck, more grinding will not help.
+        const second = await this.tryGitRemoval(
+          worktreePath,
+          profile,
+          timeoutMs,
+          removalDeadlineFor(profile, POST_REAP_REMOVAL_BUDGET_MS),
+        );
+        if (second.removed) {
+          console.log(`[WORKTREE] remove finished: ${worktreePath} removed=true total=${Date.now() - removeStartedAt}ms`);
+          return { removed: true, timedOut: false, holders: [] };
+        }
+        timedOut = timedOut || second.timedOut;
       }
     }
 
     // Still pinned (nothing to reap, or the pin is AV / an editor / something we
-    // do not own). Best-effort prune so git's metadata is consistent; leave the
-    // husk for the husk-reuse + startup-retry net.
+    // do not own). Name whoever we can see holding it: the reap's scan is
+    // cached for 5s, so this is free right here and it is the only chance to
+    // turn "could not be removed" into something the user can act on.
+    const holders = process.env.NODE_ENV === 'test'
+      ? []
+      : await describeWorktreeHolders(worktreePath, REAP_SCAN_TIMEOUT_MS[profile]);
+
+    // Best-effort prune so git's metadata is consistent; leave the husk for the
+    // husk-reuse + startup-retry net.
     try {
       await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], timeoutMs);
     } catch { /* best effort */ }
-    console.log(`[WORKTREE] remove finished: ${worktreePath} removed=false total=${Date.now() - removeStartedAt}ms`);
-    return false;
+    // warn, not log: on a production build this is the only line that records
+    // the failure at all (see GIT_QUEUE_SLOW_WARN_MS for the same reasoning).
+    console.warn(
+      `[WORKTREE] remove finished: ${worktreePath} removed=false timedOut=${timedOut} `
+      + `total=${Date.now() - removeStartedAt}ms${formatHolderLog(holders)}`,
+    );
+    return { removed: false, timedOut, holders };
   }
 
   /**
@@ -920,17 +1227,18 @@ export class WorktreeManager {
     worktreePath: string,
     profile: WorktreeRemovalProfile,
     timeoutMs: number,
-  ): Promise<boolean> {
-    await prepareWorktreeForRemoval(worktreePath, profile);
+    deadline?: number,
+  ): Promise<{ removed: boolean; timedOut: boolean }> {
+    await prepareWorktreeForRemoval(worktreePath, profile, deadline);
 
     const gitStartedAt = Date.now();
     try {
       await runGitWithTimeout(
         this.projectPath,
         ['worktree', 'remove', worktreePath, '--force'],
-        timeoutMs,
+        gitTimeoutWithin(timeoutMs, deadline),
       );
-      return true;
+      return { removed: true, timedOut: false };
     } catch (error) {
       console.log(`[WORKTREE] remove step=git-remove failed in ${Date.now() - gitStartedAt}ms, falling back to manual removal: ${(error as Error).message}`);
     }
@@ -943,17 +1251,27 @@ export class WorktreeManager {
     // nested node_modules left by sub-package npm installs.
     const manualStartedAt = Date.now();
     try {
-      await removeWithRetry(worktreePath, REMOVAL_PROFILE_OPTIONS[profile]);
-      await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], timeoutMs);
+      await removeWithRetry(worktreePath, removalOptionsFor(profile, deadline));
+      await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], gitTimeoutWithin(timeoutMs, deadline));
       console.log(`[WORKTREE] remove step=manual-rm done in ${Date.now() - manualStartedAt}ms`);
-      return true;
+      return { removed: true, timedOut: false };
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
+      const timedOut = isRemovalTimeoutError(error);
+      if (timedOut) {
+        console.warn(
+          `[WORKTREE] remove step=manual-rm timed out after ${Date.now() - manualStartedAt}ms `
+          + `(budget ${(error as WorktreeRemovalTimeoutError).budgetMs}ms): ${worktreePath}`,
+        );
+      }
+      // A timeout carries the last errno failure as its cause, and that is the
+      // diagnostic worth printing; the timeout itself only says we stopped.
+      const diagnosticError = (timedOut ? (error as Error).cause ?? error : error) as NodeJS.ErrnoException;
       console.warn(
         `[WorktreeManager] Could not remove worktree after retries: ${worktreePath} `
-        + `(code=${err.code ?? 'unknown'} errno=${err.errno ?? '?'} syscall=${err.syscall ?? '?'} path=${err.path ?? '?'}): ${err.message}`
+        + `(code=${diagnosticError.code ?? 'unknown'} errno=${diagnosticError.errno ?? '?'} `
+        + `syscall=${diagnosticError.syscall ?? '?'} path=${diagnosticError.path ?? '?'}): ${diagnosticError.message}`
       );
-      return false;
+      return { removed: false, timedOut };
     }
   }
 
@@ -1146,12 +1464,13 @@ export function parseWorktreeBranches(porcelain: string): Map<string, string> {
 export async function prepareWorktreeForRemoval(
   worktreePath: string,
   profile: WorktreeRemovalProfile,
+  deadline?: number,
 ): Promise<void> {
   if (!fs.existsSync(worktreePath)) return;
 
   const nodeModulesStartedAt = Date.now();
   await removeNodeModulesPath(path.join(worktreePath, 'node_modules'), {
-    removeOptions: REMOVAL_PROFILE_OPTIONS[profile],
+    removeOptions: removalOptionsFor(profile, nodeModulesDeadline(deadline)),
   });
   console.log(`[WORKTREE] remove step=node-modules done in ${Date.now() - nodeModulesStartedAt}ms`);
 }
@@ -1198,5 +1517,56 @@ async function notifyWorktreeRemoved(worktreePath: string): Promise<void> {
     // Best-effort: the worktree is already gone, and a failure here only
     // leaves a stale entry behind. It must never fail the removal.
     console.warn('[WORKTREE] worktree-removed listener failed (non-fatal):', error);
+  }
+}
+
+/**
+ * Notified BEFORE any removal attempt, from `removeWorktreeInternal`.
+ *
+ * The contract is "drop any OS handle you hold under this path, I am about to
+ * delete it", which is why it is deliberately paired with the *internal*
+ * method rather than the public one: unlike the removed-listener above, it is
+ * also correct for the husk clear inside `createWorktree`, whose own failure
+ * path blames "a process holding it" for the husks it leaves behind. We are one
+ * of those holders.
+ *
+ * Two concrete consumers, both measured:
+ *  - `DiffWatcher` keeps a RECURSIVE `fs.watch` on the worktree root plus two
+ *    on `<mainRepo>/.git/worktrees/<name>`, which `git worktree remove --force`
+ *    also deletes. On Windows a directory watch whose target is deleted emits
+ *    `rename` at ~150k events/sec forever, with no `error` event, stopping only
+ *    on close(). Nothing released those handles on removal; only project
+ *    relocation ever called `releaseUnder`.
+ *  - An open handle inside the tree is what the retry, process-reap and husk
+ *    machinery below exists to fight.
+ *
+ * Registered by the main process at startup for the same dependency-direction
+ * reason as the removed-listener: this module must not reach up into the IPC
+ * context or the mobile bridge to find their watchers.
+ */
+type WorktreeRemovingListener = (worktreePath: string) => Promise<void>;
+
+let worktreeRemovingListener: WorktreeRemovingListener | null = null;
+
+export function setWorktreeRemovingListener(listener: WorktreeRemovingListener | null): void {
+  worktreeRemovingListener = listener;
+}
+
+async function notifyWorktreeRemoving(worktreePath: string): Promise<void> {
+  if (!worktreeRemovingListener) return;
+  try {
+    // Bounded because this await sits ahead of the `remove start:` log and
+    // every other `[WORKTREE]` line: a listener that hangs here produces no
+    // diagnostic output at all, which is the exact failure mode the removal
+    // budget below exists to end.
+    await withTimeout(
+      worktreeRemovingListener(worktreePath),
+      REMOVING_LISTENER_TIMEOUT_MS,
+      'worktree-removing listener',
+    );
+  } catch (error) {
+    // Best-effort: failing to release a handle must never block the removal.
+    // The worst case is the pre-existing behaviour.
+    console.warn('[WORKTREE] worktree-removing listener failed (non-fatal):', error);
   }
 }

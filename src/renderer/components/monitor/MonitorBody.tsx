@@ -8,6 +8,7 @@ import { useMonitorStore } from '../../stores/monitor-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
+import { trailModeFor } from '../board/CardMessageTrail';
 import { MonitorToolbar } from './MonitorToolbar';
 import { MonitorSummaryCards } from './MonitorSummaryCards';
 import { MonitorCard } from './MonitorCard';
@@ -16,7 +17,15 @@ import { MonitorTable } from './MonitorTable';
 import { MonitorRowContextMenu } from './MonitorRowContextMenu';
 import { requestMonitorDetail } from './MonitorDetailLayer';
 import { useMonitorPeekSubscription } from './useMonitorPeekSubscription';
-import { bucketOf, filterRows, groupRows, sortRows, toRenderUnits } from './monitor-view-model';
+import {
+  applyProjectScope,
+  bucketOf,
+  filterRows,
+  groupRows,
+  monitorSlotKind,
+  sortRows,
+  toRenderUnits,
+} from './monitor-view-model';
 
 /**
  * The monitor's body. Reads purely from stores and returns a bare fragment, so it
@@ -68,11 +77,6 @@ export function MonitorBody() {
   );
   const setView = useMonitorStore((state) => state.setView);
   const closeMonitor = useMonitorStore((state) => state.close);
-
-  // Live terminal output for every row, for as long as this body is mounted.
-  // Mounted HERE rather than in the page shell so both hosts (in-app overlay and
-  // detached window) get it from the one component they share.
-  useMonitorPeekSubscription();
 
   // Memoized so LabelPills' own React.memo is not defeated by a fresh object
   // identity on every render (the trap TaskCard documents).
@@ -152,9 +156,53 @@ export function MonitorBody() {
     return {
       list: toRenderUnits(groups, columns),
       groups,
+      filteredRows: filtered,
       visibleCount: filtered.length,
     };
   }, [rows, view, columns]);
+
+  // Live terminal output, for as long as this body is mounted and only for the
+  // rows whose card would draw it. Mounted HERE rather than in the page shell so
+  // both hosts (in-app overlay and detached window) get it from the one
+  // component they share.
+  //
+  // Which rows draw the peek is `monitorSlotKind`'s answer, not a second copy of
+  // the card's branching. It used to be a copy, and the two could disagree the
+  // moment either changed: main would go on streaming output for cards that had
+  // stopped showing it, or stop sampling for cards that had started. The list and
+  // table layouts draw none. Naming the rows lets main drop every other session's
+  // output at the tap, and an empty set switches its listener and timer off.
+  // Selected as ONE string so a trail landing for some other session, or one that
+  // leaves the set unchanged, re-renders nothing here.
+  const cardPreview = useConfigStore((state) => state.config.cardPreview);
+  const trailMode = trailModeFor(cardPreview);
+  const filteredRows = units.filteredRows;
+  const isCardsLayout = view.layout === 'cards';
+  const wantedPeekKey = useSessionStore(
+    useCallback(
+      (state: ReturnType<typeof useSessionStore.getState>) => {
+        if (!isCardsLayout) return '';
+        const wanted: string[] = [];
+        for (const row of filteredRows) {
+          const trail = state.sessionMessageTrails[row.sessionId];
+          const hasTrail = Boolean(trail && trail.length > 0);
+          if (monitorSlotKind(row, trailMode, hasTrail) === 'peek') wanted.push(row.sessionId);
+        }
+        return wanted.sort().join('\n');
+      },
+      [filteredRows, isCardsLayout, trailMode],
+    ),
+  );
+  useMonitorPeekSubscription(wantedPeekKey);
+
+  // Project-scope-only rows for the summary tiles; see the comment at the
+  // render site below for why the tiles follow the scope but not the other
+  // filters. Identity-stable when the filter is empty (the common case), so
+  // MonitorSummaryCards' memo on `rows` keeps working.
+  const scopedRows = useMemo(
+    () => applyProjectScope(rows, view.projectFilter),
+    [rows, view.projectFilter],
+  );
 
   const virtualizer = useVirtualizer({
     count: units.list.length,
@@ -256,15 +304,19 @@ export function MonitorBody() {
 
   return (
     <>
-      {/* Summary ABOVE the controls, deliberately. These counts are over every
-          session regardless of the filters below, so leading with them says
-          "here is the whole machine" before the controls narrow what is listed.
-          (The usage dashboard puts its tiles under its toolbar because there the
-          controls change what the tiles measure; here they do not.) */}
+      {/* Summary ABOVE the controls, deliberately. The tiles follow the Projects
+          SCOPE - the projects the user chose to watch ARE "the whole machine" as
+          far as they are concerned, and counts for hidden projects above cards
+          that never show them read as a bug - but they still ignore the
+          transient slicing below (Live only / state / text), which narrows the
+          LIST: tiles that followed those would just restate the visible cards,
+          and "Live only" must not zero the Paused tile. (The usage dashboard
+          puts its tiles under its toolbar because there the controls change what
+          the tiles measure; here only the scope does.) */}
       {/* Dropped entirely when nothing is running: four tiles reading 0 with a
           blank line under each, stacked above a zero-state that already says "no
           agents running", is four restatements of one fact. */}
-      {rows.length > 0 && <MonitorSummaryCards rows={rows} />}
+      {scopedRows.length > 0 && <MonitorSummaryCards rows={scopedRows} />}
       <MonitorToolbar view={view} rows={rows} visibleCount={units.visibleCount} setView={setView} />
 
       {/* `pt-3` belongs HERE, not on the group header. With grouping switched off

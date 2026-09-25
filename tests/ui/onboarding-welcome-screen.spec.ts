@@ -310,8 +310,8 @@ test.describe('Welcome screen readiness', () => {
     await expect
       .poll(() => page.evaluate(() => window.__openedExternalUrls ?? []))
       .toEqual([
-        'https://www.kangentic.com/getting-started/',
-        'https://www.kangentic.com/mobile/pairing/',
+        'https://kangentic.com/getting-started/',
+        'https://kangentic.com/mobile/pairing/',
       ]);
   });
 });

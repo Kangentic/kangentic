@@ -83,6 +83,15 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
 }));
 
+// handleTaskMove fires this itself now (it used to live at the call sites these
+// tests bypass), so without the mock every successful move here runs the real
+// helper against mocked repositories. It swallows its own errors, so the damage
+// is invisible rather than absent - the same reason the other task-move suites
+// already mock it.
+vi.mock('../../src/main/pr/pr-linking', () => ({
+  autoLinkPRForTask: vi.fn(),
+}));
+
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
@@ -162,11 +171,14 @@ interface MockSessionManager {
   killByTaskId: ReturnType<typeof vi.fn>;
   listSessions: ReturnType<typeof vi.fn>;
   suspend: ReturnType<typeof vi.fn>;
+  getSession: ReturnType<typeof vi.fn>;
+  findLiveSessionByTaskId: ReturnType<typeof vi.fn>;
 }
 
 interface MockContext {
   currentProjectId: string;
   currentProjectPath: string;
+  boardEvents: { emitBoardChanged: ReturnType<typeof vi.fn> };
   mainWindow: {
     isDestroyed: ReturnType<typeof vi.fn>;
     webContents: { send: ReturnType<typeof vi.fn> };
@@ -236,6 +248,11 @@ function makeSessionManager(): MockSessionManager {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    // Phase 1 reconciles task.session_id against the registry before the
+    // Priority ladder; a live row for the pointed-at id keeps these fixtures
+    // on the branches they exercise.
+    getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+    findLiveSessionByTaskId: vi.fn(() => null),
   };
 }
 
@@ -279,6 +296,7 @@ function makeContext(
   const context: MockContext = {
     currentProjectId: 'proj-test',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
@@ -378,7 +396,7 @@ describe('handleTaskMove outer-catch rollback', () => {
     const context = makeContext(taskRepo, swimlaneRepo);
 
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).rejects.toThrow('Worktree setup failed');
 
     // removeByTaskId must run regardless (cleans up any partial PTY).
@@ -421,7 +439,7 @@ describe('handleTaskMove outer-catch rollback', () => {
 
     // Abort errors are swallowed - the handler returns undefined.
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).resolves.toBeUndefined();
 
     // PTY map cleanup must still run on abort.
@@ -452,7 +470,7 @@ describe('handleTaskMove outer-catch rollback', () => {
 
     // Original Phase 2 error must surface (wrapped by the inner worktree catch).
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).rejects.toThrow('Worktree setup failed');
 
     // removeByTaskId runs before the getById check.
@@ -483,7 +501,7 @@ describe('handleTaskMove outer-catch rollback', () => {
     const context = makeContext(taskRepo, swimlaneRepo);
 
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).rejects.toThrow('Worktree setup failed');
 
     // PTY map cleanup.
@@ -530,7 +548,7 @@ describe('handleTaskMove outer-catch rollback', () => {
     // Must throw the ORIGINAL error ('Worktree setup failed'), not the
     // rollback error ('rollback move failed: DB locked').
     await expect(
-      handleTaskMove(context as never, MOVE_INPUT),
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
     ).rejects.toThrow('Worktree setup failed');
 
     // removeByTaskId ran before the failing move.

@@ -69,7 +69,7 @@ export const MOBILE_BOARD_TOOL_ACCESS: Readonly<Record<string, BoardToolAccess>>
   ...BOARD_TOOL_WRITE_NAMES.map((name): [string, BoardToolAccess] => [name, 'mutate']),
 ]);
 
-/** query_db is unsafe; create_column/delete_column are unvalidated board-structure edits; move_task/reorder_tasks/list_tasks/list_columns/list_backlog are safe but duplicate the dedicated move-task/read-board verbs - see the module doc comment. */
+/** query_db is unsafe; create_column/delete_column are unvalidated board-structure edits; the four automation tools are column configuration plus an execute verb, with no phone surface; move_task/reorder_tasks/list_tasks/list_columns/list_backlog are safe but duplicate the dedicated move-task/read-board verbs - see the module doc comment. */
 export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([
   'query_db',
   'create_column',
@@ -87,6 +87,27 @@ export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([
   // neither name has to enter the published protocol tuples.
   'reserve_dev_ports',
   'check_dev_ports',
+  // A column's automations are board CONFIGURATION, the same class as
+  // create_column / delete_column above, and `run_automation` is a bare
+  // execute verb on top of it. Two separate reasons to keep both off this
+  // path. `set_automations` authors a `run_script` row, which is a script the
+  // DESKTOP runs on the next move into that column, so writing one from a
+  // phone is the code-execution line this path already refuses at `query_db`,
+  // with a delay in front of it. `run_automation` takes the task lock and
+  // executes one immediately; a phone CAN already trigger a column's scripts
+  // by moving a card there through the `move-task` verb, but that runs what
+  // the user authored on the desktop, at a moment the board explains.
+  //
+  // The two reads come off with them rather than being classified, because
+  // nothing on a phone renders an automation: this whole feature's surface is
+  // the desktop Column Manager. Excluding them also keeps four names out of
+  // the published protocol tuples, the same call `reserve_dev_ports` made. A
+  // phone automations view, if anyone ever wants one, gets a bespoke verb with
+  // a real schema rather than arriving by omission here.
+  'list_automations',
+  'set_automations',
+  'get_automation_runs',
+  'run_automation',
 ]);
 
 /** True only for a `commandHandlers` key that is both classified here and not on the exclusion list. */

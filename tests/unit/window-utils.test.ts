@@ -30,6 +30,7 @@ vi.mock('../../src/main/config/paths', () => ({
 }));
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: vi.fn(() => '/mock/app') },
+  nativeTheme: { shouldUseDarkColors: true },
   screen: {
     getAllDisplays: vi.fn(),
     getDisplayMatching: vi.fn(),
@@ -37,8 +38,9 @@ vi.mock('electron', () => ({
 }));
 
 import fs from 'node:fs';
-import { screen } from 'electron';
-import { resolveIconPath, resolvePopOutBounds, savePopOutBounds } from '../../src/main/window-utils';
+import { nativeTheme, screen } from 'electron';
+import { THEME_BACKGROUNDS } from '../../src/shared/types';
+import { computeWindowTitle, resolveBackgroundColor, resolveIconPath, resolvePopOutBounds, savePopOutBounds } from '../../src/main/window-utils';
 
 interface FakeDisplay {
   id: number;
@@ -206,6 +208,111 @@ describe('savePopOutBounds', () => {
     // Highest-value assertion: a save for 'changes' must not drop the sibling 'stats'
     // entry (read-merge-write), regardless of AppConfig's dictionary merge semantics.
     expect(savedConfig.popOutBounds?.stats).toEqual(previousStats);
+  });
+});
+
+describe('computeWindowTitle', () => {
+  // Pure string logic - no fs/electron access, so none of the module-level mocks above
+  // apply here. `appLabel` is always passed in as an already-resolved string ("Kangentic
+  // (dev)" or "Kangentic") rather than a boolean read from `__KANGENTIC_DEV__`: that
+  // identifier is an esbuild `define`, resolved (and its "(dev)" string literal folded
+  // away by dead-code elimination in production) only at the call site in index.ts. See
+  // the doc comment on computeWindowTitle for why the ternary must stay there instead of
+  // moving into this function.
+  const noPreviewTitle = () => null;
+
+  it('non-worktree: the app label alone, with no cwd at all', () => {
+    expect(computeWindowTitle('Kangentic (dev)', null, noPreviewTitle)).toBe('Kangentic (dev)');
+  });
+
+  it('non-worktree, dev label, real (non-worktree) cwd: "Kangentic (dev)" - the core new behavior', () => {
+    // This is the case the whole feature exists for: a dogfooding `npm start` window,
+    // NOT running out of a .kangentic/worktrees/ checkout, distinguishable from a
+    // packaged build in the taskbar.
+    expect(computeWindowTitle('Kangentic (dev)', 'C:\\Users\\dev\\projects\\kangentic', noPreviewTitle)).toBe(
+      'Kangentic (dev)',
+    );
+  });
+
+  it('non-worktree, production label: plain "Kangentic" - restates index.html\'s <title>, no badge', () => {
+    expect(computeWindowTitle('Kangentic', 'C:\\Users\\dev\\projects\\kangentic', noPreviewTitle)).toBe('Kangentic');
+  });
+
+  it('worktree, numeric folder (display_id), dev label, no resolved preview label: "Kangentic (dev) - #<id>"', () => {
+    expect(
+      computeWindowTitle('Kangentic (dev)', 'C:\\Users\\dev\\kangentic\\.kangentic\\worktrees\\566', noPreviewTitle),
+    ).toBe('Kangentic (dev) - #566');
+  });
+
+  it('worktree, numeric folder, production label, no resolved preview label: "Kangentic - #<id>"', () => {
+    expect(
+      computeWindowTitle('Kangentic', 'C:\\Users\\dev\\kangentic\\.kangentic\\worktrees\\566', noPreviewTitle),
+    ).toBe('Kangentic - #566');
+  });
+
+  it('worktree, legacy <slug>-<shortId> folder: used verbatim, no leading "#"', () => {
+    expect(
+      computeWindowTitle(
+        'Kangentic (dev)',
+        'C:\\Users\\dev\\kangentic\\.kangentic\\worktrees\\my-feature-a1b2c3d4',
+        noPreviewTitle,
+      ),
+    ).toBe('Kangentic (dev) - my-feature-a1b2c3d4');
+  });
+
+  it('worktree with a resolved preview task label: the label wins OUTRIGHT - no "Kangentic" prefix, no "(dev)" suffix', () => {
+    // Highest-value case: this is the one place the app-name/dev marker deliberately
+    // does NOT appear, because Windows already groups the thumbnail under the
+    // Kangentic taskbar group. A future edit that "helpfully" prepends the app label
+    // here would push the part that actually identifies the window off the thumbnail.
+    expect(
+      computeWindowTitle(
+        'Kangentic (dev)',
+        'C:\\Users\\dev\\kangentic\\.kangentic\\worktrees\\566',
+        () => '#566 - Some task',
+      ),
+    ).toBe('#566 - Some task');
+  });
+
+  it('accepts a forward-slash cwd (POSIX) identically to a backslash one', () => {
+    expect(
+      computeWindowTitle('Kangentic (dev)', '/home/dev/kangentic/.kangentic/worktrees/566', noPreviewTitle),
+    ).toBe('Kangentic (dev) - #566');
+  });
+
+  it('does not invoke the preview-title resolver at all outside a worktree (preserves laziness)', () => {
+    const resolvePreviewTaskTitle = vi.fn(() => null);
+    computeWindowTitle('Kangentic (dev)', 'C:\\Users\\dev\\projects\\kangentic', resolvePreviewTaskTitle);
+    expect(resolvePreviewTaskTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveBackgroundColor', () => {
+  // The launch background must resolve the theme the same way the renderer will paint it,
+  // or a follow-system install flashes the hand-picked theme's colour before first paint.
+  it('uses the hand-picked theme when not following the system', () => {
+    mockConfigFile({ theme: 'moon', themeFollowsSystem: false, themeLight: 'sky', themeDark: 'ember' });
+    nativeTheme.shouldUseDarkColors = true;
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.moon);
+  });
+
+  it('uses the pair member for the OS side when following the system', () => {
+    mockConfigFile({ theme: 'moon', themeFollowsSystem: true, themeLight: 'sky', themeDark: 'ember' });
+    nativeTheme.shouldUseDarkColors = true;
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.ember);
+    nativeTheme.shouldUseDarkColors = false;
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.sky);
+  });
+
+  it('fills a config file that predates the pair from the defaults', () => {
+    mockConfigFile({ theme: 'forest' });
+    nativeTheme.shouldUseDarkColors = false;
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.forest);
+  });
+
+  it('falls back to the dark default when the file is unreadable', () => {
+    vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.dark);
   });
 });
 

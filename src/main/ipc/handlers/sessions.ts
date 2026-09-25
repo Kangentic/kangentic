@@ -5,13 +5,14 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
-import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
-import { linkPR, autoLinkPRForTask } from '../../pr/pr-linking';
+import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides, notifySpawnBlocked } from '../helpers';
+import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
+import { trackFeatureUsed, trackMilestone } from '../../analytics/usage';
 import { parseModelId } from '../../../shared/model-id';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
@@ -19,7 +20,9 @@ import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessi
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
-import type { PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
+import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
+import { agentRegistry } from '../../agent/agent-registry';
+import { MessageTrailTracker } from '../../agent/message-trail-tracker';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { resumeBlockMessage, resumeBlockReason } from '../../../shared/session-resume-eligibility';
@@ -108,18 +111,21 @@ export function registerSessionHandlers(context: IpcContext): void {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!resolvedProjectId) throw new Error('No project is currently open');
 
-      const { tasks } = getProjectRepos(context, resolvedProjectId);
-      const task = tasks.getById(taskId);
-      if (!task) throw new Error(`Task ${taskId} not found`);
-      if (!task.session_id) return; // nothing to suspend
+      // Reconciled against the registry, as SESSION_RESUME and the task move
+      // are: a pointer at an exited row is cleared and there is nothing to
+      // suspend, and a live PTY the pointer lost is re-linked and suspended.
+      // On the raw pointer, a pause on a task whose CLI had ended by itself
+      // marked its exited record `suspended` and suspended a row that was not
+      // live.
+      const { liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
+      if (!liveSession) return; // nothing to suspend
 
-      const sessionId = task.session_id;
       // DB writes first (capture metrics, mark record suspended, clear
       // task.session_id) then async PTY shutdown. Capturing metrics before
       // shutdown is required - caches are still populated; afterwards is
       // also fine, but doing it first matches task-move's order.
       applySuspendDbWrites(context, resolvedProjectId, taskId, 'user');
-      await context.sessionManager.suspend(sessionId);
+      await context.sessionManager.suspend(liveSession.id);
     });
   });
 
@@ -138,7 +144,7 @@ export function registerSessionHandlers(context: IpcContext): void {
       const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
       if (!resolvedProjectId) throw new Error('No project is currently open');
 
-      const { tasks, actions, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
+      const { tasks, automations, automationRuns, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
 
       try {
         // Phase 1 (locked, short): validate task + lane, build plan.
@@ -180,11 +186,14 @@ export function registerSessionHandlers(context: IpcContext): void {
         // WorktreeManager.projectQueues. AbortSignal cancels in-flight fetch
         // when SESSION_SUSPEND / a newer SESSION_RESUME / SESSION_RESET fires.
         try {
-          await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal });
+          // The explicit projectId: if the user switches projects during this
+          // slow git phase, a base-fetch failure's spawn warning must stamp
+          // the resumed task's project, not whatever became ambient.
+          await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, projectId: resolvedProjectId });
         } catch (worktreeError) {
           if (isAbortError(worktreeError)) throw worktreeError;
           const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
-          throw new Error(`Worktree setup failed: ${message}`);
+          throw new Error(`Worktree setup failed: ${message}`, { cause: worktreeError });
         }
 
         // Phase 3 (locked, short): CAS-check invariants, then spawn the PTY
@@ -219,7 +228,7 @@ export function registerSessionHandlers(context: IpcContext): void {
           const db = getProjectDb(resolvedProjectId);
           const sessionRepo = new SessionRepository(db);
           const engine = createTransitionEngine(
-            context, actions, tasks, sessionRepo, attachmentRepo,
+            context, automations, automationRuns, tasks, sessionRepo, attachmentRepo,
             resolvedProjectId, resolvedProjectPath,
           );
 
@@ -457,6 +466,23 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
+  // A reason-only refresh rides the SAME channel a real transition does: the
+  // renderer's reducer stores state and reason together, and the state it
+  // re-sends is the unchanged current one, so a second channel would only
+  // duplicate that reducer. It is a separate EMITTER, though: the other nine
+  // listeners on 'activity' read that event as "the state changed", and several
+  // act on it (push notifications, desktop toasts, auto-move on turn
+  // completion). See the emit site in `session-manager.ts`.
+  context.sessionManager.on(
+    'activity-reason',
+    (sessionId: string, state: string, reason: unknown) => {
+      if (context.mainWindow.isDestroyed()) return;
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      const taskId = context.sessionManager.getSessionTaskId(sessionId);
+      broadcast(context.mainWindow, IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId);
+    },
+  );
+
   context.sessionManager.on('activity', (sessionId: string, state: string, reason: unknown) => {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);
@@ -497,21 +523,70 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
+  // Board-card agent message trail. The tracker subscribes to the session
+  // manager itself and reads a bounded transcript tail on the events above; it
+  // is NOT buffered like usage/events, because it already coalesces at the
+  // source and a background card is exactly where the trail is looked at.
+  const messageTrailTracker = new MessageTrailTracker({
+    sessionManager: context.sessionManager,
+    resolveSessionFacts: (sessionId, projectId) => {
+      try {
+        const record = new SessionRepository(getProjectDb(projectId)).findByAnyId(sessionId);
+        if (!record) return null;
+        return { sessionType: record.session_type, agentSessionId: record.agent_session_id, cwd: record.cwd };
+      } catch {
+        return null;
+      }
+    },
+    resolveAdapter: (sessionType) => agentRegistry.getBySessionType(sessionType),
+  });
+  messageTrailTracker.on('trail', (sessionId: string, entries: AssistantMessageTrailEntry[], projectId: string) => {
+    if (context.mainWindow.isDestroyed()) return;
+    broadcast(context.mainWindow, IPC.SESSION_MESSAGE_TRAIL, sessionId, entries, projectId);
+  });
+  ipcMain.handle(IPC.SESSION_GET_MESSAGE_TRAILS, () => messageTrailTracker.snapshot());
+
   context.sessionManager.on('session-changed', (sessionId: string, session: Session) => {
     if (session.status === 'running') {
       sessionStartTimes.set(sessionId, Date.now());
 
       // Analytics: track spawn intent on the first running transition. Model
       // is not known yet (arrives later via status.json) and is omitted here -
-      // session_exit / task_complete carry the model.
+      // session_exit / task_complete carry the model. permissionMode (the
+      // resolved mode the session record spawned under, not the task's raw
+      // override) and worktree ride the same event as budget-neutral props.
+      // This listener sees EVERY spawn path (board move, create, recovery,
+      // transient), which also makes it the one chokepoint for the
+      // worktree/profile adoption signals and the first_spawn milestone.
       if (!sessionSpawnAnalyticsFired.has(sessionId)) {
         sessionSpawnAnalyticsFired.add(sessionId);
         const spawnAgentName = context.sessionManager.getSessionAgentName(sessionId);
         if (spawnAgentName) {
-          trackEvent('session_spawn', {
+          const spawnProps: Record<string, string | number | boolean> = {
             agent: spawnAgentName,
             isTransient: !!session.transient,
-          });
+          };
+          try {
+            const spawnProjectId = context.sessionManager.getSessionProjectId(sessionId);
+            // Not during shutdown: getProjectDb silently REOPENS a just-closed
+            // project DB (close deletes the cache entry, so the next call
+            // constructs a fresh connection nothing ever closes again).
+            if (!isShuttingDown() && spawnProjectId && session.taskId) {
+              const database = getProjectDb(spawnProjectId);
+              const spawnRecord = new SessionRepository(database).getLatestForTask(session.taskId);
+              if (spawnRecord?.permission_mode) spawnProps.permissionMode = spawnRecord.permission_mode;
+              const taskRow = new TaskRepository(database).getById(session.taskId);
+              if (taskRow) {
+                spawnProps.worktree = !!taskRow.worktree_path;
+                if (taskRow.worktree_path) trackFeatureUsed('worktree_session');
+                if (taskRow.profile_id) trackFeatureUsed('board_profile');
+              }
+            }
+          } catch {
+            // Enrichment is best-effort; the base props still send
+          }
+          trackEvent('session_spawn', spawnProps);
+          if (!session.transient) trackMilestone('first_spawn');
         }
       }
 
@@ -535,6 +610,29 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
     if (!context.mainWindow.isDestroyed()) {
       broadcast(context.mainWindow, IPC.SESSION_STATUS, sessionId, session, session.projectId);
+    }
+  });
+
+  // A session left the registry for good (SessionManager.remove()). Its own
+  // channel, never SESSION_STATUS: the renderer's status handler can only
+  // upsert, so a removal announced there re-seeded the row it was reporting
+  // gone (#661). The renderer drops the row and its per-session maps by id.
+  context.sessionManager.on('session-removed', (sessionId: string, session: Session) => {
+    // Drop anything this session left in the background buffers above. A
+    // non-focused session's usage and events are held here for up to
+    // BACKGROUND_FLUSH_MS, so without this the timer fires AFTER the removal
+    // and broadcasts a usage tick for a session the renderer has already
+    // dropped, writing `sessionUsage[id]` back under a row that no longer
+    // exists. That is the stale context bar of #661 arriving two seconds late,
+    // and no amount of renderer-side scrubbing can prevent it: the push is
+    // legitimate as far as the renderer can tell. Purging at the source also
+    // covers every other consumer of the channel, not just the board store.
+    bufferedUsage.delete(sessionId);
+    for (let eventIndex = bufferedEvents.length - 1; eventIndex >= 0; eventIndex--) {
+      if (bufferedEvents[eventIndex].sessionId === sessionId) bufferedEvents.splice(eventIndex, 1);
+    }
+    if (!context.mainWindow.isDestroyed()) {
+      broadcast(context.mainWindow, IPC.SESSION_REMOVED, sessionId, session, session.projectId);
     }
   });
 
@@ -573,6 +671,43 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
+  /**
+   * A CLI that ended on its own and SAID why did not start; say so. The
+   * adapter reads its own CLI's last words (Claude's "No conversation found
+   * with session ID" on a `--resume` whose transcript is gone) and the failure
+   * rides the same "Agent did not start" notice a failed worktree or checkout
+   * raises. Without it the card simply went quiet: a dead session row was the
+   * only trace. Two routes reach this, and both must: the agent-absence sweep
+   * (the CLI runs under a shell that outlives it, so the PTY never exits on
+   * its own and the sweep's kill arrives INTENTIONAL) and the rare direct PTY
+   * exit. Never for a Command Terminal, which has no task to notify about.
+   */
+  const notifyStartupFailureIfNamed = (exitedSession: Session, exitCode: number, projectId: string): void => {
+    if (exitedSession.transient) return;
+    const exitAgentName = context.sessionManager.getSessionAgentName(exitedSession.id);
+    const adapter = exitAgentName ? agentRegistry.get(exitAgentName) : undefined;
+    if (!adapter?.describeStartupFailure) return;
+    const startupFailure = adapter.describeStartupFailure(context.sessionManager.getRawScrollback(exitedSession.id), exitCode);
+    if (!startupFailure) return;
+    try {
+      const failedTask = new TaskRepository(getProjectDb(projectId)).getById(exitedSession.taskId);
+      if (failedTask) notifySpawnBlocked(context, failedTask, 'agent', new Error(startupFailure), projectId);
+    } catch {
+      // DB may be closed during shutdown; the notice is best-effort.
+    }
+  };
+
+  // The agent-absence sweep found a running session whose CLI is gone and is
+  // about to retire it through kill(). That kill is intentional by design, so
+  // this is the only moment the CLI's own account of its end can be read.
+  context.sessionManager.on('agent-absent', (sessionId: string, session: Session) => {
+    const resolvedProjectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (!resolvedProjectId) return;
+    // The sweep forces the reported exit code to 0 (a normal end); the
+    // recognizers read the wording, not the code.
+    notifyStartupFailureIfNamed(session, 0, resolvedProjectId);
+  });
+
   context.sessionManager.on('exit', (sessionId: string, exitCode: number, intentional?: boolean) => {
     const resolvedProjectId = context.sessionManager.getSessionProjectId(sessionId);
 
@@ -599,6 +734,10 @@ export function registerSessionHandlers(context: IpcContext): void {
         exitProps.costUsd = Math.round(usageForExit.cost.totalCostUsd * 10000) / 10000;
       }
       exitProps.toolCalls = context.sessionManager.getToolCallCount(sessionId);
+      // Crash-vs-deliberate: kill()/suspend tag the exit intentional (see
+      // session-spawn-flow.ts); undefined means a genuine agent-side exit, so
+      // compare === true like every other consumer of the flag.
+      exitProps.intentional = intentional === true;
       trackEvent('session_exit', exitProps);
       sessionStartTimes.delete(sessionId);
       sessionSpawnAnalyticsFired.delete(sessionId);
@@ -606,6 +745,17 @@ export function registerSessionHandlers(context: IpcContext): void {
 
     if (!context.mainWindow.isDestroyed()) {
       broadcast(context.mainWindow, IPC.SESSION_EXIT, sessionId, exitCode, resolvedProjectId, intentional);
+    }
+
+    // The direct route to the startup-failure notice: the CLI was the PTY's
+    // root (or its shell ended with it) and the PTY itself exited. Never for a
+    // kill or a suspend, which are intentional and carry no failure. The usual
+    // route is the agent-absence sweep's `agent-absent` below, because the CLI
+    // normally runs under a shell that outlives it. Read BEFORE the DB writes
+    // so the raw ring is still the CLI's output and a DB throw cannot skip it.
+    if (intentional !== true && resolvedProjectId) {
+      const exitedSession = context.sessionManager.getSession(sessionId);
+      if (exitedSession) notifyStartupFailureIfNamed(exitedSession, exitCode, resolvedProjectId);
     }
 
     // Persist exit status to session DB -- use the session's own projectId
@@ -712,10 +862,25 @@ export function registerSessionHandlers(context: IpcContext): void {
   // Auto-link PR when an agent's `gh pr ...` command finishes (or on session
   // exit if its ToolEnd was lost). The candidate is just the hint; the
   // authoritative branch->PR query runs in linkPR, with the scrollback
-  // passed through only as the gh-unavailable degradation fallback.
+  // passed through only as the gh-unavailable degradation fallback. The
+  // strongest hint there is, so it skips the 60s coalesce an idle resolve
+  // may have stamped after the push (but not the terminal-state skip).
   context.sessionManager.on('pr-candidate', (sessionId: string, scrollback: string) => {
-    void linkPR(context, { sessionId, scrollback }).catch((error) => {
+    void linkPR(context, { sessionId, scrollback, bypassThrottle: true }).catch((error) => {
       console.error(`[pr-candidate] Failed to resolve PR for session ${sessionId}:`, error);
+    });
+  });
+
+  // The agent's own `git push` finished: record its destination branch on the
+  // task as the per-task PR anchor. Recorded only, never resolved from here:
+  // the push precedes the PR, and a non-force resolve now would burn the 60s
+  // per-task throttle that the `pr-candidate` seconds later needs. Transient
+  // (Command Terminal) sessions have no task row to anchor.
+  context.sessionManager.on('branch-pushed', (sessionId: string, branch: string) => {
+    const session = context.sessionManager.getSession(sessionId);
+    if (!session || session.transient) return;
+    void recordPushedBranchForSession(context, sessionId, branch).catch((error) => {
+      console.error(`[branch-pushed] Failed to record pushed branch for session ${sessionId}:`, error);
     });
   });
 
@@ -723,7 +888,11 @@ export function registerSessionHandlers(context: IpcContext): void {
   // Works with no live session (maps by task id, resolves via the confidence ladder).
   ipcMain.handle(IPC.TASK_RESOLVE_PR, async (_, taskId: string, projectId?: string | null): Promise<TaskResolvePrResult> => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
-    if (!resolvedProjectId) return { task: null, linked: false, reason: 'no-anchor' };
+    // Not `no-anchor`: that status means the TASK has nothing to search by,
+    // and the header toast says so. No project open is a different failure.
+    if (!resolvedProjectId) {
+      return { task: null, linked: false, reason: 'resolver-unavailable', message: 'No project is open' };
+    }
     const result = await linkPR(context, { projectId: resolvedProjectId, taskId, force: true });
     return {
       task: result.task,
@@ -777,20 +946,23 @@ export function registerSessionHandlers(context: IpcContext): void {
       if (!target) return;
 
       const position = tasks.list(target.id).length;
+      // 'auto-move' sends TASK_AUTO_MOVED, emits the board-changed event this
+      // path never used to, and resolves the PR for the new lane - all inside
+      // handleTaskMove now. The push in particular used to be a raw
+      // webContents.send here, which bypassed sendToRenderer and so never
+      // reached the IPC recorder: a plan-exit auto-move was invisible in the
+      // dev IPC log, which is exactly the blind spot that made this class of
+      // staleness bug hard to attribute.
       await handleTaskMove(
         context,
         { taskId: task.id, targetSwimlaneId: target.id, targetPosition: position },
+        'auto-move',
         resolvedProjectId,
         resolvedProjectPath,
         { continuationPrompt: PLAN_EXIT_CONTINUATION_PROMPT },
       );
 
-      if (!context.mainWindow.isDestroyed()) {
-        context.mainWindow.webContents.send(IPC.TASK_AUTO_MOVED, task.id, target.id, task.title, resolvedProjectId);
-      }
       console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
-      // Resolve the PR for the new (non-To Do) lane - runs after the move's lock released.
-      autoLinkPRForTask(context, task.id, resolvedProjectId);
     } catch (err) {
       console.error('[plan-exit] Auto-move failed:', err);
     }

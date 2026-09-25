@@ -3,7 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import { GitHubIcon } from '../../icons/GitHubIcon';
 import { formatRelativeTime } from '../../../lib/datetime';
 import type { DataTableColumn } from '../../DataTable';
-import { Pill } from '../../Pill';
+import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { PriorityBadge } from '../PriorityBadge';
 import { stripMarkdown } from '../../../utils/strip-markdown';
 import type { BacklogTask } from '../../../../shared/types';
@@ -46,6 +46,7 @@ export function useBacklogColumns(input: {
       label: '',
       width: 'w-[40px]',
       render: (item) => (
+        // select-none-ok: the label wraps a bare checkbox and renders no text.
         <label className="flex items-center justify-center p-1 cursor-pointer" onClick={(event) => event.stopPropagation()}>
           <input
             type="checkbox"
@@ -117,8 +118,8 @@ export function useBacklogColumns(input: {
                 <Pill
                   key={label}
                   size="sm"
-                  className={color ? 'bg-surface-hover/60 font-medium' : 'bg-surface-hover/60 text-fg-muted'}
-                  style={color ? { color } : undefined}
+                  className={color ? 'font-medium border' : 'bg-surface-hover/60 text-fg-muted'}
+                  style={color ? { color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE } : undefined}
                 >
                   {label}
                 </Pill>

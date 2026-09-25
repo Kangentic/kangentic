@@ -1,8 +1,11 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import { seedDefaultSwimlanes, seedDefaultActions } from './default-data';
+import { LINEAGE_DELTA_SET_SQL } from '../repositories/usage-history-repository';
+import { seedDefaultSwimlanes } from './default-data';
 import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
+import { runAutomationsMigration } from './automations-migration';
 import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
+import { SWIMLANE_ROLES } from '../../../shared/types';
 
 export function runProjectMigrations(db: Database.Database): void {
   db.exec(`
@@ -146,6 +149,29 @@ export function runProjectMigrations(db: Database.Database): void {
     .some((col) => col.name === 'head_sha');
   if (!hasHeadShaColumn) {
     db.exec('ALTER TABLE tasks ADD COLUMN head_sha TEXT DEFAULT NULL');
+  }
+
+  // Migration: add 'pushed_branch' column - the branch the task's work was
+  // actually pushed to when it differs from the local branch_name. Agents push
+  // under a team convention while the worktree stays on the Kangentic slug, and
+  // every branch-keyed PR anchor then looks up a branch no PR was opened from.
+  // Separate from branch_name because that one names the LOCAL branch a restore
+  // re-attaches to.
+  const hasPushedBranchColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'pushed_branch');
+  if (!hasPushedBranchColumn) {
+    db.exec('ALTER TABLE tasks ADD COLUMN pushed_branch TEXT DEFAULT NULL');
+  }
+
+  // Migration: add 'resolved_base_branch' column - the base a task's worktree
+  // was ACTUALLY cut from, as resolved against the repo's real refs. Separate
+  // from 'base_branch' (the user's explicit choice, NULL for most tasks)
+  // because ensureTaskBranchCheckout treats a NULL base_branch as "nothing to
+  // check out"; backfilling that column would change spawn behavior.
+  const hasResolvedBaseBranchColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'resolved_base_branch');
+  if (!hasResolvedBaseBranchColumn) {
+    db.exec('ALTER TABLE tasks ADD COLUMN resolved_base_branch TEXT DEFAULT NULL');
   }
 
   // Migration: add 'use_worktree' column for per-task worktree override
@@ -411,6 +437,26 @@ export function runProjectMigrations(db: Database.Database): void {
   // Migration: rename 'Backlog' swimlane to 'To Do' and migrate role 'backlog' -> 'todo'
   db.prepare("UPDATE swimlanes SET name = 'To Do' WHERE role IN ('backlog', 'todo') AND name IN ('Backlog', 'Not Started')").run();
   db.prepare("UPDATE swimlanes SET role = 'todo' WHERE role = 'backlog'").run();
+
+  // Data migration: drop any role outside the union, so a column that is not a
+  // system column is stored as one (role NULL).
+  //
+  // The earlier 'planning' -> NULL and 'running' -> NULL conversions each live inside
+  // a one-shot `if (!hasColumn)` guard, so a database whose permission_mode and
+  // plan_exit_target_id columns already existed never ran them, and a role written
+  // later (a teammate's kangentic.json, a hand-edited row) is never converted at all.
+  // Those values then reach the renderer's two-key role -> icon map and render
+  // `<undefined />`, which blanks the board via the ErrorBoundary.
+  //
+  // This one is unconditional, so it also repairs a role that arrives after the
+  // schema settles. It MUST stay the last statement that REPAIRS a `role`: the
+  // backlog remap above PROMOTES to 'todo', and running this first would null it
+  // instead, leaving the board with no To Do role for applyBoardConfigToDb to find.
+  // seedDefaultSwimlanes further down does write `role` later, but it inserts
+  // trusted literals into a fresh table rather than repairing an existing value.
+  db.prepare(
+    `UPDATE swimlanes SET role = NULL WHERE role IS NOT NULL AND role NOT IN (${SWIMLANE_ROLES.map(() => '?').join(', ')})`
+  ).run(...SWIMLANE_ROLES);
 
   // Migration: create backlog_tasks table for staging tasks before the board
   // (Originally created as backlog_items, renamed to backlog_tasks below)
@@ -877,6 +923,97 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON conversation_turn_usage(session_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_ts ON conversation_turn_usage(ts)');
 
+  // Migration: subagent attribution on the turn-usage ledger.
+  //
+  // A fan-out task's subagents (Task-tool spawns) write their own transcripts,
+  // which the ledger never saw - measured at 83% of the turns and 71% of the
+  // cache-read tokens on a real /code-review session. `subagent_id` is the
+  // DISCRIMINATOR: it is NULL for every main-thread turn, so a reader that means
+  // "the driver" (which is what every reader meant by construction before these
+  // columns existed) says `subagent_id IS NULL` and keeps its historical series
+  // comparable. Without it, inserting subagent rows would silently redefine every
+  // existing query with no marker in the series where the change happened.
+  //
+  // `agent_type` is the subagent's declared type ('review-finder', 'test-builder',
+  // ...), which makes per-finder attribution free. `parent_tool_use_id` ties a
+  // subagent back to the spawning turn already in the ledger, and `spawn_depth`
+  // covers nesting (observed at 1 and 2).
+  const turnUsageColumns = new Set(
+    (db.pragma('table_info(conversation_turn_usage)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  const subagentColumns: Array<[string, string]> = [
+    ['subagent_id', 'TEXT DEFAULT NULL'],
+    ['agent_type', 'TEXT DEFAULT NULL'],
+    ['spawn_depth', 'INTEGER DEFAULT NULL'],
+    ['parent_tool_use_id', 'TEXT DEFAULT NULL'],
+  ];
+  for (const [columnName, columnDef] of subagentColumns) {
+    if (!turnUsageColumns.has(columnName)) {
+      db.exec(`ALTER TABLE conversation_turn_usage ADD COLUMN ${columnName} ${columnDef}`);
+    }
+  }
+  // Gives the project-wide windowed breakdown its GROUP BY agent_type ordering
+  // without a sort. It does NOT prune on subagent_id: that column is not in the
+  // index, so the leading `subagent_id IS NOT NULL` predicate is still applied
+  // per row. A partial index (WHERE subagent_id IS NOT NULL) would serve the
+  // predicate too, but it needs its own name or a DROP, because CREATE INDEX IF
+  // NOT EXISTS is a no-op against the shape already created here. The per-task
+  // breakdown rides idx_turn_usage_task, which already exists and IS selective.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_agent_type ON conversation_turn_usage(agent_type, ts)');
+
+  // Covering index for the two per-session main-thread rollups the dashboard
+  // runs on every load: `listUsageRollup`'s `session_turns` CTE (breakdown
+  // tokens) and `getGroupedUsageSince`'s `session_tokens` CTE (the cost
+  // allocation denominator). Both group every main-thread turn by session and
+  // sum the same two token columns, so carrying them in the index turns a
+  // 214k-row table walk into a pure index scan.
+  //
+  // Measured on the dogfooding project (214k turns, 2.4k sessions): the
+  // breakdown rollup went from 93 ms to 18 ms per project, which matters
+  // because the app-wide scope runs it once per registered project on the
+  // synchronous main thread that also owns the PTYs.
+  //
+  // PARTIAL on `subagent_id IS NULL` deliberately. Every reader of these
+  // aggregates is main-thread-only, so the subagent rows are dead weight in
+  // the index, and SQLite only picks a partial index up when the query repeats
+  // its predicate - which both CTEs do. `idx_turn_usage_session` stays: it
+  // serves `getForSession`, which reads a session's subagent rows too.
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_turn_usage_main_session '
+    + 'ON conversation_turn_usage(session_id, ts, input_tokens, output_tokens) '
+    + 'WHERE subagent_id IS NULL',
+  );
+
+  // Migration: the spawn-link side of `parent_tool_use_id`.
+  //
+  // `parent_tool_use_id` holds the tool-use id of the spawning call, but nothing
+  // recorded WHICH turn emitted a given tool-use id, so it was half a join with no
+  // other side: `conversation_turn_usage.turn_uuid` is the transcript record's own
+  // uuid for a main-thread row and `sub:<subagentId>:<messageId>` for a subagent
+  // one, and neither is a tool-use id. This table is the missing half - one row per
+  // subagent-spawning tool call, mapping that call's id to the turn that emitted it.
+  //
+  // Deliberately minimal. `turn_uuid` joins straight back to the ledger, which
+  // already carries session_id / task_id / ts, so denormalizing them here would only
+  // create a second copy to keep in sync. Rows are written by whichever parser saw
+  // the emitting turn: the main transcript for a depth-1 spawn, the subagent
+  // transcript for a deeper one, which is what lets a nested subagent resolve to its
+  // parent rather than only to a depth number.
+  //
+  // No sessions-DELETE cascade, for the same reason the ledger it serves has none:
+  // it is durable bookkeeping, not a rebuildable index.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS turn_spawn_links (
+      tool_use_id TEXT PRIMARY KEY,
+      turn_uuid TEXT NOT NULL,
+      recorded_at TEXT NOT NULL
+    )
+  `);
+  // Serves the reverse direction (given a driver turn, which spawns did it make).
+  // The forward direction, which is the one the fan-out rollup drives, rides the
+  // PRIMARY KEY on tool_use_id.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_turn_spawn_links_turn ON turn_spawn_links(turn_uuid)');
+
   // Durable activity-disposition-interval ledger: one row per continuous span
   // a session spent in one `ActivityDisposition` bucket ('idle' - needing the
   // user, covering both ActivityState idle and permission - or 'active' -
@@ -1108,6 +1245,77 @@ export function runProjectMigrations(db: Database.Database): void {
     }
   }
 
+  // Migration: make total_cost_usd / total_duration_ms SUMMABLE across a
+  // conversation's `--resume` legs.
+  //
+  // The agent reports both as CUMULATIVE-PER-CONVERSATION readings, but each
+  // resume leg is its own `sessions` row and therefore its own usage_history
+  // row, so the dashboard's flat SUM added the running total once per leg. On
+  // the dogfooding install that read $113,209 where the last reading per
+  // conversation summed to $50,487, and one lineage carried the identical
+  // $22.16 across ~20 consecutive rows with 0 tool calls each.
+  //
+  // The shape mirrors what `setTaskGitStats` already does for branch-cumulative
+  // git churn: keep every read query a flat SUM, and make the summed column
+  // per-leg. `cumulative_*` holds the raw reading (never summed, only used as
+  // the next leg's baseline); `total_*` becomes the delta against the highest
+  // reading of a PRIOR leg of the same conversation.
+  //
+  // `conversation_id` is the session's `agent_session_id`, which tracks CLI
+  // forks: both `reconcileResumeAgentSessionId` and the stale-ID recovery in
+  // session-lifecycle.ts persist the agent-reported id, so a `/clear` fork
+  // starts a new lineage whose first leg counts in full. A NULL
+  // `conversation_id` (a row whose `sessions` row was deleted) means "its own
+  // lineage" and keeps its value unchanged.
+  //
+  // The three ALTERs, the index and the backfill run in ONE transaction,
+  // matching the `run_mode` migration below: the guard tests only for
+  // `conversation_id`, so a crash between the first ALTER and the second would
+  // leave that column present, the guard satisfied, and `cumulative_cost_usd` /
+  // `cumulative_duration_ms` never created - after which every
+  // `recordSessionUsage` INSERT fails on a missing column, permanently and with
+  // no self-repair path. A crash inside the transaction rolls the whole thing
+  // back instead, so the guard stays an accurate proxy for "this finished".
+  const hasUsageHistoryConversationId = (db.pragma('table_info(usage_history)') as Array<{ name: string }>)
+    .some((column) => column.name === 'conversation_id');
+  if (!hasUsageHistoryConversationId) {
+    const addLineageColumns = db.transaction(() => {
+      db.exec('ALTER TABLE usage_history ADD COLUMN conversation_id TEXT');
+      db.exec('ALTER TABLE usage_history ADD COLUMN cumulative_cost_usd REAL');
+      db.exec('ALTER TABLE usage_history ADD COLUMN cumulative_duration_ms INTEGER');
+      // Created BEFORE the rewrite, not after it. The delta UPDATE below runs a
+      // correlated per-row lookup keyed on exactly this (conversation_id,
+      // session_started_at) pair, so without the index first the backfill scans
+      // the whole table once per row.
+      db.exec('CREATE INDEX IF NOT EXISTS idx_usage_history_conversation ON usage_history(conversation_id, session_started_at)');
+      db.exec(`
+        UPDATE usage_history SET conversation_id = (
+          SELECT s.agent_session_id
+            FROM sessions s
+           WHERE s.id = usage_history.session_record_id
+        )
+      `);
+      // Preserve the raw readings before rewriting the summable columns.
+      db.exec(`
+        UPDATE usage_history
+           SET cumulative_cost_usd = total_cost_usd,
+               cumulative_duration_ms = total_duration_ms
+      `);
+      // Per-leg deltas, using the same definition the write path applies on
+      // every capture. A lineage-less row keeps its reading as its delta.
+      db.exec(`
+        UPDATE usage_history
+           SET ${LINEAGE_DELTA_SET_SQL}
+         WHERE conversation_id IS NOT NULL
+      `);
+    });
+    addLineageColumns();
+  }
+  // Unconditional and idempotent, so the index still lands on a database that
+  // reached this point by some other route than the block above. Serves the
+  // per-leg baseline lookup in `recordSessionUsage`.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_usage_history_conversation ON usage_history(conversation_id, session_started_at)');
+
   // Migration: add per-task permission_mode override column. Mirrors
   // agent_override/model_override/effort_override: settable via the New Task
   // dialog's Advanced section and the task-detail edit form (pre-spawn or
@@ -1274,15 +1482,147 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN auto_command_at TEXT DEFAULT NULL');
   }
 
+  // Migration: record WHY a task's last spawn ran without a worktree (the
+  // `WorktreeSkipReason` union: 'disabled' | 'not-a-repo' | 'nested-worktree' |
+  // 'no-commits' | 'remote-agent' | 'worktree-missing'). Null while the task has
+  // a worktree or no spawn has decided yet. `WorktreeManager.ensureWorktree`
+  // used to collapse every guard into one silent null, so nothing could tell
+  // the user their agent was running in the shared project checkout. It is the
+  // ground truth for saying so, but has no renderer reader yet: the 12px card
+  // glyph that drew it was reviewed out as too small to tell apart, so the card
+  // and the detail header still read `worktree_path`.
+  // Written by `TaskRepository.setWorktreeSkipReason` (no
+  // `updated_at` bump: it is spawn telemetry, not a user edit) and cleared by
+  // `recordWorktree`. No backfill: NULL correctly means "never evaluated".
+  if (!taskInjectionColumns.includes('worktree_skip_reason')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN worktree_skip_reason TEXT DEFAULT NULL');
+  }
+
+  // Migration: add 'pr_merge_readiness' - the normalized merge-readiness verdict
+  // of the linked PR (the `PRMergeReadiness` union, `PR_MERGE_READINESS_VALUES`
+  // in src/shared/types.ts: 'ready' | 'blocked' | 'conflicting' | 'queued' |
+  // 'running' | 'unknown'), computed inside each PR connector from its own
+  // platform's mergeability fields. Plain TEXT with no CHECK constraint, so a
+  // widened union needs no migration. Orthogonal to `pr_state`, which stays the
+  // gate for the terminal short-circuits. NULL means never judged (no PR, or a
+  // link that predates this column); 'unknown' means the platform was asked and
+  // has no verdict yet. Preserved by a resolve whose tier cannot judge it,
+  // cleared with the other three PR columns on the confident-not-found clear.
+  // Unlike `pr_state`, the value is VIEWER-RELATIVE: with
+  // `git.prBypassCountsAsReady` on, the GitHub connector folds the resolving
+  // user's own merge bypass into 'ready', so the same PR can legitimately read
+  // 'ready' on one machine and 'blocked' on another.
+  if (!taskInjectionColumns.includes('pr_merge_readiness')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN pr_merge_readiness TEXT DEFAULT NULL');
+  }
+
+  // Persistent cache of remote board items for the Import dialog, keyed by
+  // (source, repository, external_id). Lets the dialog paint instantly on open
+  // and reconcile only items changed since the cache's high-water mark
+  // (MAX(remote_updated_at)). Living here makes it per-project and survives app
+  // restart and project switch. Timestamps are UTC ISO 8601 via toISOString();
+  // never DEFAULT CURRENT_TIMESTAMP. The composite PK bounds the
+  // (external_source, repository) prefix scan and the MAX(remote_updated_at)
+  // watermark to one source's rows, so no separate index is needed at these sizes.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS remote_item_cache (
+      external_source   TEXT NOT NULL,
+      repository        TEXT NOT NULL,
+      external_id       TEXT NOT NULL,
+      remote_updated_at TEXT NOT NULL,
+      state_category    TEXT NOT NULL,
+      payload           TEXT NOT NULL,
+      fetched_at        TEXT NOT NULL,
+      PRIMARY KEY (external_source, repository, external_id)
+    );
+  `);
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {
     seedDefaultSwimlanes(db);
   }
 
-  // For existing projects: seed default actions if the actions table is empty
-  const actionCount = db.prepare('SELECT COUNT(*) as c FROM actions').get() as { c: number };
-  if (actionCount.c === 0 && laneCount.c > 0) {
-    seedDefaultActions(db);
-  }
+  // Nothing seeds actions or transitions any more. Every seeded row was either
+  // a no-op (`* -> Planning: Kill Session` suspends a session the task does not
+  // have at Priority 4) or a duplicate of the fallback spawn (`Start Planning
+  // Agent` carries the very template the fallback uses). A fresh board now
+  // starts with no automations at all, which is also what it behaved like.
+
+  // === Column automations ===
+  //
+  // A key/value table for data-migration flags. The automations migration is
+  // one-way and leaves its source rows in place for an older build to read, so
+  // "have I run" cannot be answered from the data itself.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+
+  // A real foreign key with a cascade, unlike `swimlane_transitions`, whose FK
+  // on `from_swimlane_id` had to be dropped to allow the `'*'` wildcard source.
+  // An automation belongs to exactly one column and there is no wildcard, so
+  // the constraint is genuine (and `foreign_keys = ON` is set in database.ts).
+  // The repository cascades too, explicitly, rather than resting on a pragma.
+  //
+  // `config_json` is a blob rather than a column per field on purpose: a type
+  // declares its own fields in AUTOMATION_MANIFEST, so a typed column would
+  // fight the registry and turn every new type into a migration.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS column_automations (
+      id TEXT PRIMARY KEY,
+      swimlane_id TEXT NOT NULL REFERENCES swimlanes(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      trigger TEXT NOT NULL DEFAULT 'enter',
+      position INTEGER NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      config_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_column_automations_lookup ON column_automations(swimlane_id, trigger, position)',
+  );
+
+  // The durable record of every execution. `automation_name` and `type` are
+  // denormalized and there is deliberately NO foreign key to
+  // `column_automations`: a run log that empties itself when you rename or
+  // delete the automation is not a log.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_runs (
+      id TEXT PRIMARY KEY,
+      automation_id TEXT NOT NULL,
+      automation_name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      swimlane_id TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      status TEXT NOT NULL,
+      detail TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT NOT NULL,
+      finished_at TEXT
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_automation_runs_task ON automation_runs(task_id, started_at DESC)');
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_automation_runs_automation ON automation_runs(automation_id, started_at DESC)',
+  );
+
+  // Runs BEFORE the unique name index below, because it is what makes names
+  // unique per column in the first place: a board with two actions of the same
+  // name on one destination would fail the index outright.
+  runAutomationsMigration(db);
+
+  // NOCASE folds ASCII only, while the dialog's own check folds with
+  // JavaScript's `toLowerCase`, so the dialog rejects a superset of what this
+  // rejects. That is the safe direction: the index can never refuse a name the
+  // UI accepted.
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_column_automations_name ON column_automations(swimlane_id, name COLLATE NOCASE)',
+  );
 }

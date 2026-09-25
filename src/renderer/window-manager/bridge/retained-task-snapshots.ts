@@ -65,10 +65,11 @@ export function pruneRetainedTasks(retainedTaskIds: ReadonlySet<string>): void {
  * The two sets are deliberately NOT the same, and collapsing them into one
  * breaks the feature in one direction or the other:
  *  - `retainAnchors` covers only windows of the project being backgrounded NOW.
- *    `browserOpenTasks` is neither project-keyed nor ever cleared, so a window
- *    already retained for an EARLIER project still matches it; passing that
- *    anchor on would re-stamp the window with this switch's project id and point
- *    its pane at another project's URL sidecar.
+ *    `mountedPaneTaskIds` (the store's `browserOpenTasks` plus `browserHeldTasks`)
+ *    is neither project-keyed nor ever cleared, so a window already retained for
+ *    an EARLIER project still matches it; passing that anchor on would re-stamp
+ *    the window with this switch's project id and point its pane at another
+ *    project's URL sidecar.
  *  - `snapshotTaskIds` additionally keeps every ALREADY-retained window, whose
  *    frozen row must not be pruned. Losing it makes `getRetainedTask` return
  *    null, and `WindowContent` then renders the "no longer available"
@@ -77,7 +78,8 @@ export function pruneRetainedTasks(retainedTaskIds: ReadonlySet<string>): void {
  */
 export function planWindowRetention(
   windows: readonly ManagedWindow[],
-  browserOpenTaskIds: ReadonlySet<string>,
+  /** Tasks whose Browser pane is mounted in its window: showing, or hidden and held. */
+  mountedPaneTaskIds: ReadonlySet<string>,
 ): { retainAnchors: string[]; snapshotTaskIds: Set<string> } {
   const retainAnchors: string[] = [];
   const snapshotTaskIds = new Set<string>();
@@ -89,7 +91,7 @@ export function planWindowRetention(
       snapshotTaskIds.add(managedWindow.anchor);
       continue;
     }
-    if (!browserOpenTaskIds.has(managedWindow.anchor)) continue;
+    if (!mountedPaneTaskIds.has(managedWindow.anchor)) continue;
     retainAnchors.push(managedWindow.anchor);
     snapshotTaskIds.add(managedWindow.anchor);
   }

@@ -23,8 +23,10 @@ vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
   return { ShellResolver: MockShellResolver };
 });
 
-vi.mock('../../src/shared/paths', () => ({
+vi.mock('../../src/shared/paths', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/shared/paths')>()),
   adaptCommandForShell: (cmd: string) => cmd,
+  buildSpawnClearPrelude: () => '',
   isUncPath: (p: string) => /^[\\/]{2}[^\\/]/.test(p),
 }));
 
@@ -33,10 +35,31 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+// Every session spawned here is young by the real predicate (startedAt is now,
+// the mock never enters the alt screen), which would turn each kill() into the
+// 1500 ms exit-sequence grace and break the instant-kill fixtures throughout
+// this file. Pin it to the mature path; the grace itself is exercised in
+// session-manager-deferred-kill.test.ts.
+vi.mock('../../src/main/pty/lifecycle/deferred-kill', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/lifecycle/deferred-kill')>()),
+  isYoungSession: () => false,
+}));
+
+// `traceTerminal` is gated on `__KANGENTIC_DEV__`, which vitest.config.ts
+// pins to `false` - the real implementation is a no-op in every test here.
+// Wrap it (not replace it) so the trace payload contract is observable via
+// `vi.mocked(traceTerminal).mock.calls` while every other test's behavior
+// (already a no-op today) stays byte-identical.
+vi.mock('../../src/main/pty/terminal-trace', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/pty/terminal-trace')>();
+  return { ...actual, traceTerminal: vi.fn(actual.traceTerminal) };
+});
+
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { ClaudeSessionHistoryParser } from '../../src/main/agent/adapters/claude/session-history-parser';
+import { traceTerminal } from '../../src/main/pty/terminal-trace';
 
 const claudeAdapter = new ClaudeAdapter();
 import { EventType } from '../../src/shared/types';
@@ -241,6 +264,40 @@ describe('Scrollback clearing on resize', () => {
     expect(scrollback).toContain('hello world');
   });
 
+  it('reports a resize the just-died PTY rejected instead of throwing it at the renderer', async () => {
+    const { session, mockPty } = await spawnSession();
+    // node-pty's WindowsPtyAgent.resize throws this once the child has exited
+    // but before the 'exit' event (which nulls session.pty) lands, up to ~1s
+    // later on Windows. Every guard before the native call still passes in
+    // that window, so the throw used to escape as an unhandled IPC rejection.
+    mockPty.resize.mockImplementationOnce(() => {
+      throw new Error('Cannot resize a pty that has already exited');
+    });
+    vi.mocked(traceTerminal).mockClear();
+    // The catch block must return early: a regression that lets control fall
+    // through to the success path (deleting the `return { colsChanged };`
+    // inside the catch in session-manager.ts) would still trace
+    // 'resize-applied' and emit 'pty-resize' for a resize whose native call
+    // never actually took effect. Observing both proves the early return, not
+    // just the trace call.
+    const resizes: Array<[string, number, number]> = [];
+    manager.on('pty-resize', (sessionId: string, cols: number, rows: number) => resizes.push([sessionId, cols, rows]));
+
+    const result = manager.resize(session.id, 200, 40);
+
+    expect(result).toEqual({ colsChanged: true });
+    const failed = vi.mocked(traceTerminal).mock.calls.find((call) => call[1] === 'resize-failed');
+    expect(failed?.[0]).toBe(session.id);
+    expect(failed?.[2]).toMatchObject({
+      cols: 200,
+      rows: 40,
+      message: expect.stringContaining('already exited'),
+    });
+    expect(resizes).toEqual([]);
+    const applied = vi.mocked(traceTerminal).mock.calls.find((call) => call[1] === 'resize-applied');
+    expect(applied).toBeUndefined();
+  });
+
   it('a rows-only resize arms the repaint settle (arming widens; the report stays colsChanged)', async () => {
     const { session, feedData } = await spawnSession();
 
@@ -260,6 +317,25 @@ describe('Scrollback clearing on resize', () => {
     feedData('\x1b[2Jrepaint at 120x50');
     const scrollback = await manager.getScrollback(session.id);
     expect(scrollback).toContain('repaint at 120x50');
+  });
+
+  it('getTerminalDimensions surfaces geometryChangedAtRingIndex, armed only by an effective resize on top of existing ring content', async () => {
+    const { session, feedData } = await spawnSession();
+
+    // spawnSession()'s own initial resize (120x30) matches the PTY's actual
+    // spawn dims, so it is a same-geometry no-op and never arms the gate -
+    // the diagnostics row reports null for an unresized session.
+    const beforeResize = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    expect(beforeResize?.geometryChangedAtRingIndex).toBeNull();
+
+    feedData('hello world');
+    // An EFFECTIVE resize (cols and rows both change) while the ring already
+    // holds bytes arms the gate at the current ring length: everything
+    // before that index was drawn for the OLD (120x30) geometry.
+    manager.resize(session.id, 200, 40);
+
+    const afterResize = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    expect(afterResize?.geometryChangedAtRingIndex).toBe('hello world'.length);
   });
 
   it('getScrollback skips the repaint-settle wait once the PTY is gone (killed before sampling)', async () => {
@@ -630,6 +706,23 @@ describe('KillAll', () => {
     expect(manager.getSession(session1.id)).toBeUndefined();
     expect(manager.getSession(session2.id)).toBeUndefined();
     expect(manager.listSessions()).toHaveLength(0);
+  });
+
+  it('returns the PtyKillReport, wired through killAllSessions for the before-quit exit-callback drain', async () => {
+    // Nothing else exercises this through the real SessionManager: session-shutdown-flow.test.ts
+    // pins how killAllSessions builds the report against a synthetic
+    // ShutdownContext, and shutdown-history-wiring.test.ts pins that
+    // syncShutdownCleanup passes a mocked killAll's return value through -
+    // neither calls the real SessionManager.killAll(), so a regression that
+    // drops the `return` in session-manager.ts (leaving killAll() run
+    // killAllSessions but resolve to undefined) would not be caught anywhere
+    // else.
+    const { mockPty: pty1 } = await spawnSession('task-ka-pid1');
+    const { mockPty: pty2 } = await spawnSession('task-ka-pid2');
+
+    const killReport = manager.killAll();
+
+    expect(killReport).toEqual({ pids: [pty1.pid, pty2.pid], killedCount: 2, deferredCount: 0 });
   });
 
   it('kills all PTY processes', async () => {
@@ -2613,6 +2706,31 @@ describe('getFirstOutputCache', () => {
     expect(Object.keys(cache).sort()).toEqual([session1.id, session2.id].sort());
   });
 
+  it('keeps a resumed session marked resuming after its first output', async () => {
+    // The card and the context bar label their spinner from this flag until the model name
+    // lands. Clearing it at first output flipped a resumed card to "Starting agent...", which
+    // reads as the resume having failed; the flag means "spawned as a resume" for the session's
+    // whole life, and first output is not a reason to push the row again.
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-first-output-resumed',
+      command: '',
+      cwd: tmpDir,
+      resuming: true,
+    });
+    spawnedIds.push(session.id);
+    const changed: string[] = [];
+    manager.on('session-changed', (changedSessionId: string) => { changed.push(changedSessionId); });
+
+    mock.feedData('resumed transcript repaint');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(manager.getFirstOutputCache()[session.id]).toBe(true);
+    expect(manager.getSession(session.id)?.resuming).toBe(true);
+    expect(changed).not.toContain(session.id);
+  });
+
   it('removes a session from the cache after remove() is called', async () => {
     const mock = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
@@ -3166,9 +3284,11 @@ describe('Resting grid restore', () => {
 
     // `refused` marks the one outcome where main deliberately HOLDS the grid
     // against the caller. The echo re-assert (width-drift self-heal) reads it
-    // to stop after a single refused IPC instead of retrying to its cap; every
-    // other early return stays the bare { colsChanged: false }.
-    expect(result).toEqual({ colsChanged: false, refused: true });
+    // to stop after a single refused IPC instead of retrying to its cap, and
+    // `held` names the grid kept, which the refused terminal conforms to
+    // (useTerminal's conformToHeldGrid); every other early return stays the
+    // bare { colsChanged: false }.
+    expect(result).toEqual({ colsChanged: false, refused: true, held: { cols: 120, rows: 30 } });
     expect(mockPty.resize).not.toHaveBeenCalled();
     expect(resizes).toEqual([]);
     expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
@@ -3292,5 +3412,377 @@ describe('Resting grid restore', () => {
     await suspendPromise;
     // The stash recorded the intent, so the respawn lands at the real size.
     expect(manager.getDimensions(session.id)).toEqual({ cols: PANEL_COLS, rows: PANEL_ROWS });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Post-boot geometry re-assert (spawn-race fix, task 573)
+// ---------------------------------------------------------------------------
+
+describe('Post-boot geometry re-assert', () => {
+  // A resize applied inside the spawn window can be lost: ConPTY only delivers
+  // a resize to a connected client, and the fit lands while the agent is still
+  // booting behind the shell. The geometry is re-delivered as a jiggle (cols-1,
+  // then cols back) via DIRECT pty.resize calls - two genuine changes nothing
+  // in the chain can deduplicate, and no pty-resize broadcast that would burn
+  // the renderer's echo re-assert budget or re-seed phone frames. Two triggers
+  // fire it: the adapter first-output latch (which a SHELL preamble can trip -
+  // pwsh 7.6 emits the cursor-hide escape Claude's detector matches - so it
+  // disarms only when the output provably came from the TUI) and the stream's
+  // first alt-screen entry, which nothing but the TUI can produce.
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  async function spawnSession(taskId: string) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    // No agent adapter, so ANY non-empty chunk counts as first output.
+    const session = await manager.spawn({ taskId, command: '', cwd: tmpDir });
+    return { session, ...mock };
+  }
+
+  async function spawnClaudeSession(taskId: string) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    // The REAL Claude adapter: its detectFirstOutput matches the cursor-hide
+    // escape, which pwsh 7.6's shell preamble also carries - the collision
+    // the preamble-ordering tests below pin.
+    const session = await manager.spawn({
+      taskId,
+      command: '',
+      cwd: tmpDir,
+      agentParser: claudeAdapter,
+    });
+    return { session, ...mock };
+  }
+
+  /** Wait past the buffer manager's 16ms flush that feeds the first-output latch. */
+  const settleFlush = () => new Promise((resolve) => setTimeout(resolve, 40));
+
+  it('re-delivers the geometry as a jiggle on first output, without broadcasting', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert');
+
+    manager.resize(session.id, 306, 48);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
+    mockPty.resize.mockClear();
+
+    // Attached AFTER the arming resize so only post-first-output emissions count.
+    const broadcasts: unknown[] = [];
+    manager.on('pty-resize', (...args: unknown[]) => broadcasts.push(args));
+
+    feedData('agent output');
+    await settleFlush();
+
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+    expect(broadcasts).toEqual([]);
+  });
+
+  it('fires at most once: later output does not re-jiggle', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-once');
+
+    manager.resize(session.id, 306, 48);
+    mockPty.resize.mockClear();
+    feedData('first output');
+    await settleFlush();
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+
+    mockPty.resize.mockClear();
+    feedData('more output');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('does not fire when no resize was applied before first output', async () => {
+    const { mockPty, feedData } = await spawnSession('task-reassert-none');
+
+    feedData('agent output');
+    await settleFlush();
+
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('a same-dims (noop) resize does not arm it', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-noop');
+
+    // Matches the 120x30 spawn grid, so resize() short-circuits before
+    // pty.resize and never arms.
+    manager.resize(session.id, 120, 30);
+    feedData('agent output');
+    await settleFlush();
+
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('a post-first-output resize lies dormant until an alt-screen entry consumes it', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-late');
+
+    feedData('first output');
+    await settleFlush();
+
+    // A running child observes this directly (verified live), and first-output
+    // is already spent, so nothing fires on further plain output - but the
+    // pre-TUI arm stays set (the stream never entered the alt buffer, so this
+    // could still be a shell whose agent has not booted).
+    manager.resize(session.id, 306, 48);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
+    mockPty.resize.mockClear();
+
+    feedData('more output');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+
+    // The TUI takeover consumes the dormant arm exactly once.
+    feedData('\x1b[?1049h');
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+  });
+
+  it('arms on a pre-TUI resize even when the shell preamble already tripped first-output (task #573 live shape)', async () => {
+    const { session, mockPty, feedData } = await spawnClaudeSession('task-reassert-preamble');
+
+    // pwsh 7.6's startup preamble carries the cursor-hide escape Claude's
+    // detector matches: the latch trips on SHELL bytes, ~tens of ms after
+    // spawn, seconds before the agent exists.
+    feedData('\x1b[?25l\x1b[2JPS preamble');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+
+    // The fit resize lands after the preamble. Under the old first-output
+    // arming criterion this read as post-first-output and never armed - the
+    // 2026-08-30 live recurrence.
+    manager.resize(session.id, 306, 19);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 19]]);
+    mockPty.resize.mockClear();
+    const broadcasts: unknown[] = [];
+    manager.on('pty-resize', (...args: unknown[]) => broadcasts.push(args));
+
+    // Plain shell output must not fire anything (first-output is spent).
+    feedData('shell prompt noise\r\n');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+
+    // The alt-screen entry - the one signal a shell cannot fake - fires the
+    // jiggle synchronously, with no broadcast.
+    feedData('\x1b[?1049h\x1b[?25l frame');
+    expect(mockPty.resize.mock.calls).toEqual([[305, 19], [306, 19]]);
+    expect(broadcasts).toEqual([]);
+
+    // Disarmed: leaving and re-entering the alt buffer does not re-jiggle
+    // without a new pre-TUI resize.
+    mockPty.resize.mockClear();
+    feedData('\x1b[?1049l\x1b[?1049h');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('a preamble-tripped first output jiggles but keeps the arm for the real TUI takeover', async () => {
+    const { session, mockPty, feedData } = await spawnClaudeSession('task-reassert-two-stage');
+
+    // The other race ordering: the fit lands BEFORE the preamble, so the
+    // first-output trigger fires while the stream is still pre-TUI.
+    manager.resize(session.id, 306, 19);
+    mockPty.resize.mockClear();
+
+    feedData('\x1b[?25l\x1b[2JPS preamble');
+    await settleFlush();
+    // The jiggle fires (one harmless repaint at worst) but does NOT disarm:
+    // the output was not provably the TUI's, and the booting agent may still
+    // miss this delivery.
+    expect(mockPty.resize.mock.calls).toEqual([[305, 19], [306, 19]]);
+
+    mockPty.resize.mockClear();
+    feedData('\x1b[?1049h frame');
+    expect(mockPty.resize.mock.calls).toEqual([[305, 19], [306, 19]]);
+  });
+
+  it('swallows a resize failure from a just-died ConPTY', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-throw');
+
+    manager.resize(session.id, 306, 48);
+    mockPty.resize.mockImplementation(() => {
+      throw new Error('EPIPE');
+    });
+
+    feedData('agent output');
+    await settleFlush();
+
+    // No unhandled throw escaped the flush callback; the session survives.
+    expect(manager.getSession(session.id)).toBeDefined();
+  });
+
+  it('swallows a resize failure on the restore leg after the jiggle leg lands', async () => {
+    // Distinct from the case above: there the arming resize's own mock throws,
+    // so only the FIRST (jiggle) resize call inside reassertGeometryForBootingChild
+    // is ever attempted. Here the jiggle leg succeeds and only the SECOND
+    // (restore) call fails - the only case that exercises the function's
+    // second try/catch, which the case above cannot reach.
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-restore-fails');
+
+    manager.resize(session.id, 306, 48);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
+    mockPty.resize.mockClear();
+
+    // Installed AFTER the arming resize succeeds, so the flag is armed with
+    // pty.cols already at 306 before the jiggle begins.
+    let resizeCallCount = 0;
+    mockPty.resize.mockImplementation((cols: number, rows: number) => {
+      resizeCallCount++;
+      if (resizeCallCount === 2) throw new Error('EPIPE');
+      mockPty.cols = cols;
+      mockPty.rows = rows;
+    });
+
+    feedData('agent output');
+    await settleFlush();
+
+    // Both legs were attempted: the narrow jiggle leg landed, the restore did not.
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+    // No unhandled throw escaped the flush callback; the session survives.
+    expect(manager.getSession(session.id)).toBeDefined();
+
+    // First-output is a spent one-shot, so a later plain-output chunk does
+    // not retry the stranded restore (mirrors the at-most-once case above).
+    mockPty.resize.mockClear();
+    feedData('more output');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('skips the jiggle when the session was killed before the flush delivered first output', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-killed');
+
+    manager.resize(session.id, 306, 48);
+    mockPty.resize.mockClear();
+    manager.kill(session.id);
+
+    feedData('late output');
+    await settleFlush();
+
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ConPTY can deliver a single escape sequence split across two onData
+   * chunks - `modeParseCarry` (pty-buffer-manager.ts) exists specifically to
+   * reassemble that split before parsing modes. Every other alt-screen-enter
+   * case in this file feeds `\x1b[?1049h` whole in one `feedData` call, so
+   * the carry-reassembled path itself has no coverage without this test.
+   */
+  it('fires the alt-screen jiggle exactly once when the entry escape is split across two onData chunks', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-split-escape');
+
+    manager.resize(session.id, 306, 48);
+    expect(mockPty.resize.mock.calls).toEqual([[306, 48]]);
+    mockPty.resize.mockClear();
+
+    // Split mid-parameter: neither half alone carries a complete DECSET, so
+    // only the carry-reassembled `combined` string can detect the entry.
+    feedData('\x1b[?10');
+    expect(mockPty.resize).not.toHaveBeenCalled();
+
+    feedData('49h frame');
+    expect(mockPty.resize.mock.calls).toEqual([[305, 48], [306, 48]]);
+
+    // The alt-screen trigger always disarms, so further output never re-fires.
+    mockPty.resize.mockClear();
+    feedData('more output');
+    await settleFlush();
+    expect(mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `traceTerminal` carries the forensics contract docs/session-lifecycle.md
+   * promises ("names the trigger"), but it is otherwise unobserved anywhere
+   * in this file - its `__KANGENTIC_DEV__` gate is pinned off by
+   * vitest.config.ts's `define`, so the real implementation is a no-op here.
+   * Spying it directly is the only way to pin which trigger fired, and that
+   * `resize-applied`'s field is `preTuiReady`, not the old `preFirstOutput`.
+   */
+  it('records the trigger and preTuiReady fields in the trace payloads', async () => {
+    const { session, mockPty, feedData } = await spawnSession('task-reassert-trace');
+    const trace = vi.mocked(traceTerminal);
+
+    manager.resize(session.id, 306, 48);
+    const applied = trace.mock.calls.find(
+      ([tracedSessionId, event]) => tracedSessionId === session.id && event === 'resize-applied',
+    );
+    expect(applied?.[2]).toMatchObject({ preTuiReady: true });
+    expect(applied?.[2]).not.toHaveProperty('preFirstOutput');
+    trace.mockClear();
+    mockPty.resize.mockClear();
+
+    // First-output trigger: jiggles but (not yet in the alt buffer) does not
+    // disarm, so the flag survives for the alt-screen trigger below.
+    feedData('first output');
+    await settleFlush();
+    const firstOutputReassert = trace.mock.calls.find(
+      ([tracedSessionId, event]) => tracedSessionId === session.id && event === 'resize-reassert',
+    );
+    expect(firstOutputReassert?.[2]).toMatchObject({ trigger: 'first-output' });
+    trace.mockClear();
+    mockPty.resize.mockClear();
+
+    // Alt-screen trigger: the still-armed flag fires a second, independent jiggle.
+    feedData('\x1b[?1049h frame');
+    const altScreenReassert = trace.mock.calls.find(
+      ([tracedSessionId, event]) => tracedSessionId === session.id && event === 'resize-reassert',
+    );
+    expect(altScreenReassert?.[2]).toMatchObject({ trigger: 'alt-screen-enter' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 18. isSessionTeardownInFlight delegate
+// ---------------------------------------------------------------------------
+
+describe('isSessionTeardownInFlight delegate', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  async function spawnSession(taskId: string) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({ taskId, command: '', cwd: tmpDir });
+    return { session, ...mock };
+  }
+
+  it('reads false for a freshly spawned, running session', async () => {
+    const { session } = await spawnSession('task-teardown-running');
+
+    expect(manager.isSessionTeardownInFlight(session.id)).toBe(false);
+  });
+
+  it('reads true for a session id the registry has never heard of', () => {
+    expect(manager.isSessionTeardownInFlight('session-teardown-missing')).toBe(true);
+  });
+
+  it('reads true for a killed session while a still-running sibling session reads false', async () => {
+    // Proves the sessionId argument is forwarded, not ignored: both sessions
+    // live in the same registry, and only the killed one flips true. `kill()`
+    // stamps `intentionalExit = true` synchronously, before any PTY write, so
+    // no wait is needed after the call (isYoungSession is pinned to false for
+    // this whole file, so kill() also takes the immediate, non-deferred path).
+    const { session: killedSession } = await spawnSession('task-teardown-killed');
+    const { session: runningSession } = await spawnSession('task-teardown-sibling');
+
+    manager.kill(killedSession.id);
+
+    expect(manager.isSessionTeardownInFlight(killedSession.id)).toBe(true);
+    expect(manager.isSessionTeardownInFlight(runningSession.id)).toBe(false);
   });
 });

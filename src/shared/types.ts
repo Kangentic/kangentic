@@ -118,9 +118,14 @@ export interface AgentDetectionInfo {
   /** True if the adapter streams account-wide rate-limit windows; gates the ContextBar
    *  rate-limit pill so any session of this agent shows the shared global snapshot. */
   reportsRateLimits?: boolean;
-  /** Template for the text injected when a clipboard/dropped image is captured to a temp PNG
-   *  (e.g. "Read this image: {path} "), so the agent reliably reads it as an image instead of
-   *  treating a bare file path as inert text. Undefined = inject the bare quoted path. */
+  /** Image extensions (lowercase, no dot) the CLI attaches natively when the file's path
+   *  arrives as a bracketed paste (Claude Code: png, jpg, jpeg, gif, webp become an
+   *  `[Image #N]` chip). The renderer pastes the bare shell-quoted path for these. A string
+   *  array, never a RegExp: this crosses IPC. Undefined = the CLI attaches nothing from a path. */
+  pastedImageNativeExtensions?: readonly string[];
+  /** Fallback text pasted for an image outside `pastedImageNativeExtensions` (or for every
+   *  image when that set is undefined), e.g. "Read this image: {path} ", so the agent reads an
+   *  explicit instruction instead of an inert path. Undefined = paste the bare quoted path. */
   pastedImageReferenceTemplate?: string;
   /** True if the adapter exposes a one-shot summarize capability (used by auto-name task title). */
   supportsSummarize?: boolean;
@@ -138,6 +143,18 @@ export interface AgentDetectionInfo {
    *  Apps"). Absent/empty = this agent declares none; the Agent settings tab renders nothing. */
   launchOptions?: readonly AgentLaunchOptionInfo[];
 }
+
+/**
+ * The two adapter-declared facts the terminal needs to deliver a captured (pasted or
+ * dropped) image: which extensions the CLI attaches natively from a pasted path, and the
+ * fallback text for the rest. An `AgentDetectionInfo` entry satisfies it directly, so a
+ * terminal host passes the agent's entry and never branches on agent name
+ * (agent-adapters-boundary.md).
+ */
+export type PastedImageCapability = Pick<
+  AgentDetectionInfo,
+  'pastedImageNativeExtensions' | 'pastedImageReferenceTemplate'
+>;
 
 /**
  * Renderer-facing description of a single adapter-declared launch-option toggle
@@ -296,6 +313,30 @@ export interface ProjectMoveProgress {
 export type PRState = 'open' | 'draft' | 'merged' | 'closed';
 
 /**
+ * Normalized, platform-agnostic merge readiness: would clicking Merge right now
+ * succeed? Orthogonal to `PRState`, which stays the gate for the terminal
+ * short-circuits. `ready` means a Merge click would succeed; `blocked` means no
+ * conflicts but a failed check, a rejected or waiting review, a policy, or a
+ * stale base stops it; `conflicting` means merge conflicts; `queued` and
+ * `running` mean a blocking check or policy has not finished (queued for a
+ * runner, or running), so the merge would not succeed yet but nothing has
+ * failed, and an in-flight check outranks a waiting review so the chip tracks
+ * CI while it runs; `unknown` means the platform was asked and has no verdict
+ * (GitHub `UNKNOWN` while it recomputes, Azure `queued` / `notSet`, and Azure
+ * `succeeded` while branch-policy evaluation is off or unreadable). It is
+ * distinct from a null column, which means never checked or no PR. The promise
+ * is read for the VIEWER: with `git.prBypassCountsAsReady` on, a GitHub PR
+ * still waiting on a required review, which GitHub reports as `BLOCKED` or as
+ * `BEHIND` once somebody else's PR lands, is `ready` when the viewer's bypass
+ * would merge it, so two people on the same repo can correctly see different
+ * verdicts. The runtime list comes first so
+ * `tests/unit/pr-connector-gate.test.ts` can assert membership over the real
+ * connector registry; the type is derived from it.
+ */
+export const PR_MERGE_READINESS_VALUES = ['ready', 'blocked', 'conflicting', 'queued', 'running', 'unknown'] as const;
+export type PRMergeReadiness = (typeof PR_MERGE_READINESS_VALUES)[number];
+
+/**
  * Outcome of an on-demand PR resolve. `linked`/`unchanged` mean a PR is associated;
  * `not-found`/`no-anchor` mean none was found; `resolver-unavailable` means the
  * provider CLI is missing/unauthenticated; `transient-error` means the check
@@ -321,6 +362,34 @@ export type PRLinkStatus = 'linked' | 'unchanged' | 'not-found' | 'no-anchor' | 
  * the pins used to lose "Agent Override with everything inherited" on every save.
  */
 export type TaskRunMode = 'column_settings' | 'agent_override';
+
+/**
+ * Why a task's last spawn ran WITHOUT a worktree, i.e. in the shared project
+ * checkout. Recorded on the task row (`Task.worktree_skip_reason`) at spawn
+ * time as ground truth for any surface that would otherwise infer the state
+ * from a null `worktree_path`. No renderer reads it yet: the 12px card glyph
+ * that drew it was reviewed out as too small to tell apart, so the card and the
+ * detail header still read `worktree_path`.
+ *
+ *   - `disabled`: `use_worktree` (per task) or `git.worktreesEnabled` (project) is off.
+ *   - `not-a-repo`: the project folder has no `.git`.
+ *   - `nested-worktree`: the project folder is itself a git worktree; git cannot nest them.
+ *   - `no-commits`: unborn HEAD (a freshly initialised repo), so there is no ref to branch from.
+ *   - `remote-agent`: the resolved agent runs against a server-side directory, so a local
+ *     worktree would be unused. The agent is NOT in the project folder in this case.
+ *   - `worktree-missing`: the worktree directory vanished between runs; startup recovery
+ *     nulled the path and fell back to the project folder.
+ *
+ * The three structural reasons (`not-a-repo`, `nested-worktree`, `no-commits`) cannot be
+ * overridden by any setting.
+ */
+export type WorktreeSkipReason =
+  | 'disabled'
+  | 'not-a-repo'
+  | 'nested-worktree'
+  | 'no-commits'
+  | 'remote-agent'
+  | 'worktree-missing';
 
 export interface Task {
   id: string;
@@ -348,28 +417,97 @@ export interface Task {
    * `path.basename(worktree_path) === worktree_folder`.
    */
   worktree_folder: string | null;
+  /**
+   * Why the last spawn ran without a worktree (see `WorktreeSkipReason`). Null
+   * while the task has a worktree or no spawn has decided yet. Written only by
+   * `TaskRepository.setWorktreeSkipReason` (spawn telemetry, no `updated_at`
+   * bump) and cleared by `recordWorktree`; the generic `update()` never touches
+   * it. Selected with `SELECT *` so the renderer sees it on every task.
+   */
+  worktree_skip_reason: WorktreeSkipReason | null;
   branch_name: string | null;
   pr_number: number | null;
   pr_url: string | null;
   /** Normalized PR state from the authoritative branch->PR resolver. null when no PR is linked or it was linked before state tracking. */
   pr_state: PRState | null;
+  /**
+   * Normalized merge readiness of the linked PR (see `PRMergeReadiness`),
+   * refreshed by every resolve whose connector can judge it. null when no PR is
+   * linked, when the link predates readiness tracking, or when no resolving
+   * tier has been able to judge it yet. A tier that cannot judge it (the commit
+   * tier) preserves the stored value; a pending `unknown` holds a determined
+   * value through a bounded re-poll; the confident-not-found clear nulls it with
+   * the other three PR columns. Unlike `pr_state`, this column is
+   * VIEWER-RELATIVE: with `git.prBypassCountsAsReady` on, the GitHub connector
+   * folds the resolving user's own merge bypass into `ready`, so the same PR
+   * can legitimately read `ready` on one machine and `blocked` on another.
+   */
+  pr_merge_readiness: PRMergeReadiness | null;
   /** Last-captured worktree HEAD commit SHA. Immutable anchor for resolving the PR after the worktree is reclaimed (Done) or the branch is renamed. null until captured. */
   head_sha: string | null;
+  /**
+   * The branch this task's work was actually PUSHED to, when that differs from
+   * the local `branch_name`. Agents push under a team convention
+   * (`maint/adopt-central-package-management`) while the worktree stays on the
+   * Kangentic slug, and nothing else reconciles the two, so every branch-keyed
+   * PR anchor looks up a branch no PR was opened from.
+   *
+   * Captured from the agent's own `git push` (the destination its command
+   * named, recorded when that call ends) and, failing that, by the PR linker
+   * from a remote branch whose tip is this task's HEAD. Read back as a PR
+   * anchor. For a task with no worktree it is the ONLY anchor: every other one
+   * is written from a worktree read, and the shared checkout's HEAD is not per
+   * task. It is a remote fact, so it outlives the local checkout and no cleanup
+   * path nulls it (like `pr_number`); it is only ever overwritten by a newer
+   * observation. Deliberately NOT
+   * `branch_name`: that names the LOCAL branch a restore re-attaches to, and
+   * `WorktreeManager.createWorktree` verifies it with `rev-parse --verify`,
+   * which does not resolve a remote-only branch. Writing a pushed-only name
+   * there would fork a fresh branch off base and orphan the work.
+   */
+  pushed_branch: string | null;
   /** External origin, carried through when this task was promoted from an imported backlog item. Lets import dedup stay aware of promoted (and archived) tasks. null for tasks created directly. */
   external_id: string | null;
   external_source: string | null;
   external_url: string | null;
+  /**
+   * The base branch a user explicitly chose for this task. NULL for most tasks,
+   * because nothing ever infers it. Prefer {@link Task.resolved_base_branch}
+   * when you need "what base is this task's work actually relative to".
+   */
   base_branch: string | null;
+  /**
+   * The base branch this task's worktree was ACTUALLY cut from, recorded by
+   * `recordWorktree` from `createWorktree`'s resolution. Where `base_branch` is
+   * the user's explicit choice (usually absent), this is the observed answer.
+   *
+   * It exists because every base-relative guard in PR linking measured against
+   * `base_branch ?? defaultBaseBranch ?? 'main'`, so a worktree cut from a
+   * long-lived integration branch was compared against the wrong branch: the
+   * commits-ahead-of-base guard found hundreds of commits and let the commit
+   * anchor run on work that was not the task's. Deliberately a separate column
+   * rather than a backfill of `base_branch`: `ensureTaskBranchCheckout` treats a
+   * NULL `base_branch` as "nothing to check out" and returns early, so
+   * populating it would push non-worktree spawns into a fetch-and-checkout path
+   * they skip today.
+   *
+   * NULL means "not recorded", never "the default". Only a real observation is
+   * written: `createWorktree` reports no base when it attached to a branch that
+   * already existed, since that path passes no start point and the resolved
+   * value would describe a cut that never happened. Reading it as a KNOWN base
+   * is what the PR linker does, so a guess here is worse than an absence.
+   */
+  resolved_base_branch: string | null;
   use_worktree: number | null;
   labels: string[];
   priority: number;
-  /** Per-task model override set via the ContextBar popover or locked at first spawn (see `lockAdvancedOverridesOnFirstSpawn`). Takes precedence over the swimlane's `model_override`; null inherits the swimlane (or agent default). */
+  /** Per-task model override set via the ContextBar popover or locked on first spawn or on leaving To Do (see `lockAdvancedOverridesOnFirstSpawn`). Takes precedence over the swimlane's `model_override`; null inherits the swimlane (or agent default). */
   model_override: string | null;
-  /** Per-task effort override set via the ContextBar popover or locked at first spawn (see `lockAdvancedOverridesOnFirstSpawn`). Takes precedence over the swimlane's `effort_override`; null inherits the swimlane (or agent default). */
+  /** Per-task effort override set via the ContextBar popover or locked on first spawn or on leaving To Do (see `lockAdvancedOverridesOnFirstSpawn`). Takes precedence over the swimlane's `effort_override`; null inherits the swimlane (or agent default). */
   effort_override: string | null;
-  /** Per-task agent override set at task creation. When non-null, wins over the swimlane's `agent_override` and the project default for the task's entire lifetime - column moves cannot change the agent. Set via the New Task dialog's Advanced section or locked at first spawn (`lockAdvancedOverridesOnFirstSpawn`); the ContextBar popover does not edit this. */
+  /** Per-task agent override set at task creation. When non-null, wins over the swimlane's `agent_override` and the project default for the task's entire lifetime - column moves cannot change the agent. Set via the New Task dialog's Advanced section or locked on first spawn or on leaving To Do (`lockAdvancedOverridesOnFirstSpawn`); the ContextBar popover does not edit this. */
   agent_override: string | null;
-  /** Per-task permission mode override. Takes precedence over the swimlane's `permission_mode` and the project's default permission mode, same as `model_override`/`effort_override` - EXCEPT when the destination swimlane forces `permission_mode: 'plan'`, which always wins regardless of this field: plan mode is a genuine safety guarantee (never let a task's Auto-Classifier/Accept-Edits pin bypass a deliberate read-only phase), not just an ordinary column default like every other permission mode. Null inherits. Set via the New Task dialog's Advanced section / the task-detail edit form, or locked at first spawn alongside agent/model/effort (`lockAdvancedOverridesOnFirstSpawn`) so a task with ANY Advanced override runs under the permission the dialog displayed, not the destination column's. */
+  /** Per-task permission mode override. Takes precedence over the swimlane's `permission_mode` and the project's default permission mode, same as `model_override`/`effort_override` - EXCEPT when the destination swimlane forces `permission_mode: 'plan'`, which always wins regardless of this field: plan mode is a genuine safety guarantee (never let a task's Auto-Classifier/Accept-Edits pin bypass a deliberate read-only phase), not just an ordinary column default like every other permission mode. Null inherits. Set via the New Task dialog's Advanced section / the task-detail edit form, or locked on first spawn or on leaving To Do alongside agent/model/effort (`lockAdvancedOverridesOnFirstSpawn`) so a task with ANY Advanced override runs under the permission the dialog displayed, not the destination column's. */
   permission_mode: PermissionMode | null;
   /** Per-task initial command, injected once the agent spawns for this task. MCP-only (set via `kangentic_create_task`'s `autoCommand` param); not surfaced in the UI. Takes precedence over the profile's and then the swimlane's `auto_command` for this task only; null inherits. Deliberately NOT part of the profile/direct-override exclusivity set (it is an MCP escape hatch, not an Advanced pin), so a task may carry both this and `profile_id`. */
   auto_command: string | null;
@@ -460,6 +598,8 @@ export interface TaskDetailViewState {
   changesSelectedCommit?: string;
   /** Manually-set commit-history region height (px) in the Changes panel's vertical split. */
   changesHistoryHeight?: number;
+  /** History section expanded in the Changes rail. Written only when true; absent means collapsed (the default). */
+  changesHistoryOpen?: boolean;
 }
 
 export interface TaskAttachment {
@@ -482,7 +622,48 @@ export interface BacklogAttachment {
   created_at: string;
 }
 
-export type SwimlaneRole = 'todo' | 'done';
+/**
+ * The system column roles, as a runtime array so callers that must check a role
+ * at runtime (the DB read path, the kangentic.json apply path, the migration that
+ * repairs legacy values) derive the set from one place instead of re-listing it.
+ */
+export const SWIMLANE_ROLES = ['todo', 'done'] as const;
+
+export type SwimlaneRole = (typeof SWIMLANE_ROLES)[number];
+
+/**
+ * Narrow an untrusted role to the union, or null.
+ *
+ * `swimlanes.role` is plain TEXT with no CHECK constraint, and roles that are no
+ * longer in the union genuinely shipped ('planning', 'running', 'backlog'). A value
+ * outside the union reaching the renderer crashed the Board Manager: every role icon
+ * comes from a two-key `Record<SwimlaneRole, ...>`, so `ROLE_DEFAULTS[role]` returned
+ * undefined and React was handed `<undefined />`. Anything unrecognized is a custom
+ * column, which is exactly what null means.
+ */
+export function normalizeSwimlaneRole(value: unknown): SwimlaneRole | null {
+  return SWIMLANE_ROLES.find((role) => role === value) ?? null;
+}
+
+/**
+ * Columns that never auto-spawn, whatever the flag says.
+ *
+ * The Board Manager strips `auto_spawn` for a role column and `apply-config.ts`
+ * forces it false, but the MCP `update_column` tool writes the field with no
+ * role validation - so `update_column({ column: 'To Do', autoSpawn: true })`
+ * would otherwise spawn an agent, and a worktree, for every card in To Do.
+ * Those sessions are also unreachable afterwards: `SESSION_RESUME` refuses
+ * role 'todo', and a To Do card relies on having no session to open straight
+ * into the edit form.
+ *
+ * This set is the one ground truth for that rule, so every gate reads it here
+ * rather than re-listing the roles: the auto-spawn reconcile, a task move, and
+ * the mobile bridge's `spawns_session` wire field all resolve a column in this
+ * set to "never delivers a successor session", whatever `auto_spawn` says.
+ * A role, unlike `auto_spawn`, is not something a Board Profile can override
+ * per task, which is what makes that answer exact rather than advisory.
+ */
+export const NEVER_AUTO_SPAWN_ROLES: ReadonlySet<SwimlaneRole> = new Set<SwimlaneRole>(['todo', 'done']);
 
 /**
  * Which session track a task runs on when it enters a column.
@@ -637,6 +818,179 @@ export interface SwimlaneTransition {
   execution_order: number;
 }
 
+// === Column Automations ===
+
+/**
+ * An automation type id. Each one is an adapter under `src/main/automations/`,
+ * declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`).
+ *
+ * `spawn_agent` is the ONE legacy id: it is never offered for a new automation,
+ * but a migrated row carrying a custom `promptTemplate` still runs, because a
+ * custom prompt has no other home. The three other retired action types
+ * (`kill_session`, `create_worktree`, `cleanup_worktree`) are not here at all -
+ * each was a no-op or a duplicate of the move path, so the migration drops
+ * their rows rather than keeping an adapter alive for them.
+ */
+export type AutomationType =
+  | 'send_message'
+  | 'run_script'
+  | 'webhook'
+  | 'notify'
+  | 'spawn_agent';
+
+/**
+ * When an automation runs, relative to the column that owns it. There is
+ * deliberately no 'both': every both-ends workflow needs different settings per
+ * direction, so it is two automations, and without it a column's two group
+ * counts always sum to its total.
+ */
+export type AutomationTrigger = 'enter' | 'exit';
+
+/**
+ * An automation's per-type payload. Keys are declared by the adapter's manifest
+ * `fields`; anything the chosen type does not declare is dropped on save. Keys
+ * may be shared across types on purpose (`body` is both the webhook payload and
+ * the notification text), so switching a draft's type and back keeps what was
+ * typed.
+ */
+export interface AutomationConfig {
+  // send_message
+  message?: string;
+  mode?: AutoCommandMode;
+  /** Legacy `send_command` key, read on migration as the message. Never written. */
+  command?: string;
+
+  // run_script
+  script?: string;
+  /** Per-automation budget. Exit rows are additionally capped by the group cap. */
+  timeoutMinutes?: number;
+  /** Legacy key. A script now always runs task-relative; ignored and dropped on save. */
+  workingDir?: 'worktree' | 'project';
+
+  // webhook
+  url?: string;
+  method?: 'GET' | 'POST' | 'PUT';
+  headers?: Record<string, string>;
+
+  // notify
+  title?: string;
+
+  /** webhook payload, and the notification's body. */
+  body?: string;
+
+  // legacy spawn_agent
+  agent?: string;
+  promptTemplate?: string;
+  nonInteractive?: boolean;
+}
+
+/** One automation on one column. An automation belongs to exactly one column. */
+export interface ColumnAutomation {
+  id: string;
+  swimlane_id: string;
+  name: string;
+  type: AutomationType;
+  trigger: AutomationTrigger;
+  /** 0..n WITHIN (swimlane_id, trigger), so the two groups never interleave. */
+  position: number;
+  enabled: boolean;
+  config: AutomationConfig;
+  created_at: string;
+  updated_at: string;
+}
+
+/** What the renderer sends when saving a column's list. `id` is kept when supplied. */
+export interface AutomationWriteInput {
+  id?: string;
+  name: string;
+  type: AutomationType;
+  trigger: AutomationTrigger;
+  enabled: boolean;
+  config: AutomationConfig;
+}
+
+/**
+ * The rationed interruption when an automation fails or is interrupted.
+ *
+ * Mirrors `auto-command-outcome.ts`: the DB row is the durable record and this
+ * push is the interruption, so nothing is sent on success and a failure is
+ * cooled down per project. Carries what a toast needs to name the thing and
+ * offer to run it again.
+ */
+export interface AutomationRunFailure {
+  runId: string;
+  automationId: string;
+  automationName: string;
+  columnName: string;
+  taskId: string;
+  taskTitle: string;
+  projectId: string;
+  status: 'failed' | 'interrupted';
+  detail: string | null;
+}
+
+/**
+ * Terminal state of one automation execution.
+ *
+ * `interrupted` is not a failure the automation caused: the shutdown path is
+ * synchronous by rule (`.claude/rules/synchronous-shutdown.md`), so an in-flight
+ * run cannot be drained on quit. A row left `running` is a known orphan, and the
+ * project-open sweep marks it interrupted so "did this run" always has an answer.
+ */
+export type AutomationRunStatus = 'running' | 'succeeded' | 'failed' | 'skipped' | 'interrupted';
+
+/**
+ * The durable record of one execution. `automation_name` and `type` are
+ * DENORMALIZED and there is no foreign key to `column_automations` on purpose:
+ * a run log that empties itself when you rename or delete the automation is not
+ * a log.
+ */
+export interface AutomationRun {
+  id: string;
+  automation_id: string;
+  automation_name: string;
+  type: AutomationType;
+  task_id: string;
+  swimlane_id: string;
+  trigger: AutomationTrigger;
+  status: AutomationRunStatus;
+  /** The skip reason, the error, or a one-line success ("HTTP 204", "exit 0"). */
+  detail: string | null;
+  attempts: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/**
+ * What `IPC.AUTOMATION_RUN_AGAIN` answers.
+ *
+ * A discriminated result rather than a throw, because both callers report it to
+ * a person: the toast's Run again action and the MCP tool. `ok: false` means the
+ * run never started (a deleted automation, a closed project); a run that STARTED
+ * and failed is `ok: true` with `status: 'failed'`, because the run row exists
+ * and the detail is the automation's own.
+ */
+export type AutomationRunAgainResult =
+  | {
+      ok: true;
+      runId: string;
+      automationName: string;
+      columnName: string;
+      status: AutomationRunStatus;
+      detail: string | null;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Payload of `IPC.AUTOMATION_RUNS_INTERRUPTED`: the project-open sweep's count
+ * of runs a quit left mid-flight. One notice per project open, never one per
+ * row, and only when the count is above zero.
+ */
+export interface AutomationInterruptedSummary {
+  projectId: string;
+  count: number;
+}
+
 // === Session Management ===
 
 export type SessionStatus = 'running' | 'queued' | 'exited' | 'suspended';
@@ -663,6 +1017,34 @@ export interface Session {
   resuming: boolean;
   /** True for ephemeral command terminal sessions (no task association, no DB persistence). */
   transient?: boolean;
+  /**
+   * For a transient session, the durable Command Terminal window SLOT id
+   * (`slot-1`, ...) the renderer allocated at spawn. Null for task agents and for
+   * a transient spawned by a path that sends none.
+   *
+   * On this DTO for CORRECTNESS, which is what separates it from `agentName`
+   * (deliberately kept off, as a diagnostic - see `listManagedSummaries` in
+   * src/main/pty/session-registry.ts). The renderer's (project, slot) pairing map
+   * is renderer-only memory that a full page reload destroys, leaving live PTYs
+   * with nothing pointing at them. This is main's authoritative copy of the
+   * pairing, so recovery re-pairs a survivor to the slot it actually ran under
+   * instead of guessing a position. See planTransientRecovery.
+   */
+  commandTerminalSlot?: string | null;
+  /** For a transient session, the branch it was spawned on (the RESOLVED branch,
+   *  after any checkout fallback). Null for task agents. Carried for the same
+   *  reason as the slot: recovery restores it, so a recovered terminal's header
+   *  branch pill is not blank. */
+  commandTerminalBranch?: string | null;
+  /** For a transient session, the name auto-derived from its first prompt. Null
+   *  until one is derived, and for task agents.
+   *
+   *  Derived in the renderer (`auto-name-scheduler.ts`) and pushed to main purely
+   *  so it survives a reload, alongside the slot and branch. Without that, a
+   *  recovered terminal drops back to "Command Terminal N" AND the auto-namer
+   *  re-fires on the next prompt, renaming it after whatever the user happened to
+   *  type second. */
+  commandTerminalLabel?: string | null;
   /**
    * Parallel-session discriminator for the terminal badge. Null/undefined (main
    * session, or legacy/transient sessions) shows as "Main"; a swimlane id (the
@@ -782,6 +1164,22 @@ export interface HandoffRecord {
  * record an attempt only.
  */
 export type SentSessionMessageStatus = 'delivered' | 'queued' | 'refused' | 'failed';
+
+/**
+ * What main answers a `sessions.resize`. `refused` is set only when main
+ * deliberately held the PTY's grid against the requested one (the mobile
+ * sub-floor guard, or a replay whose bytes address a fixed grid), and `held`
+ * then names the grid it kept. A terminal that is refused conforms to `held`:
+ * it resizes its own grid to it and picks the font size that fits that grid
+ * into its pane, so the frame the PTY paints is the frame the user sees
+ * (useTerminal's conform path). The echo re-assert reads `refused` alone to
+ * stop healing attempts immediately instead of retrying to its cap.
+ */
+export interface SessionResizeResult {
+  colsChanged: boolean;
+  refused?: true;
+  held?: { cols: number; rows: number };
+}
 
 /**
  * One message sent into a session via `kangentic_send_session_message`, by
@@ -1482,16 +1880,75 @@ export interface UsageKpis {
   filesChanged: number;
   compactionCount: number;
   totalDurationMs: number;
-  /** Turn-derived totals (conversation_turn_usage; true per-turn tokens). */
+  /**
+   * Milliseconds the agent was actually WORKING in this window, from the
+   * activity-interval ledger, and how many sessions that ledger covers here.
+   *
+   * These two travel together because they are the numerator and denominator
+   * of one average. `sessionCount` above counts `usage_history` rows, which is
+   * a different and larger population: per-interval recording shipped later,
+   * so dividing `activeMs` by `sessionCount` would mix two ledgers and
+   * under-report every historical range.
+   *
+   * Active means agent-working, not session-open. `totalDurationMs` above is
+   * the agent's own wall clock, which counts every hour a session sat idle;
+   * measured on the dogfooding install, active time is 39% of it. This is the
+   * metric Claude Code publishes as `claude_code.active_time.total`.
+   *
+   * `activeSessionsCovered` of 0 means the ledger reaches none of this range,
+   * which the UI reports as "not covered" rather than as zero activity.
+   */
+  activeMs: number;
+  activeSessionsCovered: number;
+  /**
+   * Turn-derived totals (conversation_turn_usage; true per-turn tokens).
+   *
+   * MAIN THREAD ONLY. These four, and both chart series, count the driver's
+   * turns and nothing else, exactly as they did before subagent capture existed,
+   * so the historical series stays comparable. A fan-out task's subagent traffic
+   * is reported separately in the `subagent*` fields below and in
+   * `UsageDashboardStats.bySubagentType`, never folded in here.
+   */
   turnInputTokens: number;
   turnOutputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
-  /** Tokens per hour over the effective window (turn-derived); null when no turn data. */
+  /**
+   * Subagent-derived totals (conversation_turn_usage rows with a non-null
+   * subagent_id). Additive to the four fields above, never included in them: on a
+   * fan-out task this is most of the traffic, so summing both is the session-tree
+   * token total. Zero when a window has no subagent rows, which is also what a
+   * window predating subagent capture reports.
+   */
+  subagentInputTokens: number;
+  subagentOutputTokens: number;
+  subagentCacheCreationTokens: number;
+  subagentCacheReadTokens: number;
+  subagentTurnCount: number;
+  /** Distinct subagents that ran in the window. */
+  subagentCount: number;
+  /** Of those, how many were spawned BY another subagent rather than by the
+   *  driver. A subset of `subagentCount`, never additive: their tokens are
+   *  already inside the four `subagent*` totals above. Zero for an agent that
+   *  forbids nesting (Gemini) or reports no depth. */
+  subagentNestedCount: number;
+  /** Main-thread turn tokens over the whole selected range, idle time
+   *  included. Null for a range with no sessions. */
   burnRateTokensPerHour: number | null;
-  /** Dollars per hour via proportional allocation of each session's reported
-   *  cost across its turns by token share. API-equivalent and approximate;
-   *  null when no cost or no turn data is available. */
+  /**
+   * Ledger cost over that SAME range, so `rate x range hours` reproduces
+   * `totalCostUsd` and the two lines describe one window.
+   *
+   * It used to divide turn-ALLOCATED cost (each session's cost spread across
+   * its turns by token share) by the range, which covers only the span the
+   * turn ledger reaches - about 29% of lifetime cost on the dogfooding
+   * install - while the Cost tile showed the full ledger. Dividing one tile by
+   * the other implied two different window lengths. That allocation is still
+   * the right input for the per-bucket burn CHART, which needs cost attributed
+   * to a timestamp; it is wrong for a headline rate beside a full-range total.
+   *
+   * API-equivalent list price. Null when no session or no cost is in range.
+   */
   burnRateUsdPerHour: number | null;
 }
 
@@ -1565,7 +2022,7 @@ export interface EffortUsageBreakdown {
 
 /** Per-project sub-totals for the app-wide rollup's comparison table. All
  *  fields fold out of the rows already read for the range (zero extra
- *  queries); ratios (cost share, blended $/Mtok, avg session) are derived
+ *  queries); ratios (cost share, avg active time) are derived
  *  client-side from these. */
 export interface ProjectUsageSummary {
   projectId: string;
@@ -1579,6 +2036,11 @@ export interface ProjectUsageSummary {
   linesRemoved: number;
   filesChanged: number;
   totalDurationMs: number;
+  /** Active (agent-working) ms in range, and the sessions the interval ledger
+   *  covers. Same pair and same reason as on `UsageKpis`: the average is over
+   *  `activeSessionsCovered`, never over `sessionCount`. */
+  activeMs: number;
+  activeSessionsCovered: number;
   /** Most recent session start in range (epoch ms); null when no sessions. */
   lastActiveMs: number | null;
   /** Dominant agent by tokens in range; null when none recorded. */
@@ -1639,6 +2101,60 @@ export interface UsageDashboardStats {
   byModel: ModelUsageBreakdown[];
   byAgent: AgentUsageBreakdown[];
   byEffort: EffortUsageBreakdown[];
+  /**
+   * Per-subagent-type rollup over the selected range (source:
+   * conversation_turn_usage rows with a non-null subagent_id), heaviest first.
+   *
+   * Distinct from `byAgent`, which is the CLI that ran the session (Claude vs
+   * Codex vs ...). This is which Task-tool subagent burned the tokens inside one
+   * Claude session: 'review-finder', 'test-builder', 'Explore'. Empty for a range
+   * with no subagent traffic.
+   */
+  bySubagentType: SubagentUsageTotals[];
+  /**
+   * Agents that ran in this range and CANNOT report subagent usage, so their
+   * fan-outs are absent from `bySubagentType` rather than absent from reality.
+   *
+   * Without this the Subagents tile renders `-` for two different things: a range
+   * where nothing fanned out, and a range where the agent has no subagent capture
+   * at all. Only the Claude adapter implements it today, so a Codex or Gemini
+   * project reads `-` permanently, which looks like a measurement rather than a
+   * gap. Derived from which adapters declare the capability, never from an agent
+   * name outside the adapters.
+   */
+  subagentBlindAgents: string[];
+  /**
+   * What this window's ledger ALREADY holds for the sessions the renderer is
+   * about to layer its in-memory live overlay on top of.
+   *
+   * The Cost and Tokens tiles add `useLiveUsageAggregate` to the ledger totals
+   * for instant reactivity. But a running session is upserted into
+   * `usage_history` every 45s by the metrics timer, so the ledger already
+   * carries it: adding the overlay on top counted it twice, which is why the
+   * Cost tile floated $758 above the by-model / by-agent / by-effort
+   * breakdowns, none of which get an overlay. The renderer subtracts this
+   * first, so the overlay contributes only the not-yet-snapshotted delta and
+   * the tile equals the breakdown sum whenever nothing is running.
+   *
+   * Zero when no live session is in scope, and when the range is a day drill
+   * or custom window (those pass no live sessions at all).
+   *
+   * Cost only: the token tiles read the per-turn ledger, which is written at
+   * index time rather than live, so there is no token overlay to correct.
+   */
+  liveLedgerBaseline: { costUsd: number };
+  /**
+   * Oldest timestamp in the per-turn ledger across the scoped projects, or
+   * null when no project has turn rows.
+   *
+   * The token and cost ledgers do not start at the same time. `usage_history`
+   * reaches back to the install's first session; per-turn capture shipped
+   * later, and the CLI prunes the transcripts that would let us backfill it.
+   * So when `rangeStartMs` is earlier than this, the token figures cover a
+   * genuinely shorter span than the cost beside them, and the UI says so
+   * rather than letting a June-onward number read as a March-onward one.
+   */
+  earliestTurnMs: number | null;
   /** Present only for scope.kind === 'all'. */
   perProject?: ProjectUsageSummary[];
   /** Projects whose DB was missing or unreadable and were skipped (app-wide scope). */
@@ -1719,6 +2235,14 @@ export interface GitBranchSummaryInput {
   worktreePath?: string;
   projectPath: string;
   baseBranch: string;
+  /**
+   * When true, the HANDLER refreshes remote-tracking refs first (via the
+   * throttled, 5s-budget, never-rejecting fetchAllRemotesIfStale) so `behind`
+   * reflects the actual remote rather than the last time anyone fetched.
+   * getBranchSummary itself stays fetch-free; the Changes panel opts in from
+   * its mount effect only, and fs.watch refires never pass it.
+   */
+  refreshRemote?: boolean;
 }
 
 /** Tip commit of the worktree's HEAD, for the header's last-commit line. */
@@ -1740,6 +2264,23 @@ export interface GitBranchSummaryResult {
   behind: number;
   /** The HEAD tip commit, or null on an unborn branch / probe failure. */
   lastCommit: GitLastCommit | null;
+}
+
+/** Input for `git:worktreeHead`: the checkout whose live HEAD to read. */
+export interface GitWorktreeHeadInput {
+  path: string;
+}
+
+/**
+ * A checkout's live HEAD. Two rev-parse calls, no fetch, no rev-list. `branch`
+ * is null on a detached HEAD or a git error; `sha` is null only on a git
+ * error, so the pair tells "detached" from "unknown". The Command Terminal's
+ * branch pill is re-derived from this, since the terminal shares the main
+ * checkout's HEAD with the user's own git usage and every other terminal.
+ */
+export interface GitWorktreeHeadResult {
+  branch: string | null;
+  sha: string | null;
 }
 
 /**
@@ -1935,13 +2476,20 @@ export function resolvePermissionForAgent(agentList: AgentDetectionInfo[], agent
   return agentInfo.defaultPermission;
 }
 
+/**
+ * `dark` and `light` are the neutral defaults (labelled Graphite and Paper); their ids
+ * predate the names and live in every config file, so they stay. `rust` and `clay` are
+ * the product pair.
+ */
 export type ThemeMode = 'dark' | 'light'
+  | 'rust' | 'clay'
   | 'moon' | 'forest' | 'ocean' | 'ember'
   | 'sand' | 'mint' | 'sky' | 'peach';
 
 /** Background colors for BrowserWindow (prevents flash on launch). */
 export const THEME_BACKGROUNDS: Record<ThemeMode, string> = {
   dark: '#18181b', light: '#f5f5f4',
+  rust: '#2d2017', clay: '#f6f1e8',
   moon: '#1a1d2e', forest: '#1a2318', ocean: '#0f1923', ember: '#1f1a17',
   sand: '#f5f0e8', mint: '#eef5f0', sky: '#edf3f8', peach: '#f8f0ec',
 };
@@ -1954,20 +2502,81 @@ export const THEME_BACKGROUNDS: Record<ThemeMode, string> = {
  *  before the terminal had its own fixed color scheme. */
 export const THEME_FOREGROUNDS: Record<ThemeMode, string> = {
   dark: '#e4e4e7', light: '#292524',
+  rust: '#ded4c8', clay: '#332e27',
   moon: '#c6c8d0', forest: '#c6cac4', ocean: '#c0c6ce', ember: '#ccc8c4',
   sand: '#3d3228', mint: '#1e3028', sky: '#1a2a3a', peach: '#3a2520',
 };
 
-/** UI metadata for the settings dropdown. */
-export const NAMED_THEMES: { id: ThemeMode; label: string; base: 'dark' | 'light' }[] = [
-  { id: 'moon', label: 'Moon', base: 'dark' },
-  { id: 'forest', label: 'Forest', base: 'dark' },
-  { id: 'ocean', label: 'Ocean', base: 'dark' },
-  { id: 'ember', label: 'Ember', base: 'dark' },
-  { id: 'sand', label: 'Sand', base: 'light' },
-  { id: 'mint', label: 'Mint', base: 'light' },
-  { id: 'sky', label: 'Sky', base: 'light' },
-  { id: 'peach', label: 'Peach', base: 'light' },
+/**
+ * Whether each theme is light or dark underneath. `Record<ThemeMode, ...>`, so tsc
+ * refuses a new theme that does not answer the question.
+ *
+ * This exists because the answer used to be read off NAMED_THEMES, which at the time
+ * listed only the NAMED themes: `dark` and `light` were hardcoded in the settings
+ * dropdown and not in it. `DiffViewer` resolved Monaco's theme with a `?? 'dark'`
+ * fallback for an unlisted id, so the shipped Light theme rendered a BLACK diff pane
+ * inside an otherwise light app, and any future theme would have inherited the same
+ * trap by omission. NAMED_THEMES is total now, but only a test holds it there; a
+ * total record cannot be omitted from, so this stays the light-or-dark source.
+ */
+export const THEME_BASES: Record<ThemeMode, 'dark' | 'light'> = {
+  dark: 'dark', light: 'light',
+  rust: 'dark', clay: 'light',
+  moon: 'dark', forest: 'dark', ocean: 'dark', ember: 'dark',
+  sand: 'light', mint: 'light', sky: 'light', peach: 'light',
+};
+
+/** The three keys the theme resolves from; a `Pick` so main can pass a parsed config file. */
+export type ThemeChoice = Pick<AppConfig, 'theme' | 'themeFollowsSystem' | 'themeLight' | 'themeDark'>;
+
+/**
+ * The theme the app paints, given the OS appearance. With `themeFollowsSystem` off it
+ * is the hand-picked `theme`; on, it is the pair member for the system's side. Shared
+ * by the renderer (the html class, the diff pane, the terminal's theme-match preset)
+ * and by main (the launch background), so the two cannot disagree on what "following
+ * the system" means. Guards against a pair member of the wrong base, which an edited
+ * config file can carry: a light theme in the dark slot falls back to the default pair.
+ */
+export function resolveTheme(choice: ThemeChoice, systemPrefersDark: boolean): ThemeMode {
+  if (!choice.themeFollowsSystem) return choice.theme;
+  if (systemPrefersDark) return THEME_BASES[choice.themeDark] === 'dark' ? choice.themeDark : 'dark';
+  return THEME_BASES[choice.themeLight] === 'light' ? choice.themeLight : 'light';
+}
+
+/**
+ * The Theme tab's picker list: one tile per theme, in the order the grid shows them.
+ * The light-or-dark question is answered by THEME_BASES above, not by position here;
+ * the grid groups by THEME_BASES and only keeps this order within each group. A theme
+ * missing from this list has no tile, so `theme-registry-parity.test.ts` requires the
+ * list to name every `ThemeMode` exactly once.
+ *
+ * Within a base the default comes first, then the product theme, then the palettes
+ * picked for taste. Every label is one word for what the swatch shows, like the
+ * eight palettes always were: the two defaults used to be "Dark" and "Light", which
+ * under a grid grouped by base said nothing twice, and the product pair used to be
+ * "Kangentic Dark" / "Kangentic Light", which inside Kangentic's own settings read as
+ * "Default". Those two were renamed id and all (`rust`, `clay`) before any release
+ * carried them; `dark` and `light` keep their ids because every config file has them.
+ *
+ * `group: 'kangentic'` marks the product pair, which the grid draws with the brand
+ * mark so the pair reads as the product's own without a group of its own or a shared
+ * name. It ships as a light/dark PAIR rather than one theme because a lone product
+ * theme reads as if it follows your light/dark preference. It does not, and a
+ * dark-mode user picking the product's own theme would get a bright app.
+ */
+export const NAMED_THEMES: { id: ThemeMode; label: string; group?: 'kangentic' }[] = [
+  { id: 'dark', label: 'Graphite' },
+  { id: 'rust', label: 'Rust', group: 'kangentic' },
+  { id: 'moon', label: 'Moon' },
+  { id: 'forest', label: 'Forest' },
+  { id: 'ocean', label: 'Ocean' },
+  { id: 'ember', label: 'Ember' },
+  { id: 'light', label: 'Paper' },
+  { id: 'clay', label: 'Clay', group: 'kangentic' },
+  { id: 'sand', label: 'Sand' },
+  { id: 'mint', label: 'Mint' },
+  { id: 'sky', label: 'Sky' },
+  { id: 'peach', label: 'Peach' },
 ];
 
 /** Custom terminal color overrides, editable in the Terminal settings tab's
@@ -2131,6 +2740,13 @@ export interface DictationInfo {
   /** The resolved live + final model ids for the current selection. */
   selectedLiveModelId: string | null;
   selectedFinalModelId: string | null;
+  /** True once the `kangentic-dictation` utilityProcess worker has crashed
+   *  repeatedly and the restart policy has given up for this decay window -
+   *  push-to-talk has no fallback engine, so the settings panel surfaces
+   *  this rather than leaving it a silent dead end. */
+  workerUnavailable: boolean;
+  /** The newest crash's exit code + first error line, when `workerUnavailable`. */
+  workerError?: string;
 }
 
 /** Progress event for an in-flight model download. */
@@ -2273,6 +2889,14 @@ export interface MonitorSessionRow {
    * MONITOR_PEEK push. Extraction rule: `src/main/pty/buffer/output-peek.ts`.
    */
   outputPeek: string[];
+  /**
+   * The task's description, so the card can honor a Card Preview of
+   * `description` the way the board card does. Null for a Command Terminal,
+   * which has no task; the card then shows the output peek in that mode. The
+   * two agent-message modes read the session's trail from the session store,
+   * not from this row.
+   */
+  description: string | null;
   /** The task's #N ticket number; null when the task row could not be resolved. */
   displayId: number | null;
   /** Swimlane (column) name the task currently sits in. Empty for a Command
@@ -2296,6 +2920,7 @@ export interface MonitorSessionRow {
   prUrl: string | null;
   prNumber: number | null;
   prState: PRState | null;
+  prMergeReadiness: PRMergeReadiness | null;
   /** Adapter name captured at spawn (e.g. "claude"). Null for a pre-adapter session. */
   agentName: string | null;
   /** The agent-reported live model when available, else the model the session was
@@ -2387,6 +3012,8 @@ export interface TaskDetailBundle {
     labelColors: Record<string, string>;
     defaultBaseBranch: string;
     worktreesEnabled: boolean;
+    /** Per-agent execution mode, so the branch hint can say a remote agent gets no local worktree. */
+    agentExecution: Record<string, AgentProjectExecution>;
     browserEnabled: boolean;
   };
 }
@@ -2417,20 +3044,68 @@ export interface MonitorView {
 }
 
 export interface AppConfig {
+  /** The theme picked by hand. What the app paints when `themeFollowsSystem` is off. */
   theme: ThemeMode;
+  /**
+   * Follow the OS appearance: paint `themeDark` while the system is dark and
+   * `themeLight` while it is light, ignoring `theme`. Off by default. The three keys
+   * are project-scoped together with `theme` (the Theme tab), and the OS reading is
+   * never written to config: the renderer resolves it live (`resolveTheme`), and main
+   * resolves the launch background the same way from `nativeTheme`.
+   */
+  themeFollowsSystem: boolean;
+  /** The theme for a light system appearance when following. Must be a light base. */
+  themeLight: ThemeMode;
+  /** The theme for a dark system appearance when following. Must be a dark base. */
+  themeDark: ThemeMode;
   sidebarVisible: boolean;
   boardLayout: 'horizontal' | 'vertical';
   cardDensity: 'compact' | 'default' | 'comfortable';
+  /**
+   * What a board card prints under its title: the agent's latest message alone
+   * wrapped to the slot (the default), the agent's recent messages one line
+   * each, or always the task description. Both agent modes fall back to the
+   * description while a task has no session or its agent has not said anything
+   * yet. The Agent Monitor card honors the same value.
+   */
+  cardPreview: 'agent-messages' | 'agent-latest-message' | 'description';
   columnWidth: 'narrow' | 'default' | 'wide';
   showTaskNumbers: boolean; // show each task's #N (display_id) on its board card
   terminalPanelVisible: boolean;
   animationsEnabled: boolean;
   statusBarVisible: boolean;
+  /**
+   * Chromium hardware rendering for the app window and terminals.
+   *
+   * A plain boolean, never a tri-state. An "automatic" that silently resolved
+   * to software would leave the control reading Automatic while acceleration
+   * was off, which is a control that lies about its own state. The value
+   * always matches what the app is actually doing, and the recovery path in
+   * index.ts SETS it to false rather than shadowing it. Being genuinely
+   * binary, it renders as a toggle like every other boolean here, including
+   * `animationsEnabled` beside it in the same tab.
+   *
+   * Read synchronously at module scope, before app.whenReady(), because
+   * app.disableHardwareAcceleration() only works before ready.
+   */
+  graphicsAccelerationEnabled: boolean;
+  /**
+   * Who last turned `graphicsAccelerationEnabled` off, or null while it is on.
+   *
+   * The only reason this exists: a later GPU failure must never rewrite a
+   * choice the user made themselves, and the Settings callout explaining the
+   * downgrade must show for our 'off' and not for theirs. Everything else
+   * about the incident (the death sequence, counts, timestamps, the adapter)
+   * lives in the Sentry escalation record, which is where it gets read.
+   */
+  graphicsAccelerationOffBy: 'app' | 'user' | null;
   diffViewMode: 'split' | 'inline'; // split = side-by-side, inline = unified
   diffDefaultScope: GitDiffScope; // default scope a freshly opened Changes panel uses
   diffIgnoreWhitespace: boolean; // hide whitespace-only changes in the diff
   diffCollapseUnchanged: boolean; // fold away large unchanged regions, showing only changed hunks
-  diffFileSort: 'name' | 'status' | 'size'; // Changes panel file ordering
+  diffWrapLines: boolean; // soft-wrap long lines in the diff instead of scrolling horizontally
+  diffUseInlineWhenNarrow: boolean; // render a narrow diff pane inline even when Side by side is selected
+  diffFileSort: 'name' | 'status' | 'size' | 'ext'; // Changes panel file ordering
   diffFlatList: boolean; // Changes panel file list: flat full-path list vs nested directory tree
 
   /** Persisted Agent Monitor view. Global-only: the monitor spans every project, so a
@@ -2481,6 +3156,38 @@ export interface AppConfig {
     linkNodeModules: boolean;
     /** Minutes between background PR-state refresh sweeps for the open project. null = off (on-open sweep only). */
     prRefreshIntervalMinutes: number | null;
+    /**
+     * Minutes between background `git fetch --all --prune` sweeps of the open
+     * project's remotes, so ahead/behind counts and base-drift checks read
+     * current remote refs without anyone opening a panel. null = off (on-open
+     * sweep only). The sweep only fetches; it never pulls, merges, or rebases.
+     */
+    autoFetchIntervalMinutes: number | null;
+    /**
+     * Ask the host to evaluate branch policies when judging merge readiness,
+     * where that costs a call of its own (Azure DevOps: one `az rest` per open
+     * PR per sweep, roughly a second each). Off by default for that cost; a
+     * host whose verdict already carries policy (GitHub) ignores it. Without
+     * it an Azure PR's clean merge preview stays `unknown` rather than `ready`.
+     */
+    prEvaluateBranchPolicies: boolean;
+    /**
+     * Count the viewer's own merge bypass as `ready`. On GitHub a PR still
+     * waiting on a required review reads `BLOCKED`, or `BEHIND` once somebody
+     * else's PR lands and leaves it behind the base, yet a viewer who can
+     * bypass branch protection (`viewerCanMergeAsAdmin`) merges it at once, and
+     * the board's Merge column does exactly that with `gh pr merge --admin`
+     * once every check is green. On, the GitHub connector spends one
+     * `gh api graphql` probe per such green PR per sweep and
+     * folds the answer to `ready`. Never past a check that has not passed: the
+     * bypass is a capability (it reads true on a red PR too), so the same probe
+     * reads the branch's required checks and every one of them must have
+     * reported green. Default on because the shipped Merge column
+     * already merges this way; turn it off for a team that keeps the review
+     * norm even where it could bypass. Azure DevOps ignores it. This makes
+     * `Task.pr_merge_readiness` viewer-relative.
+     */
+    prBypassCountsAsReady: boolean;
   };
 
   mcpServer: {
@@ -2821,6 +3528,23 @@ export interface AppConfig {
    *  the release that introduced it - at which point every config on disk already
    *  carries `true`. Until then it stays, like `hasCompletedFirstRun` below. */
   hasMigratedWindowLightDismissDefault: boolean;
+  /** One-shot marker for the purge of seeded entries out of `discoveredModelsByAgent`.
+   *
+   *  `loadAgentList` used to seed that cache from `capabilities.models` with a union that
+   *  only ever grew, so anything an adapter ever reported became permanent. Cursor's
+   *  hardcoded fallback list therefore outlived its own deletion: 'GPT-4 Turbo' and friends
+   *  are already written into every config on disk, and a seeded entry is indistinguishable
+   *  from a learned one, so there is nothing to filter on.
+   *
+   *  The migration in `ConfigManager.load()` clears the whole map once. The cost is that
+   *  genuinely learned models are forgotten and re-learned on next use; the alternative is
+   *  offering models the CLI no longer serves, which is the bug this is fixing. It runs in
+   *  main before the renderer's first read, so no renderer write can spread a stale value
+   *  back over it.
+   *
+   *  Retirable (with its migration block) once no supported install can still predate the
+   *  release that introduced it, like `hasMigratedWindowLightDismissDefault` above. */
+  hasPurgedSeededDiscoveredModels: boolean;
   /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
    *  dismissed suggestion does not reappear on the next app launch. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
@@ -2942,20 +3666,45 @@ export type SerializedTileNode =
       sizes: number[];
     };
 
+/**
+ * What a config write reports back. `persisted` is false when the write did not reach
+ * disk - `ConfigManager.save()` / `saveProjectOverrides()` degrade rather than throw
+ * (see `src/main/safe-write.ts`), so without this the renderer could not tell a stored
+ * setting from a dropped one.
+ *
+ * Only the settings panel acts on it, and deliberately so: these channels also carry
+ * window-layout blobs, model caches and announcement dismissals, none of which
+ * represent something a user just asked for. Sentry DESKTOP-1C.
+ */
+export interface ConfigSetResult {
+  persisted: boolean;
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   theme: 'dark',
+  themeFollowsSystem: false,
+  themeLight: 'light',
+  themeDark: 'dark',
   sidebarVisible: true,
   boardLayout: 'horizontal',
   cardDensity: 'default',
+  cardPreview: 'agent-latest-message',
   columnWidth: 'default',
   showTaskNumbers: true,
   terminalPanelVisible: true,
   animationsEnabled: true,
   statusBarVisible: true,
+  // Matches today's behaviour exactly: the app has never set a Chromium GPU
+  // switch, so Electron's own default (hardware on) is what every existing
+  // install already runs. Upgrading changes nothing and needs no migration.
+  graphicsAccelerationEnabled: true,
+  graphicsAccelerationOffBy: null,
   diffViewMode: 'split',
   diffDefaultScope: 'working',
   diffIgnoreWhitespace: false,
   diffCollapseUnchanged: false,
+  diffWrapLines: false,
+  diffUseInlineWhenNarrow: true,
   diffFileSort: 'name',
   diffFlatList: false,
   monitor: {
@@ -3012,6 +3761,9 @@ export const DEFAULT_CONFIG: AppConfig = {
     initScript: null,
     linkNodeModules: true,
     prRefreshIntervalMinutes: 5,
+    autoFetchIntervalMinutes: 5,
+    prEvaluateBranchPolicies: false,
+    prBypassCountsAsReady: true,
   },
   mcpServer: {
     enabled: true,
@@ -3070,6 +3822,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoFocusIdleSession: false,
   windowLightDismiss: 'focused',
   hasMigratedWindowLightDismissDefault: false,
+  hasPurgedSeededDiscoveredModels: false,
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,
   restoreWindowPosition: true,
@@ -3136,6 +3889,48 @@ export interface UpdateDownloadedInfo {
   version: string;
   /** Markdown release notes for this version, normalized to a flat string. Empty if none. */
   releaseNotes: string;
+}
+
+// === Host memory pressure (Sentry DESKTOP-16) ===
+
+/** A single reading of host-level memory. See `src/main/diagnostics/host-memory.ts`
+ *  for what `commitLimitBytes` / `commitRemainingBytes` mean and why they are
+ *  null on every platform but Windows. */
+export interface HostMemorySample {
+  ts: string;
+  platform: NodeJS.Platform;
+  /** Windows commit limit; null on every other platform. */
+  commitLimitBytes: number | null;
+  /** Windows commit remaining; null on every other platform. */
+  commitRemainingBytes: number | null;
+  physicalTotalBytes: number;
+  physicalFreeBytes: number;
+}
+
+/** Pushed when host commit headroom crosses below the warning threshold (an
+ *  edge-triggered, hysteresis-gated event - see `evaluateHostMemoryPressure`).
+ *  Not a per-tick heartbeat. */
+/** How this launch is rendering, and whether the user still needs telling. */
+export interface GpuGraphicsStatus {
+  /** True when Chromium was started with --disable-gpu and --in-process-gpu.
+   *  The terminal renderer reads this to stop retrying WebGL forever against
+   *  a context it can never get (src/renderer/utils/terminal-webgl.ts). */
+  softwareRendering: boolean;
+  /** True exactly once, on the launch that recovered from a GPU-fatal run.
+   *  Reading the status consumes it. */
+  noticePending: boolean;
+}
+
+export interface HostMemoryPressureEvent {
+  sample: HostMemorySample;
+  activeAgentCount: number;
+}
+
+/** Pushed when host commit headroom recovers past the hysteresis line after a
+ *  warning was latched - the clear-side edge for `HostMemoryPressureEvent`.
+ *  Fires once per recovery, never on a healthy tick with no prior warning. */
+export interface HostMemoryRecoveryEvent {
+  sample: HostMemorySample;
 }
 
 // === Backlog ===
@@ -3250,6 +4045,12 @@ export interface ExternalIssue {
   labels: string[];
   assignee: string | null;
   state: string;
+  /**
+   * Normalized open/closed bucket, stamped by each adapter's mapper from its own
+   * state vocabulary. The Import dialog filters open/closed/all client-side over a
+   * single cache bucket, so a state change just re-upserts with a fresh category.
+   */
+  stateCategory: 'open' | 'closed';
   workItemType?: string;
   createdAt: string;
   updatedAt: string;
@@ -3279,6 +4080,12 @@ export interface ImportFetchInput {
   perPage: number;
   searchQuery?: string;
   state?: 'open' | 'closed' | 'all';
+  /**
+   * ISO 8601 remote-change watermark. Adapters that support incremental fetch
+   * (ADO `System.ChangedDate`, GitHub `since`) return only items changed at or
+   * after this instant; adapters without native support ignore it and full-fetch.
+   */
+  since?: string;
 }
 
 export interface ImportFetchResult {
@@ -3305,7 +4112,48 @@ export interface ImportExecuteResult {
   imported: number;
   skippedDuplicates: number;
   skippedAttachments: number;
+  /**
+   * How many items imported without their deferred per-item detail (Azure DevOps
+   * comments) because the hydrate step failed. The items themselves are fine, so
+   * the import succeeds, but nothing on them would otherwise show the content is
+   * missing. Absent on providers that defer nothing.
+   */
+  detailUnavailable?: number;
   items: BacklogTask[];
+}
+
+/** Read the persisted remote-item cache for a source, with no network access. */
+export interface ImportCacheQuery {
+  source: ExternalSource;
+  repository: string;
+  /**
+   * The project whose cache to read, captured when the user opened the dialog.
+   * The main process falls back to the ambient current project when it is absent,
+   * but passing it keeps a project switch between the click and the handler's
+   * dispatch from pointing the read at another project's database.
+   */
+  projectId?: string;
+}
+
+export interface ImportReconcileInput extends ImportCacheQuery {
+  /**
+   * 'incremental' (default) fetches only items changed since the cache's
+   * high-water mark; 'full' re-fetches everything and prunes items the remote no
+   * longer has. An empty cache is always treated as 'full', as is a cache whose
+   * provider has no cheap id listing and has gone too long without a full pass.
+   */
+  mode?: 'incremental' | 'full';
+}
+
+export interface ImportCachedResult {
+  issues: ExternalIssue[];
+}
+
+export interface ImportReconcileResult {
+  issues: ExternalIssue[];
+  added: number;
+  updated: number;
+  removed: number;
 }
 
 export interface AsanaAuthStatus {
@@ -3349,6 +4197,7 @@ export const MOBILE_CAPABILITY_VERBS = [
   'board-tool-read',
   'board-tool-write',
   'register-push',
+  'start-session',
 ] as const;
 export type MobileCapabilityVerb = (typeof MOBILE_CAPABILITY_VERBS)[number];
 
@@ -3403,6 +4252,8 @@ export interface MobilePairedDevice {
   pairedAt: string;
   /** Live, not persisted - this device's own connection state (transport refined by whether the phone is actually attached), not the panel-wide aggregate. */
   connectionState: MobileDeviceConnectionState;
+  /** ISO 8601, live, not persisted - when `connectionState` last changed, so a row can say "Offline since 3:17 PM" rather than only "Offline". Null before the device's session has opened. */
+  connectionStateSince: string | null;
 }
 
 export interface MobilePairingSasPayload {
@@ -3472,8 +4323,14 @@ export interface TaskUpdateInput {
   pr_number?: number | null;
   pr_url?: string | null;
   pr_state?: PRState | null;
+  /** Normalized merge readiness of the linked PR (see `Task.pr_merge_readiness`). */
+  pr_merge_readiness?: PRMergeReadiness | null;
   head_sha?: string | null;
+  /** The branch the work was pushed to when it differs from `branch_name` (see `Task.pushed_branch`). */
+  pushed_branch?: string | null;
   base_branch?: string | null;
+  /** The base the worktree was actually cut from (see `Task.resolved_base_branch`). */
+  resolved_base_branch?: string | null;
   use_worktree?: number | null;
   labels?: string[];
   priority?: number;
@@ -3489,13 +4346,18 @@ export interface TaskUpdateInput {
 
 /** Result of `IPC.TASK_RESOLVE_PR` - the on-demand branch->PR resolver. */
 export interface TaskResolvePrResult {
-  /** The task after resolution (latest pr_url/pr_number/pr_state), or null if not found. */
+  /** The task after resolution (latest pr_url/pr_number/pr_state/pr_merge_readiness), or null if not found. */
   task: Task | null;
   /** True when the task now has a linked PR (whether or not it changed this call). */
   linked: boolean;
   /** Why the resolve ended this way - lets the UI/MCP show an accurate message. */
   reason: PRLinkStatus;
-  /** Detail for `resolver-unavailable` (e.g. "gh CLI not found - run gh auth login"). */
+  /**
+   * Detail for `resolver-unavailable` / `transient-error`, written by whichever
+   * connector degraded (or by the registry when no connector owns the remote).
+   * Callers should prefer it over their own wording, which cannot know which
+   * hosting provider the repository actually uses.
+   */
   message?: string;
 }
 
@@ -3552,6 +4414,26 @@ export interface TaskSwitchBranchInput {
   newBaseBranch: string;
   enableWorktree?: boolean;
 }
+
+export interface TaskUpdateFromBaseInput {
+  taskId: string;
+}
+
+/**
+ * Outcome of the explicit "Update from base" task action: fetch the task's
+ * effective base, then fast-forward the task's worktree from `origin/<base>`.
+ * This action is the only thing that MOVES a reused worktree - spawn-time
+ * freshening deliberately never fast-forwards an existing tree, it only
+ * surfaces drift. `cannot-ff` is a normal outcome, not an error: a branch
+ * carrying its own commits legitimately stays where it is.
+ */
+export type TaskUpdateFromBaseResult =
+  | { status: 'updated'; baseBranch: string; commitCount: number }
+  | { status: 'already-up-to-date'; baseBranch: string }
+  | { status: 'cannot-ff'; baseBranch: string; ahead: number; behind: number }
+  | { status: 'dirty-tree'; baseBranch: string }
+  | { status: 'fetch-failed'; baseBranch: string; reason: string }
+  | { status: 'no-remote'; baseBranch: string };
 
 export interface TaskMoveInput {
   taskId: string;
@@ -3679,6 +4561,13 @@ export interface ProjectPathProbe {
   isDirectory: boolean;
   isGitRepo: boolean;
   isInsideWorktree: boolean;
+  /**
+   * False for an unborn HEAD (a freshly initialised repo) and for anything
+   * that is not a git repo. A repo with no commits cannot have a worktree
+   * (`git worktree add` has no ref to start from), so the branch hint reads
+   * this to say "runs in the project folder" instead of promising one.
+   */
+  hasCommits: boolean;
   /** Current branch name, or null when not a git repo or HEAD is unreadable. */
   currentBranch: string | null;
   /** The folder's basename, offered as the dialog's default project name. */
@@ -3966,6 +4855,34 @@ export interface AdapterRuntimeStrategy {
       shellIds: string[];
     }): string[];
   };
+
+  /**
+   * How the agent exposes a permission prompt's RESOLUTION from its durable
+   * session transcript, when the agent's hook protocol cannot report it
+   * itself. A manual DENY at Claude's TUI aborts the turn rather than
+   * ending it, so no hook fires at all - `Stop` never comes (the model is
+   * never re-invoked), `PostToolUse` fires only on success, and
+   * `PermissionDenied` exists only for auto-mode denials. Without an
+   * out-of-band signal, `permissionPending` sticks until a human types
+   * into the session again.
+   */
+  readonly permissionPrompts?: {
+    /**
+     * Report which of `toolIds` were REJECTED, per a terminal marker in
+     * the agent's durable session transcript at or after `sinceMs`. An
+     * approval is out of scope here: it already clears through the normal
+     * ToolEnd hook. Returns the matched subset. Must not throw: return
+     * [] when the transcript is missing, unreadable, or nothing terminal
+     * appeared. Omit entirely for agents whose transcript carries no such
+     * signal, or whose hook protocol already reports denials directly.
+     */
+    reportRejectedPromptTools?(options: {
+      cwd: string;
+      agentSessionId: string;
+      toolIds: string[];
+      sinceMs: number;
+    }): string[];
+  };
 }
 
 /**
@@ -4096,6 +5013,96 @@ export interface ConversationTurnUsageRecord {
   usage: TranscriptTurnUsage;
   /** When this row was last written (UTC ISO 8601). */
   recordedAt: string;
+  /**
+   * The subagent that ran this turn, or null for a main-thread (driver) turn.
+   * This is the DISCRIMINATOR the whole ledger is split on: a reader that means
+   * "the driver" says `subagent_id IS NULL`. Every row written before subagent
+   * capture existed is a main-thread turn, so NULL is also the correct historical
+   * value.
+   */
+  subagentId: string | null;
+  /** The subagent's declared type ('review-finder', 'test-builder', ...), null for
+   *  a main-thread turn or when the agent recorded none. */
+  agentType: string | null;
+  /** Nesting depth of the spawning chain (1 for a subagent the driver spawned).
+   *  Null for a main-thread turn. */
+  spawnDepth: number | null;
+  /** The tool-use id of the call that spawned this subagent. It is NOT a key of
+   *  this table: resolve it through `turn_spawn_links`, which maps a spawning
+   *  call to the turn that emitted it. That turn is a main-thread one at depth 1
+   *  and another subagent's at greater depth, so this does not always point at
+   *  the driver. Null for a main-thread turn. */
+  parentToolUseId: string | null;
+}
+
+/**
+ * One subagent type's rolled-up token usage, as returned by the ledger's
+ * `getSubagentTotalsByType`. `agentType` is null for a subagent whose type could
+ * not be determined (no meta sidecar and no inline attribution), which is a real
+ * bucket rather than a dropped row.
+ */
+export interface SubagentUsageTotals {
+  agentType: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  turnCount: number;
+  /** Distinct subagents of this type in the window. */
+  subagentCount: number;
+  /** Turns run at depth 2 or deeper, i.e. by a subagent another subagent spawned.
+   *  A SUBSET of `turnCount`, never additive to it. */
+  nestedTurnCount: number;
+  /** Distinct subagents of this type at depth 2 or deeper. A subset of
+   *  `subagentCount`. */
+  nestedSubagentCount: number;
+  /** Deepest nesting seen for this type, or null when no row recorded a depth
+   *  (a corrupt sidecar, or an agent that does not report one) - a real bucket,
+   *  not missing data, same as a null `agentType`. */
+  maxSpawnDepth: number | null;
+}
+
+/**
+ * One fan-out: every subagent turn that traces back to a single spawning driver
+ * turn, folded together. Returned by the ledger's `getTaskFanOuts`.
+ *
+ * Reports NO cost, for the same reason `SubagentUsageTotals` does not: the
+ * owning session's `total_cost_usd` already covers its whole subagent tree.
+ */
+export interface TaskFanOut {
+  /** The driver turn that started this fan-out, or null for the bucket of
+   *  subagents whose parent could not be resolved (a session indexed before spawn
+   *  links existed, a corrupt sidecar, or a turn lost to transcript truncation).
+   *  That bucket is reported rather than dropped, so these rows always sum to the
+   *  task's per-type totals. */
+  driverTurnUuid: string | null;
+  /** Epoch ms of the driver turn; null when it has no timestamp or no ledger row. */
+  driverTs: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  turnCount: number;
+  subagentCount: number;
+  /** Deepest nesting within this fan-out, or null when no row recorded a depth. */
+  maxSpawnDepth: number | null;
+  /** Distinct subagent types in this fan-out. A type-less subagent contributes no
+   *  entry rather than an empty one. */
+  agentTypes: string[];
+}
+
+/**
+ * One line of a board card's agent message trail: an assistant entry's prose,
+ * collapsed to one plain line and capped (`assistantMessagePreviews` in
+ * `src/main/agent/shared/message-preview.ts`). Main pushes a session's whole
+ * trail, oldest first, on `session:messageTrail` whenever it changes; the
+ * card renders the newest few. `uuid` is the transcript entry's own id, so an
+ * accumulator can tell a new line from one it already holds.
+ */
+export interface AssistantMessageTrailEntry {
+  uuid: string;
+  ts: number;
+  text: string;
 }
 
 /**
@@ -4239,9 +5246,23 @@ export interface BoardColumnConfig {
   permissionMode?: PermissionMode | null;
   planExitTarget?: string; // name of target column
   archived?: boolean;
+  /**
+   * LEGACY. The column's message to its agent, before automations existed.
+   * Read on apply and converted into a `send_message` automation on the column's
+   * On enter group; never written any more. See `columns[].automations`.
+   */
   autoCommand?: string | null;
-  /** When the auto-command fires (see AutoCommandMode). Omitted means 'immediate'. */
+  /** LEGACY companion to `autoCommand`. Read on apply, never written. */
   autoCommandMode?: AutoCommandMode;
+  /**
+   * What happens when a task enters or leaves this column.
+   *
+   * Two named arrays rather than one list with an `on` key per row: it mirrors
+   * the two groups the UI shows, array order IS each row's `position` within
+   * its group, and adding an exit automation touches only the `onExit` array in
+   * a diff. An empty group is an absent key.
+   */
+  automations?: BoardColumnAutomations;
   agentOverride?: string | null;
   /** Adapter-specific model identifier passed at spawn time (e.g. Claude `--model`). Null inherits the agent default. */
   modelOverride?: string | null;
@@ -4252,6 +5273,29 @@ export interface BoardColumnConfig {
   sessionTarget?: SessionTarget;
   /** What to do with that track on entry (see SessionSpawnStrategy). Omitted = 'create_or_resume'. */
   sessionSpawnStrategy?: SessionSpawnStrategy;
+}
+
+/**
+ * One automation as it appears in `kangentic.json`.
+ *
+ * The type's own fields sit FLAT on the row rather than under a `with` object:
+ * `{ "name": "Ping", "type": "webhook", "url": "..." }` reads better in a file
+ * a team reviews in diffs than wrapping a single field. The price is that a
+ * field key could collide with a key the row shape owns, which is why
+ * `name`, `type` and `enabled` are reserved and
+ * `tests/unit/automation-manifest-reserved-keys.test.ts` fails an adapter that
+ * declares one of them.
+ */
+export type BoardAutomationConfig = {
+  name: string;
+  type: string;
+  /** Omitted means enabled. Only `false` is ever written. */
+  enabled?: boolean;
+} & Record<string, unknown>;
+
+export interface BoardColumnAutomations {
+  onEnter?: BoardAutomationConfig[];
+  onExit?: BoardAutomationConfig[];
 }
 
 export interface BoardActionConfig {
@@ -4348,8 +5392,13 @@ export interface BoardProfile {
 export interface BoardConfig {
   version: number;
   columns: BoardColumnConfig[];
-  actions: BoardActionConfig[];
-  transitions: BoardTransitionConfig[];
+  /**
+   * LEGACY, read-only. Named actions and `from -> to` transitions, from before
+   * automations belonged to a column. Still READ on apply so a file written by
+   * an older build converts; never written again.
+   */
+  actions?: BoardActionConfig[];
+  transitions?: BoardTransitionConfig[];
   shortcuts?: ShortcutConfig[];
   /**
    * Named alternate strategy ladders (see BoardProfile). Absent / empty means
@@ -4469,9 +5518,6 @@ export interface RendererErrorContext {
   boundary: 'root' | 'panel' | 'unhandled_rejection';
   /** `PanelErrorBoundary`'s static `label` prop ("Changes", "Monitor"). */
   panel?: string;
-  /** React's `info.componentStack`. Main reduces it to component names before
-   *  sending; the raw value never leaves the process. */
-  componentStack?: string;
 }
 
 export interface ElectronAPI {
@@ -4562,6 +5608,13 @@ export interface ElectronAPI {
     onMoveProgress: (callback: (progress: ProjectMoveProgress) => void) => () => void;
     onAutoOpened: (callback: (project: Project) => void) => () => void;
     onPathMissing: (callback: (project: Project) => void) => () => void;
+    /**
+     * Main deleted or reconciled project rows the renderer's list did not
+     * know about (a dev-only boot prune, or a global-DB recovery that
+     * reopened onto a different file). Carries no payload; the renderer
+     * refetches `list()` and `getCurrent()` in response. See Sentry DESKTOP-V.
+     */
+    onListChanged: (callback: () => void) => () => void;
   };
 
   // Project Groups
@@ -4603,6 +5656,12 @@ export interface ElectronAPI {
     bulkDelete: (ids: string[], projectId?: string | null) => Promise<TaskBulkDeleteResult>;
     bulkUnarchive: (ids: string[], targetSwimlaneId: string, projectId?: string | null) => Promise<void>;
     switchBranch: (input: TaskSwitchBranchInput, projectId?: string | null) => Promise<Task>;
+    /**
+     * One-click "Update from base": fetch the task's effective base and
+     * fast-forward its worktree from origin/<base>. Refuses while a session is
+     * running; every non-throw outcome is a TaskUpdateFromBaseResult status.
+     */
+    updateFromBase: (input: TaskUpdateFromBaseInput, projectId?: string | null) => Promise<TaskUpdateFromBaseResult>;
     setRuntimeOverride: (input: TaskSetRuntimeOverrideInput, projectId?: string | null) => Promise<TaskSetRuntimeOverrideResult>;
     /** On-demand authoritative branch->PR resolve + link for a task (works without a live session). */
     resolvePr: (taskId: string, projectId?: string | null) => Promise<TaskResolvePrResult>;
@@ -4618,6 +5677,15 @@ export interface ElectronAPI {
      * the renderer already toasts.
      */
     onSpawnBlocked: (callback: (taskId: string, taskTitle: string, message: string, projectId?: string) => void) => () => void;
+    /**
+     * Non-blocking spawn warning: the agent STARTED, but its base branch could
+     * not be freshened (a network or credential fetch failure), so it may be
+     * running from a stale base. `message` is already user-facing; unlike
+     * onSpawnBlocked the renderer adds no copy of its own, because "did not
+     * start its agent" would be a lie here. Cooldown-guarded in main so a bulk
+     * unarchive while offline produces one toast per project, not one per task.
+     */
+    onSpawnWarning: (callback: (taskId: string, message: string, projectId?: string) => void) => () => void;
     /**
      * A column's auto_command finished delivering, and the result is worth
      * telling the user about.
@@ -4646,6 +5714,22 @@ export interface ElectronAPI {
      * `link_pr` tool call still goes out on `onUpdatedByAgent` and still toasts.
      */
     onPrLinkChanged: (callback: (projectId?: string) => void) => () => void;
+    /**
+     * A task was moved from the paired mobile app.
+     *
+     * Deliberately quiet, like `onPrLinkChanged` and `onSessionResync`. The
+     * board must reload (the card is rendering in the column it just left), but
+     * it is not agent news: `onUpdatedByAgent` would toast `Task updated by
+     * agent`, and no agent was involved in a card the user dragged on their own
+     * phone. The move is already confirmed on the device that made it, and the
+     * card visibly relocating is the feedback here.
+     *
+     * A third provenance, not a reuse of the other two: those mean "the app
+     * reconciled something itself", and this one means "you did this, elsewhere".
+     * Keeping it distinct also keeps the dev IPC log honest about where a move
+     * came from.
+     */
+    onMovedByMobile: (callback: (projectId?: string) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).
@@ -4676,18 +5760,28 @@ export interface ElectronAPI {
   };
 
   // Actions
-  actions: {
-    list: () => Promise<Action[]>;
-    create: (input: ActionCreateInput) => Promise<Action>;
-    update: (input: ActionUpdateInput) => Promise<Action>;
-    delete: (id: string) => Promise<void>;
-  };
-
-  // Transitions
-  transitions: {
-    list: () => Promise<SwimlaneTransition[]>;
-    set: (fromId: string, toId: string, actionIds: string[]) => Promise<void>;
-    getForTransition: (fromId: string, toId: string) => Promise<SwimlaneTransition[]>;
+  // Column automations. `replaceForColumn` carries an interaction-time
+  // projectId because it mutates rows; the reads do not. See
+  // .claude/rules/project-scoped-ipc.md.
+  automations: {
+    list: (projectId?: string | null) => Promise<ColumnAutomation[]>;
+    replaceForColumn: (
+      swimlaneId: string,
+      rows: AutomationWriteInput[],
+      projectId?: string | null,
+    ) => Promise<ColumnAutomation[]>;
+    runsForTask: (taskId: string, projectId?: string | null) => Promise<AutomationRun[]>;
+    /**
+     * Re-run ONE automation against the task's CURRENT state. Mutating, so it
+     * carries the interaction-time projectId.
+     */
+    runAgain: (
+      automationId: string,
+      taskId: string,
+      projectId?: string | null,
+    ) => Promise<AutomationRunAgainResult>;
+    onRunFailed: (callback: (notice: AutomationRunFailure) => void) => () => void;
+    onRunsInterrupted: (callback: (summary: AutomationInterruptedSummary) => void) => () => void;
   };
 
   // Sessions (PTY)
@@ -4715,12 +5809,10 @@ export interface ElectronAPI {
     /**
      * `colsChanged` is intentionally unused by the renderer (main orders the
      * geometry change ahead of any scrollback sample on its own - see the
-     * parallel-IPC note in useTerminal's mount path). `refused` is set only
-     * when main deliberately held the grid against this resize (the mobile
-     * sub-floor guard) and is consumed only by the echo re-assert, which uses
-     * it to stop healing attempts immediately instead of retrying to its cap.
+     * parallel-IPC note in useTerminal's mount path). See SessionResizeResult
+     * for `refused` and `held`.
      */
-    resize: (sessionId: string, cols: number, rows: number) => Promise<{ colsChanged: boolean; refused?: true }>;
+    resize: (sessionId: string, cols: number, rows: number) => Promise<SessionResizeResult>;
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
     /**
@@ -4755,9 +5847,27 @@ export interface ElectronAPI {
     onFirstOutput: (callback: (sessionId: string, projectId?: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number, projectId?: string, intentional?: boolean) => void) => () => void;
     onStatus: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
+    /**
+     * The session left main's registry for good (`SessionManager.remove()`):
+     * a task reset to To Do, a task or project delete, a session reset, an
+     * aborted spawn. The renderer drops the row and every per-session map
+     * entry keyed on it. Distinct from `onStatus` on purpose: that handler can
+     * only upsert, so a removal announced there re-seeded the row (#661).
+     * The `Session` is the row's last snapshot, for consumers that need its
+     * `taskId`.
+     */
+    onRemoved: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
     onUsage: (callback: (sessionId: string, data: SessionUsage, projectId?: string) => void) => () => void;
     getActivity: (projectId?: string) => Promise<Record<string, ActivityState>>;
     onActivity: (callback: (sessionId: string, state: ActivityState, reason: ActivityReason, projectId?: string, taskId?: string) => void) => () => void;
+    /**
+     * Every session's agent message trail (sessionId -> lines, oldest first),
+     * for `syncSessions` to seed the store on mount and after an HMR reload.
+     * Optional on the type because a running preload can predate it.
+     */
+    getMessageTrails?: () => Promise<Record<string, AssistantMessageTrailEntry[]>>;
+    /** A session's agent message trail changed. Pushed only on change, cross-project. */
+    onMessageTrail?: (callback: (sessionId: string, entries: AssistantMessageTrailEntry[], projectId?: string) => void) => () => void;
     getActivityReason: (sessionId: string) => Promise<ActivityReason | null>;
     getActivityReasons: (projectId?: string) => Promise<Record<string, ActivityReason>>;
     getActivityStats: (sessionId: string) => Promise<ActivityStatsSnapshot | null>;
@@ -4771,6 +5881,15 @@ export interface ElectronAPI {
     getToolBreakdown: (sessionId: string) => Promise<PerToolStat[]>;
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
     killTransient: (sessionId: string) => Promise<void>;
+    /** Record a transient session's auto-derived name on main, so it survives a
+     *  renderer reload. Fire-and-forget: the renderer has already applied it
+     *  locally, and main only retains it for recovery. */
+    setTransientLabel: (sessionId: string, label: string) => Promise<void>;
+    /** Mirror where a Command Terminal's checkout actually sits, re-derived
+     *  from live HEAD by the renderer, onto its live registry row so the
+     *  Monitor row and a post-reload adopt agree with the pill. Last write
+     *  wins, unlike the label: HEAD moves, and the newest reading is true. */
+    setTransientBranch: (sessionId: string, branch: string) => Promise<void>;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
      * Which sessions this renderer has an xterm MOUNTED for - a superset of
@@ -4871,20 +5990,26 @@ export interface ElectronAPI {
   config: {
     get: () => Promise<AppConfig>;
     getGlobal: () => Promise<AppConfig>;
-    set: (config: DeepPartial<AppConfig>) => Promise<void>;
+    set: (config: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     /** Synchronous, blocking persist of a config partial. Used only on the quit/unload
      *  path so the final state reaches disk before the renderer tears down (an async
-     *  set() can be dropped mid-teardown). Same merge semantics as set(). */
+     *  set() can be dropped mid-teardown). Same merge semantics as set(). Returns
+     *  nothing on purpose: there is no renderer left to tell. */
     setSync: (config: DeepPartial<AppConfig>) => void;
     getProjectOverrides: () => Promise<DeepPartial<AppConfig> | null>;
-    setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<void>;
+    setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     getProjectOverridesByPath: (projectPath: string) => Promise<DeepPartial<AppConfig> | null>;
-    setProjectOverridesByPath: (projectPath: string, overrides: DeepPartial<AppConfig>) => Promise<void>;
+    setProjectOverridesByPath: (projectPath: string, overrides: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     syncDefaultToProjects: (partial: DeepPartial<AppConfig>) => Promise<number>;
     /** Fires after ANY window's config:set persists (including this one). Bare signal;
      *  re-fetch via config.get()/loadConfig() to pick up the new effective config. Lets
      *  pop-out windows (and the main window) live-sync theme/settings across windows. */
     onChanged: (callback: () => void) => () => void;
+    /** A sync write to the data directory (config or one of the other small
+     *  per-machine/per-project state files) failed - DESKTOP-14/DESKTOP-13. Fires at
+     *  most once per failing source until a later write to that source succeeds;
+     *  `message` is the whole user-facing sentence, composed in main. */
+    onWriteFailed: (callback: (message: string) => void) => () => void;
   };
 
   // Keybindings
@@ -4944,7 +6069,18 @@ export interface ElectronAPI {
     unsubscribeDiff: (worktreePath: string) => void;
     onDiffChanged: (callback: () => void) => () => void;
     checkPendingChanges: (input: GitPendingChangesInput) => Promise<GitPendingChangesResult>;
+    /**
+     * Warm the throttled all-remotes fetch for a worktree, so a `checkPendingChanges`
+     * that follows within the throttle window either skips its own fetch or joins the
+     * one already in flight and pays only its remainder. Fire-and-forget: never rejects,
+     * never prompts (non-interactive git), and shares the background scheduler's cache
+     * and its `git.autoFetchIntervalMinutes` setting, so it is a no-op when the user has
+     * turned background fetching off. The board calls it when a drag of a worktree-backed
+     * card begins, so a Done drop's probe is not starting a fetch after the release.
+     */
+    prefetchRemotes: (checkPath: string) => Promise<void>;
     branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
+    worktreeHead: (input: GitWorktreeHeadInput) => Promise<GitWorktreeHeadResult>;
     commitGraph: (input: GitCommitGraphInput) => Promise<GitCommitGraphResult>;
     fileHistory: (input: GitFileHistoryInput) => Promise<GitFileHistoryResult>;
     blame: (input: GitBlameInput) => Promise<GitBlameResult>;
@@ -4970,10 +6106,12 @@ export interface ElectronAPI {
     isFocused: () => Promise<boolean>;
   };
 
-  // Pop-out windows: detach a registered surface (stats, changes, browser) into its own
-  // OS-level BrowserWindow. See src/shared/pop-out.ts.
+  // Pop-out windows: detach a registered surface (stats, changes, browser, a single
+  // file's diff) into its own OS-level BrowserWindow. See src/shared/pop-out.ts.
   popOut: {
-    open: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
+    /** Resolves false when the kind's `maxInstances` cap refused the open (no
+     *  window was created or focused); true otherwise. */
+    open: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<boolean>;
     close: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
     focus: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
     isOpen: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<boolean>;
@@ -4988,6 +6126,13 @@ export interface ElectronAPI {
   // Analytics
   analytics: {
     trackRendererError: (message: string, context?: RendererErrorContext) => void;
+    /** Report one use of a curated adoption feature (fire-and-forget; main
+     *  validates against ANALYTICS_FEATURES and dedups to once per day). */
+    trackFeatureUsed: (feature: string) => void;
+    /** Synchronous boot value mirroring main's single Sentry decision (read
+     *  from additionalArguments in preload): gates the renderer-side
+     *  Sentry.init() so the two processes can never disagree. */
+    errorReportingEnabled: boolean;
   };
 
   // App
@@ -5000,6 +6145,35 @@ export interface ElectronAPI {
     checkForUpdate: () => Promise<void>;
     installUpdate: () => Promise<void>;
     onUpdateDownloaded: (callback: (info: UpdateDownloadedInfo) => void) => () => void;
+    /**
+     * This install cannot update itself until the user moves it (DESKTOP-1A).
+     * Carries the whole sentence to toast: main composes and latches it, so the
+     * renderer neither formats nor deduplicates. The updater's only other push
+     * is `onUpdateDownloaded`; ordinary update failures stay silent.
+     */
+    onUpdateBlocked: (callback: (message: string) => void) => () => void;
+  };
+
+  // Host memory pressure (Sentry DESKTOP-16): a push-only notification, no
+  // corresponding invoke - main owns the sampler and decides when to fire.
+  hostMemory: {
+    onPressure: (callback: (event: HostMemoryPressureEvent) => void) => () => void;
+    onRecovery: (callback: (event: HostMemoryRecoveryEvent) => void) => () => void;
+  };
+
+  // Graphics state for THIS launch (Sentry DESKTOP-18/DESKTOP-W).
+  //
+  // A pull, not a push: both facts are decided during boot, before the
+  // renderer can be listening, and the escalation record behind them is
+  // cleared by then. Both travel together rather than `softwareRendering`
+  // coming from config, because on the launch that RECOVERS, main writes the
+  // setting inside whenReady - after createWindow - so a renderer reading
+  // config at boot would race it and see 'on'.
+  //
+  // `noticePending` is consumed by the read, so a renderer reload cannot
+  // re-toast the same incident. `softwareRendering` is not.
+  gpuHealth: {
+    readStatus: () => Promise<GpuGraphicsStatus>;
   };
 
   // Announcements (remote feed; active = filtered for this client in main.
@@ -5036,7 +6210,8 @@ export interface ElectronAPI {
     onChangedByAgent: (callback: (projectId?: string) => void) => () => void;
     onLabelColorsChanged: (callback: () => void) => () => void;
     importCheckCli: (source: ExternalSource) => Promise<ImportCheckCliResult>;
-    importFetch: (input: ImportFetchInput) => Promise<ImportFetchResult>;
+    importGetCached: (input: ImportCacheQuery) => Promise<ImportCachedResult>;
+    importReconcile: (input: ImportReconcileInput) => Promise<ImportReconcileResult>;
     importExecute: (input: ImportExecuteInput) => Promise<ImportExecuteResult>;
     importSourcesList: () => Promise<ImportSource[]>;
     importSourcesAdd: (input: { source: ExternalSource; url: string }) => Promise<ImportSource>;
@@ -5081,8 +6256,12 @@ export interface ElectronAPI {
     onChanged: (callback: (snapshot: MonitorSnapshot) => void) => () => void;
     /** Start or stop the live output-peek stream for THIS renderer. Subscribe-gated
      *  because it is the one monitor push with a standing cost in main (a PTY
-     *  output listener plus a sampling timer); a closed monitor costs nothing. */
-    setPeekSubscribed: (subscribed: boolean) => Promise<void>;
+     *  output listener plus a sampling timer); a closed monitor costs nothing.
+     *  `sessionIds` names the sessions whose cards actually draw a peek (the
+     *  slot follows Card Preview, so most cards draw the agent's messages
+     *  instead); main taps and samples only those, and none at all for an
+     *  empty list. Re-sent whenever the set changes. Omitted means every session. */
+    setPeekSubscribed: (subscribed: boolean, sessionIds?: string[]) => Promise<void>;
     /** Changed output peeks, keyed by session id. Only sessions whose visible text
      *  actually changed are sent, so a repainting TUI whose content is unchanged
      *  produces no traffic. Patched onto rows in place, like activity. */
@@ -5183,7 +6362,14 @@ export interface ElectronAPI {
 
   // Clipboard
   clipboard: {
+    /** Save the OS clipboard image as a capped temp PNG; its path, or null when
+     *  the clipboard holds no image (or the write failed). */
     readImage: () => Promise<string | null>;
+    /** Save PNG bytes the renderer decoded from a dropped image into the same
+     *  temp directory as `readImage`; its path, or null when the bytes are not
+     *  a decodable image (or the write failed). The drop path uses it for a
+     *  format the agent CLI cannot take from a path. */
+    saveImage: (pngBytes: Uint8Array) => Promise<string | null>;
     writeText: (text: string) => Promise<void>;
   };
 
@@ -5200,15 +6386,33 @@ export interface ElectronAPI {
     setTaskUrl: (taskId: string, url: string, projectId?: string | null) => Promise<void>;
     clearTaskUrl: (taskId: string, projectId?: string | null) => Promise<void>;
     clearStorage: () => Promise<void>;
-    /** Register an open Browser pane's guest webContents for kangentic_browser_* targeting. */
+    /**
+     * Sync this task's cookie jar with the project identity jar before the guest
+     * attaches, so the pane opens already signed into shared non-localhost (IdP)
+     * sessions. Keyed by `taskId` + `projectId` (the jar follows the task, not the
+     * worktree path). Never rejects.
+     */
+    ensureJar: (taskId: string, projectId: string | null) => Promise<void>;
+    /** Register an open Browser pane's guest webContents for kangentic_browser_*
+     *  targeting. Registering the same guest again (a session rotation, a
+     *  retained window's project settling) updates the owner in place and keeps
+     *  the surface handle main minted for it. */
     registerPane: (input: BrowserPaneRegisterInput) => Promise<void>;
-    /** Unregister a Browser pane (on unmount). Pass the webContentsId this
-     *  instance registered with so the main process only clears the registry
-     *  entry if it still points at this exact guest (see
-     *  unregisterIfMatches in browser-pane-registry.ts) - guards the
-     *  in-app-pane-vs-pop-out-pane handoff race. Omit to unregister
-     *  unconditionally. */
-    unregisterPane: (sessionId: string, webContentsId?: number) => Promise<void>;
+    /** Unregister a Browser pane (on unmount), by the guest id this instance
+     *  registered with. Keyed on the guest rather than the session so an
+     *  out-of-order unmount across the in-app pane and its pop-out can only ever
+     *  remove its OWN guest, never a newer registration for the same task. */
+    unregisterPane: (webContentsId: number) => Promise<void>;
+    /**
+     * The user's Close control: retire this guest's surface handle with
+     * reason `user-closed` BEFORE the pane unmounts, so the hand-off never
+     * stands a lane up for it (the point of closing is to free the memory)
+     * and the agent's next call is told the user closed the browser.
+     */
+    closePaneByUser: (webContentsId: number) => Promise<void>;
+    /** Publish where this guest's pane is (showing / hidden / parked), so
+     *  `list_panes` can say so. Sent on every change after registration. */
+    setPaneVisibility: (webContentsId: number, visibility: BrowserPaneVisibility) => Promise<void>;
     /**
      * Subscribe to Ctrl+wheel zoom changes that fire inside the embedded
      * webview. The main process applies the zoom and broadcasts the resulting
@@ -5250,6 +6454,53 @@ export interface ElectronAPI {
      * See `.claude/rules/agent-driven-focus.md`.
      */
     onAgentInput: (callback: (webContentsId: number, active: boolean) => void) => () => void;
+    /**
+     * An agent set or cleared the viewport this guest lays out against.
+     *
+     * The pane cannot observe this for itself: an override is a property of
+     * main's CDP session with the guest, and the guest's own element never
+     * changes size, so the page simply starts rendering at a width nothing on
+     * screen accounts for. `null` means the override was dropped.
+     *
+     * `webContentsId` identifies WHICH guest, since one window can host several
+     * panes and each must ignore the others'.
+     */
+    onViewportOverride: (
+      callback: (webContentsId: number, override: BrowserViewportOverride | null) => void,
+    ) => () => void;
+    /**
+     * The `<webview>` element's own size in CSS pixels.
+     *
+     * Only this side can measure it. Main's view is the whole app window, and
+     * the pane is one side of a split inside a task-detail window inside it,
+     * so a viewport fitted against main's number comes out unfitted. Reported
+     * on mount and whenever the element resizes (a splitter drag, a window
+     * resize).
+     */
+    setPaneWidgetSize: (webContentsId: number, width: number, height: number) => Promise<void>;
+    /** The override this guest is already under, asked once on registration so
+     *  a pane that mounted after it was set (a pop-out) still shows it. */
+    getViewportOverride: (webContentsId: number) => Promise<BrowserViewportOverride | null>;
+    /** Drop this guest's viewport override, from the pane's own chip. The
+     *  user's escape hatch when the agent that set it has finished. */
+    clearViewportOverride: (webContentsId: number) => Promise<boolean>;
+    /**
+     * Which tasks currently hold their one browser surface OFFSCREEN.
+     *
+     * The whole set on every change, never a delta: a renderer that missed one
+     * push would otherwise stay wrong for the rest of the session. The card
+     * globe and the Browser pill light up from this exactly as they do from
+     * `browserGuestTasks`, which only a real `<webview>` can write.
+     */
+    onOffscreenSurfaces: (callback: (taskIds: string[]) => void) => () => void;
+    /** The same set, asked for on mount and after an HMR update, since an
+     *  offscreen surface can sit unchanged for a whole session and a
+     *  push-only channel would leave a reloaded renderer blank. */
+    getOffscreenSurfaces: () => Promise<string[]>;
+    /** The user's Close, for a task whose surface is offscreen: there is no
+     *  guest to retire and no pane to unmount, so main destroys the offscreen
+     *  window directly. True when something was closed. */
+    closeOffscreenSurface: (taskId: string, projectId?: string | null) => Promise<boolean>;
     /**
      * A file download started from a Browser pane has finished. The pane saves
      * silently to the OS Downloads folder (what Chrome does), so this push is
@@ -5298,6 +6549,9 @@ export interface ElectronAPI {
   // Conversation memory (search index) status + proactive surfaces.
   memory: {
     getStatus: () => Promise<MemoryStatus>;
+    /** Spawn + init the embedding worker ahead of the first Smart query, so
+     *  Quick Find's typing time covers the cold start. Fire-and-forget. */
+    prewarm: () => void;
     /** Purge the project's conversation index and re-run the backfill sweep
      *  (recovery from a corrupt/stale index). Resolves when the purge is done;
      *  the rebuild sweep continues in the background. */
@@ -5400,13 +6654,54 @@ export interface BrowserCaptureInput {
  * time); this is registry bookkeeping, not a task-state mutation, so it is
  * not subject to the trailing-projectId mutation rule.
  */
+/**
+ * Where a Browser surface is on the user's screen, as reported to the agent
+ * through `kangentic_browser_list_panes` / `_open_pane`. Only the renderer
+ * knows, so it publishes changes over `BROWSER_PANE_VISIBILITY`:
+ *   - `showing`: the pane is visible in an open task window.
+ *   - `hidden`: the user hid it with the Browser pill; the guest is kept
+ *     mounted behind the terminal and stays driveable.
+ *   - `parked`: the user closed the task window; the guest is kept mounted in
+ *     the hidden window and stays driveable.
+ *   - `offscreen`: a lane, which never has a window.
+ * A surface the user CLOSED is not a visibility: its handle is retired with
+ * reason `user-closed` and answers `surface-gone`.
+ */
+export const BROWSER_PANE_VISIBILITIES = ['showing', 'hidden', 'parked', 'offscreen'] as const;
+export type BrowserPaneVisibility = (typeof BROWSER_PANE_VISIBILITIES)[number];
+
 export interface BrowserPaneRegisterInput {
+  /** The agent session this pane serves (the registry records it as the
+   *  surface's `ownerSessionId`; the surface HANDLE is minted by main). */
   sessionId: string;
   taskId: string;
   projectId: string | null;
   /** The guest webview id from `webview.getWebContentsId()`. */
   webContentsId: number;
   url: string | null;
+  /** Where the pane is at registration time. Defaults to `showing`. */
+  visibility?: BrowserPaneVisibility;
+}
+
+/**
+ * The viewport an agent has imposed on a Browser surface, as the renderer sees
+ * it.
+ *
+ * `measured` is the viewport the PAGE reported after the change settled, and it
+ * is what the pane's chip shows. It can differ from `requested`: a window loses
+ * its frame and the pane's chrome to the viewport and is capped by the display,
+ * and an override composes with the zoom factor. Showing the request would put
+ * a number on screen the page never laid out against.
+ */
+export interface BrowserViewportOverride {
+  /** Which mechanism produced it. `device-emulation` is the only one that can
+   *  leave the pane showing a crop of a larger layout. */
+  mechanism: 'device-emulation' | 'window-resize' | 'lane-resize';
+  requested: { width: number; height: number };
+  measured: { width: number; height: number };
+  deviceScaleFactor: number;
+  /** ISO 8601 UTC. */
+  appliedAt: string;
 }
 
 /** A finished Browser-pane download, reported to the renderer so it can toast. */
@@ -5773,6 +7068,10 @@ export interface MemoryStatus {
   /** When `semantic === 'lexical'`, the reason sqlite-vec failed to load (so the
    *  Memory tab can explain the degrade), or undefined if it simply is not loaded. */
   vecError?: string;
+  /** When `semantic === 'error'` because the embedding worker crashed past its
+   *  restart cap: its exit code plus the first error line of its stderr (home
+   *  directory redacted), so the Memory tab can say why. Undefined otherwise. */
+  workerError?: string;
 }
 
 interface SearchHitBase {
@@ -5977,17 +7276,19 @@ export interface CrashRecord {
     | 'main-uncaught-exception'
     | 'main-unhandled-rejection'
     | 'render-process-gone'
+    | 'gpu-process-gone'
     | 'preload-error'
     | 'renderer-window-error'
     | 'renderer-unhandled-rejection';
   /** Process source. For renderer errors this is the webContents id. */
-  source: 'main' | 'renderer' | 'preload';
+  source: 'main' | 'renderer' | 'preload' | 'gpu';
   message: string;
   /** Source-mapped stack when available. */
   stack: string | null;
   /** Renderer-window URL or main-process module path at the time of error. */
   origin: string | null;
-  /** Additional context (e.g. render-process-gone reason+exitCode). */
+  /** Additional context (e.g. render-process-gone reason+exitCode, plus the
+   *  last `HostMemorySample` for a render-process-gone record). */
   context: Record<string, unknown> | null;
   /** Versions captured for bug-report reproducibility. */
   versions: { kangentic: string; electron: string; node: string; chrome: string };
@@ -6004,6 +7305,18 @@ export interface ProcessMetrics {
   platform: NodeJS.Platform;
   arch: string;
   versions: { kangentic: string; electron: string; node: string; chrome: string };
+  /** The main process's own `process.memoryUsage()`, in bytes: how much of
+   *  its footprint is V8 heap (`heapUsedBytes` of `heapTotalBytes`), Node
+   *  external allocations (`externalBytes`, of which `arrayBuffersBytes` are
+   *  Buffers and ArrayBuffers), against its resident set (`rssBytes`). The
+   *  per-process table below cannot split those apart. */
+  main: {
+    rssBytes: number;
+    heapTotalBytes: number;
+    heapUsedBytes: number;
+    externalBytes: number;
+    arrayBuffersBytes: number;
+  };
   processes: {
     pid: number;
     type: string;
@@ -6071,16 +7384,29 @@ export interface WorktreeRecord {
   /** Currently checked-out branch name, or null for detached HEAD. */
   branch: string | null;
   /**
-   * Configured base branch the worktree compares against (if recorded
-   * in kangentic state for this worktree's task). null for the main
-   * checkout or unmapped worktrees.
+   * The base branch this worktree's work is based on, and the ref the two
+   * counts below are measured against: the task's own base when one was
+   * named, else the base it was actually cut from, else the project default.
+   * The main checkout gets the project default too, so a Command Terminal on
+   * a feature branch reads its distance from the base and not from its own
+   * remote. null when no base resolved in the repo (then the counts are
+   * upstream-relative) or the project's state was unreadable.
    */
   baseRef: string | null;
   /** True when the working tree has uncommitted modifications. */
   dirty: boolean;
-  /** Commits ahead of `baseRef` (or upstream when no base). null when unknown. */
+  /**
+   * Commits reachable from HEAD but not from `baseRef` (`origin/<baseRef>`,
+   * else the local ref), or from the branch's upstream when `baseRef` is
+   * null. null when neither exists.
+   */
   commitsAhead: number | null;
-  /** Commits behind `baseRef` (or upstream when no base). null when unknown. */
+  /**
+   * Commits reachable from `baseRef` but not from HEAD: how far behind the
+   * base this tree is. Upstream-relative only when `baseRef` is null, which
+   * then says how current the branch is with its OWN remote, a different
+   * question. null when neither exists.
+   */
   commitsBehind: number | null;
   /** ISO 8601 timestamp of the last commit on the current branch. */
   lastCommitTs: string | null;

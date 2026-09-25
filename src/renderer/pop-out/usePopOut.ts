@@ -16,6 +16,10 @@ export function usePopOut<K extends PopOutKind>(kind: K, params: PopOutParamsByK
   const isOpen = usePopOutStore((state) => Boolean(state.openInstanceKeys[key]));
   return {
     isOpen,
+    // Discards popOut.open's boolean: no kind opened through this generic hook
+    // declares maxInstances, so a cap refusal (resolves false) cannot happen
+    // here. A capped kind (today only 'changes-file') needs a bespoke call site
+    // that surfaces the refusal, like ChangesPanel's handleOpenFileWindow toast.
     open: () => { void window.electronAPI.popOut.open(kind, params); },
     close: () => { void window.electronAPI.popOut.close(kind, params); },
     focus: () => { void window.electronAPI.popOut.focus(kind, params); },

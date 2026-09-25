@@ -25,6 +25,7 @@ import type {
   AutoCommandMode,
   BoardProfile,
   BoardProfileEntry,
+  ColumnAutomation,
   PermissionMode,
   SessionSpawnStrategy,
   SessionTarget,
@@ -39,8 +40,6 @@ export type LaneStrategyFields = Pick<
   | 'model_override'
   | 'effort_override'
   | 'permission_mode'
-  | 'auto_command'
-  | 'auto_command_mode'
   | 'auto_spawn'
   | 'handoff_context'
   | 'session_target'
@@ -62,8 +61,6 @@ export interface ColumnStrategy {
   model_override: string | null;
   effort_override: string | null;
   permission_mode: PermissionMode | null;
-  auto_command: string | null;
-  auto_command_mode: AutoCommandMode;
   auto_spawn: boolean;
   handoff_context: boolean;
   session_target: SessionTarget;
@@ -118,8 +115,6 @@ const NO_LANE_STRATEGY: ColumnStrategy = {
   model_override: null,
   effort_override: null,
   permission_mode: null,
-  auto_command: null,
-  auto_command_mode: 'immediate',
   auto_spawn: false,
   handoff_context: false,
   session_target: 'main',
@@ -165,8 +160,6 @@ export function resolveColumnStrategy(input: {
     model_override: lane.model_override,
     effort_override: lane.effort_override,
     permission_mode: lane.permission_mode,
-    auto_command: lane.auto_command,
-    auto_command_mode: lane.auto_command_mode,
     auto_spawn: lane.auto_spawn,
     handoff_context: lane.handoff_context,
     session_target: lane.session_target,
@@ -182,10 +175,6 @@ export function resolveColumnStrategy(input: {
     model_override: hasKey(entry, 'modelOverride') ? entry.modelOverride ?? null : base.model_override,
     effort_override: hasKey(entry, 'effortOverride') ? entry.effortOverride ?? null : base.effort_override,
     permission_mode: hasKey(entry, 'permissionMode') ? entry.permissionMode ?? null : base.permission_mode,
-    auto_command: hasKey(entry, 'autoCommand') ? entry.autoCommand ?? null : base.auto_command,
-    auto_command_mode: hasKey(entry, 'autoCommandMode')
-      ? entry.autoCommandMode ?? 'immediate'
-      : base.auto_command_mode,
     auto_spawn: hasKey(entry, 'autoSpawn') ? entry.autoSpawn === true : base.auto_spawn,
     handoff_context: hasKey(entry, 'handoffContext') ? entry.handoffContext === true : base.handoff_context,
     session_target: hasKey(entry, 'sessionTarget') ? entry.sessionTarget ?? 'main' : base.session_target,
@@ -240,6 +229,43 @@ export function resolveEffectiveAutoCommand(
   columnAutoCommand: string | null | undefined,
 ): string | null {
   return taskAutoCommand ?? columnAutoCommand ?? null;
+}
+
+/**
+ * The message a column sends its agent on entry: the first enabled
+ * `send_message` automation in its On enter group.
+ *
+ * This is what `swimlanes.auto_command` used to be, and it lives here for the
+ * same reason that field's resolution did: two paths once disagreed about it,
+ * and the fix was to give them one answer. The three paths that need it are the
+ * cold spawn (through the runner), the handoff post-spawn delivery, and the
+ * warm live injection.
+ *
+ * FIRST, not all of them, because these two callers are asking a question with
+ * one answer: a spawn has a single prompt slot, and the live injection bundles
+ * one command into the model/effort keystroke burst. Later message rows are the
+ * runner's to deliver.
+ *
+ * A profile cannot re-point this row. Automations are shared by every profile,
+ * which is what the Column Manager's pane says and why it is read-only under
+ * one. `BoardProfileEntry.autoCommand` is the retired key that used to do it.
+ */
+export function resolveColumnMessage(
+  automations: ReadonlyArray<Pick<ColumnAutomation, 'id' | 'type' | 'trigger' | 'enabled' | 'position' | 'config'>>,
+): { id: string; message: string; mode: AutoCommandMode } | null {
+  const row = [...automations]
+    .filter((candidate) => candidate.type === 'send_message' && candidate.trigger === 'enter' && candidate.enabled)
+    .sort((left, right) => left.position - right.position)[0];
+  if (!row) return null;
+
+  // `command` is the legacy `send_command` key a migrated row may still carry.
+  const message = (row.config.message ?? row.config.command ?? '').trim();
+  if (!message) return null;
+  // The id comes back so a caller that DELIVERS this message itself can tell
+  // the runner to skip the row rather than send it twice. The warm live
+  // injection is the one that needs it: it bundles this message into the
+  // model/effort keystroke burst, then runs the rest of the group.
+  return { id: row.id, message, mode: row.config.mode ?? 'immediate' };
 }
 
 /**

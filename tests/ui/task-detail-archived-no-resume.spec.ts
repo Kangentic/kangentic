@@ -12,9 +12,23 @@
  *   2. the "Resume session" kebab item (TaskDetailKebabItems),
  *   3. the big centered Play button (TaskDetailBody).
  *
- * A suspended task in an ordinary column is checked in the same run as the
- * control group, so a green result cannot come from a fixture that never
- * rendered a toggle anywhere.
+ * Two tests share one fixture (launch() always seeds both an archived Done
+ * task AND a suspended task in an ordinary column) and run in the same CI
+ * job, so the control test proves the toggle CAN render for a suspended
+ * session: a green "archived offers no toggle" result can never come from a
+ * fixture that never rendered a toggle anywhere.
+ *
+ * These were originally one test covering both scenarios on a single page.
+ * That combined test did two full detail-window-open-plus-kebab cycles
+ * inside the UI project's 15s per-test budget, and went flaky under CI load
+ * (`Test timeout of 15000ms exceeded`, no assertion detail - it ran out of
+ * time, not out of correctness). Split so a failure names which half broke,
+ * AND each half opts into `test.setTimeout(30_000)`: launch() boots a full
+ * app instance inside the test body (measured locally at 85-95% of a
+ * split test's total wall time, and the dominant variable cost - a cold
+ * Vite compile alone measured 1.8s locally vs 0.3s warm), so splitting
+ * alone does not remove the part of the cost that is actually driving the
+ * CI-load variance. See git history for the combined version.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -178,20 +192,32 @@ async function closeKebab(page: Page, windowId: string): Promise<void> {
   await expect(page.locator('[data-testid="view-conversation-btn"]')).toHaveCount(0);
 }
 
+/** Shared by both tests below: both suspended sessions really are in the
+ *  renderer store before either scenario asserts on a toggle, so an absent
+ *  toggle cannot be an unwired fixture. */
+async function expectBothSuspendedSessionsWired(page: Page): Promise<void> {
+  await expect.poll(async () => page.evaluate(() => {
+    const sessions = (window as unknown as StoreWindow).__zustandStores.session.getState().sessions;
+    return sessions.filter((session) => session.status === 'suspended').length;
+  }), { timeout: 5000 }).toBe(2);
+}
+
 test.describe('Task detail for an archived Done task', () => {
-  test('offers no pause/resume toggle, while a suspended task in an ordinary column still does', async () => {
+  test('offers no pause/resume toggle anywhere', async () => {
+    // launch() boots a full app instance inside the test body (Vite fetch
+    // poll, chromium.launch, goto+load, two mount waits) before any
+    // assertion below even starts; measured locally at ~85-95% of this
+    // test's total wall time and highly variable under CI shard/worker
+    // contention (a cold Vite compile alone measured 1.8s locally vs 0.3s
+    // warm). The project's default 15s leaves too little headroom for that
+    // plus a window-open and kebab cycle under load.
+    test.setTimeout(30_000);
     const { browser, page } = await launch();
     const getPageErrors = collectPageErrors(page);
 
     try {
-      // Precondition: both suspended sessions really are in the renderer store,
-      // so an absent toggle cannot be an unwired fixture.
-      await expect.poll(async () => page.evaluate(() => {
-        const sessions = (window as unknown as StoreWindow).__zustandStores.session.getState().sessions;
-        return sessions.filter((session) => session.status === 'suspended').length;
-      }), { timeout: 5000 }).toBe(2);
+      await expectBothSuspendedSessionsWired(page);
 
-      // --- The archived task in Done: no resume surface anywhere ---
       const archivedWindowId = await openDetailWindow(page, ARCHIVED_TASK_ID);
       const archivedFrame = page.locator(`[data-testid="window-frame-${archivedWindowId}"]`);
       await archivedFrame.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
@@ -204,7 +230,25 @@ test.describe('Task detail for an archived Done task', () => {
       await expect(page.locator('[data-testid="toggle-session-btn"]')).toHaveCount(0);
       await closeKebab(page, archivedWindowId);
 
-      // --- Control: a suspended task in an ordinary column keeps its toggle ---
+      expect(getPageErrors()).toHaveLength(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('Task detail for a suspended task in an ordinary column', () => {
+  test('still offers the pause/resume toggle (control group for the archived-task test)', async () => {
+    // See the sibling archived-task test above for why this needs more than
+    // the project's default 15s: the same full app boot happens inside the
+    // test body here too.
+    test.setTimeout(30_000);
+    const { browser, page } = await launch();
+    const getPageErrors = collectPageErrors(page);
+
+    try {
+      await expectBothSuspendedSessionsWired(page);
+
       const liveWindowId = await openDetailWindow(page, LIVE_TASK_ID);
       const liveFrame = page.locator(`[data-testid="window-frame-${liveWindowId}"]`);
       await liveFrame.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });

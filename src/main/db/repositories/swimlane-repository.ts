@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput, SwimlaneRole, PermissionMode, SessionTarget, SessionSpawnStrategy } from '../../../shared/types';
+import { normalizeSwimlaneRole } from '../../../shared/types';
 
 /** Raw row shape returned by better-sqlite3 for the swimlanes table. */
 interface SwimlaneRow {
@@ -53,6 +54,12 @@ interface SwimlaneRow {
 export function deleteSwimlaneRowWithReferences(db: Database.Database, id: string): void {
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?').run(id, id);
+    // The column's automations. `column_automations.swimlane_id` declares
+    // ON DELETE CASCADE and `foreign_keys = ON` is set, so this is belt and
+    // braces rather than the only mechanism. It is here anyway because every
+    // other reference in this function is explicit, and a reader should not
+    // have to know a pragma is on to know the rows go.
+    db.prepare('DELETE FROM column_automations WHERE swimlane_id = ?').run(id);
     // Clear dangling plan_exit_target_id references
     db.prepare('UPDATE swimlanes SET plan_exit_target_id = NULL WHERE plan_exit_target_id = ?').run(id);
     db.prepare('DELETE FROM swimlanes WHERE id = ?').run(id);
@@ -151,6 +158,12 @@ export class SwimlaneRepository {
     if (input.session_target !== undefined) updated.session_target = input.session_target;
     if (input.session_spawn_strategy !== undefined) updated.session_spawn_strategy = input.session_spawn_strategy;
 
+    // `role` is deliberately absent here, and from SwimlaneUpdateInput. A column's
+    // role is identity, fixed at create: it decides which lane is the To Do slot and
+    // which is Done, and reorder/delete guard on it. Making it settable would also
+    // reopen the hole the read-path narrowing above closes, by giving a Board Manager
+    // save a way to persist an arbitrary role string. A bad role already on disk is
+    // repaired by the catch-all in runProjectMigrations, not from here.
     this.db.prepare(
       'UPDATE swimlanes SET name = ?, description = ?, color = ?, icon = ?, position = ?, is_archived = ?, is_ghost = ?, permission_mode = ?, auto_spawn = ?, auto_command = ?, auto_command_mode = ?, plan_exit_target_id = ?, agent_override = ?, model_override = ?, effort_override = ?, handoff_context = ?, session_target = ?, session_spawn_strategy = ? WHERE id = ?'
     ).run(updated.name, updated.description, updated.color, updated.icon, updated.position, updated.is_archived ? 1 : 0, updated.is_ghost ? 1 : 0, updated.permission_mode, updated.auto_spawn ? 1 : 0, updated.auto_command, updated.auto_command_mode, updated.plan_exit_target_id, updated.agent_override, updated.model_override, updated.effort_override, updated.handoff_context ? 1 : 0, updated.session_target, updated.session_spawn_strategy, updated.id);
@@ -222,7 +235,12 @@ export class SwimlaneRepository {
       id: row.id,
       name: row.name,
       description: row.description || null,
-      role: (row.role as SwimlaneRole) || null,
+      // Narrowed, not asserted, for the same reason as auto_command_mode below.
+      // The column is plain TEXT with no CHECK, and roles that left the union
+      // ('planning', 'running') are still on disk wherever the one-shot migrations
+      // that cleared them had already run. `as SwimlaneRole` let those through and
+      // crashed the Board Manager's role-icon lookup.
+      role: normalizeSwimlaneRole(row.role),
       position: row.position,
       color: row.color,
       icon: row.icon || null,

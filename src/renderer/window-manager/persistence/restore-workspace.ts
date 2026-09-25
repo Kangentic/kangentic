@@ -26,7 +26,21 @@ import { useWindowStore } from '../store/window-store';
 
 export function restoreWorkspaceForProject(projectId: string): void {
   const workspace = useConfigStore.getState().config.workspaceByProject?.[projectId];
-  if (!workspace) return;
+  // Order matters: adopt what the blob names FIRST (adoption is what clears
+  // retention for a window the blob knows about), then release whatever is
+  // still retained for this project. What that reaches is a PARKED window,
+  // which is never in the blob, so adoption cannot release it - and without
+  // this it would keep rendering from its frozen snapshot and stay out of the
+  // ownership report after the user un-parks it. It also reaches a retained
+  // window whose task left the board while backgrounded (the blob dropped it):
+  // releasing it lets useWindowAutoCloseOnDone drop it now, rather than leaving
+  // it hidden until the next time this project is backgrounded. Runs even with
+  // no blob, since a parked window needs the release either way.
+  const release = (): void => useWindowStore.getState().releaseRetainedWindows(projectId);
+  if (!workspace) {
+    release();
+    return;
+  }
   useWindowStore.getState().applyWorkspace(
     workspace,
     // The window's live session, re-resolved from its durable anchor. A
@@ -47,4 +61,5 @@ export function restoreWorkspaceForProject(projectId: string): void {
       ? true
       : useBoardStore.getState().tasks.some((task) => task.id === anchor),
   );
+  release();
 }

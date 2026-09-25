@@ -33,10 +33,18 @@ export class AttachmentRepository {
     const diskName = attachmentDiskName(id, filename);
 
     const attachDir = path.join(projectPath, '.kangentic', 'tasks', taskId, 'attachments');
+    // sync-write-ok: this write precedes the INSERT below, so it must throw
+    // rather than degrade - swallowing it would leave a DB row pointing at a
+    // file that was never written. Two callers, both now catching: the
+    // ATTACHMENT_ADD handler (rejects the invoke; useAttachments.ts toasts
+    // it) for the task-detail add, and TASK_CREATE's pendingAttachments loop
+    // (task-crud.ts) for the New Task dialog, whose NewTaskDialog.tsx catch
+    // now toasts it too.
     fs.mkdirSync(attachDir, { recursive: true });
 
     const filePath = path.join(attachDir, diskName);
     const buffer = Buffer.from(base64Data, 'base64');
+    // sync-write-ok: same reason as the mkdir above.
     fs.writeFileSync(filePath, buffer);
 
     const attachment: TaskAttachment = {

@@ -46,12 +46,14 @@ vi.mock('electron', () => ({
 const isGitRepoMock = vi.fn().mockReturnValue(false);
 const isInsideWorktreeMock = vi.fn().mockReturnValue(false);
 const isKangenticWorktreeMock = vi.fn().mockReturnValue(false);
+const hasCommitsMock = vi.fn().mockResolvedValue(true);
 const ensureGitRepoMock = vi.fn();
 
 vi.mock('../../src/main/git/git-checks', () => ({
   isGitRepo: (...args: unknown[]) => isGitRepoMock(...args),
   isInsideWorktree: (...args: unknown[]) => isInsideWorktreeMock(...args),
   isKangenticWorktree: (...args: unknown[]) => isKangenticWorktreeMock(...args),
+  hasCommits: (...args: unknown[]) => hasCommitsMock(...args),
   ensureGitRepo: (...args: unknown[]) => ensureGitRepoMock(...args),
 }));
 
@@ -179,10 +181,30 @@ describe('PROJECT_PROBE_PATH IPC handler', () => {
     isGitRepoMock.mockReset().mockReturnValue(false);
     isInsideWorktreeMock.mockReset().mockReturnValue(false);
     isKangenticWorktreeMock.mockReset().mockReturnValue(false);
+    hasCommitsMock.mockReset().mockResolvedValue(true);
     ensureGitRepoMock.mockReset();
     readWorktreeHeadUnqueuedMock.mockReset().mockResolvedValue({ branch: null, sha: null });
     existsSyncMock.mockReset().mockReturnValue(true);
     statSyncMock.mockReset().mockReturnValue({ isDirectory: () => true });
+  });
+
+  it('reports hasCommits false for a repo with an unborn HEAD, and never probes a non-repo', async () => {
+    // The branch hint reads this to stop promising a worktree the manager
+    // cannot create: `git worktree add` needs a ref to start from.
+    isGitRepoMock.mockReturnValue(true);
+    hasCommitsMock.mockResolvedValue(false);
+    const context = makeContext();
+    registerProjectHandlers(context as never);
+
+    const unborn = await invokeProbePath(context, path.join('mock', 'fresh-init'));
+    expect(unborn.isGitRepo).toBe(true);
+    expect(unborn.hasCommits).toBe(false);
+
+    isGitRepoMock.mockReturnValue(false);
+    hasCommitsMock.mockClear();
+    const plainFolder = await invokeProbePath(context, path.join('mock', 'plain-folder'));
+    expect(plainFolder.hasCommits).toBe(false);
+    expect(hasCommitsMock).not.toHaveBeenCalled();
   });
 
   it('populates isGitRepo and currentBranch for an existing repo folder', async () => {
@@ -196,6 +218,7 @@ describe('PROJECT_PROBE_PATH IPC handler', () => {
     expect(result.exists).toBe(true);
     expect(result.isDirectory).toBe(true);
     expect(result.isGitRepo).toBe(true);
+    expect(result.hasCommits).toBe(true);
     expect(result.currentBranch).toBe('feature-x');
     expect(result.suggestedName).toBe('existing-repo');
   });

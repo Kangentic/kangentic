@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Loader2, Play, RotateCcw } from 'lucide-react';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
@@ -10,6 +10,7 @@ import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { LabelPills } from '../../Pill';
 import { useTaskDetailHost } from './task-detail-host';
 import { taskDetailSurfaceFor } from '../../../utils/task-progress';
+import { scheduleWindowTerminalResize } from '../../../window-manager/terminal/resize-coalescer';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
 import { taskHasDescriptionContent } from './description-content';
 import { TaskPriorWork } from '../../memory/TaskPriorWork';
@@ -17,9 +18,9 @@ import { AttachmentChipStrip } from '../AttachmentChipStrip';
 import { isImageMediaType } from '../attachment-utils';
 import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
-import type { Task, SessionDisplayState } from '../../../../shared/types';
+import type { Task, SessionDisplayState, SwimlaneRole } from '../../../../shared/types';
 import { useSessionStore } from '../../../stores/session-store';
-import { useIsAgentDrivingSession } from '../../../stores/agent-drive-store';
+import { useAgentDriveVeil } from '../../../hooks/useAgentDriveVeil';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
 import { PanelErrorBoundary } from '../../PanelErrorBoundary';
 import { usePopOut } from '../../../pop-out/usePopOut';
@@ -49,7 +50,9 @@ function warmChangesPanelOnIdle(): void {
 function ChangesPanelSkeleton() {
   return (
     <div className="flex h-full" data-testid="changes-panel-skeleton">
-      <div className="w-[220px] flex-shrink-0 border-r border-edge p-2 space-y-1.5">
+      {/* Mirrors ChangesPanel's RAIL_DEFAULT_WIDTH_CLAMP (kept literal here so
+          the skeleton never imports the lazy chunk it stands in for). */}
+      <div className="flex-shrink-0 border-r border-edge p-2 space-y-1.5" style={{ width: 'clamp(220px, 25%, 420px)' }}>
         {Array.from({ length: 6 }, (_, index) => (
           <div key={index} className="h-4 rounded bg-surface-hover animate-pulse" style={{ opacity: 1 - index * 0.1 }} />
         ))}
@@ -70,6 +73,9 @@ interface TaskDetailBodyProps {
   isArchived: boolean;
   isInTodo: boolean;
   isInDone: boolean;
+  /** The task's column role, for the lane-aware surface classifier: a todo-role
+   *  lane paints nothing session-shaped whatever `displayKind` says. */
+  laneRole: SwimlaneRole | null;
   hasSessionContext: boolean;
   sessionId: string | null;
   displayKind: SessionDisplayState['kind'];
@@ -96,6 +102,15 @@ interface TaskDetailBodyProps {
    *  place, and keeps the pane resolving against its OWN project rather than the
    *  open board's, which the host context supplies. */
   retainedProjectId?: string;
+  /** Hidden-but-mounted for EITHER reason (retained for a backgrounded project,
+   *  or parked after the user closed it while its agent was live): drop the
+   *  terminal. Defaults to "retained", so a host that never parks (the Agent
+   *  Monitor's layer) needs no change. */
+  dormant?: boolean;
+  /** The window was closed by the user and kept for its pane (`ManagedWindow.parked`).
+   *  Only used to tell the pane, and through it the agent, that it is `parked`
+   *  rather than merely hidden. */
+  parked?: boolean;
 }
 
 export function TaskDetailBody({
@@ -104,6 +119,7 @@ export function TaskDetailBody({
   isArchived,
   isInTodo,
   isInDone,
+  laneRole,
   hasSessionContext,
   sessionId,
   displayKind,
@@ -123,8 +139,11 @@ export function TaskDetailBody({
   browserOpen,
   descriptionPeekOpen = false,
   retainedProjectId,
+  dormant: dormantProp,
+  parked = false,
 }: TaskDetailBodyProps) {
   const retained = retainedProjectId !== undefined;
+  const dormant = dormantProp ?? retained;
   // Project-scoped values come from the HOST, never from the open board: this
   // surface can be hosted by the Agent Monitor for a task in another project.
   // Default-agent tasks leave `task.agent` null; falling back to the hosting
@@ -172,16 +191,78 @@ export function TaskDetailBody({
   // back to the other panel or the plain terminal) rather than showing it in two
   // places at once.
   const showBrowser = browserOpen && !browserPopOut.isOpen;
+  // The pane was put away from the UI while the task's agent may still be
+  // driving it, so it stays MOUNTED and hidden (see `browserHeldTasks`). Only
+  // while the split row renders at all, which is the live-session face; the
+  // reaper ends the hold once the session stops. A popped-out pane is never
+  // held in-app: the pop-out window owns the guest then.
+  const browserHeld = useSessionStore((state) => state.browserHeldTasks.has(task.id));
+  const browserKept = !browserOpen && browserHeld && !browserPopOut.isOpen;
   // Only meaningful while the pane is actually on screen: a drive against a
-  // popped-out or closed pane must not dim a terminal the user is working in.
-  const agentDrivingBrowser = useIsAgentDrivingSession(sessionId) && showBrowser;
+  // popped-out, held, or closed pane must not dim a terminal the user is
+  // working in.
+  // The same shaped envelope the pane's veil reads, so the border cannot flip
+  // at the router's raw cadence underneath a veil that no longer does.
+  const agentDrivingBrowser = useAgentDriveVeil(sessionId).visible && showBrowser;
   const showChanges = changesOpen && !showBrowser && !changesPopOut.isOpen;
   const rightPanelPresent = showChanges || showBrowser || descriptionPeekOpen;
   const changesPresent = showChanges;
   const showDescriptionPanel = descriptionPeekOpen && !showBrowser && !showChanges;
   const changesExpanded = changesPresent && changesViewMode === 'expanded';
-  const handleChangesExpand = () => setChangesViewMode(task.id, 'expanded');
-  const handleChangesCollapse = () => setChangesViewMode(task.id, 'split');
+  // The split row's shape just changed, so the terminal's box did too: a panel
+  // appeared or went away (hiding the Browser pane, opening Changes over it,
+  // the description peek), or Changes went expanded and took the row entirely.
+  //
+  // Without this the ONLY thing that noticed was the terminal's ResizeObserver,
+  // which debounces at OBSERVER_REFIT_DEBOUNCE_MS (200ms); add React's commit
+  // and the observer callback and the terminal sat at its old width for ~300ms
+  // after the space was reclaimed, reflowing visibly late. The task-detail
+  // TerminalTab is an `immediatePanelResize` host, so a `terminal-panel-resize`
+  // dispatched from a LAYOUT effect via a microtask (what the coalescer does)
+  // is handled with a synchronous fit before the browser paints - the terminal
+  // fills the new width in the same frame the panel leaves.
+  //
+  // Keyed on the two booleans that actually move the terminal's edges, not on
+  // which panel is showing: swapping Browser for Changes leaves its box alone.
+  // The divider drag has its own dispatch (useTaskSplitResize).
+  useLayoutEffect(() => {
+    scheduleWindowTerminalResize();
+  }, [rightPanelPresent, changesExpanded]);
+  // Transient expand/collapse animation for the ACTIVE-session split row: the
+  // terminal wrapper's flexBasis transitions between the split ratio and 0
+  // instead of snapping. Set ONLY by the two click handlers (never derived
+  // from the persisted mode), so a hydrated-expanded restore paints flat with
+  // no wrapper and no motion (restore-no-animation-replay). 'start' paints the
+  // FROM basis for one frame; 'run' flips to the TO basis so the CSS
+  // transition has an actual change to animate. A timer (not transitionend)
+  // clears the state, so reduced-motion - where the transition is disabled and
+  // no transitionend ever fires - still settles.
+  const [expandTransition, setExpandTransition] = useState<{ direction: 'expand' | 'collapse'; phase: 'start' | 'run' } | null>(null);
+  useLayoutEffect(() => {
+    if (expandTransition?.phase !== 'start') return;
+    const raf = requestAnimationFrame(() => {
+      setExpandTransition((current) => (current ? { ...current, phase: 'run' } : current));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [expandTransition]);
+  useEffect(() => {
+    if (expandTransition?.phase !== 'run') return;
+    const timer = setTimeout(() => {
+      setExpandTransition(null);
+      // The collapse animation lands the terminal at its final basis AFTER the
+      // mode-flip dispatch above already fired; refit once more at rest.
+      scheduleWindowTerminalResize();
+    }, 260);
+    return () => clearTimeout(timer);
+  }, [expandTransition]);
+  const handleChangesExpand = () => {
+    setExpandTransition({ direction: 'expand', phase: 'start' });
+    setChangesViewMode(task.id, 'expanded');
+  };
+  const handleChangesCollapse = () => {
+    setExpandTransition({ direction: 'collapse', phase: 'start' });
+    setChangesViewMode(task.id, 'split');
+  };
   const taskLabels = task.labels ?? [];
   const taskPriority = task.priority ?? 0;
   const hasLabelsOrPriority = taskPriority > 0 || taskLabels.length > 0;
@@ -278,6 +359,7 @@ export function TaskDetailBody({
           onCollapse={handleChangesCollapse}
           task={task}
           popOutParams={projectId ? { taskId: task.id, projectId } : undefined}
+          filePopOutParams={projectId ? { taskId: task.id, projectId } : undefined}
         />
       </Suspense>
     </PanelErrorBoundary>
@@ -327,70 +409,130 @@ export function TaskDetailBody({
   // denylist adopts every kind added later, which is how a restore came to paint
   // the outgoing session's dead terminal once 'preparing' started winning. The
   // table in task-progress.ts is compile-enforced, so a new kind cannot land
-  // here by default.
-  if (sessionId && taskDetailSurfaceFor(displayKind) === 'terminal') {
+  // here by default. The lane rides along so a To Do task, whose rows are only
+  // ever stale, cannot reach this branch on a row the store failed to drop.
+  if (sessionId && taskDetailSurfaceFor(displayKind, laneRole) === 'terminal') {
     // Browser, Changes, and the Description peek are mutually exclusive; when one
     // shares the row with the terminal, a draggable divider sets the per-task split.
     const showDivider = rightPanelPresent && !changesExpanded;
-    // The chosen right panel (Browser / Changes / Description) - shown instantly
-    // with no reveal animation.
-    const rightPanelElement = rightPanelPresent && (
+    // The Browser pane's slot, mounted while the pane is showing OR held. It is
+    // its own fixed child of the split row (never the slot Changes / the
+    // Description peek render into) so that hiding the pane, or opening
+    // Changes over it, only restyles this element: React matches the row's
+    // children by index, and moving BrowserPane between slots would remount it
+    // and destroy the guest (.claude/rules/retained-pane-never-remounts.md).
+    // Held, it sits absolutely over the right side of the row at the width it
+    // would show at, so the terminal takes the full row and an agent's
+    // screenshot of the hidden page keeps its proportions. Hidden the retained
+    // way: `opacity: 0` and inert, never `visibility: hidden`, `display: none`
+    // or a zero size - each of those stops the guest compositing, which hangs
+    // `Page.captureScreenshot` for good.
+    const browserSlot = (showBrowser || browserKept) && (
       <div
-        data-testid="task-detail-right-panel"
-        className={`flex-1 min-h-0 min-w-0 overflow-hidden transition-colors ${
-          changesExpanded ? '' : 'border-l'
-        } ${agentDrivingBrowser ? 'border-accent' : 'border-edge'}`}
+        data-testid={showBrowser ? 'task-detail-right-panel' : 'task-detail-browser-held'}
+        className={
+          showBrowser
+            ? `flex-1 min-h-0 min-w-0 overflow-hidden transition-colors border-l ${
+                agentDrivingBrowser ? 'border-accent' : 'border-edge'
+              }`
+            : 'absolute inset-y-0 right-0 min-w-0 overflow-hidden opacity-0 pointer-events-none'
+        }
+        style={showBrowser ? undefined : { width: `${(1 - splitRatio) * 100}%` }}
+        aria-hidden={showBrowser ? undefined : true}
+        inert={showBrowser ? undefined : true}
       >
         <div className="h-full">
-          {showBrowser ? (
-            <BrowserPane
-              sessionId={sessionId}
-              taskId={task.id}
-              cwd={task.worktree_path ?? projectPath}
-              projectId={paneProjectId}
-            />
-          ) : changesPresent ? (
-            changesContent
-          ) : (
-            descriptionPanelContent
-          )}
+          <BrowserPane
+            sessionId={sessionId}
+            taskId={task.id}
+            cwd={task.worktree_path ?? projectPath}
+            projectId={paneProjectId}
+            // What the agent is told about where its pane is. A retained window
+            // keeps reporting showing / hidden: the user sees it again on return.
+            visibility={parked ? 'parked' : showBrowser ? 'showing' : 'hidden'}
+          />
         </div>
       </div>
     );
+    // The other right panel (Changes / Description) - shown instantly with no
+    // reveal animation. Never alongside a SHOWING browser (the views are
+    // mutually exclusive), but freely beside a held one.
+    const otherPanelElement = !showBrowser && (changesPresent || descriptionPeekOpen) && (
+      <div
+        data-testid="task-detail-right-panel"
+        className={`flex-1 min-h-0 min-w-0 overflow-hidden transition-colors border-edge ${
+          changesExpanded ? '' : 'border-l'
+        }`}
+      >
+        <div className="h-full">{changesPresent ? changesContent : descriptionPanelContent}</div>
+      </div>
+    );
 
+    // The terminal wrapper stays mounted through the expand EXIT animation (its
+    // flexBasis transitions to 0, then the timer unmounts it); on collapse it
+    // mounts at basis 0 and transitions up to the split ratio. It is child 0 of
+    // the split row in every state - the conditional occupies the same child
+    // index whether it renders the wrapper or false - so the browserSlot's
+    // index never shifts (retained-pane-never-remounts).
+    const terminalWrapperMounted = !changesExpanded || expandTransition?.direction === 'expand';
+    // Both directions animate between the same two ends - the terminal at its
+    // split share, and the terminal gone - so the direction only decides which
+    // end each phase paints: `start` holds the FROM end for one frame, `run`
+    // flips to the TO end and the flex-basis transition carries the move.
+    const splitShareBasis = `${splitRatio * 100}%`;
+    const transitionEnds = expandTransition?.direction === 'expand'
+      ? { start: splitShareBasis, run: '0%' }
+      : { start: '0%', run: splitShareBasis };
+    const terminalBasis = expandTransition
+      ? transitionEnds[expandTransition.phase]
+      : rightPanelPresent
+        ? splitShareBasis
+        : undefined;
     return (
       <>
-        <div ref={splitContainerRef} className="flex-1 min-h-0 flex">
-          {!changesExpanded && (
+        <div ref={splitContainerRef} className="relative flex-1 min-h-0 flex">
+          {terminalWrapperMounted && (
             <div
-              className={`${rightPanelPresent ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden`}
-              style={rightPanelPresent ? { flexBasis: `${splitRatio * 100}%` } : undefined}
+              className={`${rightPanelPresent || expandTransition ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden ${
+                // Transition only during the click-driven toggle - never on the
+                // divider drag (1:1 pointer tracking) and never on a restore.
+                expandTransition ? 'transition-[flex-basis] duration-200 ease-out motion-reduce:transition-none' : ''
+              }`}
+              style={terminalBasis !== undefined ? { flexBasis: terminalBasis } : undefined}
             >
-              {/* Dimmed while an agent drives the Browser pane.
-                  Interacting with a page means clicking it, and a click gives
-                  the guest real keyboard focus - so the focus move cannot be
-                  designed away, and every attempt to hide it put keystrokes on
-                  the wrong side. It is shown instead, so the user can SEE that
-                  their typing will not land here. Opacity only: the terminal
-                  stays mounted, live, and clickable, and one click takes focus
-                  straight back. */}
+              {/* The terminal is NEVER dimmed by an agent drive, and the wrapper
+                  is kept only because the tree shape below it is load-bearing.
+
+                  It used to fade to 40% for the length of a drive, on the
+                  reasoning that the focus move should be shown. That reasoning
+                  was pointed at the wrong pane. A CDP click does steal the
+                  guest's focus, but main then intercepts every keyDown at the
+                  guest and writes it straight to this terminal, so this is the
+                  surface that still accepts your typing and the page is the one
+                  that cannot. Dimming it faded the live half of the split while
+                  the inert half stayed bright, and it did so at the router's
+                  400ms cadence, which read as a flicker.
+
+                  The drive is marked on the pane instead: a veil, the accent
+                  border on the split, and a label naming it, all on the shaped
+                  envelope in `useAgentDriveVeil`. See
+                  `.claude/rules/agent-driven-focus.md`. */}
               <div
                 data-testid="task-detail-terminal-dim"
-                className={`absolute inset-0 transition-opacity duration-200 ${
-                  agentDrivingBrowser ? 'opacity-40' : 'opacity-100'
-                }`}
+                className="absolute inset-0"
               >
-                {/* A retained window is mounted ONLY to keep its Browser pane's
-                    <webview> guest alive while its project is backgrounded, so
-                    the terminal comes down: an xterm parsing PTY output for a
-                    surface nobody can see is pure cost, and it remounts from
-                    scrollback on return exactly as the ownership handoff already
-                    does. Swapping the child here (rather than dropping the
-                    wrapping divs) is deliberate: the sibling slots around
-                    `rightPanelElement` must keep their positions, because React
-                    matches these fixed children by index and a shifted index
-                    would remount BrowserPane and destroy the guest. */}
-                {retained ? null : (
+                {/* A dormant window (retained while its project is backgrounded,
+                    or parked after the user closed it) is mounted ONLY to keep
+                    its Browser pane's <webview> guest alive, so the terminal
+                    comes down: an xterm parsing PTY output for a surface nobody
+                    can see is pure cost, and it remounts from scrollback on
+                    return exactly as the ownership handoff already does.
+                    Swapping the child here (rather than dropping the wrapping
+                    divs) is deliberate: the sibling slots around `browserSlot`
+                    must keep their positions, because React matches these fixed
+                    children by index and a shifted index would remount
+                    BrowserPane and destroy the guest. */}
+                {dormant ? null : (
                   <TerminalTab
                     key={sessionId}
                     sessionId={sessionId}
@@ -406,7 +548,8 @@ export function TaskDetailBody({
             </div>
           )}
           {showDivider && splitDivider}
-          {rightPanelElement}
+          {browserSlot}
+          {otherPanelElement}
           {resizeCaptureOverlay}
         </div>
         <ContextBar sessionId={sessionId} agentFallback={projectDefaultAgent} />
@@ -415,7 +558,7 @@ export function TaskDetailBody({
   }
 
   // Queued
-  if (taskDetailSurfaceFor(displayKind) === 'queued-placeholder') {
+  if (taskDetailSurfaceFor(displayKind, laneRole) === 'queued-placeholder') {
     return <QueuedPlaceholder sessionId={sessionId} />;
   }
 
@@ -423,7 +566,7 @@ export function TaskDetailBody({
   // exists. The terminal area is otherwise blank here, so mirror the board
   // card's launch treatment - a centered muted spinner + the spawn status
   // label - and keep PreSpawnContextBar pinned at the bottom.
-  if (taskDetailSurfaceFor(displayKind) === 'launch-overlay') {
+  if (taskDetailSurfaceFor(displayKind, laneRole) === 'launch-overlay') {
     // No session/PTY yet, so the only right panel that applies is the Description
     // peek (Browser needs a live session; Changes is not offered here). It rides
     // the same split so it survives the transition into the running terminal.

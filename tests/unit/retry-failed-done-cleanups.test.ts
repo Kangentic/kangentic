@@ -65,6 +65,8 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
 
 vi.mock('../../src/main/git/rm-with-retry', () => ({
   removeWithRetry: vi.fn(async () => {}),
+  isRemovalTimeoutError: (error: unknown) =>
+    error instanceof Error && error.name === 'WorktreeRemovalTimeoutError',
 }));
 
 // withTaskLock: pass-through in tests so the lock contract doesn't affect

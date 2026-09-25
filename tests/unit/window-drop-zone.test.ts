@@ -49,6 +49,21 @@ describe('collectCandidatePanes', () => {
     expect(panes[0]).toEqual({ windowId: 'w2', zIndex: 4, rect: { left: 500, top: 0, width: 500, height: 800 } });
   });
 
+  it('never offers a dormant window (parked or retained) as a drop target, even at a tempting geometry', () => {
+    // A parked window keeps floating, invisibly and inert, at its old geometry,
+    // often the full-height half it was tiled in. Dragging another window across
+    // that half docked INTO the ghost and left the survivor tiled beside a
+    // partner it could not see (observed live). Retained is the same shape.
+    const windows: Record<string, ManagedWindow> = {
+      w1: makeWindow({ id: 'w1', geometry: { x: 0, y: 0.2, w: 0.5, h: 0.6 } }),
+      parked: { ...makeWindow({ id: 'parked', geometry: { x: 0.5, y: 0, w: 0.5, h: 1 } }), parked: true },
+      retained: { ...makeWindow({ id: 'retained', geometry: { x: 0, y: 0, w: 0.5, h: 1 } }), retainedProjectId: 'proj-away' },
+      visible: makeWindow({ id: 'visible', geometry: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, zIndex: 9 }),
+    };
+    const panes = collectCandidatePanes('w1', windows, null, CONTAINER, { x: 0, y: 0, w: 1, h: 1 });
+    expect(panes.map((pane) => pane.windowId)).toEqual(['visible']);
+  });
+
   it('resolves tiled panes WITHIN a confined footprint (left-half group), not the full overlay', () => {
     const tree: TileNode = {
       kind: 'split',

@@ -79,8 +79,14 @@ vi.mock('../../src/main/pr/pr-registry', () => ({
   detectPR: vi.fn(() => null),
 }));
 
-vi.mock('../../src/shared/paths', () => ({
+vi.mock('../../src/shared/paths', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/shared/paths')>()),
   adaptCommandForShell: (cmd: string) => cmd,
+  // performSpawn's deferred command write calls this ~100ms after every
+  // spawn under this file's REAL timers; a factory without it throws
+  // "buildSpawnClearPrelude is not a function" as an unhandled error after
+  // the test body has already returned.
+  buildSpawnClearPrelude: () => '',
 }));
 
 // trace-recorder is the only module the onExit body touches that the
@@ -118,6 +124,7 @@ function makeContext(): SpawnFlowContext {
       emitSessionEnd: vi.fn(),
       hasPendingPRCommand: vi.fn(() => false),
       clearPendingPRCommand: vi.fn(),
+      takePendingPushedBranch: vi.fn(() => null),
       getSessionActivity: vi.fn(() => null),
     },
     sessionIdManager: {
@@ -145,6 +152,9 @@ function makeContext(): SpawnFlowContext {
     },
     sessionQueue: {
       notifySlotFreed: vi.fn(),
+    },
+    firstOutputTracker: {
+      removeSession: vi.fn(),
     },
     getTranscriptWriter: vi.fn(() => null),
     getShell: vi.fn().mockResolvedValue('/bin/bash'),

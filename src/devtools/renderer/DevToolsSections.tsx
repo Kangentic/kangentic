@@ -2,6 +2,7 @@ import { Network, Code2, Compass, Megaphone, Sparkles, Rocket } from 'lucide-rea
 import type { LucideIcon } from 'lucide-react';
 import type { AppConfig } from '../../shared/types';
 import type { Announcement, AnnouncementArchiveEntry } from '../../shared/announcements';
+import { DOCS_URLS } from '../../shared/docs-links';
 import { useScopedUpdate } from '../../renderer/components/settings/shared';
 import { useConfigStore } from '../../renderer/stores/config-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
@@ -69,7 +70,7 @@ function buildAnnouncementFixture(): {
     id: `dev-fixture-secondary-${stamp}`,
     title: 'Agent Monitor now spans every project',
     body: 'One view over every running agent on this machine, not just the open project.',
-    links: [{ label: 'Read the docs', url: 'https://kangentic.com/docs/' }],
+    links: [{ label: 'Read the docs', url: DOCS_URLS.gettingStarted }],
     publishedAt: isoDaysAgo(16),
   };
   const retired: Announcement = {

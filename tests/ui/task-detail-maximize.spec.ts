@@ -237,6 +237,16 @@ test.describe('Task Detail: maximize / restore', () => {
     await expect(browserToggle).toHaveAttribute('title', /^Show browser/);
 
     // Close the dialog so subsequent tests start clean.
+    //
+    // This doubles as a regression guard for the park policy. Ctrl+Shift+B only
+    // HIDES the pane, so the second press above left it held, and this task's
+    // session is running: the two conditions that park a window on close. It
+    // must still close for real, because no URL was ever seeded here, so the
+    // pane only ever rendered its empty state and never attached a `<webview>`.
+    // Parking exists to preserve a guest, and there is none. If this starts
+    // failing because the dialog stayed "visible", the policy has gone back to
+    // parking on pane-open state alone and is hiding windows with nothing in
+    // them (a parked frame is opacity 0, which Playwright counts as visible).
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible();
   });

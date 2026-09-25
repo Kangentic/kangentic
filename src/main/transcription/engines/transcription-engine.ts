@@ -41,16 +41,35 @@ export interface TranscriptionEngineSession {
   finalize(): Promise<string>;
   cancel(): void;
   dispose(): void;
+  /**
+   * Resolves once work this session put on the libuv threadpool has settled.
+   * `cancel()` and `dispose()` are synchronous by contract, so neither can wait
+   * for a decode already running; the worker calls this afterwards and holds off
+   * disposing the engine until it resolves. Optional because most engines end a
+   * session with nothing outstanding: the streaming transducer decodes inside
+   * `push()`, and the remote and stub engines hold no threadpool work. The two
+   * offline engines do, on two paths - the chunked-offline live loop between
+   * passes, and either of them during the final decode, which a cancel can land
+   * on top of. Never rejects.
+   */
+  drain?(): Promise<void>;
 }
 
 /**
  * The pluggable transcription engine boundary. Implementations live under
  * `src/main/transcription/engines/` and follow the agent/board adapter
  * convention: nothing outside that folder branches on a specific engine id;
- * callers read `info` and the only mode-to-engine mapping is in
- * `engine-registry.ts`. The single `TranscriptionService` owns the active
- * engine and routes all audio (local renderer PCM today, a future mobile
- * client later) through `createSession(...).push(...)`.
+ * callers read `info`. The selection-to-engine mapping is split across a
+ * process boundary (see DESKTOP-X /
+ * .claude/rules/dictation-out-of-process.md): `engine-selection.ts` (main)
+ * maps a config to an `EngineSelection` - pure data, no `sherpa-onnx-node`
+ * import - and `engine-build.ts` (the `kangentic-dictation` utilityProcess
+ * worker only) is the one place that constructs a concrete engine from it.
+ * `TranscriptionService` (main) owns session bookkeeping and routes all
+ * audio (local renderer PCM today, a future mobile client later) to the
+ * worker via `DictationClient`; the engines themselves - and every
+ * `TranscriptionEngine` / `TranscriptionEngineSession` instance - live only
+ * in the worker.
  */
 export interface TranscriptionEngine {
   readonly info: DictationEngineInfo;

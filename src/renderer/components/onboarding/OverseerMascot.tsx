@@ -106,18 +106,56 @@ export interface OverseerMascotProps {
  * - The app's own "Animations" off toggle (`.no-motion`) zeroes
  *   animation-duration instead, so the intro ends immediately and the idle
  *   sequence also runs at 0s. Both rest on the canonical frame because the
- *   shipped CSS emits no `animation-fill-mode`.
+ *   shipped CSS emits no `animation-fill-mode`. That path does NOT rely on
+ *   `animationend`, which newer Chromium no longer fires for a 0s animation;
+ *   the effect below reads the computed duration and hands off directly.
  * - At most one Overseer per view (sprite-drafting convention).
  */
 export function OverseerMascot({ scale, sequence = 'none', intro, className = '' }: OverseerMascotProps) {
-  const [introPlaying, setIntroPlaying] = useState(intro !== undefined);
-  const introDoneRef = useRef(false);
+  // Whether the current intro has finished. State rather than a ref, so the
+  // playing flag is derived from it and the intro prop, and a swap of intro
+  // resets it during render (React's "adjusting state when a prop changes"
+  // pattern) instead of through an effect. Setting it twice (wave-once lands
+  // two animationend events) is idempotent, which is all the old ref guard
+  // bought.
+  const [introDone, setIntroDone] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  // Replay the intro if the caller swaps it (also resets on remount).
+  // Replay the intro if the caller swaps it (a remount starts fresh anyway).
+  const [seenIntro, setSeenIntro] = useState(intro);
+  if (intro !== seenIntro) {
+    setSeenIntro(intro);
+    setIntroDone(false);
+  }
+  const introPlaying = intro !== undefined && !introDone;
+
+  // A zero-length intro has already ended, so hand off without waiting for an
+  // `animationend` that is not coming. Chromium stopped firing that event for a
+  // 0s-duration animation somewhere between 148 and 153 (measured: the UI tier
+  // went from green on 148 to failing both attempts on 153, with the class stuck
+  // at `overseer--wave-once`), which is exactly the `.no-motion` path, where the
+  // app's own Animations toggle zeroes the duration rather than removing the
+  // animation. The rendering was still correct either way, since the shipped CSS
+  // emits no `animation-fill-mode` and every frame but `--rest` falls back to
+  // hidden, but the state machine never completed and the hero stayed nominally
+  // mid-wave.
+  //
+  // Deliberately NOT keyed on `animation-name: none`: `prefers-reduced-motion`
+  // removes the animation outright, and resting there is reached by doing
+  // nothing at all (see the note above). Only an animation that IS applied and
+  // runs for zero time counts as already finished.
   useEffect(() => {
-    introDoneRef.current = false;
-    setIntroPlaying(intro !== undefined);
-  }, [intro]);
+    if (!introPlaying) return;
+    const node = rootRef.current;
+    if (!node) return;
+    const { animationName, animationDuration } = getComputedStyle(node);
+    if (animationName === 'none') return;
+    const everyTrackIsInstant = animationDuration
+      .split(',')
+      .every((track) => Number.parseFloat(track) === 0);
+    if (!everyTrackIsInstant) return;
+    setIntroDone(true);
+  }, [introPlaying]);
 
   const activeSequence = introPlaying && intro ? intro : sequence;
 
@@ -130,16 +168,15 @@ export function OverseerMascot({ scale, sequence = 'none', intro, className = ''
 
   return (
     <div
+      ref={rootRef}
       className={`overseer ${sequenceClass} ${className}`}
       role="img"
       aria-label="Pixel-art Kangentic mascot"
       style={{ width: scale * 18 }}
       onAnimationEnd={() => {
         // wave-once animates both its rest and wave tracks, so two events land;
-        // the ref makes the handoff idempotent.
-        if (introDoneRef.current) return;
-        introDoneRef.current = true;
-        setIntroPlaying(false);
+        // setting the same flag twice is idempotent.
+        if (introPlaying) setIntroDone(true);
       }}
     >
       {mountedFrames.map((frameKey) => (

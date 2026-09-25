@@ -1,9 +1,21 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2 } from 'lucide-react';
+import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2, AppWindow } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
-import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit } from '../../../../../shared/types';
+import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit, PRMergeReadiness, PRState } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { useToastStore } from '../../../../stores/toast-store';
+import { PrLink } from '../../../PrLink';
+import { OverlayPopover } from '../../../OverlayPopover';
+import { usePopoverPosition } from '../../../../hooks/usePopoverPosition';
+import { CountBadge } from '../../../CountBadge';
+
+/** Linked-PR chip data, declared once so the panel prop and the header prop cannot drift. */
+interface PrLinkData {
+  url: string;
+  number: number | null;
+  state: PRState | null | undefined;
+  mergeReadiness: PRMergeReadiness | null | undefined;
+}
 
 /** Diff scope options for the segmented control (single-select among 3 fixed values). */
 const SCOPE_OPTIONS: { value: GitDiffScope; label: string }[] = [
@@ -41,6 +53,15 @@ interface FileTreePanelProps {
    *  more surprising case, rendered with a stronger accent tone than the
    *  default-base case so it actually draws the eye. */
   baseLabelCustom?: boolean;
+  /** Linked-PR chip data for the branch header, so every mount that shows the
+   *  built-in header (standalone dialog, whole-panel pop-out) gets the same PR
+   *  affordance the task-detail embed shows in its surface header. */
+  prLink?: PrLinkData;
+  /** Whether the first file-list fetch has settled. Before it has, an empty
+   *  list renders skeleton rows rather than the settled "0 files" empty shape
+   *  (which would otherwise flash a false negative during the initial load).
+   *  Default true so mounts that manage no loading state are unaffected. */
+  loaded?: boolean;
   /** Worktree directory, used to resolve a file's absolute path for OS actions. */
   worktreePath?: string;
   /** Project directory, the fallback base when there is no worktree. */
@@ -48,6 +69,10 @@ interface FileTreePanelProps {
   /** Fires when the user picks a commit from a file's "View history" popover -
    *  jumps the Changes panel to that file's diff at that commit. */
   onSelectHistoryCommit?: (filePath: string, commit: GitFileHistoryCommit) => void;
+  /** When provided, a file row can detach its diff into a dedicated OS window
+   *  (double-click, and the context menu's "Open in new window"). Absent for
+   *  hosts with no task identity (the command-terminal embed). */
+  onOpenInNewWindow?: (filePath: string) => void;
 }
 
 const STATUS_CONFIG: Record<GitDiffStatus, { icon: typeof Plus; colorClass: string; label: string }> = {
@@ -122,11 +147,28 @@ function compactTree(node: DirectoryNode): DirectoryNode {
 // File sorting
 // ---------------------------------------------------------------------------
 
-type FileSortMode = 'name' | 'status' | 'size';
+// Derived, not restated: a future widening of the config union is then a type
+// error here instead of a silently missing sort option.
+type FileSortMode = AppConfig['diffFileSort'];
+
+/** The sort menu's options (single-select; the current mode gets a check). */
+const SORT_OPTIONS: { value: FileSortMode; label: string }[] = [
+  { value: 'name', label: 'Name' },
+  { value: 'status', label: 'Status' },
+  { value: 'size', label: 'Size' },
+  { value: 'ext', label: 'Extension' },
+];
 
 // Status grouping order for "by status": additions, then untracked, modified,
 // renamed, copied, and deletions last.
 const STATUS_SORT_RANK: Record<GitDiffStatus, number> = { A: 0, U: 1, M: 2, R: 3, C: 4, D: 5 };
+
+/** A file's extension for the 'ext' sort ('' for no dot, so extensionless files group first). */
+function fileExtension(filePath: string): string {
+  const basename = filePath.split('/').pop() ?? filePath;
+  const dotIndex = basename.lastIndexOf('.');
+  return dotIndex > 0 ? basename.slice(dotIndex + 1).toLowerCase() : '';
+}
 
 function compareFiles(a: GitDiffFileEntry, b: GitDiffFileEntry, sort: FileSortMode): number {
   if (sort === 'status') {
@@ -135,6 +177,9 @@ function compareFiles(a: GitDiffFileEntry, b: GitDiffFileEntry, sort: FileSortMo
   } else if (sort === 'size') {
     const bySize = (b.insertions + b.deletions) - (a.insertions + a.deletions); // largest first
     if (bySize !== 0) return bySize;
+  } else if (sort === 'ext') {
+    const byExtension = fileExtension(a.path).localeCompare(fileExtension(b.path));
+    if (byExtension !== 0) return byExtension;
   }
   return a.path.localeCompare(b.path); // name sort, and the tiebreak for the others
 }
@@ -167,7 +212,16 @@ interface FlatFileRow {
   depth: number;
 }
 
-type FlatRow = FlatDirectoryRow | FlatFileRow;
+/** Status group header (flat mode + status sort only): "Modified (12)" section
+ *  rows carrying the scanning value of a status column without table machinery. */
+interface FlatGroupRow {
+  kind: 'group';
+  key: string;
+  status: GitDiffStatus;
+  count: number;
+}
+
+type FlatRow = FlatDirectoryRow | FlatFileRow | FlatGroupRow;
 
 function flattenTree(
   node: DirectoryNode,
@@ -210,6 +264,29 @@ function flattenTree(
 // Memoized row components
 // ---------------------------------------------------------------------------
 
+/** Status section header (flat + status sort). GitHub's section-boundary
+ *  treatment: the header is a LABEL, not an item - small uppercase muted text
+ *  with no leading icon (the icon is what made it read as a file row), a
+ *  hairline rule at the section's top edge, and the label bottom-aligned so
+ *  the air above it belongs to the boundary. Status color stays on the file
+ *  rows below, which keep the interactive styling (hover, selection). */
+const GroupRowView = memo(function GroupRowView({ row, first }: { row: FlatGroupRow; first: boolean }) {
+  const statusConfig = STATUS_CONFIG[row.status];
+  return (
+    <div
+      className={`flex w-full items-end gap-1.5 px-2 pb-1 select-none ${first ? '' : 'border-t border-edge-subtle'}`}
+      style={{ height: ROW_HEIGHT }}
+      data-testid="changes-group-row"
+      data-status={row.status}
+    >
+      <span className="text-[11px] font-semibold uppercase tracking-wider leading-none text-fg-faint">
+        {statusConfig.label}
+      </span>
+      <CountBadge count={row.count} variant="muted" size="xs" />
+    </div>
+  );
+});
+
 const DirectoryRowView = memo(function DirectoryRowView({
   row,
   expanded,
@@ -239,6 +316,7 @@ const FileRowView = memo(function FileRowView({
   onSelect,
   onToggleViewed,
   onContextMenu,
+  onOpenInNewWindow,
 }: {
   row: FlatFileRow;
   isSelected: boolean;
@@ -247,6 +325,7 @@ const FileRowView = memo(function FileRowView({
   onSelect: (filePath: string) => void;
   onToggleViewed: (filePath: string) => void;
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
+  onOpenInNewWindow?: (filePath: string) => void;
 }) {
   const statusConfig = STATUS_CONFIG[row.file.status];
   const StatusIcon = statusConfig.icon;
@@ -266,8 +345,13 @@ const FileRowView = memo(function FileRowView({
     >
       <button
         onClick={() => onSelect(row.file.path)}
+        // Detach this one file's diff into its own OS window. Both clicks of the
+        // double fire onSelect first - selection is idempotent, so that is fine.
+        // On the file button only, never the row div (the viewed toggle beside it
+        // must not detach).
+        onDoubleClick={onOpenInNewWindow ? () => onOpenInNewWindow(row.file.path) : undefined}
         onContextMenu={(event) => onContextMenu(row.file, event)}
-        className={`flex items-center gap-1.5 min-w-0 flex-1 px-2 text-xs ${
+        className={`flex items-center gap-1.5 min-w-0 flex-1 px-2 text-xs transition-opacity duration-150 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
           isSelected ? 'text-fg' : 'text-fg-secondary'
         } ${viewed ? 'opacity-45' : ''}`}
         style={{ paddingLeft: `${row.depth * 12 + 8}px` }}
@@ -276,7 +360,9 @@ const FileRowView = memo(function FileRowView({
         <StatusIcon size={12} className={`flex-shrink-0 ${statusConfig.colorClass}`} />
         <span className="truncate">{displayName}</span>
         {!row.file.binary && (row.file.insertions > 0 || row.file.deletions > 0) && (
-          <span className="ml-auto flex-shrink-0 flex items-center gap-1 text-[11px]">
+          // Right-aligned into a fixed-min-width tabular column so the numbers
+          // stack scannably down the list (table feel, no table machinery).
+          <span className="ml-auto flex-shrink-0 flex items-center justify-end gap-1 min-w-[52px] text-[11px] tabular-nums">
             {row.file.insertions > 0 && <span className="text-green-400">+{row.file.insertions}</span>}
             {row.file.deletions > 0 && <span className="text-red-400">-{row.file.deletions}</span>}
           </span>
@@ -321,6 +407,7 @@ function VirtualizedFileTree({
   onSelect,
   onToggleViewed,
   onContextMenu,
+  onOpenInNewWindow,
   defaultExpanded,
 }: {
   files: GitDiffFileEntry[];
@@ -333,6 +420,7 @@ function VirtualizedFileTree({
   onSelect: (filePath: string) => void;
   onToggleViewed: (filePath: string) => void;
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
+  onOpenInNewWindow?: (filePath: string) => void;
   defaultExpanded: boolean;
 }) {
   const tree = useMemo(() => sortDirectoryTree(buildDirectoryTree(files), sort), [files, sort]);
@@ -352,31 +440,35 @@ function VirtualizedFileTree({
     () => defaultExpanded ? new Set(allDirectoryPaths) : new Set<string>(),
   );
 
-  // Expand new directories when the tree changes (new files added by the agent)
-  useEffect(() => {
+  // Expand new directories when the tree changes (new files added by the
+  // agent). Adjusted during render, on the render where the directory set
+  // first differs from the one last merged (React's "adjusting state when a
+  // prop changes" pattern), so the new rows never paint collapsed for a frame.
+  const [mergedDirectoryPaths, setMergedDirectoryPaths] = useState(allDirectoryPaths);
+  if (allDirectoryPaths !== mergedDirectoryPaths) {
+    setMergedDirectoryPaths(allDirectoryPaths);
     if (defaultExpanded) {
-      setExpandedPaths((previous) => {
-        const merged = new Set(previous);
-        let changed = false;
-        for (const directoryPath of allDirectoryPaths) {
-          if (!merged.has(directoryPath)) {
-            merged.add(directoryPath);
-            changed = true;
-          }
+      const merged = new Set(expandedPaths);
+      let changed = false;
+      for (const directoryPath of allDirectoryPaths) {
+        if (!merged.has(directoryPath)) {
+          merged.add(directoryPath);
+          changed = true;
         }
-        return changed ? merged : previous;
-      });
+      }
+      if (changed) setExpandedPaths(merged);
     }
-  }, [allDirectoryPaths, defaultExpanded]);
+  }
 
-  // Collapse-all / expand-all: apply when the command nonce changes (not on mount,
-  // and not on an unrelated allDirectoryPaths change).
-  const expansionNonceRef = useRef(expansionCommand.nonce);
-  useEffect(() => {
-    if (expansionCommand.nonce === expansionNonceRef.current) return;
-    expansionNonceRef.current = expansionCommand.nonce;
+  // Collapse-all / expand-all: apply when the command nonce changes (not on
+  // mount, and not on an unrelated allDirectoryPaths change). Same render-time
+  // adjustment; declared after the merge above so a command arriving in the
+  // same render wins, as it did when both were effects run in this order.
+  const [appliedExpansionNonce, setAppliedExpansionNonce] = useState(expansionCommand.nonce);
+  if (expansionCommand.nonce !== appliedExpansionNonce) {
+    setAppliedExpansionNonce(expansionCommand.nonce);
     setExpandedPaths(expansionCommand.expand ? new Set(allDirectoryPaths) : new Set<string>());
-  }, [expansionCommand, allDirectoryPaths]);
+  }
 
   const toggleDirectory = useCallback((fullPath: string) => {
     setExpandedPaths((previous) => {
@@ -392,9 +484,28 @@ function VirtualizedFileTree({
 
   const flatRows = useMemo(() => {
     if (flat) {
-      return [...files]
-        .sort((a, b) => compareFiles(a, b, sort))
-        .map((file): FlatRow => ({ kind: 'file', key: `file:${file.path}`, file, depth: 0 }));
+      const sorted = [...files].sort((a, b) => compareFiles(a, b, sort));
+      // Flat + status sort: interleave "Modified (12)"-style group headers at
+      // each status boundary - the scanning value of TortoiseGit's status
+      // column without a table.
+      if (sort === 'status') {
+        const grouped: FlatRow[] = [];
+        let lastStatus: GitDiffStatus | null = null;
+        for (const file of sorted) {
+          if (file.status !== lastStatus) {
+            lastStatus = file.status;
+            grouped.push({
+              kind: 'group',
+              key: `group:${file.status}`,
+              status: file.status,
+              count: sorted.filter((candidate) => candidate.status === file.status).length,
+            });
+          }
+          grouped.push({ kind: 'file', key: `file:${file.path}`, file, depth: 0 });
+        }
+        return grouped;
+      }
+      return sorted.map((file): FlatRow => ({ kind: 'file', key: `file:${file.path}`, file, depth: 0 }));
     }
     const result: FlatRow[] = [];
     flattenTree(tree, 0, expandedPaths, result);
@@ -438,7 +549,7 @@ function VirtualizedFileTree({
     >
       <div style={{ height: totalHeight, position: 'relative' }}>
         <div style={{ position: 'absolute', top: startIndex * ROW_HEIGHT, left: 0, right: 0 }}>
-          {visibleRows.map((row) =>
+          {visibleRows.map((row, index) =>
             row.kind === 'directory' ? (
               <DirectoryRowView
                 key={row.key}
@@ -446,6 +557,8 @@ function VirtualizedFileTree({
                 expanded={expandedPaths.has(row.fullPath)}
                 onToggle={toggleDirectory}
               />
+            ) : row.kind === 'group' ? (
+              <GroupRowView key={row.key} row={row} first={startIndex + index === 0} />
             ) : (
               <FileRowView
                 key={row.key}
@@ -456,6 +569,7 @@ function VirtualizedFileTree({
                 onSelect={onSelect}
                 onToggleViewed={onToggleViewed}
                 onContextMenu={onContextMenu}
+                onOpenInNewWindow={onOpenInNewWindow}
               />
             ),
           )}
@@ -476,18 +590,21 @@ interface FileContextMenuState {
 }
 
 /** Right-click menu for a changed file: open in the OS default app, reveal in
- *  the file manager, or copy the repo-relative path. Positioned at the cursor,
- *  clamped to the viewport; closes on outside click or Escape. */
+ *  the file manager, copy the repo-relative path, or detach the file's diff
+ *  into its own OS window. Positioned at the cursor, clamped to the viewport;
+ *  closes on outside click or Escape. */
 function FileContextMenu({
   state,
   worktreePath,
   projectPath,
+  onOpenInNewWindow,
   onViewHistory,
   onClose,
 }: {
   state: FileContextMenuState;
   worktreePath?: string;
   projectPath?: string;
+  onOpenInNewWindow?: () => void;
   onViewHistory?: () => void;
   onClose: () => void;
 }) {
@@ -517,7 +634,7 @@ function FileContextMenu({
 
   const menuStyle: CSSProperties = {
     left: Math.min(state.x, window.innerWidth - 220),
-    top: Math.min(state.y, window.innerHeight - 160),
+    top: Math.min(state.y, window.innerHeight - 200),
   };
 
   return (
@@ -561,6 +678,17 @@ function FileContextMenu({
         <Copy size={14} className="text-fg-faint" />
         Copy path
       </button>
+      {onOpenInNewWindow && (
+        <button
+          type="button"
+          onClick={onOpenInNewWindow}
+          className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+          data-testid="context-open-new-window"
+        >
+          <AppWindow size={14} className="text-fg-faint" />
+          Open in new window
+        </button>
+      )}
       {onViewHistory && (
         <button
           type="button"
@@ -605,23 +733,27 @@ function FileHistoryPopover({
   onClose: () => void;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [commits, setCommits] = useState<GitFileHistoryCommit[] | null>(null);
   const { file } = state;
+  // The history is stored with the key it was fetched for and `commits` is
+  // derived from it, so a change of file or directory reads as "loading"
+  // at once, with no effect having to clear the previous result first.
+  const historyKey = JSON.stringify([worktreePath, projectPath, file.path]);
+  const [fetchedHistory, setFetchedHistory] = useState<{ key: string; commits: GitFileHistoryCommit[] } | null>(null);
+  const commits = fetchedHistory?.key === historyKey ? fetchedHistory.commits : null;
 
   useEffect(() => {
     let cancelled = false;
-    setCommits(null);
     window.electronAPI.git.fileHistory({ worktreePath, projectPath: projectPath ?? '', filePath: file.path })
       .then((result) => {
-        if (!cancelled) setCommits(result.commits);
+        if (!cancelled) setFetchedHistory({ key: historyKey, commits: result.commits });
       })
       .catch(() => {
-        if (!cancelled) setCommits([]);
+        if (!cancelled) setFetchedHistory({ key: historyKey, commits: [] });
       });
     return () => {
       cancelled = true;
     };
-  }, [file.path, worktreePath, projectPath]);
+  }, [file.path, worktreePath, projectPath, historyKey]);
 
   useEffect(() => {
     const handleClick = (event: globalThis.MouseEvent) => {
@@ -699,10 +831,12 @@ function BranchHeader({
   branchSummary,
   baseLabel,
   baseLabelCustom,
+  prLink,
 }: {
   branchSummary?: GitBranchSummaryResult | null;
   baseLabel?: string;
   baseLabelCustom?: boolean;
+  prLink?: PrLinkData;
 }) {
   const branch = branchSummary?.currentBranch;
   const ahead = branchSummary?.ahead ?? 0;
@@ -746,6 +880,16 @@ function BranchHeader({
             )}
           </span>
         )}
+        {prLink && (
+          <PrLink
+            prUrl={prLink.url}
+            prNumber={prLink.number}
+            prState={prLink.state}
+            prMergeReadiness={prLink.mergeReadiness}
+            testId="changes-pr-link"
+            className="shrink-0"
+          />
+        )}
       </div>
       {lastCommit && (
         <div
@@ -780,9 +924,12 @@ export function FileTreePanel({
   onScopeChange,
   baseLabel,
   baseLabelCustom,
+  prLink,
+  loaded = true,
   worktreePath,
   projectPath,
   onSelectHistoryCommit,
+  onOpenInNewWindow,
 }: FileTreePanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
@@ -792,10 +939,48 @@ export function FileTreePanel({
   const flat = useConfigStore((state) => state.config.diffFlatList);
   const updateConfig = useConfigStore((state) => state.updateConfig);
 
-  const cycleSort = useCallback(() => {
-    const order: FileSortMode[] = ['name', 'status', 'size'];
-    updateConfig({ diffFileSort: order[(order.indexOf(sort) + 1) % order.length] });
-  }, [sort, updateConfig]);
+  // Sort mode menu (replaces the old blind 3-cycle button: a 4-mode cycle with
+  // no visible state was unlearnable). Portal + fixed per
+  // .claude/rules/popover-escapes-clipping.md - the rail is an overflow-hidden
+  // column, so an in-flow menu would clip.
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortButtonRef = useRef<HTMLDivElement>(null);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+  const { style: sortMenuStyle, placement: sortMenuPlacement } = usePopoverPosition(
+    sortButtonRef,
+    sortMenuRef,
+    sortMenuOpen,
+    { mode: 'dropdown', strategy: 'fixed', preferRight: false },
+  );
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    // The menu is portaled OUT of the trigger's subtree, so a click inside it
+    // must also count as "inside" (capture phase to beat scroll containers).
+    const handleClickOutside = (event: PointerEvent) => {
+      if (
+        sortButtonRef.current && !sortButtonRef.current.contains(event.target as Node) &&
+        (!sortMenuRef.current || !sortMenuRef.current.contains(event.target as Node))
+      ) {
+        setSortMenuOpen(false);
+      }
+    };
+    // Escape closes the MENU, not the window behind it. The host dialog /
+    // pop-out dismisses itself on a bubble-phase document Escape, so without
+    // this capture-phase intercept the first Escape over an open menu also
+    // closes the user's whole task window. Same guard KebabMenu carries.
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setSortMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', handleClickOutside, true);
+    document.addEventListener('keydown', handleEscape, true);
+    return () => {
+      document.removeEventListener('pointerdown', handleClickOutside, true);
+      document.removeEventListener('keydown', handleEscape, true);
+    };
+  }, [sortMenuOpen]);
 
   // Collapse-all / expand-all command for the tree. `expand` is the last-applied
   // direction (drives the button icon); bumping `nonce` re-applies it.
@@ -831,7 +1016,7 @@ export function FileTreePanel({
       {/* Branch context + refresh. Suppressed in the task-detail embed, where the
           shared surface header owns this context (see showBranchHeader). */}
       {showBranchHeader && (
-        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} />
+        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} prLink={prLink} />
       )}
 
       {/* Diff scope: working changes / staged / full branch. A segmented control
@@ -869,20 +1054,63 @@ export function FileTreePanel({
       )}
 
       {/* List header: file count + view controls (sort, tree/flat, collapse-all),
-          right-aligned. The filter search gets its own full-width row below. */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-edge text-xs text-fg-muted flex-shrink-0">
-        <span>{files.length} file{files.length !== 1 ? 's' : ''}</span>
-        {totalInsertions > 0 && <span className="text-green-400">+{totalInsertions}</span>}
-        {totalDeletions > 0 && <span className="text-red-400">-{totalDeletions}</span>}
+          right-aligned. The filter search gets its own full-width row below. A
+          2px review-progress fill rides the header's bottom edge, growing with
+          the viewed count (its width transition is the live feedback; a restore
+          paints once at the final width, so nothing replays). */}
+      {/* Small-layout discipline: this row must hold ONE line at the rail's
+          220px minimum - every text span is nowrap, the counts are compact
+          numerals with the full sentences in tooltips, and the row clips
+          (overflow-hidden) rather than wraps if extreme numbers exceed it.
+          Rhythm: the +/- diffstat is a tight PAIR (gap-1, like the file rows)
+          set off from the file count by the row gap, so the cluster reads as
+          "count, then stats" instead of one condensed token string. */}
+      <div
+        className="relative flex items-center gap-2 overflow-hidden px-2 py-1.5 border-b border-edge text-xs text-fg-muted flex-shrink-0"
+        data-testid="changes-list-header"
+      >
+        <span className="whitespace-nowrap">{files.length} file{files.length !== 1 ? 's' : ''}</span>
+        {(totalInsertions > 0 || totalDeletions > 0) && (
+          <span className="flex items-center gap-1 whitespace-nowrap tabular-nums">
+            {totalInsertions > 0 && <span className="text-green-400">+{totalInsertions}</span>}
+            {totalDeletions > 0 && <span className="text-red-400">-{totalDeletions}</span>}
+          </span>
+        )}
+        {/* Full-width bar scaled from its left edge, rather than a width
+            transition: Chromium composites only transform and opacity, so a
+            width animation stops producing frames for exactly as long as the
+            renderer's main thread is blocked - which, beside a live agent, is
+            often. Same reasoning as the activity marks. */}
+        {viewedCount > 0 && (
+          <span
+            aria-hidden
+            data-testid="changes-viewed-progress"
+            className="absolute left-0 bottom-0 h-[2px] w-full origin-left bg-accent/60 transition-transform duration-300 motion-reduce:transition-none"
+            style={{ transform: `scaleX(${viewedCount / Math.max(files.length, 1)})` }}
+          />
+        )}
         <div className="ml-auto flex items-center gap-1.5">
-          {viewedCount > 0 && (
+          {files.length > 0 && (
+            // Always visible once there are files (0/n included), so the
+            // review-marks feature is discoverable before the first mark.
+            // Bare n/m - the word lives in the tooltip; the rail cannot
+            // afford it at 220px (matches the surface header's chip).
             <span
-              className="flex items-center gap-1 text-fg-faint"
+              className="flex items-center gap-1 whitespace-nowrap text-fg-faint tabular-nums"
               data-testid="changes-viewed-count"
               title={`${viewedCount} of ${files.length} files viewed`}
             >
-              <Check size={11} className="text-accent" />
-              {viewedCount}/{files.length} viewed
+              <Check
+                size={11}
+                className={
+                  viewedCount === 0
+                    ? 'text-fg-disabled' // nothing reviewed yet: the chip is a label, not a signal
+                    : viewedCount === files.length
+                      ? 'text-green-400'
+                      : 'text-accent'
+                }
+              />
+              {viewedCount}/{files.length}
             </span>
           )}
           <div className="flex items-center gap-0.5">
@@ -925,24 +1153,77 @@ export function FileTreePanel({
             placeholder="Filter files..."
             className="bg-transparent outline-none flex-1 min-w-0 text-fg placeholder:text-fg-disabled"
           />
-          <button
-            type="button"
-            onClick={cycleSort}
-            title={`Sort: by ${sort}`}
-            aria-label={`Sort: by ${sort}`}
-            data-testid="changes-sort"
-            className="flex-shrink-0 -mr-1 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
-          >
-            <ArrowDownUp size={14} />
-          </button>
+          <div ref={sortButtonRef} className="flex-shrink-0 -mr-1">
+            <button
+              type="button"
+              onClick={() => setSortMenuOpen((open) => !open)}
+              title={`Sort: by ${SORT_OPTIONS.find((option) => option.value === sort)?.label.toLowerCase() ?? sort}`}
+              aria-label={`Sort: by ${sort}`}
+              aria-expanded={sortMenuOpen}
+              data-testid="changes-sort"
+              className={`p-1 rounded transition-colors ${sortMenuOpen ? 'bg-surface-hover text-fg' : 'text-fg-muted hover:text-fg hover:bg-surface-hover'}`}
+            >
+              <ArrowDownUp size={14} />
+            </button>
+            <OverlayPopover
+              open={sortMenuOpen}
+              popoverRef={sortMenuRef}
+              style={sortMenuStyle}
+              portal
+              transformOrigin={sortMenuPlacement.vertical === 'above' ? 'bottom center' : 'top center'}
+              className="fixed z-[2147483646] min-w-[160px] rounded-md border border-edge bg-surface-raised py-1 shadow-lg"
+              role="menu"
+              data-testid="changes-sort-menu"
+            >
+              {SORT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={sort === option.value}
+                  onClick={() => {
+                    updateConfig({ diffFileSort: option.value });
+                    setSortMenuOpen(false);
+                  }}
+                  data-testid={`changes-sort-option-${option.value}`}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface-hover hover:text-fg transition-colors"
+                >
+                  <span className="flex w-3.5 items-center justify-center">
+                    {sort === option.value && <Check size={12} className="text-accent" />}
+                  </span>
+                  {option.label}
+                </button>
+              ))}
+            </OverlayPopover>
+          </div>
         </div>
       </div>
 
       {/* File tree */}
-      {filteredFiles.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-xs text-fg-disabled p-4">
-          {files.length === 0 ? 'No changes found' : 'No matching files'}
+      {!loaded && files.length === 0 ? (
+        // Initial fetch in flight: pulse rows, never a premature "No changes
+        // found" (the false negative this branch exists to prevent).
+        <div className="flex-1 p-2 space-y-1.5" data-testid="changes-file-tree-skeleton">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div key={index} className="h-4 rounded bg-surface-hover animate-pulse" style={{ opacity: 1 - index * 0.15 }} />
+          ))}
         </div>
+      ) : filteredFiles.length === 0 ? (
+        files.length === 0 ? (
+          // An empty diff is ONE fact, so it gets ONE sentence. The list
+          // header above already reads "0 files", and the diff pane carries
+          // the surface's "No changes to review"; a third statement here just
+          // printed the same nothing twice, side by side. The spacer keeps the
+          // rail's shape so History stays pinned to the bottom.
+          <div className="flex-1" />
+        ) : (
+          // The filter matching nothing IS the rail's own fact - the file set
+          // is not empty, this view of it is - so the rail states that itself.
+          <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4 text-center">
+            <Search size={22} className="text-fg-disabled" />
+            <span className="text-sm text-fg-muted">No matching files</span>
+          </div>
+        )
       ) : (
         <VirtualizedFileTree
           files={filteredFiles}
@@ -954,6 +1235,7 @@ export function FileTreePanel({
           onSelect={onSelect}
           onToggleViewed={onToggleViewed}
           onContextMenu={handleFileContextMenu}
+          onOpenInNewWindow={onOpenInNewWindow}
           defaultExpanded
         />
       )}
@@ -963,6 +1245,7 @@ export function FileTreePanel({
           state={contextMenu}
           worktreePath={worktreePath}
           projectPath={projectPath}
+          onOpenInNewWindow={onOpenInNewWindow ? () => { onOpenInNewWindow(contextMenu.file.path); setContextMenu(null); } : undefined}
           onViewHistory={onSelectHistoryCommit ? handleViewHistory : undefined}
           onClose={() => setContextMenu(null)}
         />

@@ -117,6 +117,7 @@ function makeContext(overrides: Partial<CommandContext> = {}): CommandContext {
     onTasksReordered: vi.fn(),
     onSwimlaneUpdated: vi.fn(),
     onSwimlaneDeleted: vi.fn(),
+    getDefaultBaseBranch: vi.fn(() => 'develop'),
     ...overrides,
   };
 }
@@ -288,19 +289,19 @@ describe('handleCreateTask PR fields', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleUpdateTask PR fields', () => {
-  it('nulls pr_state when the PR URL is set, so a stale merged never lingers', () => {
+  it('nulls pr_state and pr_merge_readiness when the PR URL is set, so a stale merged never lingers', () => {
     handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
 
     expect(mockTaskRepoUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ pr_url: REVIEWED_PR_URL, pr_state: null }),
+      expect.objectContaining({ pr_url: REVIEWED_PR_URL, pr_state: null, pr_merge_readiness: null }),
     );
   });
 
-  it('nulls pr_state when only the PR number is set', () => {
+  it('nulls pr_state and pr_merge_readiness when only the PR number is set', () => {
     handleUpdateTask(updateTaskParams({ prNumber: 98 }), makeContext());
 
     expect(mockTaskRepoUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ pr_number: 98, pr_state: null }),
+      expect.objectContaining({ pr_number: 98, pr_state: null, pr_merge_readiness: null }),
     );
   });
 
@@ -332,11 +333,12 @@ describe('handleUpdateTask PR fields', () => {
     );
   });
 
-  it('leaves pr_state alone on an update that does not touch the PR', () => {
+  it('leaves pr_state and pr_merge_readiness alone on an update that does not touch the PR', () => {
     handleUpdateTask(updateTaskParams({ title: 'Renamed' }), makeContext());
 
     const patch = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
     expect(patch).not.toHaveProperty('pr_state');
+    expect(patch).not.toHaveProperty('pr_merge_readiness');
   });
 
   it('treats omitted PR keys the same as the explicit nulls the tool layer forwards', () => {
@@ -351,6 +353,7 @@ describe('handleUpdateTask PR fields', () => {
     expect(patch).not.toHaveProperty('pr_url');
     expect(patch).not.toHaveProperty('pr_number');
     expect(patch).not.toHaveProperty('pr_state');
+    expect(patch).not.toHaveProperty('pr_merge_readiness');
   });
 });
 
@@ -375,7 +378,7 @@ describe('handleUpdateTask: a PR link write that re-points nothing', () => {
     });
   }
 
-  it('keeps pr_state and skips the resolve when both fields match the stored row', async () => {
+  it('keeps pr_state and pr_merge_readiness and skips the resolve when both fields match the stored row', async () => {
     alreadyLinked();
 
     handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), makeContext());
@@ -383,6 +386,7 @@ describe('handleUpdateTask: a PR link write that re-points nothing', () => {
 
     const patch = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
     expect(patch).not.toHaveProperty('pr_state');
+    expect(patch).not.toHaveProperty('pr_merge_readiness');
     expect(mockLinkPRForTask).not.toHaveBeenCalled();
   });
 
@@ -408,7 +412,7 @@ describe('handleUpdateTask: a PR link write that re-points nothing', () => {
     );
     await flushLinkTimeResolve();
 
-    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(expect.objectContaining({ pr_state: null }));
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(expect.objectContaining({ pr_state: null, pr_merge_readiness: null }));
     expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
   });
 
@@ -522,7 +526,7 @@ describe('link-time PR resolve', () => {
 
     expect(mockLinkPRForTask).toHaveBeenCalledWith(
       'task-uuid-1',
-      expect.objectContaining({ force: true, preserveLinkOnNotFound: true }),
+      expect.objectContaining({ force: true, preserveLinkOnNotFound: true, defaultBaseBranch: 'develop' }),
     );
   });
 
@@ -532,7 +536,7 @@ describe('link-time PR resolve', () => {
 
     expect(mockLinkPRForTask).toHaveBeenCalledWith(
       'task-uuid-1',
-      expect.objectContaining({ force: true, preserveLinkOnNotFound: true }),
+      expect.objectContaining({ force: true, preserveLinkOnNotFound: true, defaultBaseBranch: 'develop' }),
     );
   });
 
@@ -613,6 +617,10 @@ describe('link-time PR resolve', () => {
       'task-uuid-1',
       expect.not.objectContaining({ preserveLinkOnNotFound: true }),
     );
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ defaultBaseBranch: 'develop' }),
+    );
   });
 
   it('handleLinkPr (explicit kangentic_link_pr) still notifies on the LOUD onTaskUpdated channel', async () => {
@@ -637,6 +645,69 @@ describe('link-time PR resolve', () => {
     expect(context.onTaskPrLinkChanged).not.toHaveBeenCalled();
   });
 
+  it('handleLinkPr: no-anchor is a refusal that names the two remedies', async () => {
+    // Nothing was searched, so "linked: false" under success: true read as "no
+    // PR exists" and the agent could not self-correct. Now an error, per the
+    // MCP refusal convention, naming `branch` and the prUrl / prNumber route.
+    mockLinkPRForTask.mockResolvedValue({ status: 'no-anchor', task: null });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(response.success).toBe(false);
+    expect(response.error).toMatch(/nothing recorded to search by/);
+    expect(response.error).toMatch(/pass branch/i);
+    expect(response.error).toMatch(/kangentic_update_task/);
+  });
+
+  it('handleLinkPr: not-found stays a success and names what it searched by', async () => {
+    const task = {
+      id: 'task-uuid-1', display_id: 7, title: 'Existing', worktree_path: null,
+      branch_name: 'feature/custom', pushed_branch: 'maint/pushed', head_sha: 'abc1234def', pr_number: null,
+    };
+    mockTaskRepoGetById.mockReturnValue(task);
+    mockLinkPRForTask.mockResolvedValue({ status: 'not-found', task });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(response.success).toBe(true);
+    expect(response.message).toMatch(/No PR found for "Existing"/);
+    expect(response.message).toMatch(/searched by/);
+    expect(response.message).toContain('branch "feature/custom"');
+    expect(response.message).toContain('pushed branch "maint/pushed"');
+    expect(response.message).toContain('commit abc1234');
+  });
+
+  it('handleLinkPr: branch is recorded as pushed_branch BEFORE the ladder runs', async () => {
+    // The self-correction route for a no-worktree task: the agent names the
+    // remote branch it pushed, and Tier 5 resolves from it on this same call.
+    await handleLinkPr({ taskId: 'task-uuid-1', branch: 'maint/pushed' }, makeContext());
+
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith({ id: 'task-uuid-1', pushed_branch: 'maint/pushed' });
+    expect(mockTaskRepoUpdate.mock.invocationCallOrder[0]).toBeLessThan(mockLinkPRForTask.mock.invocationCallOrder[0]);
+    expect(mockLinkPRForTask).toHaveBeenCalledWith('task-uuid-1', expect.objectContaining({ force: true }));
+  });
+
+  it('handleLinkPr: a branch equal to the stored branch_name or pushed_branch writes nothing', async () => {
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-uuid-1', display_id: 7, title: 'Existing', branch_name: 'slug', pushed_branch: 'maint/pushed',
+    });
+
+    await handleLinkPr({ taskId: 'task-uuid-1', branch: 'slug' }, makeContext());
+    await handleLinkPr({ taskId: 'task-uuid-1', branch: 'maint/pushed' }, makeContext());
+
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+    expect(mockLinkPRForTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('handleLinkPr: an option-shaped branch is refused before anything is written or resolved', async () => {
+    const response = await handleLinkPr({ taskId: 'task-uuid-1', branch: '--output=pwned' }, makeContext());
+
+    expect(response.success).toBe(false);
+    expect(response.error).toMatch(/not a valid git branch name/);
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
   it('does not resolve on update when prNumber is non-numeric and no prUrl anchors it', async () => {
     // The MCP tool's zod schema already validates a positive int, but this
     // handler is also reachable from the mobile bridge, which hands it raw
@@ -656,5 +727,244 @@ describe('link-time PR resolve', () => {
     await flushLinkTimeResolve();
 
     expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// context.getPrResolveOptions() forwarding - task-commands.ts has two call
+// sites that build linkPRForTask's deps (scheduleLinkTimeResolve, shared by
+// create_task / update_task, and handleLinkPr's own explicit resolve), and
+// each spreads `resolveOptions: context.getPrResolveOptions?.()` independently.
+// Deleting either line leaves every other test in this file green, since none
+// of them asserts on the `resolveOptions` key at all.
+// ---------------------------------------------------------------------------
+
+describe('context.getPrResolveOptions() forwarding to linkPRForTask', () => {
+  it('scheduleLinkTimeResolve (create/update link-time resolve) forwards it', async () => {
+    const context = makeContext({ getPrResolveOptions: vi.fn(() => ({ evaluateBranchPolicies: true })) });
+
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), context);
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ resolveOptions: { evaluateBranchPolicies: true } }),
+    );
+  });
+
+  it('scheduleLinkTimeResolve leaves resolveOptions undefined when the context has no getPrResolveOptions', async () => {
+    // Proves the `?.()` stays optional: a plain `context.getPrResolveOptions()`
+    // would throw here, since makeContext()'s default context has no such member.
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ resolveOptions: undefined }),
+    );
+  });
+
+  it('handleLinkPr (explicit link_pr) forwards it', async () => {
+    const context = makeContext({ getPrResolveOptions: vi.fn(() => ({ evaluateBranchPolicies: true })) });
+
+    await handleLinkPr({ taskId: 'task-uuid-1' }, context);
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ resolveOptions: { evaluateBranchPolicies: true } }),
+    );
+  });
+
+  it('handleLinkPr leaves resolveOptions undefined when the context has no getPrResolveOptions', async () => {
+    await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ resolveOptions: undefined }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// context.getPrRepollInFlight() forwarding. Both call sites have to start the
+// linker's in-flight re-poll: during `/pull-request` the agent links its PR and
+// then waits on CI inside one turn, so no idle arrives to start it. `link_pr`
+// also hands the quiet channel as `onRepollLinked`, so the CI-settled flip is
+// not announced as the agent's own update.
+// ---------------------------------------------------------------------------
+
+describe('context.getPrRepollInFlight() forwarding to linkPRForTask', () => {
+  it('scheduleLinkTimeResolve (create/update link-time resolve) forwards it', async () => {
+    const context = makeContext({ getPrRepollInFlight: vi.fn(() => true) });
+
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), context);
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ repollInFlightVerdict: true }),
+    );
+  });
+
+  it('handleLinkPr forwards it and re-polls on the quiet channel', async () => {
+    const onTaskPrLinkChanged = vi.fn();
+    const context = makeContext({ getPrRepollInFlight: vi.fn(() => true), onTaskPrLinkChanged });
+
+    await handleLinkPr({ taskId: 'task-uuid-1' }, context);
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ repollInFlightVerdict: true, onRepollLinked: onTaskPrLinkChanged }),
+    );
+  });
+
+  it('leaves the flag undefined when the context has no getPrRepollInFlight', async () => {
+    await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ repollInFlightVerdict: undefined }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleLinkPr: refusing a base-branch `branch` argument
+//
+// recordPushedBranchForSession (pr-linking.ts) already refuses a captured
+// push destination equal to the task's effective base branch, because a
+// merge-back's `git push origin HEAD:develop` would otherwise make Tier 5
+// answer with the base branch's own PR. The explicit MCP `branch` argument on
+// kangentic_link_pr had no such guard and could write exactly that value.
+// These tests cover the new guard added immediately after the
+// isSafeBranchName refusal, across all three sources of "effective base":
+// task.base_branch, task.resolved_base_branch, and
+// context.getDefaultBaseBranch().
+// ---------------------------------------------------------------------------
+
+describe('handleLinkPr: refuses a branch equal to the effective base branch', () => {
+  it('refuses when branch equals task.base_branch', async () => {
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-uuid-1', display_id: 7, title: 'Existing',
+      base_branch: 'develop', resolved_base_branch: null,
+    });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1', branch: 'develop' }, makeContext());
+
+    expect(response.success).toBe(false);
+    expect(response.error).toMatch(/is this task's base branch/);
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('refuses when branch equals task.resolved_base_branch (base_branch unset)', async () => {
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-uuid-1', display_id: 7, title: 'Existing',
+      base_branch: null, resolved_base_branch: 'integration',
+    });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1', branch: 'integration' }, makeContext());
+
+    expect(response.success).toBe(false);
+    expect(response.error).toMatch(/is this task's base branch/);
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('refuses when branch equals context.getDefaultBaseBranch() (neither task field set)', async () => {
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-uuid-1', display_id: 7, title: 'Existing',
+      base_branch: null, resolved_base_branch: null,
+    });
+    const context = makeContext({ getDefaultBaseBranch: vi.fn(() => 'main') });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1', branch: 'main' }, context);
+
+    expect(response.success).toBe(false);
+    expect(response.error).toMatch(/is this task's base branch/);
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+    expect(mockLinkPRForTask).not.toHaveBeenCalled();
+  });
+
+  it('task.base_branch outranks resolved_base_branch and the project default: a match against either of THOSE is not refused', async () => {
+    // task.base_branch is the first source checked (`||` chain), so when it is
+    // set and DIFFERENT from the branch argument, a coincidental match against
+    // resolved_base_branch or the project default must not trigger the guard -
+    // only the effective (first-set) base counts.
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-uuid-1', display_id: 7, title: 'Existing',
+      base_branch: 'develop', resolved_base_branch: 'integration',
+    });
+    const context = makeContext({ getDefaultBaseBranch: vi.fn(() => 'main') });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1', branch: 'integration' }, context);
+
+    expect(response.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith({ id: 'task-uuid-1', pushed_branch: 'integration' });
+    expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('still links a real feature branch that is not the base (happy path unaffected)', async () => {
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-uuid-1', display_id: 7, title: 'Existing',
+      base_branch: 'develop', resolved_base_branch: null,
+    });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1', branch: 'feature/my-change' }, makeContext());
+
+    expect(response.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith({ id: 'task-uuid-1', pushed_branch: 'feature/my-change' });
+    expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('omitting branch entirely is unaffected by the guard (no base to compare against)', async () => {
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-uuid-1', display_id: 7, title: 'Existing', base_branch: 'develop',
+    });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(response.success).toBe(true);
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+    expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleLinkPr - the response message and data surface the resolved PR's
+// merge readiness, same suffix shape as the linker's own log line.
+// ---------------------------------------------------------------------------
+
+describe('handleLinkPr: reports merge readiness', () => {
+  function linkedTask(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 'task-uuid-1',
+      display_id: 7,
+      title: 'Review PR #98',
+      pr_url: REVIEWED_PR_URL,
+      pr_number: 98,
+      pr_state: 'open',
+      pr_merge_readiness: null,
+      ...overrides,
+    };
+  }
+
+  it('appends ", merge <readiness>" to the message and carries it in data', async () => {
+    mockLinkPRForTask.mockResolvedValue({ status: 'unchanged', task: linkedTask({ pr_merge_readiness: 'blocked' }) });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(response.message).toContain('(open, merge blocked)');
+    expect((response.data as Record<string, unknown>).prMergeReadiness).toBe('blocked');
+  });
+
+  it('omits the merge suffix and reports null when the PR has no judged readiness', async () => {
+    mockLinkPRForTask.mockResolvedValue({ status: 'unchanged', task: linkedTask({ pr_merge_readiness: null }) });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(response.message).toContain('(open)');
+    expect(response.message).not.toMatch(/merge/);
+    expect((response.data as Record<string, unknown>).prMergeReadiness).toBeNull();
   });
 });

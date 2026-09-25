@@ -1,0 +1,402 @@
+import path from 'node:path';
+import { app } from 'electron';
+import * as Sentry from '@sentry/electron/main';
+import type { ErrorEvent, EventHint } from '@sentry/electron/main';
+import { isUserConfigurationError } from '../../shared/user-configuration-error';
+import { BENIGN_RENDERER_ERRORS } from '../../shared/benign-renderer-errors';
+import type { HostMemorySample } from '../../shared/types';
+import {
+  correctNativeCrashEvent,
+  readMinidumpIdentity,
+  type NativeCrashContext,
+} from './native-crash-event';
+import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
+
+/**
+ * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
+ * `desktop`). A DSN is a public routing identifier by design (like
+ * DEFAULT_APTABASE_APP_KEY in analytics.ts), not a secret. An empty string would make
+ * initErrorReporting() a no-op and keep the renderer flag off, so the wiring
+ * ships inert if this is ever cleared.
+ */
+const SENTRY_DSN =
+  'https://6368bfbd74782d122cb321b26799bddd@o4511808143556608.ingest.us.sentry.io/4511996066660352';
+
+let active = false;
+
+/**
+ * Decide whether Sentry error reporting should be enabled, as a pure function
+ * of the two env switches and the packaged state.
+ *
+ * The contract (docs/analytics.md):
+ * - KANGENTIC_TELEMETRY=0/false is the superset kill switch: it disables ALL
+ *   telemetry egress, Aptabase and Sentry both. Users who set it were promised
+ *   "disables analytics entirely" before Sentry existed; that promise holds.
+ * - KANGENTIC_ERROR_REPORTING=0/false disables Sentry alone (Aptabase unaffected).
+ * - KANGENTIC_ERROR_REPORTING=1/true force-enables Sentry (e.g. in dev), unless
+ *   the superset kill switch is set.
+ * - Unset inherits the analytics default: KANGENTIC_TELEMETRY=1/true forces on,
+ *   otherwise on in packaged builds only.
+ */
+export function resolveErrorReportingEnabled(
+  telemetryValue: string | undefined,
+  errorReportingValue: string | undefined,
+  isPackaged: boolean
+): boolean {
+  if (telemetryValue === '0' || telemetryValue === 'false') return false;
+  if (errorReportingValue === '0' || errorReportingValue === 'false') return false;
+  if (errorReportingValue === '1' || errorReportingValue === 'true') return true;
+  if (telemetryValue === '1' || telemetryValue === 'true') return true;
+  return isPackaged;
+}
+
+/**
+ * Whether Sentry actually initialized this run. Read by createWindow to pass
+ * the --kangentic-error-reporting flag to the renderer, which gates the
+ * renderer-side Sentry.init() on the same single decision made here.
+ */
+export function isErrorReportingActive(): boolean {
+  return active;
+}
+
+/**
+ * Attach the anonymous, non-reversible install id (the same clientId
+ * analytics attaches to app_launch - see analytics/client-id.ts) as the
+ * Sentry user id. This is what makes the per-issue "Users" count real
+ * (how many installs an issue affects), with no new data class: the id is
+ * already disclosed in docs/analytics.md and contains no personal data.
+ */
+export function setErrorReportingUser(clientId: string): void {
+  if (!active) return;
+  try {
+    Sentry.setUser({ id: clientId });
+  } catch {
+    // Never disrupt startup for telemetry
+  }
+}
+
+/**
+ * Forward a HANDLED error to Sentry with its real stack. The SDK's global
+ * handlers only see UNCAUGHT errors, so the deliberate catch sites that today
+ * emit only a sanitized app_error count (updater structural failures, PTY
+ * spawn failures, the silent agent-spawn catches) would stay invisible as
+ * diagnosable issues - exactly the "hidden issue" class error reporting
+ * exists for. Tags are for grouping/filtering; never put content in them.
+ * Content (a captured stderr tail, say) goes in `contexts`, which Sentry shows
+ * as named blocks on the event and never uses for grouping.
+ *
+ * User-configuration errors are the one class deliberately excluded. A missing
+ * agent CLI (AgentCliNotFoundError) is the user's environment, not a defect we
+ * can ship a fix for, so it is un-actionable as an issue: it is surfaced in the
+ * app instead, and its Aptabase counter still fires so the volume view ("how
+ * often are users hitting this") survives. The check lives HERE rather than at
+ * each catch site because such an error must skip only the Sentry half, whereas
+ * the neighbouring isAbortError guards must skip the analytics counter too.
+ * Every current and future call site inherits the exclusion.
+ */
+export type ErrorReportContexts = Record<string, Record<string, unknown>>;
+
+export function reportHandledError(
+  error: unknown,
+  tags: Record<string, string> = {},
+  contexts: ErrorReportContexts = {},
+): void {
+  if (!active) return;
+  if (isUserConfigurationError(error)) return;
+  try {
+    Sentry.withScope((scope) => {
+      for (const [tagKey, tagValue] of Object.entries(tags)) scope.setTag(tagKey, tagValue);
+      for (const [contextName, contextValue] of Object.entries(contexts)) {
+        scope.setContext(contextName, contextValue);
+      }
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+    });
+  } catch {
+    // Error reporting must never cascade into the failing path itself
+  }
+}
+
+/**
+ * Attach the latest host memory sample (Sentry DESKTOP-16) to the persisted
+ * Sentry scope, so whatever event fires next - including a native crash,
+ * which has no other route into `contexts` - carries it. Deliberately not a
+ * `beforeSend` hook: `beforeSend` is already `beforeSendEvent`
+ * (below), and tracing/replay are off (see `initErrorReporting`'s doc
+ * comment), so there is no transaction for `setMeasurement` to hang on.
+ * `setContext` on the ambient scope is the plain route. Composes with
+ * `correctNativeCrashEvent`'s stale-dump correction in
+ * `native-crash-event.ts`, which prunes this context the same way it prunes
+ * `app_memory`/`free_memory` when a startup-found dump's app context turns
+ * out to describe the uploading run rather than the crashed one.
+ */
+export function setHostMemoryContext(sample: HostMemorySample): void {
+  if (!active) return;
+  try {
+    Sentry.setContext('host_memory', { ...sample });
+  } catch {
+    // Never disrupt the sampler for telemetry
+  }
+}
+
+/** The attachment type `@sentry/electron` gives the raw crash dump it uploads. */
+const MINIDUMP_ATTACHMENT_TYPE = 'event.minidump';
+
+/**
+ * Where a healthy install's images live, and which build is doing the reporting.
+ * Resolved from the running app rather than hardcoded, and resolved lazily (only
+ * once an event actually carries a dump) so a missing Electron API can never
+ * take initErrorReporting() down with it.
+ */
+function resolveNativeCrashContext(): NativeCrashContext {
+  const executablePath = app.getPath('exe');
+  return {
+    // On macOS the executable sits at Contents/MacOS/<name>; going up one level
+    // to Contents/ also covers Frameworks/, the helper bundles, and
+    // Resources/app.asar.unpacked. Elsewhere every image sits beside the exe.
+    installRoot:
+      process.platform === 'darwin'
+        ? path.resolve(path.dirname(executablePath), '..')
+        : path.dirname(executablePath),
+    // Unpackaged, the executable is `Electron` inside `Electron.app`. Every dev
+    // Electron app shares both names, so matching on them would keep any dev
+    // Electron app's crash (DESKTOP-1D's class). Blank, it switches off both
+    // relocation fallbacks and leaves the install root, which covers the
+    // checkout's own dev Electron, as the only test.
+    appExecutableName: app.isPackaged ? path.basename(executablePath) : '',
+    appVersion: app.getVersion(),
+    caseInsensitivePaths: process.platform === 'win32',
+  };
+}
+
+/**
+ * The `beforeSend` body, for native crash events only. A crash in a process that
+ * is not ours becomes one grouped warning with its dump removed; a crash that is
+ * ours gets its release tag and scope corrected. Everything else passes through
+ * untouched, including renderer events (the SDK re-captures those through
+ * main's client, so they reach this hook too).
+ *
+ * A foreign crash still reaches Sentry because it is still our defect: our
+ * Crashpad port leaked into a process we started (see native-crash-event.ts).
+ * Its dump never does. It holds another program's memory, and the SDK builds
+ * the envelope from `hint.attachments` only after this hook returns, reading the
+ * same hint object (`sendEvent` in @sentry/core's client), so removing the dump
+ * here is what keeps it on the machine.
+ * tests/unit/foreign-crash-real-client.test.ts pins that against the real client.
+ *
+ * The whole thing fails OPEN. A `beforeSend` that throws makes the SDK drop the
+ * event, so a bug in the minidump reader would silently delete every native
+ * crash rather than one. Any doubt at all and the event goes through unchanged.
+ * Failing open keeps the dump, so the foreign rewrite and the removal below must
+ * never throw: they are plain property writes and an array filter.
+ */
+export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): ErrorEvent {
+  try {
+    const minidump = hint.attachments?.find(
+      (attachment) => attachment.attachmentType === MINIDUMP_ATTACHMENT_TYPE
+    );
+    if (!minidump || !(minidump.data instanceof Uint8Array)) return event;
+
+    const identity = readMinidumpIdentity(minidump.data);
+    const decision = correctNativeCrashEvent(event, identity, resolveNativeCrashContext());
+    if (decision.action === 'foreign') {
+      // Every dump, not only the one read above, and nothing else: a renderer's
+      // scope attachments ride in the same array.
+      hint.attachments = hint.attachments?.filter(
+        (attachment) => attachment.attachmentType !== MINIDUMP_ATTACHMENT_TYPE
+      );
+    }
+    return decision.event;
+  } catch {
+    return event;
+  }
+}
+
+/**
+ * The number of stack frames the Sentry SDK keeps. Both halves of the cap are
+ * this number: `@sentry/browser`'s globalHandlers integration sets
+ * `Error.stackTraceLimit = 50` when it installs, and `@sentry/core`'s
+ * `createStackParser` stops parsing at 50 frames and slices to 50 again.
+ */
+export const SENTRY_STACK_FRAME_LIMIT = 50;
+
+/**
+ * Tag an event whose stack hit the SDK's frame cap.
+ *
+ * The parser reads a V8 stack INNERMOST-first and stops at the limit, so the
+ * frames it discards are the OUTER ones: the app code that called into the
+ * library, and the timer or handler the whole thing ran under. An event capped
+ * at exactly 50 therefore reads as a self-contained third-party failure with
+ * `in_app: false` on every frame, when in fact the app frames were cut off.
+ *
+ * That is not hypothetical. Every event on DESKTOP-19 ("Illegal value for
+ * lineNumber") carried exactly 50 monaco-editor frames and no in-app frame,
+ * which is what made it look like a pure upstream bug; the app frame that
+ * actually armed the call had been truncated away. This tag makes the
+ * difference between "no app frames" and "no app frames survived" visible in
+ * the issue stream instead of leaving it to be rediscovered by hand.
+ *
+ * Mutates and returns the event; never drops one.
+ */
+export function tagTruncatedStack(event: ErrorEvent): ErrorEvent {
+  const exceptionValues = event.exception?.values;
+  if (!exceptionValues) return event;
+  const hitFrameCap = exceptionValues.some(
+    (exceptionValue) => exceptionValue.stacktrace?.frames?.length === SENTRY_STACK_FRAME_LIMIT
+  );
+  if (!hitFrameCap) return event;
+  event.tags = { ...event.tags, stack_truncated: 'true' };
+  return event;
+}
+
+/**
+ * The actual `beforeSend`. Tags a frame-capped stack, then runs the native
+ * crash split. Neither ever drops an event.
+ *
+ * Fails OPEN for the same reason `filterNativeCrashEvent` does: a throwing
+ * `beforeSend` makes the SDK drop the event, so a bug in the tagging must never
+ * be able to delete telemetry.
+ */
+export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent {
+  try {
+    tagTruncatedStack(event);
+  } catch {
+    // Tagging is diagnostic only; never let it cost us the event.
+  }
+  return filterNativeCrashEvent(event, hint);
+}
+
+/**
+ * Initialize Sentry error reporting. Must be called BEFORE app.whenReady(),
+ * next to initAnalytics() (the SDK wires its renderer IPC/protocol transport
+ * during init).
+ *
+ * SCRUBBING is deliberately Sentry's job, not ours: the SDK's default
+ * normalizePathsIntegration rewrites stack-frame paths and URLs relative to
+ * the app root (so the user's home directory never reaches Sentry through an
+ * app stack frame), sendDefaultPii stays false, and Sentry's server-side data
+ * scrubbing is on by default. Any further scrubbing rule belongs in the Sentry
+ * UI (Advanced Data Scrubbing), not in a custom beforeSend here.
+ *
+ * BREADCRUMBS are an exception to that stance, filtered on the machine by
+ * `beforeBreadcrumb` (src/shared/sentry-breadcrumbs.ts). normalizePathsIntegration never touches
+ * them, and no server-side rule can recognize a task title or a column prompt
+ * inside a console line, so the policy runs before a crumb enters the ring.
+ *
+ * FILTERING is a separate concern and does live here, in `ignoreErrors`:
+ * deciding that a whole class of event is un-actionable and should never become
+ * an issue is a product judgement about our own code, not a data-privacy rule.
+ * See the annotated entries below.
+ *
+ * NATIVE CRASH EVENTS are the one exception to the no-beforeSend stance above.
+ * `ignoreErrors` is the `eventFiltersIntegration`, which matches only an event's
+ * message and its exception type and value. A minidump event has none of those,
+ * so the matcher sees an empty candidate list and the filter is a no-op on it.
+ * The thing that says whether the crash was even ours lives in the attached
+ * dump, not on the event, and Sentry derives the stack and the image list from
+ * that dump only AFTER upload. So this one class is split in `beforeSend`
+ * (filterNativeCrashEvent, reached through beforeSendEvent, above), which is the
+ * only hook that can see the attachment. A foreign crash becomes one grouped
+ * warning, and its dump is removed from the upload. That removal is an exception
+ * to the scrubbing stance, the same kind as the stderr tail's home directory
+ * becoming `~`: the dump is another program's memory, and no Sentry-side rule
+ * can scrub a file it has already received.
+ *
+ * `beforeSend` does one other thing: beforeSendEvent also TAGS a frame-capped
+ * stack (tagTruncatedStack, above). That is annotation on an event we keep.
+ *
+ * Errors only: release-health session tracking (the MainProcessSession
+ * integration, on by default) is filtered out, and tracing/replay are never
+ * enabled. Aptabase's app_error stays as the coarse error-rate pulse on the
+ * product dashboard; Sentry is the diagnostic tool.
+ */
+export function initErrorReporting(): void {
+  if (!SENTRY_DSN) return;
+  if (
+    !resolveErrorReportingEnabled(
+      process.env.KANGENTIC_TELEMETRY,
+      process.env.KANGENTIC_ERROR_REPORTING,
+      app.isPackaged
+    )
+  ) {
+    return;
+  }
+
+  try {
+    Sentry.init({
+      dsn: SENTRY_DSN,
+      sendDefaultPii: false,
+      integrations: (defaultIntegrations) =>
+        defaultIntegrations.filter(
+          (integration) => integration.name !== 'MainProcessSession'
+        ),
+      // Tags a frame-capped stack, then splits native crash events into ours
+      // and foreign ones; see the NATIVE CRASH EVENTS note above for why that
+      // one class cannot go in ignoreErrors below.
+      beforeSend: beforeSendEvent,
+      // Noise filtering, which is a different concern from the scrubbing above:
+      // these are real events we deliberately do not want as issues, not data
+      // we need removed from events we do keep.
+      ignoreErrors: [
+        // The known-benign Windows `npm start` TTY write artifacts that
+        // index.ts's isSuppressibleUncaughtError filters for Aptabase. Sentry's
+        // own global handlers would otherwise report them as crashes.
+        //
+        // Two different message shapes carry the same benign EPIPE/EAGAIN:
+        // Node's `errnoException` (an async socket, the dev TTY case above)
+        // reads `write EPIPE`, while `uvException` (a packaged Windows GUI
+        // build's synchronous stdio pipe, DESKTOP-10/11/12) reads
+        // `EPIPE: broken pipe, write`. Neither literal below matches the
+        // other shape, so both are listed. The log-mirror echo guard
+        // (log-mirror.ts) is the actual fix for the packaged case; this is
+        // defense-in-depth for any other main-process stdout write.
+        'write EAGAIN',
+        'write EPIPE',
+        /EPIPE: .*, write/,
+        /EAGAIN: .*, write/,
+        // The SDK's own childProcessIntegration captures every utility-process
+        // exit as `'Utility' process exited with '<reason>'`, tagged only with
+        // the process TYPE - it attaches serviceName/name/exitCode to a
+        // breadcrumb AFTER the capture, so the event can never say WHICH
+        // process died and no beforeSend can recover it. Electron's own
+        // utility processes (network, audio, storage) are un-actionable for us,
+        // and our two (kangentic-embeddings, kangentic-line-count) now report
+        // themselves from their own exit handlers, where the service name,
+        // exit code, and crash count are all known. Scoped to 'Utility'
+        // deliberately: the same SDK integration reports renderer crashes as
+        // `'renderer' process exited with ...` through the same code path, and
+        // those must keep reporting. The breadcrumb survives this filter, so an
+        // Electron-internal utility crash still shows as context on later events.
+        /'Utility' process exited with/,
+        // The SDK's own childProcessIntegration also captures every GPU
+        // process exit, tagged only with the process type and reason, the
+        // same un-attributable shape as the Utility case above. Scoped to
+        // 'abnormal-exit' deliberately, narrower than the Utility filter:
+        // Chromium's own crash-limit fallback (RecordProcessCrash) can walk
+        // several GPU launch failures before it gives up, so a 'launch-failed'
+        // GPU death that Chromium survives still reaches Sentry as a real
+        // backstop - the one case gpu-health.ts's own next-boot report cannot
+        // be verified to cover (LOG(FATAL) kills the process before that
+        // report's async POST would complete, the same reason no
+        // 'launch-failed' GPU event has ever arrived here). 'abnormal-exit'
+        // alone is what DESKTOP-15 is: the reason Chromium's own recovery
+        // (a lone crash it relaunches past) fires this integration at all.
+        /'GPU' process exited with 'abnormal-exit'/,
+        // Renderer errors that are known-benign and outside our control. Shared
+        // with the monaco error funnel (monacoConfig.ts) and the UI-test
+        // collector (tests/ui/helpers.ts) so one registry drives all three.
+        // Renderer events reach this filter: the SDK re-captures them through
+        // main's client (@sentry/electron/main/ipc.js captureEventFromRenderer),
+        // so main's event processors run on them.
+        ...BENIGN_RENDERER_ERRORS,
+      ],
+      // Drops or rewrites every breadcrumb main records, before it takes a
+      // slot in the ring (src/shared/sentry-breadcrumbs.ts). Renderer crumbs
+      // skip this hook, so the renderer installs the same policy itself.
+      beforeBreadcrumb: filterBreadcrumb,
+    });
+    active = true;
+  } catch (error) {
+    console.error('[ANALYTICS] Failed to initialize error reporting:', error);
+    active = false;
+  }
+}

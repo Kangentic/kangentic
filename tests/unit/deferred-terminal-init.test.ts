@@ -38,8 +38,23 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// The init queue subscribes to the session-update coalescer's drag gate, and the
+// coalescer reads the session store inside flush(); mock the store the same way
+// tests/unit/session-update-coalescer-reload-gate.test.ts does.
+const mocks = vi.hoisted(() => ({
+  useSessionStore: { getState: vi.fn() },
+}));
+vi.mock('../../src/renderer/stores/session-store', () => ({ useSessionStore: mocks.useSessionStore }));
+
 import { runDeferredTerminalInit } from '../../src/renderer/hooks/useDeferredTerminalInit';
 import { resetTerminalInitQueue, pendingTerminalInitCount } from '../../src/renderer/utils/terminal-init-queue';
+import {
+  beginBoardDrag,
+  endBoardDrag,
+  flushDragGateOnWindowBlur,
+  resetCoalescerForHmr,
+} from '../../src/renderer/lib/session-update-coalescer';
 
 // ---------------------------------------------------------------------------
 // Deterministic rAF + ResizeObserver stubs
@@ -80,10 +95,17 @@ beforeEach(() => {
   scheduledFrames.clear();
   nextFrameHandle = 1;
   FakeResizeObserver.instances = [];
+  mocks.useSessionStore.getState.mockReturnValue({
+    batchUpdateUsage: vi.fn(),
+    batchAddEvents: vi.fn(),
+  });
   // The init queue is module state shared by every host. Clearing `scheduledFrames` above
   // drops any pump frame it had scheduled, so without this reset the queue would still
   // believe a pump is pending and never schedule another one.
   resetTerminalInitQueue();
+  // The drag gate is module state too: a test that begins a drag and fails before ending
+  // it must not hold every later test's inits.
+  resetCoalescerForHmr();
   vi.stubGlobal('requestAnimationFrame', (callback: FrameCallback): number => {
     const handle = nextFrameHandle;
     nextFrameHandle += 1;
@@ -336,6 +358,140 @@ describe('terminal inits are serialized one per frame', () => {
     expect(() => flushAnimationFrame()).toThrow('xterm construction failed');
     flushAnimationFrame();
     expect(order).toEqual(['survivor']);
+  });
+});
+
+/**
+ * The board-drag hold. A construction is a 21 to 42ms frame on the production build
+ * (75 to 130ms in dev), and a drop's pane mounts while the user is already dragging the
+ * next card, so the pump defers every init for the length of a gesture and resumes one
+ * frame AFTER the drop frame. These go red if the hold is removed (an init runs mid-drag)
+ * or if the resume lands on the drop frame itself (an init runs on the first frame after
+ * `endBoardDrag()` instead of the second).
+ */
+describe('terminal inits are held for a board drag', () => {
+  function mountHost(initTerminal: () => void): () => void {
+    return runDeferredTerminalInit({
+      element: { offsetWidth: 800, offsetHeight: 300 },
+      initializedRef: { current: false },
+      initTerminal,
+    });
+  }
+
+  it('does not construct while a drag is active, and keeps the host queued', () => {
+    const initTerminal = vi.fn();
+    beginBoardDrag();
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    flushAnimationFrame();
+    expect(initTerminal).not.toHaveBeenCalled();
+    expect(pendingTerminalInitCount()).toBe(1);
+    endBoardDrag();
+  });
+
+  it('resumes one frame after the drop frame, then drains one per frame as usual', () => {
+    const order: string[] = [];
+    beginBoardDrag();
+    mountHost(() => order.push('a'));
+    mountHost(() => order.push('b'));
+    flushAnimationFrame();
+    expect(order).toEqual([]);
+
+    // endBoardDrag() notifies synchronously from the pointerup handler; the frame it
+    // arms is the drop frame's own animation-frame phase, which must stay construction
+    // free because that frame already pays the drop handler.
+    endBoardDrag();
+    flushAnimationFrame();
+    expect(order).toEqual([]);
+    flushAnimationFrame();
+    expect(order).toEqual(['a']);
+    flushAnimationFrame();
+    expect(order).toEqual(['a', 'b']);
+    expect(pendingTerminalInitCount()).toBe(0);
+  });
+
+  it('an init enqueued mid-drag by a host that was already queued before it is not lost', () => {
+    const order: string[] = [];
+    mountHost(() => order.push('before-drag'));
+    beginBoardDrag();
+    mountHost(() => order.push('during-drag'));
+    flushAnimationFrame();
+    expect(order).toEqual([]);
+    endBoardDrag();
+    flushAnimationFrame();
+    flushAnimationFrame();
+    flushAnimationFrame();
+    expect(order).toEqual(['before-drag', 'during-drag']);
+  });
+
+  it('a drag that ends with nothing queued arms no frame', () => {
+    beginBoardDrag();
+    endBoardDrag();
+    expect(scheduledFrames.size).toBe(0);
+  });
+
+  it('the 30s watchdog ends a stuck gate and the held inits resume', () => {
+    // Fake only the timer the watchdog uses; the animation-frame stub above stays real.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const initTerminal = vi.fn();
+      beginBoardDrag();
+      mountHost(initTerminal);
+      flushAnimationFrame();
+      expect(initTerminal).not.toHaveBeenCalled();
+      // No drop ever arrives (a <DndContext> unmounted mid-drag); the watchdog fires.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.advanceTimersByTime(30_000);
+      warn.mockRestore();
+      flushAnimationFrame();
+      flushAnimationFrame();
+      expect(initTerminal).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an init enqueued in the same tick as the drop still skips the drop frame', () => {
+    // Two independent reviewers found this race: a pump armed WHILE the drag is still
+    // active is still pending (sitting in scheduledFrames) when the drop lands, so it
+    // fires in the drop frame's own animation-frame phase and constructs there, defeating
+    // the extra frame resumeAfterDrag exists to buy. Every test above hides this because
+    // each one calls flushAnimationFrame() between the mid-drag mountHost(...) and
+    // endBoardDrag(), which discharges that pending pump while the drag is still active.
+    // This test enqueues and ends the drag with no flush in between, so a pump that slips
+    // past the schedulePump() drag guard is still pending when the drop frame fires.
+    const initTerminal = vi.fn();
+    beginBoardDrag();
+    mountHost(initTerminal);
+    endBoardDrag();
+    // The drop frame: must stay construction-free even though a pump could have been
+    // armed mid-drag and left pending until now.
+    flushAnimationFrame();
+    expect(initTerminal).not.toHaveBeenCalled();
+    // The frame after the drop frame: the held init resumes here, as designed.
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('the window-blur backstop ends a stuck gate and the held inits resume', () => {
+    // dnd-kit does not fire onDragEnd/onDragCancel when the window loses a pointerup
+    // mid-drag (alt-tabbing to an overlapping window), so the coalescer's blur backstop
+    // is the other real path into endBoardDrag() besides the drop and the 30s watchdog
+    // above. The init queue's hold depends on EVERY drag-terminating path reaching
+    // onBoardDragEnd, so the blur path needs its own coverage.
+    const initTerminal = vi.fn();
+    beginBoardDrag();
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    expect(initTerminal).not.toHaveBeenCalled();
+    // The blur backstop warns before flushing the gate; mute it the same way the
+    // watchdog test above mutes its own console.warn.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    flushDragGateOnWindowBlur();
+    warn.mockRestore();
+    flushAnimationFrame();
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
   });
 });
 

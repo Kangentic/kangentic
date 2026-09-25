@@ -90,7 +90,7 @@ const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
  * from draining a live holder.
  *
  * Matching the PREFIX rather than the whole sentence is deliberate: the real
- * marker continues with a U+2014, which `tests/unit/no-em-dashes.test.ts`
+ * marker continues with a U+2014, which `tests/unit/writing-style-characters.test.ts`
  * forbids anywhere in `src/`.
  */
 const MONITOR_TIMEOUT_MARKER = /<event>\s*\[Monitor timed out/;

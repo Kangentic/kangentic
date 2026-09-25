@@ -26,6 +26,8 @@
  * from `name` with no per-tool hardcoding.
  */
 
+import { DOCS_URLS } from './docs-links';
+
 export type McpToolCategoryId = 'tasks' | 'board' | 'sessions' | 'browser' | 'diagnostics';
 
 export interface McpToolManifestEntry {
@@ -55,12 +57,12 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_search_tasks', label: 'Search Tasks', blurb: 'keyword search across board and backlog tasks', category: 'tasks' },
   { name: 'kangentic_find_task', label: 'Find Task', blurb: 'look up a task by ID, branch, title, or PR number', category: 'tasks' },
   { name: 'kangentic_get_current_task', label: 'Current Task', blurb: 'resolve the task for the current directory or branch', category: 'tasks' },
-  { name: 'kangentic_get_task_stats', label: 'Task Stats', blurb: 'token usage, cost, duration, and lines changed per task', category: 'tasks' },
+  { name: 'kangentic_get_task_stats', label: 'Task Stats', blurb: 'token usage, cost, duration, lines changed, and the subagent-type breakdown per task', category: 'tasks' },
   { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description (full, in-place find/replace, or append), PR info, agent, model, effort, permission mode, run mode, priority, labels, base branch, worktree, and attachments', category: 'tasks' },
   { name: 'kangentic_move_task', label: 'Move Task', blurb: 'move a task between columns and place it at a slot, running the same lifecycle as a drag', category: 'tasks' },
   { name: 'kangentic_reorder_tasks', label: 'Reorder Tasks', blurb: 'set the top-to-bottom order of tasks within one column', category: 'tasks' },
   { name: 'kangentic_move_task_to_project', label: 'Move Task to Project', blurb: 'relocate a To Do task to another project\'s board', category: 'tasks' },
-  { name: 'kangentic_link_pr', label: 'Link PR', blurb: 'resolve and attach a task pull request via the gh CLI', category: 'tasks' },
+  { name: 'kangentic_link_pr', label: 'Link PR', blurb: 'resolve and attach a task pull request by its number, branch, commit, or pushed branch', category: 'tasks' },
   { name: 'kangentic_delete_task', label: 'Delete Task', blurb: 'permanently remove a task, its attachments, and session records', category: 'tasks' },
   { name: 'kangentic_remove_task_attachment', label: 'Remove Attachment', blurb: 'detach a file from a board task or backlog item by attachment ID', category: 'tasks' },
 
@@ -70,12 +72,16 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_update_column', label: 'Update Column', blurb: 'rename, recolor, and configure a column automation', category: 'board' },
   { name: 'kangentic_create_column', label: 'Create Column', blurb: 'add a board column, placed before Done by default', category: 'board' },
   { name: 'kangentic_delete_column', label: 'Delete Column', blurb: 'remove an empty, non-role column and every reference to it', category: 'board' },
+  { name: 'kangentic_list_automations', label: 'List Automations', blurb: 'what runs when a task enters or leaves each column, and whether it can', category: 'board' },
+  { name: 'kangentic_set_automations', label: 'Set Automations', blurb: 'replace one column\'s ordered list of messages, scripts, webhooks, and notifications', category: 'board' },
+  { name: 'kangentic_get_automation_runs', label: 'Automation Runs', blurb: 'the run log for a task or a column: what ran, when, and why it failed', category: 'board' },
+  { name: 'kangentic_run_automation', label: 'Run Automation', blurb: 'run one automation now against a task\'s current state', category: 'board' },
   { name: 'kangentic_list_board_profiles', label: 'List Board Profiles', blurb: 'see the board\'s named per-column agent/model/effort presets', category: 'board' },
   { name: 'kangentic_create_board_profile', label: 'Create Board Profile', blurb: 'add a named preset of per-column agent/model/effort settings', category: 'board' },
   { name: 'kangentic_update_board_profile', label: 'Update Board Profile', blurb: 'rename a profile or retune its per-column settings, across projects', category: 'board' },
   { name: 'kangentic_delete_board_profile', label: 'Delete Board Profile', blurb: 'remove a profile; tasks riding it fall back to each column\'s own settings', category: 'board' },
-  { name: 'kangentic_board_summary', label: 'Board Summary', blurb: 'counts, active sessions, and aggregate cost across the board', category: 'board' },
-  { name: 'kangentic_get_usage_stats', label: 'Usage Stats', blurb: 'tokens, cost, burn rate, and by-model / by-agent usage for a project or all projects over a time range', category: 'board' },
+  { name: 'kangentic_board_summary', label: 'Board Summary', blurb: 'counts, label vocabulary, active sessions, and aggregate cost across the board', category: 'board' },
+  { name: 'kangentic_get_usage_stats', label: 'Usage Stats', blurb: 'tokens, cost, burn rate, and by-model / by-agent / by-effort / by-subagent-type usage for a project or all projects over a time range', category: 'board' },
   { name: 'kangentic_list_backlog', label: 'List Backlog', blurb: 'see items staged in the backlog', category: 'board' },
   { name: 'kangentic_promote_backlog', label: 'Promote Backlog', blurb: 'move backlog items onto the board as tasks', category: 'board' },
   { name: 'kangentic_update_backlog_item', label: 'Update Backlog Item', blurb: 'edit a backlog item title, description, priority, labels, or attachments', category: 'board' },
@@ -113,6 +119,16 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_browser_type', label: 'Type', blurb: 'type text into the Browser pane', category: 'browser' },
   { name: 'kangentic_browser_keypress', label: 'Keypress', blurb: 'send a key or chord to the pane', category: 'browser' },
   { name: 'kangentic_browser_drag', label: 'Drag', blurb: 'drag from one element to another', category: 'browser' },
+  { name: 'kangentic_browser_hover', label: 'Hover', blurb: 'move the pointer over an element without clicking', category: 'browser' },
+  { name: 'kangentic_browser_scroll', label: 'Scroll', blurb: 'scroll the page or an element by a wheel delta', category: 'browser' },
+  { name: 'kangentic_browser_select_option', label: 'Select Option', blurb: 'choose a value in a native dropdown', category: 'browser' },
+  { name: 'kangentic_browser_drop_files', label: 'Drop Files', blurb: 'drop real files onto a drop zone or file input', category: 'browser' },
+  { name: 'kangentic_browser_history', label: 'History', blurb: 'go back or forward in the pane history', category: 'browser' },
+  { name: 'kangentic_browser_network', label: 'Network Requests', blurb: 'list the requests the page made, with status and timing', category: 'browser' },
+  { name: 'kangentic_browser_handle_dialog', label: 'Handle Dialog', blurb: 'decide how alert / confirm / prompt are answered', category: 'browser' },
+  { name: 'kangentic_browser_set_viewport', label: 'Set Viewport', blurb: 'render the pane at a chosen width and height', category: 'browser' },
+  { name: 'kangentic_browser_pop_out', label: 'Pop Out Browser', blurb: 'detach the Browser pane into its own window', category: 'browser' },
+  { name: 'kangentic_browser_dock', label: 'Dock Browser', blurb: 'put a detached Browser window back in the task', category: 'browser' },
   { name: 'kangentic_browser_eval', label: 'Eval', blurb: 'evaluate JavaScript in the page (off by default)', category: 'browser' },
 
   // ── Diagnostics (diagnostics-tools.ts; query_db from session-tools.ts) - dev-leaning, rendered last ──
@@ -125,7 +141,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
 ];
 
 /** Live docs reference for the MCP server. Each tool's heading anchor is its registered name. */
-export const MCP_SERVER_DOCS_URL = 'https://kangentic.com/mcp-server/';
+export const MCP_SERVER_DOCS_URL = DOCS_URLS.mcpServer;
 
 /** Deep link to a tool's entry on the docs page. Anchor = manifest/registered tool name. */
 export function mcpToolDocsUrl(toolName: string): string {

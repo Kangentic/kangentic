@@ -1,11 +1,15 @@
 const PROCESS_START = performance.now();
 
-import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
+import type { Event as ElectronEvent } from 'electron';
+import type { GpuGraphicsStatus } from '../shared/types';
 import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
+import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
+import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
 import { resolvePreviewTaskLabel } from '../devtools/main/preview-task-title';
@@ -20,14 +24,21 @@ import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-s
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
 import { setAgentInputSender, isAgentDriving } from './browser/agent-input-signal';
+import { setViewportOverrideSender } from './browser/viewport-override-store';
 import { encodeTerminalKey } from '../shared/terminal-key-encoding';
 import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
+import { decideSecondInstanceAction, isStartupComplete, markStartupComplete, shouldCreateWindowOnActivate } from './startup-gate';
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
-import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId } from './analytics/analytics';
+import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId, HEARTBEAT_INTERVAL_MS } from './analytics/analytics';
+import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
+import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
+import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
+import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, isDeathNearRunEnd, shouldReportEscalation, summarizeGpuInfo } from './diagnostics/gpu-health';
+import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
 // Whether this launch found an existing global config.json. Read at module
@@ -50,16 +61,26 @@ import { PATHS } from './config/paths';
 // one-shot marker there - so a module-scope load() breaks this too.
 const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
-import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath } from './window-utils';
+import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { destroyAllLanes } from './browser/browser-lane-manager';
+import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
+import { createBeforeQuitHandler } from './pty/shutdown/before-quit-handler';
+import { drainPtyExitCallbacks } from './pty/shutdown/exit-callback-drain';
+import type { PtyKillReport } from './pty/shutdown/session-shutdown';
+import { isProcessAlive } from './shared/process-liveness';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
+import { gitFetchScheduler } from './git/git-fetch-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
 import { setProjectDbInitializer } from './db/database';
-import { setWorktreeRemovedListener } from './git/worktree-manager';
+import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
+import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
+import { setSyncWriteFailureNotifier } from './config/write-failure-notice';
+import { sendToRenderer } from './ipc/send-to-renderer';
+import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
 import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
@@ -75,6 +96,7 @@ import {
   type WebviewPopupPolicy,
 } from './window-open-policy';
 import { installWebviewDownloadPolicy } from './browser/webview-download-policy';
+import { applyBrowserUserAgent } from './browser/browser-user-agent';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
@@ -84,6 +106,39 @@ mark('process_start');
 // for the inspection server's /event-loop-lag route. Dead-code-eliminated in
 // production via __KANGENTIC_DEV__.
 if (__KANGENTIC_DEV__) startEventLoopLagMonitor();
+
+// The GPU health escalation record. One constant, because the crash-capture
+// path below WRITES it and the whenReady block far below READS and clears it:
+// two independent path.join calls would diverge silently, with no compile or
+// test failure to catch it.
+const GPU_HEALTH_FILE_PATH = path.join(PATHS.configDir, 'gpu-health.json');
+
+// The run-uptime record. Hoisted for the same reason as the constant above:
+// the module-scope graphics decision below PEEKS it and initRunUptimeTracking
+// in whenReady OWNS it, so two path.join calls could diverge silently.
+const RUN_UPTIME_FILE_PATH = path.join(PATHS.configDir, 'analytics-run.json');
+
+/** How long the escalation report waits on app.getGPUInfo('complete') before
+ *  giving up on it. Enrichment only: nothing downstream needs it, and the
+ *  report is worth more on time without it than late with it. */
+const GPU_INFO_TIMEOUT_MS = 2_000;
+
+// When this run started, in wall clock. Compared against a pending GPU
+// record's own timestamp so the report block far below can tell a record the
+// PREVIOUS run wrote from one THIS run just wrote (gpu-health.ts's
+// isEscalationFromCurrentRun).
+const PROCESS_START_ISO = new Date().toISOString();
+
+/**
+ * True when THIS launch came up on software rendering because the previous
+ * one was killed by its GPU. The renderer PULLS this (IPC.GPU_HEALTH_STATUS)
+ * rather than main pushing it: the notice is decided exactly once, during
+ * boot, when a webContents.send can land before the renderer has registered
+ * any listener and be dropped silently - and the escalation record is already
+ * cleared by then, so a dropped push would lose the notice for good. Cleared
+ * on read, so a renderer reload does not re-toast.
+ */
+let pendingGpuNotice = false;
 
 // Install product diagnostics (log mirror, crash capture, IPC recorder,
 // debug-dump path resolver) BEFORE any IPC handler registers. The recorder
@@ -101,7 +156,9 @@ installDiagnostics({
     safeReadDeveloperFlag('persistConsoleLogs'),
   getRecordIpcTraffic: () =>
     safeReadDeveloperFlag('recordIpcTraffic'),
+  gpuHealthFilePath: GPU_HEALTH_FILE_PATH,
 });
+
 
 function safeReadDeveloperFlag(key: DeveloperFlagKey): boolean {
   try {
@@ -128,8 +185,10 @@ function safeReadDeveloperFlag(key: DeveloperFlagKey): boolean {
 // `src/devtools/` tree is dropped from production builds via
 // `__KANGENTIC_DEV__` dead-code elimination + esbuild tree-shaking.
 if (__KANGENTIC_DEV__) {
-  // `mainWindow` is declared as `let` lower in this file (around line 230)
-  // and assigned inside `createWindow()`. The arrow-function callbacks
+  // `mainWindow` is declared as `let` lower in this file (search for
+  // `let mainWindow`) and assigned inside `createWindow()`. It is also reset to
+  // null when the window closes, so this getter can return null at any time -
+  // every consumer must handle that. The arrow-function callbacks
   // below close over it but only READ at call time (not at definition);
   // every caller (notifyDevtoolsRefresh, the inspection server's HTTP
   // handlers, the before-quit hook) runs strictly after createWindow has
@@ -209,6 +268,21 @@ import { ensureSpawnHelperPermissions } from './pty/spawn/spawn-helper-permissio
 // based on app.isPackaged and the KANGENTIC_TELEMETRY env var.
 initAnalytics();
 
+// Initialize Sentry error reporting beside it (also pre-ready: the SDK wires
+// its renderer IPC/protocol transport during init). Gated by the same
+// KANGENTIC_TELEMETRY superset kill switch plus KANGENTIC_ERROR_REPORTING;
+// scrubbing and event hygiene are the SDK's and Sentry's job, not ours, except
+// for breadcrumbs (see analytics/error-reporting.ts).
+//
+// It must stay AFTER installDiagnostics() above. The SDK wraps whatever
+// console.* is at init, so running second makes it the outer wrapper, which
+// sees each caller's own arguments. The log mirror hands the function it wraps
+// a `[HH:MM:SS] [projectName]`-prefixed first argument, so in the other order
+// no console line would start with an allowlisted breadcrumb tag, and every
+// console breadcrumb would silently drop. tests/unit/sentry-breadcrumbs.test.ts
+// pins the order.
+initErrorReporting();
+
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
@@ -219,6 +293,106 @@ for (const arg of process.argv) {
     break;
   }
 }
+
+/**
+ * Decide whether this launch runs on software rendering, and engage it if so.
+ *
+ * Placed HERE on purpose, and the position is load-bearing in two directions.
+ * It must come before `app.whenReady()`, because
+ * `app.disableHardwareAcceleration()` THROWS once the app is ready. And it
+ * must come after `initErrorReporting()` above, because it is the first thing
+ * in the process to call `windowConfigManager.load()`: if that load hits an
+ * unwritable config dir, `reportSyncWriteFailure` LATCHES the source before it
+ * calls `reportHandledError`, so running it while Sentry is still inactive
+ * would silently drop that failure and then suppress it for the whole run.
+ *
+ * Two independent triggers, in order:
+ *
+ *   1. The stored setting is off. That covers every launch after the first
+ *      recovered one, and a user who chose it themselves.
+ *   2. No setting yet, but the PREVIOUS run died with a GPU death at its end
+ *      (gpu-health.ts's isDeathNearRunEnd). This is the launch that rescues an
+ *      install which cannot otherwise start: DESKTOP-18's seven launches each
+ *      died 8 to 12 seconds in, so waiting for a setting written by a later
+ *      run would never have helped. whenReady persists the setting, so trigger
+ *      1 takes over from there.
+ *
+ * Both, not one. `--in-process-gpu` removes the GPU child process, so
+ * Chromium's IntentionallyCrashBrowserForUnusableGpuProcess (the LOG(FATAL)
+ * this whole path exists for) is unreachable. `disableHardwareAcceleration()`
+ * then keeps the display driver out of the browser process, which
+ * `--in-process-gpu` alone would pull in, turning a contained GPU-child crash
+ * into a browser crash with no fallback ladder at all. Calling the API rather
+ * than appending `--disable-gpu` ourselves is not a distinction: Electron's
+ * `App::DisableHardwareAcceleration` appends that exact switch AND disables
+ * the GpuDataManager, and it throws if called once the app is ready, which is
+ * the other half of why this sits at module scope.
+ *
+ * Verified in Electron 41 on Windows and on Linux (Ubuntu 24.04 under WSLg,
+ * whose GL is Mesa's d3d12 driver rather than a native one): with both set,
+ * getAppMetrics() reports no GPU process at all, and the window still paints.
+ * NOT verified on macOS, and no test tier reaches this branch on any platform
+ * (see the NODE_ENV note below), so CI being green is not evidence about the
+ * switches themselves.
+ *
+ * Cost on a launch that will never need any of this: one `readFileSync` that
+ * ENOENTs. `windowConfigManager.load()` caches, and every launch loads config
+ * anyway.
+ *
+ * Never in tests: an E2E or preview run must not inherit a downgrade from
+ * whatever ran before it, matching how `isE2ETest` gates the modal dialogs.
+ */
+function resolveGraphicsMode(): { software: boolean; engagedNow: boolean } {
+  if (process.env.NODE_ENV === 'test') return { software: false, engagedNow: false };
+  try {
+    if (windowConfigManager.load().graphicsAccelerationEnabled === false) {
+      return { software: true, engagedNow: false };
+    }
+    const pending = readPendingGpuEscalation(GPU_HEALTH_FILE_PATH);
+    if (!pending) return { software: false, engagedNow: false };
+    const previousRun = peekPreviousRun(RUN_UPTIME_FILE_PATH);
+    const killedTheLastRun = isDeathNearRunEnd(pending, {
+      previousRunExit: previousRun?.exit ?? null,
+      lastKnownAliveAt: previousRun?.lastAliveAt ?? null,
+    });
+    return { software: killedTheLastRun, engagedNow: killedTheLastRun };
+  } catch (error) {
+    // A decision this early must never be able to stop the app booting. An
+    // unreadable config or record simply means hardware, exactly as today.
+    console.error('[GPU-HEALTH] Failed to resolve the graphics mode:', error);
+    return { software: false, engagedNow: false };
+  }
+}
+
+const graphicsMode = resolveGraphicsMode();
+if (graphicsMode.software) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('in-process-gpu');
+  console.warn('[GPU-HEALTH] Starting without graphics acceleration.');
+}
+
+// Armed HERE, at module scope, and not only in the whenReady report block far
+// below. The renderer can invoke as soon as the synchronous createWindow()
+// span ends, and the block that would otherwise be the first to arm this sits
+// behind `await resolveClientId` after that span - so a renderer that got its
+// pull in first would read `noticePending: false`, consume it, and never ask
+// again, while the record behind it is cleared moments later. The user would
+// then be on software rendering with no explanation at all. This is the same
+// decision the whenReady block re-derives; arming it before any renderer can
+// exist is what makes the answer independent of who wins that race. The later
+// arm stays: it is idempotent, and it still covers the case where software
+// mode was already on from a previous launch, so this line cannot reach it.
+if (graphicsMode.engagedNow) pendingGpuNotice = true;
+
+// Registered here rather than in an ipc/handlers module because the answer is
+// a module-scope fact of THIS file: the graphics decision runs before
+// whenReady and the notice it produces has no other owner. Cleared on read, so
+// a renderer reload during the same launch does not re-toast.
+ipcMain.handle(IPC.GPU_HEALTH_STATUS, (): GpuGraphicsStatus => {
+  const noticePending = pendingGpuNotice;
+  pendingGpuNotice = false;
+  return { softwareRendering: graphicsMode.software, noticePending };
+});
 
 // Set Windows AppUserModelID so the taskbar resolves the correct icon.
 // In packaged builds, this must match the appId in electron-builder.yml so
@@ -280,8 +454,20 @@ app.on('web-contents-created', (_event, contents) => {
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
+    // Electron must not draw its own JavaScript dialog for a guest, because
+    // the CDP driver already answers them (`cdp.ts`, `Page.enable` +
+    // `Page.javascriptDialogOpening`). Measured on Electron 41: BOTH fire.
+    // The page got its answer from CDP and carried on, while Electron left a
+    // native "Really delete?" box on screen whose OK and Cancel then did
+    // nothing - the answer was already given. So the box was not merely
+    // redundant, it was a lie about what the page would do, and the user had
+    // to dismiss one per dialog.
+    //
+    // Suppressing it here rather than in the driver because this is Electron's
+    // own delegate, which the CDP interception does not sit in front of.
+    webPreferences.disableDialogs = true;
 
-    let allowed = false;
+    let allowed: boolean;
     try {
       const parsed = new URL(params.src);
       allowed = parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -303,6 +489,13 @@ app.on('web-contents-created', (_event, contents) => {
     contents.setWindowOpenHandler(createExternalWindowOpenHandler((url) => shell.openExternal(url)));
     return;
   }
+
+  // Drop the `Electron/` token from the guest's user agent, which some web
+  // application firewalls reject as a bot (decision 41). This runs at guest
+  // construction, before `did-attach` loads the first `src`, so the first
+  // request already carries it. It also sets the guest's Session, which is how
+  // the popups below inherit it.
+  applyBrowserUserAgent(contents);
 
   // Forward the guest's mouse BACK / FORWARD buttons to the host renderer.
   //
@@ -603,6 +796,30 @@ setAgentInputSender((guest, active) => {
   hostWindow.webContents.send(IPC.BROWSER_AGENT_INPUT, guest.id, active);
 });
 
+// Routed exactly as the two above are, and for the same reason: a detached
+// pane's chip lives in the pop-out window's renderer, not the main one. A LANE
+// has no host window at all and `fromWebContents` on its own offscreen guest
+// resolves the lane window, whose renderer has no pane to tell - the send is a
+// harmless no-op there, which is correct, since nobody is looking at a lane.
+setViewportOverrideSender((guest, override) => {
+  if (guest.isDestroyed()) return;
+  const hostWindow = BrowserWindow.fromWebContents(guest.hostWebContents ?? guest);
+  if (!hostWindow || hostWindow.isDestroyed()) return;
+  hostWindow.webContents.send(
+    IPC.BROWSER_VIEWPORT_OVERRIDE,
+    guest.id,
+    override
+      ? {
+          mechanism: override.mechanism,
+          requested: override.requested,
+          measured: override.measured,
+          deviceScaleFactor: override.deviceScaleFactor,
+          appliedAt: override.appliedAt,
+        }
+      : null,
+  );
+});
+
 // Enforce single instance -- prevents manual double-launches from spawning
 // duplicate windows. Ephemeral instances (worktree previews) and E2E test
 // instances skip this so they can coexist with a running dogfooding app.
@@ -611,11 +828,49 @@ if (!isEphemeral && !isE2ETest) {
   if (!gotTheLock) {
     app.exit(0);
   } else {
+    // Sentry DESKTOP-J: this used to be a bare `if (mainWindow)`. The 'closed'
+    // handler never nulled the variable, so after the window closed it held a
+    // DESTROYED BrowserWindow, isMinimized() threw, and the throw escaped a raw
+    // Electron event handler with nothing below it to catch. The decision is in
+    // startup-gate.ts so it can be unit-tested; see its docblock for why the
+    // three checks are ordered the way they are.
     app.on('second-instance', () => {
-      if (mainWindow) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
+      const action = decideSecondInstanceAction({
+        hasLiveWindow: Boolean(mainWindow && !mainWindow.isDestroyed()),
+        shuttingDown: isShuttingDown(),
+        startupComplete: isStartupComplete(),
+      });
+      if (action === 'ignore') return;
+      if (action === 'focus') {
+        if (mainWindow!.isMinimized()) mainWindow!.restore();
+        // The window is constructed with `show: false` and only shown from
+        // 'ready-to-show', so for the first seconds of a cold start it is live
+        // and INVISIBLE. focus() alone there makes the user's second launch do
+        // nothing they can see - the same dead outcome as the crash, minus the
+        // Sentry event. backgroundColor is set at construction, so showing
+        // early paints the theme colour rather than a white flash, and
+        // 'ready-to-show' still runs its own maximize()/show() afterwards.
+        if (!mainWindow!.isVisible()) mainWindow!.show();
+        mainWindow!.focus();
+        return;
       }
+      // The app outlived its window. Off macOS that is a fault: window-all-closed
+      // quits, so reaching here means a browser lane survived the 'closed' sweep
+      // and held the window count above zero, leaving an invisible process still
+      // holding the single-instance lock. Count it - recovering silently would
+      // trade a visible crash for a hidden lane leak.
+      //
+      // On macOS it is the documented lifecycle instead (window-all-closed only
+      // quits when platform !== 'darwin', below), so a user who closes the window
+      // and relaunches lands here with nothing wrong. Reporting that as an
+      // app_error would bury the real leak signal under the ordinary case.
+      if (process.platform !== 'darwin') {
+        trackEvent('app_error', {
+          source: 'secondInstanceNoWindow',
+          message: 'second-instance arrived with no live main window; rebuilding',
+        });
+      }
+      rebuildMainWindow();
     });
   }
 }
@@ -623,7 +878,20 @@ if (!isEphemeral && !isE2ETest) {
 let mainWindow: BrowserWindow | null = null;
 let activateAllProjectsTimer: ReturnType<typeof setTimeout> | null = null;
 let mcpServerHandle: McpHttpServerHandle | null = null;
+// Whether the whenReady body has finished DECIDING mcpServerHandle. The handle
+// itself is null both before startup runs startMcpHttpServer and after that
+// call fails, so "unresolved" is not observable from the value alone. Only this
+// flag separates the two, and createWindow must never run while it is false:
+// registerAllIpc would build an IpcContext that can never reach the MCP server,
+// and only repairs itself if some later call passes a truthy handle.
+let mcpServerSettled = false;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let runUptimeCheckpointInterval: ReturnType<typeof setInterval> | null = null;
+let stopHostMemorySampler: (() => void) | null = null;
+// DESKTOP-16 bounded-reload guard for the main window's render-process-gone
+// handler below. See renderer-recovery.ts for why the decision logic lives
+// in its own testable module rather than inline here.
+const rendererReloadGate = createRendererReloadGate();
 
 // Parse --cwd=<path> from command line args
 function getCwdArg(): string | null {
@@ -716,6 +984,30 @@ function showTerminalAwareContextMenu(
 }
 
 const createWindow = () => {
+  // Unreachable while the startup gate holds: the call sites are the whenReady
+  // body (once) and rebuildMainWindow, whose own two callers (activate,
+  // second-instance) are each gated on there being no live window. Kept because
+  // the failure it prevents is severe and silent - a second BrowserWindow
+  // orphans the first, which holds getAllWindows() above zero forever, so
+  // window-all-closed never fires, before-quit never runs, and
+  // syncShutdownCleanup never kills PTYs, suspends session records, or closes
+  // DBs (the same trap described at the 'closed' handler below). Report rather
+  // than throw, and sit above phase() so the early return cannot leave a
+  // startup phase unclosed.
+  //
+  // Returning without assigning mainWindow is safe for every caller: this
+  // branch is taken only WHEN a live window exists, so rebuildMainWindow's
+  // `mainWindow!` still holds and it simply re-points the updater/announcements
+  // refs at the window it already had.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    console.error('[APP] createWindow called with a live main window; ignoring');
+    trackEvent('app_error', {
+      source: 'duplicateCreateWindow',
+      message: 'createWindow called while a live main window already existed',
+    });
+    return;
+  }
+
   phase('createWindow');
   const isTest = process.env.NODE_ENV === 'test';
 
@@ -744,22 +1036,51 @@ const createWindow = () => {
       // Enable <webview> for the embedded browser side-pane in the task-detail
       // window. Hardened via the will-attach-webview hook below.
       webviewTag: true,
-      // Surface the ephemeral-preview flag (and, when resolvable, the original task
-      // title) to the renderer (read in preload via process.argv). Set ONLY in
+      // Surface boot flags to the renderer (read in preload via process.argv).
+      // --kangentic-error-reporting mirrors main's single Sentry decision so the
+      // renderer-side Sentry.init() can never disagree with it. The ephemeral-preview
+      // flag (and, when resolvable, the original task title) is set ONLY in
       // dev-preview mode (`--ephemeral`), so the dev TestHarness and the preview title
       // stay out of the regular `npm start` dogfood. The title is base64-encoded so a
       // value with spaces / `:` / `/` survives command-line round-tripping intact.
-      additionalArguments:
-        __KANGENTIC_DEV__ && isEphemeral
+      additionalArguments: [
+        ...(isErrorReportingActive() ? ['--kangentic-error-reporting'] : []),
+        ...(__KANGENTIC_DEV__ && isEphemeral
           ? [
               '--kangentic-ephemeral',
               ...(previewTaskTitle
                 ? [`--kangentic-preview-task-title=${Buffer.from(previewTaskTitle, 'utf-8').toString('base64')}`]
                 : []),
             ]
-          : [],
+          : []),
+      ],
     },
   });
+
+  /**
+   * THIS window, for the deferred callbacks below.
+   *
+   * A listener body that reads the module-level `mainWindow` reads it at EVENT
+   * time, not registration time, so after a rebuild it resolves to whichever
+   * window is current rather than the one the listener was attached to. That is
+   * unreachable today (createWindow refuses to run while a live window exists,
+   * and a destroyed window fires nothing), but it is a real hazard now that two
+   * gated paths can rebuild, and the non-null assertions it forced were load
+   * bearing on that same unreachability.
+   *
+   * Liveness checks that genuinely mean "is there a current window at all"
+   * (saveBounds, the pop-out push, did-finish-load's synchronous setTitle)
+   * deliberately keep reading the module variable.
+   *
+   * A send that RESUMES after an await is not one of those, however current the
+   * window looked when the listener started: the module variable can have been
+   * nulled by 'closed' and reassigned by a rebuild while the await was pending,
+   * so the push would land in the new window's renderer, which is running its
+   * own preload and will announce its own result. The two post-await sends
+   * below (PROJECT_PATH_MISSING, PROJECT_AUTO_OPENED) therefore use this
+   * capture and check isDestroyed on it.
+   */
+  const createdWindow = mainWindow;
 
   // Explicitly set icon for Windows/Linux taskbar
   if (process.platform !== 'darwin') {
@@ -779,7 +1100,7 @@ const createWindow = () => {
         const isCtrlShiftI =
           input.control && input.shift && input.key.toLowerCase() === 'i';
         if (isF12 || isCtrlShiftI) {
-          mainWindow?.webContents.toggleDevTools();
+          createdWindow.webContents.toggleDevTools();
         }
       }
     });
@@ -788,9 +1109,9 @@ const createWindow = () => {
   mainWindow.once('ready-to-show', () => {
     mark('ready_to_show');
     if (!isTest && (!savedBounds || savedBounds.maximized)) {
-      mainWindow!.maximize();
+      createdWindow.maximize();
     }
-    mainWindow!.show();
+    createdWindow.show();
   });
 
   // Debounced save of window bounds on move/resize
@@ -860,10 +1181,18 @@ const createWindow = () => {
   //
   // On 'closed', NOT 'close', and the difference is load-bearing. Destroying the
   // window tears down its <webview> guests, each of which fires the registry's
-  // guest-destroyed path -> the lane hand-off -> a BRAND NEW lane, created
-  // synchronously (openLane registers before its first await). That all happens
-  // after 'close' handlers return, so sweeping there would be undone by the very
-  // teardown that triggered it. 'closed' runs once the guests are already gone.
+  // guest-destroyed path -> the lane hand-off -> a BRAND NEW lane. That all
+  // happens after 'close' handlers return, so sweeping there would be undone by
+  // the very teardown that triggered it. 'closed' runs once the guests are
+  // already gone.
+  //
+  // Sweeping here is necessary but NOT sufficient on its own, and this comment
+  // used to claim otherwise ("created synchronously - openLane registers before
+  // its first await"). That stopped being true when the lane opener grew a jar
+  // seed: openLane now awaits BEFORE it constructs its window, so a lane whose
+  // hand-off starts during this teardown is invisible to the sweep below and
+  // would be built right after it. browser-lane-manager.ts closes that with a
+  // sweep generation openLane re-checks after each await.
   //
   // The accepted cost: on macOS the app outlives its window, so this ends an
   // agent's lane when the user closes the window rather than quitting. That is
@@ -871,12 +1200,71 @@ const createWindow = () => {
   // above zero, which makes app.on('activate') refuse to rebuild the window and
   // locks the user out of the app entirely.
   mainWindow.on('closed', () => {
+    // Sentry DESKTOP-J. Without this the variable keeps a DESTROYED
+    // BrowserWindow, so every bare `if (mainWindow)` in this file is a
+    // truthiness check that passes and then throws "Object has been destroyed"
+    // on the first method call. That is what killed the second-instance
+    // handler; the did-finish-load title/auto-open sends had the same latent
+    // bug. Nulling makes the plain check mean what it reads as.
+    //
+    // Cleared BEFORE destroyAllLanes(), and the ordering is free rather than
+    // load bearing: nothing the sweep reaches reads this variable. Lane
+    // teardown runs through the pane registry, and the hand-off it can trigger
+    // is async (that is the whole point of the sweep generation described
+    // above), so it resumes after this handler has returned, by which time the
+    // variable is null either way. Clearing first only means no code added to
+    // the sweep later can see the destroyed window.
+    //
+    // Identity-checked so a closing window can only ever clear ITS OWN
+    // reference. Electron fires 'closed' during destroy and createWindow
+    // refuses to build while a live window exists, so a stale 'closed' cannot
+    // outlive a rebuild today - but an unconditional null here would blank a
+    // freshly built window if that ever stopped holding.
+    if (mainWindow === createdWindow) mainWindow = null;
     destroyAllLanes();
   });
+
+  // Windows has no powerMonitor 'shutdown' event (Linux/macOS only). An OS
+  // shutdown/restart/log-off there is signaled via this BrowserWindow event
+  // instead. Route it through the same synchronous shutdown flush as
+  // before-quit / SIGINT/SIGTERM so a session killed by the OS still gets a
+  // closing event instead of a stale one.
+  //
+  // Electron on this event: "Once this event fires, there is no way to prevent
+  // the session from ending." So unlike the macOS/Linux powerMonitor path, this
+  // quit cannot be held for the PTY exit-callback drain, and the flag disarms
+  // it. That asymmetry is the whole reason the two routes are wired differently.
+  //
+  // Attached HERE, per window, rather than once in the whenReady body: a
+  // rebuilt window (activate, or a second-instance that found no window) would
+  // otherwise have no session-end hook at all, so a later logout would leave
+  // osShutdownCannotBeDelayed false and the before-quit drain would hold the
+  // quit during an OS shutdown - the one thing
+  // .claude/rules/synchronous-shutdown.md says it never does.
+  if (process.platform === 'win32') {
+    mainWindow.on('session-end', () => {
+      osShutdownCannotBeDelayed = true;
+      performShutdown();
+    });
+  }
 
   // Register IPC handlers early so speculative preloading (below) can use them.
   // Idempotent: on macOS dock re-activation, the guard in registerAllIpc()
   // updates the window reference without re-registering handlers.
+  //
+  // The handle must have SETTLED first, or the context is built with no route
+  // to the MCP server. The startup gate guarantees that on every normal path;
+  // the one exception is the degraded-startup escape hatch (the whenReady
+  // .catch below), where a throw before the MCP block leaves it unsettled.
+  // Report rather than throw: throwing here would destroy the very escape
+  // hatch that produced this window.
+  if (!mcpServerSettled) {
+    console.error('[APP] createWindow ran before the MCP server handle settled');
+    trackEvent('app_error', {
+      source: 'createWindowBeforeMcpSettled',
+      message: 'createWindow ran before startMcpHttpServer settled',
+    });
+  }
   registerAllIpc(mainWindow, mcpServerHandle);
 
   // Native right-click context menu (Copy / Paste / Select All).
@@ -928,6 +1316,50 @@ const createWindow = () => {
       reason: details.reason,
       exitCode: details.exitCode,
     });
+
+    // DESKTOP-16: an OOM/crashed renderer is usually the HOST running out of
+    // memory around us, not a bug on the page (see host-memory.ts's header).
+    // Agents live in main - a PTY survives a renderer death untouched - so
+    // recovering costs the user a repaint, never their work. Reload instead
+    // of leaving a dead, blank window with no explanation.
+    if (!isRecoverableRendererDeath(details.reason)) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+
+    if (rendererReloadGate.tryReload()) {
+      if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+        mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+      } else {
+        mainWindow.loadFile(resolveRendererIndexPath(MAIN_WINDOW_VITE_NAME));
+      }
+      return;
+    }
+
+    // Past the bound: a fresh renderer died too, so reloading again would
+    // just spin. Say so, with the last known headroom, rather than leaving a
+    // blank window with nothing to explain it. Suppressed under E2E, where a
+    // modal has nobody to click it.
+    if (isE2ETest) return;
+    const sample = getLastHostMemorySample();
+    const detail = [
+      `The window crashed (${details.reason}) and could not recover after `
+        + `${RENDERER_RELOAD_MAX} attempts in ${RENDERER_RELOAD_WINDOW_MS / 60_000} minutes.`,
+      formatHostMemoryDetailLine(sample),
+      'Your agents are still running in the background. Restart Kangentic to reconnect to them.',
+    ].filter((line): line is string => line !== null).join('\n\n');
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const options: Electron.MessageBoxOptions = {
+      type: 'error',
+      title: 'Kangentic',
+      message: "Kangentic's window stopped responding",
+      detail,
+      buttons: ['OK'],
+    };
+    void (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)).catch(
+      (dialogError) => {
+        // A dialog that cannot open must not become the crash it was reporting.
+        console.error('[APP] Failed to show the renderer-recovery-failed dialog:', dialogError);
+      }
+    );
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -944,7 +1376,16 @@ const createWindow = () => {
   // IPC handlers were registered earlier in this function (registerAllIpc),
   // and Electron queues any webContents.send() calls until the renderer is ready.
   const cwd = getCwdArg();
-  const projectPath = cwd || getLastOpenedProject()?.path || null;
+  // Softened because this line is where DESKTOP-9 threw. It is the first
+  // global-database touch on the whole boot path, it sits BELOW loadURL, and a
+  // synchronous throw here took initUpdater and initAnnouncements down with it.
+  // The startup gate above should mean the database is already proven readable,
+  // but an antivirus scan or a sync lock is intermittent by nature and can
+  // arrive in between. Degrading to "no last project" opens the app on the
+  // project picker, which is a far better answer than a dead startup.
+  const projectPath = cwd
+    || softly('lastOpenedProject', null, () => getLastOpenedProject()?.path ?? null)
+    || null;
   const preloadPromise = (async () => {
     // Dev-only ephemeral: open isolated CLONES of the worktree, never the worktree
     // itself, so nothing the preview does (agents, edits, commits) can reach the
@@ -1039,10 +1480,13 @@ const createWindow = () => {
       // disk). Surface it to the renderer so the "Project Folder Not
       // Found" dialog offers "Locate Folder..." instead of a dead board.
       // Electron queues the send until the renderer is ready.
-      if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && mainWindow && !mainWindow.isDestroyed()) {
-        const lastOpened = getLastOpenedProject();
+      if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && !createdWindow.isDestroyed()) {
+        // Softened for the same reason as the read above: this one sits inside
+        // a catch, so a database throw here would replace a recoverable
+        // "Locate Folder..." prompt with an unhandled rejection.
+        const lastOpened = softly('lastOpenedProject', undefined, () => getLastOpenedProject());
         if (lastOpened && path.resolve(lastOpened.path) === path.resolve(projectPath)) {
-          mainWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
+          createdWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
         }
       }
       console.error('[APP] Failed to preload project:', err);
@@ -1053,35 +1497,35 @@ const createWindow = () => {
   mainWindow.webContents.on('did-finish-load', async () => {
     mark('did_finish_load');
 
-    // Set window title to include worktree name so the taskbar entry
-    // is distinguishable from the main project window.
-    if (cwd && mainWindow) {
-      const worktreeMatch = cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/);
-      if (worktreeMatch) {
-        // A preview window gets the task's own `#<id> - <title>` label, with no
-        // app-name prefix: Windows already groups these thumbnails under
-        // Kangentic, so repeating it only pushed the part that identifies the
-        // window past the edge of the thumbnail. The number alone was not enough
-        // either - it still meant scanning the board to learn which task it was.
-        // Same string the title-bar pill renders, so the two cannot drift.
-        //
-        // Outside preview (or when resolution missed), keep the app-name form:
-        // there the title is the only thing distinguishing a worktree run from
-        // the main window. Current worktree folders are the task's display_id;
-        // folders created before that scheme keep their `<slug>-<shortId>` name,
-        // so prefix the numeric form to stop it reading as a window index.
-        const folderName = worktreeMatch[1];
-        const folderLabel = /^\d+$/.test(folderName) ? `#${folderName}` : folderName;
-        const previewLabel = getPreviewTaskTitle();
-        mainWindow.setTitle(previewLabel ?? `Kangentic - ${folderLabel}`);
-      }
+    // Set the window title so the taskbar entry says which build this is and, for a
+    // worktree run, which worktree. One computed string (computeWindowTitle,
+    // window-utils.ts), one setTitle call, so the dev marker cannot drift between the
+    // worktree and non-worktree paths. A dev build marks itself here the same way the
+    // in-app wordmark does, so the taskbar entry and the window chrome agree about which
+    // instance this is when a packaged build is open alongside `npm start`.
+    //
+    // The __KANGENTIC_DEV__ ternary stays INLINE here rather than moving into
+    // computeWindowTitle: esbuild only folds this reference (and drops the "(dev)"
+    // string literal from the production bundle via dead-code elimination) at the
+    // point __KANGENTIC_DEV__ itself is referenced. Passing a boolean into a separate
+    // module's function would ship the literal, dead but present, in every prod build.
+    // For the MAIN bundle __KANGENTIC_DEV__ means "dev tooling compiled in"
+    // (scripts/dev.js sets it; scripts/build.js only under KANGENTIC_BUILD_DEV=1).
+    //
+    // Set from `did-finish-load`, after Chromium has applied index.html's <title>, so
+    // this wins. The main window does not preventDefault() on 'page-title-updated'
+    // (unlike window-open-policy.ts for popups), so a renderer-side document.title write
+    // would silently clobber it. Nothing in the main-window tree writes one.
+    if (mainWindow) {
+      const appLabel = __KANGENTIC_DEV__ ? 'Kangentic (dev)' : 'Kangentic';
+      mainWindow.setTitle(computeWindowTitle(appLabel, cwd, getPreviewTaskTitle));
     }
 
     // Await the preload that started during createWindow -- typically already resolved
     const project = await preloadPromise;
     finishStartupTimer();
-    if (project && mainWindow) {
-      mainWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
+    if (project && !createdWindow.isDestroyed()) {
+      createdWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
     }
 
     // Activate all other projects' sessions in the background.
@@ -1095,6 +1539,41 @@ const createWindow = () => {
         .finally(() => { endPhase('activateAllProjects'); });
     }, 5000);
   });
+};
+
+/**
+ * Rebuild the main window after it was closed while the app stayed alive, and
+ * re-point the two module-level window refs that createWindow does not own.
+ *
+ * Shared by the only two paths that may rebuild - the macOS 'activate' dock
+ * click and a 'second-instance' launch that finds no window - because forgetting
+ * either update call leaves that module holding a destroyed window, silently.
+ *
+ * NOT initUpdater / initAnnouncements: neither is idempotent, which is why the
+ * whenReady body calls those once and everything afterwards only re-points.
+ * A rebuilt window therefore inherits the gap already documented on the
+ * whenReady .catch path.
+ */
+const rebuildMainWindow = () => {
+  // try/finally for the same reason the whenReady body uses one: createWindow
+  // can throw BELOW `new BrowserWindow` (that is what DESKTOP-3/4 was, a
+  // database throw after loadURL), which leaves a live window whose updater and
+  // announcements refs still point at the destroyed one. Without the finally
+  // the throw skips the re-point entirely, and both callers are raw Electron
+  // event handlers, so it is the process-level uncaughtException hook that
+  // catches it and this function never resumes.
+  //
+  // The guard inside covers the other order: a throw at construction leaves
+  // mainWindow null, and `mainWindow!` would hand null to a parameter typed
+  // BrowserWindow.
+  try {
+    createWindow();
+  } finally {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      updateUpdaterWindow(mainWindow);
+      updateAnnouncementsWindow(mainWindow);
+    }
+  }
 };
 
 // Replace the default application menu with a minimal one.
@@ -1127,6 +1606,21 @@ app.whenReady().then(async () => {
   // removal path can run un-notified.
   setWorktreeRemovedListener(notifyAdaptersWorktreeRemoved);
 
+  // Symmetric BEFORE hook: release every fs.watch handle we hold under a
+  // worktree ahead of deleting it. On Windows a directory watch whose target is
+  // deleted emits `rename` at ~150k events/sec forever, with no `error` event,
+  // stopping only on close() - and an open handle inside the tree is also what
+  // the removal retry / process-reap / husk machinery exists to fight.
+  //
+  // Both DiffWatcher instances have to be released: the bridge deliberately
+  // owns one separate from the IPC context's, so releasing either alone leaves
+  // half the handles armed over a deleted directory.
+  setWorktreeRemovingListener(async (worktreePath: string) => {
+    const removalContext = getOptionalIpcContext();
+    removalContext?.diffWatcher.releaseUnder(worktreePath);
+    removalContext?.mobileBridgeService.releaseDiffHandlesUnder(worktreePath);
+  });
+
   // Redundant AUMID call inside whenReady -- ensures the ID is set even if
   // Electron clears it during app initialization on some Windows versions.
   app.setAppUserModelId(
@@ -1146,6 +1640,84 @@ app.whenReady().then(async () => {
     console.warn('[APP] restoreShellEnv failed:', error);
   } finally {
     endPhase('restoreShellEnv');
+  }
+
+  // Prove the global index database is readable before startup builds anything
+  // on top of it (Sentry DESKTOP-9/A/B). SQLITE_IOERR there is environmental -
+  // an antivirus scan, a OneDrive or Dropbox sync lock, failing storage - and
+  // it used to surface as an unhandled rejection plus a renderer that got a
+  // stack trace where a message belonged.
+  //
+  // Placed EARLY, not next to createWindow(), for two reasons: the user sees
+  // the dialog before the MCP server's multi-second startup rather than after
+  // it, and proving the database readable before any window exists removes the
+  // whole "renderer races a startup that died half way through" scenario for
+  // this cause.
+  //
+  // Note this makes the global database open eagerly on every boot. It used to
+  // be opened lazily at the first getLastOpenedProject() call, which
+  // short-circuits whenever --cwd is passed, so preview and worktree dev runs
+  // never touched it at all.
+
+  // The notifier is what softly() reaches for when a global read degrades while
+  // the app is already running. The Sentry report is debounced, because softly()
+  // calls this on EVERY notifying failure and the renderer re-reads project:list
+  // on each project switch and HMR re-sync. An unreadable database is one
+  // condition, not one event per read, so an undebounced report would send a
+  // burst of identical events for a fault Sentry already has.
+  let globalDbFailureReported = false;
+  setGlobalDbFailureNotifier((error, operation) => {
+    if (!globalDbFailureReported) {
+      globalDbFailureReported = true;
+      reportHandledError(error, { source: 'global_db_read', operation });
+    }
+    // mainWindow is read at CALL time, not registration time: this runs before
+    // createWindow, so it is still null here and holds the real window by the
+    // time a read can degrade.
+    notifyGlobalDbUnavailable(error, operation, mainWindow);
+  });
+
+  // A sync write to config or one of the other small per-machine/per-project
+  // state files failed (DESKTOP-14/DESKTOP-13: the data directory itself went
+  // unwritable, e.g. a relocated userData on a removable volume). The Sentry
+  // report is unconditional (write-failure-notice.ts latches it once per
+  // source); the toast is suppressed on the way out, matching notifySpawnBlocked
+  // and notifySpawnWarning - a quit that closes the window mid-flush must not
+  // try to push to a renderer that is tearing down. mainWindow is read at CALL
+  // time, same reason as the DB notifier above: this runs before createWindow.
+  setSyncWriteFailureNotifier((message) => {
+    if (isShuttingDown()) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    sendToRenderer(mainWindow, IPC.CONFIG_WRITE_FAILED, message);
+  });
+  phase('ensureGlobalDbReadable');
+  const globalDbReady = await ensureGlobalDbReadable();
+  endPhase('ensureGlobalDbReadable');
+  if (!globalDbReady.ok) {
+    // Count it. Handling this failure must not also make it invisible: the
+    // whole cluster was noticed only because it reached Sentry as an unhandled
+    // rejection. Aptabase rather than Sentry, matching the app_error sources
+    // around it, because the cause is environmental and the user has already
+    // been shown a dialog naming it.
+    trackEvent('app_error', {
+      source: 'globalDbUnreadable',
+      message: sanitizeErrorMessage(
+        globalDbReady.error instanceof Error
+          ? globalDbReady.error.message
+          : String(globalDbReady.error),
+      ),
+    });
+    // exit, not quit. The user chose Quit before registerAllIpc ran, so there
+    // is no IPC context, no window, no PTY and no open database to tear down -
+    // and performShutdown's first act is to reach for the board config manager,
+    // which throws "IPC not initialized" and aborts the rest of the teardown.
+    // app.exit(0) is what the single-instance-lock bail above already uses for
+    // the same "give up before startup built anything" case.
+    //
+    // The gate stays shut deliberately: no window, and no dock-click recovery
+    // into a state that cannot work.
+    app.exit(0);
+    return;
   }
 
   // Fix node-pty spawn-helper permissions on macOS before any PTY spawns.
@@ -1211,6 +1783,9 @@ app.whenReady().then(async () => {
     // Continue without it -- agents will see "Unauthorized" or "Connection
     // refused" but the rest of the app stays functional.
   }
+  // Settled either way: a handle on success, a deliberate null on failure.
+  // Set once here, after the try/catch, so both paths are covered in one place.
+  mcpServerSettled = true;
 
   // Grant the first-party renderer the web-platform permissions it actually uses:
   // 'media' (getUserMedia microphone access for voice-to-text dictation) and the
@@ -1231,38 +1806,154 @@ app.whenReady().then(async () => {
     return isFirstPartyPermissionAllowed(permission);
   });
 
-  createWindow();
-  initUpdater(mainWindow!);
-  initAnnouncements(mainWindow!);
+  // Lifetime usage flags (onboarding milestones, feature first-use, last-run
+  // version) live beside the client-id file in the global config dir. Loaded
+  // BEFORE createWindow(): registerAllIpc (inside it) attaches the
+  // session-changed listener whose trackMilestone('first_spawn') silently
+  // no-ops until these flags load, and startup session recovery can reach
+  // 'running' before post-window init would have run. Loading also arms
+  // update_outcome: an applied update or rollback is detected as a version
+  // change between runs.
+  initUsageAnalytics(path.join(PATHS.configDir, 'analytics-usage.json'));
+  trackUpdateOutcome(app.getVersion());
 
-  // Windows has no powerMonitor 'shutdown' event (Linux/macOS only). An OS
-  // shutdown/restart/log-off there is signaled via this BrowserWindow event
-  // instead. Route it through the same synchronous shutdown flush as
-  // before-quit / SIGINT/SIGTERM so a session killed by the OS still gets a
-  // closing event instead of a stale one.
-  if (process.platform === 'win32') {
-    mainWindow!.on('session-end', () => {
-      performShutdown();
-    });
+  // The previous run's uptime and exit kind, read now and reported on
+  // app_launch below; this run's record starts at zero and is checkpointed
+  // every minute from here (analytics/run-uptime.ts says why it is its own
+  // file and why every write is synchronous). unref'd so the interval never
+  // holds the loop at quit, and cleared in clearPendingTimers regardless so no
+  // tick fires mid-shutdown. Started before the awaited client-id resolution
+  // below so a slow lookup cannot delay the first checkpoint.
+  initRunUptimeTracking(RUN_UPTIME_FILE_PATH, appLaunchTime);
+  runUptimeCheckpointInterval = setInterval(() => checkpointRunUptime(), RUN_UPTIME_CHECKPOINT_INTERVAL_MS);
+  runUptimeCheckpointInterval.unref();
+
+  // Host memory pressure sampling (Sentry DESKTOP-16): armed here, before
+  // createWindow()/registerAllIpc() below, but its first real tick is 60s
+  // away - by then mainWindow and the session manager both exist, the same
+  // ordering the heartbeat and run-uptime timers already rely on. The
+  // sampler itself is synchronous and side-effect-free
+  // (`process.getSystemMemoryInfo()`), so arming it this early is harmless
+  // even though nothing reads a sample until the first tick.
+  stopHostMemorySampler = startHostMemorySampler({
+    // getSessionManager() throws if registerAllIpc() has not run yet; that
+    // should never be true by the time a tick fires 60s+ after this is
+    // armed, but the fallback keeps a degenerate early-startup failure from
+    // becoming a recurring uncaught-exception report every tick.
+    getActiveAgentCount: () => {
+      try {
+        return getSessionManager().getSessionCounts().active;
+      } catch {
+        return 0;
+      }
+    },
+    onSample: (sample) => setHostMemoryContext(sample),
+    onPressure: (sample, activeAgentCount) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send(IPC.HOST_MEMORY_PRESSURE, { sample, activeAgentCount });
+    },
+    onRecovery: (sample) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send(IPC.HOST_MEMORY_RECOVERED, { sample });
+    },
+  });
+
+  // This span MUST stay one unbroken synchronous block. createWindow() calls
+  // mainWindow.loadURL() internally, so the renderer starts loading before
+  // initUpdater/initAnnouncements have registered their channels; only the
+  // absence of an await here guarantees the renderer cannot reach its first
+  // invoke until they have. Adding an await in this span re-opens DESKTOP-3/4
+  // from the whenReady path itself, which the static scan in
+  // tests/unit/startup-gate.test.ts exists to catch.
+  //
+  // The finally covers the OTHER way to break the same block: a THROW. That is
+  // what the Windows DESKTOP-3/4 event was. createWindow() reached
+  // getLastOpenedProject() below loadURL, the global database threw
+  // SQLITE_IOERR, and the two registrations plus the gate open never ran - so
+  // a live renderer invoked announcements:get with nobody listening. An await
+  // scan cannot see that; the finally makes it structurally impossible.
+  // Neither init is idempotent, and a finally runs exactly once, so this is
+  // safe. With mainWindow still null the throw landed before the window
+  // existed, there is no renderer to confuse, and the whenReady .catch below
+  // handles it as before.
+  try {
+    createWindow();
+  } finally {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      initUpdater(mainWindow);
+      initAnnouncements(mainWindow);
+    }
+    // Open the gate: from here an activate event may rebuild the window. Before
+    // this point the module-scope activate handler is a no-op, so a macOS
+    // launch-time activate can no longer race ahead of the registrations above.
+    markStartupComplete();
   }
+
+  // The Windows 'session-end' hook is attached per window inside createWindow,
+  // so a rebuilt window keeps it too.
 
   // System suspend fixes the stale-last-event case where the process is
   // killed while asleep before it can flush anything: emit one heartbeat
   // (gated the same as the periodic one, so an idle app going to sleep sends
-  // nothing) right before the system goes down. Not a close event; the app
-  // keeps running once the system resumes. Registered before the awaited
-  // client-id resolution below so a slow lookup can never delay it.
+  // nothing) right before the system goes down, and checkpoint this run's
+  // uptime so a machine that never wakes (a dead battery, a forced power-off
+  // while asleep) still reports the run's duration on the next launch. Not a
+  // close event; the app keeps running once the system resumes. Registered
+  // before the awaited client-id resolution below so a slow lookup can never
+  // delay it.
   powerMonitor.on('suspend', () => {
     trackHeartbeat();
+    checkpointRunUptime();
+  });
+
+  // The mobile bridge's relay sockets do not survive a sleep: the relay's
+  // keepalive reaps a peer that misses one pong, and a socket the relay
+  // reaped while the machine was away still reads ESTABLISHED to this
+  // process afterwards, with nothing to tell the bridge (measured on
+  // 2026-09-18 after a router restart: four such sockets, 31 minutes). On
+  // resume each roster session redials or probes on its own evidence (a
+  // session with no phone attached redials at once; one whose phone was
+  // present is probed, since 'resume' also fires after a standby short
+  // enough that the socket survived); an unlock is only a hint, so it sends
+  // one presence probe and lets the session's own budget decide. Both are
+  // no-ops with the bridge disabled (no sessions), and neither touches an
+  // in-flight pairing. Electron emits 'unlock-screen' on Windows and macOS
+  // only; Linux recovers a zombie socket through 'resume', the rekey tick,
+  // and the spent-budget redial alone.
+  powerMonitor.on('resume', () => {
+    getOptionalIpcContext()?.mobileBridgeService.resumeAllSessions('system resumed from sleep');
+  });
+  powerMonitor.on('unlock-screen', () => {
+    getOptionalIpcContext()?.mobileBridgeService.probeAllPresence('screen unlocked');
   });
 
   // OS-initiated shutdown/reboot bypasses before-quit entirely on Linux/macOS
   // (Windows's equivalent is the BrowserWindow 'session-end' handler above).
-  // Route it through the same flush so an abrupt OS shutdown still records a
-  // closing event instead of leaving a stale last event.
+  // Route it through the same flush so an OS shutdown still suspends the
+  // sessions and records this run's clean exit (the run-uptime record the next
+  // launch reports) instead of leaving the run to read as abrupt.
+  //
+  // Unlike Windows session-end, Electron documents a preventDefault() here that
+  // asks the OS to delay shutdown so the app can exit cleanly, with the app
+  // expected to quit promptly afterwards. Taking it is what lets the following
+  // before-quit run the PTY exit-callback drain: without it, every reboot with
+  // a live PTY killed the children and then raced node-pty's exit callback
+  // against node::Stop() (Sentry DESKTOP-E). performShutdown() stays as the
+  // guaranteed flush rather than relying on app.quit() reaching before-quit,
+  // so a blocked quit cannot lose the exit record.
+  //
+  // Electron's typings declare this listener as () => void even though its docs
+  // document the event, so the parameter is declared here rather than inherited.
+  // It needs no assertion: an optional parameter already satisfies () => void,
+  // since assignability counts required parameters, not total ones. Optional-
+  // chained so a runtime that passes no event degrades to the undelayed path.
   if (process.platform !== 'win32') {
-    powerMonitor.on('shutdown', () => {
-      performShutdown();
+    powerMonitor.on('shutdown', (event?: ElectronEvent) => {
+      event?.preventDefault?.();
+      // The before-quit that follows drains from the module-level report, so a
+      // young session's kill may ride that drain's timer here too.
+      performShutdown({ allowGrace: true });
+      app.quit();
     });
   }
 
@@ -1273,13 +1964,182 @@ app.whenReady().then(async () => {
     path.join(PATHS.configDir, 'analytics-client-id.json')
   );
   setAnalyticsClientId(clientId);
+  // Same anonymous id as the Sentry user id, so issues carry an affected-
+  // installs count (no-op unless error reporting initialized).
+  setErrorReportingUser(clientId);
+
+  const previousRunProps = previousRunLaunchProps();
+
+  // A GPU health escalation (repeated GPU process deaths within one launch,
+  // possibly ending in the browser process being killed - gpu-health.ts)
+  // latches to disk rather than reporting live, because LOG(FATAL) can kill
+  // the process before an async Sentry POST queued at that moment would ever
+  // complete. Report it now instead, on the launch that follows. Must run
+  // AFTER setErrorReportingUser above (the install id is what correlates
+  // this with a minidump of the same crash) and after initRunUptimeTracking
+  // (previousRunProps reads that module's state); app.getGPUFeatureStatus()
+  // needs the app ready, which this whole block already is. Wrapped
+  // defensively so a telemetry-only failure here can never disrupt startup.
+  //
+  // Reported once per escalation: cleared before the report, so a run with
+  // error reporting OFF (the kill switch, or KANGENTIC_ERROR_REPORTING=0)
+  // still consumes it silently rather than queuing it for a later launch
+  // that might have reporting on. That loses only the Sentry issue - the
+  // local crash JSONs under .kangentic/logs/crashes/ and the Aptabase
+  // gpu_process_gone count exist independent of this report.
+  try {
+    const pendingGpuEscalation = readPendingGpuEscalation(GPU_HEALTH_FILE_PATH);
+    // A record THIS run wrote is not the previous run's news. The writer is
+    // installed at module scope above; this block runs after createWindow and
+    // an await, so a GPU crash-looping from startup writes into that gap.
+    // Without this guard the same run reads it, clears it, and reports it,
+    // with the async Sentry POST racing the LOG(FATAL) about to kill the
+    // process - and the next launch then finds nothing pending. Leave it on
+    // disk for the launch that can actually deliver it.
+    if (pendingGpuEscalation && !isEscalationFromCurrentRun(pendingGpuEscalation, PROCESS_START_ISO)) {
+      const gpuReportContext = {
+        previousRunExit: (previousRunProps.lastRunExit as string | undefined) ?? null,
+        lastKnownAliveAt: previousRunLastAliveAt(),
+      };
+      const killedTheLastRun = isDeathNearRunEnd(pendingGpuEscalation, gpuReportContext);
+
+      // Persist what the module-scope decision already engaged, so every
+      // later launch reads the setting instead of re-deriving it from a
+      // record that is about to be cleared. Only ever sets 'off': the way
+      // back is the user's, and `graphicsAccelerationOffBy` is what stops a
+      // later failure rewriting a choice they made themselves.
+      if (graphicsMode.engagedNow) {
+        // Through the IPC context's manager, NOT windowConfigManager. By this
+        // point registerAllIpc has built a second ConfigManager that loaded
+        // and CACHED config.json, and every later write in the app goes
+        // through that one (window bounds, the settings panel). Saving here on
+        // the module-scope manager writes the key to disk and then loses it to
+        // the very next bounds save, which rewrites the file from the other
+        // manager's stale cache. Caught in /preview: safe mode engaged and
+        // toasted correctly, and the setting read 'on' afterwards - so the
+        // downgrade was a one-shot and the next launch would have gone
+        // straight back to hardware and died again.
+        const configManager = getOptionalIpcContext()?.configManager ?? windowConfigManager;
+        configManager.save({ graphicsAccelerationEnabled: false, graphicsAccelerationOffBy: 'app' });
+      }
+      // Independent of Sentry on purpose: reportHandledError is a no-op when
+      // reporting is off, and the user with telemetry disabled is exactly the
+      // one who would otherwise get no explanation at all.
+      if (killedTheLastRun) pendingGpuNotice = true;
+
+      // Compare-and-clear: a crash loop can write a FRESH record between the
+      // read above and this call, and an unconditional unlink would take it.
+      clearGpuEscalation(GPU_HEALTH_FILE_PATH, { onlyIfLastAt: pendingGpuEscalation.lastAt });
+
+      // The one getGPUInfo call in the whole path. It names the machine's
+      // actual graphics stack, which is the context every triage of this
+      // crash class has so far lacked.
+      //
+      // RACED AGAINST A TIMER, not just `.catch`ed. Electron only promises
+      // complete GPU info once `gpu-info-update` has fired, and this call
+      // happens on exactly the machines whose GPU is broken - including one
+      // just started in software mode with --in-process-gpu. A rejection is
+      // handled; a promise that never settles would strand the rest of this
+      // whenReady handler (app_launch, the settings snapshot, everything
+      // after) with the window already up and nothing visibly wrong. That
+      // failure would be invisible AND scoped to the users this feature
+      // exists for, which is the worst combination available.
+      // The loser's timer is cleared rather than left to fire into an
+      // already-settled promise. Resolving twice is harmless, but an
+      // uncleared handle keeps the event loop alive for up to the full
+      // timeout, and this block runs on the quit-sensitive startup path.
+      let gpuInfoTimer: NodeJS.Timeout | undefined;
+      const gpuInfoOnReport = await Promise.race([
+        app.getGPUInfo('complete').catch(() => null),
+        new Promise((resolve) => {
+          gpuInfoTimer = setTimeout(() => resolve(null), GPU_INFO_TIMEOUT_MS);
+        }),
+      ]).finally(() => {
+        if (gpuInfoTimer) clearTimeout(gpuInfoTimer);
+      });
+
+      // Not every pending record earns a Sentry issue. A lone recoverable
+      // death that the run then survived is DESKTOP-15's shape, and #665
+      // filtered it deliberately; it is still consumed above rather than
+      // left to accumulate.
+      //
+      // A record with no deaths at all is a fallback that no GPU exit ever
+      // announced: a launch-failure ladder (DESKTOP-W), which Electron never
+      // reports to JS. Its own message keeps it out of the crash-loop issue,
+      // because the two shapes need different triage.
+      const gpuReportMessage = pendingGpuEscalation.count > 0
+        ? `GPU process exited repeatedly (reason ${pendingGpuEscalation.reason}, exit code ${pendingGpuEscalation.exitCode ?? 'unknown'})`
+        : 'GPU left hardware acceleration with no GPU process exit reported';
+      if (shouldReportEscalation(pendingGpuEscalation, gpuReportContext)) reportHandledError(
+        new Error(gpuReportMessage),
+        {
+          source: 'gpu_process',
+          reason: pendingGpuEscalation.reason,
+          exitCode: String(pendingGpuEscalation.exitCode ?? 'unknown'),
+          crashCount: String(pendingGpuEscalation.count),
+        },
+        // Content goes in a context, never a tag, matching restart-policy.ts.
+        // previousRunExit separates the two shapes seen so far: 'abrupt'
+        // means the escalating run ended in a browser-process kill
+        // (DESKTOP-W's shape); 'clean' or 'failsafe' means Chromium
+        // recovered on its own (DESKTOP-15's). TWO feature-status reads,
+        // deliberately not one: featureStatusAtEscalation is what Chromium's
+        // GPU mode was at the record's latest write, a death or a fallback
+        // (captured back then); featureStatusOnReport is what it is on THIS
+        // boot, which may already differ (a machine that recovers on its own,
+        // or one still stuck) - reporting only the live read would silently
+        // claim to describe the failure while actually describing whatever
+        // came up afterwards.
+        {
+          gpu_process: {
+            reason: pendingGpuEscalation.reason,
+            exitCode: pendingGpuEscalation.exitCode,
+            count: pendingGpuEscalation.count,
+            firstAt: pendingGpuEscalation.firstAt,
+            lastAt: pendingGpuEscalation.lastAt,
+            escalatedInVersion: pendingGpuEscalation.appVersion,
+            featureStatusAtEscalation: pendingGpuEscalation.featureStatus,
+            featureStatusOnReport: app.getGPUFeatureStatus(),
+            previousRunExit: previousRunProps.lastRunExit ?? 'unknown',
+            // The SEQUENCE, which is the thing a single end-state snapshot
+            // could never say: how Chromium walked its fallback ladder. Each
+            // entry names the rung its death left behind, so the death that
+            // triggered a fallback already reads the lower one. This is what
+            // the next occurrence needs for anyone to name a cause.
+            deaths: pendingGpuEscalation.deaths,
+            // Each step down the ladder that Chromium announced, which on a
+            // launch-failure ladder is the only trace of the incident. On
+            // Linux each step carries whether the GPU's zygote was alive.
+            modeChanges: pendingGpuEscalation.modeChanges,
+            gpuInfoOnReport: summarizeGpuInfo(gpuInfoOnReport),
+            killedTheLastRun,
+            softwareRenderingEngaged: graphicsMode.engagedNow,
+          },
+        },
+      );
+    }
+  } catch (error) {
+    console.error('[GPU-HEALTH] Failed to report a pending escalation:', error);
+  }
 
   // Fire app_launch event (analytics initialized before app.whenReady above).
   // trackEvent is a no-op if analytics is disabled, so no guard needed here.
-  // clientId is attached here only - the one authoritative per-launch install
-  // signal - not merged into every event (see analytics.ts).
-  trackEvent('app_launch', { platform: process.platform, arch: process.arch, clientId });
-  heartbeatInterval = setInterval(trackHeartbeat, 30 * 60 * 1000);
+  // clientId is attached explicitly here (the one authoritative per-launch
+  // install signal) and on the two lifetime-once events, never merged into
+  // every event (see analytics.ts). The previous run's uptime and exit kind
+  // ride along: there is no close event, because nothing sent from the quit
+  // path can land (see analytics/run-uptime.ts).
+  trackEvent('app_launch', {
+    platform: process.platform,
+    arch: process.arch,
+    clientId,
+    ...previousRunProps,
+  });
+  // Once per run: which global settings differ from their defaults. Reads the
+  // global config only, never a project's overrides, since there may be no
+  // project open at all; the manager idiom matches the other readers here.
+  trackSettingsSnapshot(getOptionalIpcContext()?.configManager ?? windowConfigManager);
+  heartbeatInterval = setInterval(trackHeartbeat, HEARTBEAT_INTERVAL_MS);
 
   // Load React DevTools extension in development (fire-and-forget, after window is visible)
   if (!app.isPackaged) {
@@ -1334,6 +2194,57 @@ app.whenReady().then(async () => {
       .catch((err) => console.error('[APP] Failed to prune stale worktree projects:', err))
       .finally(() => { endPhase('pruneStaleWorktreeProjects'); });
   }
+
+  // Reclaim orphaned embedded-Browser cookie jars left by deleted tasks and projects.
+  // Runs in PACKAGED builds too (jars accumulate for every user, holding live
+  // session cookies), unlike the dev-only prune above. Skipped for ephemeral
+  // preview instances (separate --user-data-dir) and E2E (launch-cost parity
+  // with the reaper skip). Fire-and-forget: work is bounded per directory by
+  // removeWithRetry, and the sweep abstains rather than over-delete on any fault.
+  if (!isEphemeral && !isE2ETest) {
+    phase('sweepBrowserPartitions');
+    sweepOrphanedBrowserPartitions(app.getPath('userData'))
+      .then((summary) => {
+        if (summary.removed.length > 0) {
+          console.log(`[browser-partition] startup sweep reclaimed ${summary.removed.length} jar(s).`);
+        }
+      })
+      .catch((err) => console.warn('[browser-partition] startup sweep failed:', err))
+      .finally(() => { endPhase('sweepBrowserPartitions'); });
+  }
+}).catch((error) => {
+  // Degraded-startup escape hatch. This body has several unguarded SYNCHRONOUS
+  // fs writes before createWindow (ensureSpawnHelperPermissions, the config
+  // save, initUsageAnalytics), and a read-only config dir or a full disk
+  // reaches them. Before the startup gate, an early throw still produced a
+  // window by accident, because the ungated activate handler fired on launch
+  // and saw a zero window count. The gate closes that path deliberately, so
+  // re-open it here or a startup failure becomes a dead dock icon.
+  //
+  // This catch intercepts the rejection before process.on('unhandledRejection')
+  // can, so the suppression filter has to be reapplied here or a benign stdio
+  // write error is echoed to the very TTY that produced it (see the comment on
+  // isSuppressibleUncaughtError). The source tag is deliberately distinct from
+  // that handler's, so a startup failure stays separable from an ambient one.
+  if (!isSuppressibleUncaughtError(error)) {
+    console.error('[APP] Startup failed:', error);
+    if (!isShuttingDown()) {
+      trackEvent('app_error', {
+        source: 'startupFailure',
+        message: sanitizeErrorMessage(error instanceof Error ? error.message : String(error)),
+      });
+    }
+  }
+  // Recovery is not automatic: the launch-time activate has already been
+  // dropped, so the window arrives on the user's next dock click. If the throw
+  // landed before createWindow, that window gets the bulk of its channels
+  // (registerAllIpc runs inside createWindow) but NOT the updater or
+  // announcements ones - neither init is idempotent, so they cannot be
+  // retried from here. A throw after initAnnouncements recovers fully.
+  //
+  // Unconditional, suppressed errors included: a gate left shut is a dock icon
+  // that never opens anything, which is worse than the error we just dropped.
+  markStartupComplete();
 });
 
 app.on('window-all-closed', () => {
@@ -1342,13 +2253,20 @@ app.on('window-all-closed', () => {
   }
 });
 
+// macOS fires 'activate' during LAUNCH as well as on a dock click, so this
+// handler is gated on the startup sequence having finished. Acting on the
+// launch-time event is what built the window mid-startup and let the renderer
+// invoke announcements channels that initAnnouncements had not registered yet
+// (Sentry DESKTOP-3 / DESKTOP-4). Dropping it loses nothing: the whenReady body
+// creates the window unconditionally.
 app.on('activate', () => {
-  if (isShuttingDown()) return;
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-    updateUpdaterWindow(mainWindow!);
-    updateAnnouncementsWindow(mainWindow!);
-  }
+  const shouldCreate = shouldCreateWindowOnActivate({
+    shuttingDown: isShuttingDown(),
+    startupComplete: isStartupComplete(),
+    openWindowCount: BrowserWindow.getAllWindows().length,
+  });
+  if (!shouldCreate) return;
+  rebuildMainWindow();
 });
 
 /** Send a heartbeat event with current session counts. Skipped when no
@@ -1364,26 +2282,6 @@ function trackHeartbeat(): void {
     queuedSessions: sessionManager.queuedCount,
     totalSessions: counts.total,
   });
-}
-
-/**
- * Fire-and-forget shutdown analytics. Attempts a final heartbeat (skipped by
- * the shouldEmitHeartbeat gate when no session is active, which is the common
- * idle-at-quit case), then always sends the app_close event. Aptabase's
- * "Avg. Duration" metric (time between first and last event in a session) is
- * still covered by app_close's own durationSeconds even when the heartbeat is
- * skipped.
- *
- * Wrapped in try-catch so analytics failures never prevent syncShutdownCleanup.
- */
-function trackShutdownAnalytics(): void {
-  try {
-    trackHeartbeat();
-    const durationSeconds = Math.round((Date.now() - appLaunchTime) / 1000);
-    trackEvent('app_close', { durationSeconds });
-  } catch {
-    // Analytics must never block shutdown cleanup
-  }
 }
 
 /** Build the shutdown dependencies from current module-level state. */
@@ -1408,15 +2306,36 @@ function getShutdownDependencies() {
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
       }
-      // Stop the background PR-refresh timer (also .unref()'d, but clear it
-      // explicitly so no tick fires mid-shutdown).
+      // The run-uptime checkpoint is .unref()'d, but a tick that fired after
+      // the exit record would be a no-op anyway; clear it so nothing runs
+      // mid-shutdown at all.
+      if (runUptimeCheckpointInterval) {
+        clearInterval(runUptimeCheckpointInterval);
+        runUptimeCheckpointInterval = null;
+      }
+      // Synchronous (clearInterval), so this needs no drain - see
+      // .claude/rules/synchronous-shutdown.md.
+      if (stopHostMemorySampler) {
+        stopHostMemorySampler();
+        stopHostMemorySampler = null;
+      }
+      // Stop the background PR-refresh and remote-fetch timers (both
+      // .unref()'d, but clear them explicitly so no tick fires mid-shutdown).
       prRefreshScheduler.stop();
+      gitFetchScheduler.stop();
       // Stop conversation-memory indexing synchronously: drop pending finalize
       // timers and abandon any in-flight sweep (recovered on next open).
       retrievalService.dispose();
       // Synchronously kill the line-count worker (if spawned); in-flight
       // counts abandon and their callers fall back to inline counting.
       lineCountClient.dispose();
+      // Synchronously kill the dictation worker (if spawned): cancels every
+      // in-flight session bookkeeping-side and kills the kangentic-dictation
+      // utilityProcess. This is the DESKTOP-X quit-path gap - the method
+      // existed and was already synchronous-shutdown safe, but nothing
+      // called it, so the worker (and any native async work it still held)
+      // rode the app's own teardown instead of being torn down first.
+      getOptionalIpcContext()?.transcriptionService.dispose();
       // Stop accepting new MCP requests synchronously. The server's close()
       // is non-blocking; in-flight requests are abandoned, which is fine
       // because they're idempotent (the agent will retry on reconnect or
@@ -1441,30 +2360,95 @@ function getShutdownDependencies() {
 }
 
 /**
+ * What the synchronous cleanup killed, consumed once by the before-quit
+ * handler's exit-callback drain. Its killedCount, not just its pids, decides
+ * whether the drain runs: a killed PTY whose child pid was unreadable has an
+ * exit callback in flight with nothing to probe.
+ */
+let ptyKillReport: PtyKillReport = { pids: [], killedCount: 0, deferredCount: 0 };
+/**
+ * Set by an OS shutdown the app cannot ask to be delayed: Windows
+ * 'session-end', which Electron documents as "once this event fires, there is
+ * no way to prevent the session from ending". A before-quit that follows one
+ * never holds the quit, because the drain would be running against an OS that
+ * is not waiting.
+ *
+ * The macOS/Linux powerMonitor 'shutdown' path is deliberately NOT here.
+ * Electron documents a preventDefault() on that event which asks the OS to
+ * delay shutdown so the app can exit cleanly, so that path takes it and then
+ * drains normally. Leaving it disarmed meant every macOS or Linux reboot with
+ * live PTYs raced node-pty's exit callback against node::Stop().
+ */
+let osShutdownCannotBeDelayed = false;
+
+/**
  * Shared synchronous shutdown flush: app quit (before-quit), SIGINT/SIGTERM,
  * and OS-initiated shutdown/reboot/log-off (powerMonitor 'shutdown' on
  * Linux/macOS, BrowserWindow 'session-end' on Windows) all route through
  * this. Idempotent via isShuttingDown: returns false (and does nothing) if
  * a shutdown is already in progress.
+ *
+ * `allowGrace` (default false) lets a young session's PTY kill ride the
+ * before-quit drain's timer (SessionManager.killAll). Only a route the drain
+ * follows may pass it: before-quit itself (unless a Windows session-end
+ * disarmed the drain) and the powerMonitor shutdown. The signal handlers and
+ * session-end call this bare, so nothing stays deferred on a route that
+ * exits without the loop. First caller wins: the route that starts the
+ * shutdown decides.
  */
-function performShutdown(): boolean {
+interface PerformShutdownOptions {
+  allowGrace?: boolean;
+}
+
+function performShutdown(options?: PerformShutdownOptions): boolean {
   if (isShuttingDown()) return false;
   setShuttingDown();
 
-  // Hard failsafe: if Electron's normal shutdown hangs, force-kill everything
-  startHardShutdownFailsafe();
+  // Hard failsafe: if Electron's normal shutdown hangs, force-kill everything.
+  // It overwrites the clean exit recorded below, so a quit that had to be
+  // force-killed reports as `failsafe` on the next launch, not `clean`.
+  startHardShutdownFailsafe(() => recordRunExit('failsafe'));
 
-  trackShutdownAnalytics();
+  // The only analytics in the quit path is this synchronous disk write: the
+  // next launch's app_launch reports this run's duration and that it ended
+  // cleanly. No network send from here can land (synchronous-shutdown.md rule
+  // 3; app_close used to be fired here and never arrived). Never throws, which
+  // matters because a throw would skip the cleanup that kills the PTYs.
+  recordRunExit('clean');
 
   // Synchronous cleanup - then let the quit proceed normally so Electron
   // tears down all Chromium child processes (GPU, utility, crashpad, etc.)
-  syncShutdownCleanup(getShutdownDependencies());
+  ptyKillReport = syncShutdownCleanup({
+    ...getShutdownDependencies(),
+    allowGrace: options?.allowGrace === true,
+  });
   return true;
 }
 
-app.on('before-quit', () => {
-  performShutdown();
-});
+// The synchronous cleanup, then the one sanctioned event.preventDefault() in
+// the quit path: a timer-bounded drain that lets node-pty dispatch the killed
+// children's exit callbacks while JS is still callable, then app.quit() again.
+// See pty/shutdown/exit-callback-drain.ts and
+// .claude/rules/synchronous-shutdown.md.
+app.on('before-quit', createBeforeQuitHandler({
+  // The drain runs after this pass unless a Windows session-end disarmed it,
+  // so a young session's kill may wait out its grace on the drain's clock.
+  performShutdown: () => performShutdown({ allowGrace: !osShutdownCannotBeDelayed }),
+  isOsInitiatedShutdown: () => osShutdownCannotBeDelayed,
+  getPtyKillReport: () => ptyKillReport,
+  drainPtyExitCallbacks: (report) => drainPtyExitCallbacks({
+    pids: report.pids,
+    killedCount: report.killedCount,
+    deferredCount: report.deferredCount,
+    isProcessAlive,
+  }),
+  hideAllWindows: () => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.hide();
+    }
+  },
+  requestQuit: () => app.quit(),
+}));
 
 // Handle force-close (Ctrl+C / SIGINT / SIGTERM) which may not fire before-quit
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

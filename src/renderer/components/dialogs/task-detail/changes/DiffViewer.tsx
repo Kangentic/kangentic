@@ -1,22 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
-import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical, Eye, UserRound } from 'lucide-react';
+import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye } from 'lucide-react';
+import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } from './DiffViewOptionsMenu';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
-import { useConfigStore } from '../../../../stores/config-store';
-import { useKeybinding } from '../../../../hooks/useKeybinding';
+import { shownTheme, useConfigStore } from '../../../../stores/config-store';
+import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { formatRelativeTime } from '../../../../lib/datetime';
-import { NAMED_THEMES } from '../../../../../shared/types';
 import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
 import {
+  clampDiffScrollTop,
   getSavedDiffScroll,
   makeDiffScrollKey,
   resolveDiffScrollAction,
   saveDiffScroll,
 } from '../../../../utils/diff-scroll-memory';
 import { copyDiffSelection } from '../../../../utils/diff-clipboard';
-import { selectDiffAlgorithmOptions } from './diff-render-options';
+import { monacoThemeForTheme, selectDiffAlgorithmOptions } from './diff-render-options';
 
 interface DiffViewerProps {
   original: string;
@@ -56,6 +57,15 @@ interface DiffViewerProps {
    * Defaults to true.
    */
   blameEligible?: boolean;
+  /**
+   * Whether Monaco's boot phase shows a spinner in the editor area. Defaults to
+   * true (the in-app panel). The per-file pop-out passes false: its host shows
+   * ONE full-body spinner until content arrives, and a second spinner centered
+   * in the editor area (below the toolbar) would visibly shift ~20px right
+   * before the diff paints - the indicator hides once instead, and Monaco boots
+   * against the plain editor background.
+   */
+  showEditorBootSpinner?: boolean;
 }
 
 const STATUS_LABELS: Record<GitDiffStatus, { label: string; colorClass: string }> = {
@@ -76,17 +86,6 @@ interface TrackedScroll {
   scrollLeft: number;
 }
 
-/** Shared styling for the diff toolbar buttons: a clear hover background (matching
- *  the rest of the app) and a brief press effect so a click visibly registers.
- *  `active` renders the pressed/selected state for toggles and the current view mode. */
-function toolbarButtonClass(active: boolean): string {
-  return `p-1.5 rounded transition active:scale-90 ${
-    active
-      ? 'bg-surface-raised text-fg'
-      : 'text-fg-muted hover:text-fg hover:bg-surface-hover'
-  }`;
-}
-
 export function DiffViewer({
   original,
   modified,
@@ -105,10 +104,12 @@ export function DiffViewer({
   worktreePath,
   projectPath,
   blameEligible = true,
+  showEditorBootSpinner = true,
 }: DiffViewerProps) {
-  const theme = useConfigStore((state) => state.config.theme);
-  const themeBase = NAMED_THEMES.find((namedTheme) => namedTheme.id === theme)?.base ?? 'dark';
-  const monacoTheme = themeBase === 'dark' ? 'vs-dark' : 'vs';
+  // The SHOWN theme, so a Theme tab hover preview re-skins the diff pane with the rest
+  // of the app instead of leaving it on the committed theme for the hover's duration.
+  const theme = useConfigStore(shownTheme);
+  const monacoTheme = monacoThemeForTheme(theme);
   const statusConfig = STATUS_LABELS[status];
 
   // Markdown files can flip from the Monaco diff to a rendered preview of their
@@ -123,7 +124,6 @@ export function DiffViewer({
 
   // Blame gutter: off by default, toggled per file (reset below on file switch).
   const [blameOn, setBlameOn] = useState(false);
-  const [blame, setBlame] = useState<GitBlameLine[] | null>(null);
   const blameDecorationsRef = useRef<MonacoEditorNamespace.IEditorDecorationsCollection | null>(null);
   const blameUnavailable = binary || status === 'D' || !blameEligible;
 
@@ -131,51 +131,55 @@ export function DiffViewer({
   // each file opens on its diff - like changeIndexRef / pendingRevealRef,
   // which also reset per file. DiffViewer is never re-keyed per file (Monaco
   // stays mounted), so the reset is manual. Adjust state during render
-  // (React's supported reset-on-prop-change pattern) rather than in an
-  // effect, so switching files never paints a frame of the previous file's
-  // preview or blame.
-  const previousFilePathRef = useRef(filePath);
-  if (previousFilePathRef.current !== filePath) {
-    previousFilePathRef.current = filePath;
+  // (React's supported reset-on-prop-change pattern, with the previous path
+  // held in state rather than a ref, which render may not read) rather than
+  // in an effect, so switching files never paints a frame of the previous
+  // file's preview or blame.
+  const [previousFilePath, setPreviousFilePath] = useState(filePath);
+  if (previousFilePath !== filePath) {
+    setPreviousFilePath(filePath);
     setShowMarkdownPreview(false);
     setBlameOn(false);
   }
 
-  // Fetch blame when toggled on. `cancelled` guards against a slow fetch
-  // landing after the user switched files or toggled blame off; the effect
-  // re-runs (cancelling the previous request) on any of those changes.
+  // Turn blame back off when it becomes unavailable (a binary/deleted file, or
+  // browsing a historical commit), so re-entering an eligible file or scope
+  // starts from the "off by default" state rather than a stale "on". The same
+  // render-time adjustment as the file-change reset above.
+  if (blameUnavailable && blameOn) setBlameOn(false);
+
+  // Fetch blame when toggled on. The result is stored with the key it was
+  // fetched for and `blame` is derived from it, so a switch of file or scope,
+  // or toggling blame off, reads as "no blame" at once without an effect
+  // having to clear anything; `cancelled` still stops a slow fetch from
+  // landing after the effect has re-run for a newer key.
+  const blameKey = JSON.stringify([worktreePath, projectPath, filePath]);
+  const [fetchedBlame, setFetchedBlame] = useState<{ key: string; lines: GitBlameLine[] } | null>(null);
+  const blame = blameOn && !blameUnavailable && fetchedBlame?.key === blameKey ? fetchedBlame.lines : null;
   useEffect(() => {
-    if (!blameOn || blameUnavailable) {
-      setBlame(null);
-      return;
-    }
+    if (!blameOn || blameUnavailable) return;
     let cancelled = false;
     window.electronAPI.git.blame({ worktreePath, projectPath, filePath })
       .then((result) => {
-        if (!cancelled) setBlame(result.lines);
+        if (!cancelled) setFetchedBlame({ key: blameKey, lines: result.lines });
       })
       .catch(() => {
-        if (!cancelled) setBlame([]);
+        if (!cancelled) setFetchedBlame({ key: blameKey, lines: [] });
       });
     return () => {
       cancelled = true;
     };
-  }, [blameOn, blameUnavailable, worktreePath, projectPath, filePath]);
+  }, [blameOn, blameUnavailable, worktreePath, projectPath, filePath, blameKey]);
 
-  // Turn blame back off when it becomes unavailable (a binary/deleted file, or
-  // browsing a historical commit), so re-entering an eligible file or scope
-  // starts from the "off by default" state rather than a stale "on".
-  useEffect(() => {
-    if (blameUnavailable) setBlameOn(false);
-  }, [blameUnavailable]);
-
-  // Diff-rendering preferences are single global config keys (the toolbar
-  // toggles and the Changes settings tab read and write the same keys), so the
+  // Diff-rendering preferences are single global config keys (the View options
+  // menu and the Changes settings tab read and write the same keys), so the
   // choices stick across every diff, all mount points, and restarts - exactly
-  // like the split/inline view mode.
+  // like the split/inline view mode. The menu owns the WRITES (see
+  // DiffViewOptionsMenu); these reads are the ones monaco itself needs.
   const ignoreWhitespace = useConfigStore((state) => state.config.diffIgnoreWhitespace);
   const collapseUnchanged = useConfigStore((state) => state.config.diffCollapseUnchanged);
-  const updateConfig = useConfigStore((state) => state.updateConfig);
+  const wrapLines = useConfigStore((state) => state.config.diffWrapLines);
+  const inlineWhenNarrow = useConfigStore((state) => state.config.diffUseInlineWhenNarrow);
 
   const diffEditorRef = useRef<MonacoDiffEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -197,23 +201,33 @@ export function DiffViewer({
   };
 
   const collapseUnchangedRef = useRef(collapseUnchanged);
-  collapseUnchangedRef.current = collapseUnchanged;
 
   // Mirror nav props into refs so the stable navigateChange callback and the
   // once-subscribed onDidUpdateDiff listener always read the latest values.
   const onCrossFileRef = useRef(onCrossFile);
-  onCrossFileRef.current = onCrossFile;
   const pendingChangeFocusRef = useRef(pendingChangeFocus);
-  pendingChangeFocusRef.current = pendingChangeFocus;
   const onPendingChangeFocusConsumedRef = useRef(onPendingChangeFocusConsumed);
-  onPendingChangeFocusConsumedRef.current = onPendingChangeFocusConsumed;
+  // Written on commit, in a layout effect, never during render (which the
+  // compiler rules forbid). The ordering the listeners need still holds: every
+  // layout effect of a commit runs before any passive effect of it, and
+  // @monaco-editor/react flushes new model content (firing onDidUpdateDiff and
+  // scroll events synchronously) from a passive effect, so these are current
+  // by the time that flush happens.
+  useLayoutEffect(() => {
+    collapseUnchangedRef.current = collapseUnchanged;
+    onCrossFileRef.current = onCrossFile;
+    pendingChangeFocusRef.current = pendingChangeFocus;
+    onPendingChangeFocusConsumedRef.current = onPendingChangeFocusConsumed;
+  });
 
-  // Mirror blame state into refs so the once-subscribed onDidUpdateDiff
-  // listener (below) always reads the latest values.
+  // Mirror the derived blame (null whenever the toggle is off or blame is
+  // unavailable) into a ref so the once-subscribed onDidUpdateDiff listener
+  // (below) always reads the latest value. Written on commit, in a layout
+  // effect that runs ahead of the passive effect below; never during render.
   const blameRef = useRef(blame);
-  blameRef.current = blame;
-  const blameOnRef = useRef(blameOn);
-  blameOnRef.current = blameOn;
+  useLayoutEffect(() => {
+    blameRef.current = blame;
+  });
 
   // Apply (or clear) the blame gutter as `before`-content decorations on the
   // modified editor: a fixed-width column at the start of each line reading
@@ -225,7 +239,7 @@ export function DiffViewer({
     const monacoInstance = monacoRef.current;
     if (diffEditor === null || monacoInstance === null) return;
     const modifiedEditor = diffEditor.getModifiedEditor();
-    const blameLines = blameOnRef.current ? blameRef.current : null;
+    const blameLines = blameRef.current;
     if (!blameLines) {
       blameDecorationsRef.current?.clear();
       return;
@@ -260,7 +274,7 @@ export function DiffViewer({
 
   useEffect(() => {
     applyBlameDecorations();
-  }, [blame, blameOn, applyBlameDecorations]);
+  }, [blame, applyBlameDecorations]);
 
   // Apply (or clear) the unchanged-region fold on the live editor. Monaco folds
   // only on a false->true transition of hideUnchangedRegions, so a diff that
@@ -355,14 +369,19 @@ export function DiffViewer({
     return true;
   }, [revealChangeLine]);
 
-  // Refs assigned during render so the once-subscribed Monaco event handlers
-  // always read the current file's values, even for scroll events the child
-  // DiffEditor fires synchronously while flushing new model content.
+  // Refs the once-subscribed Monaco event handlers read for the current file's
+  // values, even for scroll events the child DiffEditor fires synchronously
+  // while flushing new model content. Written in a layout effect, which runs
+  // before that flush (a passive effect in @monaco-editor/react) on every
+  // commit; see the nav refs above.
   const scrollMemoryKey = makeDiffScrollKey(scrollKey, filePath);
   const scrollMemoryKeyRef = useRef(scrollMemoryKey);
-  scrollMemoryKeyRef.current = scrollMemoryKey;
-  const contentMatchesRef = useRef(false);
-  contentMatchesRef.current = contentFilePath !== null && contentFilePath === filePath && !binary;
+  const contentMatches = contentFilePath !== null && contentFilePath === filePath && !binary;
+  const contentMatchesRef = useRef(contentMatches);
+  useLayoutEffect(() => {
+    scrollMemoryKeyRef.current = scrollMemoryKey;
+    contentMatchesRef.current = contentMatches;
+  });
 
   const lastScrollRef = useRef<TrackedScroll | null>(null);
   // Memory key still awaiting its initial positioning; null once consumed.
@@ -391,7 +410,19 @@ export function DiffViewer({
     const modifiedEditor = diffEditor.getModifiedEditor();
     pendingRevealRef.current = null;
     if (action.kind === 'restore') {
-      modifiedEditor.setScrollTop(action.position.scrollTop);
+      // Never hand Monaco an offset the current layout cannot reach. A diff
+      // editor's height depends on the alignment view zones, so the same file
+      // is shorter before its diff is computed and shorter again once
+      // unchanged regions fold - a position saved against a taller layout
+      // saturates at the bottom instead. scrollLeft is left unclamped: it does
+      // not feed the visible-line-range computation this guards.
+      modifiedEditor.setScrollTop(
+        clampDiffScrollTop(
+          action.position.scrollTop,
+          modifiedEditor.getScrollHeight(),
+          modifiedEditor.getLayoutInfo().height,
+        ),
+      );
       modifiedEditor.setScrollLeft(action.position.scrollLeft);
     } else if (action.kind === 'revealLineInCenter') {
       modifiedEditor.revealLineInCenter(action.lineNumber, monacoRef.current?.editor.ScrollType.Immediate);
@@ -428,6 +459,26 @@ export function DiffViewer({
   const handleEditorMount: DiffOnMount = useCallback((diffEditor, monacoInstance) => {
     diffEditorRef.current = diffEditor;
     monacoRef.current = monacoInstance;
+    // Keep the ORIGINAL editor wrappable. Monaco force-sets BOTH wordWrap overrides to
+    // 'off' on it whenever the diff renders inline ("never wrap hidden editor"), but its
+    // side-by-side branch restores only wordWrapOverride1, and override2 outranks
+    // override1 - so after any inline pass the LEFT pane never wraps again. Every narrow
+    // pane hits this, because Monaco collapses to inline on its own below its ~900px
+    // breakpoint. Clearing override2 is safe in both modes: while inline, override1 is
+    // still 'off' and keeps the hidden editor unwrapped.
+    // The first override is baked into the CONSTRUCTION options (Monaco measures a zero
+    // width before the first layout, so it builds the pair inline) and lands before this
+    // handler can listen, hence the direct clear as well as the listener.
+    // See diffEditorEditors.js _adjustOptionsForLeftHandSide.
+    const originalEditor = diffEditor.getOriginalEditor();
+    const wordWrapOverride2Option = monacoInstance.editor.EditorOption.wordWrapOverride2;
+    originalEditor.updateOptions({ wordWrapOverride2: 'inherit' });
+    originalEditor.onDidChangeConfiguration((event) => {
+      if (!event.hasChanged(wordWrapOverride2Option)) return;
+      if (originalEditor.getOption(wordWrapOverride2Option) === 'inherit') return;
+      originalEditor.updateOptions({ wordWrapOverride2: 'inherit' });
+    });
+
     const modifiedEditor = diffEditor.getModifiedEditor();
     modifiedEditor.onDidScrollChange(() => {
       // Ignore clamp noise: events fired while the displayed content belongs to
@@ -531,6 +582,23 @@ export function DiffViewer({
     diffEditorRef.current?.updateOptions({ ignoreTrimWhitespace: ignoreWhitespace });
   }, [ignoreWhitespace]);
 
+  // Same for wrap. wordWrap is a BASE editor option, not a diff one, but Monaco's
+  // diff widget forwards changed base options down to both sub-editors, and its own
+  // diffWordWrap stays at 'inherit', so this reaches split and inline alike.
+  useEffect(() => {
+    diffEditorRef.current?.updateOptions({ wordWrap: wrapLines ? 'on' : 'off' });
+  }, [wrapLines]);
+
+  // Same for the narrow-pane behavior. Monaco's own useInlineViewWhenSpaceIsLimited
+  // (default true, breakpoint ~900px) is what silently renders a narrow pane inline
+  // regardless of the Side by side selection; the setting exposes the escape hatch
+  // (VS Code's diffEditor.useInlineViewWhenSpaceIsLimited parity). With it off, the
+  // inline pass never fires, and the wordWrapOverride2 repair in handleEditorMount
+  // becomes a harmless no-op.
+  useEffect(() => {
+    diffEditorRef.current?.updateOptions({ useInlineViewWhenSpaceIsLimited: inlineWhenNarrow });
+  }, [inlineWhenNarrow]);
+
   // Re-apply the fold whenever collapse is toggled. The diff is already loaded
   // here, so applyCollapseFold's disable -> enable is the transition Monaco honors.
   useEffect(() => {
@@ -549,6 +617,9 @@ export function DiffViewer({
   // because the diff editor owns the line changes.
   useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: isFocused && !previewActive });
   useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: isFocused && !previewActive });
+  // Live combo strings for the nav-button tooltips ('' when unbound).
+  const nextChangeCombo = useFormattedCombo('changes.nextChange');
+  const prevChangeCombo = useFormattedCombo('changes.prevChange');
 
   // Reliable copy: Monaco's own Ctrl+C routes through the web clipboard, which
   // rejects once the document loses focus. Capture ahead of Monaco (capture
@@ -669,11 +740,13 @@ export function DiffViewer({
             <>
               {isMarkdown && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
 
-              {/* Next / previous change navigation */}
+              {/* Next / previous change navigation. Tooltips carry the LIVE
+                  combos (rebind-aware via useFormattedCombo), never hardcoded
+                  strings. */}
               <button
                 onClick={() => navigateChange('prev')}
                 className={toolbarButtonClass(false)}
-                title="Previous change"
+                title={prevChangeCombo ? `Previous change (${prevChangeCombo})` : 'Previous change'}
                 data-testid="diff-prev-change"
               >
                 <ChevronUp size={16} />
@@ -681,7 +754,7 @@ export function DiffViewer({
               <button
                 onClick={() => navigateChange('next')}
                 className={toolbarButtonClass(false)}
-                title="Next change"
+                title={nextChangeCombo ? `Next change (${nextChangeCombo})` : 'Next change'}
                 data-testid="diff-next-change"
               >
                 <ChevronDown size={16} />
@@ -689,42 +762,14 @@ export function DiffViewer({
 
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
 
-              {/* Diff-rendering toggles (persisted as global Changes settings) */}
-              <button
-                onClick={() => updateConfig({ diffIgnoreWhitespace: !ignoreWhitespace })}
-                className={toolbarButtonClass(ignoreWhitespace)}
-                title="Ignore whitespace"
-                aria-pressed={ignoreWhitespace}
-                data-testid="diff-ignore-whitespace"
-              >
-                <Pilcrow size={16} />
-              </button>
-              <button
-                onClick={() => updateConfig({ diffCollapseUnchanged: !collapseUnchanged })}
-                className={toolbarButtonClass(collapseUnchanged)}
-                title="Collapse unchanged regions"
-                aria-pressed={collapseUnchanged}
-                data-testid="diff-collapse-unchanged"
-              >
-                <FoldVertical size={16} />
-              </button>
-              <button
-                onClick={() => setBlameOn((value) => !value)}
-                disabled={blameUnavailable}
-                className={`${toolbarButtonClass(blameOn)} disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted`}
-                title={blameUnavailable ? 'Blame unavailable for this file' : 'Toggle blame'}
-                aria-pressed={blameOn}
-                data-testid="diff-blame-toggle"
-              >
-                <UserRound size={16} />
-              </button>
-
-              <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
-
+              {/* Layout mode stays a pair of icon buttons: side-by-side vs
+                  unified is the one diff control with a settled cross-tool
+                  glyph (GitHub ships this exact toggle), and it is flipped
+                  often enough to earn permanent space. */}
               <button
                 onClick={() => onViewModeChange('split')}
                 className={toolbarButtonClass(viewMode === 'split')}
-                title="Side by side"
+                title={inlineWhenNarrow ? 'Side by side (a narrow pane renders inline)' : 'Side by side'}
                 data-testid="diff-view-split"
               >
                 <Columns2 size={16} />
@@ -737,6 +782,16 @@ export function DiffViewer({
               >
                 <Rows2 size={16} />
               </button>
+
+              <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
+
+              <DiffViewOptionsMenu
+                blame={{
+                  on: blameOn,
+                  unavailable: blameUnavailable,
+                  onToggle: () => setBlameOn((value) => !value),
+                }}
+              />
             </>
           )}
         </div>
@@ -745,8 +800,9 @@ export function DiffViewer({
       {/* Editor area - Monaco stays mounted to avoid expensive re-initialization */}
       <div className="flex-1 min-h-0 relative" data-testid="diff-editor-area">
         {binary ? (
-          <div className="flex items-center justify-center h-full text-xs text-fg-disabled">
-            Binary file - cannot display diff
+          <div className="flex flex-col items-center justify-center h-full gap-2 p-4 text-center">
+            <FileCode size={22} className="text-fg-disabled" />
+            <span className="text-sm text-fg-muted">Binary file - cannot display diff</span>
           </div>
         ) : contentFilePath === null ? (
           // Wait for the first content before mounting Monaco, so the editor is
@@ -803,6 +859,11 @@ export function DiffViewer({
                 scrollBeyondLastLine: false,
                 minimap: { enabled: false },
                 renderWhitespace: 'boundary',
+                wordWrap: wrapLines ? 'on' : 'off',
+                useInlineViewWhenSpaceIsLimited: inlineWhenNarrow,
+                // Pin the enclosing scope's header line while scrolling a long
+                // hunk (VS Code's editor.stickyScroll).
+                stickyScroll: { enabled: true },
                 fontSize: 12,
                 lineHeight: 18,
                 // Monaco's default context menu also surfaces "Command Palette",
@@ -812,10 +873,17 @@ export function DiffViewer({
                 contextmenu: false,
                 ...diffRenderOptions,
               }}
+              // A non-null empty node when suppressed: a nullish `loading`
+              // would fall back to @monaco-editor/react's default "Loading..."
+              // text instead of showing nothing.
               loading={
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 size={20} className="animate-spin text-fg-muted" />
-                </div>
+                showEditorBootSpinner ? (
+                  <div className="flex items-center justify-center h-full">
+                    <Loader2 size={20} className="animate-spin text-fg-muted" />
+                  </div>
+                ) : (
+                  <></>
+                )
               }
             />
           </div>

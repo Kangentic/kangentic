@@ -31,13 +31,17 @@ interface PreparedStatement {
   getReturn?: unknown;
 }
 
-function createMockDb(getReturn?: unknown): {
+function createMockDb(getReturn: unknown = { costUsd: 0, durationMs: 0 }): {
   db: Database.Database;
   statements: PreparedStatement[];
 } {
   const statements: PreparedStatement[] = [];
 
   const db = {
+    // `recordSessionUsage` wraps its baseline read and its upsert in one
+    // transaction; the fake just runs the body straight through.
+    transaction: vi.fn(<Args extends unknown[]>(fn: (...args: Args) => void) =>
+      (...args: Args) => fn(...args)),
     prepare: vi.fn((sql: string) => {
       const statement: PreparedStatement = {
         sql,
@@ -67,15 +71,24 @@ function createMockDb(getReturn?: unknown): {
   return { db, statements };
 }
 
+/** The upsert among the prepared statements. `recordSessionUsage` also
+ *  prepares the lineage-baseline SELECT, so index 0 is no longer the INSERT. */
+function insertStatement(statements: PreparedStatement[]): PreparedStatement {
+  const found = statements.find((statement) => /INSERT\s+INTO\s+usage_history/i.test(statement.sql));
+  if (!found) throw new Error('no usage_history INSERT was prepared');
+  return found;
+}
+
 function makeUsageInput(overrides: Partial<RecordSessionUsageInput> = {}): RecordSessionUsageInput {
   return {
     sessionRecordId: 'session-record-1',
     sessionStartedAt: '2026-04-01T10:00:00Z',
     sessionType: 'claude_agent',
-    totalCostUsd: 0.42,
+    conversationId: 'conv-1',
+    cumulativeCostUsd: 0.42,
     totalInputTokens: 1234,
     totalOutputTokens: 567,
-    totalDurationMs: 60000,
+    cumulativeDurationMs: 60000,
     toolCallCount: 7,
     modelId: 'claude-opus-4',
     modelDisplayName: 'Claude Opus 4',
@@ -93,8 +106,7 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
 
     repository.recordSessionUsage(makeUsageInput());
 
-    expect(statements).toHaveLength(1);
-    const sql = statements[0].sql;
+    const sql = insertStatement(statements).sql;
     expect(sql).toMatch(/INSERT\s+INTO\s+usage_history/i);
     expect(sql).toMatch(/ON\s+CONFLICT\s*\(\s*session_record_id\s*\)\s+DO\s+UPDATE/i);
   });
@@ -105,13 +117,14 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
 
     repository.recordSessionUsage(makeUsageInput());
 
-    const params = statements[0].runParams[0];
+    const params = insertStatement(statements).runParams[0];
     // Positional order matches the INSERT column list:
     //   id, session_record_id, recorded_at, session_started_at, session_type,
+    //   conversation_id, cumulative_cost_usd, cumulative_duration_ms,
     //   total_cost_usd, total_input_tokens, total_output_tokens,
     //   total_duration_ms, tool_call_count, model_id, model_display_name,
     //   compaction_count, agent, effort
-    expect(params).toHaveLength(15);
+    expect(params).toHaveLength(18);
     // id (param 0) is a generated uuid - just assert it's a string
     expect(typeof params[0]).toBe('string');
     expect((params[0] as string).length).toBeGreaterThan(0);
@@ -121,16 +134,22 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
     expect(Number.isFinite(Date.parse(params[2] as string))).toBe(true);
     expect(params[3]).toBe('2026-04-01T10:00:00Z');
     expect(params[4]).toBe('claude_agent');
-    expect(params[5]).toBe(0.42);
-    expect(params[6]).toBe(1234);
-    expect(params[7]).toBe(567);
-    expect(params[8]).toBe(60000);
-    expect(params[9]).toBe(7);
-    expect(params[10]).toBe('claude-opus-4');
-    expect(params[11]).toBe('Claude Opus 4');
-    expect(params[12]).toBe(0);
-    expect(params[13]).toBe('claude');
-    expect(params[14]).toBe('high');
+    expect(params[5]).toBe('conv-1');
+    // Raw cumulative readings are stored as-is ...
+    expect(params[6]).toBe(0.42);
+    expect(params[7]).toBe(60000);
+    // ... and the summable columns carry the delta against a zero baseline,
+    // which for a first leg is the whole reading.
+    expect(params[8]).toBe(0.42);
+    expect(params[9]).toBe(1234);
+    expect(params[10]).toBe(567);
+    expect(params[11]).toBe(60000);
+    expect(params[12]).toBe(7);
+    expect(params[13]).toBe('claude-opus-4');
+    expect(params[14]).toBe('Claude Opus 4');
+    expect(params[15]).toBe(0);
+    expect(params[16]).toBe('claude');
+    expect(params[17]).toBe('high');
   });
 
   it('keeps a previously-stamped agent and effort when a re-capture has none (COALESCE in the upsert)', () => {
@@ -139,7 +158,7 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
 
     repository.recordSessionUsage(makeUsageInput({ agent: null, effort: null }));
 
-    const doUpdateMatch = statements[0].sql.match(/DO\s+UPDATE\s+SET\s+([\s\S]+)$/i);
+    const doUpdateMatch = insertStatement(statements).sql.match(/DO\s+UPDATE\s+SET\s+([\s\S]+)$/i);
     expect(doUpdateMatch).not.toBeNull();
     expect(doUpdateMatch![1]).toMatch(/agent\s*=\s*COALESCE\(\s*excluded\.agent\s*,\s*usage_history\.agent\s*\)/i);
     expect(doUpdateMatch![1]).toMatch(/effort\s*=\s*COALESCE\(\s*excluded\.effort\s*,\s*usage_history\.effort\s*\)/i);
@@ -151,7 +170,7 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
 
     repository.recordSessionUsage(makeUsageInput());
 
-    const sql = statements[0].sql;
+    const sql = insertStatement(statements).sql;
     // Extract just the DO UPDATE portion. Anything outside it can mention
     // git stat columns (the INSERT column list mentions them by absence,
     // not literally), so we scope the check.
@@ -171,7 +190,7 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
     repository.recordSessionUsage(makeUsageInput());
     const afterFirst = Date.now();
 
-    const recordedAt = statements[0].runParams[0][2] as string;
+    const recordedAt = insertStatement(statements).runParams[0][2] as string;
     const parsed = Date.parse(recordedAt);
     expect(parsed).toBeGreaterThanOrEqual(beforeFirst);
     expect(parsed).toBeLessThanOrEqual(afterFirst);
@@ -183,16 +202,19 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
 
     repository.recordSessionUsage(makeUsageInput({
       sessionType: null,
-      totalDurationMs: null,
+      conversationId: null,
+      cumulativeDurationMs: null,
       modelId: null,
       modelDisplayName: null,
     }));
 
-    const params = statements[0].runParams[0];
+    const params = insertStatement(statements).runParams[0];
     expect(params[4]).toBeNull(); // session_type
-    expect(params[8]).toBeNull(); // total_duration_ms
-    expect(params[10]).toBeNull(); // model_id
-    expect(params[11]).toBeNull(); // model_display_name
+    expect(params[5]).toBeNull(); // conversation_id
+    expect(params[7]).toBeNull(); // cumulative_duration_ms
+    expect(params[11]).toBeNull(); // total_duration_ms
+    expect(params[13]).toBeNull(); // model_id
+    expect(params[14]).toBeNull(); // model_display_name
   });
 });
 

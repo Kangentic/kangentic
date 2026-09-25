@@ -6,15 +6,24 @@ import { PROVIDERS, getSourceLabel, getSourceIcon } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
 import type { ImportSource } from '../../../shared/types';
 import { AsanaSetupDialog } from '../asana/AsanaSetupDialog';
+import type { ToolbarControlCollapse } from '../board/toolbar-collapse';
 
 interface ImportPopoverProps {
   onOpenImportDialog: (source: ImportSource) => void;
+  /**
+   * Passed only by the backlog toolbar, where the trigger sheds its text as the
+   * row narrows. It is a prop rather than a class baked into this component
+   * because this popover has a second mount site (`BacklogView`'s empty state)
+   * with no `@container` ancestor, where the collapsed BASE state would win
+   * permanently and leave the button icon-only at every width.
+   */
+  collapse?: ToolbarControlCollapse;
 }
 
 // --- Add source flow phases ---
 type AddPhase = 'provider' | 'sourceType' | 'url';
 
-export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
+export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverProps) {
   const [open, setOpen] = useState(false);
   const [sources, setSources] = useState<ImportSource[]>([]);
 
@@ -54,6 +63,17 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
   useEffect(() => {
     if (addPhase === 'url') urlInputRef.current?.focus();
   }, [addPhase]);
+
+  // Declared ahead of the effects that call it. They only ran it from
+  // listeners, after it existed, but that is a timing accident the compiler
+  // rules read as a use before declaration.
+  const resetAddFlow = () => {
+    setAddPhase(null);
+    setSelectedProvider(null);
+    setSelectedSourceType(null);
+    setNewSourceUrl('');
+    setError(null);
+  };
 
   // Close on click outside
   useEffect(() => {
@@ -101,14 +121,6 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
     document.addEventListener('keydown', handleEscape, true);
     return () => document.removeEventListener('keydown', handleEscape, true);
   }, [open, addPhase, setupDialogOpen]);
-
-  const resetAddFlow = () => {
-    setAddPhase(null);
-    setSelectedProvider(null);
-    setSelectedSourceType(null);
-    setNewSourceUrl('');
-    setError(null);
-  };
 
   /**
    * Advance past the provider selection step to either sourceType or url,
@@ -208,16 +220,20 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
   };
 
   return (
-    <div className="relative">
+    <div className="relative shrink-0">
       <button
         ref={buttonRef}
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-fg-muted hover:text-fg border border-edge/50 hover:bg-surface-hover/40 rounded transition-colors"
+        title="Import Tasks"
+        aria-label="Import Tasks"
+        className={`flex items-center gap-1.5 py-1.5 text-sm text-fg-muted hover:text-fg border border-edge/50 hover:bg-surface-hover/40 rounded transition-colors ${
+          collapse ? collapse.button : 'px-3'
+        }`}
         data-testid="import-sources-btn"
       >
-        <Download size={14} />
-        Import Tasks
+        <Download size={14} className="shrink-0" />
+        <span className={collapse?.label}>Import Tasks</span>
       </button>
 
       <OverlayPopover
@@ -243,7 +259,7 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
               {sources.map((source) => (
                 <div
                   key={source.id}
-                  className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-hover/40 cursor-pointer group"
+                  className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-hover/40 cursor-pointer select-none group"
                   onClick={() => handleSourceClick(source)}
                   data-testid={`import-source-${source.id}`}
                 >

@@ -77,6 +77,18 @@ export interface IpcContext {
    */
   recoveredProjects: Set<string>;
   /**
+   * Projects whose board_snapshot analytics event has fired this app run.
+   * Separate from `recoveredProjects` on purpose: recovery is marked by three
+   * paths (the boot auto-open, the background activation of every other
+   * project, the sidebar open), and the snapshot must fire the first time the
+   * user VIEWS a project, not whenever recovery happened to run. Keyed on
+   * recovery it fired for almost nothing: the boot project was already warm
+   * from openProjectByPath, and every other project was already warm from
+   * activateAllProjects by the time the user clicked it. Cleared per-project
+   * on `cleanupProject`; the whole set dies with the process.
+   */
+  snapshottedProjects: Set<string>;
+  /**
    * In-process MCP HTTP server handle. Set once at app startup before
    * any project opens; null only during the brief startup window before
    * the server has bound its port.

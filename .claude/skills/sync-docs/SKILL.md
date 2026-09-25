@@ -15,18 +15,26 @@ Each doc file and the source files that are its authority:
 |-----|---------------------|
 | `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts`, `src/main/transition-engine/transition-engine.ts`, `src/main/boards/board-registry.ts` |
 | `session-lifecycle.md` | `src/main/pty/session-manager.ts`, `src/main/pty/session-queue.ts`, `src/main/transition-engine/session-lifecycle.ts`, `src/main/transition-engine/resource-cleanup.ts` |
-| `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, GLOBAL_ONLY_PATHS), `src/main/config/config-manager.ts` |
+| `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, BoardConfig, BoardColumnConfig), `src/main/config/config-manager.ts` (`pickOverridableSubset` - the project/global split) |
 | `agent-integration.md` | `src/main/agent/agent-adapter.ts`, `src/main/agent/agent-registry.ts`, `src/main/agent/adapters/**` (per-adapter command builders, hook managers, trust managers, capability-discovery, detectors), `src/main/transition-engine/agent-resolver.ts` |
 | `handoff.md` | `src/main/agent/handoff/**`, `src/main/db/repositories/handoff-repository.ts`, `src/main/ipc/helpers/agent-spawn.ts` (handoff path) |
-| `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/shared/types.ts` (ActionType, ActionConfig) |
+| `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/main/automations/**` (the adapter registry, the runner, per-field escaping), `src/shared/automation-manifest.ts`, `src/shared/types.ts` (AutomationType, AutomationTrigger, AutomationRunStatus, AutomationConfig) |
 | `command-injection.md` | `src/main/transition-engine/injection-plan.ts`, `src/main/transition-engine/terminal-submit-scheduler.ts`, `src/main/pty/terminal-submit.ts`, `src/main/agent/adapters/claude/slash-command-verifier.ts` |
 | `database.md` | `src/main/db/migrations/**`, `src/main/db/database.ts`, `src/main/db/repositories/*.ts` |
-| `cross-platform.md` | `src/main/pty/spawn/shell-resolver.ts`, `src/shared/paths.ts` (adaptCommandForShell, convertWindowsExePath; called from `src/main/pty/lifecycle/session-spawn-flow.ts`), `electron-builder.yml`, `scripts/build.js` |
+| `cross-platform.md` | `src/main/pty/spawn/shell-resolver.ts`, `src/shared/paths.ts` (adaptCommandForShell, convertWindowsExePath, quoteArg, isPowerShellShell; called from `src/main/pty/lifecycle/session-spawn-flow.ts`), `src/shared/shell-quote.ts` (escapeForDoubleQuotedShell and the shell predicates, shared with the renderer), `src/main/agent/shared/shim-launch.ts`, `electron-builder.yml`, `scripts/build.js` |
 | `worktree-strategy.md` | `src/main/git/worktree-manager.ts`, `src/main/agent/adapters/claude/hook-manager.ts`, `src/main/agent/adapters/claude/trust-manager.ts` |
 | `activity-detection.md` | `src/main/agent/event-bridge.js`, `src/shared/types.ts` (EventType, EventTypeActivity, HookEvent), `src/main/activity-engine/engine/shapes.ts` (TransitionTrigger, default thresholds), `src/main/activity-engine/engine/watchdog.ts` (hold table) |
 | `mcp-server.md` | `src/main/agent/mcp-http-server.ts`, `src/main/agent/mcp-http/**`, `src/main/agent/commands/`, `src/main/ipc/handlers/sessions.ts`, `src/shared/types.ts` (MCP types) |
 | `board-integration.md` | `src/main/boards/board-registry.ts`, `src/main/boards/shared/**`, `src/main/boards/adapters/**`, `src/shared/types.ts` (ExternalSource) |
 | `pr-integration.md` | `src/main/pr/pr-registry.ts`, `src/main/pr/shared/**`, `src/main/pr/adapters/**`, `src/main/pr/pr-linking.ts`, `src/main/pr/pr-refresh.ts`, `src/main/pr/pr-refresh-scheduler.ts`, `src/shared/types.ts` (PR types) |
+| `embedded-browser.md` | `src/main/browser/**` (pane driver, lane manager, guest-drive queue, dev-server-error), `src/renderer/components/browser/**`, `src/main/agent/mcp-http/browser-tools.ts`, `src/main/db/migrations/global-schema.ts` (the `dev_ports` ledger) |
+| `mobile-bridge.md` | `src/main/mobile-bridge/**` (identity, pairing, capability router, transport, push), `packages/protocol/src/**` |
+| `adapter-session-history.md` | `src/main/agent/adapters/*/session-history-parser.ts`, `src/main/pty/readers/session-history-reader.ts`, `src/main/agent/handoff/session-history-reference.ts` |
+| `transcript-pipeline-audit.md` | `src/main/agent/transcript-service.ts`, `src/main/agent/transcript-cache.ts`, `src/main/agent/shared/transcript-truncation.ts`, `src/main/agent/adapters/*/transcript-parser.ts`, `src/shared/transcript-format.ts` |
+| `analytics.md` | `src/main/analytics/analytics.ts`, `src/main/analytics/usage.ts` (ANALYTICS_FEATURES, ONBOARDING_MILESTONES), `src/main/analytics/run-uptime.ts`, `src/main/analytics/settings-snapshot.ts` (SETTINGS_SNAPSHOT_ALLOWLIST) |
+| `deployment.md` | `electron-builder.yml`, `.github/workflows/release.yml`, `scripts/verify-release-assets.js`, `src/main/updater.ts`, `src/main/updater-release-notes.ts` |
+| `installation.md` | `packages/launcher/**`, `electron-builder.yml`, `README.md` |
+| `release-checklist.md` | `.claude/skills/release/SKILL.md`, `.github/workflows/release.yml`, `scripts/verify-release-assets.js` |
 | `overview.md` | `README.md`, high-level features |
 | `user-guide.md` | `src/renderer/components/`, `src/renderer/stores/`, `src/shared/types.ts` |
 | `developer-guide.md` | `scripts/`, `tests/`, `electron-builder.yml`, `package.json` |
@@ -81,11 +89,16 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 
 | Anchor | What to extract | Target doc |
 |--------|----------------|------------|
-| `PermissionMode` | Union variants | configuration.md, database.md |
+| `PermissionMode` | Union variants | configuration.md (canonical, the user-facing setting), database.md (the same variants again as stored column values; both must enumerate all of them) |
 | `TaskRunMode` | Union variants | database.md |
-| `ActionType` | Union variants | transition-engine.md |
+| `AutomationType` | Union variants | transition-engine.md (canonical, one heading per adapter), configuration.md and mcp-server.md (the 4 stable types plus the `send_command` alias and the legacy `spawn_agent`) |
+| `AutomationTrigger` | Union variants | transition-engine.md |
+| `AutomationRunStatus` | Union variants | transition-engine.md (canonical), database.md (the same variants as stored column values) |
+| `ColumnAutomation` | Interface fields | database.md (schema table) |
+| `AutomationRun` | Interface fields | database.md (schema table) |
+| `ActionType` | Union variants | RETIRED. The engine no longer branches on it; it survives only for the retired `actions` / `swimlane_transitions` tables and legacy `kangentic.json` reads. database.md and configuration.md mark it retired; do not report it as a missing-doc gap against transition-engine.md |
 | `SessionStatus` | Union variants | session-lifecycle.md |
-| `SessionRecordStatus` | Union variants | session-lifecycle.md, database.md |
+| `SessionRecordStatus` | Union variants | session-lifecycle.md (canonical, the state machine), database.md (the same variants again as stored column values; both must enumerate all of them) |
 | `SwimlaneRole` | Union variants | database.md |
 | `SuspendedBy` | Union variants | database.md |
 | `ThemeMode` | Union variants | configuration.md |
@@ -116,7 +129,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
-| Settings tabs | `src/renderer/components/settings/settings-tabs.ts` (`SETTINGS_TABS` array) | user-guide.md, configuration.md |
+| Settings tabs | `src/renderer/components/settings/settings-tabs.ts` (`SETTINGS_TABS` array) | user-guide.md (canonical prose), configuration.md (cross-reference only) |
 | Settings registry | `src/renderer/components/settings/settings-registry.ts` entries | configuration.md |
 | Pop-out surfaces | `src/shared/pop-out.ts` (`PopOutKind`) | architecture.md (Pop-out Windows section) |
 
@@ -144,6 +157,16 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | Template variables | `src/shared/template-vars.ts` | configuration.md (canonical), transition-engine.md and agent-integration.md (cross-reference only) |
 | Task template variables (auto_command / promptTemplate) | `src/shared/task-template-vars.ts` | transition-engine.md (canonical, "Template Variables"), architecture.md (cross-reference only) |
 
+### Integration Anchors
+
+| Anchor | Source file | Target doc |
+|--------|-----------|------------|
+| MCP tool manifest | `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`) | mcp-server.md (one heading per tool). Also enforced mechanically by `tests/unit/mcp-tool-list-parity.test.ts`. |
+| Automation adapters | `src/shared/automation-manifest.ts` (`AUTOMATION_MANIFEST`) and `src/main/automations/automation-registry.ts` | transition-engine.md (canonical, one heading per type with its fields, escaping, timeout and retry), architecture.md (the folder layout beside `pr/` and `boards/`), configuration.md and mcp-server.md (type summary tables). Registry-to-manifest parity is enforced by `tests/unit/automation-adapter-parity.test.ts`; the DOCS side is not mechanically checked. |
+| Board adapters | `src/main/boards/board-registry.ts` (registered providers) | board-integration.md (provider table, including each provider's stable/stub status) |
+| PR adapters | `src/main/pr/pr-registry.ts` (`connectors`) | pr-integration.md (provider list; keep planned-but-unimplemented providers marked as such) |
+| External scripts registry | `scripts/copy-external-scripts.js` (`EXTERNAL_SCRIPTS`) | No `docs/` target by design. Enforced by `tests/unit/external-scripts-parity.test.ts` and `.claude/rules/external-scripts-parity.md`; listed here so an auditor does not report it as a missing-doc gap. |
+
 ### Deliberately Not Anchored
 
 Enumerable structures that intentionally have no `docs/` target, so an auditor does not report
@@ -151,7 +174,7 @@ them as a missing-doc gap:
 
 | Structure | Source | Why it is not a docs anchor |
 |-----------|--------|------------------------------|
-| Activity marks | `src/renderer/components/ActivityMark.tsx` (`ACTIVITY_MARK_NAMES`) | The nine glyphs are owned upstream in `@kangentic/branding`; their contract is covered by CLAUDE.md's "Activity marks" section and pinned mechanically by `tests/unit/activity-mark.test.ts`. A `docs/` table would duplicate CLAUDE.md and drift from the upstream package. |
+| Activity marks (`ACTIVITY_MARK_NAMES`) | `src/renderer/components/ActivityMark.tsx` | The nine names are owned upstream in `@kangentic/branding`, so no `docs/` file enumerates them and a table of them would drift from the package. `docs/activity-marks.md` exists but records design history and measurements, deliberately not the name list; the contract is `.claude/rules/activity-marks.md` and the geometry is pinned by `tests/unit/activity-mark.test.ts`. Do not report the missing name table as a gap. |
 
 ### Verification Procedures
 
@@ -202,7 +225,10 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: template variable list is mirrored in configuration.md (canonical) and cross-referenced in transition-engine.md and agent-integration.md.
 
 - `src/shared/task-template-vars.ts`
-  WHY: the 10-keyword auto_command / spawn_agent promptTemplate catalog (title, description, task_xml, taskId, worktreePath, branchName, baseBranch, prUrl, prNumber, attachments) is tabulated in transition-engine.md "Template Variables" and cross-referenced in architecture.md. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). agent-integration.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
+  WHY: the template-variable catalog every automation field, the per-task auto_command, and the legacy spawn_agent promptTemplate read (22 names: task_xml, title, description, taskId, taskNumber, projectPath, projectName, worktreePath, branchName, baseBranch, prUrl, prNumber, prState, issueKey, issueUrl, labels, attachments, port, plus the 4 move-only names column, fromColumn, toColumn, trigger) is tabulated in transition-engine.md "Template Variables" and cross-referenced in architecture.md. Each entry's `contexts` decides where it is offered, and `availability` flags the ones that are usually empty; the table's PROSE (the keyword count, which context uses which interpolator) is not mechanically checked and is where this anchor has drifted before. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). agent-integration.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
+
+- `src/shared/automation-manifest.ts`
+  WHY: each automation type declares itself once here (label, icon, `status`, `needs`, fields with their per-field `escape`, `timeoutMs`, `retry`), and transition-engine.md tabulates all of it. Also holds `RETIRED_ACTION_TYPES`, `EXIT_GROUP_BUDGET_MS` and `DEFAULT_SCRIPT_TIMEOUT_MINUTES`, each of which is quoted as a number in the docs. Registry-to-manifest parity is mechanical (`tests/unit/automation-adapter-parity.test.ts`); the docs side is not, so an added type or a changed budget needs a hand pass. See .claude/rules/automation-adapters.md.
 
 - `src/main/agent/agent-adapter.ts`
   WHY: AgentAdapter interface methods (discoverCapabilities, getInjectionSequence, getCommandInjectionVerifier, summarize, locateSessionHistoryFile, getExitSequence, detectFirstOutput) are tabulated in agent-integration.md. Catches drift that types.ts re-exports miss.
@@ -267,7 +293,7 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: every CREATE TABLE column, ALTER TABLE, and seed data block is enumerated in database.md schema tables and migration history. Glob covers global-schema.ts, project-schema.ts, default-data.ts, spawn-agent-config-migration.ts, and any future migration file. (Note: `src/main/db/migrations.ts` is a 2-line re-export shim - do not rely on it.)
 
 - `src/main/agent/adapters/**`
-  WHY: per-adapter capability declarations (claude-adapter.ts, codex-adapter.ts, etc.), command-builders, capability-discovery.ts, detectors, hook-managers, trust-managers, transcript-cleanup.ts all drive per-adapter tables in agent-integration.md, adapter-session-history.md, command-injection.md, and handoff.md. Glob covers all 13 adapters and all their internal files.
+  WHY: per-adapter capability declarations (claude-adapter.ts, codex-adapter.ts, etc.), command-builders, capability-discovery.ts, detectors, hook-managers, trust-managers, transcript-cleanup.ts all drive per-adapter tables in agent-integration.md, adapter-session-history.md, command-injection.md, and handoff.md. Glob covers all 15 adapters and all their internal files.
 
 - `src/main/agent/handoff/**`
   WHY: handoff orchestration (session-history-reference.ts, transcript-cleanup.ts) backs handoff.md sections. Small directory; safe to glob.
@@ -283,6 +309,9 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 
 - `src/main/ipc/handlers/**`
   WHY: handler files register IPC channels, emit event payloads, and define handler-level behavior. A new handler that registers a channel without changing ipc-channels.ts (e.g., event-only ipcMain.on) would slip through the channel-constants anchor. Currently 17 files; glob avoids list-rot.
+
+- `src/main/analytics/**`
+  WHY: analytics.md tabulates every event name, every property, and the closed vocabularies behind them (usage.ts's ANALYTICS_FEATURES and ONBOARDING_MILESTONES, settings-snapshot.ts's SETTINGS_SNAPSHOT_ALLOWLIST, run-uptime.ts's exit kinds and uptime buckets). An added event or a renamed property is a docs-affecting event with no other mechanical check. The allowlist in particular is a privacy control the doc enumerates for users, so drift there is worse than stale: user-guide.md and configuration.md's Privacy paragraphs describe the same collection.
 
 If any anchor source files appear in the changed-file list:
 

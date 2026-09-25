@@ -19,9 +19,11 @@
  * sizing math is gone.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Pencil, Trash2, X } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
+import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
+import { closeBrowserForTask } from '../../components/browser/close-browser';
 import { useConfigStore } from '../../stores/config-store';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -41,10 +43,13 @@ import {
   useTaskActions,
   taskHasDescriptionContent,
   useTaskDetailHost,
+  adjacentSwimlane,
 } from '../../components/dialogs/task-detail';
+import type { ColumnStepDirection } from '../../components/dialogs/task-detail';
 import { useLayerStore } from '../context';
 import { taskDetailSurfaceFor } from '../../utils/task-progress';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
+import { isWindowDormant } from '../store/types';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
 import type { SnapDirection } from '../dnd/snap-zones';
 import type { Task, ShortcutConfig, TaskRunMode, SessionDisplayState } from '../../../shared/types';
@@ -71,6 +76,11 @@ interface TaskDetailWindowProps {
    *  keep resolving against its own project or its task URL lookup misses, the
    *  pane falls back to the empty state, and the unmount destroys the guest. */
   retainedProjectId?: string;
+  /** The user CLOSED this window but it stays mounted, hidden, so its Browser
+   *  pane's guest survives for the task's live agent (see `ManagedWindow.parked`).
+   *  Like a retained window it drops its terminal and releases its terminal
+   *  claim; unlike one, it belongs to the OPEN project and resolves live. */
+  parked?: boolean;
 }
 
 /**
@@ -98,6 +108,24 @@ function isInteractiveTarget(event: React.PointerEvent | React.MouseEvent): bool
   return !!interactive && (event.currentTarget as HTMLElement).contains(interactive);
 }
 
+// `taskDetail.moveColumnLeft/Right`'s `when` guard: a text field must keep the
+// key (on macOS Option+Shift+Arrow is word selection in the Browser URL bar,
+// the Changes search box, the note input, ...), so this is checked BEFORE the
+// match rather than inside the handler - `useKeybinding` skips
+// preventDefault/stopPropagation whenever `when` returns false, letting the
+// keystroke reach the field. xterm's helper textarea is a real <textarea> but
+// is deliberately exempt: it is the one text field this hotkey is FOR.
+// Not `utils/text-target.ts`'s `isTextTarget`: that answers "may this field
+// receive dictated text" and so excludes password, read-only, and non-prose
+// inputs, all of which still select text on Option+Shift+Arrow and must keep it.
+function isTextFieldTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.classList.contains('xterm-helper-textarea')) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName;
+  return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
+}
+
 export function TaskDetailWindow({
   task,
   windowId,
@@ -107,11 +135,18 @@ export function TaskDetailWindow({
   titleBarPointerDown,
   requestClose,
   retainedProjectId,
+  parked,
 }: TaskDetailWindowProps) {
+  // Hidden-but-mounted, for either reason. What the two share is everything
+  // this window does about it: no terminal, no terminal claim, no registered
+  // closer. What they do not share (which project the pane resolves against)
+  // stays on `retainedProjectId` alone.
+  const dormant = isWindowDormant({ parked, retainedProjectId });
   // Everything project-scoped comes from the HOST, so this window renders the
   // same whether the board mounted it for the open project or the Agent Monitor
   // mounted it for a task in another one.
   const {
+    projectId: hostProjectId,
     projectPath,
     swimlanes,
     shortcuts,
@@ -127,15 +162,15 @@ export function TaskDetailWindow({
   const skipDeleteConfirm = useConfigStore((s) => s.config.skipDeleteConfirm);
   const updateConfig = useConfigStore((s) => s.updateConfig);
 
-  const useStore = useLayerStore();
-  const toggleMaximizeWindow = useStore((s) => s.toggleMaximizeWindow);
-  const dockWindow = useStore((s) => s.dockWindow);
-  const maximizeWindow = useStore((s) => s.maximizeWindow);
-  const restoreWindow = useStore((s) => s.restoreWindow);
-  const setGeometry = useStore((s) => s.setGeometry);
-  const snapWindow = useStore((s) => s.snapWindow);
-  const untileWindow = useStore((s) => s.untileWindow);
-  const isTiled = useStore((s) => s.windows[windowId]?.state === 'tiled');
+  const layerStore = useLayerStore();
+  const toggleMaximizeWindow = layerStore((s) => s.toggleMaximizeWindow);
+  const dockWindow = layerStore((s) => s.dockWindow);
+  const maximizeWindow = layerStore((s) => s.maximizeWindow);
+  const restoreWindow = layerStore((s) => s.restoreWindow);
+  const setGeometry = layerStore((s) => s.setGeometry);
+  const snapWindow = layerStore((s) => s.snapWindow);
+  const untileWindow = layerStore((s) => s.untileWindow);
+  const isTiled = layerStore((s) => s.windows[windowId]?.state === 'tiled');
 
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -155,10 +190,33 @@ export function TaskDetailWindow({
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
   const browserOpen = useSessionStore((s) => s.browserOpenTasks.has(task.id));
   const toggleBrowserOpen = useSessionStore((s) => s.toggleBrowserOpen);
+  // A browser exists for this task (showing, hidden, parked, or offscreen), and
+  // whether an agent is driving it right now: the pill's alive dot and the
+  // kebab's "Close browser" read these. Close is the user's discard, distinct
+  // from the pill's hide; see components/browser/close-browser.ts.
+  const browserAlive = useSessionStore(
+    (s) => s.browserGuestTasks.has(task.id) || s.browserOffscreenTasks.has(task.id),
+  );
+  const browserSessionId = useSessionStore((s) => s._sessionByTaskId.get(task.id)?.id ?? null);
+  const browserDriving = useIsAgentDrivingSession(browserSessionId);
+  // The TASK's project, not the open board's, for the same reason
+  // `TaskDetailBody` derives `paneProjectId` that way: a retained window's
+  // project is backgrounded while the host context reports whatever board is
+  // now open, and closing this task's browser must not be resolved against a
+  // different project. Forwarded explicitly per
+  // `.claude/rules/project-scoped-ipc.md`.
+  const browserProjectId = retainedProjectId ?? hostProjectId;
+  const handleCloseBrowser = useCallback(() => {
+    void closeBrowserForTask(task.id, browserProjectId);
+  }, [task.id, browserProjectId]);
 
   const isArchived = task.archived_at !== null;
   const currentSwimlane = swimlanes.find((s) => s.id === task.swimlane_id);
   const isInTodo = currentSwimlane?.role === 'todo';
+  // For the lane-aware surface classifier (task-progress.ts). An unknown lane
+  // (the host's list not loaded yet) reads as a custom column, which holds
+  // sessions: the conservative answer.
+  const laneRole = currentSwimlane?.role ?? null;
 
   const attachments = useAttachments(task.id, updateAttachmentCount);
   const branchConfig = useBranchConfig(task, title, isInTodo);
@@ -169,6 +227,7 @@ export function TaskDetailWindow({
     isArchived,
     isInTodo: isInTodo ?? false,
     currentSwimlaneRole: currentSwimlane?.role,
+    dormant,
   });
 
   // A close request only STARTS the frame's exit; the window stays mounted for
@@ -182,7 +241,7 @@ export function TaskDetailWindow({
   // `displayKind` is the field that actually does the work here, not the two
   // flags the Resume prompt reads. TaskDetailBody picks its branch in order, and
   // the active-terminal branch is gated FIRST, on
-  // `sessionId && taskDetailSurfaceFor(displayKind) === 'terminal'`.
+  // `sessionId && taskDetailSurfaceFor(displayKind, laneRole) === 'terminal'`.
   // `displayKind` is derived from `session.status` (task-progress.ts, which also
   // lets an in-flight spawn label outrank a suspended session), so the
   // optimistic write flips it
@@ -224,6 +283,17 @@ export function TaskDetailWindow({
     setClosingView(sessionViewRef.current);
     requestClose();
   }, [requestClose]);
+  // A window that was PARKED rather than removed keeps its frozen view through
+  // the park (nothing unmounts). Release the freeze on the way back so the
+  // un-parked body renders live state, not the face it wore when closed. A
+  // render-time adjustment on the dormant transition (React's "adjusting state
+  // when a prop changes" pattern), so the body never paints the frozen face
+  // for a frame after un-parking.
+  const [wasDormant, setWasDormant] = useState(dormant);
+  if (dormant !== wasDormant) {
+    setWasDormant(dormant);
+    if (!dormant) setClosingView(null);
+  }
 
   const actions = useTaskActions({
     task,
@@ -268,6 +338,10 @@ export function TaskDetailWindow({
     skipDeleteConfirm,
     updateConfig,
   });
+  // Pulled out by name so the compiler rules can see it is a ref (the `Ref`
+  // suffix) rather than a field of the hook's return value, which they would
+  // treat as immutable when the worktree confirm below writes to it.
+  const { pendingSaveRef } = actions;
 
   // Track the body's branch selector until a close is requested, then hold it.
   // An effect (not a render-time write) is what makes the snapshot pre-gesture:
@@ -317,7 +391,7 @@ export function TaskDetailWindow({
   // The two surfaces that actually render the peek are the terminal branch and
   // the launch overlay, so ask the classifier for those rather than re-listing
   // the kinds that are not them.
-  const descriptionSurface = taskDetailSurfaceFor(sessionState.displayState.kind);
+  const descriptionSurface = taskDetailSurfaceFor(sessionState.displayState.kind, laneRole);
   const canShowDescription = !isArchived
     && hasDescriptionContent
     && (descriptionSurface === 'terminal' || descriptionSurface === 'launch-overlay');
@@ -341,39 +415,45 @@ export function TaskDetailWindow({
     || branchConfig.useWorktree !== (task.use_worktree != null ? Boolean(task.use_worktree) : null)
   ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, profileId, runMode, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
 
-  // Guard close gestures (header X, Escape, panel.close) while editing with
-  // unsaved changes: ask before discarding. Returns true to let the caller
-  // proceed with the close, false when a confirm was shown instead.
-  const handleCloseAttempt = useCallback(() => {
-    if (confirmDiscard) return false;
-    if (isEditing && isEditDirty) { setConfirmDiscard(true); return false; }
-    return true;
-  }, [confirmDiscard, isEditing, isEditDirty]);
-
-  // The single guarded close used by every close affordance. Proceeds through
-  // the frame's animated exit unless the discard guard intercepts.
+  // The single guarded close used by every close affordance. Guards close
+  // gestures (header X, Escape, panel.close) while editing with unsaved
+  // changes by asking before discarding; otherwise proceeds through the
+  // frame's animated exit.
   const closeWithGuard = useCallback(() => {
-    if (handleCloseAttempt()) requestCloseFrozen();
-  }, [handleCloseAttempt, requestCloseFrozen]);
+    if (confirmDiscard) return;
+    if (isEditing && isEditDirty) {
+      setConfirmDiscard(true);
+      return;
+    }
+    requestCloseFrozen();
+  }, [confirmDiscard, isEditing, isEditDirty, requestCloseFrozen]);
+  // Named rather than inline in the confirm's JSX: an inline arrow that calls
+  // the same setter `closeWithGuard` calls makes the compiler rules read the
+  // setter as a reactive dependency of `closeWithGuard` and reject its memo.
+  const cancelDiscard = useCallback(() => setConfirmDiscard(false), []);
+  const confirmDiscardAndClose = useCallback(() => {
+    setConfirmDiscard(false);
+    requestCloseFrozen();
+  }, [requestCloseFrozen]);
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
   const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
   // Pop the window back to floating from whatever docked state it is in
   // (maximized / snapped / tiled) - the "down" restore step.
   const popToFloat = useCallback(() => {
-    const target = useStore.getState().windows[windowId];
+    const target = layerStore.getState().windows[windowId];
     if (!target) return;
     if (target.state === 'maximized') restoreWindow(windowId);
     else if (target.state === 'snapped') setGeometry(windowId, target.restoreGeometry ?? target.geometry);
     else if (target.state === 'tiled') untileWindow(windowId);
-  }, [windowId, restoreWindow, setGeometry, untileWindow, useStore]);
+  }, [windowId, restoreWindow, setGeometry, untileWindow, layerStore]);
 
   // Win11-style stateful snap: the result depends on the window's current zone,
   // read from its RENDERED rect (a tiled pane's stored geometry is its pre-tile
   // float, not where it renders). Halves dock (pair); corners are lone snaps; a
   // tiled pane cannot slide within its pair horizontally. See snap-zones.ts.
   const handleSnapDirection = useCallback((direction: SnapDirection) => {
-    const target = useStore.getState().windows[windowId];
+    const target = layerStore.getState().windows[windowId];
     if (!target) return;
     const frameElement = document.querySelector(`[data-testid="window-frame-${windowId}"]`);
     const overlayElement = document.querySelector('[data-testid="window-overlay"]');
@@ -399,7 +479,7 @@ export function TaskDetailWindow({
       if (target.state === 'tiled') untileWindow(windowId);
       snapWindow(windowId, action.geometry);
     }
-  }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, useStore]);
+  }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, layerStore]);
 
   // The three right-panel views (Browser / Changes / Description peek) are
   // mutually exclusive and share the terminal split: opening one closes the
@@ -444,7 +524,7 @@ export function TaskDetailWindow({
   // One table, one answer, so a future kind cannot split them again.
   const canShowBrowser = browserEnabled
     && !!sessionState.session?.id
-    && taskDetailSurfaceFor(sessionState.displayState.kind) === 'terminal';
+    && taskDetailSurfaceFor(sessionState.displayState.kind, laneRole) === 'terminal';
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
 
   const moveTargets = useMemo(() =>
@@ -481,18 +561,24 @@ export function TaskDetailWindow({
   // pointer event that lands on this window (not another open window's header).
   const titleBarRef = useRef<HTMLDivElement>(null);
 
-  // Auto-save and exit edit mode when a session appears.
+  // Auto-save and exit edit mode when a session appears. The form values are
+  // mirrored into refs so the effect keys on `hasSessionContext` alone; the
+  // mirrors are written on commit (a layout effect, ahead of the passive effect
+  // below that reads them), never during render, which the compiler rules
+  // forbid.
   const hadSessionContext = useRef(hasSessionContext);
   const editingRef = useRef(isEditing);
   const titleRef = useRef(title);
   const descriptionRef = useRef(description);
   const labelsRef = useRef(labels);
   const priorityRef = useRef(priority);
-  editingRef.current = isEditing;
-  titleRef.current = title;
-  descriptionRef.current = description;
-  labelsRef.current = labels;
-  priorityRef.current = priority;
+  useLayoutEffect(() => {
+    editingRef.current = isEditing;
+    titleRef.current = title;
+    descriptionRef.current = description;
+    labelsRef.current = labels;
+    priorityRef.current = priority;
+  });
   useEffect(() => {
     if (!hadSessionContext.current && hasSessionContext && editingRef.current) {
       updateTask({
@@ -506,6 +592,32 @@ export function TaskDetailWindow({
     }
     hadSessionContext.current = hasSessionContext;
   }, [hasSessionContext, task.id, updateTask]);
+
+  // Move the open task one column left/right, keeping the window (and its
+  // terminal) open. Runs the SAME move `handleMoveTo` runs for the kebab's
+  // "Move to" (keepOpen: true), so a target column's automation and the
+  // existing move confirmations (the To Do "Reset task?" dialog, the Done
+  // confirm) fire exactly as they do for a drag or the kebab - see the
+  // registry comment on taskDetail.moveColumnLeft/Right in keybindings.ts for
+  // the policy. A second press while a step is in flight is dropped, not
+  // queued.
+  const columnStepInFlightRef = useRef(false);
+  const stepColumn = async (event: KeyboardEvent | PointerEvent, direction: ColumnStepDirection) => {
+    // Checked in the HANDLER, not `when`: useKeybinding has already
+    // preventDefault/stopPropagation'd the match by the time this runs, so a
+    // held key's repeats are swallowed here rather than leaking through to
+    // the focused xterm as Alt+Shift+Arrow escape sequences.
+    if ('repeat' in event && event.repeat) return;
+    if (columnStepInFlightRef.current) return;
+    const target = adjacentSwimlane(swimlanes, task.swimlane_id, direction);
+    if (!target) return; // at an edge: no wraparound, no feedback
+    columnStepInFlightRef.current = true;
+    try {
+      await actions.handleMoveTo(target.id, { keepOpen: true });
+    } finally {
+      columnStepInFlightRef.current = false;
+    }
+  };
 
   // Task-detail hotkeys (capture phase so they intercept before the embedded
   // xterm consumes the Ctrl-letter control chars). Gated on `isFocused` so only
@@ -535,6 +647,15 @@ export function TaskDetailWindow({
   useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser && !isEditing });
   useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges && !isEditing });
   useKeybinding('taskDetail.toggleDescription', handleToggleDescription, { capture: true, enabled: isFocused && canShowDescription && !isEditing });
+  // Gated on `!isArchived`: `handleMoveTo`'s archived branch closes the window
+  // before unarchiving, which fights keeping it open, and an archived task is
+  // off the board anyway. `when` refuses a text field OTHER than xterm's
+  // helper textarea, so the field keeps the key (macOS Option+Shift+Arrow is
+  // word selection in the Browser URL bar / Changes search / note input).
+  const columnStepEnabled = isFocused && !shortcutsSuppressed && !isEditing && !isArchived;
+  const columnStepAllowed = (event: KeyboardEvent | PointerEvent) => !isTextFieldTarget(event.target);
+  useKeybinding('taskDetail.moveColumnLeft', (event) => void stepColumn(event, 'left'), { capture: true, enabled: columnStepEnabled, when: columnStepAllowed });
+  useKeybinding('taskDetail.moveColumnRight', (event) => void stepColumn(event, 'right'), { capture: true, enabled: columnStepEnabled, when: columnStepAllowed });
   useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: isFocused });
@@ -560,9 +681,13 @@ export function TaskDetailWindow({
   // same unsaved-edits guard as Escape and the X. Keyed on `closeWithGuard` so a
   // re-memo re-registers the fresh closure; mirrors the Escape effect lifecycle.
   useEffect(() => {
+    // A dormant window is hidden and inert; no dismiss path may reach its
+    // guarded close, which would unmount it and destroy the guest it is kept
+    // alive for.
+    if (dormant) return;
     registerWindowCloser(windowId, closeWithGuard);
     return () => unregisterWindowCloser(windowId);
-  }, [windowId, closeWithGuard]);
+  }, [windowId, closeWithGuard, dormant]);
 
   // Restore keyboard focus to this window's terminal after a maximize/restore
   // toggle, so the next keystroke lands in the terminal instead of the maximize
@@ -628,6 +753,9 @@ export function TaskDetailWindow({
       canShowBrowser={canShowBrowser}
       browserOpen={browserOpen}
       onToggleBrowser={handleToggleBrowser}
+      browserAlive={browserAlive}
+      browserDriving={browserDriving}
+      onCloseBrowser={handleCloseBrowser}
       canShowDescription={canShowDescription}
       descriptionPeekOpen={descriptionPeekOpen}
       onToggleDescription={handleToggleDescription}
@@ -732,7 +860,6 @@ export function TaskDetailWindow({
                   onCancel={actions.handleCancel}
                   onSubmit={actions.handleSave}
                   submitLabel="Save"
-                  busyLabel="Saving..."
                   busy={actions.saving}
                   disabled={!!branchConfig.branchNameError}
                   leading={isInTodo ? (
@@ -755,6 +882,7 @@ export function TaskDetailWindow({
               isArchived={isArchived}
               isInTodo={isInTodo}
               isInDone={sessionState.isInDone}
+              laneRole={laneRole}
               hasSessionContext={hasSessionContext}
               sessionId={bodySessionView.sessionId}
               displayKind={bodySessionView.displayKind}
@@ -774,6 +902,8 @@ export function TaskDetailWindow({
               browserOpen={browserOpen}
               descriptionPeekOpen={descriptionPeekOpen}
               retainedProjectId={retainedProjectId}
+              dormant={dormant}
+              parked={parked === true}
             />
           )}
         </div>
@@ -821,8 +951,8 @@ export function TaskDetailWindow({
           confirmLabel="Discard"
           cancelLabel="Keep editing"
           message="Closing now will discard your unsaved edits to this task."
-          onConfirm={() => { setConfirmDiscard(false); requestCloseFrozen(); }}
-          onCancel={() => setConfirmDiscard(false)}
+          onConfirm={confirmDiscardAndClose}
+          onCancel={cancelDiscard}
         />
       )}
 
@@ -835,14 +965,14 @@ export function TaskDetailWindow({
           variant="default"
           onConfirm={async () => {
             actions.setShowEnableWorktreeConfirm(false);
-            if (actions.pendingSaveRef.current) {
-              await actions.pendingSaveRef.current();
-              actions.pendingSaveRef.current = null;
+            if (pendingSaveRef.current) {
+              await pendingSaveRef.current();
+              pendingSaveRef.current = null;
             }
           }}
           onCancel={() => {
             actions.setShowEnableWorktreeConfirm(false);
-            actions.pendingSaveRef.current = null;
+            pendingSaveRef.current = null;
           }}
         />
       )}

@@ -4,7 +4,7 @@ import { isActive, requiresUserInteraction } from '../../../shared/activity-stat
 import { useProjectStore } from '../project-store';
 import { useToastStore } from '../toast-store';
 import type { SessionStore } from './types';
-import { buildSessionByTaskId } from './session-index';
+import { withoutSessionsIndexed } from './session-index';
 
 /**
  * One transient (Command Terminal) session, owned by a single command-terminal
@@ -25,9 +25,51 @@ export interface TransientSessionEntry {
   label?: string;
 }
 
+/**
+ * What a kill request actually did.
+ *
+ * `'no-session'` means the slot held no map entry, so no IPC was issued at all. It is
+ * NOT a quiet success: the PTY, if one exists, is still running and now unreachable
+ * from this slot. The way that actually happens is a Stop landing before the initial
+ * spawn resolves, since `spawnTransientSession` inserts the entry only after its await;
+ * the spawn then completes unattended and the next layer-open reconciles a window back
+ * for it. `handleTerminate` still closes the window on this outcome and stays silent
+ * about it - see the reasoning there before making it louder.
+ */
+export type TransientKillOutcome = 'killed' | 'no-session' | 'failed';
+
 /** Composite map key. One Command Terminal window owns one (project, slot) PTY. */
 export function transientKey(projectId: string, slot: string): string {
   return `${projectId}::${slot}`;
+}
+
+/**
+ * Build the pairing entry for a SURVIVING PTY that main says owns `(projectId,
+ * slot)`.
+ *
+ * Shared by the only two paths that re-pair a survivor - `adoptTransientSession`
+ * below and `planTransientRecovery`'s pairing pass - because they have to agree on
+ * which fields an entry carries, and they did not. The adopt path built the entry
+ * by hand and omitted `label`, so a terminal recovered through it came back as
+ * "Command Terminal N"; recovery's pass 1 then kept that label-less entry verbatim,
+ * the auto-namer re-derived a name from a LATER prompt, and main refused the mirror
+ * because first-write-wins. One builder is what stops that drifting again.
+ *
+ * `spawnTransientSession` deliberately does NOT use this: a fresh spawn takes its
+ * branch from the spawn RESULT rather than the session row, and has no label yet.
+ */
+export function buildTransientSessionEntry(
+  projectId: string,
+  slot: string,
+  session: Session,
+): TransientSessionEntry {
+  return {
+    projectId,
+    slot,
+    sessionId: session.id,
+    branch: session.commandTerminalBranch ?? null,
+    ...(session.commandTerminalLabel ? { label: session.commandTerminalLabel } : {}),
+  };
 }
 
 /** Every transient session id for a project, in map order. Drives the focused-set
@@ -64,11 +106,11 @@ const EMPTY_COMMAND_TERMINAL_SUMMARY: CommandTerminalSummary = { count: 0, tone:
  * tone. Drives the title-bar glyph and the per-project sidebar indicator.
  *
  * Reads the SESSIONS list rather than the `transientSessions` map on purpose. That
- * map is renderer-owned window pairing, and its hard-reload recovery only re-pairs
- * the CURRENT project's survivors (see `syncSessions`), so a map-based count would
- * read zero for every background project after a reload. `session:list` is unscoped
- * and every row carries `projectId` + `transient` stamped by main, so this stays
- * correct cross-project and across reloads.
+ * map is renderer-owned window pairing, reconstructed after a reload by
+ * `planTransientRecovery`; reading main's own rows keeps this count independent of
+ * whether that reconstruction has run yet. `session:list` is unscoped and every row
+ * carries `projectId` + `transient` stamped by main, so it is correct cross-project
+ * and across reloads by construction.
  *
  * WORKING wins: any active terminal makes the whole project read active, else
  * attention if any needs you, else rest. Bucketed only through the shared
@@ -94,36 +136,6 @@ export function selectCommandTerminalSummary(
   }
   if (count === 0) return EMPTY_COMMAND_TERMINAL_SUMMARY;
   return { count, tone: anyActive ? 'thinking' : anyNeedsUser ? 'idle' : 'rest' };
-}
-
-/** Shallow copy of `record` minus any key in `ids`. */
-function omitKeys<T>(record: Record<string, T>, ids: Set<string>): Record<string, T> {
-  const result: Record<string, T> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (!ids.has(key)) result[key] = value;
-  }
-  return result;
-}
-
-/**
- * Strip every per-session dictionary entry + the sessions-list rows for a set of
- * dead transient sessions, in one pass. Shared by the by-id, by-slot, and
- * by-project removers: the session is gone, so leaving these entries would leak
- * (a `sessionActivity[id] = 'thinking'` that never clears, stale usage/events).
- */
-function scrubSessionDicts(state: SessionStore, sessionIds: string[]): Partial<SessionStore> {
-  const ids = new Set(sessionIds);
-  const sessions = state.sessions.filter((session) => !ids.has(session.id));
-  return {
-    sessions,
-    _sessionByTaskId: buildSessionByTaskId(sessions),
-    sessionUsage: omitKeys(state.sessionUsage, ids),
-    sessionFirstOutput: omitKeys(state.sessionFirstOutput, ids),
-    sessionActivity: omitKeys(state.sessionActivity, ids),
-    sessionActivityReason: omitKeys(state.sessionActivityReason, ids),
-    sessionEvents: omitKeys(state.sessionEvents, ids),
-    seenIdleSessions: omitKeys(state.seenIdleSessions, ids),
-  };
 }
 
 export interface TransientSessionSlice {
@@ -152,8 +164,22 @@ export interface TransientSessionSlice {
     branch?: string,
     grid?: { cols: number; rows: number },
   ) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
-  /** Kill one slot's transient PTY (IPC) and scrub its renderer state. */
-  killTransientSessionBySlot: (projectId: string, slot: string) => Promise<void>;
+  /** Pair an ALREADY-RUNNING transient PTY to `(projectId, slot)` without spawning.
+   *
+   *  The window mount effect's last resort before it spawns: main's session row
+   *  says this PTY belongs to this slot, but nothing in the map points at it. That
+   *  is the reload-orphan shape, and spawning instead would manufacture a duplicate
+   *  and strand the survivor. Recovery normally re-pairs first, so this only fires
+   *  when a window mounts ahead of it. */
+  adoptTransientSession: (projectId: string, slot: string, session: Session) => void;
+  /** Kill one slot's transient PTY (IPC) and scrub its renderer state.
+   *
+   *  Reports which of the three things actually happened, because they are not
+   *  interchangeable and used to be indistinguishable: a missing map entry issued no
+   *  IPC at all and a rejected kill was swallowed, so both resolved exactly like a
+   *  successful kill. A caller that surfaces "stopped" on every path tells the user a
+   *  PTY died when it may still be running. The renderer state is scrubbed either way. */
+  killTransientSessionBySlot: (projectId: string, slot: string) => Promise<TransientKillOutcome>;
   /** Remove a transient session's renderer state by session id, no IPC (the PTY
    *  already exited naturally). Drops its (project, slot) map entry too. */
   clearTransientSessionById: (sessionId: string) => void;
@@ -161,6 +187,18 @@ export interface TransientSessionSlice {
   killTransientSessionForProject: (projectId: string) => Promise<void>;
   /** Set the derived label on a transient session entry (first prompt wins). */
   setTransientSessionLabel: (sessionId: string, label: string) => void;
+  /** Re-derive every one of a project's Command Terminal branches from the
+   *  checkout's live HEAD, and mirror each change to main.
+   *
+   *  The branch is a PER-PROJECT fact: every Command Terminal of a project runs
+   *  in the same project root, so they all share one HEAD, and that HEAD is also
+   *  moved by the user's own git usage, non-worktree task spawns, and the agents
+   *  inside the terminals. The spawn-time stamp therefore goes stale, and this is
+   *  what makes the pill honest again: the layer calls it on mount (a reattach)
+   *  and on every diff-watcher fire. One git read per project per fire, however
+   *  many terminals are open. An unknown HEAD (git error) leaves the entries as
+   *  they are; a detached HEAD reads as the short sha. */
+  refreshTransientBranchesFromHead: (projectId: string, projectPath: string) => Promise<void>;
   /** Inject a live model/effort change into a transient session's PTY (no DB persistence).
    *  Surfaces a toast on failure; the live pill updates when the CLI echoes the new value. */
   injectTransientSettings: (input: SessionInjectSettingsInput) => Promise<void>;
@@ -185,6 +223,12 @@ export interface TransientSessionSlice {
 export function createTransientSessionSlice(preserved: {
   transientSessions: Record<string, TransientSessionEntry>;
 } | undefined): StateCreator<SessionStore, [], [], TransientSessionSlice> {
+  // In-flight HEAD refreshes by project id; the value records whether a fire
+  // arrived mid-read, so the read repeats once more instead of running twice
+  // at once. Function-scoped, not module-scoped: it belongs to this store
+  // instance, which is pinned across HMR with the rest of the session store.
+  const headRefreshRerun = new Map<string, boolean>();
+
   return (set, get) => ({
     commandBarVisible: false,
     setCommandBarVisible: (visible) => set({ commandBarVisible: visible }),
@@ -228,15 +272,30 @@ export function createTransientSessionSlice(preserved: {
       return result;
     },
 
+    adoptTransientSession: (projectId, slot, session) => {
+      set((state) => ({
+        transientSessions: {
+          ...state.transientSessions,
+          [transientKey(projectId, slot)]: buildTransientSessionEntry(projectId, slot, session),
+        },
+      }));
+    },
+
     killTransientSessionBySlot: async (projectId, slot) => {
       const entry = get().transientSessions[transientKey(projectId, slot)];
-      if (!entry) return;
+      // No entry means no PTY to address. Nothing was killed, and saying so is the
+      // point: this path issues no IPC and the caller cannot otherwise tell.
+      if (!entry) return 'no-session';
+      let outcome: TransientKillOutcome = 'killed';
       try {
         await window.electronAPI.sessions.killTransient(entry.sessionId);
       } catch {
-        // Best-effort cleanup.
+        // Still scrub below - the renderer must not keep pointing at a PTY it can no
+        // longer address - but report the failure rather than passing as a kill.
+        outcome = 'failed';
       }
       get().clearTransientSessionById(entry.sessionId);
+      return outcome;
     },
 
     clearTransientSessionById: (sessionId) => {
@@ -249,8 +308,10 @@ export function createTransientSessionSlice(preserved: {
             break;
           }
         }
+        // The by-id scrub every dead session gets (rows, index, per-session
+        // maps): shared with `removeSession`, see session-index.ts.
         return {
-          ...scrubSessionDicts(state, [sessionId]),
+          ...withoutSessionsIndexed(state, [sessionId]),
           transientSessions,
         };
       });
@@ -274,7 +335,7 @@ export function createTransientSessionSlice(preserved: {
           if (entry.projectId !== projectId) transientSessions[key] = entry;
         }
         return {
-          ...scrubSessionDicts(state, entries.map((entry) => entry.sessionId)),
+          ...withoutSessionsIndexed(state, entries.map((entry) => entry.sessionId)),
           transientSessions,
         };
       });
@@ -283,6 +344,7 @@ export function createTransientSessionSlice(preserved: {
     setTransientSessionLabel: (sessionId, label) => {
       const trimmed = label.trim();
       if (!trimmed) return;
+      let applied = false;
       set((state) => {
         const next = { ...state.transientSessions };
         for (const [key, entry] of Object.entries(next)) {
@@ -291,11 +353,77 @@ export function createTransientSessionSlice(preserved: {
             // user-set or earlier-derived label on subsequent prompts.
             if (entry.label) return state;
             next[key] = { ...entry, label: trimmed };
+            applied = true;
             return { transientSessions: next };
           }
         }
         return state;
       });
+      // Mirror to main so the name outlives this renderer. Only on a real apply,
+      // so a no-op (already labelled, or no owning entry) issues no IPC. Main
+      // holds it passively; nothing here waits on it, and a rejection costs only
+      // the name after a future reload.
+      if (!applied) return;
+      void window.electronAPI.sessions.setTransientLabel(sessionId, trimmed).catch(() => {
+        // Best-effort - the label is already applied locally.
+      });
+    },
+
+    refreshTransientBranchesFromHead: async (projectId, projectPath) => {
+      // Nothing to correct without an entry: skip the git read outright (the
+      // layer's mount fire lands before a cold spawn has written its entry).
+      const hasEntry = Object.values(get().transientSessions).some((entry) => entry.projectId === projectId);
+      if (!hasEntry) return;
+      // Guarded, not assumed: a renderer hot-swapped ahead of its preload would
+      // otherwise throw here and take the layer down with it.
+      const readHead = window.electronAPI.git.worktreeHead;
+      const mirrorBranch = window.electronAPI.sessions.setTransientBranch;
+      if (typeof readHead !== 'function') return;
+
+      if (headRefreshRerun.has(projectId)) {
+        headRefreshRerun.set(projectId, true);
+        return;
+      }
+      try {
+        do {
+          headRefreshRerun.set(projectId, false);
+          let head: { branch: string | null; sha: string | null };
+          try {
+            head = await readHead({ path: projectPath });
+          } catch {
+            // Best-effort: an unreachable main leaves the entries as they are.
+            return;
+          }
+          // A detached HEAD shows as its short sha rather than as the default
+          // branch name the picker would otherwise fall back to, which is the
+          // one thing the pill must never claim.
+          const value = head.branch ?? (head.sha ? head.sha.slice(0, 7) : null);
+          if (!value) continue;
+
+          const changedSessionIds: string[] = [];
+          set((state) => {
+            let next: Record<string, TransientSessionEntry> | null = null;
+            for (const [key, entry] of Object.entries(state.transientSessions)) {
+              if (entry.projectId !== projectId || entry.branch === value) continue;
+              if (!next) next = { ...state.transientSessions };
+              next[key] = { ...entry, branch: value };
+              changedSessionIds.push(entry.sessionId);
+            }
+            return next ? { transientSessions: next } : state;
+          });
+          // Mirror to main only on a real change, so a steady HEAD issues no
+          // IPC per fire. Main holds it passively for the Monitor row and a
+          // post-reload adopt; nothing here waits on it.
+          if (typeof mirrorBranch !== 'function') continue;
+          for (const sessionId of changedSessionIds) {
+            void mirrorBranch(sessionId, value).catch(() => {
+              // Best-effort - the branch is already applied locally.
+            });
+          }
+        } while (headRefreshRerun.get(projectId) === true);
+      } finally {
+        headRefreshRerun.delete(projectId);
+      }
     },
 
     injectTransientSettings: async (input) => {

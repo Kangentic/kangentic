@@ -2,7 +2,8 @@
  * Unit coverage for three of the new shared dialog primitives from the
  * New/Edit Task dialog presentation refactor: `Field`'s error-wins-over-hint
  * precedence, `DialogFooterActions`'s submit-vs-button `type` ternary, and
- * `WorktreeChip`'s `type="button"` guard. All three are hookless function
+ * `WorktreePlacementControl`'s blocked-state mapping onto the shared
+ * `SegmentedControl`. All three are hookless function
  * components, so - following the established pattern in
  * `panel-error-boundary.test.ts` (this project's vitest config has no jsdom
  * environment and no @testing-library/react dependency) - they are called
@@ -15,7 +16,7 @@
  * pass unchanged even if the call site computed the wrong boolean (e.g.
  * `showWorktree={!!task.worktree_path}` inverted). That risk lives at the
  * call site in `TaskDetailEditForm`, and is covered at the UI tier instead
- * (see the "hides the worktree toggle once the task has a worktree_path" test
+ * (see the "hides the placement control once the task has a worktree_path" test
  * in tests/ui/new-task-dialog.spec.ts). `PriorityLabelsRow` reads Zustand
  * store hooks (`useConfigStore`, `useAllExistingLabels`), so it cannot be
  * called this way without a reconciler.
@@ -25,7 +26,8 @@ import React from 'react';
 import { Info } from 'lucide-react';
 import { Field } from '../../src/renderer/components/Field';
 import { DialogFooterActions } from '../../src/renderer/components/dialogs/DialogFooterActions';
-import { WorktreeChip } from '../../src/renderer/components/dialogs/WorktreeChip';
+import { WorktreePlacementControl } from '../../src/renderer/components/dialogs/WorktreePlacementControl';
+import { SegmentedControl, type SegmentedControlOption } from '../../src/renderer/components/SegmentedControl';
 
 interface ElementLike {
   type: unknown;
@@ -176,17 +178,59 @@ describe('DialogFooterActions', () => {
   });
 });
 
-describe('WorktreeChip', () => {
-  it('renders as type="button" so a click inside NewTaskDialog\'s <form> never submits it', () => {
-    // WorktreeChip used to be a `Pill`, which auto-defaults an unset `type` to
-    // "button" for any `as="button"` render (Pill.tsx). Now that it is a raw
-    // <button>, that safety net is gone: a future edit that drops the
-    // explicit type="button" line silently regresses to the browser's
-    // default of type="submit" inside a form, and NewTaskDialog wraps the
-    // whole dialog body (including this control) in exactly such a <form>.
-    const output = WorktreeChip({ enabled: true, onToggle: () => {} });
+describe('WorktreePlacementControl', () => {
+  // The control is the shared `SegmentedControl` (whose own `type="button"`
+  // guard covers the <form> hazard), so what is worth pinning here is the
+  // mapping this wrapper adds on top: the option set, and the blocked state.
+  function segmentedProps(output: unknown) {
+    const segmented = findByType(output, SegmentedControl);
+    expect(segmented).not.toBeNull();
+    return segmented!.props as {
+      value: string;
+      options: readonly SegmentedControlOption<string>[];
+      onChange: (value: string) => void;
+    };
+  }
 
-    expect(output.type).toBe('button');
-    expect(output.props.type).toBe('button');
+  it('offers Worktree and Project through the shared SegmentedControl', () => {
+    const output = WorktreePlacementControl({ value: 'worktree', onChange: () => {} });
+
+    const props = segmentedProps(output);
+    expect(props.value).toBe('worktree');
+    expect(props.options.map((option) => option.value)).toEqual(['worktree', 'project']);
+    expect(props.options.map((option) => option.testId)).toEqual(['worktree-option-worktree', 'worktree-option-project']);
+    expect(props.options.every((option) => option.disabled !== true)).toBe(true);
+  });
+
+  it('ignores a re-click of the selected option so a task following the global setting is not pinned', () => {
+    const writes: string[] = [];
+    const output = WorktreePlacementControl({ value: 'worktree', onChange: (next) => writes.push(next) });
+
+    const props = segmentedProps(output);
+    props.onChange('worktree');
+    expect(writes).toEqual([]);
+    props.onChange('project');
+    expect(writes).toEqual(['project']);
+  });
+
+  it('reads Project selected and Worktree disabled when the project cannot have a worktree', () => {
+    // The parent may still hold `useWorktree: true` (the global default); the
+    // control must not show a worktree the manager will skip.
+    const output = WorktreePlacementControl({
+      value: 'worktree',
+      onChange: () => {},
+      blockedReason: 'Not a git repository',
+    });
+
+    const props = segmentedProps(output);
+    expect(props.value).toBe('project');
+    const [worktreeOption, projectOption] = props.options;
+    expect(worktreeOption.disabled).toBe(true);
+    expect(worktreeOption.title).toBe('Not a git repository');
+    expect(projectOption.disabled).not.toBe(true);
+
+    // The reason also sits on a wrapper: a disabled button does not fire the
+    // mouse events a tooltip needs.
+    expect(isElementLike(output) && output.props.title).toBe('Not a git repository');
   });
 });

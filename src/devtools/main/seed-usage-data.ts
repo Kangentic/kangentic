@@ -155,11 +155,14 @@ function seedOneProject(projectId: string, days: number, runIndex: number, volum
         sessionRecordId: sessionId,
         sessionStartedAt: new Date(startMs).toISOString(),
         sessionType: 'main',
-        totalCostUsd: Math.round(costUsd * 10_000) / 10_000,
+        // One leg per conversation in seeded data, so each cumulative reading
+        // has no prior leg to baseline against and the stored delta equals it.
+        conversationId: sessionId,
+        cumulativeCostUsd: Math.round(costUsd * 10_000) / 10_000,
         // Snapshot-style tokens: the last context window, not the cumulative sum.
         totalInputTokens: Math.floor(sessionInput / Math.max(1, turnsThisSession / 3)),
         totalOutputTokens: Math.floor(sessionOutput / Math.max(1, turnsThisSession / 3)),
-        totalDurationMs: durationMs,
+        cumulativeDurationMs: durationMs,
         toolCallCount: Math.floor(turnsThisSession * (1 + Math.random() * 2)),
         modelId: profile.modelId,
         modelDisplayName: profile.modelDisplayName,

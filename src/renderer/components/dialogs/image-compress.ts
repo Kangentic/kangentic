@@ -83,6 +83,38 @@ export async function compressImage(input: File, options: CompressImageOptions):
 }
 
 /**
+ * Re-encode an image file as PNG, capped at IMAGE_LONG_EDGE_CAP on the long
+ * edge, for the terminal drop path.
+ *
+ * This exists for the formats an agent CLI cannot take from a path. Claude Code
+ * attaches png/jpg/gif/webp natively from a pasted path and its Read tool
+ * refuses a bmp as binary, so a dropped bmp reached the agent in no form at
+ * all. Chromium decodes bmp (and ico, and the rest of what `<img>` accepts)
+ * through `createImageBitmap`, so the renderer, which already holds the dropped
+ * File, is the cheapest decoder there is; main only writes the bytes. PNG, not
+ * WebP: lossless, alpha-preserving, and inside every CLI's native set.
+ *
+ * Returns null when the bytes do not decode (not an image after all, or a
+ * format Chromium does not read), so the caller can fall back to the path it
+ * had. Never toasts: a drop that falls back to text is not an error the user
+ * needs to act on.
+ */
+export async function encodeImageFileAsPng(input: File): Promise<Uint8Array | null> {
+  try {
+    const bitmap = await createImageBitmap(input);
+    try {
+      const canvas = renderToCanvas(bitmap, IMAGE_LONG_EDGE_CAP);
+      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      return new Uint8Array(await blob.arrayBuffer());
+    } finally {
+      bitmap.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Compress a clipboard-pasted image to fit Anthropic's vision API budget.
  *
  * Skip rules: not an image, GIF/SVG (lossy re-encode would damage them), under

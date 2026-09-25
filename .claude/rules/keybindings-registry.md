@@ -31,15 +31,32 @@ the same array.
     xterm's own key pipeline, not a window listener). They are registered in `KEYBINDINGS` as
     display-only entries (`rebindable: false, terminalUnsafe: true`) so the panel lists them and
     the conflict checker can warn against them.
-  - Structural Escape, in two shapes. A dialog's own dismissal (BaseDialog's Escape), and a
-    TRANSIENT IN-GESTURE cancel that must beat the dialog dismissal to the event: BrowserPane's
-    Esc-cancels-Inspect and `useWindowDrag`'s Esc-cancels-drag. Both of the latter register a
+  - Structural Escape, in three shapes. A dialog's own dismissal (BaseDialog's Escape), a
+    pop-out window's own dismissal (`PopOutWindowFrame`'s bubble-phase Escape closes the OS
+    window, guarded so open overlays, DOM windows, and focused text fields keep their Escape),
+    and a TRANSIENT IN-GESTURE cancel that must beat the dialog dismissal to the event: BrowserPane's
+    Esc-cancels-Inspect, `useWindowDrag`'s Esc-cancels-drag, and `IntentKeyboardSensor`'s
+    document tracker (`src/renderer/utils/intent-keyboard-sensor.ts`), which consumes Escape only
+    while a keyboard drag is in flight and the key is aimed at the dragged node (see
+    `keyboard-drag-intent.md`). All three register a
     CAPTURE-phase listener and call `stopImmediatePropagation`, because the focused window closes
     itself on a bubble-phase `document` Escape - without the capture-phase intercept, Escape
     during the gesture closes the window instead of cancelling. Each gates on the gesture being
-    in flight and returns early otherwise, so a plain Escape still reaches the dialog. Escape is
-    registered display-only as `dialog.dismiss` and is not rebindable; these do not add entries,
-    since a second entry for the same physical key would only invent a phantom conflict.
+    in flight and returns early otherwise, so a plain Escape still reaches the dialog. An OPEN
+    MENU is the same shape: the comboboxes (`Combobox`, `ModelCombobox`, `FontCombobox`) and
+    `BranchPicker` consume Escape while their menu is showing through a capture-phase `document`
+    listener registered only while open, since focus may sit on a menu row. A plain
+    `stopPropagation` is enough there: the host listeners it must beat are bubble-phase, and a
+    stopped event never enters the bubble phase. `stopImmediatePropagation`, which `KebabMenu`
+    and the in-gesture cancels call, also silences capture listeners registered later on
+    `document` itself, which no combobox menu needs. `LabelInput` does it
+    with a React handler on its input, which is complete for it because its suggestions are
+    click-only with no keyboard path into them. Without this, `SettingsPanelShell` and
+    `BaseDialog`, which both dismiss on a bubble-phase `document` Escape, close the panel or
+    dialog under the menu on the same keystroke. `tests/ui/combobox-escape-layering.spec.ts`
+    pins it. Escape is registered display-only as
+    `dialog.dismiss` and is not rebindable; none of the three shapes adds an entry, since a
+    second entry for the same physical key would only invent a phantom conflict.
   - The description editor's text-formatting combos (`description.bold` / `.italic` / `.link` /
     `.pastePlain`, handled in `DescriptionEditor`'s own `onKeyDown`). They are decisions made
     while already inspecting the keystroke, alongside bare Enter and Tab, against the textarea's

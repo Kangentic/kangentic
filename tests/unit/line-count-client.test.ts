@@ -17,21 +17,31 @@ vi.mock('electron', () => ({
 }));
 
 import { LineCountClient } from '../../src/main/git/line-count/line-count-client';
+import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
 
 // Mirrors the private IDLE_SHUTDOWN_MS in line-count-client.ts.
 const IDLE_SHUTDOWN_MS = 60_000;
+// Comfortably past the largest UtilityRestartPolicy backoff step, so a test
+// that wants the next respawn allowed does not encode the exact ladder.
+const BACKOFF_CLEAR_MS = 20_000;
+// Past the policy's decay window (5 min), after which the crash count resets.
+const DECAY_MS = 5 * 60_000;
 
 interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
+  /** Present only when a test forks with a piped stderr (the real shape);
+   *  absent otherwise, which the client must tolerate. */
+  stderr?: EventEmitter;
 }
 
 const forkedChildren: FakeChild[] = [];
 
-function makeFakeChild(): FakeChild {
+function makeFakeChild(withStderr = false): FakeChild {
   const child = new EventEmitter() as FakeChild;
   child.postMessage = vi.fn();
   child.kill = vi.fn();
+  if (withStderr) child.stderr = new EventEmitter();
   return child;
 }
 
@@ -108,21 +118,91 @@ describe('LineCountClient', () => {
   });
 
   it('resolves in-flight requests null on an unexpected worker exit and disables offload after MAX_CRASHES', async () => {
-    const client = new LineCountClient();
+    vi.useFakeTimers();
+    try {
+      const client = new LineCountClient();
 
-    for (let cycle = 0; cycle < 3; cycle++) {
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const promise = client.countFiles(['/mock/a.txt']);
+        lastChild().emit('exit');
+        await expect(promise).resolves.toBeNull();
+        // Clear the post-crash backoff so the next cycle is allowed to fork.
+        // Without this the client refuses to respawn and the cap is never
+        // reached, which is the whole point of the backoff (see the test below).
+        await vi.advanceTimersByTimeAsync(BACKOFF_CLEAR_MS);
+      }
+
+      expect(client.crashed).toBe(true);
+      expect(mockFork).toHaveBeenCalledTimes(3);
+
+      // Further calls degrade to null without forking again, so diff-service.ts
+      // always has a working inline fallback.
+      await expect(client.countFiles(['/mock/again.txt'])).resolves.toBeNull();
+      expect(mockFork).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses to respawn immediately after a crash, so a crash loop cannot burn the cap in one burst', async () => {
+    // The regression this guards: the client used to re-fork on the very next
+    // request, so a worker dying at startup burned all three lives in
+    // milliseconds and disabled offload for the whole app run. That is the
+    // three-exits-in-four-seconds signature that reached error reporting.
+    vi.useFakeTimers();
+    try {
+      const client = new LineCountClient();
+
       const promise = client.countFiles(['/mock/a.txt']);
       lastChild().emit('exit');
       await expect(promise).resolves.toBeNull();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      // Immediately asking again must NOT fork a replacement...
+      await expect(client.countFiles(['/mock/b.txt'])).resolves.toBeNull();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+      expect(client.crashed).toBe(false);
+
+      // ...but the client recovers on its own once the backoff elapses.
+      await vi.advanceTimersByTimeAsync(BACKOFF_CLEAR_MS);
+      const recovered = client.countFiles(['/mock/c.txt']);
+      expect(mockFork).toHaveBeenCalledTimes(2);
+      lastChild().emit('message', { type: 'result', id: 2, entries: [] });
+      await recovered;
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
     }
+  });
 
-    expect(client.crashed).toBe(true);
-    expect(mockFork).toHaveBeenCalledTimes(3);
+  it('recovers after the crash count decays, rather than staying dead for the app run', async () => {
+    // lineCountClient is a module singleton nothing ever replaces, so before
+    // the decay a single bad burst removed line-count offload until restart.
+    vi.useFakeTimers();
+    try {
+      const client = new LineCountClient();
 
-    // Further calls degrade to null without forking again, so diff-service.ts
-    // always has a working inline fallback.
-    await expect(client.countFiles(['/mock/again.txt'])).resolves.toBeNull();
-    expect(mockFork).toHaveBeenCalledTimes(3);
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const promise = client.countFiles(['/mock/a.txt']);
+        lastChild().emit('exit');
+        await expect(promise).resolves.toBeNull();
+        await vi.advanceTimersByTimeAsync(BACKOFF_CLEAR_MS);
+      }
+      expect(client.crashed).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(DECAY_MS);
+
+      expect(client.crashed).toBe(false);
+      const promise = client.countFiles(['/mock/after-decay.txt']);
+      expect(mockFork).toHaveBeenCalledTimes(4);
+      lastChild().emit('message', { type: 'result', id: 4, entries: [] });
+      await promise;
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('dispose() kills the worker, resolves pending null, and refuses further work', async () => {
@@ -215,5 +295,83 @@ describe('LineCountClient', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('forks the worker with stderr piped and stdin/stdout ignored, the same shape as the embed worker', async () => {
+    const client = new LineCountClient();
+    const promise = client.countFiles(['/mock/a.txt']);
+    lastChild().emit('message', { type: 'result', id: 1, entries: [] });
+    await promise;
+
+    expect(mockFork).toHaveBeenCalledWith(
+      expect.stringContaining('line-count-worker.js'),
+      [],
+      expect.objectContaining({
+        serviceName: 'kangentic-line-count',
+        stdio: ['ignore', 'ignore', 'pipe'],
+      }),
+    );
+    client.dispose();
+  });
+
+  it("hands the worker's captured stderr to the restart policy on an unexpected exit", async () => {
+    // The mocked app is unpackaged, so the client also passes chunks through
+    // to this process's stderr; silence that for the test output.
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      mockFork.mockImplementation(() => {
+        const child = makeFakeChild(true);
+        forkedChildren.push(child);
+        return child;
+      });
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-line-count', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new LineCountClient(policy);
+      const promise = client.countFiles(['/mock/a.txt']);
+      const child = lastChild();
+
+      child.stderr?.emit('data', Buffer.from('Error: worker blew up\n'));
+      child.emit('exit', 1);
+      await expect(promise).resolves.toBeNull();
+
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      const [exitCode, stderrTail] = recordCrashSpy.mock.calls[0];
+      expect(exitCode).toBe(1);
+      expect(stderrTail?.snapshot()).toBe('Error: worker blew up');
+      expect(policy.lastCrashDescription).toBe('exited with code 1: Error: worker blew up');
+    } finally {
+      stderrWrite.mockRestore();
+    }
+  });
+
+  it('degrades to null and records the crash with no stderr tail when utilityProcess.fork() itself throws', async () => {
+    // Distinct from the exit-path test above: here fork() never returns a
+    // child at all (e.g. spawn ENOENT), so there is no stderr stream to
+    // capture. recordCrash must still be reachable through the catch block
+    // with a bare exit code and no third argument. Two independent
+    // regressions land here: trying to read stderr off the not-yet-assigned
+    // `child` throws (TypeError: Cannot read properties of undefined)
+    // instead of degrading, and passing a StderrTail anyway (skipping that
+    // dereference) still fails the toHaveBeenCalledWith(null) arity check
+    // below on its own. Both were confirmed red separately against a
+    // temporarily reintroduced StderrTail in this catch branch.
+    const forkError = new Error('spawn ENOENT');
+    mockFork.mockImplementationOnce(() => {
+      throw forkError;
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const policy = new UtilityRestartPolicy({ service: 'kangentic-line-count', maxCrashes: 3 });
+    const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+    const client = new LineCountClient(policy);
+
+    await expect(client.countFiles(['/mock/a.txt'])).resolves.toBeNull();
+
+    expect(mockFork).toHaveBeenCalledTimes(1);
+    expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+    expect(recordCrashSpy).toHaveBeenCalledWith(null);
+    // A single fork failure is one crash, not three - the client must not be
+    // latched off after it.
+    expect(client.crashed).toBe(false);
+    warnSpy.mockRestore();
   });
 });

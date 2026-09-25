@@ -19,6 +19,9 @@ export const INIT_SCRIPT_TIMEOUT_MS = 600_000;
  * hardcoding a shell path or path separator. Omitting an args array avoids the
  * Node DEP0190 deprecation that fires when an args array is combined with
  * `shell: true` (the same reasoning documented in agent/shared/exec-version.ts).
+ * On macOS spawnWithAbort spells the same `/bin/sh -c` out and runs it through
+ * node-pty's spawn-helper, so nothing the script starts inherits Crashpad's
+ * exception port (see pty/spawn/shell-launch.ts).
  *
  * The shared spawnWithAbort lifecycle handles the wall-clock timeout, external
  * cancellation (a superseding move or app shutdown), drained stdio, and

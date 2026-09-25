@@ -24,9 +24,12 @@ export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
         onChange={(value) => updateGlobal({ skipBoardConfigConfirm: value })}
       />
 
+      {/* Animations used to sit here. It moved to Performance: it toggles
+          `.no-motion` on <html> (config-store.ts), so it was never board
+          chrome, and it belongs beside graphics acceleration. */}
       <SectionHeader
         label="Window"
-        searchIds={['terminalPanelVisible', 'statusBarVisible', 'animationsEnabled']}
+        searchIds={['terminalPanelVisible', 'statusBarVisible']}
       />
       <SettingToggleRow
         {...settingProps('terminalPanelVisible')}
@@ -37,11 +40,6 @@ export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
         {...settingProps('statusBarVisible')}
         checked={globalConfig.statusBarVisible !== false}
         onChange={(value) => updateGlobal({ statusBarVisible: value })}
-      />
-      <SettingToggleRow
-        {...settingProps('animationsEnabled')}
-        checked={globalConfig.animationsEnabled}
-        onChange={(value) => updateGlobal({ animationsEnabled: value })}
       />
     </>
   );

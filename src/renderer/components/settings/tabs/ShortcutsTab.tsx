@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, Info, Zap } from 'lucide-react';
 import { useBoardStore } from '../../../stores/board-store';
 import { IconPickerDialog } from '../../dialogs/IconPickerDialog';
-import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
+import { RegistryIcon } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
+import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { SectionHeader, Select, INPUT_CLASS } from '../shared';
 import { Pill } from '../../Pill';
 import { OverlayPopover } from '../../OverlayPopover';
@@ -110,7 +111,6 @@ function SortableActionItem({
     zIndex: isDragging ? 10 : undefined,
   };
 
-  const Icon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
 
   return (
     <div
@@ -120,13 +120,15 @@ function SortableActionItem({
     >
       {/* Summary row */}
       <div
-        className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-hover/50 rounded-lg transition-colors"
+        className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-surface-hover/50 rounded-lg transition-colors"
         onClick={onToggleEdit}
       >
         {/* light-dismiss-ok: the settings panel mounts as a SIBLING of AppLayout's marked shell
             subtree, so a click anywhere in it resolves to no `data-dismiss-layer` scope and
             cannot dismiss a task window. That is the fail-safe the marker placement buys; this
             `cursor-grab` handle needs no marker of its own. */}
+        {/* select-none-ok: the handle draws a grip icon and no text, and it
+            inherits the summary row's `select-none` anyway. */}
         <div
           className="flex-shrink-0 cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted"
           {...attributes}
@@ -135,7 +137,7 @@ function SortableActionItem({
         >
           <GripVertical size={14} />
         </div>
-        <Icon size={16} className="text-fg-muted flex-shrink-0" />
+        <RegistryIcon name={action.icon ?? 'zap'} fallback={Zap} size={16} className="text-fg-muted flex-shrink-0" />
         <span className="text-sm text-fg font-medium truncate flex-1">{action.label}</span>
         <span
           className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${action.source === 'team' ? 'bg-accent/15 text-accent border border-accent/25' : 'bg-fg-disabled/15 text-fg-muted border border-fg-disabled/25'}`}
@@ -180,11 +182,7 @@ function SortableActionItem({
                 onClick={onOpenIconPicker}
                 className="bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg flex items-center gap-2 cursor-pointer hover:border-fg-faint transition-colors group focus:outline-none focus:border-accent"
               >
-                {(() => {
-                  const iconName = action.icon ?? 'zap';
-                  const IconComp = ICON_REGISTRY.get(iconName) ?? Zap;
-                  return <IconComp size={14} strokeWidth={1.75} className="text-fg-muted flex-shrink-0" />;
-                })()}
+                <RegistryIcon name={action.icon ?? 'zap'} fallback={Zap} size={14} strokeWidth={1.75} className="text-fg-muted flex-shrink-0" />
                 <span className="text-xs text-fg-tertiary truncate">
                   {action.icon ?? 'zap'}
                 </span>
@@ -270,7 +268,16 @@ function SortableActionItem({
 
 export function ShortcutsTab() {
   const shortcuts = useBoardStore((state) => state.shortcuts);
-  const [localActions, setLocalActions] = useState<ShortcutEditState[]>([]);
+  // A local editing copy of the store's shortcuts, re-copied whenever the store
+  // array changes. Done during render against the array last copied (React's
+  // "adjusting state when a prop changes" pattern) rather than in an effect,
+  // so the list never paints a stale copy for a frame.
+  const [localActions, setLocalActions] = useState<ShortcutEditState[]>(() => shortcuts.map((action) => ({ ...action })));
+  const [copiedShortcuts, setCopiedShortcuts] = useState(shortcuts);
+  if (shortcuts !== copiedShortcuts) {
+    setCopiedShortcuts(shortcuts);
+    setLocalActions(shortcuts.map((action) => ({ ...action })));
+  }
   const [showPresets, setShowPresets] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [iconPickerIndex, setIconPickerIndex] = useState<number | null>(null);
@@ -286,13 +293,13 @@ export function ShortcutsTab() {
     { mode: 'dropdown', strategy: 'fixed', preferRight: false },
   );
 
+  // The row grip carries dnd-kit's attributes (a Tab stop announced as
+  // sortable), so it gets the shared keyboard sensor. Never the stock
+  // KeyboardSensor (keyboard-drag-intent.md).
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-
-  useEffect(() => {
-    setLocalActions(shortcuts.map((action) => ({ ...action })));
-  }, [shortcuts]);
 
   // Click-outside handler for presets dropdown (capture phase to beat scroll containers)
   useEffect(() => {
@@ -478,11 +485,12 @@ export function ShortcutsTab() {
             data-testid="shortcut-presets-menu"
           >
             {(() => {
-              let lastCategory = '';
               return filteredPresets.map((preset, index) => {
-                const PresetIcon = ICON_REGISTRY.get(preset.action.icon ?? 'zap') ?? Zap;
-                const showHeader = preset.category !== lastCategory;
-                lastCategory = preset.category;
+                // A category header opens each run of presets sharing a
+                // category: compare against the previous entry rather than an
+                // accumulator mutated inside the map, which is a reassignment
+                // the compiler rules cannot prove stays inside this render.
+                const showHeader = index === 0 || preset.category !== filteredPresets[index - 1].category;
                 return (
                   <React.Fragment key={`${preset.label}-${preset.platform ?? 'all'}-${index}`}>
                     {showHeader && (
@@ -494,7 +502,7 @@ export function ShortcutsTab() {
                       onClick={() => addAction(preset.action)}
                       className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
                     >
-                      <PresetIcon size={14} />
+                      <RegistryIcon name={preset.action.icon ?? 'zap'} fallback={Zap} size={14} />
                       {preset.label}
                     </button>
                   </React.Fragment>

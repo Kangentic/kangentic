@@ -126,6 +126,23 @@ async function openBrowserPane(page: Page): Promise<void> {
 }
 
 async function closeDialog(page: Page): Promise<void> {
+  // Discard the pane first. The fixture's task has a RUNNING session, so
+  // closing the window with the pane mounted would PARK it (hidden in place so
+  // its guest survives for the agent) rather than remove it, and an
+  // `opacity: 0` frame never reads as hidden to Playwright. The shortcut would
+  // only HOLD the pane (hidden, still mounted, still parking the window), so
+  // the discard is an agent's close_pane push, which is the one path that
+  // unmounts it.
+  // The pane may be on its empty state OR already showing a page (a quick pick
+  // or a submitted URL seeds one), and the two render different containers, so
+  // gate on either.
+  const paneOrEmptyState = page.locator('[data-testid="browser-pane"], [data-testid="browser-empty-state"]');
+  if ((await paneOrEmptyState.count()) > 0) {
+    await page.evaluate(({ projectId, taskId }) => {
+      window.__mockBrowser?.emitPaneCloseRequest(projectId, [taskId]);
+    }, { projectId: PROJECT_ID, taskId: TASK_ID });
+    await paneOrEmptyState.first().waitFor({ state: 'detached', timeout: 3000 });
+  }
   await page.locator('[data-testid="task-detail-close"]').click();
   await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 }

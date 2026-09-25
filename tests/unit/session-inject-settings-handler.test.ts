@@ -1,14 +1,16 @@
 /**
- * Unit tests for the SESSION_INJECT_SETTINGS IPC handler.
+ * Unit tests for two IPC handlers registered by registerTransientSessionHandlers
+ * (transient-sessions.ts): SESSION_INJECT_SETTINGS and SESSION_SPAWN_TRANSIENT's
+ * missing-CLI branch.
  *
- * The handler lives inside registerTransientSessionHandlers (transient-sessions.ts)
- * and serves command-terminal (transient) sessions that have no task row and
- * therefore cannot use the task-keyed TASK_SET_RUNTIME_OVERRIDE handler.
+ * SESSION_INJECT_SETTINGS serves command-terminal (transient) sessions that have
+ * no task row and therefore cannot use the task-keyed TASK_SET_RUNTIME_OVERRIDE
+ * handler.
  *
  * Pattern mirrors task-runtime-override-handler.test.ts: capture the function
  * registered with ipcMain.handle and invoke it directly with a mocked IpcContext.
  *
- * Covers:
+ * SESSION_INJECT_SETTINGS covers:
  *   - unknown-agent branch (a): getSessionAgentName returns a name, but
  *     agentRegistry has no adapter for it
  *   - unknown-agent branch (b): getSessionAgentName returns undefined, falls
@@ -21,6 +23,14 @@
  *   - happy path: adapter returns ['/model sonnet'] -> scheduleKeystrokes
  *     called with (sessionId, sessionId, sequence, {}), ok:true, injected:true
  *   - happy path with effort only changed
+ *
+ * SESSION_SPAWN_TRANSIENT covers:
+ *   - the missing-CLI branch (adapter.detect() resolves not-found, or found
+ *     with a null path) rejects with an AgentCliNotFoundError - specifically a
+ *     UserConfigurationError subclass, not a plain Error, since
+ *     reportHandledError keys its Sentry exclusion off that type - carrying
+ *     the canonical agentCliNotFoundMessage wording, and never reaches
+ *     sessionManager.spawn.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -70,8 +80,15 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 // ---------------------------------------------------------------------------
 
 import { registerTransientSessionHandlers } from '../../src/main/ipc/handlers/transient-sessions';
+import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { AgentCliNotFoundError, agentCliNotFoundMessage } from '../../src/main/agent/shared/agent-cli-not-found';
+import { UserConfigurationError } from '../../src/shared/user-configuration-error';
 import { IPC } from '../../src/shared/ipc-channels';
-import type { SessionInjectSettingsInput, SessionInjectSettingsResult } from '../../src/shared/types';
+import type {
+  SessionInjectSettingsInput,
+  SessionInjectSettingsResult,
+  SpawnTransientSessionInput,
+} from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -135,6 +152,12 @@ async function callHandler(
   const handler = capturedHandlers.get(IPC.SESSION_INJECT_SETTINGS);
   if (!handler) throw new Error(`Handler for ${IPC.SESSION_INJECT_SETTINGS} was not registered`);
   return handler(null, input) as Promise<SessionInjectSettingsResult>;
+}
+
+async function callSpawnHandler(context: MockContext, input: SpawnTransientSessionInput): Promise<unknown> {
+  const handler = capturedHandlers.get(IPC.SESSION_SPAWN_TRANSIENT);
+  if (!handler) throw new Error(`Handler for ${IPC.SESSION_SPAWN_TRANSIENT} was not registered`);
+  return handler(null, input);
 }
 
 // ---------------------------------------------------------------------------
@@ -349,5 +372,68 @@ describe('SESSION_INJECT_SETTINGS handler', () => {
 
     expect(mockAgentRegistryGet).toHaveBeenCalledWith('gemini');
     expect(mockAgentRegistryGet).not.toHaveBeenCalledWith('claude');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SESSION_SPAWN_TRANSIENT - missing-CLI branch
+// ---------------------------------------------------------------------------
+
+describe('SESSION_SPAWN_TRANSIENT handler - missing CLI', () => {
+  let context: MockContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedHandlers.clear();
+
+    context = createMockContext();
+    registerTransientSessionHandlers(context as never);
+  });
+
+  it('rejects with AgentCliNotFoundError (a UserConfigurationError, not a plain Error) carrying the canonical message, and never calls sessionManager.spawn, when detect() reports not found', async () => {
+    // The type matters, not just the message: reportHandledError keys its
+    // Sentry exclusion off `instanceof UserConfigurationError`. A plain
+    // Error here would silently start reporting a missing-CLI user
+    // configuration problem to Sentry as a defect.
+    const detect = vi.fn(async () => ({ found: false }));
+    vi.mocked(agentRegistry.getOrThrow).mockReturnValueOnce({
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect,
+    } as never);
+
+    const input: SpawnTransientSessionInput = { projectId: 'proj-1' };
+    const spawnPromise = callSpawnHandler(context, input);
+
+    await expect(spawnPromise).rejects.toBeInstanceOf(UserConfigurationError);
+    await expect(spawnPromise).rejects.toBeInstanceOf(AgentCliNotFoundError);
+    await expect(spawnPromise).rejects.toMatchObject({
+      message: agentCliNotFoundMessage('Claude Code'),
+    });
+
+    expect(detect).toHaveBeenCalled();
+    expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('rejects with the same AgentCliNotFoundError when detect() reports found with a null path', async () => {
+    // The handler's condition is `!detection.found || !detection.path` - a
+    // found:true with a null path must be treated identically to not-found.
+    const detect = vi.fn(async () => ({ found: true, path: null }));
+    vi.mocked(agentRegistry.getOrThrow).mockReturnValueOnce({
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect,
+    } as never);
+
+    const input: SpawnTransientSessionInput = { projectId: 'proj-1' };
+    const spawnPromise = callSpawnHandler(context, input);
+
+    await expect(spawnPromise).rejects.toBeInstanceOf(UserConfigurationError);
+    await expect(spawnPromise).rejects.toBeInstanceOf(AgentCliNotFoundError);
+    await expect(spawnPromise).rejects.toMatchObject({
+      message: agentCliNotFoundMessage('Claude Code'),
+    });
+
+    expect(context.sessionManager.spawn).not.toHaveBeenCalled();
   });
 });

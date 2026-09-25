@@ -1,37 +1,21 @@
+/**
+ * The board hover video. The board STILLS this file once shot are the `board` scene now
+ * (features/scenes.capture.ts), so the rig and the web build describe that state once; a video
+ * needs the dev-server fixture path because its hover pan is choreography, not a state.
+ */
 import { test } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
-import { ALL_RESOLUTIONS, hero } from '../helpers/resolutions';
+import { hero } from '../helpers/resolutions';
 import { launchCapturePage } from '../helpers/capture-page';
 import { buildMarketingPreConfig } from '../helpers/marketing-fixture';
 import { getOutputDir } from '../helpers/output-dir';
 
 const OUTPUT_DIR = getOutputDir('agent-orchestration');
-const THEMES = ['dark', 'light'] as const;
 
 const preConfigScript = buildMarketingPreConfig();
 
 test.describe('Agent Orchestration Captures', () => {
-  for (const theme of THEMES) {
-    for (const resolution of ALL_RESOLUTIONS) {
-      test(`${theme} ${resolution.name}`, async () => {
-        const { browser, page } = await launchCapturePage({
-          resolution,
-          theme,
-          preConfigScript,
-          hideTerminal: true,
-        });
-
-        await page.screenshot({
-          path: path.join(OUTPUT_DIR, `${theme}-${resolution.name}.png`),
-          fullPage: false,
-        });
-
-        await browser.close();
-      });
-    }
-  }
-
   test('dark interaction video', async () => {
     test.setTimeout(60_000);
 

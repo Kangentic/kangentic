@@ -11,6 +11,7 @@ import {
   setIncrementalStateBudgetForTests,
 } from '../../src/main/agent/adapters/claude/transcript-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
+import type { TranscriptEntry } from '../../src/shared/types';
 
 /**
  * Covers the incremental-append parse path in `parseClaudeTranscript`: when a
@@ -55,6 +56,68 @@ function assistantTextLine(
   if (usage) message.usage = usage;
   return line({ type: 'assistant', uuid, timestamp: ts, message });
 }
+
+/** One assistant line carrying a single content block, the shape Claude writes
+ *  when one API message spans several transcript lines (a thinking line, then
+ *  one line per tool_use). Every such line repeats the message's `usage`. */
+function assistantBlockLine(
+  uuid: string,
+  messageId: string,
+  block: Record<string, unknown>,
+  usage: Record<string, number> | null,
+  ts: string,
+): string {
+  const message: Record<string, unknown> = {
+    id: messageId,
+    role: 'assistant',
+    model: 'claude-opus-4-8',
+    content: [block],
+  };
+  if (usage) message.usage = usage;
+  return line({ type: 'assistant', uuid, timestamp: ts, message });
+}
+
+function toolResultLine(uuid: string, toolUseId: string, body: string, ts: string): string {
+  return line({
+    type: 'user',
+    uuid,
+    timestamp: ts,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: body }] },
+  });
+}
+
+/**
+ * Walk a file with `parseClaudeTranscriptWindow`, using `windowBytes[i]` as
+ * window i's budget (the last value repeats). Per-window sizes rather than one
+ * uniform budget, so a test can place a seam on an exact line boundary instead
+ * of hoping a single number lands there.
+ */
+async function walkWindows(
+  filePath: string,
+  windowBytes: number[],
+  attributedMessageIds?: Set<string>,
+): Promise<TranscriptEntry[]> {
+  const total = fs.statSync(filePath).size;
+  const collected: TranscriptEntry[] = [];
+  let offset = 0;
+  let windowIndex = 0;
+  while (offset < total && windowIndex < 50) {
+    const maxBytes = windowBytes[Math.min(windowIndex, windowBytes.length - 1)];
+    const window = await parseClaudeTranscriptWindow(filePath, offset, maxBytes, attributedMessageIds);
+    collected.push(...window.entries);
+    if (window.nextByteOffset <= offset) break;
+    offset = window.nextByteOffset;
+    windowIndex += 1;
+  }
+  return collected;
+}
+
+const SEAM_USAGE = {
+  input_tokens: 4,
+  output_tokens: 1249,
+  cache_creation_input_tokens: 11882,
+  cache_read_input_tokens: 136206,
+};
 
 describe('parseClaudeTranscript incremental append', () => {
   let tmpDir: string;
@@ -374,6 +437,172 @@ describe('parseClaudeTranscript incremental append', () => {
     // Every turn indexed exactly once, no gap and no duplicate.
     expect(seen).toEqual(Array.from({ length: 40 }, (unused, turn) => `u${turn}`));
     expect(incrementalStateSizeForTests()).toBe(0);
+  });
+
+  it('attributes a message whose lines straddle a window seam exactly once', async () => {
+    // The shape a real seam case has: one API message written as a thinking
+    // line and then a tool_use line, minutes apart, each repeating the whole
+    // message's usage. The lines carry DIFFERENT uuids, and the turn-usage
+    // ledger keys a row per uuid - so a second attribution is a second row the
+    // primary key cannot collapse, and the message's tokens are counted twice.
+    const lines = [
+      userLine('u0', `please edit ${'x'.repeat(2000)}`),
+      assistantBlockLine(
+        'a-thinking',
+        'msg_seam',
+        { type: 'thinking', thinking: 'weighing the edit', signature: 'sig' },
+        SEAM_USAGE,
+        '2026-06-01T01:18:09.516Z',
+      ),
+      assistantBlockLine(
+        'a-tool-use',
+        'msg_seam',
+        { type: 'tool_use', id: 'toolu_1', name: 'Edit', input: { file_path: '/repo/a.ts' } },
+        SEAM_USAGE,
+        '2026-06-01T01:20:28.780Z',
+      ),
+      userLine('u1', 'thanks'),
+    ];
+    fs.writeFileSync(file, lines.join(''));
+
+    // Cut the first window a few bytes into the tool_use line, so it trims back
+    // to the thinking line and the seam lands between the message's two lines.
+    const seamBudget = Buffer.byteLength(lines[0] + lines[1]) + 5;
+    const windowBytes = [seamBudget, 100_000];
+
+    // Control: a fresh dedupe per window is the old behavior, and it is what
+    // makes this fixture a real seam test rather than one that quietly stopped
+    // crossing a boundary.
+    const perWindow = await walkWindows(file, windowBytes);
+    expect(perWindow.filter((entry) => 'usage' in entry && entry.usage).length).toBe(2);
+
+    const carried = await walkWindows(file, windowBytes, new Set<string>());
+    const attributed = carried.filter((entry) => 'usage' in entry && entry.usage);
+    expect(attributed).toHaveLength(1);
+    // The FIRST emitted line of the message keeps it, exactly as within a window.
+    expect(attributed[0].uuid).toBe('a-thinking');
+    // Both lines still produce their entries; only the usage is deduped.
+    expect(carried.map((entry) => entry.uuid)).toEqual(['u0', 'a-thinking', 'a-tool-use', 'u1']);
+  });
+
+  it('carries attribution THROUGH a window that attributes nothing', async () => {
+    // A parallel-tool batch's tool_result lines can fill a whole window while
+    // the message they belong to is still unfinished. Resetting the carry per
+    // window - or only remembering the last window's ids - puts the double
+    // count straight back for exactly this case.
+    const lines = [
+      userLine('u0', `run the batch ${'x'.repeat(2000)}`),
+      assistantBlockLine(
+        'a-thinking',
+        'msg_seam',
+        { type: 'thinking', thinking: 'fanning out', signature: 'sig' },
+        SEAM_USAGE,
+        '2026-06-01T01:18:09.516Z',
+      ),
+      toolResultLine('tr-1', 'toolu_0', 'y'.repeat(1500), '2026-06-01T01:19:00.000Z'),
+      toolResultLine('tr-2', 'toolu_0', 'z'.repeat(1500), '2026-06-01T01:19:30.000Z'),
+      assistantBlockLine(
+        'a-tool-use',
+        'msg_seam',
+        { type: 'tool_use', id: 'toolu_1', name: 'Edit', input: { file_path: '/repo/a.ts' } },
+        SEAM_USAGE,
+        '2026-06-01T01:20:28.780Z',
+      ),
+    ];
+    fs.writeFileSync(file, lines.join(''));
+
+    const windowBytes = [
+      Buffer.byteLength(lines[0] + lines[1]) + 5,
+      // Starts ON the thinking line's newline (one byte is spent dropping it),
+      // so this covers both tool_result lines and stops short of the tool_use.
+      Buffer.byteLength(lines[2] + lines[3]) + 5,
+      100_000,
+    ];
+
+    const carried = await walkWindows(file, windowBytes, new Set<string>());
+    const attributed = carried.filter((entry) => 'usage' in entry && entry.usage);
+    expect(attributed).toHaveLength(1);
+    expect(attributed[0].uuid).toBe('a-thinking');
+    // The middle window really did attribute nothing, which is the whole point.
+    expect(carried.map((entry) => entry.uuid)).toEqual([
+      'u0', 'a-thinking', 'tr-1', 'tr-2', 'a-tool-use',
+    ]);
+  });
+
+  it('keeps the carry bounded rather than growing it to the whole file', async () => {
+    // The walk exists to avoid whole-file residency, so the fix must not
+    // quietly reintroduce it as a set of every message id in the transcript.
+    const lines: string[] = [];
+    for (let turn = 0; turn < 60; turn += 1) {
+      lines.push(assistantTextLine(`a${turn}`, `msg_${turn}`, `reply ${turn}`, SEAM_USAGE));
+    }
+    fs.writeFileSync(file, lines.join(''));
+
+    const carry = new Set<string>();
+    await walkWindows(file, [Buffer.byteLength(lines[0]) * 4], carry);
+
+    expect(carry.size).toBeGreaterThan(0);
+    expect(carry.size).toBeLessThanOrEqual(16);
+  });
+
+  it('evicts the carry OLDEST-first, so the LAST-attributed message survives to dedupe its own seam', async () => {
+    // The test above only pins carry.size, which stays green even if the
+    // prune evicted the NEWEST id instead of the oldest. Eviction order is
+    // load-bearing: the only id that can ever straddle a seam is the LAST one
+    // attributed in the window that just ran (see the SEAM_CARRY_LIMIT
+    // comment in transcript-parser.ts), so it must be the last one dropped,
+    // not the first. This pins that order directly by forcing a real overflow
+    // (more distinct message ids than the carry can hold) whose LAST id then
+    // continues into the very next window.
+    const seamMessageCount = 20; // more than SEAM_CARRY_LIMIT (16)
+    const lastMessageId = 'm-last';
+    const seamLines: string[] = [];
+    for (let messageIndex = 0; messageIndex < seamMessageCount; messageIndex += 1) {
+      const isFinalMessageOfWindowOne = messageIndex === seamMessageCount - 1;
+      const messageId = isFinalMessageOfWindowOne ? lastMessageId : `msg_${messageIndex}`;
+      seamLines.push(
+        assistantTextLine(`a${messageIndex}`, messageId, `reply ${messageIndex}`, SEAM_USAGE),
+      );
+    }
+    const seamLinesText = seamLines.join('');
+
+    // The continuation line for the SAME (last-attributed) message id lands
+    // right at the start of the next window, exactly as a real straddling
+    // message's continuation always does.
+    const continuationLine = assistantBlockLine(
+      'a-last-continuation',
+      lastMessageId,
+      { type: 'tool_use', id: 'toolu_seam', name: 'Edit', input: { file_path: '/repo/a.ts' } },
+      SEAM_USAGE,
+      '2026-06-01T00:00:21Z',
+    );
+    fs.writeFileSync(file, seamLinesText + continuationLine);
+
+    // A few bytes past the end of window one's lines and into the
+    // continuation line, so the window trims back to the exact boundary
+    // between them, the same technique the other seam tests above use.
+    const seamBudget = Buffer.byteLength(seamLinesText) + 5;
+    const windowBytes = [seamBudget, 100_000];
+
+    const carry = new Set<string>();
+    const carried = await walkWindows(file, windowBytes, carry);
+
+    // The carry stays bounded, and the last-attributed id specifically is
+    // still in it after the prune, not evicted in favor of older ids.
+    expect(carry.size).toBeLessThanOrEqual(16);
+    expect(carry.has(lastMessageId)).toBe(true);
+
+    const lastMessageFirstEntry = carried.find((entry) => entry.uuid === `a${seamMessageCount - 1}`);
+    const lastMessageContinuationEntry = carried.find((entry) => entry.uuid === 'a-last-continuation');
+    if (lastMessageFirstEntry?.kind !== 'assistant' || lastMessageContinuationEntry?.kind !== 'assistant') {
+      throw new Error('expected both seam entries to be assistant entries');
+    }
+    // Window one's line claims the usage (the first emitted line of the
+    // message, exactly as within a single window).
+    expect(lastMessageFirstEntry.usage).toBeDefined();
+    // The continuation in window two must NOT re-claim it: the carried id
+    // survived the prune and suppressed a second attribution across the seam.
+    expect(lastMessageContinuationEntry.usage).toBeUndefined();
   });
 
   it('parses a CRLF-terminated line appended incrementally to a CRLF-terminated transcript', async () => {

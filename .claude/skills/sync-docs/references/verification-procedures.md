@@ -30,7 +30,7 @@ When an anchor maps to multiple target docs, one doc is the **canonical** locati
 
 ## Config Anchors
 
-**Applies to:** `AppConfig`, `DEFAULT_CONFIG`, `GLOBAL_ONLY_PATHS`, `BoardConfig`, `BoardColumnConfig`
+**Applies to:** `AppConfig`, `DEFAULT_CONFIG`, `pickOverridableSubset`, `BoardConfig`, `BoardColumnConfig`
 
 ### AppConfig / DEFAULT_CONFIG
 1. Read `src/shared/types.ts`
@@ -115,7 +115,7 @@ When an anchor maps to multiple target docs, one doc is the **canonical** locati
 ## Task Template Variable Anchors (auto_command / spawn_agent promptTemplate)
 
 1. Read `src/shared/task-template-vars.ts` (`TASK_TEMPLATE_VAR_NAMES` / `TASK_TEMPLATE_VARS`)
-2. Extract all 10 keyword names and their `chip`/`description` fields
+2. Extract every keyword name (currently 22) and their `chip`/`description` fields
 3. Read `docs/transition-engine.md` ("## Template Variables", canonical) and
    `docs/architecture.md` (the "Template variables available" line, cross-reference)
 4. Compare: report any chip missing from either doc, or documented with stale prose (e.g.

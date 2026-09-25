@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   ghError: null as Error | null,
   lastArgs: [] as readonly string[],
   lastCwd: undefined as string | undefined,
+  lastOptions: undefined as { cwd?: string; timeout?: number; maxBuffer?: number } | undefined,
 }));
 
 /**
@@ -54,6 +55,19 @@ vi.mock('../../src/main/git/worktree-head', async (importOriginal) => ({
   isShaContainedInRef: gitRefs.isShaContainedInRef,
 }));
 
+/**
+ * The registry dispatches only to connectors that OWN the repo's remote, so a
+ * registry-level call reads `git remote -v` first. Stub it to a GitHub remote:
+ * these tests use a synthetic cwd (`/r`) that is not a repository, and without
+ * this the gate correctly refuses to name an owner and throws before any
+ * connector runs.
+ */
+const remotes = vi.hoisted(() => ({ urls: ['https://github.com/owner/repo.git'] as readonly string[] | null }));
+vi.mock('../../src/main/git/git-remotes', () => ({
+  readRemoteUrls: async () => remotes.urls,
+  invalidateRemoteUrlsCache: () => {},
+}));
+
 vi.mock('which', () => ({
   default: async () => {
     if (state.whichResult instanceof Error) throw state.whichResult;
@@ -73,9 +87,14 @@ vi.mock('node:child_process', async (importOriginal) => {
       if (callback) callback(state.ghError, { stdout: state.ghStdout, stderr: '' });
     },
     {
-      [promisifyCustom]: (_file: string, args?: readonly string[] | unknown, opts?: { cwd?: string }) => {
+      [promisifyCustom]: (
+        _file: string,
+        args?: readonly string[] | unknown,
+        opts?: { cwd?: string; timeout?: number; maxBuffer?: number },
+      ) => {
         state.lastArgs = Array.isArray(args) ? (args as readonly string[]) : [];
         state.lastCwd = opts?.cwd;
+        state.lastOptions = opts;
         if (state.ghError) return Promise.reject(state.ghError);
         return Promise.resolve({ stdout: state.ghStdout, stderr: '' });
       },
@@ -85,8 +104,9 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 import { GitHubImporter, GhUnavailableError, GhTransientError } from '../../src/main/boards/adapters/github-common/gh-client';
-import { gitHubPRConnector } from '../../src/main/pr/adapters/github/github-connector';
+import { gitHubPRConnector, resetRequiredChecksCacheForTests } from '../../src/main/pr/adapters/github/github-connector';
 import { resolvePRForBranch, resolvePRByNumber, resolvePRByCommit, PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
+import type { PRResolveOptions } from '../../src/main/pr/pr-registry';
 
 function pr(overrides: Partial<GhPrListItem>): GhPrListItem {
   return {
@@ -124,6 +144,13 @@ describe('GitHubImporter.resolvePRByBranch', () => {
     expect(result[0].number).toBe(5);
     expect(state.lastArgs).toEqual(expect.arrayContaining(['pr', 'list', '--head', 'feat', '--state', 'all']));
     expect(state.lastCwd).toBe('/repo/worktree');
+    // The check rollup rides the same list call, so the in-flight distinction
+    // costs no extra call on the branch tier either.
+    const jsonFields = state.lastArgs[state.lastArgs.indexOf('--json') + 1];
+    expect(jsonFields.split(',')).toEqual(expect.arrayContaining(['mergeStateStatus', 'statusCheckRollup']));
+    // statusCheckRollup is a per-check-run array (~7KB on a PR with 26 checks),
+    // which can pass Node's 1MB execFile default on a busy branch.
+    expect(state.lastOptions?.maxBuffer).toBe(10 * 1024 * 1024);
   });
 
   it('returns [] when gh fails for a non-auth reason (no PR / not a gh repo)', async () => {
@@ -136,6 +163,29 @@ describe('GitHubImporter.resolvePRByBranch', () => {
     state.ghError = new Error('gh auth login required (HTTP 401)');
     const importer = new GitHubImporter();
     await expect(importer.resolvePRByBranch('/repo', 'feat')).rejects.toBeInstanceOf(GhUnavailableError);
+  });
+
+  /**
+   * gh's repo-mismatch message ENDS with "please use `gh auth login`", so the
+   * auth classifier read a permanent host mismatch as "gh is not authenticated"
+   * and told the user to re-login while gh was working perfectly. The branch
+   * ordering is what this pins: the input literally contains that phrase.
+   *
+   * It stays UNAVAILABLE rather than becoming not-found. With the ownership gate
+   * this is only reachable when our remote read says GitHub owns the repo and gh
+   * disagrees, so gh did not run cleanly and a clean not-found would let the
+   * linker clear the task's link.
+   */
+  it('reports a non-GitHub remote as a repo mismatch, not an auth failure', async () => {
+    state.ghError = new Error(
+      'none of the git remotes configured for this repository point to a known GitHub host. ' +
+        'To tell gh about a new GitHub host, please use `gh auth login`',
+    );
+    const importer = new GitHubImporter();
+    const failure = await importer.resolvePRByBranch('/repo', 'feat').catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(GhUnavailableError);
+    expect((failure as Error).message).toMatch(/do not point at a GitHub host/i);
+    expect((failure as Error).message).not.toMatch(/not authenticated/i);
   });
 });
 
@@ -221,6 +271,75 @@ describe('resolvePRForBranch registry', () => {
   });
 });
 
+/**
+ * `resolvePRForBranch` / `resolvePRByNumber` (pr-registry.ts) are pure
+ * forwarding wrappers around `connector.resolveForBranch!` /
+ * `connector.resolveByNumber!`, and nothing else in the suite exercises that
+ * specific link. `pr-link-ladder.test.ts` mocks `pr-registry` wholesale, so
+ * its options-forwarding tests only prove `pr-linking.ts` calls the MOCKED
+ * registry function correctly - they never run the registry's own body. Every
+ * connector-level options test in this file, in
+ * `azure-devops-pr-resolver.test.ts`, and in `pr-connector-gate.test.ts` calls
+ * `gitHubPRConnector.resolveForBranch!` / `.resolveByNumber!` (or Azure's
+ * equivalents) directly, bypassing the registry wrapper entirely. So a
+ * registry wrapper that dropped its `options` argument on the way to the
+ * connector call - or defaulted it to `{}` when the caller passed nothing -
+ * would ship with the whole suite green.
+ */
+describe('pr-registry wrappers forward options untouched to the connector', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * `toBe` on the options argument (not just `toHaveBeenCalledWith`'s
+   * structural equality) is deliberate: the header comment on
+   * `resolvePRByNumber` in pr-registry.ts promises "options is forwarded
+   * untouched", and a structural check alone would still pass a registry that
+   * reconstructed `{ evaluateBranchPolicies: options?.evaluateBranchPolicies }`
+   * instead of forwarding the same reference.
+   */
+  it('resolvePRForBranch forwards the exact options object to connector.resolveForBranch', async () => {
+    const spy = vi.spyOn(gitHubPRConnector, 'resolveForBranch').mockResolvedValue(null);
+    const options: PRResolveOptions = { evaluateBranchPolicies: true };
+
+    await resolvePRForBranch('/r', 'feat', 'main', options);
+
+    expect(spy).toHaveBeenCalledWith('/r', 'feat', 'main', options);
+    expect(spy.mock.calls[0][3]).toBe(options); // same reference, not a rebuilt copy
+  });
+
+  it('resolvePRByNumber forwards the exact options object to connector.resolveByNumber', async () => {
+    const spy = vi.spyOn(gitHubPRConnector, 'resolveByNumber').mockResolvedValue(null);
+    const options: PRResolveOptions = { evaluateBranchPolicies: true };
+
+    await resolvePRByNumber('/r', 42, options);
+
+    expect(spy).toHaveBeenCalledWith('/r', 42, options);
+    expect(spy.mock.calls[0][2]).toBe(options);
+  });
+
+  /**
+   * A caller that omits `options` (every production call site except
+   * pr-linking.ts's readiness-aware ladder tiers) must reach the connector as
+   * literal `undefined`, never a registry-invented `{}`. A connector's gate
+   * reads `options?.evaluateBranchPolicies === true`, so `undefined` and `{}`
+   * are behaviorally identical there today - but this pins the distinction at
+   * the one layer that could otherwise silently erase it for every future
+   * caller and every future gate.
+   */
+  it('resolvePRForBranch and resolvePRByNumber forward undefined when no options are given', async () => {
+    const branchSpy = vi.spyOn(gitHubPRConnector, 'resolveForBranch').mockResolvedValue(null);
+    const numberSpy = vi.spyOn(gitHubPRConnector, 'resolveByNumber').mockResolvedValue(null);
+
+    await resolvePRForBranch('/r', 'feat');
+    await resolvePRByNumber('/r', 42);
+
+    expect(branchSpy).toHaveBeenCalledWith('/r', 'feat', undefined, undefined);
+    expect(numberSpy).toHaveBeenCalledWith('/r', 42, undefined);
+  });
+});
+
 describe('GitHubImporter.resolvePRByNumber', () => {
   beforeEach(() => {
     state.whichResult = '/usr/bin/gh';
@@ -235,6 +354,23 @@ describe('GitHubImporter.resolvePRByNumber', () => {
     expect(state.lastArgs).toEqual(expect.arrayContaining(['pr', 'view', '42']));
   });
 
+  it('requests the mergeability triple and the check rollup on the number tier', async () => {
+    // The number tier is Tier 1 for an already-linked PR, so it is the hot path
+    // that keeps merge readiness fresh; the fields ride the same `gh pr view`.
+    // `statusCheckRollup` is what tells a required check still running apart
+    // from one that failed, which `mergeStateStatus` folds into one BLOCKED.
+    state.ghStdout = JSON.stringify(pr({ number: 42 }));
+    const importer = new GitHubImporter();
+    await importer.resolvePRByNumber('/repo', 42);
+    const jsonFields = state.lastArgs[state.lastArgs.indexOf('--json') + 1];
+    expect(jsonFields.split(',')).toEqual(
+      expect.arrayContaining(['mergeable', 'mergeStateStatus', 'reviewDecision', 'statusCheckRollup']),
+    );
+    // Same buffer bound as the branch tier, for the same reason: the rollup can
+    // pass Node's 1MB execFile default on a busy PR.
+    expect(state.lastOptions?.maxBuffer).toBe(10 * 1024 * 1024);
+  });
+
   it('throws GhUnavailableError when gh is not installed', async () => {
     state.whichResult = new Error('not found');
     const importer = new GitHubImporter();
@@ -245,6 +381,298 @@ describe('GitHubImporter.resolvePRByNumber', () => {
     state.ghError = new Error('no pull requests found for number 42');
     const importer = new GitHubImporter();
     await expect(importer.resolvePRByNumber('/repo', 42)).resolves.toBeNull();
+  });
+});
+
+/**
+ * The viewer's merge bypass and the base branch's required checks are the two
+ * readiness inputs `gh pr view --json` cannot project, so they share one
+ * `gh api graphql` call. Every failure is contained as `null`: this enriches a
+ * resolve that already succeeded, and a throw here would fail that resolve and
+ * freeze `pr_state` for the sweep.
+ */
+describe('GitHubImporter.resolveMergeBypass', () => {
+  const answer = (viewerCanMergeAsAdmin: unknown, requiredStatusCheckContexts: unknown = null) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            viewerCanMergeAsAdmin,
+            baseRef: {
+              branchProtectionRule: requiredStatusCheckContexts === null
+                ? null
+                : { requiredStatusCheckContexts },
+            },
+          },
+        },
+      },
+    });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    // Every contained failure warns once; keep the run quiet and observable.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.lastArgs = [];
+    state.lastCwd = undefined;
+  });
+
+  it('asks GraphQL with gh placeholder substitution, a typed number, and the repo cwd', async () => {
+    state.ghStdout = answer(true, ['cla']);
+    const importer = new GitHubImporter();
+    await expect(importer.resolveMergeBypass('/repo', 393)).resolves.toEqual({
+      viewerCanMergeAsAdmin: true,
+      requiredStatusCheckContexts: ['cla'],
+    });
+    // `{owner}` / `{repo}` are gh's own placeholders, filled from the remote of
+    // the repo at `cwd`: no owner/name parsing anywhere in this code. `-F` (not
+    // `-f`) on `number` is what makes it an Int for the `Int!` variable.
+    expect(state.lastArgs.slice(0, 7)).toEqual([
+      'api', 'graphql', '-F', 'owner={owner}', '-F', 'name={repo}', '-F',
+    ]);
+    expect(state.lastArgs[7]).toBe('number=393');
+    expect(state.lastArgs[8]).toBe('-f');
+    expect(state.lastArgs[9]).toMatch(/^query=query\(\$owner:String!,\$name:String!,\$number:Int!\)/);
+    expect(state.lastArgs[9]).toContain('viewerCanMergeAsAdmin');
+    // Off `baseRef`, never `refUpdateRule`: that one reports the rules as they
+    // apply to the VIEWER and answers an empty list for a bypassing admin,
+    // which is exactly the viewer this call serves.
+    expect(state.lastArgs[9]).toContain('baseRef{branchProtectionRule{requiredStatusCheckContexts}}');
+    expect(state.lastArgs[9]).not.toContain('refUpdateRule');
+    expect(state.lastCwd).toBe('/repo');
+  });
+
+  /**
+   * Real-shape fixture per the external-input-parser convention (the
+   * `codex-rollout-event-msg.jsonl` pattern): every other case in this
+   * describe block builds the envelope with the hand-written `answer()`
+   * helper, so gh's actual `gh api graphql` stdout is never JSON.parse'd here.
+   * This drives a literal, realistic stdout string (this repo's own public CI
+   * job names; the query returns no owner/repo/PR fields to sanitize) through
+   * the real parse -> field read path.
+   */
+  it('parses a literal gh api graphql stdout into GhMergeBypass', async () => {
+    state.ghStdout = '{"data":{"repository":{"pullRequest":{"viewerCanMergeAsAdmin":true,'
+      + '"baseRef":{"branchProtectionRule":{"requiredStatusCheckContexts":'
+      + '["cla","Lint, Typecheck, Build","Unit tests (Vitest)","UI tests (Playwright)","E2E tests (Electron)"]}}}}}}';
+    const importer = new GitHubImporter();
+    await expect(importer.resolveMergeBypass('/repo', 393)).resolves.toEqual({
+      viewerCanMergeAsAdmin: true,
+      requiredStatusCheckContexts: ['cla', 'Lint, Typecheck, Build', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)'],
+    });
+  });
+
+  it('returns false when the viewer cannot bypass', async () => {
+    state.ghStdout = answer(false, ['cla']);
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
+      viewerCanMergeAsAdmin: false,
+      requiredStatusCheckContexts: ['cla'],
+    });
+  });
+
+  it('reads a protected branch that requires no status checks as an empty list, not as unreadable', async () => {
+    state.ghStdout = answer(true, []);
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
+      viewerCanMergeAsAdmin: true,
+      requiredStatusCheckContexts: [],
+    });
+  });
+
+  it.each([
+    // A branch with no classic protection; a repo on rulesets answers this too.
+    ['a null branch protection rule', answer(true, null)],
+    ['a null baseRef', JSON.stringify({ data: { repository: { pullRequest: { viewerCanMergeAsAdmin: true, baseRef: null } } } })],
+    ['an absent baseRef', JSON.stringify({ data: { repository: { pullRequest: { viewerCanMergeAsAdmin: true } } } })],
+    ['a non-array context list', answer(true, 'cla')],
+    // Fails the WHOLE list closed: a partially-read list looks complete and
+    // would under-require.
+    ['a list carrying a non-string', answer(true, ['cla', 7])],
+  ])('answers requiredStatusCheckContexts null for %s, keeping the bypass', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
+      viewerCanMergeAsAdmin: true,
+      requiredStatusCheckContexts: null,
+    });
+  });
+
+  it.each([
+    ['a non-boolean at the path', answer('yes')],
+    ['a null pull request (no such PR)', JSON.stringify({ data: { repository: { pullRequest: null } } })],
+    ['a null repository', JSON.stringify({ data: { repository: null } })],
+    ['an envelope with no data', JSON.stringify({ errors: [{ message: 'Could not resolve' }] })],
+    ['an empty stdout', ''],
+    ['a bare null', 'null'],
+  ])('returns null for %s instead of guessing', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+  });
+
+  it('returns null and never throws when gh fails, warning once per cause', async () => {
+    const warn = vi.mocked(console.warn);
+    const failure = Object.assign(new Error('Command failed: gh api graphql -F number=7'), {
+      stderr: 'gh: Resource not accessible by integration (HTTP 403)\n',
+    });
+    state.ghError = failure;
+    const importer = new GitHubImporter();
+    await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    await expect(importer.resolveMergeBypass('/repo', 8)).resolves.toBeNull();
+    // Keyed on the stderr line, not the message (which embeds the PR number),
+    // so one repo-wide cause prints once however many PRs it touches.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('gh: Resource not accessible by integration (HTTP 403)');
+    expect(warn.mock.calls[0][0]).toContain('merge readiness stays blocked');
+  });
+
+  /**
+   * `bypassProbeWarningsShown` is bounded at MAX_WARNING_CAUSES_SHOWN (32) with
+   * oldest-first eviction, and the test above only proves same-cause dedupe (two
+   * calls, one cause, one warning) - nothing drives the Set past 32 distinct
+   * causes, so the eviction branch itself has never run in this suite.
+   *
+   * The Set is module-level and shared with every other test in this file, so
+   * this test uses stderr text unique to it (a `BOUND-TEST-CAUSE-` marker) to
+   * avoid pre-seeding or colliding with the once-per-cause test's exact stderr
+   * string above. Whatever else already occupies the Set when this test starts,
+   * inserting exactly 32 new distinct causes fills the bound with only this
+   * test's own entries (any pre-existing entries are the ones evicted first,
+   * since they were inserted earlier) - so the 33rd new cause evicts this
+   * test's own oldest entry, and re-triggering that first cause is what proves
+   * eviction really happened rather than the bound being decorative. Reverting
+   * the bound to an unbounded Set (or dropping the eviction inside
+   * `warnOncePerCause`) fails the final assertion: the re-triggered first
+   * cause would still be in the Set and would stay silent instead of warning a
+   * 34th time.
+   */
+  it('evicts the oldest bypass-probe warning cause once the 32-entry cap is exceeded', async () => {
+    const warn = vi.mocked(console.warn);
+    const importer = new GitHubImporter();
+    const causeStderr = (index: number) => `BOUND-TEST-CAUSE-${index}: gh api graphql failed\n`;
+
+    for (let index = 0; index < 32; index += 1) {
+      state.ghError = Object.assign(new Error('Command failed: gh api graphql'), { stderr: causeStderr(index) });
+      await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    }
+    expect(warn).toHaveBeenCalledTimes(32);
+
+    // A 33rd distinct cause still warns: the cap is not silently refusing new causes.
+    state.ghError = Object.assign(new Error('Command failed: gh api graphql'), { stderr: causeStderr(32) });
+    await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(33);
+
+    // Re-trigger the FIRST of the 32 causes. If it was actually evicted, this
+    // warns again; if the bound never evicted anything, it is still in the Set
+    // and this call stays silent.
+    state.ghError = Object.assign(new Error('Command failed: gh api graphql'), { stderr: causeStderr(0) });
+    await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(34);
+  });
+
+  /**
+   * Every other failure test in this describe block rejects with an `Error`.
+   * `describeGhFailure` falls back to `String(error)` for a rejection that
+   * carries neither `stderr` nor a `message` at all, and that branch has never
+   * run: reverting it to assume an Error shape (an unguarded `error.message`)
+   * would throw a TypeError out of the catch instead of resolving null.
+   */
+  it.each([
+    ['a bare string rejection', 'ENOTFOUND api.github.com', 'ENOTFOUND api.github.com'],
+    ['a plain object rejection with no message or stderr', {}, '[object Object]'],
+  ] as Array<[string, unknown, string]>)(
+    'resolves null and warns with the stringified cause for %s',
+    async (_label, rejection, expectedCause) => {
+      const warn = vi.mocked(console.warn);
+      state.ghError = rejection as unknown as Error;
+      const importer = new GitHubImporter();
+      await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain(expectedCause);
+    },
+  );
+
+  it('returns null without throwing when gh is not installed', async () => {
+    state.whichResult = new Error('not found');
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    expect(state.lastArgs).toEqual([]);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])('rejects PR number %s before spawning anything', async (prNumber) => {
+    state.ghStdout = answer(true);
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', prNumber)).resolves.toBeNull();
+    expect(state.lastArgs).toEqual([]);
+  });
+});
+
+/**
+ * The per-BRANCH required-checks read the connector caches, so a just-opened PR
+ * whose CI has not created its runs reads `queued` instead of `blocked`. The
+ * three literal stdouts are what `gh api graphql` printed against this repo:
+ * `main` (protected), a feature branch (unprotected), and a ref that does not
+ * exist.
+ */
+describe('GitHubImporter.resolveRequiredStatusChecks', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.lastArgs = [];
+    state.lastCwd = undefined;
+  });
+
+  it('asks GraphQL for the branch rule by qualified ref name, from the repo cwd', async () => {
+    state.ghStdout = '{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusCheckContexts":'
+      + '["cla","Unit tests (Vitest)","UI tests (Playwright)","E2E tests (Electron)","Lint, Typecheck, Build"]}}}}}';
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', 'main')).resolves.toEqual({
+      contexts: ['cla', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)', 'Lint, Typecheck, Build'],
+    });
+    expect(state.lastArgs.slice(0, 8)).toEqual([
+      'api', 'graphql', '-F', 'owner={owner}', '-F', 'name={repo}', '-f', 'ref=refs/heads/main',
+    ]);
+    expect(state.lastArgs[8]).toBe('-f');
+    expect(state.lastArgs[9]).toContain('ref(qualifiedName:$ref){branchProtectionRule{requiredStatusCheckContexts}}');
+    expect(state.lastArgs[9]).not.toContain('refUpdateRule');
+    expect(state.lastCwd).toBe('/repo');
+  });
+
+  it.each([
+    ['an unprotected branch', '{"data":{"repository":{"ref":{"branchProtectionRule":null}}}}'],
+    ['a ref that does not exist', '{"data":{"repository":{"ref":null}}}'],
+    ['a list carrying a non-string', '{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusCheckContexts":["cla",7]}}}}}'],
+  ])('answers "no readable rule" for %s', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', 'main')).resolves.toEqual({ contexts: null });
+  });
+
+  it('reads a protected branch that requires no checks as an empty list', async () => {
+    state.ghStdout = '{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusCheckContexts":[]}}}}}';
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', 'main')).resolves.toEqual({ contexts: [] });
+  });
+
+  it.each([
+    ['a null repository', '{"data":{"repository":null}}'],
+    ['an envelope with no data', '{"errors":[{"message":"Could not resolve"}]}'],
+    ['an empty stdout', ''],
+  ])('fails (null, not "no rule") for %s', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', 'main')).resolves.toBeNull();
+  });
+
+  it('returns null and never throws when gh fails, warning once per cause', async () => {
+    const warn = vi.mocked(console.warn);
+    state.ghError = Object.assign(new Error('Command failed: gh api graphql'), {
+      stderr: 'gh: REQUIRED-CHECKS-TEST-CAUSE (HTTP 502)\n',
+    });
+    const importer = new GitHubImporter();
+    await expect(importer.resolveRequiredStatusChecks('/repo', 'main')).resolves.toBeNull();
+    await expect(importer.resolveRequiredStatusChecks('/repo', 'develop')).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('REQUIRED-CHECKS-TEST-CAUSE');
+  });
+
+  it.each(['', '-oops'])('rejects base name %j before spawning anything', async (baseRefName) => {
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', baseRefName)).resolves.toBeNull();
+    expect(state.lastArgs).toEqual([]);
   });
 });
 
@@ -277,6 +705,14 @@ describe('GitHubImporter.resolvePRByCommit (REST normalization)', () => {
     expect(result[0].mergeCommitOid).toBe('merge-sha-1');     // merge_commit_sha -> mergeCommitOid
     expect(result[1].mergeCommitOid).toBeUndefined();         // absent in raw -> undefined
     expect(result.every((item) => item.isCrossRepository === false)).toBe(true);
+    // The REST commit-pulls payload carries no mergeability, so the three raw
+    // fields stay ABSENT (not empty strings): that absence is what tells the
+    // connector "this tier cannot judge readiness" rather than "no verdict".
+    for (const item of result) {
+      expect(item).not.toHaveProperty('mergeable');
+      expect(item).not.toHaveProperty('mergeStateStatus');
+      expect(item).not.toHaveProperty('reviewDecision');
+    }
   });
 
   it('flags a fork PR as cross-repository when head and base repos differ', async () => {
@@ -306,6 +742,14 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     vi.restoreAllMocks();
     gitRefs.containment.clear();
     gitRefs.isShaContainedInRef.mockClear();
+    // Module-level and keyed by repo + base, which every `pr()` shares.
+    resetRequiredChecksCacheForTests();
+    // Default: the required-checks read fails, so it never parses whatever
+    // `state.ghStdout` an earlier test left behind. Under this default the
+    // older rows here that name "a required context missing from the rollup"
+    // and expect `blocked` describe a list that could not be read. With a
+    // readable list the same PRs read `queued` (see the rows that stub it).
+    vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(null);
   });
 
   it('resolveByNumber maps the gh item to a ResolvedPR', async () => {
@@ -329,6 +773,730 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ]);
     const result = await gitHubPRConnector.resolveByCommit!('/r', 'sha');
     expect(result?.number).toBe(2); // prefers OPEN over merged
+  });
+
+  /**
+   * The verdict is folded HERE, beside `mapState`, and never leaves the adapter
+   * as a raw `mergeStateStatus`. The promise is "a Merge click would succeed",
+   * read literally: UNSTABLE counts as ready because the button works with
+   * failing non-required checks (required ones report BLOCKED), only a still
+   * REQUIRED review downgrades a `ready` (CHANGES_REQUESTED without required
+   * reviews leaves the button working, so it stays `ready`), and an
+   * unrecognized status falls back to `mergeable`.
+   */
+  it.each([
+    ['CLEAN', 'MERGEABLE', 'APPROVED', 'ready'],
+    ['CLEAN', 'MERGEABLE', '', 'ready'],
+    ['HAS_HOOKS', 'MERGEABLE', '', 'ready'],
+    ['UNSTABLE', 'MERGEABLE', '', 'ready'],
+    ['BLOCKED', 'MERGEABLE', 'APPROVED', 'blocked'],
+    ['BEHIND', 'MERGEABLE', '', 'blocked'],
+    ['DRAFT', 'MERGEABLE', '', 'blocked'],
+    ['DIRTY', 'CONFLICTING', '', 'conflicting'],
+    ['UNKNOWN', 'UNKNOWN', '', 'unknown'],
+    ['CLEAN', 'MERGEABLE', 'REVIEW_REQUIRED', 'blocked'],
+    ['UNSTABLE', 'MERGEABLE', 'REVIEW_REQUIRED', 'blocked'],
+    ['CLEAN', 'MERGEABLE', 'CHANGES_REQUESTED', 'ready'],
+    ['DIRTY', 'CONFLICTING', 'REVIEW_REQUIRED', 'conflicting'],
+    ['SOMETHING_NEW', 'CONFLICTING', '', 'conflicting'],
+    ['SOMETHING_NEW', 'MERGEABLE', '', 'unknown'],
+    [undefined, 'CONFLICTING', '', 'conflicting'],
+    [undefined, 'MERGEABLE', '', 'unknown'],
+  ] as Array<[string | undefined, string, string, string]>)(
+    'resolveByNumber folds mergeStateStatus=%s mergeable=%s reviewDecision=%s into %s',
+    async (mergeStateStatus, mergeable, reviewDecision, expected) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+        pr({ number: 7, mergeStateStatus, mergeable, reviewDecision }),
+      );
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
+      expect(result?.mergeReadiness).toBe(expected);
+    },
+  );
+
+  /**
+   * Real-shape fixture per the external-input-parser convention: every case in
+   * the it.each table above stubs GitHubImporter.resolvePRByNumber directly, so
+   * gh's actual `pr view --json` stdout is never JSON.parse'd here, and gh's
+   * real rendering of a null review decision as an empty string is never
+   * exercised. This drives a literal gh stdout string through the real
+   * importer -> connector path, with no prototype spy.
+   *
+   * Only the first case proves the named revert target (deleting the BLOCKED
+   * short-circuit in mapMergeReadiness, the `classifyRollup` /
+   * `bypassClearsTheBlock` branch, falls through mapMergeStateStatus, which
+   * maps no BLOCKED case, to `mapMergeable('MERGEABLE')` -> 'unknown', not
+   * 'blocked'). The other two
+   * guard adjacent behavior: the REVIEW_REQUIRED downgrade of an otherwise
+   * clean/ready PR, and gh's '' rendering of "no review decision" read as
+   * ready rather than as a truthy value.
+   */
+  it.each([
+    [
+      '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","number":42,"reviewDecision":"","state":"OPEN","updatedAt":"2026-09-04T16:54:23Z","url":"https://github.com/owner/repo/pull/42"}',
+      'blocked',
+    ],
+    [
+      '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","number":43,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN","updatedAt":"2026-09-04T16:54:23Z","url":"https://github.com/owner/repo/pull/43"}',
+      'blocked',
+    ],
+    [
+      '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","number":44,"reviewDecision":"","state":"OPEN","updatedAt":"2026-09-04T16:54:23Z","url":"https://github.com/owner/repo/pull/44"}',
+      'ready',
+    ],
+  ] as Array<[string, string]>)(
+    'resolveByNumber parses literal gh stdout into mergeReadiness=%s',
+    async (ghStdoutFixture, expectedReadiness) => {
+      state.whichResult = '/usr/bin/gh';
+      state.ghError = null;
+      state.ghStdout = ghStdoutFixture;
+
+      const result = await gitHubPRConnector.resolveByNumber!('/repo', 42);
+
+      expect(result?.mergeReadiness).toBe(expectedReadiness);
+      expect(result?.state).toBe('open');
+    },
+  );
+
+  /** A `statusCheckRollup` entry as `gh` renders a GitHub Actions check run. */
+  const checkRun = (status: string, conclusion: string | null = null, name = 'CI') => ({
+    __typename: 'CheckRun', name, status, conclusion,
+  });
+  /** A legacy commit-status context entry. */
+  const statusContext = (state: string, context = 'ci/legacy') => ({ __typename: 'StatusContext', context, state });
+
+  /**
+   * BLOCKED is the one `mergeStateStatus` the triple cannot split: a required
+   * check still running, a required check that failed, and a review still
+   * required all report it. The rollup splits the first from the others, and a
+   * check in flight wins over a required review on purpose (the chip tracks CI
+   * while it runs, then flips to `blocked` when only the review remains); a
+   * failed check never yields to a running one. BEHIND takes the same branch,
+   * because it is the value GitHub reports INSTEAD of BLOCKED once the base
+   * moves. Every other state ignores the rollup: a CLEAN / UNSTABLE PR with
+   * checks running is `ready`, because the Merge button works and the checks in
+   * flight are therefore not required.
+   */
+  it.each([
+    ['BLOCKED with no rollup key', 'BLOCKED', '', undefined, 'blocked'],
+    ['BLOCKED with an empty rollup', 'BLOCKED', '', [], 'blocked'],
+    ['BLOCKED with every check green', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS')], 'blocked'],
+    ['BLOCKED with a check in progress', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS'), checkRun('IN_PROGRESS')], 'running'],
+    ['BLOCKED with a queued check', 'BLOCKED', '', [checkRun('QUEUED')], 'queued'],
+    ['BLOCKED with a pending check', 'BLOCKED', '', [checkRun('PENDING')], 'queued'],
+    ['BLOCKED with a waiting check', 'BLOCKED', '', [checkRun('WAITING')], 'queued'],
+    ['BLOCKED with a requested check', 'BLOCKED', '', [checkRun('REQUESTED')], 'queued'],
+    ['BLOCKED with queued and in-progress checks', 'BLOCKED', '', [checkRun('QUEUED'), checkRun('IN_PROGRESS')], 'running'],
+    ['BLOCKED with a pending status context', 'BLOCKED', '', [statusContext('PENDING')], 'queued'],
+    ['BLOCKED with an expected status context', 'BLOCKED', '', [statusContext('EXPECTED')], 'queued'],
+    ['BLOCKED with a failed check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with a timed-out check beside a queued one', 'BLOCKED', '', [checkRun('COMPLETED', 'TIMED_OUT'), checkRun('QUEUED')], 'blocked'],
+    ['BLOCKED with a cancelled check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'CANCELLED'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with an action-required check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'ACTION_REQUIRED'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with a startup-failed check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'STARTUP_FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with an errored status context beside a running check', 'BLOCKED', '', [statusContext('ERROR'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with a failed status context beside a running check', 'BLOCKED', '', [statusContext('FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with skipped and neutral checks beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'SKIPPED'), checkRun('COMPLETED', 'NEUTRAL'), checkRun('IN_PROGRESS')], 'running'],
+    ['BLOCKED by a required review with a check in progress', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('IN_PROGRESS')], 'running'],
+    ['BLOCKED by a required review with a queued check', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('QUEUED')], 'queued'],
+    ['BLOCKED by a required review with every check green', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS')], 'blocked'],
+    ['BLOCKED by a required review with a failed check running again', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with an unrecognized check status', 'BLOCKED', '', [checkRun('SOMETHING_NEW')], 'blocked'],
+    ['BLOCKED with an unrecognized conclusion', 'BLOCKED', '', [checkRun('COMPLETED', 'SOMETHING_NEW')], 'blocked'],
+    ['CLEAN with a check in progress', 'CLEAN', '', [checkRun('IN_PROGRESS')], 'ready'],
+    ['UNSTABLE with a queued check', 'UNSTABLE', '', [checkRun('QUEUED')], 'ready'],
+    ['CLEAN with a check in progress and a required review', 'CLEAN', 'REVIEW_REQUIRED', [checkRun('IN_PROGRESS')], 'blocked'],
+    // BEHIND reads the rollup exactly as BLOCKED does, and this row is why:
+    // GitHub reports BEHIND instead of BLOCKED once the base moves under an
+    // otherwise identical PR, so a rollup branch that covered one and not the
+    // other would flip the chip on a merge somebody else did. Unlike the fold
+    // below, this is not gated on `bypassCountsAsReady`.
+    ['BEHIND with a check in progress', 'BEHIND', '', [checkRun('IN_PROGRESS')], 'running'],
+    ['BEHIND with a queued check', 'BEHIND', '', [checkRun('QUEUED')], 'queued'],
+    ['BEHIND with every check green', 'BEHIND', '', [checkRun('COMPLETED', 'SUCCESS')], 'blocked'],
+    ['BEHIND with a failed check beside a running one', 'BEHIND', '', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['DRAFT with a check in progress', 'DRAFT', '', [checkRun('IN_PROGRESS')], 'blocked'],
+    ['DIRTY with a check in progress', 'DIRTY', '', [checkRun('IN_PROGRESS')], 'conflicting'],
+    ['UNKNOWN with a check in progress', 'UNKNOWN', '', [checkRun('IN_PROGRESS')], 'unknown'],
+  ] as Array<[string, string, string, unknown[] | undefined, string]>)(
+    'resolveByNumber folds %s into %s',
+    async (_label, mergeStateStatus, reviewDecision, statusCheckRollup, expected) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+        pr({
+          number: 7,
+          mergeStateStatus,
+          mergeable: mergeStateStatus === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE',
+          reviewDecision,
+          ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
+        }),
+      );
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
+      expect(result?.mergeReadiness).toBe(expected);
+    },
+  );
+
+  /**
+   * Observed live on a review-required repository: every check run COMPLETED
+   * with SUCCESS, `mergeStateStatus` BLOCKED, `reviewDecision` REVIEW_REQUIRED.
+   * The rollup shape is what `gh pr view --json statusCheckRollup` printed.
+   */
+  it('resolveByNumber parses a literal gh rollup with every check green into blocked', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","number":45,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-10T22:42:48Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-10T22:41:34Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":"2026-09-10T22:43:28Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"Unit tests (Vitest)",'
+      + '"startedAt":"2026-09-10T22:43:04Z","status":"COMPLETED","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-10T22:57:32Z","url":"https://github.com/owner/repo/pull/45"}';
+    const result = await gitHubPRConnector.resolveByNumber!('/repo', 45);
+    expect(result?.mergeReadiness).toBe('blocked');
+  });
+
+  /**
+   * The BEHIND shape, as `gh` printed it for a PR whose base moved after its
+   * checks went green. Without a bypass answer it still reads `blocked`, so
+   * this pins the parse rather than the fold: a viewer who cannot merge as
+   * admin sees GitHub's own verdict for a stale base, unchanged.
+   */
+  it('resolveByNumber parses a literal gh BEHIND payload into blocked without a bypass', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"fix/push-notifier-stale-presence-delivery","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BEHIND","mergeable":"MERGEABLE","number":47,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-13T18:12:03Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-13T18:10:41Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":"2026-09-13T18:13:55Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"Unit tests (Vitest)",'
+      + '"startedAt":"2026-09-13T18:12:20Z","status":"COMPLETED","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-13T18:20:07Z","url":"https://github.com/owner/repo/pull/47"}';
+    const result = await gitHubPRConnector.resolveByNumber!('/repo', 47);
+    expect(result?.mergeReadiness).toBe('blocked');
+    expect(result?.state).toBe('open');
+  });
+
+  /**
+   * The same payload as above, differing only in the bypass answer: one
+   * real-shape fixture pins both outcomes of the BEHIND branch, parse and
+   * fold alike.
+   */
+  it('resolveByNumber folds the same literal gh BEHIND payload into ready under the bypass', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"fix/push-notifier-stale-presence-delivery","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BEHIND","mergeable":"MERGEABLE","number":47,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-13T18:12:03Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-13T18:10:41Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":"2026-09-13T18:13:55Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"Unit tests (Vitest)",'
+      + '"startedAt":"2026-09-13T18:12:20Z","status":"COMPLETED","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-13T18:20:07Z","url":"https://github.com/owner/repo/pull/47"}';
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(
+      canBypass(['Lint, Typecheck, Build', 'Unit tests (Vitest)']),
+    );
+    const result = await gitHubPRConnector.resolveByNumber!('/repo', 47, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('ready');
+    expect(bypass).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolveByNumber parses a literal gh rollup with a check in progress into running', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","number":46,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-10T22:42:48Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-10T22:41:34Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":null,"conclusion":null,'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"UI Test (1/11)",'
+      + '"startedAt":"2026-09-10T22:43:04Z","status":"IN_PROGRESS","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-10T22:57:32Z","url":"https://github.com/owner/repo/pull/46"}';
+    const result = await gitHubPRConnector.resolveByNumber!('/repo', 46);
+    expect(result?.mergeReadiness).toBe('running');
+  });
+
+  it('accepts and ignores the branch-policy option: the verdict already carries policy', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', reviewDecision: '' }),
+    );
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const withOption = await gitHubPRConnector.resolveByNumber!('/r', 7, { evaluateBranchPolicies: true });
+    const without = await gitHubPRConnector.resolveByNumber!('/r', 7);
+    expect(withOption).toEqual(without);
+    expect(withOption?.mergeReadiness).toBe('ready');
+    // The branch-policy option alone never opens the bypass probe either.
+    expect(bypass).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The viewer's merge bypass, folded into `ready`. The board's Merge column
+   * merges a green PR past its missing review with `gh pr merge --admin`, so
+   * for a viewer who can do that the literal promise on a review-blocked green
+   * PR is `ready`, not `blocked`. Every row below is red with the fold
+   * reverted (the fold rows) or with its gate loosened (the `blocked` rows):
+   * the failed-check row is the load-bearing one, because
+   * `viewerCanMergeAsAdmin` is a capability that reads true on a red PR too,
+   * observed live against a PR with a FAILURE check run.
+   */
+  const BYPASS_ON: PRResolveOptions = { bypassCountsAsReady: true };
+  const green = [checkRun('COMPLETED', 'SUCCESS'), checkRun('COMPLETED', 'SKIPPED'), checkRun('COMPLETED', 'NEUTRAL'), statusContext('SUCCESS')];
+  /**
+   * What the probe answers. `requiredStatusCheckContexts` null is "no readable
+   * rule" (an unprotected branch, or a repo on rulesets), where the fold falls
+   * back to the rollup alone; a list is compared against the rollup's own
+   * passing names, so a required context the rollup never carried refuses the
+   * fold.
+   */
+  const canBypass = (requiredStatusCheckContexts: string[] | null = null) =>
+    ({ viewerCanMergeAsAdmin: true, requiredStatusCheckContexts });
+  const cannotBypass = { viewerCanMergeAsAdmin: false, requiredStatusCheckContexts: null };
+
+  it.each([
+    // [label, mergeStateStatus, reviewDecision, rollup, bypass answer, options, expected]
+    ['BLOCKED by a required review with every check green', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'ready'],
+    ['the same PR with the option absent', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(), undefined, 'blocked'],
+    ['the same PR with the option off', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(), { bypassCountsAsReady: false }, 'blocked'],
+    ['the same PR when the viewer cannot bypass', 'BLOCKED', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
+    ['the same PR when the probe gave no answer', 'BLOCKED', 'REVIEW_REQUIRED', green, null, BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a FAILED check, bypass or not', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a failed status context', 'BLOCKED', 'REVIEW_REQUIRED', [statusContext('FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with an empty rollup (checks about to start)', 'BLOCKED', 'REVIEW_REQUIRED', [], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with no rollup key', 'BLOCKED', 'REVIEW_REQUIRED', undefined, canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a stale check beside green ones', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'STALE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a completed check lacking a conclusion', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', null)], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with an unrecognized conclusion', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SOMETHING_NEW')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with an unrecognized status', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('SOMETHING_NEW')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with an unrecognized rollup entry', 'BLOCKED', 'REVIEW_REQUIRED', [{ __typename: 'SomethingNew' }], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a check in progress (in flight wins)', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS'), checkRun('IN_PROGRESS')], canBypass(), BYPASS_ON, 'running'],
+    ['BLOCKED by a required review with a queued check', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('QUEUED')], canBypass(), BYPASS_ON, 'queued'],
+    ['BLOCKED with every check green and the review approved (something else blocks)', 'BLOCKED', 'APPROVED', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED with every check green and no review decision', 'BLOCKED', '', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED with every check green and changes requested', 'BLOCKED', 'CHANGES_REQUESTED', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['CLEAN with a required review and every check green', 'CLEAN', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'ready'],
+    ['CLEAN with a required review and an empty rollup', 'CLEAN', 'REVIEW_REQUIRED', [], canBypass(), BYPASS_ON, 'blocked'],
+    ['CLEAN with a required review when the viewer cannot bypass', 'CLEAN', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
+    ['UNSTABLE with a required review and a failed non-required check', 'UNSTABLE', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    // BEHIND folds exactly as BLOCKED does. It used to be excluded ("a stale
+    // base never folds"), which made a green review-required PR read `ready`
+    // until a sibling landed and `blocked` afterwards, with nothing about the
+    // PR itself changing - GitHub reports one `mergeStateStatus` for a PR that
+    // is behind AND review-blocked, and which one it names is decided by the
+    // base moving. The rows under it are the same guards the BLOCKED fold
+    // carries, so the widening stopped at these two states.
+    ['BEHIND with a required review and every check green', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'ready'],
+    ['the same BEHIND PR with the option off', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(), { bypassCountsAsReady: false }, 'blocked'],
+    ['the same BEHIND PR when the viewer cannot bypass', 'BEHIND', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
+    ['BEHIND with a required review and a FAILED check, bypass or not', 'BEHIND', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BEHIND with every check green and the review approved (something else blocks)', 'BEHIND', 'APPROVED', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['BEHIND with a required context missing from the rollup', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(['CI', 'Lint, Typecheck, Build']), BYPASS_ON, 'blocked'],
+    // DRAFT and DIRTY are what BEHIND stopped being: a draft is the author's
+    // own switch and a conflict is real, so no permission clears either.
+    ['DRAFT with a required review and every check green', 'DRAFT', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['DIRTY with a required review and every check green', 'DIRTY', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'conflicting'],
+    // The required-context comparison. A `passing` rollup is "nothing here
+    // failed", not "everything required ran": a check GitHub still EXPECTS is
+    // absent from the rollup entirely, so the branch's own required list is
+    // what decides.
+    ['BLOCKED with every required context green', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(['CI', 'ci/legacy']), BYPASS_ON, 'ready'],
+    ['BLOCKED with a required context missing from the rollup', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(['CI', 'Lint, Typecheck, Build']), BYPASS_ON, 'blocked'],
+    // Every other "required context missing" row above names a CheckRun-shaped
+    // context. `passingContextNames` reads `StatusContext.context` on a
+    // separate branch from `CheckRun.name`, and until this row that branch was
+    // only ever exercised as a context that IS satisfied ('ci/legacy' in the
+    // all-green row above). Mirrors that row's shape (one satisfied, one
+    // missing) but for a StatusContext-styled required name.
+    ['BLOCKED with a required status-context name missing from the rollup', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(['ci/legacy', 'ci/needs-secops-review']), BYPASS_ON, 'blocked'],
+    ['BLOCKED with a protected branch that requires no checks', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass([]), BYPASS_ON, 'ready'],
+    ['BLOCKED with no readable rule (rulesets or no protection)', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(null), BYPASS_ON, 'ready'],
+    ['CLEAN with a required context missing from the rollup', 'CLEAN', 'REVIEW_REQUIRED', green, canBypass(['cla']), BYPASS_ON, 'blocked'],
+  ] as Array<[string, string, string, unknown[] | undefined, { viewerCanMergeAsAdmin: boolean; requiredStatusCheckContexts: string[] | null } | null, PRResolveOptions | undefined, string]>)(
+    'resolveByNumber folds %s into %s',
+    async (_label, mergeStateStatus, reviewDecision, statusCheckRollup, bypassAnswer, options, expected) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+        pr({
+          number: 7,
+          mergeStateStatus,
+          mergeable: mergeStateStatus === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE',
+          reviewDecision,
+          ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
+        }),
+      );
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(bypassAnswer);
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 7, options);
+      expect(result?.mergeReadiness).toBe(expected);
+    },
+  );
+
+  /**
+   * The shape this repo produces on every PR it opens, and the reason the
+   * required-context comparison exists. The CLA check runs in its own workflow
+   * and finishes in seconds; CI's runs are created by a different workflow, so
+   * for a moment the rollup holds ONE green check on a PR whose CI has not
+   * started. `classifyRollup` calls that `passing` and cannot do better -
+   * GitHub omits an expected-but-unreported required check from the rollup
+   * entirely - so without the comparison this folds to `ready` with no CI run.
+   *
+   * With the branch's required list readable it is also not `blocked`: the
+   * card read that for minutes on #479 while CI was only starting, and a
+   * verdict that is not in flight never starts the linker's 30 s re-poll. It
+   * reads `queued`. Without the list (the read failed, or rulesets) it keeps
+   * GitHub's own `blocked`, and neither ever folds.
+   */
+  const REQUIRED = ['cla', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)', 'Lint, Typecheck, Build'];
+  const claOnly = () => pr({
+    number: 395,
+    mergeStateStatus: 'BLOCKED',
+    mergeable: 'MERGEABLE',
+    reviewDecision: 'REVIEW_REQUIRED',
+    statusCheckRollup: [checkRun('COMPLETED', 'SUCCESS', 'cla')],
+  });
+
+  it('never folds a PR whose CLA check is green while CI has not created its runs', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(claOnly());
+    vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass(REQUIRED));
+    vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 395, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('queued');
+  });
+
+  it('keeps GitHub\'s blocked for that PR when the required list cannot be read', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(claOnly());
+    vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass(REQUIRED));
+    vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(null);
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 395, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('blocked');
+  });
+
+  it.each([
+    // [label, mergeStateStatus, reviewDecision, rollup, required-checks answer, expected]
+    ['BLOCKED with CI not started (CLA only)', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: REQUIRED }, 'queued'],
+    ['BEHIND with CI not started (CLA only)', 'BEHIND', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: REQUIRED }, 'queued'],
+    ['BLOCKED with an empty rollup', 'BLOCKED', '', [], { contexts: REQUIRED }, 'queued'],
+    ['BLOCKED with no rollup key', 'BLOCKED', '', undefined, { contexts: REQUIRED }, 'queued'],
+    ['BLOCKED with a required status context not reported', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: ['cla', 'ci/legacy'] }, 'queued'],
+    // The join reads BOTH rollup entry shapes: a legacy commit-status context
+    // (`StatusContext`, keyed by `.context`) counts as present exactly like a
+    // `CheckRun` (keyed by `.name`) does. Without the `StatusContext` arm this
+    // required context would read as missing and the row would flip to `queued`.
+    ['BLOCKED with a required status context reported', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla'), statusContext('SUCCESS', 'ci/legacy')], { contexts: ['cla', 'ci/legacy'] }, 'blocked'],
+    ['BLOCKED with a required check present but stale', 'BLOCKED', '', [checkRun('COMPLETED', 'STALE', 'cla')], { contexts: ['cla'] }, 'blocked'],
+    ['BLOCKED with every required check present and green', 'BLOCKED', '', REQUIRED.map((name) => checkRun('COMPLETED', 'SUCCESS', name)), { contexts: REQUIRED }, 'blocked'],
+    ['BLOCKED with a failed check and a required one missing', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE', 'cla')], { contexts: REQUIRED }, 'blocked'],
+    ['BLOCKED with no readable rule', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: null }, 'blocked'],
+    ['BLOCKED on a branch that requires no checks', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: [] }, 'blocked'],
+    ['BLOCKED when the read failed', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], null, 'blocked'],
+    // Outside the BLOCKED / BEHIND branch the list is never consulted.
+    ['CLEAN with a required review and a required check missing', 'CLEAN', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: REQUIRED }, 'blocked'],
+  ] as Array<[string, string, string, unknown[] | undefined, { contexts: string[] | null } | null, string]>)(
+    'resolveByNumber reads %s by the required list',
+    async (_label, mergeStateStatus, reviewDecision, statusCheckRollup, requiredAnswer, expected) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+        pr({
+          number: 7,
+          mergeStateStatus,
+          mergeable: 'MERGEABLE',
+          reviewDecision,
+          ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
+        }),
+      );
+      vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(requiredAnswer);
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
+      expect(result?.mergeReadiness).toBe(expected);
+    },
+  );
+
+  it.each([
+    ['the PR is a draft', pr({ number: 7, isDraft: true, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [] })],
+    ['the PR is merged', pr({ number: 7, state: 'MERGED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [] })],
+    ['a check is running', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [checkRun('IN_PROGRESS')] })],
+    ['a check is queued', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [checkRun('QUEUED')] })],
+    ['a check failed', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [checkRun('COMPLETED', 'FAILURE')] })],
+    ['the PR is clean', pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', statusCheckRollup: [] })],
+    ['the branch conflicts', pr({ number: 7, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', statusCheckRollup: [] })],
+    ['the item carries no mergeability', pr({ number: 7 })],
+  ] as Array<[string, GhPrListItem]>)('never reads the required checks when %s', async (_label, item) => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item);
+    const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+    await gitHubPRConnector.resolveByNumber!('/r', 7);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('resolveByCommit never reads the required checks', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 2, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [] }),
+    ]);
+    const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+    await gitHubPRConnector.resolveByCommit!('/r', 'sha');
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  describe('the required-checks cache', () => {
+    const settled = (number: number, baseRefName = 'main') => pr({
+      number,
+      url: `https://github.com/owner/repo/pull/${number}`,
+      baseRefName,
+      mergeStateStatus: 'BLOCKED',
+      mergeable: 'MERGEABLE',
+      statusCheckRollup: [checkRun('COMPLETED', 'SUCCESS', 'cla')],
+    });
+
+    it('reads once per repo and base, shared across PRs and across cwds', async () => {
+      const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
+      const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+      byNumber.mockResolvedValue(settled(7));
+      await gitHubPRConnector.resolveByNumber!('/repo', 7);
+      byNumber.mockResolvedValue(settled(8));
+      const second = await gitHubPRConnector.resolveByNumber!('/worktrees/other-task', 8);
+      expect(second?.mergeReadiness).toBe('queued');
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenCalledWith('/repo', 'main');
+
+      byNumber.mockResolvedValue(settled(9, 'develop'));
+      await gitHubPRConnector.resolveByNumber!('/repo', 9);
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(read).toHaveBeenLastCalledWith('/repo', 'develop');
+    });
+
+    it('does not cache a failed read', async () => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(settled(7));
+      const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(null);
+      await gitHubPRConnector.resolveByNumber!('/r', 7);
+      await gitHubPRConnector.resolveByNumber!('/r', 7);
+      expect(read).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads again once the entry is ten minutes old', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(settled(7));
+        const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+        await gitHubPRConnector.resolveByNumber!('/r', 7);
+        vi.advanceTimersByTime(10 * 60_000 - 1);
+        await gitHubPRConnector.resolveByNumber!('/r', 7);
+        expect(read).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(1);
+        await gitHubPRConnector.resolveByNumber!('/r', 7);
+        expect(read).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    /**
+     * The cache is bounded at MAX_REQUIRED_CHECKS_ENTRIES (32) and evicts in
+     * insertion order. Filling it with 33 distinct bases on one repo evicts the
+     * first one inserted, so re-reading that base spends a fresh call while the
+     * newest base still hits. An unbounded cache fails the final assertion.
+     */
+    it('evicts the oldest-inserted base once 33 distinct bases have been read', async () => {
+      resetRequiredChecksCacheForTests();
+      const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
+      const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+      const totalDistinctBases = 33;
+      for (let baseIndex = 0; baseIndex < totalDistinctBases; baseIndex += 1) {
+        byNumber.mockResolvedValue(settled(baseIndex, `base-${baseIndex}`));
+        await gitHubPRConnector.resolveByNumber!('/r', baseIndex);
+      }
+      expect(read).toHaveBeenCalledTimes(totalDistinctBases);
+
+      // The 33rd (most recently inserted) key is still cached: no fresh read.
+      const mostRecentBaseIndex = totalDistinctBases - 1;
+      byNumber.mockResolvedValue(settled(mostRecentBaseIndex, `base-${mostRecentBaseIndex}`));
+      await gitHubPRConnector.resolveByNumber!('/r', mostRecentBaseIndex);
+      expect(read).toHaveBeenCalledTimes(totalDistinctBases);
+
+      // The first (oldest) key was evicted to make room for the 33rd: reading
+      // it again spends a fresh call.
+      byNumber.mockResolvedValue(settled(0, 'base-0'));
+      await gitHubPRConnector.resolveByNumber!('/r', 0);
+      expect(read).toHaveBeenCalledTimes(totalDistinctBases + 1);
+    });
+  });
+
+  /**
+   * The probe is spent only where its answer can change the verdict: the
+   * option on, an open non-draft PR, the review still required, the merge
+   * state one the bypass clears, and every check settled green. Never one call
+   * per open PR per sweep, which is what lets the setting default on.
+   */
+  it.each([
+    ['the option is absent', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), undefined],
+    ['the option is off', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), { bypassCountsAsReady: false }],
+    ['only the branch-policy option is on', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), { evaluateBranchPolicies: true }],
+    ['the PR is already ready', pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', statusCheckRollup: green }), BYPASS_ON],
+    ['a check failed', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: [checkRun('COMPLETED', 'FAILURE')] }), BYPASS_ON],
+    ['a check is in progress', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: [checkRun('IN_PROGRESS')] }), BYPASS_ON],
+    ['the rollup is empty', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: [] }), BYPASS_ON],
+    ['the review is approved and something else blocks', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', statusCheckRollup: green }), BYPASS_ON],
+    ['the PR is a draft', pr({ number: 7, isDraft: true, mergeStateStatus: 'DRAFT', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
+    ['the PR is merged', pr({ number: 7, state: 'MERGED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
+    ['the branch conflicts', pr({ number: 7, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
+    ['the item carries no mergeability', pr({ number: 7 }), BYPASS_ON],
+  ] as Array<[string, GhPrListItem, PRResolveOptions | undefined]>)(
+    'resolveByNumber never spends the bypass probe when %s',
+    async (_label, item, options) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item);
+      const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+      await gitHubPRConnector.resolveByNumber!('/r', 7, options);
+      expect(bypass).not.toHaveBeenCalled();
+    },
+  );
+
+  it('resolveByNumber spends exactly one probe, for the resolved PR, from the repo cwd', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({ number: 393, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }),
+    );
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 393, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('ready');
+    expect(bypass).toHaveBeenCalledTimes(1);
+    expect(bypass).toHaveBeenCalledWith('/r', 393);
+  });
+
+  /**
+   * The BEHIND counterpart of the test above, and the one that is red with the
+   * fold reverted: before BEHIND joined `isBypassClearableMergeState` the probe
+   * gate rejected it, so this PR never spent a call and read `blocked`.
+   * Measured live on a review-required repository with strict status checks:
+   * BEHIND + MERGEABLE + REVIEW_REQUIRED, every required context green,
+   * `viewerCanMergeAsAdmin` true, with GitHub's own PR page offering "Merge
+   * without waiting for requirements to be met".
+   */
+  it('resolveByNumber spends the probe on a BEHIND PR whose base moved under it', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({ number: 405, mergeStateStatus: 'BEHIND', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }),
+    );
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass(['CI', 'ci/legacy']));
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 405, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('ready');
+    expect(bypass).toHaveBeenCalledTimes(1);
+    expect(bypass).toHaveBeenCalledWith('/r', 405);
+  });
+
+  it('resolveForBranch folds the bypass for the ONE chosen candidate', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([
+      pr({ number: 1, state: 'CLOSED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }),
+      pr({ number: 3, state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }),
+    ]);
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat', 'main', BYPASS_ON);
+    expect(result).toMatchObject({ number: 3, state: 'open', mergeReadiness: 'ready' });
+    // Disambiguation runs first, so a branch shared by several PRs costs one call.
+    expect(bypass).toHaveBeenCalledTimes(1);
+    expect(bypass).toHaveBeenCalledWith('/r', 3);
+  });
+
+  /**
+   * `disambiguate` refuses to guess when several candidates share the branch
+   * query but none matches the branch hint, and returns null before there is
+   * any "ONE chosen candidate" for `bypassFor` to probe. Reverting the early
+   * `if (!best) return null;` to probe anyway (or to probe the disambiguation
+   * pool's first entry regardless) would call `resolveMergeBypass` here.
+   */
+  it('resolveForBranch never spends the bypass probe when disambiguate finds no single candidate', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([
+      pr({ number: 1, headRefName: 'other-a' }),
+      pr({ number: 2, headRefName: 'other-b' }),
+    ]);
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat', 'main', BYPASS_ON);
+    expect(result).toBeNull();
+    expect(bypass).not.toHaveBeenCalled();
+  });
+
+  it('resolveByCommit never probes: the REST payload cannot judge readiness', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([pr({ number: 2, state: 'OPEN' })]);
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const result = await gitHubPRConnector.resolveByCommit!('/r', 'sha');
+    expect(result?.number).toBe(2);
+    expect(result).not.toHaveProperty('mergeReadiness');
+    expect(bypass).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The live shape this was written against (PR #393): every check run
+   * COMPLETED / SUCCESS, BLOCKED, REVIEW_REQUIRED, and a viewer whose
+   * `viewerCanMergeAsAdmin` reads true. Drives the literal `gh pr view --json`
+   * stdout through the real importer; only the GraphQL probe is stubbed, since
+   * the child_process mock answers every spawn with the same stdout.
+   */
+  it('resolveByNumber parses a literal gh rollup with every check green into ready under the bypass', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","number":393,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-10T22:42:48Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-10T22:41:34Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":"2026-09-10T22:43:28Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"Unit tests (Vitest)",'
+      + '"startedAt":"2026-09-10T22:43:04Z","status":"COMPLETED","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-10T22:57:32Z","url":"https://github.com/owner/repo/pull/393"}';
+    vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(
+      canBypass(['Lint, Typecheck, Build', 'Unit tests (Vitest)']),
+    );
+    const withBypass = await gitHubPRConnector.resolveByNumber!('/repo', 393, BYPASS_ON);
+    expect(withBypass?.mergeReadiness).toBe('ready');
+    // Same stdout, option off: GitHub's own answer stands.
+    const without = await gitHubPRConnector.resolveByNumber!('/repo', 393);
+    expect(without?.mergeReadiness).toBe('blocked');
+  });
+
+  it('resolveByNumber omits the verdict when the item carries no mergeability at all', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(pr({ number: 7 }));
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
+    // Absent key, not `mergeReadiness: undefined`: the linker reads an absent
+    // verdict as "keep what is stored", and exact-shape callers see no key.
+    expect(result).not.toHaveProperty('mergeReadiness');
+  });
+
+  it('resolveByCommit omits the verdict, since the REST payload cannot judge it', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([pr({ number: 2, state: 'OPEN' })]);
+    const result = await gitHubPRConnector.resolveByCommit!('/r', 'sha');
+    expect(result?.number).toBe(2);
+    expect(result).not.toHaveProperty('mergeReadiness');
+  });
+
+  it('resolveForBranch carries an in-flight verdict from the list tier', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([
+      pr({
+        number: 3,
+        mergeStateStatus: 'BLOCKED',
+        mergeable: 'MERGEABLE',
+        reviewDecision: 'REVIEW_REQUIRED',
+        statusCheckRollup: [checkRun('IN_PROGRESS')],
+      }),
+    ]);
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat');
+    expect(result).toMatchObject({ number: 3, state: 'open', mergeReadiness: 'running' });
+  });
+
+  it('resolveForBranch carries the verdict from the list tier', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([
+      pr({ number: 3, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED' }),
+    ]);
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat');
+    expect(result).toMatchObject({ number: 3, state: 'open', mergeReadiness: 'blocked' });
+  });
+
+  /**
+   * `resolveForBranch` is how a just-opened PR is FIRST discovered (auto-link,
+   * `link_pr` with no URL), before any `resolveByNumber` call ever happens for
+   * it. `requiredChecksFor` has to gate and fold on this tier exactly as it
+   * does on `resolveByNumber`'s, or the discovery path keeps reading `blocked`
+   * for a required check CI has not created runs for yet, reproducing the
+   * #479 lag specifically on discovery, where `resolveByNumber`'s own coverage
+   * cannot see it.
+   */
+  it('resolveForBranch folds a required check not yet in the rollup into queued', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([claOnly()]);
+    vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat', 'main');
+    expect(result?.mergeReadiness).toBe('queued');
   });
 
   it('translates GhUnavailableError into the generic PRResolverUnavailableError', async () => {
@@ -535,5 +1703,38 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([pr({ number: 8, state: 'OPEN' })]);
     expect((await resolvePRByNumber('/r', 7))?.number).toBe(7);
     expect((await resolvePRByCommit('/r', 'sha'))?.number).toBe(8);
+  });
+
+  /**
+   * `resolveVia`'s three call sites each pass a `kind` string alongside an
+   * `invoke` closure, and the two must name the same resolver member. Every
+   * other registry-level test in this file uses a PRIMARY-matching remote, so
+   * `resolvePRByNumber` and `resolvePRForBranch` behave identically there and
+   * a copy-paste of the wrong `kind` string is invisible. Only a SECONDARY
+   * remote (no connector owns the primary) tells them apart, because
+   * `selectOwningConnectors` refuses the secondary fallback for
+   * `resolveByNumber` specifically (dispatchResolve's `allowSecondaryFallback:
+   * kind !== 'resolveByNumber'`). This exercises that through the REAL
+   * registry (both GitHub and Azure DevOps connectors registered), not the
+   * `dispatchResolve` helper directly.
+   *
+   * Red-green: change `resolvePRByNumber`'s `resolveVia(repoCwd,
+   * 'resolveByNumber', ...)` kind argument to `'resolveForBranch'` in
+   * pr-registry.ts - the first assertion goes red (it resolves instead of
+   * rejecting) while the second stays green, which is exactly the silent
+   * mislink risk this test exists to catch.
+   */
+  it('resolveByNumber refuses the secondary-remote fallback through the real registry, unlike resolveForBranch', async () => {
+    const originalRemotes = remotes.urls;
+    remotes.urls = ['https://gitea.corp.example/owner/repo.git', 'https://github.com/owner/repo.git'];
+    try {
+      await expect(resolvePRByNumber('/r', 42)).rejects.toBeInstanceOf(PRResolverUnavailableError);
+
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([pr({ number: 42, state: 'OPEN' })]);
+      const branchResult = await resolvePRForBranch('/r', 'feat');
+      expect(branchResult?.number).toBe(42);
+    } finally {
+      remotes.urls = originalRemotes;
+    }
   });
 });

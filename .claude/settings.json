@@ -73,9 +73,19 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:api.npmjs.org)",
       "WebFetch(domain:www.kangentic.com)",
+      "WebFetch(domain:kangentic.com)",
       "Skill"
     ],
     "deny": []
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Sentry reads for the /sentry and /release skills: any GET against the sentry.io API under the kangentic org or its desktop and mobile projects (issue summaries, latest and all events, tag breakdowns, issue search, releases, org members). Any transport those skills document: PowerShell Invoke-RestMethod on Windows, curl on macOS and Linux. Reading an event payload is not a write and needs no further judgement.",
+      "Sentry triage assignment: a PUT to https://sentry.io/api/0/organizations/kangentic/issues/<a single numeric issue id>/ whose JSON body sets only assignedTo. This is the triage marker the /sentry skill requires after filing a follow-up board task; it leaves the issue in the unresolved stream so a recurrence stays visible. Scoped to one issue id in the path, never a bulk query.",
+      "Sentry resolution markers: a PUT to https://sentry.io/api/0/organizations/kangentic/issues/<a single numeric issue id>/ setting status to resolved with statusDetails inRelease or inNextRelease, or setting status back to unresolved. This is /release Step 8 marking the issues a shipped release fixes, and the documented two-write correction (unresolve, then resolve) of a marker naming the wrong release. Scoped to one issue id in the path, never a bulk query.",
+      "The three Sentry rules above cover reads plus the assign and resolve PUTs on one issue at a time. They do not extend to any DELETE, to a bulk mutation that targets a search query instead of a single issue id, to writes against org, team, member, project, client-key or integration settings, or to any Sentry org other than kangentic. Judge those normally."
+    ]
   },
   "enableAllProjectMcpServers": true
 }

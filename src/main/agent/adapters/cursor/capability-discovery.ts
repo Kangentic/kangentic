@@ -1,163 +1,169 @@
 /**
- * Cursor CLI capability discovery: detect available models and model override support.
+ * Cursor CLI capability discovery: model override support and the live model list.
  *
- * Cursor supports:
- * - `--model <model>` flag for model selection
- * - `/model` slash command for live session model switching
- * - No effort/reasoning flags (reasoning is encoded in model names, e.g., "sonnet-4-thinking")
+ * Verified against cursor-agent on 2026-09-13:
+ * - `cursor-agent --help` documents `--model <model>`, parsed from the live help
+ *   text so a future CLI that drops the flag degrades automatically.
+ * - `cursor-agent --list-models` prints an `Available models` header, one
+ *   `<id> - <Display Name>` line per model, then a `Tip:` footer. 224 models in
+ *   1.3 s: it is a NETWORK fetch, hence the longer timeout and the cache. An
+ *   invalid credential exits non-zero with a stderr warning and no model lines.
  *
- * Models are discovered from:
- * 1. `agent about --format json` output (current model)
- * 2. Session history in .cursor/sessions directory (NDJSON init events)
- * 3. Hardcoded fallback list of common Cursor models
+ * Two lines carry a state marker that is not part of the name - `auto - Auto
+ * (default)` and `<id> - <Name> (current)`, the latter tracking whatever the
+ * user last selected. `(NO ZDR)` IS part of the name, so the strip enumerates
+ * the two markers by word rather than dropping any trailing parenthetical.
+ *
+ * Nothing is hardcoded here. A CLI that cannot be asked yields no list and the
+ * renderer falls back to a free-form model input, which is the honest failure:
+ * a wrong model list is worse than an empty one, because the user acts on it.
  */
 
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import path from 'node:path';
-import os from 'node:os';
-import {
-  listMostRecentDirs,
-  listMostRecentFiles,
-  readHeadBytes,
-  parseJsonlRecords,
-  SESSION_SCAN_HEAD_BYTES,
-} from '../../shared/history-scan';
+import { quoteArg } from '../../../../shared/paths';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
-/**
- * Read `<cliPath> --help`. On Windows, npm/installer shims (.cmd / .CMD)
- * cannot be invoked via `execFile` directly because Node's CVE-2024-27980
- * mitigation refuses to execute .cmd/.bat without a shell. We fall back
- * to `exec` with a quoted command string on Windows (same pattern as
- * codex/claude/gemini adapters); other platforms keep `execFile` which
- * is safer and faster for native binaries.
- */
-async function readHelpText(cliPath: string): Promise<string> {
-  if (process.platform === 'win32') {
-    const { stdout } = await execAsync(`"${cliPath}" --help`, {
-      timeout: 5000,
-      windowsHide: true,
-      maxBuffer: 1024 * 1024,
-    });
-    return stdout;
-  }
-  const { stdout, stderr } = await execFileAsync(cliPath, ['--help'], {
-    timeout: 5000,
-    windowsHide: true,
-    maxBuffer: 1024 * 1024,
-  });
-  return stdout + stderr;
+const HELP_TIMEOUT_MS = 5000;
+const MODELS_TIMEOUT_MS = 10000;
+
+let cache: { cliPath: string; capabilities: AgentCapabilities } | null = null;
+
+/** Test-only: reset the discovery cache between cases. */
+export function resetCursorCapabilityCacheForTests(): void {
+  cache = null;
 }
 
 /**
- * Parse `agent --help` to detect if --model flag is supported.
- * Returns true if the help text mentions a --model flag.
+ * Run the Cursor CLI and capture both streams.
+ *
+ * On Windows, npm/installer shims (.cmd / .CMD) cannot be invoked via
+ * `execFile` because Node's CVE-2024-27980 mitigation refuses to execute
+ * .cmd/.bat without a shell, so we use `exec` with a quoted command string
+ * (same pattern as the codex/claude/gemini adapters). Other platforms keep
+ * `execFile`, which is safer and faster for native binaries.
+ *
+ * Both streams are returned so each caller can decide: help detection wants
+ * stderr too (a CLI is free to print help there), while the models parse wants
+ * stdout only, so a stderr warning can never be mistaken for a model row.
+ *
+ * Each arg is quoted on the win32 path. Today's callers pass bare literal flags,
+ * which `quoteArg` returns untouched, so this costs nothing now. It is here
+ * because the win32 branch builds a SHELL STRING: the moment a caller threads a
+ * path or a model id through `args`, an unquoted join is a command injection,
+ * and the non-win32 `execFile` branch would not share the bug to reveal it.
+ */
+async function runCursorCli(
+  cliPath: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> {
+  if (process.platform === 'win32') {
+    return execAsync(`"${cliPath}" ${args.map((arg) => quoteArg(arg)).join(' ')}`, {
+      timeout: timeoutMs,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+  }
+  return execFileAsync(cliPath, args, {
+    timeout: timeoutMs,
+    windowsHide: true,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
+/**
+ * Parse `cursor-agent --help` to detect whether `--model` is supported.
+ *
+ * Kept deliberately separate from the model listing. `supportsModelOverride` is
+ * what keeps the renderer's free-form model input alive when the list is empty
+ * (see `AgentCapabilities` in shared/types), so deriving it from a successful
+ * listing would take the input away on an auth failure - a worse degradation
+ * than the empty list it would be reporting.
  */
 async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
   try {
-    const helpText = await readHelpText(cliPath);
-    // Look for exact flag pattern: --model followed by whitespace and arg description
-    return /--model\s+<|--model\s+[A-Za-z]/.test(helpText);
+    const { stdout, stderr } = await runCursorCli(cliPath, ['--help'], HELP_TIMEOUT_MS);
+    // Look for exact flag pattern: --model followed by whitespace and arg description.
+    return /--model\s+<|--model\s+[A-Za-z]/.test(stdout + stderr);
   } catch {
-    // If help fails, assume no model support
+    // If help fails, assume no model support.
     return false;
   }
 }
 
+/** Trailing state markers the CLI appends to a display name; not part of it. */
+const MODEL_STATE_MARKER = /\s*\((?:current|default)\)$/;
+
 /**
- * Scan Cursor's NDJSON session history for observed models.
- * Sessions are stored in .cursor/sessions with dated subdirectories and chat JSONL files.
+ * Parse `cursor-agent --list-models` output into id -> display-name pairs.
  *
- * Each line is a JSON event. The init event contains:
- * {"type":"system","subtype":"init","session_id":"uuid","model":"display name",...}
+ * A model id never contains a space, so anchoring on `^(\S+)` makes the
+ * `Available models` header and the `Tip:` footer fall out for free: neither
+ * matches, and anything that does not match is skipped. That way a partial or
+ * unauthenticated fetch degrades to "no list" rather than garbage entries.
  */
-async function scanCursorSessionHistory(): Promise<string[]> {
-  const modelSet = new Set<string>();
-  const sessionsDir = path.join(os.homedir(), '.cursor', 'sessions');
-
-  // Read up to 10 most recent session directories (by mtime).
-  const dirs = await listMostRecentDirs(sessionsDir, 10);
-  for (const dir of dirs) {
-    // Read up to 3 most recent JSONL files per directory.
-    const files = await listMostRecentFiles(dir.fullPath, (name) => name.endsWith('.jsonl'), 3);
-    for (const { fullPath } of files) {
-      const text = await readHeadBytes(fullPath, SESSION_SCAN_HEAD_BYTES);
-      for (const record of parseJsonlRecords(text, false)) {
-        // Extract model from the init event.
-        if (
-          record.type === 'system' &&
-          record.subtype === 'init' &&
-          typeof record.model === 'string' &&
-          record.model.length > 0
-        ) {
-          modelSet.add(record.model);
-        }
-      }
-    }
+export function parseCursorModelsOutput(
+  stdout: string,
+): { models: string[]; displayNames: Record<string, string> } {
+  const models: string[] = [];
+  const seen = new Set<string>();
+  const displayNames: Record<string, string> = {};
+  // Split tolerates CRLF: a trailing \r would make `(.+)$` unmatchable
+  // (`.` excludes \r and `$` only anchors at end of input), silently
+  // dropping every line of a Windows-emitted models list.
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = line.match(/^(\S+)\s+-\s+(.+)$/);
+    if (!match) continue;
+    const modelId = match[1].trim();
+    if (!modelId || seen.has(modelId)) continue;
+    seen.add(modelId);
+    models.push(modelId);
+    const displayName = match[2].trim().replace(MODEL_STATE_MARKER, '').trim();
+    if (displayName) displayNames[modelId] = displayName;
   }
-
-  // Ascending alphabetical: groups by family naturally (shared prefix
-  // clusters together) and keeps the order consistent across all agents.
-  return Array.from(modelSet).sort();
+  return { models, displayNames };
 }
 
 /**
- * Hardcoded list of Cursor CLI models that are commonly available.
- * Used as fallback when session history is empty or unavailable.
+ * Discover Cursor's capabilities. Best-effort and never throws: a failed help
+ * read yields no override support, a failed listing yields override support
+ * with no list (the renderer falls back to a free-form input). Cached per
+ * cliPath because the listing is a network fetch; `forceRefresh` (the model
+ * dropdown's rescan-on-open) bypasses it.
  */
-const CURSOR_COMMON_MODELS = [
-  'Claude 4.1 Sonnet',
-  'Claude 3.5 Sonnet',
-  'GPT-4.5',
-  'GPT-4o Max',
-  'GPT-4o',
-  'Claude 3 Opus',
-  'Claude 3 Sonnet',
-  'GPT-4 Turbo',
-];
+export async function discoverCursorCapabilities(
+  cliPath: string,
+  forceRefresh = false,
+): Promise<AgentCapabilities> {
+  if (!forceRefresh && cache && cache.cliPath === cliPath) return cache.capabilities;
 
-/**
- * Discover Cursor's capabilities: model override support and available models.
- * Returns:
- * - supportsModelOverride: true if --model flag is supported
- * - models: list of discovered models (from history + fallback)
- * - effortLevels: empty array (Cursor doesn't have separate effort flags)
- *
- * Best-effort: always returns a capabilities object even if detection partially fails.
- */
-export async function discoverCursorCapabilities(cliPath: string): Promise<AgentCapabilities> {
-  let supportsModelOverride = false;
-  try {
-    supportsModelOverride = await detectModelFlagSupport(cliPath);
-  } catch {
-    // Flag detection failure - continue with assumed no support
+  const supportsModelOverride = await detectModelFlagSupport(cliPath);
+
+  let models: string[] = [];
+  let displayNames: Record<string, string> = {};
+  if (supportsModelOverride) {
+    try {
+      const { stdout } = await runCursorCli(cliPath, ['--list-models'], MODELS_TIMEOUT_MS);
+      const parsed = parseCursorModelsOutput(stdout);
+      models = parsed.models;
+      displayNames = parsed.displayNames;
+    } catch {
+      // Network/auth failure - free-form input fallback.
+    }
   }
 
-  // Discover models from session history (best-effort)
-  let discoveredModels: string[] = [];
-  try {
-    discoveredModels = await scanCursorSessionHistory();
-  } catch {
-    // Session history scan failure - continue with empty list
-  }
-
-  // Combine with fallback list, preserving discovered models first, then adding fallbacks
-  const modelSet = new Set<string>(discoveredModels);
-  for (const model of CURSOR_COMMON_MODELS) {
-    modelSet.add(model);
-  }
-
-  const models = Array.from(modelSet);
-
-  return {
+  const capabilities: AgentCapabilities = {
     supportsModelOverride,
     models: models.length > 0 ? models : undefined,
+    modelDisplayNames: Object.keys(displayNames).length > 0 ? displayNames : undefined,
     // Effort levels are not a separate concept in Cursor - reasoning is encoded
-    // in model names (e.g., "Claude 4.1 Sonnet" vs "Claude 4.1 Sonnet Thinking")
+    // in the model id (e.g. `claude-sonnet-5-thinking-high` vs `claude-sonnet-5-high`).
     effortLevels: [],
   };
+  cache = { cliPath, capabilities };
+  return capabilities;
 }

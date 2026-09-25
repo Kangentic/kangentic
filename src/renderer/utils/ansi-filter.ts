@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { activateUnicode11 } from '../../shared/xterm-unicode11';
 
 /**
  * Creates a browser-based xterm ANSI filter for the aggregate terminal.
@@ -53,6 +54,9 @@ export function createAnsiFilter(): {
     scrollback: 200,
     allowProposedApi: true,
   });
+  // Unicode 11 widths, matching every other terminal parser in the app, so
+  // emoji-bearing rows wrap where the producing TUI padded them to.
+  activateUnicode11(term);
   const serializer = new SerializeAddon();
   term.loadAddon(serializer);
   term.open(el);

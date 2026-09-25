@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { useConfigStore } from '../stores/config-store';
 import { useDictationStore } from '../stores/dictation-store';
 import { useKeybinding } from './useKeybinding';
@@ -161,8 +161,12 @@ export function useDictation(): void {
    *  stamped when the browser created the event, so it measures the finger. */
   const pressedAtRef = useRef<number | null>(null);
   // Latest config read by the press/release handlers without re-arming them.
+  // Written on commit (a layout effect), never during render, which the
+  // compiler rules forbid.
   const optionsRef = useRef({ engineMode, modelId, liveModelId, punctuation, language, autoSubmit, releaseBufferMs, experience });
-  optionsRef.current = { engineMode, modelId, liveModelId, punctuation, language, autoSubmit, releaseBufferMs, experience };
+  useLayoutEffect(() => {
+    optionsRef.current = { engineMode, modelId, liveModelId, punctuation, language, autoSubmit, releaseBufferMs, experience };
+  });
 
   /** Drop this utterance's transient handles. Called on every path that ends a
    *  dictation - commit, cancel, release, an abandoned start, and unmount - so
@@ -443,12 +447,21 @@ export function useDictation(): void {
       return;
     }
     useDictationStore.getState().setFinalizing();
-    let finalText = '';
+    let finalText: string;
     try {
       // Pass the sent-frame count so finalize drains the tail before decoding.
       finalText = await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current);
-    } catch {
-      // ignore; finalText stays empty
+    } catch (error) {
+      // The dictation engine runs in its own process (DESKTOP-X), so a
+      // native fault there no longer takes the whole app down with it - but
+      // the utterance itself is still lost. Surface it rather than silently
+      // committing nothing, mirroring the mic-permission-denied path above:
+      // cleanup, setError, return (no reset - the error stays visible).
+      cleanupSubscriptions();
+      useDictationStore.getState().setError(
+        error instanceof Error ? `Dictation failed: ${error.message}` : 'Dictation failed.',
+      );
+      return;
     }
     useDictationStore.setState({ finalText });
 

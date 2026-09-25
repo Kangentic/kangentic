@@ -89,9 +89,13 @@ export function Field({ label, children, hint, error, className }: FieldProps) {
       {error ? (
         <p className="mt-1 text-xs text-danger">{error}</p>
       ) : hint ? (
-        <p className="mt-1 flex items-center gap-1 text-xs text-fg-disabled">
+        <p className="mt-1 flex items-center gap-1 text-xs text-fg-disabled" data-testid="field-hint">
           <Info size={12} className="shrink-0" />
-          {hint}
+          {/* One span, so the hint is a single inline line: as bare children of
+              the flex row, each text run and each monospace pill became its own
+              flex item and was centered on its own, which left `main` riding
+              above the words around it instead of sharing their baseline. */}
+          <span className="min-w-0">{hint}</span>
         </p>
       ) : null}
     </div>

@@ -28,7 +28,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { clickPastDragSwallow, waitForViteReady } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -245,8 +245,13 @@ test.describe('Move to Done - confirm dialog animated path', () => {
       }, TASK_ID);
       expect(isArchivedBeforeConfirm).toBe(false);
 
-      // Click the Move/confirm button to release the gate.
-      await page.locator('button:has-text("Move")').first().click();
+      // Click the Move/confirm button to release the gate. The click comes
+      // straight off a dnd-kit drop, so it has to survive a swallowed first
+      // click; the assertion below is still what decides the test.
+      await clickPastDragSwallow(
+        page.locator('button:has-text("Move")').first(),
+        page.locator('text=Move to Done?'),
+      );
 
       // Dialog must close immediately.
       await expect(page.locator('text=Move to Done?')).toBeHidden({ timeout: 3000 });

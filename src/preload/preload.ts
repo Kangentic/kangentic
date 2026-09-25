@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext, MemoryAnswerStreamPush } from '../shared/types';
+import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, MemoryAnswerStreamPush } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -69,6 +69,11 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.PROJECT_PATH_MISSING, handler);
       return () => ipcRenderer.removeListener(IPC.PROJECT_PATH_MISSING, handler);
     },
+    onListChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.PROJECT_LIST_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.PROJECT_LIST_CHANGED, handler);
+    },
   },
 
   projectGroups: {
@@ -93,6 +98,7 @@ const api: ElectronAPI = {
     bulkDelete: (ids, projectId) => ipcRenderer.invoke(IPC.TASK_BULK_DELETE, ids, projectId),
     bulkUnarchive: (ids, targetSwimlaneId, projectId) => ipcRenderer.invoke(IPC.TASK_BULK_UNARCHIVE, ids, targetSwimlaneId, projectId),
     switchBranch: (input, projectId) => ipcRenderer.invoke(IPC.TASK_SWITCH_BRANCH, input, projectId),
+    updateFromBase: (input, projectId) => ipcRenderer.invoke(IPC.TASK_UPDATE_FROM_BASE, input, projectId),
     setRuntimeOverride: (input, projectId) => ipcRenderer.invoke(IPC.TASK_SET_RUNTIME_OVERRIDE, input, projectId),
     resolvePr: (taskId, projectId) => ipcRenderer.invoke(IPC.TASK_RESOLVE_PR, taskId, projectId),
     setDetailViewState: (taskId, state, projectId) => ipcRenderer.invoke(IPC.TASK_SET_DETAIL_VIEW_STATE, taskId, state, projectId),
@@ -107,6 +113,12 @@ const api: ElectronAPI = {
         callback(taskId, taskTitle, message, projectId);
       ipcRenderer.on(IPC.TASK_SPAWN_BLOCKED, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_BLOCKED, handler);
+    },
+    onSpawnWarning: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, taskId: string, message: string, projectId?: string) =>
+        callback(taskId, message, projectId);
+      ipcRenderer.on(IPC.TASK_SPAWN_WARNING, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_WARNING, handler);
     },
     onAutoCommandResult: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, result: AutoCommandResultNotice) => callback(result);
@@ -142,6 +154,12 @@ const api: ElectronAPI = {
         callback(projectId);
       ipcRenderer.on(IPC.TASK_PR_LINK_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_PR_LINK_CHANGED, handler);
+    },
+    onMovedByMobile: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId?: string) =>
+        callback(projectId);
+      ipcRenderer.on(IPC.TASK_MOVED_BY_MOBILE, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_MOVED_BY_MOBILE, handler);
     },
     onSpawnProgress: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, label: string | null) =>
@@ -180,17 +198,29 @@ const api: ElectronAPI = {
     },
   },
 
-  actions: {
-    list: () => ipcRenderer.invoke(IPC.ACTION_LIST),
-    create: (input) => ipcRenderer.invoke(IPC.ACTION_CREATE, input),
-    update: (input) => ipcRenderer.invoke(IPC.ACTION_UPDATE, input),
-    delete: (id) => ipcRenderer.invoke(IPC.ACTION_DELETE, id),
-  },
-
-  transitions: {
-    list: () => ipcRenderer.invoke(IPC.TRANSITION_LIST),
-    set: (fromId, toId, actionIds) => ipcRenderer.invoke(IPC.TRANSITION_SET, fromId, toId, actionIds),
-    getForTransition: (fromId, toId) => ipcRenderer.invoke(IPC.TRANSITION_GET_FOR, fromId, toId),
+  automations: {
+    list: (projectId) => ipcRenderer.invoke(IPC.AUTOMATION_LIST, projectId),
+    // projectId is stamped at interaction time per project-scoped-ipc.md: this
+    // mutates a column's rows, and a project switch between the click and the
+    // handler would otherwise write them into the wrong project's database.
+    replaceForColumn: (swimlaneId, rows, projectId) =>
+      ipcRenderer.invoke(IPC.AUTOMATION_REPLACE_FOR_COLUMN, swimlaneId, rows, projectId),
+    runsForTask: (taskId, projectId) => ipcRenderer.invoke(IPC.AUTOMATION_RUNS_FOR_TASK, taskId, projectId),
+    // Mutating, so it carries the interaction-time projectId too: the toast
+    // outlives a project switch, and Run again must not fire against the board
+    // the user has since moved to.
+    runAgain: (automationId, taskId, projectId) =>
+      ipcRenderer.invoke(IPC.AUTOMATION_RUN_AGAIN, automationId, taskId, projectId),
+    onRunFailed: (callback) => {
+      const handler = (_: unknown, notice: AutomationRunFailure) => callback(notice);
+      ipcRenderer.on(IPC.AUTOMATION_RUN_FAILED, handler);
+      return () => ipcRenderer.removeListener(IPC.AUTOMATION_RUN_FAILED, handler);
+    },
+    onRunsInterrupted: (callback) => {
+      const handler = (_: unknown, summary: AutomationInterruptedSummary) => callback(summary);
+      ipcRenderer.on(IPC.AUTOMATION_RUNS_INTERRUPTED, handler);
+      return () => ipcRenderer.removeListener(IPC.AUTOMATION_RUNS_INTERRUPTED, handler);
+    },
   },
 
   sessions: {
@@ -232,6 +262,11 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.SESSION_STATUS, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_STATUS, handler);
     },
+    onRemoved: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, session: Session, projectId?: string) => callback(sessionId, session, projectId);
+      ipcRenderer.on(IPC.SESSION_REMOVED, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_REMOVED, handler);
+    },
     onUsage: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: SessionUsage, projectId?: string) => callback(sessionId, data, projectId);
       ipcRenderer.on(IPC.SESSION_USAGE, handler);
@@ -245,6 +280,12 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, state: ActivityState, reason: ActivityReason, projectId?: string, taskId?: string) => callback(sessionId, state, reason, projectId, taskId);
       ipcRenderer.on(IPC.SESSION_ACTIVITY, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_ACTIVITY, handler);
+    },
+    getMessageTrails: () => ipcRenderer.invoke(IPC.SESSION_GET_MESSAGE_TRAILS),
+    onMessageTrail: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, entries: AssistantMessageTrailEntry[], projectId?: string) => callback(sessionId, entries, projectId);
+      ipcRenderer.on(IPC.SESSION_MESSAGE_TRAIL, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_MESSAGE_TRAIL, handler);
     },
     getEvents: (sessionId) => ipcRenderer.invoke(IPC.SESSION_GET_EVENTS, sessionId),
     getEventsCache: (projectId?) => ipcRenderer.invoke(IPC.SESSION_GET_EVENTS_CACHE, projectId),
@@ -263,6 +304,8 @@ const api: ElectronAPI = {
     getToolBreakdown: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_GET_TOOL_BREAKDOWN, sessionId),
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),
     killTransient: (id) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id),
+    setTransientLabel: (sessionId: string, label: string) => ipcRenderer.invoke(IPC.SESSION_SET_TRANSIENT_LABEL, sessionId, label),
+    setTransientBranch: (sessionId: string, branch: string) => ipcRenderer.invoke(IPC.SESSION_SET_TRANSIENT_BRANCH, sessionId, branch),
     setFocused: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_FOCUSED, sessionIds),
     setMounted: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_MOUNTED, sessionIds),
     notifyUserInterrupt: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_NOTIFY_USER_INTERRUPT, sessionId),
@@ -318,6 +361,11 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.CONFIG_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.CONFIG_CHANGED, handler);
     },
+    onWriteFailed: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
+      ipcRenderer.on(IPC.CONFIG_WRITE_FAILED, handler);
+      return () => ipcRenderer.removeListener(IPC.CONFIG_WRITE_FAILED, handler);
+    },
   },
 
   keybindings: {
@@ -359,7 +407,9 @@ const api: ElectronAPI = {
     subscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_SUBSCRIBE, worktreePath),
     unsubscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_UNSUBSCRIBE, worktreePath),
     checkPendingChanges: (input) => ipcRenderer.invoke(IPC.GIT_CHECK_PENDING_CHANGES, input),
+    prefetchRemotes: (checkPath) => ipcRenderer.invoke(IPC.GIT_PREFETCH_REMOTES, checkPath),
     branchSummary: (input) => ipcRenderer.invoke(IPC.GIT_BRANCH_SUMMARY, input),
+    worktreeHead: (input) => ipcRenderer.invoke(IPC.GIT_WORKTREE_HEAD, input),
     commitGraph: (input) => ipcRenderer.invoke(IPC.GIT_COMMIT_GRAPH, input),
     fileHistory: (input) => ipcRenderer.invoke(IPC.GIT_FILE_HISTORY, input),
     blame: (input) => ipcRenderer.invoke(IPC.GIT_BLAME, input),
@@ -425,8 +475,8 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.MONITOR_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.MONITOR_CHANGED, handler);
     },
-    setPeekSubscribed: (subscribed: boolean) =>
-      ipcRenderer.invoke(IPC.MONITOR_SET_PEEK_SUBSCRIBED, subscribed),
+    setPeekSubscribed: (subscribed: boolean, sessionIds?: string[]) =>
+      ipcRenderer.invoke(IPC.MONITOR_SET_PEEK_SUBSCRIBED, subscribed, sessionIds),
     onPeek: (callback: (peeks: Record<string, string[]>) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, peeks: Record<string, string[]>) => callback(peeks);
       ipcRenderer.on(IPC.MONITOR_PEEK, handler);
@@ -473,6 +523,12 @@ const api: ElectronAPI = {
   analytics: {
     trackRendererError: (message: string, context?: RendererErrorContext) =>
       ipcRenderer.send(IPC.TRACK_RENDERER_ERROR, message, context),
+    trackFeatureUsed: (feature: string) =>
+      ipcRenderer.send(IPC.TRACK_FEATURE_USED, feature),
+    // Appended to additionalArguments by main only when Sentry actually
+    // initialized there (isErrorReportingActive), so the renderer-side
+    // Sentry.init() follows main's single decision.
+    errorReportingEnabled: process.argv.includes('--kangentic-error-reporting'),
   },
 
   app: {
@@ -487,6 +543,28 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler);
       return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler);
     },
+    onUpdateBlocked: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
+      ipcRenderer.on(IPC.UPDATE_BLOCKED, handler);
+      return () => ipcRenderer.removeListener(IPC.UPDATE_BLOCKED, handler);
+    },
+  },
+
+  hostMemory: {
+    onPressure: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: HostMemoryPressureEvent) => callback(payload);
+      ipcRenderer.on(IPC.HOST_MEMORY_PRESSURE, handler);
+      return () => ipcRenderer.removeListener(IPC.HOST_MEMORY_PRESSURE, handler);
+    },
+    onRecovery: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: HostMemoryRecoveryEvent) => callback(payload);
+      ipcRenderer.on(IPC.HOST_MEMORY_RECOVERED, handler);
+      return () => ipcRenderer.removeListener(IPC.HOST_MEMORY_RECOVERED, handler);
+    },
+  },
+
+  gpuHealth: {
+    readStatus: () => ipcRenderer.invoke(IPC.GPU_HEALTH_STATUS),
   },
 
   announcements: {
@@ -531,7 +609,8 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.BACKLOG_LABEL_COLORS_CHANGED, handler);
     },
     importCheckCli: (source) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_CHECK_CLI, source),
-    importFetch: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_FETCH, input),
+    importGetCached: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_GET_CACHED, input),
+    importReconcile: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_RECONCILE, input),
     importExecute: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_EXECUTE, input),
     importSourcesList: () => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_LIST),
     importSourcesAdd: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_ADD, input),
@@ -608,6 +687,7 @@ const api: ElectronAPI = {
 
   clipboard: {
     readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
+    saveImage: (pngBytes) => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE, pngBytes),
     writeText: (text) => ipcRenderer.invoke(IPC.CLIPBOARD_WRITE_TEXT, text),
   },
 
@@ -617,8 +697,12 @@ const api: ElectronAPI = {
     setTaskUrl: (taskId, url, projectId) => ipcRenderer.invoke(IPC.BROWSER_URL_SET_TASK, taskId, url, projectId),
     clearTaskUrl: (taskId, projectId) => ipcRenderer.invoke(IPC.BROWSER_URL_CLEAR_TASK, taskId, projectId),
     clearStorage: () => ipcRenderer.invoke(IPC.BROWSER_CLEAR_STORAGE),
+    ensureJar: (taskId, projectId) => ipcRenderer.invoke(IPC.BROWSER_JAR_ENSURE, taskId, projectId),
     registerPane: (input) => ipcRenderer.invoke(IPC.BROWSER_PANE_REGISTER, input),
-    unregisterPane: (sessionId, webContentsId) => ipcRenderer.invoke(IPC.BROWSER_PANE_UNREGISTER, sessionId, webContentsId),
+    unregisterPane: (webContentsId) => ipcRenderer.invoke(IPC.BROWSER_PANE_UNREGISTER, webContentsId),
+    closePaneByUser: (webContentsId) => ipcRenderer.invoke(IPC.BROWSER_PANE_USER_CLOSE, webContentsId),
+    setPaneVisibility: (webContentsId, visibility) =>
+      ipcRenderer.invoke(IPC.BROWSER_PANE_VISIBILITY, webContentsId, visibility),
     onZoomChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, factor: number, webContentsId: number) =>
         callback(factor, webContentsId);
@@ -643,6 +727,29 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.BROWSER_AGENT_INPUT, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_AGENT_INPUT, handler);
     },
+    onViewportOverride: (callback) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        webContentsId: number,
+        override: BrowserViewportOverride | null,
+      ) => callback(webContentsId, override);
+      ipcRenderer.on(IPC.BROWSER_VIEWPORT_OVERRIDE, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_VIEWPORT_OVERRIDE, handler);
+    },
+    setPaneWidgetSize: (webContentsId, width, height) =>
+      ipcRenderer.invoke(IPC.BROWSER_PANE_WIDGET_SIZE, webContentsId, width, height),
+    getViewportOverride: (webContentsId) =>
+      ipcRenderer.invoke(IPC.BROWSER_VIEWPORT_GET, webContentsId),
+    clearViewportOverride: (webContentsId) =>
+      ipcRenderer.invoke(IPC.BROWSER_VIEWPORT_CLEAR, webContentsId),
+    onOffscreenSurfaces: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, taskIds: string[]) => callback(taskIds);
+      ipcRenderer.on(IPC.BROWSER_OFFSCREEN_SURFACES, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_OFFSCREEN_SURFACES, handler);
+    },
+    getOffscreenSurfaces: () => ipcRenderer.invoke(IPC.BROWSER_OFFSCREEN_SURFACES_GET),
+    closeOffscreenSurface: (taskId, projectId) =>
+      ipcRenderer.invoke(IPC.BROWSER_OFFSCREEN_CLOSE, taskId, projectId),
     onDownloadDone: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, download: BrowserDownloadDone) =>
         callback(download);
@@ -675,6 +782,7 @@ const api: ElectronAPI = {
 
   memory: {
     getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
+    prewarm: () => ipcRenderer.send(IPC.MEMORY_PREWARM),
     rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
     graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_SNAPSHOT, projectId),
     refreshGraph: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_REFRESH, projectId),

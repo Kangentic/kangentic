@@ -229,6 +229,109 @@ describe('MonitorPeekTracker', () => {
     });
   });
 
+  describe('the per-session gate', () => {
+    // A subscriber names the sessions whose cards draw a peek. With the card's
+    // slot following Card Preview, most cards draw the agent's messages instead,
+    // so this is what keeps an open monitor from sampling every agent on the
+    // machine for text nobody sees.
+    it('drops output from a session the subscriber did not name, at the tap', () => {
+      const { sessionManager, emit, tracker } = makeTracker();
+      sessionManager.summaries = [{ id: 'a' }, { id: 'b' }];
+      sessionManager.peeks.set('a', ['alpha']);
+      sessionManager.peeks.set('b', ['bravo']);
+
+      tracker.subscribe(1, new Set(['a']));
+      // The seed covers only the wanted session.
+      expect(emit).toHaveBeenCalledWith({ a: ['alpha'] });
+      emit.mockClear();
+
+      sessionManager.peeks.set('b', ['bravo 2']);
+      sessionManager.emit('data-tap', 'b', 'bytes');
+      vi.advanceTimersByTime(PEEK_SAMPLE_INTERVAL_MS);
+      expect(emit).not.toHaveBeenCalled();
+
+      sessionManager.peeks.set('a', ['alpha 2']);
+      sessionManager.emit('data-tap', 'a', 'bytes');
+      vi.advanceTimersByTime(PEEK_SAMPLE_INTERVAL_MS);
+      expect(emit).toHaveBeenCalledWith({ a: ['alpha 2'] });
+    });
+
+    it('keeps the listener and the timer off while a subscriber wants nothing', () => {
+      const { sessionManager, emit, tracker } = makeTracker();
+      sessionManager.summaries = [{ id: 'a' }];
+      sessionManager.peeks.set('a', ['alpha']);
+
+      tracker.subscribe(1, new Set());
+      expect(tapListeners(sessionManager)).toBe(0);
+      expect(emit).not.toHaveBeenCalled();
+
+      // Naming a session later attaches and seeds just that session.
+      tracker.subscribe(1, new Set(['a']));
+      expect(tapListeners(sessionManager)).toBe(1);
+      expect(emit).toHaveBeenCalledWith({ a: ['alpha'] });
+
+      // Dropping it again detaches without unsubscribing.
+      tracker.subscribe(1, new Set());
+      expect(tapListeners(sessionManager)).toBe(0);
+      tracker.unsubscribe(1);
+      expect(tapListeners(sessionManager)).toBe(0);
+    });
+
+    it('re-stating the same set seeds nothing; adding a session seeds only that session', () => {
+      const { sessionManager, emit, tracker } = makeTracker();
+      sessionManager.summaries = [{ id: 'a' }, { id: 'b' }];
+      sessionManager.peeks.set('a', ['alpha']);
+      sessionManager.peeks.set('b', ['bravo']);
+
+      tracker.subscribe(1, new Set(['a']));
+      emit.mockClear();
+      tracker.subscribe(1, new Set(['a']));
+      expect(emit).not.toHaveBeenCalled();
+
+      tracker.subscribe(1, new Set(['a', 'b']));
+      expect(emit).toHaveBeenCalledTimes(1);
+      expect(emit).toHaveBeenCalledWith({ b: ['bravo'] });
+    });
+
+    it('samples the union of what every subscriber wants', () => {
+      const { sessionManager, emit, tracker } = makeTracker();
+      sessionManager.summaries = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+      tracker.subscribe(1, new Set(['a']));
+      tracker.subscribe(2, new Set(['b']));
+      emit.mockClear();
+
+      sessionManager.peeks.set('a', ['alpha']);
+      sessionManager.peeks.set('b', ['bravo']);
+      sessionManager.peeks.set('c', ['charlie']);
+      for (const sessionId of ['a', 'b', 'c']) sessionManager.emit('data-tap', sessionId, 'bytes');
+      vi.advanceTimersByTime(PEEK_SAMPLE_INTERVAL_MS);
+
+      expect(emit).toHaveBeenCalledWith({ a: ['alpha'], b: ['bravo'] });
+
+      // One subscriber leaving narrows the union to the other's set.
+      tracker.unsubscribe(1);
+      emit.mockClear();
+      sessionManager.peeks.set('a', ['alpha 2']);
+      sessionManager.emit('data-tap', 'a', 'bytes');
+      vi.advanceTimersByTime(PEEK_SAMPLE_INTERVAL_MS);
+      expect(emit).not.toHaveBeenCalled();
+    });
+
+    it('a subscriber naming nothing in particular still gets every session', () => {
+      // The `null` form is what a caller that does not narrow sends.
+      const { sessionManager, emit, tracker } = makeTracker();
+      sessionManager.summaries = [{ id: 'a' }, { id: 'b' }];
+      tracker.subscribe(1, new Set(['a']));
+      tracker.subscribe(2, null);
+      emit.mockClear();
+
+      sessionManager.peeks.set('b', ['bravo']);
+      sessionManager.emit('data-tap', 'b', 'bytes');
+      vi.advanceTimersByTime(PEEK_SAMPLE_INTERVAL_MS);
+      expect(emit).toHaveBeenCalledWith({ b: ['bravo'] });
+    });
+  });
+
   it('dispose detaches everything', () => {
     const { sessionManager, tracker } = makeTracker();
     tracker.subscribe(1);

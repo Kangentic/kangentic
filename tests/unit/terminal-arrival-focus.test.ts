@@ -138,6 +138,40 @@ describe('resolveArrivalFocus - tier 1, the user-gesture claim', () => {
     expect(result).toEqual({ allow: true, reason: 'window' });
   });
 
+  it('still grants a SLOW arrival, well past what a mount takes on a healthy machine', () => {
+    // Regression guard for the flake this constant caused (CI run 33886876661,
+    // terminal-arrival-focus.spec.ts's panel re-expand case, passed only on
+    // retry #1). The gesture-to-arrival gap is work - a CSS transition, a React
+    // render, an xterm construct, an async scrollback fetch - so it stretches
+    // with load: measured 238-267ms unthrottled but 4605-5897ms at 25x CPU
+    // throttle, which is past the 4000ms the deadline used to be. When it
+    // lapses first, the user's own expand click silently fails to move focus.
+    //
+    // 10s is chosen to sit beyond any plausible mount AND beyond that old
+    // value, so this fails if the deadline is ever tightened back toward the
+    // times it has to beat.
+    const result = resolveArrivalFocus(baseInput({
+      sessionId: 'sess-clicked',
+      claim: {
+        sessionId: 'sess-clicked',
+        fingerprint: 'board:|cmd:|mon:',
+        at: NOW - 10_000,
+      },
+      // A detail window still holds focus, so tier 2 would DENY this session.
+      // Only the claim can allow it, which is what makes the case meaningful.
+      focusedWindowTerminal: userOpenedWindow('sess-detail'),
+    }));
+    expect(result).toEqual({ allow: true, reason: 'claim' });
+  });
+
+  it('keeps the backstop far longer than the slowest measured mount', () => {
+    // Pins the MARGIN, not the number. The slowest arrival measured on a
+    // throttled runner was 5897ms; a deadline anywhere near that races the
+    // mount it is waiting for, which is the bug above. Raise this floor rather
+    // than lower the constant to meet it.
+    expect(ARRIVAL_CLAIM_TTL_MS).toBeGreaterThanOrEqual(15_000);
+  });
+
   it('still applies at exactly the TTL boundary', () => {
     const result = resolveArrivalFocus(baseInput({
       sessionId: 'sess-clicked',
@@ -419,12 +453,12 @@ describe('mayTakeArrivalFocus / claimArrivalFocus (the real, impure wrapper)', (
     // denied as a claim-mismatch against the session cleared above. If the
     // null branch became a no-op, the stale claim on 'sess-a' would still be
     // live and would deny 'sess-b'.
-    expect(mayTakeArrivalFocus('sess-b')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-b', 'mount-replay')).toBe(true);
   });
 
   it('claims tier-1 exclusivity through the real wrapper: the claimed session is allowed, any other is denied', () => {
     claimArrivalFocus('sess-a');
-    expect(mayTakeArrivalFocus('sess-a')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-a', 'mount-replay')).toBe(true);
 
     // Step past the tier-3 burst window (well inside the tier-1 claim's own
     // TTL) before the second check. Without this, a wrapper that silently
@@ -435,7 +469,7 @@ describe('mayTakeArrivalFocus / claimArrivalFocus (the real, impure wrapper)', (
     // Stepping past the burst window removes that false-pass path.
     vi.advanceTimersByTime(ARRIVAL_BURST_MS + 1);
 
-    expect(mayTakeArrivalFocus('sess-b')).toBe(false);
+    expect(mayTakeArrivalFocus('sess-b', 'mount-replay')).toBe(false);
   });
 
   it('records lastArrivalGrant only for a tier-3 (unclaimed) grant, never for a tier-1 (claim) grant', () => {
@@ -444,10 +478,10 @@ describe('mayTakeArrivalFocus / claimArrivalFocus (the real, impure wrapper)', (
     // check below (an unrelated session, checked at the SAME instant, well
     // inside ARRIVAL_BURST_MS) would be denied as burst-taken instead of
     // reaching tier 3 on its own.
-    expect(mayTakeArrivalFocus('sess-claimed')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-claimed', 'mount-replay')).toBe(true);
     claimArrivalFocus(null);
 
-    expect(mayTakeArrivalFocus('sess-unrelated')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-unrelated', 'mount-replay')).toBe(true);
   });
 });
 
@@ -490,7 +524,7 @@ describe('focusIsInTypingSurface (through mayTakeArrivalFocus, its only entry po
     const matchesSpy = vi.fn(() => false);
     vi.stubGlobal('document', { body: {}, activeElement: { matches: matchesSpy } });
 
-    expect(mayTakeArrivalFocus('sess-button-focus')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-button-focus', 'mount-replay')).toBe(true);
     // The load-bearing assertion: this is what fails if `button` (or anything
     // else) is ever added to the selector list. The return-value assertion
     // above cannot see that change, because the stub returns whatever this
@@ -503,7 +537,7 @@ describe('focusIsInTypingSurface (through mayTakeArrivalFocus, its only entry po
     const matchesSpy = vi.fn(() => true);
     vi.stubGlobal('document', { body: {}, activeElement: { matches: matchesSpy } });
 
-    expect(mayTakeArrivalFocus('sess-textarea-focus')).toBe(false);
+    expect(mayTakeArrivalFocus('sess-textarea-focus', 'mount-replay')).toBe(false);
   });
 
   it('short-circuits on activeElement === document.body without calling matches', () => {
@@ -511,7 +545,7 @@ describe('focusIsInTypingSurface (through mayTakeArrivalFocus, its only entry po
     const bodySentinel = { matches: matchesSpy };
     vi.stubGlobal('document', { body: bodySentinel, activeElement: bodySentinel });
 
-    expect(mayTakeArrivalFocus('sess-body-focus')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-body-focus', 'mount-replay')).toBe(true);
     // The load-bearing assertion for the second red condition: dropping the
     // `active === document.body` guard would route this call into
     // `active.matches(...)` instead of short-circuiting. A real

@@ -71,6 +71,14 @@ vi.mock('../../src/main/agent/commands/task-commands', () => ({
   handleMoveTaskToProject: vi.fn(),
 }));
 
+// Same reason as the task-commands stub: the real override validator probes
+// the machine's installed agent CLIs, which would make this wiring suite
+// depend on the developer's machine and differ on CI. Validation is covered by
+// mcp-spawn-override-validation.test.ts.
+vi.mock('../../src/main/agent/mcp-http/spawn-override-validation', () => ({
+  validateSpawnOverrides: vi.fn(async () => null),
+}));
+
 import { registerTaskTools } from '../../src/main/agent/mcp-http/task-tools';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { TaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
@@ -108,6 +116,8 @@ function makeResolver(): RequestResolver {
     resolveProject: vi.fn(() => makeDefaultContextResolved()),
     listProjects: vi.fn(() => []),
     defaultContextResolved: vi.fn(() => makeDefaultContextResolved()),
+    getProjectDefaultAgent: vi.fn(() => null),
+    getAgentValidationConfig: vi.fn(() => ({ cliPathOverrides: {}, discoveredModelsByAgent: {} })),
   } as unknown as RequestResolver;
 }
 

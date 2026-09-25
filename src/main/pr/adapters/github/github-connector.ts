@@ -14,9 +14,28 @@
  */
 
 import PQueue from 'p-queue';
-import type { PRConnector, DetectedPR, ResolvedPR, PRState } from '../../shared/pr-connector';
+import type {
+  PRConnector,
+  DetectedPR,
+  ResolvedPR,
+  PRState,
+  PRMergeReadiness,
+  PRResolveOptions,
+} from '../../shared/pr-connector';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
-import { GitHubImporter, GhUnavailableError, GhTransientError, type GhPrListItem } from '../../../boards/adapters/github-common/gh-client';
+import {
+  GitHubImporter,
+  GhUnavailableError,
+  GhTransientError,
+  type GhPrListItem,
+  type GhMergeable,
+  type GhMergeStateStatus,
+  type GhCheckRunStatus,
+  type GhCheckRunConclusion,
+  type GhStatusState,
+  type GhStatusCheckRollupItem,
+  type GhMergeBypass,
+} from '../../../boards/adapters/github-common/gh-client';
 import { isShaContainedInRef } from '../../../git/worktree-head';
 
 /**
@@ -59,14 +78,440 @@ function mapState(item: GhPrListItem): PRState {
   return item.isDraft ? 'draft' : 'open';
 }
 
-/** Project a raw gh PR item into the platform-agnostic ResolvedPR shape. */
-function toResolvedPR(item: GhPrListItem): ResolvedPR {
+/**
+ * Fold GitHub's mergeability triple into the normalized verdict, or undefined
+ * when the item carries none (the commit tier's REST payload). The promise is
+ * "a Merge click would succeed", read literally: UNSTABLE is `ready` because the
+ * button works with failing NON-required checks (required ones report BLOCKED
+ * instead), and a `ready` verdict is downgraded to `blocked` only when a review
+ * is still REQUIRED. CHANGES_REQUESTED is deliberately not a downgrade: where
+ * reviews are required GitHub already reports BLOCKED, and where they are not
+ * the button works, so calling it `blocked` would break the promise.
+ * `mergeable` is the fallback when `mergeStateStatus` is absent or a value this
+ * code does not know. `reviewDecision` is compared against the one named value:
+ * gh renders a null decision as ''.
+ *
+ * BLOCKED is the one state the triple cannot tell apart: a required check
+ * still running, a required check that failed, and a review still required all
+ * report it. The check rollup splits them (see `classifyRollup`), and a check
+ * in flight wins over a required review on purpose, so the chip tracks CI while
+ * it runs and flips to `blocked` when only the review remains. A failed check
+ * never yields to a running one, and a required check the rollup does not
+ * carry yet reads `queued` (`requiredContextMissing`). BEHIND takes the same branch, for the reason
+ * `isBypassClearableMergeState` gives: it is the value GitHub reports INSTEAD
+ * of BLOCKED once the base moves, so reading the rollup for one and not the
+ * other would make the chip flip on a merge somebody else did.
+ *
+ * `bypass` is what the viewer's own merge-bypass probe answered (see
+ * `bypassFor`), and the verdict is read for the VIEWER: the board's Merge
+ * column merges a green PR past its missing review with `gh pr merge --admin`,
+ * so for a viewer who can do that the literal promise is `ready`. It folds at
+ * BOTH sites where branch protection alone would block (the
+ * `isBypassClearableMergeState` branch and the `ready` downgrade) and only
+ * there, under the conditions `bypassClearsTheBlock` names. DRAFT and DIRTY
+ * never fold. Azure DevOps has no counterpart: its bypass is a
+ * security-namespace permission, out of scope.
+ */
+function mapMergeReadiness(
+  item: GhPrListItem,
+  bypass: GhMergeBypass | null,
+  requiredContexts: string[] | null,
+): PRMergeReadiness | undefined {
+  if (item.mergeStateStatus === undefined && item.mergeable === undefined) return undefined;
+  if (isBypassClearableMergeState(item.mergeStateStatus)) {
+    const rollup = classifyRollup(item.statusCheckRollup);
+    if (rollup === 'running' || rollup === 'queued') return rollup;
+    // A required check the rollup does not carry at all is one GitHub is
+    // still waiting on (see `requiredContextMissing`), so the PR is queued on
+    // CI, not blocked by it. A failure still wins: nothing that has not run
+    // can unblock a check that already failed.
+    if (rollup !== 'failed' && requiredContextMissing(item.statusCheckRollup, requiredContexts)) return 'queued';
+    return bypassClearsTheBlock(item, bypass) ? 'ready' : 'blocked';
+  }
+  const verdict = mapMergeStateStatus(item.mergeStateStatus) ?? mapMergeable(item.mergeable);
+  if (verdict !== 'ready' || item.reviewDecision !== 'REVIEW_REQUIRED') return verdict;
+  return bypassClearsTheBlock(item, bypass) ? 'ready' : 'blocked';
+}
+
+/**
+ * Whether the viewer's bypass would really merge this PR right now: they can
+ * bypass, every block this code can see is one branch protection imposes
+ * (`isBlockedOnlyByProtection`), and every check branch protection REQUIRES has
+ * reported green (`requiredChecksReported`). All three, because the bypass is
+ * a capability rather than a state - it reads `true` on a red PR too.
+ */
+function bypassClearsTheBlock(item: GhPrListItem, bypass: GhMergeBypass | null): boolean {
+  if (bypass?.viewerCanMergeAsAdmin !== true) return false;
+  if (!isBlockedOnlyByProtection(item)) return false;
+  return requiredChecksReported(item.statusCheckRollup, bypass.requiredStatusCheckContexts);
+}
+
+/**
+ * Whether every block the PR's own fields can show is one branch protection
+ * imposes and `--admin` lifts: the review is still required, the merge state is
+ * one the bypass clears (`isBypassClearableMergeState`, or a `ready` state the
+ * downgrade would catch), and every check in the rollup has settled green.
+ * Shared by the fold and by the probe gate, so the two cannot drift apart.
+ *
+ * Named for protection rather than for the review because BEHIND carries a
+ * second block, a base the branch fell behind, and the same bypass clears it.
+ *
+ * Not sufficient on its own, which is what `requiredChecksReported` adds: a
+ * `passing` rollup is "nothing here failed", not "everything required ran".
+ */
+function isBlockedOnlyByProtection(item: GhPrListItem): boolean {
+  if (item.reviewDecision !== 'REVIEW_REQUIRED') return false;
+  if (!isBypassClearableMergeState(item.mergeStateStatus) && mapMergeStateStatus(item.mergeStateStatus) !== 'ready') return false;
+  return classifyRollup(item.statusCheckRollup) === 'passing';
+}
+
+/**
+ * The merge states `gh pr merge --admin` clears, and so the only two the bypass
+ * fold may act on. Both name a condition branch protection imposes: BLOCKED is
+ * a required review or check outstanding, BEHIND is a base the branch fell
+ * behind where protection requires branches to be up to date.
+ *
+ * They are ONE predicate because GitHub reports a single `mergeStateStatus` for
+ * a PR that is in both conditions at once, and which one it names is decided by
+ * whether a sibling PR landed: a green, review-required PR reads BLOCKED until
+ * one does and BEHIND immediately after. Splitting them made the chip flip
+ * `ready` to `blocked` because somebody else merged, with nothing about the PR
+ * itself changing, which is the bug this exists to fix.
+ *
+ * DRAFT is the author's own switch, not protection, and DIRTY is a real
+ * conflict no permission resolves, so neither ever folds. There is deliberately
+ * no "does the base require up-to-date branches" condition: GitHub only reports
+ * BEHIND where it does, so the condition would be a no-op, and where it somehow
+ * did not, being behind would not block the merge at all - which makes folding
+ * more obviously right, not less.
+ */
+function isBypassClearableMergeState(mergeStateStatus: GhMergeStateStatus | undefined): boolean {
+  return mergeStateStatus === 'BLOCKED' || mergeStateStatus === 'BEHIND';
+}
+
+/**
+ * Whether every context the base branch's protection requires is present in
+ * the rollup AND passing.
+ *
+ * This closes the one gap `classifyRollup` cannot see. A required check GitHub
+ * still EXPECTS is absent from the rollup entirely, so an all-green rollup can
+ * still be missing required checks, and this repo hits that on every PR it
+ * opens: the CLA workflow finishes in seconds while CI's runs have not been
+ * created yet, leaving a rollup of one green check on a PR whose CI has not
+ * started. Without this the fold would read `ready` there. The required list
+ * costs nothing extra - it rides the bypass probe's own call.
+ *
+ * `null` means there is no readable rule (a branch with no classic protection;
+ * a repo on rulesets answers `branchProtectionRule: null`). Fall back to the
+ * rollup alone rather than refusing every fold on such a repo: that is the
+ * behaviour without this check, not a new hazard.
+ *
+ * The join is by NAME, and its failure direction is deliberate. A required
+ * context for an Actions check is the job name, which is the rollup's
+ * `CheckRun.name` (measured: this repo's five required contexts match its
+ * rollup entries exactly). An integration that registers a context under some
+ * other string would read as a required check missing, so the fold refuses and
+ * the chip stays `blocked` - the verdict without this check, never a false
+ * `ready`.
+ */
+function requiredChecksReported(
+  rollup: GhStatusCheckRollupItem[] | undefined,
+  requiredContexts: string[] | null,
+): boolean {
+  if (requiredContexts === null) return true;
+  const passing = passingContextNames(rollup);
+  return requiredContexts.every((context) => passing.has(context));
+}
+
+/**
+ * Whether a context the base branch requires is absent from the rollup
+ * entirely, in any state. That is how a just-opened PR looks while CI is
+ * starting: its fast CLA workflow is green and CI's workflow has not created
+ * its runs yet, so the rollup holds one check and GitHub reports BLOCKED. On
+ * the sweep's cadence the card read `blocked` for minutes, and a verdict that
+ * is not in flight never starts the linker's 30 s re-poll, so a CI run that
+ * finished inside one sweep interval left the card up to a whole interval
+ * behind. Reporting `queued` here is also the honest label: GitHub's own page
+ * shows the check as "Expected, waiting for status to be reported".
+ *
+ * The join is by name, and it is the join GitHub itself makes: a required
+ * context is satisfied only by a check run or status with that name. So a
+ * context missing here is one GitHub is waiting on too. A required check that
+ * never reports (a path-filtered workflow, a check only a merge queue runs)
+ * therefore reads `queued` for as long as GitHub reads it as expected; the
+ * linker's re-poll budget bounds what that costs. `null` (no readable rule) is
+ * never missing anything, which keeps a ruleset repo on the verdict it had.
+ */
+function requiredContextMissing(
+  rollup: GhStatusCheckRollupItem[] | undefined,
+  requiredContexts: string[] | null,
+): boolean {
+  if (requiredContexts === null || requiredContexts.length === 0) return false;
+  const present = new Set<string>();
+  for (const item of rollup ?? []) {
+    if (item.__typename === 'CheckRun') present.add(item.name);
+    else if (item.__typename === 'StatusContext') present.add(item.context);
+  }
+  return requiredContexts.some((context) => !present.has(context));
+}
+
+/**
+ * Names of the rollup entries that individually PASSED. Every caller reaches
+ * this only for a `passing` rollup, where that is every entry, but reading per
+ * entry keeps the comparison above correct if that gate is ever loosened.
+ */
+function passingContextNames(rollup: GhStatusCheckRollupItem[] | undefined): ReadonlySet<string> {
+  const names = new Set<string>();
+  for (const item of rollup ?? []) {
+    if (item.__typename === 'CheckRun') {
+      if (item.status === 'COMPLETED' && item.conclusion !== null && PASSING_CHECK_RUN_CONCLUSIONS.has(item.conclusion)) {
+        names.add(item.name);
+      }
+    } else if (item.__typename === 'StatusContext' && item.state === 'SUCCESS') {
+      names.add(item.context);
+    }
+  }
+  return names;
+}
+
+/**
+ * CheckRun conclusions and StatusContext states that mean the check has FAILED,
+ * so the merge stays blocked. Typed on the gh unions rather than `string` so a
+ * misspelled member fails `tsc` instead of silently never matching.
+ */
+const FAILED_CHECK_RUN_CONCLUSIONS: ReadonlySet<GhCheckRunConclusion> = new Set<GhCheckRunConclusion>([
+  'FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE',
+]);
+const FAILED_STATUS_STATES: ReadonlySet<GhStatusState> = new Set<GhStatusState>(['ERROR', 'FAILURE']);
+/** CheckRun statuses short of IN_PROGRESS that still mean the check has not run yet. */
+const WAITING_CHECK_RUN_STATUSES: ReadonlySet<GhCheckRunStatus> = new Set<GhCheckRunStatus>([
+  'QUEUED', 'PENDING', 'WAITING', 'REQUESTED',
+]);
+const WAITING_STATUS_STATES: ReadonlySet<GhStatusState> = new Set<GhStatusState>(['PENDING', 'EXPECTED']);
+/**
+ * Conclusions that count as a check having PASSED for the bypass fold. STALE
+ * and a null conclusion are neither failed nor passed, so a rollup carrying
+ * one is `inconclusive` and never folds.
+ */
+const PASSING_CHECK_RUN_CONCLUSIONS: ReadonlySet<GhCheckRunConclusion> = new Set<GhCheckRunConclusion>([
+  'SUCCESS', 'NEUTRAL', 'SKIPPED',
+]);
+
+/**
+ * What a PR's check rollup says about its checks, highest precedence first:
+ * `failed` when ANY check has failed (a failure is what blocks, whatever else
+ * is running), `running` when a check run is IN_PROGRESS, `queued` when the
+ * only unfinished ones are waiting to start, `passing` when the rollup is
+ * non-empty and every entry settled green, and `inconclusive` for everything
+ * else: an absent or empty rollup, a completed run with a STALE or null
+ * conclusion, or a status, state, or typename this code does not know.
+ *
+ * `running` / `queued` are the in-flight answers a BLOCKED PR shows instead of
+ * `blocked`; `passing` is the ONLY class the bypass fold accepts, and
+ * `inconclusive` is deliberately not it. An absent rollup has a concrete
+ * meaning here: a required check GitHub still EXPECTS but that has not
+ * reported yet is not in the rollup at all, so an empty rollup is "checks
+ * about to start", not "no checks".
+ *
+ * A heuristic, because `gh` carries no `isRequired` on the rollup: a BLOCKED
+ * PR whose only unfinished checks are optional reads `running` too, which
+ * corrects itself on the next resolve. A required check not yet in the rollup
+ * is caught separately, against the branch's required list
+ * (`requiredContextMissing`), and reads `queued`; only a branch with no
+ * readable rule (rulesets) still reads `blocked` there until CI reports. `passing` is the class that heuristic
+ * would make dangerous - a fast workflow can be green before a slower one has
+ * created its runs at all - so the bypass fold does not trust it alone and
+ * compares against the branch's required contexts (`requiredChecksReported`).
+ */
+type RollupVerdict = 'failed' | 'running' | 'queued' | 'passing' | 'inconclusive';
+
+function classifyRollup(rollup: GhStatusCheckRollupItem[] | undefined): RollupVerdict {
+  if (!rollup || rollup.length === 0) return 'inconclusive';
+  let running = false;
+  let waiting = false;
+  let allPassing = true;
+  for (const item of rollup) {
+    if (item.__typename === 'CheckRun') {
+      if (item.status === 'COMPLETED') {
+        if (item.conclusion !== null && FAILED_CHECK_RUN_CONCLUSIONS.has(item.conclusion)) return 'failed';
+        if (item.conclusion === null || !PASSING_CHECK_RUN_CONCLUSIONS.has(item.conclusion)) allPassing = false;
+      } else if (item.status === 'IN_PROGRESS') {
+        running = true;
+      } else if (WAITING_CHECK_RUN_STATUSES.has(item.status)) {
+        waiting = true;
+      } else {
+        allPassing = false;
+      }
+    } else if (item.__typename === 'StatusContext') {
+      if (FAILED_STATUS_STATES.has(item.state)) return 'failed';
+      if (WAITING_STATUS_STATES.has(item.state)) {
+        waiting = true;
+      } else if (item.state !== 'SUCCESS') {
+        allPassing = false;
+      }
+    } else {
+      allPassing = false;
+    }
+  }
+  if (running) return 'running';
+  if (waiting) return 'queued';
+  return allPassing ? 'passing' : 'inconclusive';
+}
+
+/**
+ * Whether the bypass probe can change this item's verdict at all, which is
+ * the gate `git.prBypassCountsAsReady` opens. Only an open, non-draft PR still
+ * waiting on a required review is worth the GraphQL call: a draft never renders
+ * readiness, a merged or closed PR never changes, a failed or in-flight check
+ * keeps `blocked` whatever the bypass says, and a green PR with no review
+ * outstanding is blocked by something the bypass is not being asked about -
+ * which is why an already-approved BEHIND PR does not fold either.
+ *
+ * Never one probe per open PR per sweep, which is why the setting can default
+ * on where `prEvaluateBranchPolicies` defaults off. What bounds it is the
+ * review-plus-green gate, NOT the merge-state value: admitting BEHIND beside
+ * BLOCKED does not add a population, it stops the same PRs dropping out of the
+ * gate each time a sibling lands. The probe is uncached, so the cost is one
+ * `gh api graphql` per qualifying linked PR per sweep
+ * (`git.prRefreshIntervalMinutes`, default 5; the 60 s `RESOLVE_TTL_MS`
+ * coalesce is shorter than any selectable interval, so it does not lower that
+ * rate). If that rate ever matters, the mitigation is a per-base-ref memo of
+ * `requiredStatusCheckContexts`; `viewerCanMergeAsAdmin` is per-PR and would
+ * still cost a call.
+ */
+function needsBypassProbe(item: GhPrListItem, options: PRResolveOptions | undefined): boolean {
+  return options?.bypassCountsAsReady === true
+    && item.state === 'OPEN'
+    && !item.isDraft
+    && isBlockedOnlyByProtection(item);
+}
+
+/**
+ * The viewer's merge bypass for one chosen item, or null when the probe is not
+ * warranted (see `needsBypassProbe`) or gave no answer. Called INSIDE the
+ * caller's `viaGh` slot, never through a `viaGh` of its own: `ghQueue` allows
+ * three concurrent slots, and a nested `add` awaited from inside a running
+ * slot would let three overlapping resolves hold every slot while each waits
+ * on a queued child that can never start. A `null` answer (any probe failure)
+ * is "no bypass known", so the verdict stays GitHub's own `blocked`.
+ */
+async function bypassFor(
+  item: GhPrListItem,
+  repoCwd: string,
+  options: PRResolveOptions | undefined,
+): Promise<GhMergeBypass | null> {
+  if (!needsBypassProbe(item, options)) return null;
+  return ghImporter.resolveMergeBypass(repoCwd, item.number);
+}
+
+/**
+ * Required-context lists per repo and base branch. Protection rules change
+ * rarely and the list is per BRANCH, so one answer serves every PR on that
+ * base: without the cache, every sweep would spend a GraphQL call per
+ * BLOCKED-and-settled PR, and the linker's in-flight re-poll one per 30 s.
+ * Keyed by the PR's repo URL, not the cwd, so a task's worktree and the main
+ * checkout share an entry. A failed read is not cached, so the next resolve
+ * asks again. Bounded, evicting the oldest entry.
+ */
+const REQUIRED_CHECKS_TTL_MS = 10 * 60_000;
+const MAX_REQUIRED_CHECKS_ENTRIES = 32;
+const requiredChecksByBase = new Map<string, { contexts: string[] | null; fetchedAt: number }>();
+
+/** Drop every cached required-context list. Tests only: the cache is module-level. */
+export function resetRequiredChecksCacheForTests(): void {
+  requiredChecksByBase.clear();
+}
+
+/**
+ * Whether the required-context list can change this item's verdict: an open,
+ * non-draft PR in a merge state the rollup decides (`isBypassClearableMergeState`)
+ * whose rollup has not already answered. A failed check keeps `blocked`, and an
+ * in-flight one already reads `running` / `queued`, so neither spends a call.
+ */
+function needsRequiredChecks(item: GhPrListItem): boolean {
+  if (item.state !== 'OPEN' || item.isDraft || !item.baseRefName) return false;
+  if (!isBypassClearableMergeState(item.mergeStateStatus)) return false;
+  const rollup = classifyRollup(item.statusCheckRollup);
+  return rollup === 'passing' || rollup === 'inconclusive';
+}
+
+/**
+ * The base branch's required contexts for `item`, from the cache or one
+ * `resolveRequiredStatusChecks` call, or null when the read is not warranted,
+ * failed, or found no readable rule. Called INSIDE the caller's `viaGh` slot,
+ * never through a nested `add`, for the deadlock reason `bypassFor` gives.
+ */
+async function requiredChecksFor(item: GhPrListItem, repoCwd: string): Promise<string[] | null> {
+  if (!needsRequiredChecks(item)) return null;
+  const repoKey = item.url.replace(/\/pull\/\d+$/, '') || repoCwd;
+  const cacheKey = `${repoKey}\n${item.baseRefName}`;
+  const now = Date.now();
+  const cached = requiredChecksByBase.get(cacheKey);
+  if (cached && now - cached.fetchedAt < REQUIRED_CHECKS_TTL_MS) return cached.contexts;
+  const answer = await ghImporter.resolveRequiredStatusChecks(repoCwd, item.baseRefName);
+  if (answer === null) return null;
+  // Drop this key's expired entry first, so it does not count against the
+  // bound and evict an unrelated base, and so the refresh lands newest.
+  requiredChecksByBase.delete(cacheKey);
+  if (requiredChecksByBase.size >= MAX_REQUIRED_CHECKS_ENTRIES) {
+    const oldest = requiredChecksByBase.keys().next();
+    if (!oldest.done) requiredChecksByBase.delete(oldest.value);
+  }
+  requiredChecksByBase.set(cacheKey, { contexts: answer.contexts, fetchedAt: now });
+  return answer.contexts;
+}
+
+/**
+ * The un-folded meaning of each state, and only that: `mapMergeReadiness` sends
+ * both of `isBypassClearableMergeState`'s values through the check rollup before
+ * this switch runs, so neither reaches it from either caller.
+ *
+ * BLOCKED has no case because it has no meaning on its own - a running check, a
+ * failed check, and a required review all report it. BEHIND keeps its case even
+ * though the fold now covers it too: unlike BLOCKED it means one definite thing,
+ * and dropping it would leave a future caller falling through to `mapMergeable`
+ * and answering `unknown` for a PR that is plainly blocked.
+ */
+function mapMergeStateStatus(mergeStateStatus: GhMergeStateStatus | undefined): PRMergeReadiness | undefined {
+  switch (mergeStateStatus) {
+    case 'CLEAN':
+    case 'HAS_HOOKS':
+    case 'UNSTABLE':
+      return 'ready';
+    case 'BEHIND':
+    case 'DRAFT':
+      return 'blocked';
+    case 'DIRTY':
+      return 'conflicting';
+    case 'UNKNOWN':
+      return 'unknown';
+    default:
+      // Absent or unrecognized: fall back to `mergeable`.
+      return undefined;
+  }
+}
+
+function mapMergeable(mergeable: GhMergeable | undefined): PRMergeReadiness {
+  return mergeable === 'CONFLICTING' ? 'conflicting' : 'unknown';
+}
+
+/**
+ * Project a raw gh PR item into the platform-agnostic ResolvedPR shape.
+ * `bypass` and `requiredContexts` are what `bypassFor` and `requiredChecksFor`
+ * answered for THIS item; the commit tier passes null for both, since its
+ * items carry no mergeability at all.
+ */
+function toResolvedPR(item: GhPrListItem, bypass: GhMergeBypass | null, requiredContexts: string[] | null): ResolvedPR {
+  const mergeReadiness = mapMergeReadiness(item, bypass, requiredContexts);
   return {
     url: item.url,
     number: item.number,
     state: mapState(item),
     baseRefName: item.baseRefName,
     updatedAt: item.updatedAt,
+    // Conditional spread, not `mergeReadiness: undefined`: an absent key is what
+    // "this tier cannot judge it" looks like to the linker and to exact-shape tests.
+    ...(mergeReadiness === undefined ? {} : { mergeReadiness }),
   };
 }
 
@@ -191,6 +636,27 @@ const SCAN_WINDOW = 4096;
 
 export const gitHubPRConnector: PRConnector = {
   name: 'GitHub',
+  // `gh api commits/<sha>/pulls` returns every PR whose head branch CONTAINS
+  // the commit, so ownership is not free here - it is established client-side,
+  // by the `mergeCommitOid` check and `dropCandidatesSharingBaseHistory` below.
+  // The KNOWN GAP documented on that filter (a kept-undetermined lone survivor)
+  // is a narrowing of this claim, not a refutation: it needs an un-fetched base
+  // ref, and it degrades to the `branchHint` rule rather than to no check.
+  verifiesCommitOwnership: true,
+
+  /**
+   * Any host label containing `github`, not the literal `github.com`, so a
+   * GitHub Enterprise host such as `github.mycorp.com` keeps resolving.
+   *
+   * KNOWN GAP: GHE hosted on a name with no `github` in it (`ghe.corp.example`)
+   * no longer resolves PRs. Before the ownership gate this connector ran on
+   * every remote and would have tried; the failure is now at least diagnosable,
+   * because the thrown message names the unmatched remote URL. A per-project
+   * list of extra hosts is the follow-up.
+   */
+  matchesRemote(remoteUrls: readonly string[]): boolean {
+    return remoteUrls.some((url) => /(^|\/\/|@)[^/:@]*github[^/:@]*[:/]/i.test(url));
+  },
 
   matchesCommand(commandDetail: string): boolean {
     return /^gh\s+pr\s+(create|view|merge)/.test(commandDetail);
@@ -222,24 +688,37 @@ export const gitHubPRConnector: PRConnector = {
     return lastMatch;
   },
 
-  async resolveForBranch(repoCwd: string, branchName: string, baseBranch?: string): Promise<ResolvedPR | null> {
+  // Of the two `options`, only `bypassCountsAsReady` is read here (see
+  // `bypassFor`). `evaluateBranchPolicies` is accepted for contract parity and
+  // ignored: GitHub's verdict already carries policy through `mergeStateStatus`
+  // and `reviewDecision` on the same call, so there is nothing extra to spend.
+  async resolveForBranch(
+    repoCwd: string,
+    branchName: string,
+    baseBranch?: string,
+    options?: PRResolveOptions,
+  ): Promise<ResolvedPR | null> {
     return viaGh(async () => {
       const items = await ghImporter.resolvePRByBranch(repoCwd, branchName);
       // Every item already matches head=branchName; the hint also drops fork PRs
       // that share the branch name.
       const best = disambiguate(items, { baseBranch, branchHint: branchName });
-      return best ? toResolvedPR(best) : null;
+      if (!best) return null;
+      // The bypass is probed for the ONE chosen candidate, after
+      // disambiguation, so a branch shared by several PRs costs one call.
+      return toResolvedPR(best, await bypassFor(best, repoCwd, options), await requiredChecksFor(best, repoCwd));
     });
   },
 
-  async resolveByNumber(repoCwd: string, prNumber: number): Promise<ResolvedPR | null> {
+  async resolveByNumber(repoCwd: string, prNumber: number, options?: PRResolveOptions): Promise<ResolvedPR | null> {
     return viaGh(async () => {
       const item = await ghImporter.resolvePRByNumber(repoCwd, prNumber);
       // Explicit number lookup is unambiguous: a PR number is unique within the repo,
       // so there is no cross-repo collision risk. Unlike resolveForBranch/resolveByCommit
       // (which drop fork PRs because a fork can share a branch name or commit), trusting a
       // fork PR here is safe - the caller already named the exact PR.
-      return item ? toResolvedPR(item) : null;
+      if (!item) return null;
+      return toResolvedPR(item, await bypassFor(item, repoCwd, options), await requiredChecksFor(item, repoCwd));
     });
   },
 
@@ -265,7 +744,9 @@ export const gitHubPRConnector: PRConnector = {
       // The commit can still belong to several PRs (shared/squashed commits); the
       // branch hint ties it back to this task and ambiguous matches return null.
       const best = disambiguate(survivors, { branchHint });
-      return best ? toResolvedPR(best) : null;
+      // No bypass probe: these items carry no mergeability fields (the REST
+      // commit-pulls payload), so the verdict is omitted whatever the setting.
+      return best ? toResolvedPR(best, null, null) : null;
     });
   },
 };

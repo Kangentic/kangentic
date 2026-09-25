@@ -1,0 +1,112 @@
+# CodeQL code scanning.
+#
+# THERE IS NO `pull_request:` TRIGGER, AND THAT IS DELIBERATE. Do not add one
+# without re-reading the concurrency-budget block at the top of ci.yml.
+#
+# The PR gate already runs 19 shards + `checks` + the CLA workflow = 21
+# concurrent jobs against GitHub Free's ~20-job ACCOUNT-wide cap. ci.yml
+# documents that 21 is a ceiling, not a target: at 22+ the earliest slot
+# releaser becomes a ~70s unit shard, so a queued UI shard starts that late and
+# blows past the ~226s pole that sets the whole run's wall clock. The two
+# Analyze jobs below would take every PR to 23.
+#
+# So scanning runs after the merge instead of before it. `main` is PR-gated, so
+# nothing reaches it unreviewed, and findings land within minutes of a merge
+# plus a weekly sweep that catches newly published queries against unchanged
+# code. The cost of the trade is real and worth naming: while there is no PR
+# trigger, CodeQL can never be a required status check.
+#
+# The push-to-main run overlaps ci.yml's own push run. That run is 20 jobs, not
+# the PR path's 21: cla.yml is a pull_request_target workflow and never fires on
+# a push. So the overlap is 20 + 2 = 22, still past the ceiling, and it queues
+# briefly. Nobody waits on that run - the PR check was the gate - so the delay
+# is accepted here and NOT on the PR path.
+#
+# This lives in its own workflow file rather than as jobs inside ci.yml on
+# purpose: tests/unit/ci-required-checks.test.ts asserts an exact job count for
+# ci.yml and checks it against a captured snapshot of main's branch protection
+# (it does not re-read the API), so a job added there would need both that
+# snapshot and the protection rule updated.
+# tests/unit/repo-hygiene.test.ts pins the missing pull_request trigger.
+#
+# Default setup (the repo-settings toggle) is the other way to get scanning. It
+# was rejected for exactly one reason: it always adds its Analyze jobs to PRs
+# and offers no way to turn that off.
+#
+# Scan SCOPE is narrowed by the inline `config:` on the Initialize CodeQL step
+# below, which excludes tests, scripts, and src/devtools. The reasoning for each
+# exclusion lives next to it.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays, 04:27 UTC. Off the hour so it does not land in the cron rush.
+    - cron: "27 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # security-events: write is what uploads the SARIF results. The other two
+      # are the documented minimum for the analyze step on a public repo.
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # `javascript-typescript` is one language covering both .js and .ts, not
+        # two. `actions` scans the workflow files in this directory.
+        language: [actions, javascript-typescript]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # Both languages are interpreted, so there is nothing to compile.
+          build-mode: none
+          # Scope. These three trees produced 13 of the 21 open alerts in
+          # September 2026, outnumbering the real findings 13 to 4, which is how
+          # a genuine alert gets missed. None of them ships or is
+          # attacker-reachable. Dismissing the alerts one by one is not durable:
+          # the next Math.random() in a new spec opens a new one.
+          #
+          # paths-ignore only applies to the interpreted analysis, so this is
+          # inert for the `actions` leg, which scans this directory. The entries
+          # are bare directory names because the pattern syntax forbids mixing
+          # `**` with other characters.
+          config: |
+            paths-ignore:
+              # Test code. Mock session ids and per-run suffixes from
+              # Math.random(), and MD5 in tests/e2e/helpers.ts, which has to
+              # reproduce the real Kimi CLI's session-directory naming.
+              - tests
+              # Local dev and build scripts. Never packaged, and a flag like
+              # measure-injection-flush.mjs's --pattern regex is
+              # developer-supplied by definition.
+              - scripts
+              # Dev tooling, including the localhost-only inspection server. It
+              # is build-excluded behind __KANGENTIC_DEV__ and dead-code
+              # eliminated, so it never reaches a packaged app. See
+              # .claude/rules/dev-tooling-build-exclusion.md.
+              - src/devtools
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"

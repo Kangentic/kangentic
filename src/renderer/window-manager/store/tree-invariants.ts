@@ -19,7 +19,7 @@
  * source instead of surfacing three drags later as a mysterious phantom pane.
  */
 
-import type { ManagedWindow, TileNode } from './types';
+import { isWindowDormant, type ManagedWindow, type TileNode } from './types';
 import { collectWindowIds } from '../tiling/tree-ops';
 
 /**
@@ -62,6 +62,14 @@ export function findWindowTreeViolations(
   // Per-window: state <-> tree-membership <-> leafId must all agree.
   for (const window of Object.values(windows)) {
     const inTree = seenLeafIds.has(window.id);
+    // A dormant window (parked or retained) is invisible and inert; it is
+    // evicted from the tree when it goes dormant and must not be docked back in.
+    // A leaf pointing at one is a ghost pane: the visible partner comes out
+    // tiled beside nothing it can see or drag away from (shipped once, via a
+    // drop-zone resolver that counted every floating window as a target).
+    if (inTree && isWindowDormant(window)) {
+      violations.push(`window ${window.id} is dormant (parked or retained) but is referenced by a tile leaf (ghost pane)`);
+    }
     if (window.state === 'tiled') {
       if (!inTree) violations.push(`window ${window.id} is 'tiled' but is not in the tile tree`);
       if (!window.leafId) violations.push(`window ${window.id} is 'tiled' but has no leafId`);

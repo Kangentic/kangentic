@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 // Ensures every IPC-backed Zustand store is re-synced in the HMR handler.
 //
@@ -92,6 +93,11 @@ describe('HMR store re-sync', () => {
   it('top-level mutable module state has HMR preservation or opt-out', () => {
     const UTILS_DIR = path.resolve(__dirname, '../../src/renderer/utils');
     const WINDOW_MANAGER_DIR = path.resolve(__dirname, '../../src/renderer/window-manager');
+    // src/renderer/pop-out/ holds renderer modules too (the surface registry, the
+    // popOut:changed consumer). Nothing in it needs preservation today, but it was
+    // outside this scan until a push handler landed there, so the next module-scope
+    // let/Map added would have shipped with no Pattern A guard.
+    const POP_OUT_DIR = path.resolve(__dirname, '../../src/renderer/pop-out');
     const sourceFiles: string[] = [];
     const collect = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -103,6 +109,7 @@ describe('HMR store re-sync', () => {
     collect(STORES_DIR);
     collect(UTILS_DIR);
     collect(WINDOW_MANAGER_DIR);
+    collect(POP_OUT_DIR);
 
     // Match any top-level `let` declaration (column-0 = module scope, since
     // intra-function locals are indented). The dispose-block check and the
@@ -157,11 +164,9 @@ describe('HMR store re-sync', () => {
 
         const matchIndex = match.index;
         const lineNumber = source.slice(0, matchIndex).split('\n').length;
-        const sameLine = lines[lineNumber - 1] ?? '';
-        const prevLine = lines[lineNumber - 2] ?? '';
-        // Per-declaration opt-out via `// hmr-safe: <reason>` on the same
-        // line or the line immediately above.
-        if (/\/\/\s*hmr-safe:/.test(sameLine) || /\/\/\s*hmr-safe:/.test(prevLine)) continue;
+        // Per-declaration opt-out via `// hmr-safe: <reason>` on the same line
+        // or in the comment block directly above.
+        if (hasOptOutMarker(lines, lineNumber - 1, 'hmr-safe')) continue;
 
         // Per-variable check: the variable name must appear in at least one
         // dispose callback body (e.g. `data.name = name` or `data[name]`).
@@ -259,17 +264,44 @@ describe('HMR store re-sync', () => {
   // store must pin its instance - read it from import.meta.hot.data, write it
   // back, and self-accept so editing the store's own code forces a clean reload
   // instead of running stale closures. See .claude/rules/hmr-patterns.md.
+  // Entries name the hot.data KEY, not just the file. A wildcard `\w+` read check
+  // passes vacuously on any store that ALSO uses Pattern A: session-store stashes
+  // `import.meta.hot?.data?.syncController` (an AbortController, nothing to do with
+  // the pin), which would satisfy a wildcard even with the instance pin deleted
+  // outright - on the one store where A and E coexist, i.e. exactly where the check
+  // needs to bite.
+  //
+  // `selfAccepts` is per-store, because the self-accept is UNSAFE for a store inside
+  // an import cycle: Vite answers an `invalidate()` raised from a cycle with a full
+  // page reload, which destroys live Browser pane guests. session-store sits in an
+  // intrinsic cycle (-> terminal-arrival-focus -> dictation-target -> back) and so
+  // pins WITHOUT self-accepting. See .claude/rules/hmr-patterns.md, and
+  // tests/unit/renderer-store-import-cycles.test.ts for the cycle guard itself.
   it('instance-pinned stores read, write, and self-accept across HMR (Pattern E)', () => {
-    const PATTERN_E_STORES = ['board-store.ts', 'backlog-store.ts', 'project-store.ts', 'dictation-store.ts', 'agent-drive-store.ts', 'usage-dashboard-store.ts', 'pop-out-store.ts', 'updater-store.ts', 'monitor-store.ts', 'announcements-store.ts', 'memory-graph-store.ts'];
+    const PATTERN_E_STORES: ReadonlyArray<{ file: string; key: string; selfAccepts: boolean }> = [
+      { file: 'board-store.ts', key: 'boardStore', selfAccepts: true },
+      { file: 'backlog-store.ts', key: 'backlogStore', selfAccepts: true },
+      { file: 'project-store.ts', key: 'projectStore', selfAccepts: true },
+      { file: 'session-store.ts', key: 'sessionStore', selfAccepts: false },
+      { file: 'dictation-store.ts', key: 'dictationStore', selfAccepts: true },
+      { file: 'agent-drive-store.ts', key: 'agentDriveStore', selfAccepts: true },
+      { file: 'usage-dashboard-store.ts', key: 'usageDashboardStore', selfAccepts: true },
+      { file: 'pop-out-store.ts', key: 'popOutStore', selfAccepts: true },
+      { file: 'updater-store.ts', key: 'updaterStore', selfAccepts: true },
+      { file: 'monitor-store.ts', key: 'monitorStore', selfAccepts: true },
+      { file: 'announcements-store.ts', key: 'announcementsStore', selfAccepts: true },
+      { file: 'memory-graph-store.ts', key: 'memoryGraphStore', selfAccepts: true },
+    ];
     const violations: string[] = [];
-    for (const fileName of PATTERN_E_STORES) {
+    for (const { file: fileName, key, selfAccepts: mustSelfAccept } of PATTERN_E_STORES) {
       const source = fs.readFileSync(path.join(STORES_DIR, fileName), 'utf-8');
-      const readsPreserved = /import\.meta\.hot\?\.data\?\.\w+/.test(source);
-      const writesPreserved = /import\.meta\.hot\.data\.\w+\s*=/.test(source);
+      const readsPreserved = new RegExp(`import\\.meta\\.hot\\?\\.data\\?\\.${key}\\b`).test(source);
+      const writesPreserved = new RegExp(`import\\.meta\\.hot\\.data\\.${key}\\s*=`).test(source);
       const selfAccepts = /import\.meta\.hot\.accept\s*\(/.test(source);
-      if (!readsPreserved || !writesPreserved || !selfAccepts) {
+      if (!readsPreserved || !writesPreserved || selfAccepts !== mustSelfAccept) {
         violations.push(
-          `${fileName} -> reads:${readsPreserved} writes:${writesPreserved} accepts:${selfAccepts}`,
+          `${fileName} (key: ${key}) -> reads:${readsPreserved} writes:${writesPreserved} `
+          + `accepts:${selfAccepts} (expected accepts:${mustSelfAccept})`,
         );
       }
     }

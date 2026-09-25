@@ -36,20 +36,50 @@ pop-outs, and do not conflate the two layers.
   construction site needs a teardown of its own, in whichever of the two the same reasoning picks.
 - **Every `PopOutKind` has a shared metadata entry** in `POP_OUT_SURFACES`
   (`src/shared/pop-out.ts`): title, default bounds/min size, `needsWebview`, and the push
-  `channels` fanned to that surface's open windows. This is the single source both processes read
-  - the main-side window manager for bounds/webview config, the renderer for its fan-out
-  declaration.
+  `channels` fanned to that surface's open windows, plus optionally `resolveTitle` (a
+  per-instance OS/taskbar title derived from params, read via `resolveSurfaceTitle` by both
+  processes), `maxInstances` (a kind-wide window cap, enforced in
+  `PopOutWindowManager.open()`, which returns null at the cap and whose IPC handler resolves
+  `false`), and `openMaximized` (with no saved bounds yet, open maximized; a user
+  resize/move/maximize persists via `popOutBounds` and wins from then on). This is the single
+  source both processes read - the main-side window manager for bounds/webview config, the
+  renderer for its fan-out declaration.
 - **Every `PopOutKind` has a matching renderer registry entry** (`SurfaceDescriptor` in
   `src/renderer/pop-out/surface-registry.ts`, registered via `registerSurface()` in
   `src/renderer/pop-out/surfaces/index.ts`): a root component, a minimal `bootstrap()` (load only
   what the surface consumes, not the full `App.tsx` bootstrap), an `hmrResync()`, and the in-app
-  surface it is mutually exclusive with.
+  surface it is mutually exclusive with (`inAppSurface`, or `null` for an additive surface - see
+  the carve-out below).
 - **Every declared fan-out channel is a real `IPC` constant.** A typo silently drops that push
   instead of erroring.
-- **Strict mutual exclusivity.** When a surface's pop-out window is open
-  (`usePopOut(kind, params).isOpen`), the in-app form (overlay / dialog / embedded pane) must not
-  also be mounted. Guard the in-app mount site and add a `<PopOutButton kind=... params=.../>` to
-  its header/toolbar.
+- **Strict mutual exclusivity - for surfaces that HAVE an in-app counterpart.** When such a
+  surface's pop-out window is open (`usePopOut(kind, params).isOpen`), the in-app form (overlay /
+  dialog / embedded pane) must not also be mounted. Guard the in-app mount site and add a
+  `<PopOutButton kind=... params=.../>` to its header/toolbar.
+
+  **Guarding the mount site only SUPPRESSES the render; it does not decide what happens when the
+  window closes.** The in-app open flag survives detachment, so by default the surface RECLAIMS
+  its in-app slot the moment the window closes. Whether that is right is per-surface, and either
+  answer needs a deliberate choice:
+  - `stats` and `monitor` clear their in-app store when the pop-out OPENS
+    (`AppLayout.tsx`), so reopening later starts from a clean closed state.
+  - `changes` clears on CLOSE instead (`renderer/pop-out/pop-out-changed.ts`), because its trigger
+    is a stateful pill reading the same flag: clearing on open would leave the pill inactive over
+    a live detached window.
+
+  A close-driven effect belongs on the `popOut:changed` PUSH, never in `pop-out-store.setOpen()` -
+  `loadOpen()` also calls that on mount and on every HMR `vite:afterUpdate`, so an effect placed
+  there rides a re-sync path and a Fast Refresh could close a user's panel. The push carries the
+  whole open-key set with no per-key close event, so derive the disappearance by diffing the sets
+  and read the vanished key back with `parsePopOutInstanceKey`.
+
+  **Carve-out: an ADDITIVE surface declares `inAppSurface: null`.** `changes-file` is a detached
+  read of ONE file's diff, opened FROM the inline diff pane - suppressing that pane would defeat
+  the surface, so it has no exclusive in-app counterpart and its origin stays mounted while its
+  windows are open. Because an additive surface can hold many windows at once (its instance key
+  carries a `filePath` segment), it must declare a main-side `maxInstances` cap instead of
+  relying on singleton-per-key behavior; the cap lives in `PopOutWindowManager.open()` because a
+  pop-out renderer never receives `popOut:changed` and cannot count its siblings.
 - **Task-scoped surfaces resolve their own data from `params`** (`{ taskId, projectId }`), never
   from ambient ` currentProject`/`currentTask` state - a pop-out window is a separate renderer
   process with its own stores.
@@ -62,6 +92,13 @@ pop-outs, and do not conflate the two layers.
   `Object.values(IPC)`. Runs in CI via `npm run test:unit`.
 - **Test:** `tests/unit/hmr-resync.test.ts` covers the renderer half of Pattern B/E for
   `pop-out-store.ts` (the store mirroring which windows are open).
+- **Test:** `tests/unit/pop-out-changed.test.ts` pins the push-vs-`setOpen` split above: it
+  asserts a raw `setOpen([])` (the shape `loadOpen()` and the HMR re-sync take) leaves the
+  panel open, while the same disappearance arriving through the push closes it. Folding the
+  close effect back into `setOpen` turns it red.
+- **Test:** `tests/unit/pop-out.test.ts` round-trips `popOutInstanceKey` against
+  `parsePopOutInstanceKey` for every task-scoped kind, so the key a close path reads back
+  cannot drift from the one the open path wrote.
 - **Review:** `/code-review` flags a new `new BrowserWindow(` outside the manager, or a new
   in-app surface added without its mutual-exclusivity guard.
 

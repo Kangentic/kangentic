@@ -28,7 +28,7 @@ import { qwenChatsDir } from './session-history-parser';
  *
  * Qwen is slower than Codex and lands ABOVE the 400ms single-attempt window, so
  * confirmation typically arrives on the second Enter attempt rather than the
- * first. That is well within the ~2s budget (5 attempts) and is why the retry
+ * first. That is well within the ~4s budget (5 attempts plus the grace) and is why the retry
  * loop exists; it is recorded here so a future tightening of
  * `VERIFY_WINDOW_MS` is understood to put Qwen at risk first.
  */

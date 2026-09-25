@@ -6,7 +6,9 @@ import type { IpcContext } from '../ipc-context';
 
 export function registerPopOutHandlers(_context: IpcContext): void {
   ipcMain.handle(IPC.POPOUT_OPEN, (_event, kind: PopOutKind, params: PopOutParams) => {
-    popOutWindowManager.open(kind, params);
+    // Boolean, never the BrowserWindow (not serializable): false = the kind's
+    // maxInstances cap refused the open, so the caller can tell the user.
+    return popOutWindowManager.open(kind, params) !== null;
   });
   ipcMain.handle(IPC.POPOUT_CLOSE, (_event, kind: PopOutKind, params: PopOutParams) => {
     popOutWindowManager.close(kind, params);

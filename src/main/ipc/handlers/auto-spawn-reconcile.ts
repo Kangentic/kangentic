@@ -7,7 +7,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { IPC } from '../../../shared/ipc-channels';
 import type { StrategyChange } from './strategy-propagation';
 import type { IpcContext } from '../ipc-context';
-import type { SwimlaneRole } from '../../../shared/types';
+import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 
 /**
  * One task selected for a spawn because its column just started wanting agents.
@@ -40,19 +40,6 @@ export interface AutoSpawnReconcileSuspend {
   swimlaneId: string;
   sourceName: string;
 }
-
-/**
- * Columns that never auto-spawn, whatever the flag says.
- *
- * The Board Manager strips `auto_spawn` for a role column and `apply-config.ts`
- * forces it false, but the MCP `update_column` tool writes the field with no
- * role validation - so `update_column({ column: 'To Do', autoSpawn: true })`
- * reaches this reconcile and would otherwise spawn an agent, and a worktree,
- * for every card in To Do. Those sessions are also unreachable afterwards:
- * `SESSION_RESUME` refuses role 'todo', and a To Do card relies on having no
- * session to open straight into the edit form.
- */
-const NEVER_AUTO_SPAWN_ROLES: ReadonlySet<SwimlaneRole> = new Set<SwimlaneRole>(['todo', 'done']);
 
 /** True when this change actually flips `auto_spawn` for its task. */
 function flipsAutoSpawn(change: StrategyChange): boolean {

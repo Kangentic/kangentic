@@ -1,6 +1,16 @@
 import { BrowserWindow, type WebContents } from 'electron';
-import { browserPaneRegistry, type ResolveTargetSelector } from './browser-pane-registry';
-import { attachDebugger, ensureFocusEmulation, isDebuggerAttached } from './cdp/cdp';
+import {
+  browserPaneRegistry,
+  type BrowserPaneEntry,
+  type ResolveTargetSelector,
+} from './browser-pane-registry';
+import {
+  attachDebugger,
+  ensureFocusEmulation,
+  isDebuggerAttached,
+  waitForDialogInterception,
+} from './cdp/cdp';
+import { KeyboardFocusNotInGuestError } from './cdp/keyboard-focus';
 import { beginAgentInput, endAgentInput } from './agent-input-signal';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
 import { withGuestDriveLock, GuestBusyError, guestDriveDepth } from './guest-drive-queue';
@@ -33,6 +43,13 @@ export interface DriverError {
 export type DriverResult<T> = { ok: true; data: T } | { ok: false; error: DriverError };
 
 const SETTINGS_HINT = 'Settings -> Agent Browser';
+
+/** The refusal for a key the pane would not have received (`keyboard-focus.ts`). */
+const PANE_NOT_FOCUSED_DETAIL =
+  'The Browser pane does not hold keyboard focus, so the key was not sent. It would have reached '
+  + 'whatever does, such as the user\'s terminal. Pass a selector so the element that should get the '
+  + 'key is clicked first, in the same call. If you already passed one, focus left the pane after the '
+  + 'click. Keys sent before this point in the call were delivered, so account for them before retrying.';
 
 /**
  * The automation policy check, exported so a tool whose side effects happen
@@ -81,8 +98,9 @@ export interface WithGuestOptions {
 
 /**
  * Resolve, gate, attach, and run. The body receives the live guest webContents.
- * Any throw inside the body becomes a `driver-error` envelope rather than
- * rejecting, so tool handlers never have to try/catch.
+ * Any throw inside the body becomes an error envelope rather than rejecting, so
+ * tool handlers never have to try/catch: `pane-not-focused` for a key refused
+ * because the pane does not hold keyboard focus, `driver-error` for the rest.
  *
  * Resolution is CALLER-SCOPED: `options.selector.projectId` is required, and
  * `resolveTarget` refuses any pane outside it with the `foreign-project` kind.
@@ -93,7 +111,7 @@ export interface WithGuestOptions {
  */
 export async function withGuest<T>(
   options: WithGuestOptions,
-  fn: (webContents: WebContents) => Promise<T>,
+  fn: (webContents: WebContents, entry: BrowserPaneEntry) => Promise<T>,
 ): Promise<DriverResult<T>> {
   const gate = capabilityGate(options.capability, options.config);
   if (gate) return { ok: false, error: gate };
@@ -155,6 +173,19 @@ export async function withGuest<T>(
     }
   }
 
+  // Do not let a drive outrun dialog interception.
+  //
+  // `attachDebugger` is synchronous and its domain enables are fire-and-forget,
+  // so before this await the FIRST drive against a guest ran while
+  // `Page.enable` was still in flight. A click that opened a `confirm()` in
+  // that window raced ahead of the interceptor: Chromium showed its own native
+  // modal, the renderer blocked, every later command queued behind it, and
+  // there was no agent-side way out. Found by a live agent whose first act on a
+  // fresh pane was a click; a sweep that calls anything else first never
+  // reproduces it. Resolved already for every call after the attach, so this
+  // costs one settled-promise await on the hot path.
+  await waitForDialogInterception(webContents);
+
   // Tell the guest it BEHAVES as focused, so a page that hides UI or pauses on
   // blur works normally under automation and keeps its own focused element after
   // the renderer hands the user's focus back. It does NOT affect input routing -
@@ -192,7 +223,7 @@ export async function withGuest<T>(
       capability: options.capability,
       callerSessionId: options.selector.callerSessionId,
       callerTaskId: options.selector.callerTaskId,
-      resolvedSessionId: target.entry.sessionId,
+      resolvedHandle: target.entry.sessionId,
       resolvedTaskId: target.entry.taskId,
       projectId: target.entry.projectId,
       webContentsId: webContents.id,
@@ -221,13 +252,31 @@ export async function withGuest<T>(
         // What works, and has in every measurement, is a click and its keystrokes
         // inside ONE call: the click focuses the guest as a direct side effect of
         // the same input pipeline, and the characters follow with nothing held
-        // across a boundary. So the selector forms are the supported path, and the
-        // limits of the selector-less ones are documented rather than papered over
-        // with focus management. See `docs/embedded-browser.md`.
-        const data = await fn(webContents);
+        // across a boundary. So the selector forms are the supported path. A key
+        // sent while the pane does NOT hold focus is refused rather than papered
+        // over with focus management: `dispatchKeyEvent` checks where it would
+        // land and throws `KeyboardFocusNotInGuestError`, mapped below to
+        // `pane-not-focused`. See `docs/embedded-browser.md`.
+        // The resolved entry is handed over alongside the guest because
+        // `WebContents` alone cannot tell a lane from a pane, nor a docked pane
+        // from a popped-out one, and `set_viewport` picks a different mechanism
+        // for each. Deriving it from `hostWebContents` would work today and
+        // couple a product decision to a Chromium implementation detail; the
+        // registry already knows, so it says. Existing one-argument callbacks
+        // are assignable, so this costs no call site.
+        const data = await fn(webContents, target.entry);
         report('ok');
         return { ok: true, data } as DriverResult<T>;
       } catch (error) {
+        // Its own kind rather than a `driver-error`: the page did nothing wrong,
+        // and the agent has a specific fix (pass a selector).
+        if (error instanceof KeyboardFocusNotInGuestError) {
+          report('pane-not-focused');
+          return {
+            ok: false,
+            error: { kind: 'pane-not-focused', detail: PANE_NOT_FOCUSED_DETAIL },
+          } as DriverResult<T>;
+        }
         report('driver-error');
         return {
           ok: false,

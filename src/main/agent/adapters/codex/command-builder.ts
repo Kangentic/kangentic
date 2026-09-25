@@ -206,6 +206,12 @@ export class CodexCommandBuilder {
       const safePrompt = needsDoubleQuoteReplacement
         ? options.prompt.replace(/"/g, "'")
         : options.prompt;
+      // Unconditionally multiline. A `.cmd` head would truncate this at the
+      // first newline (#353), but by here `codexPath` has already been through
+      // resolveShimLaunch at the spawn chokepoint, which either swapped in the
+      // sibling shim that carries newlines or flattened the prompt itself. The
+      // decision is shell and packaging knowledge, not Codex knowledge, so it
+      // stays out of this builder and out of the other thirteen.
       parts.push(quoteArg(safePrompt, shell, { multiline: true }));
     }
 

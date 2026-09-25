@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { BoardProfile, Task, Swimlane } from '../../../shared/types';
+import type { AutomationRunAgainResult, BoardProfile, Task, Swimlane } from '../../../shared/types';
+import type { PRResolveOptions } from '../../pr/shared/pr-connector';
 
 export interface CommandContext {
   /**
@@ -16,6 +17,30 @@ export interface CommandContext {
    * collision the range exists to avoid.
    */
   getDevServerPortRange: () => { rangeStart?: number; rangeEnd?: number };
+  /**
+   * This project's configured default base branch, for the PR linker's
+   * base-relative guards. Without it `linkPRForTask` falls back to the hardcoded
+   * 'main', so on a project based on `develop` the commits-ahead-of-base guard
+   * measured against the wrong branch and the remote-branch tier could not tell
+   * a base tip from a task's own work. Optional so a test context can omit it.
+   */
+  getDefaultBaseBranch?: () => string | undefined;
+  /**
+   * This project's per-resolve PR settings (`git.prEvaluateBranchPolicies`,
+   * `git.prBypassCountsAsReady`), for the two `linkPRForTask` calls this
+   * module makes itself. Bound to the
+   * request's project like `getDefaultBaseBranch`. Optional so a test context
+   * can omit it; the linker treats absent as every option off.
+   */
+  getPrResolveOptions?: () => PRResolveOptions;
+  /**
+   * Whether this project's background PR refresh is on, which is what lets
+   * the linker re-poll a PR whose checks are in flight
+   * (`PRLinkDeps.repollInFlightVerdict`). Bound to the request's project like
+   * `getPrResolveOptions`. Optional so a test context can omit it; absent reads
+   * as off.
+   */
+  getPrRepollInFlight?: () => boolean;
   /**
    * This project's Board Profiles, read from `kangentic.json`. Profiles are
    * config-only (no DB table), so `getProjectDb` cannot reach them.
@@ -83,6 +108,20 @@ export interface CommandContext {
   onSwimlaneDeleted: (swimlane: Swimlane) => void;
   onBacklogChanged: () => void;
   onLabelColorsChanged: (colors: Record<string, string>) => void;
+  /**
+   * Re-run ONE automation against a task's CURRENT state.
+   *
+   * A callback rather than something the handler does itself, for the same
+   * reason `onTaskMove` is one: it takes the task lock, builds a transition
+   * engine, and can type at a live agent, none of which a DB-only command
+   * handler has access to. The production builder points it at the same
+   * `runAutomationAgain` the failure toast's Run again action uses, so the two
+   * cannot diverge about what a re-run means.
+   *
+   * Optional because ~23 test suites hand-build a context; the tool refuses
+   * with a plain message when it is absent rather than throwing.
+   */
+  onRunAutomation?: (automationId: string, taskId: string) => Promise<AutomationRunAgainResult>;
 }
 
 export interface CommandResponse {

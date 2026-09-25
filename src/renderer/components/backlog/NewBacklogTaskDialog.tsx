@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { Plus, Pencil, ExternalLink, Trash2, X } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -12,6 +12,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useConfigStore } from '../../stores/config-store';
+import { describeIpcError } from '../../lib/ipc-error';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from '../dialogs/AttachmentChipStrip';
@@ -78,9 +79,13 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
   // Highest pasted-filename index handed out so far, per prefix. Monotonic on
   // purpose - see reserveNextPastedIndex.
   const issuedPastedIndex = useRef<Record<string, number>>({});
-  // Ref tracks current attachments for cleanup on unmount (avoids stale closure)
+  // Ref tracks current attachments for cleanup on unmount (avoids stale
+  // closure). Written on commit (a layout effect), never during render, which
+  // the compiler rules forbid.
   const attachmentsRef = useRef<DisplayAttachment[]>([]);
-  attachmentsRef.current = attachments;
+  useLayoutEffect(() => {
+    attachmentsRef.current = attachments;
+  });
 
   // Only PENDING attachments make the form dirty - a freshly loaded saved
   // attachment is not an edit the user made, so it must not trip the
@@ -215,6 +220,10 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
         setAttachments((previous) => previous.filter((attachment) => attachment.id !== id));
       }).catch((error: unknown) => {
         console.error('[NewBacklogTaskDialog] Failed to remove saved attachment:', error);
+        useToastStore.getState().addToast({
+          message: `Couldn't remove the attachment: ${describeIpcError(error)}`,
+          variant: 'warning',
+        });
       });
     } else {
       URL.revokeObjectURL(target.previewUrl);
@@ -325,6 +334,17 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
         if (!isSavedAttachment(attachment)) URL.revokeObjectURL(attachment.previewUrl);
       });
       onClose();
+    } catch (error) {
+      // Previously unhandled: a rejected create/update (including a pending
+      // attachment write failing inside it) reached only the global
+      // unhandledrejection analytics listener, with nothing shown to the
+      // user. The dialog stays open so the title/description/attachments
+      // are not lost and the user can retry.
+      console.error('[NewBacklogTaskDialog] Failed to save backlog task:', error);
+      useToastStore.getState().addToast({
+        message: `Couldn't save backlog task: ${describeIpcError(error)}`,
+        variant: 'error',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -400,7 +420,6 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
             <DialogFooterActions
               onCancel={onClose}
               submitLabel={isEditMode ? 'Save' : 'Create'}
-              busyLabel={isEditMode ? 'Saving...' : 'Creating...'}
               busy={submitting}
               disabled={!title.trim()}
               submitTestId="create-backlog-task-btn"

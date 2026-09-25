@@ -150,12 +150,17 @@ describe.runIf(CAN_RUN)('resolving and moving a task to the Done column', () => 
     }
   });
 
-  it('handleCreateTask still rejects column: "Done" by name', async () => {
+  it('handleCreateTask still refuses column: "Done", and says why rather than "not found"', async () => {
     const response = await handleCreateTask({ title: 'New task', column: 'Done' }, context);
 
     expect(response.success).toBe(false);
     if (!response.success) {
-      expect(response.error).toContain('Column "Done" not found');
+      // kangentic_list_columns prints Done, so "not found" would flatly
+      // contradict what the caller just read. The refusal has to name the
+      // reason and the way around it.
+      expect(response.error).not.toContain('not found');
+      expect(response.error).toContain('completed column');
+      expect(response.error).toContain('kangentic_move_task');
     }
   });
 

@@ -67,7 +67,11 @@ export function contentMatchesFile(
 export function atomicWriteJson(filePath: string, value: unknown): string {
   const content = JSON.stringify(value, null, 2) + '\n';
   const tmpPath = filePath + '.tmp.' + process.pid;
+  // sync-write-ok: this function's whole contract is "throws on I/O errors -
+  // callers decide whether to log and continue or propagate" (see the docblock
+  // above); every caller already wraps it in its own try/catch.
   fs.writeFileSync(tmpPath, content);
+  // sync-write-ok: same contract as the write above - deliberately throws.
   fs.renameSync(tmpPath, filePath);
   return hashString(content);
 }

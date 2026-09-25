@@ -104,6 +104,75 @@ test.describe('SegmentedControl', () => {
     await expect(boardOption()).toHaveAttribute('aria-checked', 'true');
   });
 
+  test('a control mounted inside an animating dialog still measures itself', async () => {
+    // The ViewToggle above never animates, so every other thumb assertion here
+    // is blind to the defect this covers. A dialog enters at scale(0.96)
+    // (`dialog-content-in`), `getBoundingClientRect` reports TRANSFORMED
+    // geometry, and the component's only correction is a ResizeObserver, which
+    // reports the LAYOUT box and therefore never fires when a transform ends.
+    // A thumb measured mid-entrance stayed 2.84px narrow for the life of the
+    // dialog. It looked intermittent because what varies is whether the layout
+    // effect lands before or during the animation's first frame.
+    // Planning, not To Do: To Do collapses its Conversation card to an
+    // explanation, so it has no Session control to measure.
+    await page.locator('[data-swimlane-name="Planning"]').locator('text=Planning').click();
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    await expect(dialog).toBeVisible({ timeout: 3000 });
+
+    const control = dialog.locator('[data-testid="column-session-target"]');
+    await expect(control).toBeVisible();
+
+    // Polled, because the entrance takes ~150ms and the correction runs across
+    // it. The defect does not settle at all, so a poll cannot paper over it.
+    await expect.poll(async () => {
+      const drift = await control.evaluate((node) => {
+        const row = node.firstElementChild;
+        const thumb = row?.querySelector('.kng-segmented-thumb');
+        const active = row?.querySelector('[data-selected="true"]');
+        if (!thumb || !active) return null;
+        const thumbBox = thumb.getBoundingClientRect();
+        const activeBox = active.getBoundingClientRect();
+        return Math.max(
+          Math.abs(thumbBox.width - activeBox.width),
+          Math.abs(thumbBox.left - activeBox.left),
+        );
+      });
+      // Half a pixel: the scale correction reads an unrounded computed width, so
+      // what is left is float noise, not a rounding budget. The defect is 2.84.
+      return drift === null ? 99 : drift < 0.5;
+    }, { timeout: 5000 }).toBe(true);
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await dialog.waitFor({ state: 'detached', timeout: 2000 });
+  });
+
+  test('an option with no ariaLabel exposes its label text as its accessible name', async () => {
+    // Board passes no `ariaLabel`, so this is the plain
+    // `aria-label={option.ariaLabel ?? option.label}` fallback every option gets -
+    // the Backlog option's own override is covered separately below.
+    await expect(boardOption()).toHaveAttribute('aria-label', 'Board');
+  });
+
+  test("the Backlog option's accessible name spells out its item count", async () => {
+    // A fresh project seeds no backlog items, so the option's name starts as the
+    // bare label. The `CountBadge` in `trailing` contributes nothing to the
+    // accessible name once it comes from `ariaLabel` instead of the rendered
+    // text, so both branches of ViewToggle's ternary need their own assertion.
+    await expect(backlogOption()).toHaveAttribute('aria-label', 'Backlog');
+
+    await page.evaluate(async () => {
+      await window.electronAPI.backlog.create({ title: 'Alpha backlog item' });
+      await window.electronAPI.backlog.create({ title: 'Beta backlog item' });
+      await window.electronAPI.backlog.create({ title: 'Gamma backlog item' });
+      const stores = (window as unknown as {
+        __zustandStores: { backlog: { getState: () => { loadBacklog: () => Promise<void> } } };
+      }).__zustandStores;
+      await stores.backlog.getState().loadBacklog();
+    });
+
+    await expect(backlogOption()).toHaveAttribute('aria-label', 'Backlog, 3 items');
+  });
+
   test('slides the thumb onto the selected option', async () => {
     const thumb = group().locator('.kng-segmented-thumb');
     await expect(thumb).toBeAttached();

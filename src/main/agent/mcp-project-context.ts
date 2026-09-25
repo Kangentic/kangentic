@@ -6,8 +6,9 @@
  */
 import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../db/database';
-import { autoSpawnForTask } from '../ipc/helpers';
+import { autoSpawnForTask, captureSessionLeftovers, reapSessionLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
+import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
 import { WorktreeManager } from '../git/worktree-manager';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import {
@@ -19,6 +20,7 @@ import type { CommandContext } from './commands';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
 import { RequestResolver } from './mcp-http/project-resolver';
+import { prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '../pr/pr-linking';
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -40,6 +42,47 @@ export function buildCommandContextForProject(
     getDevServerPortRange: () => {
       const devServer = ipcContext.configManager.getEffectiveConfig(projectPath).devServer;
       return { rangeStart: devServer?.portRangeStart, rangeEnd: devServer?.portRangeEnd };
+    },
+    // Board default FIRST, matching `resolveEffectiveBaseBranch` in
+    // ipc/helpers/task-git.ts, which is what actually decides the base a
+    // worktree gets cut from. `defaultBaseBranch` is team-shared through
+    // kangentic.json and overlays the effective config, so reading the config
+    // alone reports `main` for a project whose board says `develop` - and the
+    // linker would then measure a task against a base its worktree was never
+    // cut from. The ForPath variant is required, not incidental: an MCP tool
+    // call routinely targets a project that is not the active board.
+    getDefaultBaseBranch: () => {
+      try {
+        // `||`, not `??`: an empty string in either layer falls through, exactly
+        // as `resolveEffectiveBaseBranch` does it. Under `??` an empty base
+        // would win and defeat the linker's base-tip bail, whose three ref forms
+        // can none of them match an empty branch name.
+        return ipcContext.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
+          || ipcContext.configManager.getEffectiveConfig(projectPath).git?.defaultBaseBranch;
+      } catch {
+        // An unreadable config must not fail the tool call; it just leaves the
+        // linker on its 'main' fallback.
+        return undefined;
+      }
+    },
+    // Same project binding and the same failure posture as the base branch:
+    // an unreadable config reads as every option off, never a failed call.
+    // The key mapping itself is the linker's, so a sweep and a tool-triggered
+    // resolve of the same PR can never disagree.
+    getPrResolveOptions: () => {
+      try {
+        return prResolveOptionsFromGitConfig(ipcContext.configManager.getEffectiveConfig(projectPath).git);
+      } catch {
+        return {};
+      }
+    },
+    // Same binding, failure posture, and shared mapping as the resolve options.
+    getPrRepollInFlight: () => {
+      try {
+        return prRepollInFlightFromGitConfig(ipcContext.configManager.getEffectiveConfig(projectPath).git);
+      } catch {
+        return false;
+      }
     },
     // Explicit path, not the active project: a cross-project tool call must
     // resolve its profile selector against the board it is targeting. The same
@@ -91,10 +134,23 @@ export function buildCommandContextForProject(
     },
 
     onTaskDeleted: (task) => {
-      // Kill any live PTY for the task
+      // An MCP delete is a terminal transition, so it reaps what the session
+      // left running, exactly as the UI delete path does in `cleanupTaskSession`.
+      // Taken BEFORE the kill: the watcher stops publishing once the session
+      // ends and POSIX reparents the children to init at once, so there is no
+      // tree left to walk afterwards.
+      const leftovers = captureSessionLeftovers(ipcContext, task.session_id);
+
+      // Kill any live PTY for the task. The exit promise is captured BETWEEN the
+      // kill and the remove: awaitExit resolves at once for a row that is gone,
+      // and a young session's kill waits out its exit-sequence grace
+      // (SessionManager.kill), so the reap and the worktree removal below must
+      // wait for the process, not for the call.
+      let sessionExited: Promise<void> = Promise.resolve();
       if (task.session_id) {
         try {
           ipcContext.sessionManager.kill(task.session_id);
+          sessionExited = ipcContext.sessionManager.awaitExit(task.session_id);
           ipcContext.sessionManager.remove(task.session_id);
         } catch { /* may already be dead */ }
       }
@@ -103,16 +159,25 @@ export function buildCommandContextForProject(
       // Best-effort worktree + branch cleanup
       if (task.worktree_path) {
         const worktreeManager = new WorktreeManager(projectPath);
-        worktreeManager.withLock(async () => {
-          const removed = await worktreeManager.removeWorktree(task.worktree_path!);
-          if (removed && task.branch_name) {
-            const config = ipcContext.configManager.getEffectiveConfig(projectPath);
-            if (config.git.autoCleanup) {
-              try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
-              await worktreeManager.removeBranch(task.branch_name);
+        // The exit wait and the reap run BEFORE the per-project git queue is
+        // taken: holding it for the grace would head-of-line block every other
+        // task's worktree work in the project (see task-cleanup.ts).
+        void (async () => {
+          await sessionExited;
+          // Before the removal: a live process holding the worktree as its cwd
+          // is what makes the delete fail on Windows.
+          await reapSessionLeftovers(task.id, leftovers);
+          await worktreeManager.withLock(async () => {
+            const removed = await worktreeManager.removeWorktree(task.worktree_path!);
+            if (removed && task.branch_name) {
+              const config = ipcContext.configManager.getEffectiveConfig(projectPath);
+              if (config.git.autoCleanup) {
+                try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
+                await worktreeManager.removeBranch(task.branch_name);
+              }
             }
-          }
-        }, { label: `mcp-worktree:${task.id.slice(0, 8)}` }).catch((error) => {
+          }, { label: `mcp-worktree:${task.id.slice(0, 8)}` });
+        })().catch((error) => {
           console.error(`[mcp-http delete] Worktree cleanup failed for task ${task.id.slice(0, 8)}:`, error);
         });
       }
@@ -121,16 +186,12 @@ export function buildCommandContextForProject(
       ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-deleted', ids: [task.id] });
     },
 
+    // The only callback here that does NOT hand-roll its own push + bus pair.
+    // handleTaskMove owns the fan-out for every one of its callers, keyed on the
+    // origin passed in - which also drops the raw-SQL re-read this used to need
+    // purely to recover a title for the toast.
     onTaskMove: async (input) => {
-      await handleTaskMove(ipcContext, input, projectId, projectPath);
-      // Notify renderer to reload board (handleTaskMove assumes UI initiated)
-      const movedTask = getProjectDb(projectId)
-        .prepare('SELECT id, title FROM tasks WHERE id = ?')
-        .get(input.taskId) as { id: string; title: string } | undefined;
-      if (movedTask) {
-        sendToRenderer(ipcContext.mainWindow, IPC.TASK_UPDATED_BY_AGENT, movedTask.id, movedTask.title, projectId);
-        ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [movedTask.id] });
-      }
+      await handleTaskMove(ipcContext, input, 'agent', projectId, projectPath);
     },
 
     onTasksReordered: (swimlane, orderedTaskIds) => {
@@ -209,6 +270,13 @@ export function buildCommandContextForProject(
       ipcContext.configManager.save({ backlog: { labelColors: colors } } as Partial<AppConfig>);
       sendToRenderer(ipcContext.mainWindow, IPC.BACKLOG_LABEL_COLORS_CHANGED);
     },
+
+    // The SAME entry point the failure toast's Run again action uses, so an
+    // agent re-running an automation and a user clicking Run again get
+    // identical behavior: the task lock, the five-minute budget, a fresh run
+    // row, and the task's current state rather than the state at failure time.
+    onRunAutomation: (automationId, taskId) =>
+      runAutomationAgain(ipcContext, projectId, taskId, automationId),
   };
 }
 

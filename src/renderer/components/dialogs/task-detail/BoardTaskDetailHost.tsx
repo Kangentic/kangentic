@@ -43,6 +43,7 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors);
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
   const worktreesEnabled = useConfigStore((state) => state.config.git.worktreesEnabled);
+  const agentExecution = useConfigStore((state) => state.config.agent.execution);
   const browserEnabled = useConfigStore((state) => state.config.browser?.enabled);
 
   // Memoized so `LabelPills`' own React.memo is not defeated by a fresh object
@@ -51,8 +52,9 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
     labelColors: labelColors ?? {},
     defaultBaseBranch,
     worktreesEnabled,
+    agentExecution: agentExecution ?? {},
     browserEnabled: browserEnabled !== false,
-  }), [labelColors, defaultBaseBranch, worktreesEnabled, browserEnabled]);
+  }), [labelColors, defaultBaseBranch, worktreesEnabled, agentExecution, browserEnabled]);
 
   const value = useMemo<TaskDetailHostValue>(() => ({
     projectId,

@@ -23,7 +23,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   CAPABILITY_VERBS,
   createPairingInitiatorHandshake,
-  deriveShortAuthenticationString,
   generateX25519KeyPair,
   randomBytes,
   bytesToHex,
@@ -504,7 +503,7 @@ describe('PairingService ceremony', () => {
 });
 
 describe('PairingService default capability grant', () => {
-  it('DEFAULT_PAIRING_CAPABILITIES is the full ten-verb set', () => {
+  it('DEFAULT_PAIRING_CAPABILITIES is the full set, every protocol verb', () => {
     expect(DEFAULT_PAIRING_CAPABILITIES).toEqual(CAPABILITY_VERBS);
   });
 

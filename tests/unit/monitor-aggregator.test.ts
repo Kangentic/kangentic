@@ -96,6 +96,7 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
 
 import {
   buildMonitorSnapshot,
+  MONITOR_ROW_DESCRIPTION_MAX_CHARS,
   RECENTLY_FINISHED_CAP,
   RECENTLY_FINISHED_WINDOW_MS,
 } from '../../src/main/monitor/monitor-aggregator';
@@ -161,6 +162,7 @@ function makeTask(id: string, overrides: Partial<Task> = {}): Task {
     pr_number: null,
     pr_url: null,
     pr_state: null,
+    pr_merge_readiness: null,
     head_sha: null,
     external_id: null,
     external_source: null,
@@ -415,6 +417,10 @@ describe('buildMonitorSnapshot', () => {
     expect(row.prUrl).toBeNull();
     expect(row.prNumber).toBeNull();
     expect(row.prState).toBeNull();
+    expect(row.prMergeReadiness).toBeNull();
+    // A Command Terminal has no task, so no description; the card falls back
+    // to the output peek in that mode instead of a description-mode blank.
+    expect(row.description).toBeNull();
   });
 
   it('falls back to the unnumbered name for a transient session with no slot', () => {
@@ -591,6 +597,33 @@ describe('buildMonitorSnapshot', () => {
     const generatedAtMs = Date.parse(snapshot.generatedAt);
     expect(generatedAtMs).toBeGreaterThanOrEqual(before);
     expect(generatedAtMs).toBeLessThanOrEqual(after);
+  });
+
+  it('carries the task PR link and merge readiness onto the row', () => {
+    // The transient-session test above pins the null shape; this one pins the
+    // passthrough, so a row that hardcoded `prMergeReadiness: null` goes red.
+    registerHealthyProject('project-a', {
+      tasksById: new Map([
+        ['task-a', makeTask('task-a', {
+          pr_url: 'https://github.com/owner/repo/pull/7',
+          pr_number: 7,
+          pr_state: 'open',
+          pr_merge_readiness: 'ready',
+        })],
+      ]),
+    });
+    const context = makeContext([
+      makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
+    ]);
+
+    const snapshot = buildMonitorSnapshot(context);
+
+    expect(snapshot.rows[0]).toMatchObject({
+      prUrl: 'https://github.com/owner/repo/pull/7',
+      prNumber: 7,
+      prState: 'open',
+      prMergeReadiness: 'ready',
+    });
   });
 
   // =========================================================================
@@ -833,6 +866,50 @@ describe('buildMonitorSnapshot', () => {
       ]);
 
       expect(buildMonitorSnapshot(context).rows[0].commandTerminalBranch).toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // description (row seeding) - the Card Preview fallback slot
+  // =========================================================================
+
+  describe('description (row seeding)', () => {
+    it("carries the task's description on the row", () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1', { description: 'Fix the PTY capture race.' })]]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+      ]);
+
+      expect(buildMonitorSnapshot(context).rows[0].description).toBe('Fix the PTY capture race.');
+    });
+
+    it('is null when the task has no description, not an empty string', () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1', { description: '' })]]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+      ]);
+
+      expect(buildMonitorSnapshot(context).rows[0].description).toBeNull();
+    });
+
+    it('truncates a description longer than MONITOR_ROW_DESCRIPTION_MAX_CHARS', () => {
+      // The snapshot fans to every monitor window on every change, so a raw
+      // multi-KB description must never ride it uncapped.
+      const longDescription = 'x'.repeat(MONITOR_ROW_DESCRIPTION_MAX_CHARS + 500);
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1', { description: longDescription })]]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+      ]);
+
+      const row = buildMonitorSnapshot(context).rows[0];
+      expect(row.description).toHaveLength(MONITOR_ROW_DESCRIPTION_MAX_CHARS);
+      expect(row.description).toBe(longDescription.slice(0, MONITOR_ROW_DESCRIPTION_MAX_CHARS));
     });
   });
 

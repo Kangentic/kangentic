@@ -16,7 +16,10 @@ export interface SwimlaneSlice {
   deleteSwimlane: (id: string) => Promise<void>;
   reorderSwimlanes: (ids: string[]) => Promise<void>;
   loadBoardProfiles: () => Promise<void>;
-  saveBoardProfiles: (profiles: BoardProfile[]) => Promise<void>;
+  /** Resolves `false` when the write failed (it has already reloaded and toasted).
+   *  The caller decides what a failure means for its own flow; the Column Manager
+   *  folds it into the same error path as a failed column save. */
+  saveBoardProfiles: (profiles: BoardProfile[]) => Promise<boolean>;
 }
 
 export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice> = (set, get) => ({
@@ -43,12 +46,18 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
     set({ boardProfiles: profiles });
     try {
       await window.electronAPI.boardConfig.setBoardProfiles(profiles);
+      return true;
     } catch (error) {
       await get().loadBoardProfiles();
       useToastStore.getState().addToast({
         message: `Failed to save profiles: ${error instanceof Error ? error.message : 'Unknown error'}`,
         variant: 'error',
       });
+      // Reported rather than rethrown: the toast and the reload are this
+      // action's job, and every caller still needs to know the write did not
+      // land. Swallowing it silently let the Column Manager print "saved
+      // profiles" and close on top of this very toast.
+      return false;
     }
   },
 

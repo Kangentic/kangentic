@@ -11,9 +11,17 @@ import {
   parseClaudeTranscriptUsage,
   parseClaudeTranscriptToolCounts,
 } from './transcript-parser';
+import {
+  CLAUDE_SUBAGENT_SPAWN_TOOL,
+  locateClaudeSubagentDir,
+  parseClaudeSubagentUsage,
+  statClaudeSubagentDir,
+} from './subagent-usage-parser';
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
+import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
+import { ensureDiffPanelClosed } from './diff-panel';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import {
@@ -27,6 +35,7 @@ import {
 } from '../../shared/auto-name';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
+import { describeClaudeStartupFailure } from './startup-failure';
 import { configuredModelFromClaudeCommand, buildModelDisplayNames } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
@@ -37,6 +46,8 @@ import type {
   ParsedTranscript,
   ParsedTranscriptWindow,
   AnswerFromContextOptions,
+  ParsedSubagentUsage,
+  SubagentTranscriptSignature,
 } from '../../agent-adapter';
 
 /**
@@ -60,6 +71,9 @@ const ANSWER_RETRIEVAL_TOOL = 'mcp__kangentic__kangentic_search';
 export function writeScopedMcpConfig(retrieval: { url: string; token: string }): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
   const configPath = path.join(directory, 'mcp.json');
+  // sync-write-ok: the answer call names this file in --mcp-config and cannot
+  // run without it. The throw reaches the MEMORY_GRAPH_ANSWER handler's catch,
+  // which turns it into the reason the rail shows.
   fs.writeFileSync(configPath, JSON.stringify({
     mcpServers: {
       kangentic: {
@@ -125,10 +139,18 @@ export class ClaudeAdapter implements AgentAdapter {
   // global snapshot - even a freshly spawned one that has not reported its own yet.
   readonly reportsRateLimits = true;
   // Claude's own clipboard image paste fails silently on Windows Snipping Tool
-  // images (claude-code #26679), and a bare typed path is never auto-recognized
-  // as an image (no @file support for images). Kangentic's own clipboard/drop
-  // capture is reliable, so inject an explicit Read instruction pointing at the
-  // saved temp PNG instead of a bare path.
+  // images (claude-code #26679), so Kangentic captures the image itself and
+  // hands Claude the saved file's path. Claude's prompt input scans a bracketed
+  // paste for tokens ending in these extensions (`/\.(png|jpe?g|gif|webp)$/i`,
+  // one surrounding quote pair stripped first), reads the file, and attaches it
+  // as an `[Image #N]` chip in the user turn: no `Read` tool call, no extra
+  // model round trip. A typed path never reaches that scan, which is why the
+  // renderer delivers it through xterm's paste() rather than a raw write.
+  readonly pastedImageNativeExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+  // bmp and svg are outside Claude's native set, so they keep the explicit
+  // Read instruction; the scan leaves the text alone and the agent reads it.
+  // That reaches an svg (Read returns the markup) but not a bmp: Read refuses
+  // a bmp as binary, on every delivery form. Verified against 2.1.276.
   readonly pastedImageReferenceTemplate = 'Read this image: {path} ';
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only)' },
@@ -185,6 +207,9 @@ export class ClaudeAdapter implements AgentAdapter {
   async ensureTrust(workingDirectory: string): Promise<void> {
     await ensureWorktreeTrust(workingDirectory);
     await ensureMcpServerTrust(workingDirectory);
+    // Same file, same lock: keep 2.1.260's fullscreen diff panel closed at
+    // launch. Runs per spawn on purpose - see diff-panel.ts for why.
+    await ensureDiffPanelClosed();
   }
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -241,6 +266,12 @@ export class ClaudeAdapter implements AgentAdapter {
       // background-shell-transcript.ts for the full rationale.
       reportTerminatedShells: (options) => reportTerminatedBackgroundShells(options),
     },
+    // A manual TUI deny aborts the turn with no hook of any kind - see
+    // permission-rejection-transcript.ts for the full rationale. This is
+    // the only signal that can clear a denied `permissionPending`.
+    permissionPrompts: {
+      reportRejectedPromptTools: (options) => reportRejectedPromptTools(options),
+    },
   };
 
   removeHooks(directory: string): void {
@@ -285,17 +316,43 @@ export class ClaudeAdapter implements AgentAdapter {
     return { entries, sourcePath: filePath };
   }
 
-  /** Stateless bounded window, for the conversation indexer's whole-file walk. */
+  /** Stateless bounded window, for the conversation indexer's whole-file walk.
+   *  `attributedMessageIds` is the caller's bounded usage-attribution carry; the
+   *  parser seeds from it, adds to it, and prunes it, so a message whose lines
+   *  straddle a window seam is still counted once. */
   async parseTranscriptWindow(
     agentSessionId: string,
     cwd: string,
     startByte: number,
     maxBytes: number,
+    attributedMessageIds?: Set<string>,
   ): Promise<ParsedTranscriptWindow> {
     const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
-    const window = await parseClaudeTranscriptWindow(filePath, startByte, maxBytes);
+    const window = await parseClaudeTranscriptWindow(
+      filePath, startByte, maxBytes, attributedMessageIds,
+    );
     return { ...window, sourcePath: filePath };
   }
+
+  /**
+   * Staleness signature for the session's `subagents/` directory. Its own
+   * signature, because a running subagent moves no byte of the main transcript.
+   */
+  statSubagentTranscripts(agentSessionId: string, cwd: string): SubagentTranscriptSignature | null {
+    return statClaudeSubagentDir(locateClaudeSubagentDir(agentSessionId, cwd));
+  }
+
+  /** Every Task-tool subagent's tokens for this session, folded to one turn per
+   *  API message. See `subagent-usage-parser.ts` for why the fold rule differs
+   *  from the main transcript's. */
+  async parseSubagentUsage(agentSessionId: string, cwd: string): Promise<ParsedSubagentUsage> {
+    return parseClaudeSubagentUsage(agentSessionId, cwd);
+  }
+
+  /** Claude spawns a subagent with the `Task` tool, so a `Task` tool-use id is
+   *  what a subagent's `.meta.json` records as its `toolUseId`. Matching on it is
+   *  how the spawning turn is found again. */
+  readonly subagentSpawnToolName = CLAUDE_SUBAGENT_SPAWN_TOOL;
 
   /**
    * Lifetime cumulative tokens from Claude's own session JSONL. Prefers the
@@ -477,9 +534,10 @@ export class ClaudeAdapter implements AgentAdapter {
         const filePath = locateClaudeTranscriptFile(context.agentSessionId, context.cwd);
         const verifier = createSlashCommandVerifier(filePath);
         if (!verifier) return false;
-        // sentAt comes from TerminalSubmit.submitKeystrokes's most-recent
-        // Enter timestamp, re-advanced on each retry attempt. Falling back to
-        // Date.now() preserves single-call use (e.g. ad-hoc verifier
+        // sentAt comes from TerminalSubmit.submitKeystrokes and is the FIRST
+        // Enter pressed for the command, held across its retries and the
+        // scheduler's late re-check (see `firstSentAt` on the result). Falling
+        // back to Date.now() preserves single-call use (e.g. ad-hoc verifier
         // invocation in tests) but the production path always supplies it.
         //
         // `mode` distinguishes an adapter-emitted settings command (must
@@ -491,6 +549,14 @@ export class ClaudeAdapter implements AgentAdapter {
       };
     }
     return null;
+  }
+
+  /**
+   * A `--resume` of a conversation the CLI can no longer find is the one
+   * startup failure Claude names in its output. See `startup-failure.ts`.
+   */
+  describeStartupFailure(finalOutput: string, exitCode: number): string | null {
+    return describeClaudeStartupFailure(finalOutput, exitCode);
   }
 
   /**

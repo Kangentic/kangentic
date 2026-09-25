@@ -108,7 +108,7 @@ export async function scanForSubmittedText(
  * Build a `SubmissionVerifier` for the `command-injection` context.
  *
  * `resolvePath` MUST be synchronous. The caller rebuilds this verifier on every
- * poll (25ms, for up to ~2s per command), so an async locate that polls for
+ * poll (25ms, for up to ~4s per command), so an async locate that polls for
  * seconds - as every `SessionHistoryParser.locate` does - would never return
  * inside a single 400ms verify window. Adapters memoise their scan in a
  * module-global map instead; that memo must be persistent, not one-shot.

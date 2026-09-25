@@ -25,7 +25,7 @@
  * Mounted once by `WindowLayer`.
  */
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -45,9 +45,11 @@ export function useTaskDetailWindowBridge(): void {
 
   /**
    * Mount a window for a task in THIS renderer, and tell main we own it. Called
-   * only from main's `onOpenHere` push, never directly from the signal.
+   * only from main's `onOpenHere` push, never directly from the signal. Stable
+   * for the mount: it reads every store through `getState()` and closes over
+   * nothing from render, so its dependency list is genuinely empty.
    */
-  const openWindowFor = useRef((projectId: string, taskId: string): void => {
+  const openWindowFor = useCallback((projectId: string, taskId: string): void => {
     // This host renders from the OPEN project's board, so it cannot mount a task
     // belonging to another one. Switch to that project first and park the id; the
     // project-open path re-fires `detailTaskId`, which asks main again - by then
@@ -76,9 +78,16 @@ export function useTaskDetailWindowBridge(): void {
       (candidate) => candidate.kind === 'task-detail' && candidate.anchor === taskId,
     );
     if (existing) {
-      windowStore.focusWindow(existing.id);
-      // AFTER the raise: `focusWindow` clears the stamp, so stamping first would
-      // be undone immediately.
+      // A PARKED window (the user closed it while its agent was live, so its
+      // Browser pane's guest was kept) is un-parked in place rather than
+      // rebuilt: same DOM node, same guest, same surface handle. Both raises
+      // clear the agent stamp, so the re-stamp below must follow either.
+      if (existing.parked) windowStore.unparkWindow(existing.id);
+      else windowStore.focusWindow(existing.id);
+      // AFTER the raise: the raise clears the stamp, so stamping first would be
+      // undone immediately. A user's card click un-parks unstamped, so the
+      // remounting terminal may take the keyboard; an agent's open_pane
+      // re-stamps, so `resolveArrivalFocus` denies it.
       if (agentInitiated) windowStore.markAgentOpened(existing.id);
       detailWindowIdRef.current = existing.id;
       return;
@@ -124,7 +133,7 @@ export function useTaskDetailWindowBridge(): void {
     // No claim call: opening the window changed the store, and the derived reporter
     // turns that into main's record. A request that never becomes a window therefore
     // leaves nothing behind, with no ordering to get right.
-  }).current;
+  }, []);
 
   // Main asking the BOARD to mount a detail. The only path that opens one here.
   // The host filter matters: the monitor's layer lives in this same renderer and
@@ -183,13 +192,18 @@ export function useTaskDetailWindowBridge(): void {
 
   // Mirror window closure back to the signal: when the detail window we opened is
   // gone (the user closed it via the title bar / Escape), clear `detailTaskId`.
+  // A PARKED window counts as gone here: the user closed it, and if the signal
+  // kept naming its task a second click on the same card would be a no-op
+  // `setDetailTaskId` (same value), the request effect would never re-fire, and
+  // the window would never un-park.
   // Telling main is not this effect's job any more - the same store change drives
   // the derived report.
   useEffect(() => {
     if (!detailTaskId) return;
     const id = detailWindowIdRef.current;
     if (!id) return;
-    if (!useWindowStore.getState().windows[id]) {
+    const mirrored = useWindowStore.getState().windows[id];
+    if (!mirrored || mirrored.parked) {
       detailWindowIdRef.current = null;
       useSessionStore.getState().setDetailTaskId(null);
     }

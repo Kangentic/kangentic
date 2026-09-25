@@ -14,11 +14,12 @@
  *      it. The constants (MIN=0.25, MAX=0.75) and DEFAULT (0.5) ARE exported
  *      and imported directly to anchor the test to the production values.
  *
- *   2. The mid-drag resync guard: the useEffect that resyncs local ratio
- *      from the store skips the update while a drag is in progress
- *      (`if (isResizing) return`). This prevents the store's stale value
- *      from snapping the divider back mid-drag. We model this as a pure
- *      function that mirrors the effect body exactly.
+ *   2. The mid-drag resync guard: the hook derives the ratio it renders as
+ *      `isResizing ? liveRatio : storedRatio`, so the store's value is
+ *      applied only while no drag is in progress. This prevents the store's
+ *      stale value from snapping the divider back mid-drag. We model the
+ *      derivation as a pure function that returns the store value when it
+ *      would be applied and null when the live drag value wins.
  *
  * The CustomEvent dispatch and the DOM overlay (isSplitResizing) are
  * browser-observable and are covered in tests/ui/task-detail-split-divider.spec.ts.
@@ -39,14 +40,11 @@ function clampRatio(value: number): number {
 }
 
 /**
- * Mirror of the useEffect guard in useTaskSplitResize.ts.
+ * Mirror of the derived ratio in useTaskSplitResize.ts:
+ *   const ratio = isResizing ? liveRatio : storedRatio;
  *
- * The effect body is:
- *   if (isResizing) return;
- *   setRatio(storedRatio);
- *
- * We model it as a function that returns the ratio value that WOULD be applied,
- * or null when the guard suppresses the update.
+ * We model it as a function that returns the store ratio that WOULD be
+ * rendered, or null when the live drag value takes precedence.
  */
 function resyncRatioIfIdle(
   storedRatio: number,

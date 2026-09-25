@@ -15,6 +15,11 @@ const SEARCH_DEBOUNCE_MS = 200;
  *  lexical path, so it waits a little longer before firing. */
 const SMART_SEARCH_DEBOUNCE_MS = 350;
 
+// Stable empty list so the grouping memo keeps a referentially constant input
+// while there is nothing to show.
+// hmr-safe: never mutated; a referential-identity sentinel for "no hits".
+const EMPTY_HITS: SearchHit[] = [];
+
 type Scope = 'current' | 'all';
 type Mode = 'keyword' | 'smart';
 
@@ -48,8 +53,13 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
   const semanticOn = useConfigStore((state) => state.config.memory?.semanticEnabled ?? false);
   const mode: Mode = semanticOn ? 'smart' : 'keyword';
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
-  const [results, setResults] = useState<SearchHit[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  // The last search that settled, stamped with the key it ran for. `results`
+  // and `isSearching` derive from it against the current key, so a new query
+  // reads as searching at once and a cleared one as empty, with no effect
+  // having to set a flag or clear a list (the cascading-render shape React's
+  // compiler rules forbid). The previous hits stay on screen while the next
+  // search runs, as they did when the flag was state.
+  const [search, setSearch] = useState<{ key: string; hits: SearchHit[] } | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -65,9 +75,13 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
   }, []);
 
   // Fetch the semantic-layer status on open and on each mode flip, so the
-  // Smart-mode degraded notice reflects the current backend state.
+  // Smart-mode degraded notice reflects the current backend state. In Smart
+  // mode the open is also the moment to start the embedding worker: it is
+  // released after a long idle, and the typing that follows is exactly the
+  // window its cold start needs.
   useEffect(() => {
     let cancelled = false;
+    if (mode === 'smart') window.electronAPI.memory.prewarm();
     window.electronAPI.memory
       .getStatus()
       .then((status) => {
@@ -94,37 +108,31 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
     };
   }, [query, mode]);
 
+  // A search runs for a non-empty (debounced) query with a project to search from.
+  const debouncedTrimmed = debouncedQuery.trim();
+  const searchKey = debouncedTrimmed && currentProjectId
+    ? JSON.stringify([debouncedTrimmed, scope, currentProjectId, mode])
+    : null;
+  const results: SearchHit[] = searchKey === null ? EMPTY_HITS : (search?.hits ?? EMPTY_HITS);
+  const isSearching = searchKey !== null && search?.key !== searchKey;
+
   useEffect(() => {
-    const trimmed = debouncedQuery.trim();
-    if (!trimmed) {
-      setResults([]);
-      setIsSearching(false);
-      setSelectedIndex(0);
-      return;
-    }
-    if (!currentProjectId) {
-      setResults([]);
-      setIsSearching(false);
-      return;
-    }
+    if (searchKey === null || !currentProjectId) return;
     const seq = ++requestSeq.current;
-    setIsSearching(true);
     window.electronAPI.search
-      .everything({ query: trimmed, scope, currentProjectId, mode })
+      .everything({ query: debouncedTrimmed, scope, currentProjectId, mode })
       .then((hits) => {
         if (seq !== requestSeq.current) return;
-        setResults(hits);
+        setSearch({ key: searchKey, hits });
         setSelectedIndex(0);
-        setIsSearching(false);
       })
       .catch((error) => {
         if (seq !== requestSeq.current) return;
         const message = error instanceof Error ? error.message : String(error);
         useToastStore.getState().addToast({ message, variant: 'error' });
-        setResults([]);
-        setIsSearching(false);
+        setSearch({ key: searchKey, hits: [] });
       });
-  }, [debouncedQuery, scope, currentProjectId, mode]);
+  }, [searchKey, debouncedTrimmed, scope, currentProjectId, mode]);
 
   const grouped = useMemo(() => {
     const buckets: Partial<Record<SearchHitKind, SearchHit[]>> = {};
@@ -150,14 +158,10 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
 
     const switchProjectIfNeeded = async (): Promise<boolean> => {
       if (!isCrossProject) return true;
-      try {
-        await projectStore.openProject(hit.projectId);
-        return true;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        useToastStore.getState().addToast({ message, variant: 'error' });
-        return false;
-      }
+      // openProject has already reported any failure itself (a toast, or the
+      // missing-path dialog); nothing further to raise here.
+      const outcome = await projectStore.openProject(hit.projectId);
+      return outcome === 'opened';
     };
 
     switch (hit.kind) {
@@ -304,6 +308,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
         className={`absolute top-20 left-1/2 -translate-x-1/2 w-[70%] max-w-3xl ${contentClassName}`}
         onAnimationEnd={onAnimationEnd}
         onMouseDown={(event) => event.stopPropagation()}
+        data-testid="search-palette-card"
       >
         <div className="bg-surface-raised border border-edge rounded-lg shadow-2xl overflow-hidden flex flex-col">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-edge">

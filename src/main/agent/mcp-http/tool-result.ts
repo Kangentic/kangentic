@@ -69,12 +69,24 @@ export function screenshotToolResult(result: DriverResult<ScreenshotResponse>): 
     height: data.height,
     viewportWidth: data.viewportWidth,
     viewportHeight: data.viewportHeight,
+    // Whether the three fields above were READ or substituted. When
+    // `Page.getLayoutMetrics` fails, `screenshot.ts` fills in
+    // `viewportWidth: 0`, which an agent could previously shrug at. Once a
+    // viewport can be set deliberately it cannot: a zero is indistinguishable
+    // from a genuine reading, and mapping image coordinates through a made-up
+    // scale factor produces confidently wrong element positions.
+    metricsAvailable: data.metricsAvailable,
     deviceScaleFactor: data.deviceScaleFactor,
+    // The one to map image coordinates with. `deviceScaleFactor` is the page's
+    // own ratio, and a capture scaled to fit its pane or a byte budget holds
+    // fewer pixels than that.
+    pixelsPerCssPixel: data.pixelsPerCssPixel,
     scale: data.scale,
     fullPage: data.fullPage,
     elementClip: data.elementClip,
     retries: data.retries,
   };
+  if (data.note) meta.note = data.note;
   if (data.mode === 'file') {
     meta.filePath = data.filePath;
     meta.fileUri = data.fileUri;

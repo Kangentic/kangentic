@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { safeWriteJson } from '../safe-write';
 
 // Per-task browser URL overrides. Stored as a flat JSON map
 // `{ [taskId]: url }` at `<projectPath>/.kangentic/browser-urls.json`. The
@@ -37,13 +38,11 @@ function readMap(projectPath: string): Record<string, string> {
 }
 
 function writeMap(projectPath: string, map: Record<string, string>): void {
-  const dir = path.join(projectPath, '.kangentic');
-  fs.mkdirSync(dir, { recursive: true });
-  const filePath = resolveFilePath(projectPath);
-  // Atomic write via tmp + rename so a crash mid-write doesn't truncate.
-  const tmpPath = `${filePath}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(map, null, 2));
-  fs.renameSync(tmpPath, filePath);
+  // Degrades rather than throws: an unwritable project directory must not
+  // reject the set/clear/prune call the renderer is waiting on. Atomicity
+  // (tmp + rename) and the shared write-failure-notice latch both come from
+  // safeWriteJson now; this used to hand-roll the same tmp + rename.
+  safeWriteJson(resolveFilePath(projectPath), map, 'browser_url');
 }
 
 export class BrowserUrlStore {

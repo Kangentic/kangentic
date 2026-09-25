@@ -157,7 +157,7 @@ export function resolveDictationAnchor(target: DictationAnchorTarget | null): Di
     const host = toAnchorRect(target.webview.getBoundingClientRect());
     if (!isMeasurable(host)) return null;
     // Guest CSS pixels are scaled by the pane's zoom before they land on screen.
-    let zoom = 1;
+    let zoom: number;
     try { zoom = target.webview.getZoomFactor() || 1; } catch { zoom = 1; }
     const left = host.left + target.rect.left * zoom;
     const top = host.top + target.rect.top * zoom;

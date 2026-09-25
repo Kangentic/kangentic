@@ -9,8 +9,8 @@ import type { CommandContext, CommandResponse } from '../commands';
 /**
  * Usage-statistics MCP tools. One read-only tool exposing the same
  * usage-stats service the in-app dashboard reads (tokens, cost, burn rate,
- * by-model / by-agent / by-effort breakdowns, per-project or app-wide, over
- * the shared Live/Today/Week/Month/All time ranges).
+ * by-model / by-agent / by-effort / by-subagent-type breakdowns, per-project or
+ * app-wide, over the shared Live/Today/Week/Month/All time ranges).
  */
 
 function toToolResult(response: CommandResponse): McpToolResult {
@@ -27,7 +27,7 @@ export function registerUsageTools(server: McpServer, resolver: RequestResolver)
     'kangentic_get_usage_stats',
     {
       description:
-        'Aggregated agent-usage statistics: tokens in/out, cost, burn rate ($/hr approximate + tokens/hr), sessions, tool calls, line churn, and by-model / by-agent / by-effort breakdowns - for one project or rolled up across every registered project. Reads the durable usage ledgers, so totals survive task/session deletion; usage from in-flight sessions is excluded until they finalize. Pass includeSeries for bucketed token/cost time series (burn-rate and trend charts).',
+        'Aggregated agent-usage statistics: the four token types (fresh input, output, cache write, cache read), cost, burn rate ($/hr + tokens/hr), sessions, tool calls, line churn, compactions, active time, and by-model / by-agent / by-effort / by-subagent-type breakdowns - for one project or rolled up across every registered project. Reads the durable usage ledgers, so totals survive task/session deletion; usage from in-flight sessions is excluded until they finalize. Tokens are disjoint (never summed into one total) and start at earliestTurnMs, which is later than the cost ledger on an install predating per-turn capture. Cost is API-equivalent list price, not what a subscription was billed. Token and burn-rate figures are the MAIN THREAD; Task-tool subagent usage is reported additively in the subagent* KPI fields and bySubagentType, and its cost is already inside totalCostUsd. For one task\'s subagent fan-out, use kangentic_get_task_stats with a taskId. Pass includeSeries for bucketed token/cost time series (burn-rate and trend charts).',
       inputSchema: z.object({
         period: z
           .enum(['live', 'today', 'week', 'month', 'all'])

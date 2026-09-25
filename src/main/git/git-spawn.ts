@@ -16,6 +16,8 @@ export interface GitSpawnOptions {
   timeoutMs: number;
   /** External cancellation. Race-combined with the internal timeout. */
   signal?: AbortSignal;
+  /** The child's environment; omitted inherits `process.env` (see spawn-with-abort.ts). */
+  env?: NodeJS.ProcessEnv;
 }
 
 export function runGitWithTimeout(

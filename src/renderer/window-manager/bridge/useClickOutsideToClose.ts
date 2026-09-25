@@ -126,7 +126,7 @@ function isDismissibleDeadArea(target: EventTarget | null, scope: DismissScope):
  */
 export function useClickOutsideToClose(scope: DismissScope): void {
   const policy = useConfigStore((state) => state.config.windowLightDismiss);
-  const useStore = useLayerStore();
+  const layerStore = useLayerStore();
   const pendingRef = useRef<PendingPress | null>(null);
 
   useEffect(() => {
@@ -153,7 +153,7 @@ export function useClickOutsideToClose(scope: DismissScope): void {
       if (Math.abs(event.clientY - pending.startY) >= CLEAN_CLICK_MAX_PX) return;
       if (!isDismissibleDeadArea(event.target, scope)) return;
 
-      const { windows, focusedWindowId } = useStore.getState();
+      const { windows, focusedWindowId } = layerStore.getState();
       for (const windowId of resolveLightDismissTargets(policy, windows, focusedWindowId)) {
         requestWindowClose(windowId);
       }
@@ -171,5 +171,5 @@ export function useClickOutsideToClose(scope: DismissScope): void {
       document.removeEventListener('pointerup', handlePointerUp);
       document.removeEventListener('pointercancel', handlePointerCancel);
     };
-  }, [policy, scope, useStore]);
+  }, [policy, scope, layerStore]);
 }

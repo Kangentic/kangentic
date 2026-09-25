@@ -23,6 +23,7 @@ import {
   computeKpis,
   foldCostSeries,
   foldTokenSeries,
+  mergeSubagentTotals,
   mergeUsageTotals,
   nextBucketStart,
   resolveAllTimeBucketKinds,
@@ -36,6 +37,7 @@ import type {
   UsageWindowTotals,
 } from '../../src/main/db/repositories/usage-history-repository';
 import type { GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
+import type { SubagentUsageTotals } from '../../src/shared/types';
 
 function makeGroup(overrides: Partial<GroupedTurnUsageRow> = {}): GroupedTurnUsageRow {
   return {
@@ -79,6 +81,22 @@ function makeRollup(overrides: Partial<UsageRollupRow> = {}): UsageRollupRow {
     outputTokens: 400,
     costUsd: 1,
     sessionCount: 1,
+    ...overrides,
+  };
+}
+
+function makeSubagentTotals(overrides: Partial<SubagentUsageTotals> = {}): SubagentUsageTotals {
+  return {
+    agentType: 'review-finder',
+    inputTokens: 100,
+    outputTokens: 50,
+    cacheCreationTokens: 10,
+    cacheReadTokens: 500,
+    turnCount: 4,
+    subagentCount: 2,
+    nestedTurnCount: 0,
+    nestedSubagentCount: 0,
+    maxSpawnDepth: 1,
     ...overrides,
   };
 }
@@ -386,14 +404,40 @@ describe('computeKpis', () => {
     expect(kpis.cacheCreationTokens).toBe(75);
     // 1000 turn tokens over 2 hours.
     expect(kpis.burnRateTokensPerHour).toBeCloseTo(500);
-    // The full $2 allocated across the window.
-    expect(kpis.burnRateUsdPerHour).toBeCloseTo(1);
+    // The LEDGER cost over the same 2 hours, not the turn-allocated share.
+    expect(kpis.burnRateUsdPerHour).toBeCloseTo(kpis.totalCostUsd / 2);
   });
 
-  it('reports null burn rates with no turn data, and null $/hr when no cost was reported', () => {
-    const noTurns = computeKpis(makeTotals(), [], 3_600_000);
-    expect(noTurns.burnRateTokensPerHour).toBeNull();
-    expect(noTurns.burnRateUsdPerHour).toBeNull();
+  it('divides both burn-rate lines by the same hours, each over the number its own tile shows', () => {
+    // The defect this pins: the dollar line used to divide turn-ALLOCATED cost
+    // while the Cost tile showed the ledger total, so `$/hr x hours` did not
+    // reproduce the tile and the two lines implied different window lengths.
+    const kpis = computeKpis(
+      makeTotals({ totalCostUsd: 90, costKnownCount: 3 }),
+      [makeGroup({ inputTokens: 200, outputTokens: 100, allocatedCostUsd: 7 })],
+      3 * 3_600_000,
+    );
+    const hours = 3;
+    expect(kpis.burnRateUsdPerHour! * hours).toBeCloseTo(kpis.totalCostUsd);
+    expect(kpis.burnRateTokensPerHour! * hours)
+      .toBeCloseTo(kpis.turnInputTokens + kpis.turnOutputTokens);
+    // Same denominator, so the ratio of the lines is the ratio of the tiles.
+    expect(kpis.burnRateUsdPerHour! / kpis.burnRateTokensPerHour!)
+      .toBeCloseTo(kpis.totalCostUsd / (kpis.turnInputTokens + kpis.turnOutputTokens));
+  });
+
+  it('reports a dollar rate for a window with ledger cost but no turn rows', () => {
+    // Anything predating the turn ledger. The old `groups.length > 0` gate
+    // rendered a bare `-` next to a Cost tile showing real money.
+    const noTurns = computeKpis(makeTotals({ totalCostUsd: 60, costKnownCount: 2 }), [], 3_600_000);
+    expect(noTurns.burnRateUsdPerHour).toBeCloseTo(60);
+    expect(noTurns.burnRateTokensPerHour).toBe(0);
+  });
+
+  it('reports null burn rates for an empty window, and null $/hr when no cost was reported', () => {
+    const empty = computeKpis(makeTotals({ sessionCount: 0, costKnownCount: 0 }), [], 3_600_000);
+    expect(empty.burnRateTokensPerHour).toBeNull();
+    expect(empty.burnRateUsdPerHour).toBeNull();
 
     const noCost = computeKpis(
       makeTotals({ totalCostUsd: 0, costKnownCount: 0 }),
@@ -407,12 +451,90 @@ describe('computeKpis', () => {
 
   it('floors the elapsed window at one minute so tiny ranges cannot explode the rate', () => {
     const kpis = computeKpis(
-      makeTotals({ sessionCount: 0, costKnownCount: 0 }),
+      makeTotals({ costKnownCount: 0 }),
       [makeGroup({ inputTokens: 60, outputTokens: 0 })],
       1,
     );
     // 60 tokens over the 1-minute floor = 3600 tokens/hr, not 216M.
     expect(kpis.burnRateTokensPerHour).toBeCloseTo(3600);
+  });
+
+  it('averages active time over the sessions the interval ledger covers, not every session', () => {
+    // The two counts come from different ledgers: per-interval recording
+    // shipped later than usage_history, so dividing by `sessionCount` would
+    // under-report every historical range.
+    const kpis = computeKpis(makeTotals({ sessionCount: 10 }), [], 3_600_000, [], {
+      activeMs: 600_000,
+      sessionsCovered: 4,
+    });
+    expect(kpis.activeMs).toBe(600_000);
+    expect(kpis.activeSessionsCovered).toBe(4);
+    expect(kpis.activeMs / kpis.activeSessionsCovered).toBe(150_000);
+  });
+
+  it('sums subagentNestedCount across every subagent type row, as a subset of subagentCount', () => {
+    // Distinct nonzero values per row so a dropped `+=` (summing only one row)
+    // cannot accidentally match the total.
+    const kpis = computeKpis(makeTotals(), [], 3_600_000, [
+      makeSubagentTotals({ agentType: 'review-finder', subagentCount: 4, nestedSubagentCount: 3 }),
+      makeSubagentTotals({ agentType: 'test-builder', subagentCount: 2, nestedSubagentCount: 5 }),
+    ]);
+    expect(kpis.subagentNestedCount).toBe(8);
+    // A subset, not additive: subagentCount is unaffected by the nested field.
+    expect(kpis.subagentCount).toBe(6);
+  });
+
+  it('reports zero subagentNestedCount with no subagent totals', () => {
+    const kpis = computeKpis(makeTotals(), [], 3_600_000);
+    expect(kpis.subagentNestedCount).toBe(0);
+  });
+});
+
+describe('mergeSubagentTotals', () => {
+  it('sums nestedTurnCount and nestedSubagentCount across projects for the same type', () => {
+    // Distinct nonzero values per project so a dropped `+=` line cannot
+    // accidentally match (e.g. reading only the second project's value).
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', nestedTurnCount: 10, nestedSubagentCount: 1 })],
+      [makeSubagentTotals({ agentType: 'review-finder', nestedTurnCount: 25, nestedSubagentCount: 4 })],
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].nestedTurnCount).toBe(35);
+    expect(merged[0].nestedSubagentCount).toBe(5);
+  });
+
+  it('takes the MAX of maxSpawnDepth across projects, not the last one merged', () => {
+    // Descending order (3 merged before 1): a "last write wins" bug would
+    // return 1 here, not 3.
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: 3 })],
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: 1 })],
+    ]);
+    expect(merged[0].maxSpawnDepth).toBe(3);
+  });
+
+  it('keeps a real depth when a later project reports null, rather than overwriting it', () => {
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: 2 })],
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: null })],
+    ]);
+    expect(merged[0].maxSpawnDepth).toBe(2);
+  });
+
+  it('adopts a later project real depth when the running total is still null', () => {
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: null })],
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: 4 })],
+    ]);
+    expect(merged[0].maxSpawnDepth).toBe(4);
+  });
+
+  it('stays null when no project recorded a depth - a real bucket, not a zero', () => {
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: null })],
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: null })],
+    ]);
+    expect(merged[0].maxSpawnDepth).toBeNull();
   });
 });
 

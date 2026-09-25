@@ -177,20 +177,18 @@ metadata lives in the header line, not in a whole-file object.
 
 ### Context window size
 
-**Not present in the file.** The parser uses a hardcoded model-name → window-size lookup:
+**Not present in the file, and not available anywhere else.** The parser emits the `0` "unknown
+size" sentinel for every Gemini model, so the card shows token counts with no progress bar.
 
-| Model prefix | Context window |
-|---|---|
-| `gemini-3-flash*` | 1,000,000 |
-| `gemini-3-pro*` | 2,000,000 |
-| `gemini-3*` | 1,000,000 |
-| `gemini-2.5-pro*` | 2,000,000 |
-| `gemini-2.5-flash*` | 1,000,000 |
-| `gemini-2.5*` | 1,000,000 |
-| `gemini-2.0*` | 1,000,000 |
-| (default) | 1,000,000 |
+There used to be a hardcoded model-prefix to window-size lookup here, transcribed from Google's
+model cards and kept current by hand. It is gone, per
+`.claude/rules/cli-features-over-custom-layers.md`: we do not track model releases, and a guessed
+limit renders a percentage that looks precise and is not. Gemini's session JSON carries no window
+size and the Gemini CLI has no command that reports one, so there is nothing to discover and the
+honest answer is to show nothing.
 
-Source: Google's published model cards. Update the table in `gemini/session-history-parser.ts` when Google publishes new model specs.
+The bar comes back on its own if Gemini ever starts reporting a window, through the live-telemetry
+path that fills `discoveredContextWindowsByAgent`. Do not reintroduce the table.
 
 ### Assumptions that could break on CLI upgrades
 
@@ -312,6 +310,7 @@ behavior below is the resume contract.
 | Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes |
 | Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a |
 | Antigravity | `agy --conversation <id>` | `~/.gemini/antigravity-cli/conversations/<id>.db` (SQLite; the parseable transcript sits beside it under `brain/<id>/`) | conversation id (global store) | no | **no** (the locator returns the brain-dir `transcript.jsonl`, which resume itself does not read) |
+| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store, resolved by name | caller-owned name (global store) | no | **no** (locator returns null; resume needs no transcript file) |
 
 Reading the table by class:
 
@@ -319,14 +318,17 @@ Reading the table by class:
   Grok (and Claude). The resume target is a file under a directory derived from the cwd
   (basename, slug, `md5`, or Grok's `encodeURIComponent`), so moving the project to a path with
   a different cwd-derived key, or deleting that file, makes the stored id unresolvable.
-- **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor, Antigravity.
+- **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor, Antigravity,
+  and Goose.
   Resume resolves by session id against a global location, so the working directory does not gate it.
   Codex scans `~/.codex/sessions/` by id (`codex-rs find_thread_path_by_id_str`; the per-rollout
   cwd only filters the interactive picker, which has an `--all` escape hatch). OpenCode keys the
   shared SQLite DB by session id. Copilot and Cursor attach by id; for Copilot the saved `cwd`
   only affects *where* the resumed session reopens, not whether it attaches, and Cursor's
   per-cwd `~/.cursor/projects/<slug>/` directory holds only `repo.json` / trust metadata, not the
-  conversation, which lives in `~/.cursor/chats/<chat-id-hash>/`.
+  conversation, which lives in `~/.cursor/chats/<chat-id-hash>/`. Goose resolves by the
+  caller-supplied `--name` against Goose's own session store, so resume is cwd-independent and
+  Kangentic reads no transcript file (`locateSessionHistoryFile` returns null).
 - **project-wide reload, no session id:** Aider. `--restore-chat-history` reloads the cwd-local
   `.aider.chat.history.md`; there is no per-session id, so there is nothing to verify or
   downgrade.
@@ -371,11 +373,11 @@ The actual root cause of the #255 bug was unrelated to a missing transcript: whe
 launched from inside a Claude Code session it leaked `CLAUDE_CODE_*` markers into spawned agents,
 so a Claude spawned with `--session-id <id>` never persisted a transcript under that id and the
 later `--resume` found nothing. The cure was `buildSpawnEnv` stripping `CLAUDECODE` plus every
-`CLAUDE_CODE_*` identity marker (`src/main/pty/spawn/pty-spawn.ts`, commit `4b236593`; the sole
-exception is the keeplisted `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` renderer flag, which carries no
-session identity), which makes every spawned Claude a clean top-level session that persists its
-own resumable transcript. With that in
-place the resume target reliably exists, so the presence guard earns nothing and was dropped.
+`CLAUDE_CODE_*` identity marker (`src/main/pty/spawn/pty-spawn.ts`, commit `4b236593`; the
+exceptions are the keeplisted `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` and `CLAUDE_CODE_SCROLL_SPEED`
+renderer tuning flags, which carry no session identity), which makes every spawned Claude a clean
+top-level session that persists its own resumable transcript. With that in place the resume
+target reliably exists, so the presence guard earns nothing and was dropped.
 
 The non-Claude agents never exhibited an analogous missing-resume-target failure: each captures
 or owns its session id against a store the CLI itself writes, and none inherits the Claude env

@@ -38,7 +38,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { logMcpToolArguments, LARGE_DESCRIPTION_WARN_THRESHOLD } from '../../src/main/agent/mcp-http/tool-call-logging';
+import {
+  logMcpToolArguments,
+  createToolArgumentNotices,
+  LARGE_DESCRIPTION_WARN_THRESHOLD,
+} from '../../src/main/agent/mcp-http/tool-call-logging';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -309,6 +313,91 @@ describe('logMcpToolArguments - warn path', () => {
 // ---------------------------------------------------------------------------
 // Array body with multiple matching calls
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Notices: the same detection, carried out to the tool layer so the CALLING
+// AGENT learns about the drop. The console warn never reached it.
+//
+// The predicate under test is `labels` ABSENT, never `labels` empty: a caller
+// who deliberately sent no labels must get no notice, or agents learn to
+// ignore the line. That distinction only survives here, on the raw body -
+// downstream, a missing field has already been normalized to null.
+// ---------------------------------------------------------------------------
+
+describe('logMcpToolArguments - ToolArgumentNotices', () => {
+  it('records the description length for a create whose arguments lack labels', () => {
+    const notices = createToolArgumentNotices();
+    logMcpToolArguments(makeToolCall('kangentic_create_task', { title: 'Big', description: 'x'.repeat(1500) }), notices);
+    expect(notices.labelsAbsentWithLargeDescription).toEqual({ kangentic_create_task: 1500 });
+  });
+
+  it('records under the update key for an update', () => {
+    const notices = createToolArgumentNotices();
+    logMcpToolArguments(makeToolCall('kangentic_update_task', { taskId: 'abc', description: 'y'.repeat(2048) }), notices);
+    expect(notices.labelsAbsentWithLargeDescription).toEqual({ kangentic_update_task: 2048 });
+  });
+
+  it('records nothing when labels ARE present alongside a large description', () => {
+    // The decisive edge: this is a healthy call, and a notice here would be a
+    // false positive on every correctly-labelled long create.
+    const notices = createToolArgumentNotices();
+    logMcpToolArguments(
+      makeToolCall('kangentic_create_task', { title: 'Big', description: 'x'.repeat(2048), labels: ['bug'] }),
+      notices,
+    );
+    expect(notices.labelsAbsentWithLargeDescription).toEqual({});
+  });
+
+  it('records nothing for an EXPLICITLY EMPTY labels array with a large description', () => {
+    // `labels: []` is a caller saying "no labels, deliberately". The key is
+    // present, so this must not trip - absent is not the same as empty.
+    const notices = createToolArgumentNotices();
+    logMcpToolArguments(
+      makeToolCall('kangentic_create_task', { title: 'Big', description: 'x'.repeat(2048), labels: [] }),
+      notices,
+    );
+    expect(notices.labelsAbsentWithLargeDescription).toEqual({});
+  });
+
+  it('records nothing when the description is below the threshold', () => {
+    const notices = createToolArgumentNotices();
+    logMcpToolArguments(makeToolCall('kangentic_create_task', { title: 'Small', description: 'x'.repeat(999) }), notices);
+    expect(notices.labelsAbsentWithLargeDescription).toEqual({});
+  });
+
+  it('records at exactly the threshold', () => {
+    const notices = createToolArgumentNotices();
+    logMcpToolArguments(
+      makeToolCall('kangentic_create_task', { title: 'At threshold', description: 'x'.repeat(LARGE_DESCRIPTION_WARN_THRESHOLD) }),
+      notices,
+    );
+    expect(notices.labelsAbsentWithLargeDescription.kangentic_create_task).toBe(LARGE_DESCRIPTION_WARN_THRESHOLD);
+  });
+
+  it('keys per tool so one batch body can carry both a create and an update', () => {
+    const notices = createToolArgumentNotices();
+    logMcpToolArguments([
+      makeToolCall('kangentic_create_task', { title: 'A', description: 'x'.repeat(1100) }),
+      makeToolCall('kangentic_update_task', { taskId: 't', description: 'y'.repeat(1200) }),
+    ], notices);
+    expect(notices.labelsAbsentWithLargeDescription).toEqual({
+      kangentic_create_task: 1100,
+      kangentic_update_task: 1200,
+    });
+  });
+
+  it('starts empty and stays empty for an unrelated tool call', () => {
+    const notices = createToolArgumentNotices();
+    expect(notices.labelsAbsentWithLargeDescription).toEqual({});
+    logMcpToolArguments(makeToolCall('kangentic_list_tasks', { description: 'x'.repeat(2000) }), notices);
+    expect(notices.labelsAbsentWithLargeDescription).toEqual({});
+  });
+
+  it('still logs to the console when no notices object is passed (back-compat)', () => {
+    logMcpToolArguments(makeToolCall('kangentic_create_task', { title: 'Big', description: 'x'.repeat(1500) }));
+    expect(warnSpy).toHaveBeenCalledOnce();
+  });
+});
 
 describe('logMcpToolArguments - array body with multiple matching calls', () => {
   it('logs once per matching message when the batch contains both create and update calls', () => {

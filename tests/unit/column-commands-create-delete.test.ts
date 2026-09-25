@@ -8,9 +8,16 @@
  * SQL would assert that we issued the statements, not that they had any effect,
  * which is exactly the class of bug this tool exists to avoid.
  *
- * Skips cleanly when better-sqlite3 cannot load under the runner's Node ABI
- * (NODE_MODULE_VERSION mismatch under plain system Node); CI resolves the
- * correct ABI at build time. Mirrors swimlane-repository.test.ts.
+ * Skips when better-sqlite3 cannot load under the runner's Node ABI. Read that
+ * as "skips everywhere", not "skips locally": `postinstall` runs
+ * scripts/rebuild-native.js, which rebuilds better-sqlite3 against ELECTRON's
+ * headers, so CI's own `npm ci` produces a binding vitest cannot load either
+ * and this whole file is inert on CI too. vitest.config.ts says the same and
+ * names the way out - `node:sqlite`, already flagged on there for the Node 22
+ * runner. Until this file moves to it, treat these cases as documentation and
+ * pin anything load-bearing somewhere that executes; the mock-harness cases in
+ * column-commands-description.test.ts cover the session-track pairing and the
+ * enum narrowing for that reason. Mirrors swimlane-repository.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -221,6 +228,172 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
     expect(response.success).toBe(false);
     expect(response.error).toContain('Invalid permissionMode');
     expect(repository.list().some((lane) => lane.name === 'Brand Review')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // the session track
+  //
+  // Every assertion here reads the PERSISTED row, not the response payload.
+  // `session_spawn_strategy` is NOT NULL with a literal default, so a handler
+  // that merely declines to write it still ends up with 'create_or_resume' on
+  // disk while its own echo looks right - which is the exact shape of the bug
+  // these tests exist for.
+  // -------------------------------------------------------------------------
+
+  it('carries the spawn strategy across when a new column asks only for isolation', () => {
+    // The whole point of the issue: "set up a Code Review column that runs
+    // /code-review" must produce a column that runs an independent pass each
+    // entry, not one that resumes its own previous review.
+    handleCreateColumn({ name: 'Review Pass', sessionTarget: 'isolated' }, context);
+
+    const created = repository.list().find((lane) => lane.name === 'Review Pass');
+    expect(created?.session_target).toBe('isolated');
+    expect(created?.session_spawn_strategy).toBe('always_spawn_new');
+  });
+
+  it('preserves an explicit persistent isolated track instead of snapping it', () => {
+    handleCreateColumn({
+      name: 'Design Notes',
+      sessionTarget: 'isolated',
+      sessionSpawnStrategy: 'create_or_resume',
+    }, context);
+
+    const created = repository.list().find((lane) => lane.name === 'Design Notes');
+    expect(created?.session_target).toBe('isolated');
+    expect(created?.session_spawn_strategy).toBe('create_or_resume');
+  });
+
+  it('leaves a main-session column at the defaults', () => {
+    handleCreateColumn({ name: 'Brand Review' }, context);
+
+    const created = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(created?.session_target).toBe('main');
+    expect(created?.session_spawn_strategy).toBe('create_or_resume');
+  });
+
+  it('snaps the spawn strategy back when a column returns to the main session', () => {
+    handleCreateColumn({ name: 'Review Pass', sessionTarget: 'isolated' }, context);
+    const response = handleUpdateColumn({ column: 'Review Pass', sessionTarget: 'main' }, context);
+
+    expect(response.success).toBe(true);
+    const updated = repository.list().find((lane) => lane.name === 'Review Pass');
+    expect(updated?.session_target).toBe('main');
+    expect(updated?.session_spawn_strategy).toBe('create_or_resume');
+    // The derived field is reported, not silently changed underneath the caller.
+    expect(response.message).toContain('sessionSpawnStrategy');
+  });
+
+  it('does not clobber a deliberate strategy when sessionTarget is restated', () => {
+    // An MCP caller cannot tell a change from a restatement the way a <select>
+    // can, so a no-op write must stay a no-op.
+    handleCreateColumn({
+      name: 'Design Notes',
+      sessionTarget: 'isolated',
+      sessionSpawnStrategy: 'create_or_resume',
+    }, context);
+    handleUpdateColumn({ column: 'Design Notes', sessionTarget: 'isolated' }, context);
+
+    const updated = repository.list().find((lane) => lane.name === 'Design Notes');
+    expect(updated?.session_spawn_strategy).toBe('create_or_resume');
+  });
+
+  it('updates the spawn strategy on its own, without a sessionTarget', () => {
+    handleCreateColumn({ name: 'Brand Review' }, context);
+    const response = handleUpdateColumn(
+      { column: 'Brand Review', sessionSpawnStrategy: 'always_spawn_new' },
+      context,
+    );
+
+    expect(response.success).toBe(true);
+    const updated = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(updated?.session_target).toBe('main');
+    expect(updated?.session_spawn_strategy).toBe('always_spawn_new');
+  });
+
+  it('rejects an invalid sessionTarget on create instead of storing it', () => {
+    const response = handleCreateColumn({ name: 'Brand Review', sessionTarget: 'seperate' }, context);
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Invalid sessionTarget');
+    expect(response.error).toContain('main, isolated');
+    expect(repository.list().some((lane) => lane.name === 'Brand Review')).toBe(false);
+  });
+
+  it('rejects an invalid sessionSpawnStrategy on update instead of storing it', () => {
+    // Neither DB column has a CHECK constraint and mapRow asserts rather than
+    // narrows, so an unvalidated value would persist and read back as a member
+    // of the union. The mobile bridge reaches this handler with no zod layer.
+    handleCreateColumn({ name: 'Brand Review' }, context);
+    const response = handleUpdateColumn(
+      { column: 'Brand Review', sessionSpawnStrategy: 'always' },
+      context,
+    );
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Invalid sessionSpawnStrategy');
+    const untouched = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(untouched?.session_spawn_strategy).toBe('create_or_resume');
+  });
+
+  it('lists the session fields and autoCommandMode in the no-fields-to-update error', () => {
+    handleCreateColumn({ name: 'Brand Review' }, context);
+    const response = handleUpdateColumn({ column: 'Brand Review' }, context);
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('sessionTarget');
+    expect(response.error).toContain('sessionSpawnStrategy');
+    expect(response.error).toContain('autoCommandMode');
+  });
+
+  // -------------------------------------------------------------------------
+  // auto-command timing
+  //
+  // The third field that drifted the same way as the two above. `mapRow`
+  // collapses anything that is not 'deferred' to 'immediate', so an invalid
+  // value here does not persist visibly - it silently acts as the default,
+  // which is why the handler refuses it outright rather than coercing.
+  // -------------------------------------------------------------------------
+
+  it('persists a deferred auto-command timing on create', () => {
+    handleCreateColumn(
+      { name: 'Brand Review', autoCommand: '/review --brand', autoCommandMode: 'deferred' },
+      context,
+    );
+
+    const created = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(created?.auto_command_mode).toBe('deferred');
+  });
+
+  it('defaults auto-command timing to immediate', () => {
+    handleCreateColumn({ name: 'Brand Review', autoCommand: '/review --brand' }, context);
+
+    const created = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(created?.auto_command_mode).toBe('immediate');
+  });
+
+  it('updates auto-command timing and reports it', () => {
+    handleCreateColumn({ name: 'Brand Review', autoCommand: '/review --brand' }, context);
+    const response = handleUpdateColumn(
+      { column: 'Brand Review', autoCommandMode: 'deferred' },
+      context,
+    );
+
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('autoCommandMode');
+    expect(repository.list().find((lane) => lane.name === 'Brand Review')?.auto_command_mode).toBe('deferred');
+  });
+
+  it('rejects an invalid autoCommandMode instead of coercing it to immediate', () => {
+    handleCreateColumn({ name: 'Brand Review', autoCommand: '/review --brand' }, context);
+    const response = handleUpdateColumn(
+      { column: 'Brand Review', autoCommandMode: 'defered' },
+      context,
+    );
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Invalid autoCommandMode');
+    expect(response.error).toContain('immediate, deferred');
+    expect(repository.list().find((lane) => lane.name === 'Brand Review')?.auto_command_mode).toBe('immediate');
   });
 
   // -------------------------------------------------------------------------

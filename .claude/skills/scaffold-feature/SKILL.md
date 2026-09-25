@@ -118,7 +118,7 @@ Follow this order strictly (types first, UI last):
 Apply automatically during implementation:
 - [ ] No `any` types
 - [ ] No shorthand variable names (use `currentIndex` not `curIdx`)
-- [ ] No Unicode em-dashes (use ASCII `--`)
+- [ ] House writing style in every comment, label, and doc line - see `.claude/rules/writing-style.md`
 - [ ] `data-testid` on interactive elements
 - [ ] Lucide React icons only
 - [ ] `useEffect` Escape listener on new dialogs

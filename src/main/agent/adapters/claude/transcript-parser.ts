@@ -56,11 +56,19 @@ export function claudeProjectSlug(cwd: string): string {
 
 /**
  * Parse one JSONL line into zero or more transcript entries, appending to
- * `entries` and mutating `usageAttributedMessageIds` in place. Extracted so
- * both the full-file parse and the incremental append parse below share
- * IDENTICAL per-line semantics - the only difference between them is which
- * bytes get fed to this function and whether `entries`/`usageAttributedMessageIds`
- * start fresh or carry over from a prior increment.
+ * `entries` and mutating `usageAttributedMessageIds` in place. Extracted so all
+ * three read paths below - the full-file parse, the incremental append, and the
+ * windowed walk - share IDENTICAL per-line semantics. The only difference
+ * between them is which bytes get fed to this function and what its two
+ * accumulators do between calls.
+ *
+ * `entries` starts fresh on a full parse, carries across increments (the file
+ * cache relies on that array staying referentially append-only), and is
+ * per-window for the walk, which retains none. `usageAttributedMessageIds`
+ * carries in all three, because usage must be attributed once per `message.id`
+ * and Claude spreads one message over several lines: the incremental path keeps
+ * every id it has seen in its retained state, and the walk keeps a small bounded
+ * tail of them (see `SEAM_CARRY_LIMIT`), which is all a seam can need.
  */
 function parseTranscriptLine(
   line: string,
@@ -186,11 +194,15 @@ function parseTranscriptLine(
         if (block.type === 'text' && typeof block.text === 'string') {
           blocks.push({ type: 'text', text: block.text });
         } else if (block.type === 'thinking') {
-          // Real Claude Code session JSONL never persists thinking text
-          // (it stores only an encrypted `signature`). Empty thinking
-          // blocks would render as useless empty disclosures, so skip
-          // them. Kept the branch in case a future Claude version starts
-          // persisting plaintext thinking - then it will be captured.
+          // Claude Code persists thinking text SOMETIMES, so both shapes are
+          // live and this branch is load-bearing rather than speculative.
+          // Measured across the transcripts on a dev machine: 1,979 thinking
+          // blocks carry text against 16,879 that hold only an encrypted
+          // `signature`, and both forms appear on the same day - so this is a
+          // per-turn difference, not a version cutover to wait out. An empty
+          // one would render as a useless empty disclosure, so it is skipped;
+          // a text-bearing one becomes a real block, which also makes it the
+          // line that claims the message's usage below.
           if (typeof block.thinking === 'string' && block.thinking.length > 0) {
             blocks.push({ type: 'thinking', text: block.thinking });
           }
@@ -207,23 +219,24 @@ function parseTranscriptLine(
 
     // A line that yields no blocks produces no entry, so skip it BEFORE
     // claiming this message's usage. With extended thinking, Claude writes a
-    // turn as two lines under one message id - a thinking-only line (which we
-    // drop, since persisted thinking is empty) followed by the text line. If
-    // usage were claimed on the dropped thinking line, the message id would be
-    // marked "attributed" and the following text entry (same id) would be
-    // deduped out of its own usage, silently losing the whole turn's per-turn
-    // tokens. Claiming usage only when an entry is actually emitted keeps it on
-    // the first VISIBLE line of each message id.
+    // turn as several lines under one message id, and the first is a
+    // thinking-only line. When that line's thinking is signature-only it is
+    // dropped above, and claiming usage on it would mark the message id
+    // "attributed" so the following text entry (same id) is deduped out of its
+    // own usage, silently losing the whole turn's per-turn tokens. Claiming
+    // usage only when an entry is actually emitted keeps it on the first
+    // VISIBLE line of each message id - which, when the thinking text IS
+    // persisted, is that thinking line itself.
     if (blocks.length === 0) return;
 
     // Attribute this turn's usage to exactly one emitted entry per message id
-    // (a single message can still span several emitted lines, e.g. text +
-    // tool_use); the first emitted line claims it so a burn-rate sum never
-    // double-counts a turn. Persisted on `usageAttributedMessageIds` across
-    // incremental append calls (not just within one parse), so a turn split
-    // across TWO SEPARATE poll ticks (the thinking-only line landing in one
-    // increment, the text line in the next) still attributes usage exactly
-    // once.
+    // (a single message can still span several emitted lines, e.g. thinking +
+    // text + one per tool_use); the first emitted line claims it so a burn-rate
+    // sum never double-counts a turn. Persisted on `usageAttributedMessageIds`
+    // across calls, not just within one parse, so a turn split across TWO
+    // SEPARATE reads still attributes usage exactly once - two poll ticks on
+    // the incremental path, or two windows on the indexer's walk, where the
+    // caller threads a bounded carry for exactly this reason.
     let usage: TranscriptTurnUsage | undefined;
     if (!messageId || !usageAttributedMessageIds.has(messageId)) {
       usage = extractTurnUsage(message);
@@ -474,6 +487,28 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
 }
 
 /**
+ * Message ids carried across ONE window seam by `parseClaudeTranscriptWindow`.
+ *
+ * A cap of one would do, and that is the load-bearing claim, not the 16. Claude
+ * writes one message's lines contiguously, and only `user` / `tool_result`
+ * lines - which carry no message id - interleave them, so exactly one id can
+ * ever straddle a seam: the last one attributed. A carried id's continuation
+ * lines can only sit at the very START of the next window, so by the time
+ * enough new ids have arrived to evict it, it is already past. Any cap at or
+ * above 1 is therefore safe, and 16 is margin so a future format that does
+ * interleave messages degrades to correct rather than back to the double count.
+ *
+ * Checked against the 51 transcripts on a dev machine larger than the indexer's
+ * window, replayed through this function: at 16 the walk produced 71,647 ledger
+ * rows and 18,955,445,313 cache-read tokens, byte-identical to the same walk
+ * carrying every id in the file, while holding 16 ids instead of 32,836. The
+ * unfixed per-window dedupe produced 71,669 rows and 18,967,276,012. So the
+ * bound costs nothing and the whole file's ids buy nothing, which is the point:
+ * that residency is what the windowed walk exists to avoid.
+ */
+const SEAM_CARRY_LIMIT = 16;
+
+/**
  * Parse one explicit byte window of a transcript WITHOUT retaining any state.
  *
  * This is the whole-file walk for consumers that need every turn but no
@@ -484,21 +519,48 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
  * this existed, a sweep was exactly what packed the state map with the largest
  * files on the machine).
  *
- * `usage` dedupe is per-window, so a message id split across a window seam can
- * be attributed twice. Irrelevant to the only caller (chunking for search) and
- * deliberately not paid for.
+ * `usage` is attributed once per `message.id`, and that dedupe used to be
+ * per-window: a message whose lines straddled a seam was attributed once on each
+ * side. There is one CALL SITE (the indexer's walk) but TWO CONSUMERS of it, and
+ * they differ. Chunking for search never reads `usage` at all, so it did not
+ * care. The `conversation_turn_usage` ledger keys each row on the per-LINE
+ * `uuid`, so its primary key cannot collapse the two attributions and the
+ * message's tokens were counted twice.
+ *
+ * `attributedMessageIds` closes that seam. It is CALLER-owned: the walker
+ * creates one set and passes the same one to every window, and this function
+ * prunes it to `SEAM_CARRY_LIMIT` rather than growing it. A window that
+ * attributes nothing therefore passes the carry through untouched, which is the
+ * case a per-window reset would get wrong (a single parallel-tool batch's
+ * `tool_result` lines can fill a whole window; the largest measured
+ * intra-message span is 2.34MB against an 8MB window). The default is a fresh
+ * set, so a one-shot caller behaves exactly as before, and this function still
+ * retains nothing of its own.
+ *
+ * Known gap, currently unreachable: a usage-bearing assistant line with no
+ * `message.id` bypasses the dedupe entirely (see `parseTranscriptLine`). Zero
+ * such lines exist across the 92,935 usage-bearing lines measured.
  */
 export async function parseClaudeTranscriptWindow(
   filePath: string,
   startByte: number,
   maxBytes: number,
+  attributedMessageIds: Set<string> = new Set(),
 ): Promise<{ entries: TranscriptEntry[]; nextByteOffset: number; totalBytes: number }> {
   const window = await readJsonlWindow(filePath, { startByte, maxBytes });
   const entries: TranscriptEntry[] = [];
-  const usageAttributedMessageIds = new Set<string>();
   for (const line of window.text.split(/\r?\n/)) {
     if (line.length === 0) continue;
-    parseTranscriptLine(line, entries, usageAttributedMessageIds);
+    parseTranscriptLine(line, entries, attributedMessageIds);
+  }
+  // Prune to the most recent ids. A Set iterates in insertion order, so the
+  // front is the oldest - and the oldest is the safest to drop, because a
+  // message id is only ever at risk of straddling the seam that immediately
+  // follows its own lines.
+  while (attributedMessageIds.size > SEAM_CARRY_LIMIT) {
+    const oldest = attributedMessageIds.values().next();
+    if (oldest.done) break;
+    attributedMessageIds.delete(oldest.value);
   }
   return { entries, nextByteOffset: window.nextByteOffset, totalBytes: window.totalBytes };
 }

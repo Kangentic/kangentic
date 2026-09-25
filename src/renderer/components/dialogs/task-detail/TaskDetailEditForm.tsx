@@ -160,6 +160,7 @@ export function TaskDetailEditForm({
           defaultBaseBranch={branchConfig.defaultBaseBranch}
           effectiveWorktree={branchConfig.effectiveWorktree}
           setUseWorktree={branchConfig.setUseWorktree}
+          worktreeBlocker={branchConfig.blocker}
         />
       )}
       {!isSessionActive && !isArchived && !isInTodo && (
@@ -175,6 +176,7 @@ export function TaskDetailEditForm({
           effectiveWorktree={branchConfig.effectiveWorktree}
           setUseWorktree={branchConfig.setUseWorktree}
           showWorktree={!task.worktree_path}
+          worktreeBlocker={branchConfig.blocker}
         />
       )}
       {!isSessionActive && !isArchived && (

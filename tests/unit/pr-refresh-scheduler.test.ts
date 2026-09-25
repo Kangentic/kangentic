@@ -14,12 +14,15 @@ vi.mock('../../src/main/diagnostics/project-log-context', () => ({
   runWithProjectLogContext: (_name: string, fn: () => void) => fn(),
 }));
 vi.mock('../../src/main/pr/pr-refresh', () => ({ refreshProjectPRs: vi.fn(async () => {}) }));
+vi.mock('../../src/main/pr/pr-linking', () => ({ cancelPendingVerdictRepolls: vi.fn() }));
 
 import { refreshProjectPRs } from '../../src/main/pr/pr-refresh';
+import { cancelPendingVerdictRepolls } from '../../src/main/pr/pr-linking';
 import { prRefreshScheduler } from '../../src/main/pr/pr-refresh-scheduler';
 
 const FIVE_MIN = 5 * 60_000;
 const mockRefresh = vi.mocked(refreshProjectPRs);
+const mockCancelPendingVerdictRepolls = vi.mocked(cancelPendingVerdictRepolls);
 
 /** Minimal context: the scheduler only reads currentProjectId + the git interval. */
 function makeContext(currentProjectId: string, minutes: number | null): IpcContext {
@@ -90,6 +93,26 @@ describe('prRefreshScheduler', () => {
     mockRefresh.mockClear();
     await vi.advanceTimersByTimeAsync(FIVE_MIN);
     expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it('stop() cancels this project\'s pending merge-verdict re-polls', async () => {
+    prRefreshScheduler.startForProject(makeContext('p1', 5), makeProject('p1'));
+    // startForProject's own internal stop() already called this once (tearing
+    // down any prior project's timer); clear before the assertion below.
+    mockCancelPendingVerdictRepolls.mockClear();
+
+    prRefreshScheduler.stop();
+
+    expect(mockCancelPendingVerdictRepolls).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop(projectId) does not cancel merge-verdict re-polls when a different project owns the active timer', async () => {
+    prRefreshScheduler.startForProject(makeContext('p1', 5), makeProject('p1'));
+    mockCancelPendingVerdictRepolls.mockClear();
+
+    prRefreshScheduler.stop('other-project'); // no-op: not the active project
+
+    expect(mockCancelPendingVerdictRepolls).not.toHaveBeenCalled();
   });
 
   it('switching projects tears down the prior timer and arms the new one', async () => {

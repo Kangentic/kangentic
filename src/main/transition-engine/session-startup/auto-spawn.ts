@@ -6,10 +6,12 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, Swimlane, Task } from '../../../shared/types';
+import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { isShuttingDown } from '../../shutdown-state';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
+import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
 
 /**
@@ -61,7 +63,18 @@ export async function autoSpawnTasks(
       if (entry.autoSpawn === true) laneIdsSomeProfileEnables.add(laneId);
     }
   }
-  const lanesToScan = allLanes.filter((lane) => lane.auto_spawn || laneIdsSomeProfileEnables.has(lane.id));
+  // To Do and Done never get an agent, however a profile wrote auto_spawn - mirrors
+  // auto-spawn-reconcile.ts's guard for the same invariant. Filtered at the lane level
+  // (not per-task below) because a Board Profile can only turn auto_spawn ON for a lane
+  // id, never change what role that lane id carries: applyProfileToLane leaves `role`
+  // untouched by contract (see wire-mappers.ts), so the raw lane's role already decides
+  // this for every task in it, and a todo/done lane can hold hundreds of tasks that would
+  // otherwise be scanned, profile-folded, and session-probed one at a time for nothing.
+  const lanesToScan = allLanes.filter(
+    (lane) =>
+      (lane.auto_spawn || laneIdsSomeProfileEnables.has(lane.id)) &&
+      (lane.role === null || !NEVER_AUTO_SPAWN_ROLES.has(lane.role)),
+  );
   if (lanesToScan.length === 0) {
     done(0);
     return;
@@ -135,7 +148,7 @@ export async function autoSpawnTasks(
       // Guard: CWD must still exist -- fall back to projectPath if worktree was deleted
       if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
         console.log(`[AUTO_SPAWN] Worktree missing for task ${task.id} -- falling back to project path`);
-        taskRepo.update({ id: task.id, worktree_path: null, branch_name: null });
+        await demoteMissingWorktree(taskRepo, task, projectPath);
         cwd = projectPath;
       }
       if (!fs.existsSync(cwd)) {

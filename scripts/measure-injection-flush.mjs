@@ -54,6 +54,12 @@
  *   --out <path>        write the JSON report here
  *   --pattern <regex>   narrow the scan to the file the VERIFIER would read,
  *                       e.g. --agent qwen --pattern "^[0-9a-f-]+\.jsonl$"
+ *   --workspace <dir>   run in this already-trusted directory instead of a fresh
+ *                       temp one (skips Claude Code's workspace trust dialog);
+ *                       never written to or removed. Not a directory a live
+ *                       agent session runs in: the probes then share that
+ *                       session's transcript directory and its writes
+ *                       contaminate the latency (docs/command-injection.md)
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -97,6 +103,22 @@ const patternOverride = readFlag('pattern', null);
 const overridePattern = patternOverride && patternOverride !== true
   ? new RegExp(patternOverride)
   : null;
+
+/**
+ * Run every probe in this existing directory instead of a fresh temp one.
+ *
+ * A fresh directory triggers Claude Code's workspace trust dialog, and since
+ * 2.1.x that dialog parks its cursor on "No, exit". `maybeAnswerPrompt` moves
+ * it and confirms, but accepting trust for a brand-new directory has been
+ * observed to redraw the dialog and end the CLI when the harness itself runs
+ * inside another Claude Code session (2026-09-18). A directory the CLI already
+ * trusts (the checkout you are running from) skips the dialog entirely. The
+ * directory is never written to or removed; the CLI still writes its session
+ * file under its own `~/.claude/projects/<slug>/`, which is where the nonce is
+ * looked for, so the measurement is unchanged.
+ */
+const workspaceFlag = readFlag('workspace', null);
+const workspaceOverride = workspaceFlag && workspaceFlag !== true ? path.resolve(workspaceFlag) : null;
 
 // ---------------------------------------------------------------------------
 // Agent configuration
@@ -418,7 +440,12 @@ async function waitForReady(state, { minBytes = 200, quietMs = 1500, timeoutMs =
     // "settled" and reports a dead process as a ready TUI - manufacturing a
     // false verdict, which is the exact failure this gate exists to prevent.
     if (state.exited) return false;
-    maybeAnswerPrompt(state);
+    // A keystroke into the dialog restarts the quiet window. Without this the
+    // dialog itself satisfies "settled" (it draws once and waits), so the
+    // probe was typed into the dialog in the same poll that answered it, and
+    // the probe's own Enter landed on whichever row the typed letters had
+    // moved the cursor to.
+    if (maybeAnswerPrompt(state)) state.lastDataAt = Date.now();
     const quietFor = Date.now() - state.lastDataAt;
     if (state.totalBytes >= minBytes && quietFor >= quietMs) return true;
     await sleep(100);
@@ -427,26 +454,34 @@ async function waitForReady(state, { minBytes = 200, quietMs = 1500, timeoutMs =
 }
 
 /**
- * Accept the trust / onboarding prompts a fresh temp workspace triggers.
- * Each is answered at most once so a stray Enter cannot submit a probe early.
+ * Accept the trust / onboarding prompt a fresh temp workspace triggers.
+ * Answered at most once so a stray Enter cannot submit a probe early.
+ *
+ * The answer is read off the frame, not assumed. Claude Code 2.1.x parks the
+ * dialog's cursor on "No, exit", so a bare Enter (which older builds accepted
+ * as "yes") ends the CLI and every trial reports "exited before the nonce
+ * appeared". The LAST cursor glyph in the scrollback is the live selection;
+ * earlier frames stay in the buffer after a repaint, so a whole-buffer match
+ * on "No, exit" would keep reading the stale row after the cursor has moved.
  */
+const TRUST_DIALOG_PATTERN = /trust\s*(this|the)\s*(folder|directory)|safety\s*check|do\s*you\s*trust|allow\s*this\s*folder/i;
+
 function maybeAnswerPrompt(state) {
+  if (state.answeredPrompts.has('trust')) return false;
   const recent = stripAnsi(state.scrollback.slice(-6000));
-  const patterns = [
-    /trust\s*(this|the)\s*(folder|directory)/i,
-    /safety\s*check/i,
-    /do\s*you\s*trust/i,
-    /allow\s*this\s*folder/i,
-  ];
-  for (const pattern of patterns) {
-    const key = pattern.source;
-    if (state.answeredPrompts.has(key)) continue;
-    if (pattern.test(recent)) {
-      state.answeredPrompts.add(key);
-      state.pty.write('\r');
-      return;
-    }
+  if (!TRUST_DIALOG_PATTERN.test(recent)) return false;
+  const lastCursor = recent.lastIndexOf('❯');
+  const selectedRow = lastCursor === -1 ? '' : recent.slice(lastCursor, lastCursor + 40);
+  if (/No,?\s*exit/i.test(selectedRow)) {
+    // Move once, then let the next poll read the repainted selection.
+    if (state.answeredPrompts.has('trust-move')) return false;
+    state.answeredPrompts.add('trust-move');
+    state.pty.write('\x1b[B');
+    return true;
   }
+  state.answeredPrompts.add('trust');
+  state.pty.write('\r');
+  return true;
 }
 
 /**
@@ -505,8 +540,10 @@ async function typeSlowly(pty, text, perCharMs = 12) {
 // ---------------------------------------------------------------------------
 
 async function runProbe({ agentName, agent, probeCase, trialIndex }) {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `kng-flush-${agentName}-`));
-  fs.writeFileSync(path.join(workspace, 'README.md'), 'Measurement workspace.\n');
+  // A caller-owned workspace is never created or removed here; see --workspace.
+  const workspace = workspaceOverride ?? fs.mkdtempSync(path.join(os.tmpdir(), `kng-flush-${agentName}-`));
+  const ownsWorkspace = workspaceOverride === null;
+  if (ownsWorkspace) fs.writeFileSync(path.join(workspace, 'README.md'), 'Measurement workspace.\n');
 
   const roots = agent.sessionRootsFromWorkspace
     ? agent.sessionRootsFromWorkspace(workspace)
@@ -525,7 +562,7 @@ async function runProbe({ agentName, agent, probeCase, trialIndex }) {
   try {
     pty = spawnAgent(agent, workspace, env);
   } catch (error) {
-    if (!keepWorkspace) {
+    if (ownsWorkspace && !keepWorkspace) {
       try { fs.rmSync(workspace, { recursive: true, force: true }); } catch { /* ignore */ }
     }
     return {
@@ -670,7 +707,7 @@ async function runProbe({ agentName, agent, probeCase, trialIndex }) {
   } finally {
     try { pty.kill(); } catch { /* already gone */ }
     await sleep(300);
-    if (!keepWorkspace) {
+    if (ownsWorkspace && !keepWorkspace) {
       try { fs.rmSync(workspace, { recursive: true, force: true }); } catch { /* ignore */ }
     } else {
       result.workspace = workspace;

@@ -3,6 +3,7 @@ import type {
   CostSeriesPoint,
   EffortUsageBreakdown,
   ModelUsageBreakdown,
+  SubagentUsageTotals,
   TokenSeriesPoint,
   UsageKpis,
   UsageTimePeriod,
@@ -390,6 +391,8 @@ export function computeKpis(
   totals: UsageWindowTotals,
   groups: GroupedTurnUsageRow[],
   elapsedMs: number,
+  subagentTotals: SubagentUsageTotals[] = [],
+  activeTotals: { activeMs: number; sessionsCovered: number } = { activeMs: 0, sessionsCovered: 0 },
 ): UsageKpis {
   const costKnown = totals.costKnownCount > 0;
 
@@ -397,21 +400,66 @@ export function computeKpis(
   let cacheReadTokens = 0;
   let turnInputTokens = 0;
   let turnOutputTokens = 0;
-  let allocatedCostUsd = 0;
   for (const group of groups) {
     cacheCreationTokens += group.cacheCreationTokens;
     cacheReadTokens += group.cacheReadTokens;
     turnInputTokens += group.inputTokens;
     turnOutputTokens += group.outputTokens;
-    allocatedCostUsd += group.allocatedCostUsd;
   }
   const turnTokens = turnInputTokens + turnOutputTokens;
 
+  // Subagent totals are summed but kept in their OWN fields, never folded into
+  // the four above. Those four (and both chart series) are the main thread by
+  // definition, and their history is only comparable as long as that stays true.
+  let subagentInputTokens = 0;
+  let subagentOutputTokens = 0;
+  let subagentCacheCreationTokens = 0;
+  let subagentCacheReadTokens = 0;
+  let subagentTurnCount = 0;
+  let subagentCount = 0;
+  // A SUBSET of subagentCount, not another addend: a nested subagent's tokens are
+  // already inside the four sums above. Summing it separately would double count
+  // it in any total built from these fields.
+  let subagentNestedCount = 0;
+  for (const row of subagentTotals) {
+    subagentInputTokens += row.inputTokens;
+    subagentOutputTokens += row.outputTokens;
+    subagentCacheCreationTokens += row.cacheCreationTokens;
+    subagentCacheReadTokens += row.cacheReadTokens;
+    subagentTurnCount += row.turnCount;
+    subagentCount += row.subagentCount;
+    subagentNestedCount += row.nestedSubagentCount;
+  }
+
   // Burn rates average over the elapsed window (floored at one minute so a
   // just-started range cannot produce absurd rates).
+  //
+  // Both lines divide by the SAME elapsed hours, and each numerator is the KPI
+  // field its own tile renders, so `rate x range hours` reproduces the tile
+  // above it. That was not true before: the dollar line used
+  // `allocatedCostUsd` (cost spread across turn groups), which covers only the
+  // span the turn ledger reaches - about 29% of lifetime cost on the
+  // dogfooding install - while the Cost tile showed the full ledger. Dividing
+  // one tile by the other implied two different window lengths, 1.6x apart.
+  // `allocatedCostUsd` is still the right input for the per-bucket burn CHART,
+  // which genuinely needs cost attributed to a timestamp; it is wrong for a
+  // headline rate that sits next to a full-range total.
+  //
+  // Token side stays main-thread only, matching the Tokens tile: subagent
+  // tokens have no cost allocation of their own (the session's reported cost
+  // already covers the whole tree), so folding them in would move the token
+  // rate without the dollar rate and the two would stop describing the same
+  // work.
+  //
+  // Gated on having any session in the window rather than on `groups.length`:
+  // a range with real ledger cost but no turn rows (anything predating the
+  // turn ledger) rendered a bare `-` next to a live Cost tile. The gate still
+  // has to exist, or an empty window divides a zero numerator by the 60s floor
+  // and reports a rate for a range with nothing in it.
   const elapsedHours = Math.max(elapsedMs, 60_000) / HOUR_MS;
-  const burnRateTokensPerHour = groups.length > 0 ? turnTokens / elapsedHours : null;
-  const burnRateUsdPerHour = groups.length > 0 && costKnown ? allocatedCostUsd / elapsedHours : null;
+  const hasWindowData = totals.sessionCount > 0;
+  const burnRateTokensPerHour = hasWindowData ? turnTokens / elapsedHours : null;
+  const burnRateUsdPerHour = hasWindowData && costKnown ? totals.totalCostUsd / elapsedHours : null;
 
   return {
     totalCostUsd: totals.totalCostUsd,
@@ -426,13 +474,67 @@ export function computeKpis(
     filesChanged: totals.filesChanged,
     compactionCount: totals.compactionCount,
     totalDurationMs: totals.totalDurationMs,
+    activeMs: activeTotals.activeMs,
+    activeSessionsCovered: activeTotals.sessionsCovered,
     turnInputTokens,
     turnOutputTokens,
     cacheCreationTokens,
     cacheReadTokens,
+    subagentInputTokens,
+    subagentOutputTokens,
+    subagentCacheCreationTokens,
+    subagentCacheReadTokens,
+    subagentTurnCount,
+    subagentCount,
+    subagentNestedCount,
     burnRateTokensPerHour,
     burnRateUsdPerHour,
   };
+}
+
+/**
+ * Merge per-project subagent rollups into one project-agnostic breakdown,
+ * heaviest cache-read first.
+ *
+ * Needed because the SQL groups within ONE project DB; an app-wide scope reads N
+ * of them and the same subagent type appears in each. A null `agentType` is a
+ * real bucket (no sidecar, no inline attribution) and merges with its own kind.
+ */
+export function mergeSubagentTotals(perProject: SubagentUsageTotals[][]): SubagentUsageTotals[] {
+  // Keyed on `string | null` directly rather than on a string sentinel: a Map
+  // takes null as a key, and any sentinel string is one an agent type could
+  // theoretically spell.
+  const byType = new Map<string | null, SubagentUsageTotals>();
+  for (const rows of perProject) {
+    for (const row of rows) {
+      const key = row.agentType;
+      const existing = byType.get(key);
+      if (!existing) {
+        // Copy rather than store the caller's row: the branch below mutates the
+        // stored object in place, and the caller re-reads its own perProject rows.
+        byType.set(key, { ...row });
+        continue;
+      }
+      existing.inputTokens += row.inputTokens;
+      existing.outputTokens += row.outputTokens;
+      existing.cacheCreationTokens += row.cacheCreationTokens;
+      existing.cacheReadTokens += row.cacheReadTokens;
+      existing.turnCount += row.turnCount;
+      existing.subagentCount += row.subagentCount;
+      existing.nestedTurnCount += row.nestedTurnCount;
+      existing.nestedSubagentCount += row.nestedSubagentCount;
+      // Depth is a MAX, not a sum: two projects each two deep are still two deep.
+      // Null means no row recorded a depth, so it loses to any real number.
+      existing.maxSpawnDepth = existing.maxSpawnDepth === null
+        ? row.maxSpawnDepth
+        : row.maxSpawnDepth === null
+          ? existing.maxSpawnDepth
+          : Math.max(existing.maxSpawnDepth, row.maxSpawnDepth);
+    }
+  }
+  return Array.from(byType.values()).sort(
+    (left, right) => right.cacheReadTokens - left.cacheReadTokens || right.outputTokens - left.outputTokens,
+  );
 }
 
 /**

@@ -494,7 +494,7 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
     'kangentic_devtools_event_loop_lag',
     {
       description:
-        'Freeze flight recorder: event-loop lag for the MAIN process AND the RENDERER of the inspected instance. Each report carries the recorded recent stalls (UTC timestamp + duration ms), the worst stall, and the spike count, so a freeze is diagnosed RETROACTIVELY - call this AFTER a user reports lag/freezing to see exactly when and for how long each thread blocked, without having been probing at that instant. The renderer report also carries `recentLongFrames`, which answers WHAT ran rather than only when: each long animation frame lists its heaviest scripts with the source URL and function name that registered them, plus `forcedLayoutMs` (read/write thrash) and a `styleLayoutMs` vs script-time split that says whether the cost was JS, style/layout, or forced reflow. Long frames and lag spikes share a wall-clock stamp, so they line up by timestamp. The main report is always present; the renderer report needs an attached debugger (it reports `unavailable` otherwise), and `recentLongFrames` is `unavailable` where the runtime lacks the long-animation-frame entry type. Dev-only.',
+        'Freeze flight recorder: event-loop lag for the MAIN process AND the RENDERER of the inspected instance. Each report carries the recorded recent stalls (UTC timestamp + duration ms), the worst stall, and the spike count, so a freeze is diagnosed RETROACTIVELY - call this AFTER a user reports lag/freezing to see exactly when and for how long each thread blocked, without having been probing at that instant. The renderer report also carries `recentLongFrames`, which answers WHAT ran rather than only when: each long animation frame lists its heaviest scripts with the source URL and function name that registered them, plus `forcedLayoutMs` (read/write thrash) and a `styleLayoutMs` vs script-time split that says whether the cost was JS, style/layout, or forced reflow. Long frames and lag spikes share a wall-clock stamp, so they line up by timestamp. The main report carries `recentSlowSyncWork`, the same idea for the main process: every synchronous span the known suspects wrap in `timeSyncWork` (the metrics snapshot transaction, the status and events file reads, the embedding writeback, the task list read) that ran 50ms or longer, with its label, so a main spike whose window holds a span is attributed and one with no span points at work that is not wrapped yet. The main report is always present; the renderer report needs an attached debugger (it reports `unavailable` otherwise), and `recentLongFrames` is `unavailable` where the runtime lacks the long-animation-frame entry type. Dev-only.',
       inputSchema: z.object({
         instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
       }),
@@ -522,7 +522,7 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
     'kangentic_devtools_terminal_state',
     {
       description:
-        'Every layer\'s view of each live terminal, joined: the PTY grid main holds (ptyCols/ptyRows, the width the buffered bytes were DRAWN at, plus any stashed/desktop dimensions and whether a post-resize repaint is outstanding), each mounted xterm\'s grid and container geometry (cols/rows, host, viewport clientWidth vs offsetWidth, rendered screen size, wrapped-line count) and which surface hosts it, plus the derived invariants ptyMatchesGrid / colsDrift / gridOverflowPx. Use for any terminal that looks mis-sized, clipped, wrapped, blank, or frozen: a PTY whose width has drifted from the grid showing it cannot self-correct (xterm re-sends dimensions only when its OWN size changes), and that gap is invisible from either process alone. Also reports sessions main knows about that no xterm is mounted for, and the pty-pipeline backpressure stats. Dev-only.',
+        'Every layer\'s view of each live terminal, joined: the PTY grid main holds (ptyCols/ptyRows, the width the buffered bytes were DRAWN at, plus any stashed/desktop dimensions and whether a post-resize repaint is outstanding), each mounted xterm\'s grid and container geometry (cols/rows, host, viewport clientWidth vs offsetWidth, rendered screen size, wrapped-line count) and which surface hosts it, plus the derived invariants ptyMatchesGrid / colsDrift / gridOverflowPx / composedCols / composedMatchesPty. composedCols is the THIRD layer: the width the agent TUI is actually composing rows at, derived from full-width rule runs and ECH spans in its raw byte ring (null for a session not in alt-screen); composedColsSampleCount is how many byte-stream samples corroborate that width. composedMatchesPty false while ptyMatchesGrid is true is the verdict the other invariants structurally cannot reach - every Kangentic layer agrees and the CHILD missed the resize (rows glued together at wrong offsets, or clipped), the spawn-window ConPTY race. Use for any terminal that looks mis-sized, clipped, wrapped, blank, or frozen: a PTY whose width has drifted from the grid showing it cannot self-correct (xterm re-sends dimensions only when its OWN size changes), and that gap is invisible from either process alone. Also reports sessions main knows about that no xterm is mounted for, and the pty-pipeline backpressure stats. Dev-only.',
       inputSchema: z.object({
         instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
       }),
@@ -951,6 +951,29 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
           method: 'POST',
           path: '/drag',
           body: { fromSelector, toSelector, steps },
+          instanceId,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'kangentic_devtools_drop_files',
+    {
+      description:
+        'Drop OS files on an element, the way a drag out of the file manager lands: dispatches dragEnter, dragOver and drop at the centroid of `selector` with the given absolute paths as the drag data. The page receives real File objects backed by those paths (webUtils.getPathForFile resolves them), which no in-page simulation can produce. Use it to verify a file-drop feature end-to-end, e.g. dropping an image onto a terminal. Paths must exist. Selector accepts CSS, `text="..."`, or `aria="..."`. Dev-only.',
+      inputSchema: z.object({
+        selector: z.string().describe('CSS selector of the drop target.'),
+        paths: z.array(z.string()).min(1).describe('Absolute paths of the files to drop, in order.'),
+        instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ selector, paths, instanceId }) =>
+      toolResult(
+        await callBridge({
+          method: 'POST',
+          path: '/drop-files',
+          body: { selector, paths },
           instanceId,
         }),
       ),

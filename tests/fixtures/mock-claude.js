@@ -14,6 +14,14 @@
  *   MOCK_CLAUDE_PROMPT:<text>  → prompt/task text delivered
  *   MOCK_CLAUDE_NO_PROMPT      → no session-id and no prompt
  *   MOCK_CLAUDE_SETTINGS:<path> → settings file path from --settings
+ *   MOCK_CLAUDE_PERMISSION_MODE:<mode> → value passed via --permission-mode
+ *
+ * Every marker line is printed by this script itself, never left to the
+ * shell's echo of the invoked command line: a shell/ConPTY preamble or
+ * screen clear can scroll or wipe an echoed command line before a test
+ * observes it, so a test that needs to prove a specific flag was passed
+ * must assert on a labeled marker this file prints, not on the raw argv
+ * text appearing anywhere in scrollback.
  *
  * Stays alive for a few seconds to simulate a running session,
  * then exits cleanly.
@@ -51,6 +59,7 @@ let sessionId = null;
 let resumed = false;
 let prompt = null;
 let settingsPath = null;
+let permissionMode = null;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--session-id' && i + 1 < args.length) {
@@ -64,7 +73,8 @@ for (let i = 0; i < args.length; i++) {
   } else if (args[i] === '--settings' && i + 1 < args.length) {
     settingsPath = args[i + 1];
     i++; // skip value
-  } else if (args[i] === '--permission-mode') {
+  } else if (args[i] === '--permission-mode' && i + 1 < args.length) {
+    permissionMode = args[i + 1];
     i++; // skip value
   } else if (args[i] === '--dangerously-skip-permissions' || args[i] === '--print') {
     // flag without value, skip
@@ -81,6 +91,10 @@ for (let i = 0; i < args.length; i++) {
 
 if (settingsPath) {
   console.log('MOCK_CLAUDE_SETTINGS:' + settingsPath);
+}
+
+if (permissionMode) {
+  console.log('MOCK_CLAUDE_PERMISSION_MODE:' + permissionMode);
 }
 
 if (sessionId) {

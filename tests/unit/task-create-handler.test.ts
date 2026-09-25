@@ -136,6 +136,21 @@ vi.mock('../../src/main/ipc/handlers/task-move', () => ({
   handleTaskMove: vi.fn(async () => {}),
 }));
 
+const mockTrackEvent = vi.fn();
+vi.mock('../../src/main/analytics/analytics', () => ({
+  trackEvent: (...args: unknown[]) => mockTrackEvent(...args),
+}));
+
+const mockTrackMilestone = vi.fn();
+vi.mock('../../src/main/analytics/usage', () => ({
+  trackMilestone: (...args: unknown[]) => mockTrackMilestone(...args),
+}));
+
+const mockReportHandledError = vi.fn();
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
+}));
+
 // ---------------------------------------------------------------------------
 // Capture handlers registered by ipcMain.handle
 // ---------------------------------------------------------------------------
@@ -148,6 +163,7 @@ const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
 import { registerTaskCrudHandlers } from '../../src/main/ipc/handlers/task-crud';
 import { IPC } from '../../src/shared/ipc-channels';
+import { getInFlightSpawnProgress, __resetSpawnProgressForTest } from '../../src/main/transition-engine/spawn-progress';
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -277,7 +293,7 @@ function createMockSwimlaneRepo(swimlanes: MockSwimlane[]): MockSwimlaneRepo {
 
 function createMockEngine(): MockEngine {
   return {
-    executeTransition: vi.fn(async () => {}),
+    executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
     resumeSuspendedSession: vi.fn(async () => {}),
   };
 }
@@ -332,6 +348,7 @@ describe('TASK_CREATE handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedHandlers.clear();
+    __resetSpawnProgressForTest();
 
     targetLane = createMockSwimlane('lane-doing', { auto_spawn: true });
     task = createMockTask('task-new', { swimlane_id: 'lane-doing' });
@@ -382,6 +399,27 @@ describe('TASK_CREATE handler', () => {
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
     expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it('fires trackMilestone("first_task") on every create, regardless of auto_spawn', async () => {
+    const noSpawnLane = createMockSwimlane('lane-backlog', { auto_spawn: false });
+    swimlaneRepo = createMockSwimlaneRepo([noSpawnLane]);
+    const noSpawnTask = createMockTask('task-no-spawn', { swimlane_id: 'lane-backlog' });
+    taskRepo = createMockTaskRepo(noSpawnTask);
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: taskRepo,
+      swimlanes: swimlaneRepo,
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: attachmentRepo,
+    });
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-backlog',
+      title: 'No spawn task',
+    });
+
+    expect(mockTrackMilestone).toHaveBeenCalledWith('first_task');
   });
 
   it('skips lock block when currentProjectPath is null', async () => {
@@ -536,6 +574,83 @@ describe('TASK_CREATE handler', () => {
     });
 
     expect(result).toMatchObject({ id: 'task-new' });
+  });
+
+  it('tracks spawn_failed and reports the handled error, tagged with the resolved agent, when spawnAgent rejects', async () => {
+    const spawnError = new Error('CLI not found');
+    mockSpawnAgent.mockRejectedValueOnce(spawnError);
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Spawn failure task',
+    });
+
+    // The resolved agent lives inside spawnAgent and is never returned, so
+    // the handler approximates it from the override chain
+    // (task.agent_override ?? toLane.agent_override ?? 'default'); neither
+    // fixture sets an override here, so 'default' is the expected tag.
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'default', reason: 'create_spawn' });
+    // reportHandledError's agent tag is a just-applied fix (pinned here so a
+    // regression to the untagged two-arg call form is caught): the SAME
+    // resolved agent that trackEvent above receives.
+    expect(mockReportHandledError).toHaveBeenCalledWith(spawnError, {
+      source: 'spawn',
+      reason: 'create_spawn',
+      agent: 'default',
+    });
+  });
+
+  // =========================================================================
+  // Spawn progress wiring (born-into-a-column spawns used to be silent)
+  // =========================================================================
+
+  it('threads onProgress + projectId into both git helpers and pushes their phases to the card', async () => {
+    // The mocked helper stands in for the real one emitting 'fetching'; the
+    // handler's createProgressCallback must resolve it and push over IPC.
+    mockEnsureTaskWorktree.mockImplementation(async (
+      _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
+      options?: { onProgress?: (phase: string) => void },
+    ) => {
+      options?.onProgress?.('fetching');
+      return null;
+    });
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Progress task',
+    });
+
+    const worktreeOptions = mockEnsureTaskWorktree.mock.calls[0][4] as { onProgress?: unknown; projectId?: unknown };
+    expect(typeof worktreeOptions.onProgress).toBe('function');
+    expect(worktreeOptions.projectId).toBe('proj-123');
+    const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { onProgress?: unknown; projectId?: unknown };
+    expect(typeof checkoutOptions.onProgress).toBe('function');
+    expect(checkoutOptions.projectId).toBe('proj-123');
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.TASK_SPAWN_PROGRESS, 'task-new', 'Fetching latest...',
+    );
+    // The finally cleared the label, so an HMR reconcile after the create
+    // cannot strand the card on a stale phase.
+    expect(getInFlightSpawnProgress()).toEqual({});
+  });
+
+  it('clears the in-flight label even when a git step fails', async () => {
+    mockEnsureTaskWorktree.mockImplementation(async (
+      _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
+      options?: { onProgress?: (phase: string) => void },
+    ) => {
+      options?.onProgress?.('creating-worktree');
+      throw new Error('git worktree add failed');
+    });
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Progress cleanup task',
+    });
+
+    // The notifySpawnBlocked early-return still flows through the finally.
+    expect(getInFlightSpawnProgress()).toEqual({});
   });
 
   // =========================================================================

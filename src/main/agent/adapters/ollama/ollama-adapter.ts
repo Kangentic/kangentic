@@ -106,8 +106,9 @@ export class OllamaAdapter implements AgentAdapter {
       // beginning with a dash (a markdown bullet, a dashed list item) would be
       // misread as a flag. Push the `--` end-of-options marker first so the
       // prompt is always taken as the positional argument (matches the Warp
-      // adapter).
-      parts.push('--', quoteArg(safePrompt, shell, { multiline: true }));
+      // adapter). quoteArg quotes the marker for PowerShell hosts, whose
+      // binder would otherwise consume it before a .ps1 shim sees $args.
+      parts.push(quoteArg('--', shell), quoteArg(safePrompt, shell, { multiline: true }));
     }
 
     return parts.join(' ');

@@ -21,12 +21,58 @@ type DivAttrs = Omit<React.HTMLAttributes<HTMLDivElement>, keyof PillOwnProps>;
 
 type PillProps = PillOwnProps & (ButtonAttrs | SpanAttrs | DivAttrs);
 
+// Each size carries the height its text line box used to give it (line box +
+// vertical padding), because `trimTextChildren` below shrinks a text child to
+// its cap height and a pill must not shrink with it.
 const SIZE_CLASSES: Record<PillSize, string> = {
-  xs: 'gap-1.5 px-2.5 py-[3px] text-xs',
-  sm: 'gap-1 min-w-[32px] px-2.5 py-1 text-xs',
-  md: 'gap-1.5 min-w-[40px] px-3 py-1.5 text-xs',
-  lg: 'gap-2 min-w-[48px] px-4 py-2 text-sm',
+  xs: 'gap-1.5 min-h-[22px] px-2.5 py-[3px] text-xs',
+  sm: 'gap-1 min-h-6 min-w-[32px] px-2.5 py-1 text-xs',
+  md: 'gap-1.5 min-h-7 min-w-[40px] px-3 py-1.5 text-xs',
+  lg: 'gap-2 min-h-9 min-w-[48px] px-4 py-2 text-sm',
 };
+
+/**
+ * Trims a text run's line box to cap height and baseline, so the pill's
+ * `items-center` centers the ink rather than the font's content area. A 12px
+ * font's 16px line box centers that content area, and every UI font puts more
+ * of it below the baseline than above the caps, so pill text sat ~2px low and
+ * read as bottom-aligned beside an icon or a remove button. Metric-driven, so
+ * it holds across platforms and fonts where a fixed nudge would not; a browser
+ * without `text-box` simply keeps the old placement.
+ */
+const PILL_TEXT_CLASS = '[text-box:trim-both_cap_alphabetic]';
+
+/**
+ * Wrap bare text children in the trimmed span. Consecutive text runs merge into
+ * ONE span, so `{count} items` does not become two flex items with the pill's
+ * gap between them; whitespace-only runs are passed through, since a flex
+ * container drops them anyway. Element children are untouched: a caller that
+ * wraps its own text (a `truncate` span) keeps its own metrics.
+ */
+function trimTextChildren(children: React.ReactNode): React.ReactNode {
+  const output: React.ReactNode[] = [];
+  let textRun: string[] = [];
+  const flush = () => {
+    if (textRun.length === 0) return;
+    const text = textRun.join('');
+    textRun = [];
+    if (text.trim() === '') {
+      output.push(text);
+      return;
+    }
+    output.push(<span key={`text-${output.length}`} className={PILL_TEXT_CLASS}>{text}</span>);
+  };
+  for (const child of React.Children.toArray(children)) {
+    if (typeof child === 'string' || typeof child === 'number') {
+      textRun.push(String(child));
+    } else {
+      flush();
+      output.push(child);
+    }
+  }
+  flush();
+  return output;
+}
 
 const SHAPE_CLASSES: Record<PillShape, string> = {
   round: 'rounded-full',
@@ -56,10 +102,30 @@ export const Pill = React.memo(React.forwardRef<HTMLElement, PillProps>(function
     elementProps.type = 'button';
   }
 
-  return React.createElement(Element, elementProps, children);
+  return React.createElement(Element, elementProps, trimTextChildren(children));
 }));
 
-/** Renders a row of label pills with configured colors. Muted background, colored text. */
+/**
+ * The tint a pill that carries a user-chosen colour is painted with, mixed from the pill's own
+ * `color` so it follows whatever hex the user set without any of it being computed in JS. Every
+ * surface that renders such a pill shares these, so one label cannot look like two different
+ * things depending on whether it is on a card, in a table, or in the editor.
+ *
+ * A flat 60 percent wash of a surface token does not work here, because what it reads as depends
+ * on the token behind it: on a card it measured 1.22, and in the dialog it was 60 percent of the
+ * very token the field is painted with, so the pill vanished entirely. A tint mixed from the
+ * pill's own colour has no such dependency.
+ */
+export const TINTED_PILL_FILL = 'color-mix(in srgb, currentColor 14%, transparent)';
+export const TINTED_PILL_EDGE = 'color-mix(in srgb, currentColor 35%, transparent)';
+
+/**
+ * A label pill is tinted from its own colour: a wash of it behind, a stronger line around it, the
+ * colour itself as text. A configured label used to get a flat `surface-hover/60` behind coloured
+ * text, which measured 1.22 against the card it sits on, so the pill was invisible and the label
+ * read as a stray coloured word. An UNCONFIGURED label keeps the flat treatment, because it has no
+ * colour to tint with and its brighter muted text carries the shape on its own.
+ */
 export const LabelPills = React.memo(function LabelPills({ labels, labelColors }: { labels: string[]; labelColors: Record<string, string> }) {
   if (labels.length === 0) return null;
   return (
@@ -70,8 +136,8 @@ export const LabelPills = React.memo(function LabelPills({ labels, labelColors }
           <Pill
             key={label}
             size="sm"
-            className={color ? 'bg-surface-hover/60 font-medium' : 'bg-surface-hover/60 text-fg-muted'}
-            style={color ? { color } : undefined}
+            className={color ? 'font-medium border' : 'bg-surface-hover/60 text-fg-muted'}
+            style={color ? { color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE } : undefined}
           >
             {label}
           </Pill>

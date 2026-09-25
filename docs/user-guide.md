@@ -26,19 +26,18 @@ New projects start with seven columns:
 | **Merge** | (auto) | Agent keeps running. Add a message telling it how to ship the work (e.g. merge a verified PR and pull back). |
 | **Done** | done | Suspends the session (preserving context) and archives the task. |
 
-None of the default columns carries a message or a description: the defaults are names, icons,
-and colors only, since what a column should tell its agent depends on your repo and agent. Both
-fields are yours to fill in from Board manager.
+None of the default columns carries automations or a description: the defaults are names, icons,
+and colors only, since what a column should do when a task arrives depends on your repo and agent.
+Both are yours to fill in from the Column Manager.
 Message examples in this guide, like `/code-review`, come from Kangentic's own development
-board, not from the defaults. ("Message to agent" is the column editor's label for what
-`kangentic.json` and the database store as `autoCommand` / `auto_command`; this guide uses
-both terms interchangeably.)
+board, not from the defaults. A column's message to its agent is one kind of automation, a
+**Send message to agent** row; see [Automations](#automations).
 
 ## Task Lifecycle
 
 ### Create a Task
 
-Click the **+** button on any column header or use the "New Task" button. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
+Click the **+** button on any column header, or **New Task** in the backlog toolbar. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
 Pasted screenshots are capped at a 2000px long edge, which bounds a multi-monitor grab without costing the detail an agent needs to read small text. Oversized pastes are re-encoded as WebP, stepping quality down until each image lands under a ~1.5MB target, so a large grab is not rejected by the API. Small pastes (under 500KB), GIFs, SVGs, and PNGs already inside the cap are attached as-is.
 
@@ -58,12 +57,13 @@ because one varies settings per column while the other pins them for the task's 
 **Board Profiles** are the answer to "I want Opus xhigh for Planning but Sonnet high for Merge."
 A profile is a named alternate set of per-column settings, so a heavy task and a light task can
 ride the same board at different tiers without either user changing the shared column config.
-Profiles are created and edited in **Edit Columns** (the Board Manager), where selecting one
+Profiles are created and edited in the **Column Manager**, where selecting one
 switches the column editors to that profile's values; column structure (which columns exist, their
-names and order) is shared across all profiles and is locked while a profile is selected. Profiles
-are saved to `kangentic.json`, so they reach teammates through git.
+names and order) is shared across all profiles and is locked while a profile is selected. So are
+automations: a column's list is the same under every profile, and the list is read-only while one
+is selected. Profiles are saved to `kangentic.json`, so they reach teammates through git.
 
-The pencil button beside the Profile dropdown opens Edit Columns, which is the only place profiles
+The pencil button beside the Profile dropdown opens the Column Manager, which is the only place profiles
 are authored - so creating your first one and retuning an existing one are the same trip. Until a
 board has any, the dropdown shows **Default**, disabled: the concept stays visible without adding a
 second creation path to keep in sync.
@@ -82,11 +82,13 @@ carries its own override. Changing the Agent resets Model + Effort because the p
 valid for the previous agent's capability matrix.
 
 You can also choose Agent Override and pick nothing at all. Each field then shows, in the muted
-placeholder weight, the value it resolves to today, and keeps resolving live until the task spawns
-for the first time - at which point all four lock to the values the dialog was showing. That is the
-point of the branch: "whatever this task would run right now, pin exactly that." Because it stores
-no pins, the choice itself is what is saved, so the branch is still selected when you reopen the
-task.
+placeholder weight, the value it resolves to today, and keeps resolving live while the task sits in
+To Do. The moment it leaves To Do for a spawn column - or spawns for the first time ever, whichever
+comes first - all four lock to the values the dialog was showing. That is the point of the branch:
+"whatever this task would run right now, pin exactly that." Because it stores no pins, the choice
+itself is what is saved, so the branch is still selected when you reopen the task. Moving a pinned
+task back to To Do does not erase the pins it already carries, but it does re-arm the lock: clear a
+field there and the next move out pins it again to whatever the dialog was showing at that point.
 
 Agents can read and edit Board Profiles too, including across projects, which is the practical way
 to keep them in sync as models change ("update every profile's Opus 4.8 to Opus 5", "copy this
@@ -101,15 +103,15 @@ When an agent is already running, the same Model / Effort pills appear in the li
 
 Drag a task from To Do to any active column (Planning, Executing, etc.). Kangentic will:
 
-1. Create a git worktree for the task (if worktrees are enabled)
+1. Create a git worktree for the task (if worktrees are enabled). Otherwise the agent runs in the project folder, and the task detail says so - see [Worktrees](#worktrees)
 2. Spawn an agent CLI session with the task title and description as the prompt
 3. The task card shows a spinner while the agent is thinking
 
 A move out of To Do is the only kind of move that sends the task itself to the agent: the title,
 description, and any attachment paths become the opening prompt (the seeded template
 `{{task_xml}}{{attachments}}`). A move between two active columns resumes the same
-conversation - the description is not sent again, and the destination column's **Message to
-agent** (`auto_command`), if it has one, is the only new instruction the agent receives.
+conversation - the description is not sent again, and the destination column's **Send message to
+agent** automation, if it has one, is the only new instruction the agent receives.
 Moving a task back to To Do kills its session, so moving it out again starts a fresh
 conversation and sends the task once more.
 
@@ -124,15 +126,18 @@ conversation and sends the task once more.
   - "Initializing..." or "Resuming..." during session startup
   - "Queued..." when waiting for a concurrency slot
   - "Paused" when manually suspended
-- **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that triggers an auto_command), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the auto_command name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
+  - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR Integration](pr-integration.md#merge-readiness) for what each value promises and which settings change it
+- **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that runs the destination's automations), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the running automation's name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
 ### Move Between Active Columns
 
-Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has an `auto_command` configured (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (a permission-mode change, or a model/effort change the agent cannot swap live); in that case the `auto_command` rides along as the resume prompt instead.
+Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has a **Send message to agent** automation (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (a permission-mode change, or a model/effort change the agent cannot swap live); in that case the message rides along as the resume prompt instead. The source column's exit automations run first, while its session is still attached, and the destination's remaining enter automations run after the move lands.
 
 The agent keeps its conversation across these moves; the message is the only new input it sees. A new project has no messages configured, so by default these moves simply carry the session along.
 
 Each column chooses WHEN its message arrives via **Message timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes.
+
+**From the keyboard.** Tab to a card, press Space to pick it up, move it with the arrow keys, and press Space again to drop it; Escape puts it back. The pickup only arms from a Tab-placed focus: a card you clicked or dragged with the mouse stays put on Space and Enter, and a picked-up card is released the moment you click anywhere or focus lands in a terminal. The same keys reorder columns (from the grip in the column header), backlog rows, Column Manager rows, priorities, and shortcuts.
 
 ### Complete a Task
 
@@ -178,11 +183,13 @@ The leftmost tab shows an activity log - structured events from all sessions. Th
 
 ### Clipboard Paste
 
-Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary file, capped at a 2000px long edge so a 4K or 5K grab does not land on disk at full size; the agent then reliably reads it as a vision input, since a bare file path alone is not recognized as an image by most CLIs. The cap costs no detail - it sits at the point above which the extra pixels are discarded before an agent ever sees them. Saved pastes are pruned by age and count, so the temp directory no longer grows for the life of the install. Claude Code receives an explicit "Read this image: ..." instruction pointing at the saved file (this is more reliable than the CLI's own clipboard reader, which can silently miss a Windows Snipping Tool image); other agents receive the bare file path today. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).
+Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary PNG, capped at a 2000px long edge so a 4K or 5K grab does not land on disk at full size. The cap costs no detail - it sits at the point above which the extra pixels are discarded before an agent ever sees them. Saved pastes are pruned by age and count, so the temp directory no longer grows for the life of the install. The saved file's path is then pasted into the terminal the way a native terminal delivers a dropped file: as a bracketed paste when the program in the terminal asked for one, as plain text otherwise. With Claude Code in the foreground, the pasted path becomes an `[Image #1]` chip and the image lands in your next message directly, with no `Read` tool call and no extra model round trip; Claude still knows the file's path on disk. Kangentic's own capture is more reliable than the CLI's clipboard reader, which can silently miss a Windows Snipping Tool image. Gemini CLI and OpenCode attach the pasted capture the same way. Agents that do not attach from a pasted path receive the quoted path as text. At a plain shell prompt the quoted path is inserted as text and nothing runs. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).
 
 ### File Drop to Terminal
 
-Drag files from your file manager onto the terminal to insert their file paths into the active session. An image file (PNG, JPEG, GIF, WebP, BMP, SVG) is inserted the same way as a pasted image (Claude Code gets an explicit "Read this image: ..." reference); any other file is inserted as its bare file path. Paths containing spaces are automatically quoted. Multiple files are inserted as a space-separated list. A visual overlay appears when files are dragged over the terminal area.
+Drag files from your file manager onto the terminal to insert their file paths into the active session. Every dropped path is delivered as a paste, the same way a native terminal delivers a drop. With Claude Code in the foreground, a PNG, JPEG, GIF, or WebP file becomes an `[Image #N]` chip, one per file, and the images land in your next message directly. Gemini CLI and OpenCode attach PNG, JPEG, and GIF drops the same way. An image in a format the agent does not attach from a path (a BMP, an ICO) is converted to a PNG copy first, saved next to the clipboard captures, and that copy is what gets pasted, so it attaches too. An SVG, or a file whose bytes are not an image, gets an explicit "Read this image: ..." instruction under Claude Code (Claude reads SVG markup with its Read tool) and the bare path under other agents. Any other file is inserted as its bare file path. Paths containing spaces are automatically quoted. Dropping several files inserts them separated by spaces. A visual overlay appears when files are dragged over the terminal area.
+
+Two shell-specific limits apply to a dropped or pasted image on Windows. Under Git Bash the path is converted to `/c/...`, which Claude Code (a Windows process) cannot open, so the image arrives as text; WSL's `/mnt/c/...` form reads fine. Under a Unix-style shell a file name containing an apostrophe is quoted with `'\''`, which the path scan cannot undo, so that file also arrives as text.
 
 ### Resize
 
@@ -205,9 +212,10 @@ Click a task card to open the detail dialog. From here you can:
 - Run shortcuts from the header bar (configurable pills that launch external tools)
 - Open the **Commands & Skills** popover to browse and run Claude Code commands (`.claude/commands/`) and skills (`.claude/skills/`) from the project directory. Search by name, navigate with arrow keys, press Enter to invoke.
 - Open the task's transcript in the read-only [conversation viewer](#the-conversation-viewer) via the **View conversation** pill (speech-bubble icon). Muted until the task has session history, live or historical.
+- See the **pull request pill** in the header once a PR is linked, carrying its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). `ready` means clicking Merge right now would succeed, which is a stronger claim than "no conflicts". The same pill appears on the task card. See [PR Integration](pr-integration.md#merge-readiness) for what each value promises and which Git settings change it.
 - Access the kebab menu (three-dot icon) for additional actions:
   - **Edit** - switch to edit mode for title and description
-  - **Open folder** - open the worktree or project directory in your file manager
+  - **Open worktree** / **Open project folder** - open the task's directory in your file manager; the label names which one it is
   - **View conversation** - same as the header pill
   - **View PR** - open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_create_task` / `kangentic_update_task` MCP tools (any platform), or manually through the PR URL field in edit mode. Those are the only ways to link a PR: writing a PR URL into the task description does not link it, so you can cite another task's PR as background without it being mistaken for this task's own. Also shown as a pill in the header bar and a clickable badge on the task card.
   - **Commands & Skills** - submenu of available Claude Code commands and skills (same as the header popover)
@@ -220,17 +228,25 @@ Click a task card to open the detail dialog. From here you can:
 
 ### Changes Panel
 
-The Changes tab in the task detail dialog is a commit-history browser stacked vertically: a commit-history region on top, and a detail pane (file tree + diff) below, split by a resizable divider.
+The Changes tab in the task detail dialog is a read-only review surface split horizontally: a left rail (the changed-file list, with a collapsible **History** section pinned at its bottom) and the diff pane on the right, divided by a resizable divider. The rail sizes itself proportionally, so expanding the panel widens filenames instead of leaving a narrow rail stranded in a wide window; drag the divider to override that, and double-click it to go back to the default.
 
-The history region is a **pinned "Uncommitted changes" row** above the branch's commit graph (a visual DAG: commit nodes down a vertical axis, lane columns for parallel branches, and edges to each commit's parents). Each commit row shows the short SHA, subject, author, and relative time; the branch tip is marked `HEAD`, the fork point is labelled with the base branch, and a linked pull request's head commit is tagged with its PR number. The graph reads git directly (no session required), refreshes live as you commit or the branch's refs change, and is capped at the most recent 200 commits with a note when older commits are trimmed.
+The rail's **History** section is collapsed by default - its header row stays visible with a live commit count, so history is one click away without spending vertical space on it. Expanding it reveals a **pinned "Uncommitted changes" row** above the branch's commit graph (a visual DAG: commit nodes down a vertical axis, lane columns for parallel branches, and edges to each commit's parents). Each commit row shows the short SHA, subject, author, and relative time; the branch tip is marked `HEAD`, and the base branch and a linked pull request's head commit are marked with tone dots (hover for the full label). The graph reads git directly (no session required), refreshes live as you commit or the branch's refs change, and is capped at the most recent 200 commits with a note when older commits are trimmed. A history with several parallel lanes is cramped at rail width; pop the whole panel out into its own window to read it comfortably.
 
-**Uncommitted changes** is selected by default and shows the branch-wide diff: the file tree on the left lists changed files with insertion/deletion counts, a scope selector (working / staged / branch) picks which changes to diff, and a base-branch label shows whether the branch diverged from the default base or a custom one. Click a file to view a side-by-side or inline diff on the right. Toggle between split and inline view modes using the button in the toolbar.
+**Uncommitted changes** is selected by default and shows the branch-wide diff: the rail lists changed files with insertion/deletion counts in an aligned column and a checkbox to mark each one **viewed** (a viewed row dims, and the header keeps a running viewed/total count with a progress fill under it), a scope selector (working / staged / branch) picks which changes to diff, and a base-branch label shows whether the branch diverged from the default base or a custom one. Sort the list by name, status, size, or extension from the sort menu, and switch between the tree and a flat list; sorting a flat list by status groups it under status headings. Click a file to view a side-by-side or inline diff on the right. Toggle between split and inline view modes using the button in the toolbar. When there is nothing to review, the diff pane says so and names the scope it searched, so an empty **Working** view reads as "No uncommitted changes" rather than looking broken next to a History section full of commits.
 
-**Selecting a commit** in the history region scopes the detail pane to that commit's own diff (`<oid>^..<oid>`) instead - a compact header identifies the commit, with a back button that returns to Uncommitted changes.
+**Selecting a commit** in the History section scopes the detail pane to that commit's own diff (`<oid>^..<oid>`) instead - a compact header at the top of the rail identifies the commit, with a back button that returns to Uncommitted changes.
 
-Right-click a file in the tree for **View history**, a popover listing the commits that touched that file (`git log --follow`); selecting one jumps the detail pane to that commit. The diff toolbar also has a **blame** toggle (off by default, per file) that annotates each line of the modified editor with its short hash and author via a left-gutter column, with the full hash/author/date on hover; blame is only available for the Uncommitted detail (it reflects the file's current content, so it doesn't apply while browsing a historical commit).
+Right-click a file in the tree for **View history**, a popover listing the commits that touched that file (`git log --follow`); selecting one jumps the detail pane to that commit.
 
-The panel persists its expanded/collapsed state, selected file, selected commit, and divider positions across dialog reopens.
+The diff toolbar's **View options** menu collects the rendering choices as named, checkable items rather than icons you have to hover to identify: ignore whitespace, collapse unchanged regions, wrap long lines, and render inline when the pane is narrow. All four are app-wide preferences shared with **Settings > Changes**, and the menu's **Open settings** item jumps straight there. The same menu carries the **blame** toggle (off by default, per file, never remembered), which annotates each line of the modified editor with its short hash and author via a left-gutter column, with the full hash/author/date on hover. Blame reflects the file's current working-tree content, so it is unavailable while browsing a historical commit and in the **Staged** scope, and for binary or deleted files, which have no current content to annotate. The menu stays reachable even with no file selected, so you can set up how diffs render before there is anything to review.
+
+**Double-click a file** (or pick **Open in new window** from its right-click menu) to detach that one file's diff into its own OS window - read it full-screen or on a second monitor, and open several files side by side to compare them (one window per file; double-clicking the same file again focuses its existing window). The window opens maximized by default; un-maximize for a floating window, and once you resize, move, or maximize one, that becomes how every later diff window opens. Up to 8 file windows can be open at once; opening a 9th shows a toast asking you to close one first. The window is read-only, follows your diff view options (split/inline, whitespace, collapse-unchanged, wrap long lines, inline-when-narrow), live-updates as the file changes, shows an empty state if the change is reverted while it is open, and closes with its own window controls or **Escape**. Available in every file list (Working / Staged / Branch and a commit's files) except the Command Terminal's Changes view, which has no task to scope the window to.
+
+The panel persists its expanded/collapsed state, selected file, selected commit, the diff scope, which files you have marked viewed, whether the rail's History section is expanded, and the divider positions across dialog reopens. Those are per-task; the View options above are app-wide.
+
+Each file also remembers where you had scrolled it. Open a file for the first time and it opens centred on its first change; leave it and come back and it returns to where you left off. That memory is per task and per diff scope, and it is held in memory rather than in the database, so it lasts as long as the app is running and a restart puts every file back on its first change.
+
+The whole panel can also detach into its own OS window - click the pop-out icon in its header - not just a single file's diff. Unlike the properties above, this is not preserved through a close: while the window is open the header pill still reads **Hide changes**, but closing the window leaves the panel closed instead of restoring it inline; click **Show changes** again to reopen it.
 
 The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits.
 
@@ -238,9 +254,11 @@ When the dialog is open, it claims the terminal session and the bottom panel dro
 
 ### Browser Pane
 
-Tasks can host an embedded browser inside the task detail dialog. Use it to preview your dev server, capture screenshots with annotations, and submit framed prompts back to the agent without leaving Kangentic. Each worktree gets its own persistent webview partition (cookie jar), so two tasks logged into dev servers on the same localhost host don't clobber each other's sessions; tasks without a worktree share a single fallback jar.
+Tasks can host an embedded browser inside the task detail dialog. Use it to preview your dev server, capture screenshots with annotations, and submit framed prompts back to the agent without leaving Kangentic. Each task gets its own persistent webview partition (cookie jar), so two tasks logged into dev servers on the same localhost host don't clobber each other's sessions. Non-localhost logins are shared: signing into an identity provider (Google, GitHub, your SSO) in one task's pane carries to the project's other tasks through a per-project identity jar, so you sign in once per project rather than once per task. Holding two different accounts at the same provider across tasks at the same time is unsupported; the Clear Browser Data action wipes every jar, identity included.
 
 Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools (navigate, screenshot, DOM queries, click, type, eval), governed by the [Agent Browser](#agent-browser) settings tab. An agent can also open and close its own task's pane rather than waiting for you to do it, which means it may open that task's detail window on its own if none is open.
+
+**Hiding the pane is not the same as closing it.** The Browser pill only hides: the page stays loaded so you get it back exactly as you left it, which also means the agent driving it is never interrupted by you reclaiming the space. Closing the task's window while its agent is still running keeps it the same way. A loaded page costs real memory (roughly 120 MB, more for a heavy app), so when you are genuinely finished with a task's browser, use **Close browser** in the pane's toolbar, or the same item in the task menu when the pane is hidden. That ends the page and frees the memory. The task's URL is remembered either way, so showing the pane again reopens the same address on a fresh page. While a task's browser is loaded, its Browser pill shows a green dot and a green globe appears on the task's card.
 
 | Action | Shortcut |
 |--------|----------|
@@ -248,14 +266,20 @@ Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools
 | Zoom out | **Ctrl+-** (or **Ctrl+wheel down** inside the page) |
 | Reset zoom to 100% | **Ctrl+0** |
 | Reload page | **F5** or **Ctrl+R** (outside the embedded page) |
+| Send the capture to the agent | **Enter** (with the note field focused) |
 
 Zoom snaps to a Chrome-compatible ladder (25%, 33%, 50%, 67%, 75%, 80%, 90%, 100%, 110%, 125%, 150%, ... up to 500%). Ctrl+wheel zoom inside the webview uses a smoother multiplicative step but stays clamped to the same range. The toolbar shows a zoom pill with the current factor, plus dedicated zoom-out / reset / zoom-in buttons.
 
-Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else.
+Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else. Send is the exception. Its handler is bound on the note field itself rather than on the pane-scoped listener, so Enter sends only while that field has focus.
 
 ## Backlog
 
 The Backlog is a staging area for tasks before they reach the board. Switch between **Board** and **Backlog** views using the tabs at the top.
+
+Both views share one toolbar row, and it adapts to the space it has. As the window narrows or the
+sidebar widens, its controls drop their text and become icons in the same positions, keeping the
+label as a tooltip. Nothing is hidden and nothing moves, so every control named below is still
+where this guide says it is, just narrower. At the smallest window size the whole row is icons.
 
 ### Creating Items
 
@@ -292,7 +316,7 @@ When multiple items are selected and you right-click one of them, the context me
 
 ### Drag to Reorder
 
-Drag rows by the grip handle on the left to manually reorder items. Drag-to-reorder is available when no column sort is active. When you sort by a column header (priority, title, created date), manual reorder is disabled until the sort is cleared.
+Drag rows by the grip handle on the left to manually reorder items, or Tab to the grip and use Space and the arrow keys. Drag-to-reorder is available when no column sort is active. When you sort by a column header (priority, title, created date), manual reorder is disabled until the sort is cleared.
 
 ### Promoting to the Board
 
@@ -325,6 +349,15 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 3. Use the "Imported" toggle to hide already-imported items (on by default)
 4. Click anywhere on a row to select it (or use the checkbox)
 5. Click **Import (N)** to pull selected items into the backlog
+
+The dialog opens from a per-project cache of the source's items, so the list paints at once, and a
+"Syncing..." line at the bottom shows while it fetches only the items changed since the last sync in
+the background. The cache survives an app restart and a project switch. The **Open / Closed / All**
+toggle filters that cache on the spot, without another fetch. If the sync fails, the error banner
+carries a **Retry**; once every item is imported, **Refresh to check for new items** on the empty
+state refetches the whole source rather than only the changes.
+See [board-integration.md](board-integration.md) for the adapter contract behind the incremental
+fetch.
 
 Imported items include the title, description (markdown), labels, and assignee from the source. Inline images in issue bodies are downloaded as backlog attachments. A small GitHub icon appears on imported items linking back to the original ticket.
 
@@ -362,11 +395,13 @@ Active filters show a count badge on the filter icon. Click "Clear all filters" 
 
 ### Add a Column
 
-Click the **+** button at the end of the column row.
+Click **Add column** at the right-hand end of the board toolbar. It becomes a plain **+** once the
+toolbar runs short of room.
 
 ### Edit a Column
 
-Click the column header's settings icon. You can configure:
+Click a column header to open the **Column Manager**. Settings are on the left, the column's
+automations on the right.
 
 | Setting | Description |
 |---------|-------------|
@@ -375,17 +410,71 @@ Click the column header's settings icon. You can configure:
 | **Color** | Header accent color |
 | **Icon** | Lucide icon name (e.g., `square-terminal`, `code`, `flask-conical`) |
 | **Agent** | Override the project's default agent for this column (e.g., use Codex for code review) |
+| **Model** / **Effort** | Override the project's default model and reasoning effort for agents in this column |
 | **Permission Mode** | Override the global permission mode for agents in this column |
-| **Auto Spawn** | Whether moving a task here spawns an agent (default: on) |
-| **Message to agent** | Sent to the agent when a task enters the column. Plain instructions or a slash command; template variables fill in task details. Stored as `autoCommand` in `kangentic.json` |
-| **Message timing** | Whether the message interrupts the agent or waits for its current turn to finish |
+| **Auto Spawn** ("Start an agent here") | Whether moving a task here spawns an agent (default: on). Turning it off also stops any **Send message to agent** automation on the column, since there is no agent to type at; those rows show as off with a disabled switch and the reason. |
+| **Hand off context when the agent changes** | On a move that changes the agent, hand the previous agent's conversation to the new one instead of starting it with just the task title and description |
+| **Session** | Whether the column runs the task's main session or its own isolated one. An isolated session is separate from the main one and starts clean on every entry, which suits an adversarial code review |
 | **Plan Exit Target** | For plan-mode columns: where tasks move when planning completes |
+
+The column's message to its agent is no longer a field here. It is an automation, and it lives in
+the list on the right: see [Automations](#automations) below.
+
+**Remove column**, at the left of the dialog's footer, stages the removal until you save; Cancel
+keeps the column. A column that still has tasks cannot be removed.
 
 When a column's agent override differs from the current session's agent, moving a task into that column triggers a cross-agent handoff. The outgoing agent's context (transcript, git changes, metrics) is automatically packaged and delivered to the incoming agent.
 
+### Automations
+
+What a column does when a task enters or leaves it. Each column owns one ordered list, split into
+**On enter** and **On exit**, and each row has its own switch. A row belongs to one column; there
+is no sharing and no library.
+
+Four types:
+
+| Type | What it does |
+|------|--------------|
+| **Send message to agent** | Types a message at the column's agent. Plain instructions or a slash command. |
+| **Run script** | Runs a script in the task's worktree, or the project checkout when it has none. |
+| **Call webhook** | Calls a URL. Retries a transport error, 429 or 5xx up to three times. |
+| **Notify me** | Raises one desktop notification. Clicking it opens the task. |
+
+**Adding one.** Each group has its own **Add automation** control, so where you add decides when
+it runs. The picker offers the four types, and below them every row on every other column, to
+copy. A copy is independent of the original. A type the column cannot run is offered disabled,
+with the reason.
+
+**Editing one.** Clicking the row opens a dialog with the name, the type, the type's own fields,
+and When. Nothing else. The pencil does the same, for a pointer that is already over it; the grip,
+the switch and the trash keep their own jobs and do not open it. A name is required and must be unique on its column. Every text field takes
+template variables: type `{{` to pick one, or use the **Template variable** button. A known
+variable is highlighted; an unknown one is flagged and sent as written.
+
+**Reordering.** Drag a row by its grip. A drag stays inside its own group: it changes where the row
+sits, never when it runs. To change when it runs, open the row and set When.
+
+**The agent starts by itself.** Nothing in the list starts the agent, and there is no Start agent
+row. On enter, Kangentic starts the column's agent right before the first automation that needs
+one, which today means a **Send message to agent** row. On exit there is no agent to start, so
+such a row is skipped with that reason recorded.
+
+**When something fails.** Every run is recorded, whatever happens. A failure raises one toast
+naming the automation and the column, with a **Run again** action that re-runs it against the
+task's current state. Nothing is retried
+automatically: a fired webhook and a half-run script are not safe to repeat blind. A run that was
+in flight when Kangentic quit is marked interrupted the next time the project opens.
+
+**To Do and Done** run exit automations only. Nothing runs when a task enters them.
+
+**Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so
+they are shared with your team through git. The board header shows a lightning glyph with the
+count of automations that will actually run there, and **All columns** in the Column Manager shows
+every column's counts side by side.
+
 ### Reorder Columns
 
-Drag column headers to reorder.
+Drag a column by the grip in its header to reorder, or Tab to the grip and use Space and the arrow keys (see [Move Between Active Columns](#move-between-active-columns)). To Do stays first.
 
 ### Delete a Column
 
@@ -398,7 +487,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ### Moving a project
 
@@ -416,10 +505,29 @@ A search bar at the top of each panel filters settings by keyword. Type multiple
 
 ### Themes
 
-Choose from 10 themes in the Theme tab's dropdown (a per-project setting):
-- **Base:** Dark, Light
-- **Dark variants:** Moon, Forest, Ocean, Ember
-- **Light variants:** Sand, Mint, Sky, Peach
+The Theme tab (a per-project setting) shows the 12 themes as a grid of tiles, each painted in
+its own colours, so you pick by eye. Rest the pointer on a tile to try that theme on the whole
+app without changing anything; move off the grid and it reverts. Click a tile to keep it, or
+with the grid focused use the arrow keys, Home and End, or type the first letter of a name; the
+app repaints as the selection moves. The tiles are grouped by whether the theme is dark or
+light underneath:
+- **Dark:** Graphite, Rust, Moon, Forest, Ocean, Ember
+- **Light:** Paper, Clay, Sand, Mint, Sky, Peach
+
+Graphite and Paper are the neutral defaults. Rust and Clay are the product palette, built from
+kangentic.com's own tokens, so the app and the site read as one surface; their tiles carry the
+brand mark. Colour only: the site's typefaces do not come with the theme, and the terminal keeps
+its own colour scheme (see Terminal Colors below). Searching Settings for a theme's name finds
+the picker. (In `config.json` Graphite and Paper keep their original ids, `dark` and `light`;
+the others are their lower-cased names.)
+
+**Follow system appearance**, the switch above the grid, keeps one theme for when the OS is
+light and another for when it is dark. With it on, each group in the grid has its own selected
+tile and the other tiles dim so the pair stands out (a dimmed tile still previews on hover and
+can be picked); the app paints the one that matches the OS right now and switches the moment
+the OS does, with no restart. Turning it on keeps the theme you had (it becomes that group's
+choice), and turning it off keeps whichever theme is showing. The launch background follows the
+same rule, so a follow-system install opens in the right colour.
 
 ### Terminal Colors
 
@@ -444,9 +552,10 @@ Applies to every project (Settings > Task, not a per-project override). These de
 | Setting | Description |
 |---------|-------------|
 | Card Density | Amount of detail shown on task cards (compact, default, comfortable) |
-| Ticket Numbers | Show each task's `#N` number as a muted badge on its card (off by default) |
+| Card Preview | The text under each card's title: the latest agent message (default), recent agent messages one line each, or the task description |
+| Ticket Numbers | Show each task's `#N` number as a muted badge on its card (on by default) |
 
-The Task tab also holds the Context Bar toggles below.
+With Card Preview at its default, a card whose agent is running prints that agent's newest message in place of the description, in a shaded terminal panel, wrapped to three lines at default density, five at comfortable, one at compact. Recent agent messages prints the newest messages one line each and newest last in those same lines, for a sense of the agent's last few steps instead of one whole thought. The text updates live as the agent works. The panel appears exactly when the card's activity glyph does, including while the agent is waiting on you, and the moment the session pauses or ends the card goes back to showing the task description. A task with no session, or whose agent has not said anything yet, shows its description too. The Agent Monitor's cards honor the same setting and render it the same way. The Task tab also holds the Context Bar toggles below.
 
 ### Context Bar
 
@@ -470,7 +579,7 @@ The context bar is a status line displayed below the terminal showing session me
 
 | Setting | Description |
 |---------|-------------|
-| Default Agent | Which agent CLI to use for new sessions in this project. Supported agents: Claude Code, Codex CLI, Gemini CLI, Antigravity CLI, Qwen Code, Kimi Code, OpenCode, Droid (Factory), Cursor CLI, GitHub Copilot CLI, Aider, Oz CLI (Warp), Ollama, Grok Build. Per-project setting. |
+| Default Agent | Which agent CLI to use for new sessions in this project. Supported agents: Claude Code, Codex CLI, Gemini CLI, Antigravity CLI, Qwen Code, Kimi Code, OpenCode, Droid (Factory), Cursor CLI, GitHub Copilot CLI, Aider, Oz CLI (Warp), Ollama, Grok Build, Goose CLI. Per-project setting. |
 | CLI Path | Path to agent CLI binary (auto-detected if empty) |
 | Execution (remote) | For agents that support it (today OpenCode), attach to a server you run instead of spawning a local process: server URL, authentication, and the server-side working directory. Shown only when the selected agent declares remote execution. |
 | Launch Options | Agent-specific startup toggles (today Codex's "Disable ChatGPT Apps", which skips the optional cloud ChatGPT Apps connector that can hang startup). Shown only for agents that declare options. |
@@ -488,6 +597,9 @@ All permission modes are available in both the global App Settings dropdown and 
 | Copy Files | Files to copy from repo root into worktrees |
 | Post-Worktree Script | Shell script run in each new worktree after creation (e.g. `npm install`). A non-zero exit or timeout fails worktree creation |
 | Link node_modules | Symlink the root `node_modules` into each worktree to skip a fresh install (on by default). Turn off to let the Post-Worktree Script install the worktree's own dependencies |
+| Auto-refresh PRs | How often the background sweep refreshes linked PRs' state and merge readiness (every 2, 5, 10, or 15 minutes, or off; the on-open sweep still runs) |
+| Evaluate branch policies | Off by default. Ask Azure DevOps to evaluate a PR's branch policies (reviewer minimums, required builds, work-item linking) so a clean PR can read `ready` instead of plain `open`, at one extra `az` call per open PR per refresh. GitHub already reports policy in its normal call and ignores this |
+| Count merge bypass as ready | On by default. On GitHub, a PR still waiting on a required review reads `blocked` even when you can bypass that rule and merge it yourself, which is how the Merge column already lands PRs. That stays true once somebody else's PR lands and leaves yours behind the base. On, such a PR reads `ready`, at one extra `gh` call per such PR per refresh. Never past a check: the same call reads the branch's required checks and every one must have reported green. Turn it off to keep the review norm even where you could bypass. Azure DevOps ignores this |
 
 ### Shortcuts
 
@@ -565,9 +677,16 @@ If a teammate removes a column that still has your tasks, the column becomes a "
 
 When worktrees are enabled (default), each task gets its own git branch and working directory. This allows multiple agents to work in parallel without merge conflicts.
 
-### Per-Task Toggle
+A task WITHOUT a worktree runs in the project folder itself: the checkout you have open in your editor (and the one Kangentic runs from), shared with every other task that has no worktree. Nothing prevents two such agents from editing the same tree at once; Kangentic only refuses to switch that folder's branch under a live agent. This happens when you choose Project instead of Worktree in the Branch row, and also when the project cannot have a worktree at all: it is not a git repository, it has no commits yet, or the project folder is itself a git worktree (git cannot nest them). A remote-execution agent gets no local worktree either, but runs in its server directory rather than the project folder.
 
-Individual tasks can opt in or out of worktrees regardless of the global setting. Set this when creating a task or in the task detail dialog.
+Where an agent works is always visible:
+
+- **New Task dialog and edit form** - the line under the Branch row says where the task will run before you create it: "Runs in the project folder on `main`" (the branch the folder actually has checked out) versus "will be created from `main` in a new worktree". A pinned base or a custom branch without a worktree reads "`x` will be checked out in the project folder", since that is a real branch switch in the folder you have open. When the project cannot have a worktree, the line reads "Runs in the project folder" and the Worktree option is disabled, with the reason in its tooltip.
+- **Task detail** - the folder button in the header shows the worktree icon for a task in its own worktree and the git-folder icon otherwise, and the kebab's folder item reads "Open worktree" or "Open project folder".
+
+### Per-Task Placement
+
+The Branch row's Worktree | Project pair sets where an individual task runs, regardless of the global setting. Choose it when creating a task or in the task detail edit form. Choosing Worktree cannot override the structural cases above.
 
 ### Branch Naming
 
@@ -605,7 +724,11 @@ Command Terminals keep running when you hide the layer and when you switch proje
 
 ### Notifications
 
-Desktop and toast notifications fire when an agent needs attention and the user can't already see it - either the window is minimized/unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a desktop notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated desktop notifications from the same agent.
+Notifications fire when an agent needs attention and you cannot already see it. The two channels cover opposite halves of that, so between them nothing is missed and nothing is said twice.
+
+Desktop notifications are for when you are away: they fire only when the window is minimized or unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking one brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second cooldown prevents the same agent repeating the same kind of desktop notification. Idle and crash are counted separately, so an agent that dies right after finishing a turn still reports the crash.
+
+Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. It carries an **Open** button that opens the task. One toast per turn, not one per progress update.
 
 The Settings > Notifications panel exposes four configurable events: **Agent Idle**, **Agent Crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop only, Toast only, or Both. Toast duration and max visible count are also configurable.
 
@@ -635,13 +758,13 @@ Enable the toggle, then pick a **Relay**: *Kangentic Relay* (the default, the on
 
 Click **Pair a device** to display a QR code; scanning it with the Kangentic mobile app starts an end-to-end encrypted pairing handshake. Once the handshake completes, both the desktop and the phone show the same short code - compare them, then tap **Confirm** on the phone. The desktop auto-enrolls the device as soon as it hears back; there is no second confirmation to make on the desktop. This catches a photographed or relayed QR, since an attacker cannot make both sides show the same code. To back out, cancel on the phone (or close the desktop's pairing panel) before confirming.
 
-The phone is treated as an extension of your own desktop, not a separate integration to configure: pairing grants it full access to the same ten capabilities the protocol defines (there is no shell, file, or arbitrary-command access in the protocol at all). Paired devices appear in a list below, identified by a key fingerprint you can compare against the phone's own Settings > Devices screen, along with their connection status and paired date. Rename a device from that list, or revoke it - revoking removes it from the desktop's signed roster immediately, and a revoked phone must be paired again from scratch to reconnect. See [Mobile Bridge](mobile-bridge.md) for the underlying protocol, pairing ceremony, and security design.
+The phone is treated as an extension of your own desktop, not a separate integration to configure: pairing grants it full access to every capability the protocol defines (there is no shell, file, or arbitrary-command access in the protocol at all). Paired devices appear in a list below, identified by a key fingerprint you can compare against the phone's own Settings > Devices screen, along with their connection status and paired date. Rename a device from that list, or revoke it - revoking removes it from the desktop's signed roster immediately, and a revoked phone must be paired again from scratch to reconnect. See [Mobile Bridge](mobile-bridge.md) for the underlying protocol, pairing ceremony, and security design.
 
-The Mobile section closes with **How to install and pair**, which opens the [Kangentic Mobile docs](https://www.kangentic.com/mobile/): installing the app, pairing a phone, and push notifications. It is always present, in both directions - it stays usable with the bridge toggle off, since someone who has not installed the app yet is exactly the person who has not enabled the bridge, and it does not disappear once phones are paired, since that link is a docs landing page rather than an install page and you may well be adding a second device. Install instructions live on the website so they stay current between desktop releases; while a store rollout is in progress, the in-app Announcements dialog carries the signup steps for the current phase.
+The Mobile section closes with **How to install and pair**, which opens the [Kangentic Mobile docs](https://kangentic.com/mobile/): installing the app, pairing a phone, and push notifications. It is always present, in both directions - it stays usable with the bridge toggle off, since someone who has not installed the app yet is exactly the person who has not enabled the bridge, and it does not disappear once phones are paired, since that link is a docs landing page rather than an install page and you may well be adding a second device. Install instructions live on the website so they stay current between desktop releases; while a store rollout is in progress, the in-app Announcements dialog carries the signup steps for the current phase.
 
 ### Privacy
 
-The Privacy tab shows what anonymous analytics Kangentic collects and how to opt out. Analytics are powered by Aptabase (no cookies, no persistent identifiers, GDPR-compliant). Set `KANGENTIC_TELEMETRY=0` as an environment variable to disable analytics entirely. It also lists `support@kangentic.com` for questions about what is collected. This tab is informational only - there are no configurable settings.
+The Privacy tab shows what anonymous telemetry Kangentic collects (app launches and the previous run's duration, crash reports, task and session counts, daily feature-usage counts, and a once-per-launch list of which global settings differ from their defaults) and how to opt out. Usage analytics are powered by Aptabase (no cookies, GDPR-compliant, plus one anonymous non-reversible install id used only to count unique installs); crash and error reports go to Sentry with machine-specific paths removed from stack traces. Set `KANGENTIC_TELEMETRY=0` as an environment variable to disable all telemetry, or `KANGENTIC_ERROR_REPORTING=0` to disable only error reporting. It also lists `support@kangentic.com` for questions about what is collected. This tab is informational only - there are no configurable settings.
 
 ### Developer
 
@@ -667,14 +790,49 @@ If the project doesn't exist yet, it's created automatically. Without a path, Ka
 Sessions survive app restarts. When you close Kangentic:
 
 1. All running sessions are marked as `suspended` in the database
-2. PTY processes are force-killed (there is no graceful shutdown window)
+2. PTY processes are force-killed. A session still in its first moments after spawn gets a brief grace first (its exit command, then the force-kill about 1.5 s later) so Claude Code's own startup bookkeeping is not cut off mid-boot
 3. On next launch, sessions are automatically resumed via `--resume` using the saved session ID
 
-Because Claude Code supports `--resume`, conversation context is fully preserved despite the hard kill. If the app crashes, orphaned sessions are detected and recovered on the next launch.
+Because Claude Code supports `--resume`, conversation context is fully preserved even when a session is killed rather than exited. If the app crashes, orphaned sessions are detected and recovered on the next launch.
 
 ### User-Paused Sessions
 
 Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+
+## Graphics failures
+
+Chromium renders the app through a separate graphics process. Rarely, that process fails over and
+over, or cannot be started again. When it
+exhausts every fallback it has, Chromium shuts the whole app down on purpose. There is no crash
+dialog and no warning: the window simply disappears. On some machines it happens within seconds of
+launching, so the app can look like it will not start at all. On others, so far only Linux, it
+happens a few minutes into a normal session.
+
+Kangentic recovers itself. The next launch starts without graphics acceleration, which removes the
+graphics process entirely and takes that shutdown off the table. You get a toast saying so, and
+Settings > Performance shows **Graphics acceleration** switched off, with a note that Kangentic
+turned it off after repeated failures.
+
+What to expect while it is off:
+
+- Terminals render through the slower DOM path instead of WebGL. Long-running agents with heavy
+  output feel less smooth. Everything still works.
+- Animations and the rest of the UI are unaffected.
+- Nothing turns it back on by itself. When you want to try again, switch **Graphics acceleration**
+  back on in Settings > Performance and restart. If the failure returns, the next launch turns it
+  off again.
+
+Kangentic does not diagnose the cause, and deliberately does not guess at one. On the installs that
+failed at boot, the failures started seconds in, before any agent or terminal existed. A display
+driver is the usual culprit for that shape, so updating yours is the first thing worth trying, but
+the app has no way to confirm that from the inside and will not claim it did. If it keeps happening,
+the local crash records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the
+useful thing to attach to a bug report. When the graphics process could not be started at all,
+there is no such record: Chromium never reports a failed start to the app, and only the fallback
+itself is recorded.
+
+Unrelated, despite the similar name: **Model acceleration** in Settings > Memory controls where the
+semantic search model runs, not app rendering. The two are independent.
 
 ## Conversation Memory
 
@@ -686,7 +844,7 @@ The structured transcript of each session: user turns, assistant replies, thinki
 
 ### Keyword and Semantic Search
 
-Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Hardware acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
 
 ### Where It Surfaces
 
@@ -707,14 +865,15 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 **Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (the left-most icon in its right-hand button row). The same button **toggles** the layer closed again, so there is always a one-click way to hide it, even when a window is maximized. The terminal icon reflects activity across your open terminals: its prompt blinks in green while an agent is working, it holds a steady warm amber when one needs your input, and it stays plain when idle.
 
 **Behavior:**
-- Spawns Claude Code at the project root on the configured default base branch
+- Spawns Claude Code at the project root on the configured default base branch. If you have uncommitted changes to tracked files on another branch, a new terminal stays on that branch and tells you so, rather than carrying your work onto the base.
 - It opens as a **window** over a slight backdrop blur: drag it by the header, resize it from any edge or corner, maximize / restore it (double-click the header or use the maximize button), and snap it to a screen half or full screen (Windows-style). The layout (size, position, maximized state) **persists globally** across all projects and app restarts.
 - **Run more than one at once.** While the layer is open, a second terminal icon (with a `+` in its center) appears in the title bar just to the left of the main terminal icon - click it to open another terminal (up to four); it disables once you hit the cap. New terminals split into the current window's footprint (side by side, keeping the size you set) so you can keep two ad-hoc tasks cooking and glance between them; drag the seam to rebalance, or maximize one to focus it.
 - **Each window is numbered.** A terminal titles itself `Command Terminal 1`, `Command Terminal 2`, and so on, from its durable window slot - so two side-by-side terminals are tellable apart, and the number stays put when a sibling opens or closes. The same title identifies that terminal on its Agent Monitor row. Once you send a first prompt, the title becomes a short auto-derived name for what you asked instead.
 - **Layout controls (same as task windows).** When a terminal is tiled, a **pop-out** button floats it back out of the tile group. The title always wins the header's space: the quick-action pills (Commands, Project, Changes, shortcuts) fold into the `...` menu as the window narrows.
-- The **branch picker** in the header lets you switch branches - selecting a new branch kills that terminal's session and respawns it on the selected branch
+- The **branch picker** in the header lets you switch branches - selecting a new branch kills that terminal's session and respawns it on the selected branch. The pill names the branch the checkout is actually on: it is re-read from git whenever you reopen the layer and whenever the checkout moves (an agent running `git checkout` inside the terminal, or your own git usage), so it never keeps claiming a branch the repo has left. Reopening never checks anything out.
+- The terminal's **Changes** panel measures ahead/behind, and diffs its Branch tab, against the project's default base branch, the same base the pill's default names.
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
-- Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts on exit
+- Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts when they exit or go idle
 - Your terminals are **preserved across project switches**. If you open terminals, switch to another project, and switch back, they are still running. Each project keeps its own terminals, so you can keep ad-hoc work going while navigating between projects.
 - If git checkout fails when switching branches (e.g., uncommitted changes), a warning toast explains the issue and the session stays on the current branch
 
@@ -736,9 +895,11 @@ Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift
 - **Scope** - the current project, or an app-wide rollup across every registered project (with a per-project comparison table).
 - **Metric** - toggle between cost and tokens.
 - **Range** - Live (trailing 2 hours), Today, This Week, This Month, All Time, or a custom month range. Click a day in a chart to drill into that single day.
-- **Breakdowns** - by model, by agent, and by reasoning effort, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, burn rate) with "vs previous period" deltas.
+- **Breakdowns** - by model, by agent, by reasoning effort, and, when a session fanned out to subagents, by subagent type, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, files, cache reads, compactions, burn rate, average active time, subagent tokens) with "vs previous period" deltas. The Subagents tile's tooltip adds how many of those subagents another subagent spawned, and names any agent in the range that cannot report subagent usage at all - only Claude can today, so a Codex or Gemini range says so rather than showing a dash that looks like "nothing fanned out".
 
 Totals are read from the durable usage ledgers, so they survive task and session deletion. The selected range and scope persist across app restarts (one global value shared across all projects).
+
+Two things the numbers do NOT mean, both said on the tiles themselves. Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed, so a subscription session can report $0. And tokens are counted per turn and kept apart by type (fresh input, output, cache write, cache read) because cache reads are far larger and far cheaper than fresh input; per-turn counting started later than cost did, so a long range covers less of it, and the Tokens tile says from when.
 
 ## Memory Graph
 
@@ -752,27 +913,24 @@ embeddings, so conversations about the same thing cluster together. Links join e
 its nearest neighbours. Regions are named automatically from what the conversations in them are
 about, so the map reads as a topic atlas of the project rather than an anonymous scatter.
 
-**Flying it.** Drag to orbit, shift-drag to pan, scroll to zoom in and out. Click the map and use
+**Flying it.** Drag to orbit, right-drag to pan, scroll to zoom in and out. Click the map and use
 **W** / **S** to fly forward and back, **A** / **D** to slide left and right, and **Q** / **E** to
 rise and drop - you can fly right into a cluster and out the other side. **Reset view** (bottom
 right) frames the whole map again, so it is always possible to get un-lost. With regions switched
 off it frames what is left rather than the regions you hid, so resetting a scoped map fills the
 view instead of pulling it back out.
 
-**Clicking around.** Hover a point for its title and size; click it for a detail panel. When a
-search is running, the panel opens with **Why this matched** - where the conversation ranks in the
-results, whether it matched your wording, its meaning, or both, and the passage that matched - so
-selecting a node continues the search rather than dropping it.
+**Clicking around.** Hover a point for its title and size; click it for a detail panel. Reached
+from an answer, the panel's **Back** control returns to that answer.
 
-Below that, **Closest conversations** lists its strongest links, ordered rather than scored: the
+The panel lists **Closest conversations**, its strongest links, ordered rather than scored: the
 embeddings sit in a narrow similarity band where a percentage reads "99%" on every row and tells
-you nothing, so the ordering is the signal. Any that are also answers to your current search are
-marked.
+you nothing, so the ordering is the signal.
 
 Two actions: **Open conversation** (or a double-click on the point) opens the full transcript in a
 movable window over the map, so it stays where you are reading rather than opening behind the
 graph - the same when the graph is detached into its own window. **Explore from here** re-scopes
-the map to that conversation and everything it links to, with a breadcrumb under the search box to
+the map to that conversation and everything it links to, with a breadcrumb under the question box to
 take it back.
 
 The **Display** panel (top left) collapses out of the way and holds the groups below.
@@ -873,7 +1031,7 @@ The panel counts conversations, not files: it says nothing about how much of you
 indexed.
 
 The map is drawn on the GPU. On a machine that cannot provide a 3D drawing context (a blocklisted
-driver, some remote sessions) it says so and the coverage numbers and search keep working.
+driver, some remote sessions) it says so, and the coverage numbers and Ask keep working.
 
 **Building the map.** The first time a project opens the graph, Kangentic reads every embedding in
 the index to place the dots. On a large project that takes a few minutes, runs in the background,
@@ -899,9 +1057,9 @@ near a task, nothing is shown at all.
 
 Open the monitor from the activity icon in the title bar or with `Mod+Shift+M`. It answers "what are all my agents doing right now?" in one place, across **every** registered project rather than just the one whose board is open. The title-bar icon itself is the ambient signal: green while any agent anywhere is working, amber the moment one starts waiting on you.
 
-Each session shows its owning project and column, the task title and ticket number, live activity state, agent, model, effort and permission mode, how long it has been running, and what the agent is doing right now. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live.
+Each session shows its owning project and column, the task title and ticket number, live activity state, agent, model, effort and permission mode, how long it has been running, and what the agent is doing right now. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live. The tiles follow the Projects filter, so a scoped view counts only the projects in view.
 
-Every card also carries a **live output peek**: the last few rendered lines of that session's terminal, in a shaded panel where a task description would otherwise sit. It updates in place as the agent works (at most twice a second, and only when the visible text actually changes), so you can see what a session is saying without opening it. The panel is a fixed height, so a card never resizes as messages land.
+The slot under each card's title follows the same Card Preview setting as the board card (Settings > Task), and renders it the same way. A session with an agent on it shows what that agent is doing, in a shaded terminal panel: its latest message wrapped, or its recent messages one line each. When it has not said anything yet, or it is a Command Terminal with no task, that same panel carries a **live output peek** instead, the last few rendered lines of the session's terminal. The peek updates in place as the agent works (at most twice a second, and only when the visible text actually changes), so you can see what a session is saying without opening it. A paused or finished session shows the task description instead, as does every card when Card Preview is set to the task description. A Command Terminal has no task to describe, so it keeps its last output peek in both of those cases. The terminal panel is a fixed height whichever of the two it carries, so a card never resizes as messages land.
 
 Command Terminals (`Mod+Shift+P`) appear here too. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible. Each is titled `Command Terminal N` (matching the number on its own window), draws a terminal-shaped activity glyph rather than the agent one, and names the **branch** it is working on where a task card names its column.
 
@@ -910,7 +1068,7 @@ You choose how it looks, and the choice is remembered (including across a restar
 - **Layout** - cards (which reflow into 2 or 3 columns as the window widens), a dense sortable table, or a one-line-per-session list.
 - **Grouping** - by status (Idle / Active / Paused / Recently finished) or by project. Rows are always sectioned, which is what keeps anything waiting on you at the top without you having to sort for it.
 - **Sort** - Oldest or Newest, applied within each section. The table layout sorts by its own column headers instead.
-- **Filters** - a text filter across title, project, column, agent, model, ticket number and labels, plus a "Live only" toggle that drops paused and recently finished sessions.
+- **Filters** - a project scope multi-select that narrows the whole view (list and tiles) to a chosen subset of projects; its pill reads "All projects" until narrowed (then e.g. "2 of 5 projects") and appears once more than one project has sessions, staying while narrowed - as long as any project has a session - so Clear is always reachable. Plus a text filter across title, project, column, agent, model, ticket number and labels, and a "Live only" toggle that drops paused and recently finished sessions.
 
 Clicking a row opens that task's full detail - terminal included - **in the monitor**, so several agents across several projects can be watched and driven from one surface without leaving for another project's board. Right-click a row and choose **Open on board** for the old behavior. A task's detail is only ever open in one place: opening it somewhere else moves it rather than making a second copy, and its tab leaves the bottom panel while it is open.
 
@@ -948,6 +1106,7 @@ Task detail (whichever panel is open):
 - **Mod+Shift+B** - Toggle the browser pane inside the task detail dialog
 - **Mod+Shift+G** - Toggle the changes (diff) panel inside the task detail dialog
 - **Mod+Shift+K** - Toggle the description panel inside the task detail dialog
+- **Alt+Shift+Left** / **Alt+Shift+Right** - Move the open task one column left / right without closing its window. Stops at the first and last board columns; Done is never a target. Column automations and move confirmations apply exactly as they do for the kebab's "Move to"
 - **Middle-click the window header** - Close a modeless task-detail window (default `Mouse:Middle`; routes through the same unsaved-edits guard as the close button)
 
 Description editor (mounts in task detail and in the New Task / New Backlog Task dialogs). All four are fixed, not rebindable:
@@ -973,6 +1132,6 @@ Terminal:
 ## Tips
 
 - **Plan mode workflow:** Use a Planning column with `permission_mode='plan'` and `plan_exit_target_id` pointing to your Executing column. The agent plans first, then auto-moves to execution.
-- **Column messages:** Set a message (`auto_command`) on a Code Review column to automatically ask the agent to review its own code when tasks arrive. Prose works: "Review the diff on this branch and fix what you would change."
+- **Column messages:** Add a **Send message to agent** automation on a Code Review column to automatically ask the agent to review its own code when tasks arrive. Prose works: "Review the diff on this branch and fix what you would change."
 - **Concurrent agents:** Increase `maxConcurrentSessions` to run more agents in parallel. Each needs its own worktree to avoid conflicts.
 - **Resume from Done:** Unarchive a completed task and drag it back to an active column. Kangentic recreates the worktree from the preserved branch on the fly, and the agent picks up exactly where it left off.

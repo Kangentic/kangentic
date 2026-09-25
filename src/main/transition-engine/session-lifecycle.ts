@@ -1,6 +1,7 @@
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { SuspendedBy } from '../../shared/types';
 import { destroyLanesForSession } from '../browser/browser-lane-manager';
+import { releaseViewportOverridesForSession } from '../browser/viewport-override';
 
 // ---------------------------------------------------------------------------
 // Session lifecycle: centralized state machine for session DB records
@@ -57,6 +58,23 @@ export function markRecordExited(
     } catch (error) {
       console.warn(`[browser-lane] Could not close lanes for session ${recordId.slice(0, 8)}:`, error);
     }
+    // Put back any viewport this session overrode on a pane it did NOT own.
+    //
+    // Lanes are covered by the line above, because a lane's viewport is its
+    // window and the window is being destroyed. A pane is the user's and
+    // survives the agent, so an override left behind is a pane rendering a
+    // desktop layout at a fraction of its width, with the agent that asked for
+    // it gone and no explanation on screen. The pane's own viewport chip is the
+    // user's manual way out; this is the automatic one.
+    //
+    // Same guard and same best-effort posture as the lanes above: a viewport
+    // that fails to reset must never stop a session record being marked exited.
+    void releaseViewportOverridesForSession(recordId).catch((error: unknown) => {
+      console.warn(
+        `[browser-viewport] Could not reset viewports for session ${recordId.slice(0, 8)}:`,
+        error,
+      );
+    });
   }
 
   return transitioned;
@@ -85,17 +103,26 @@ export function markRecordSuspended(
 /**
  * Retire an old session record (mark as exited) when spawning a new
  * session to replace it. Accepts suspended, orphaned, or exited source status.
+ *
+ * `exited_at` is stamped only when this call is what ends the record. A record
+ * that already exited keeps the time its own exit recorded: retiring it later
+ * (the next spawn of the task, a startup dedup) used to rewrite `exited_at` to
+ * whenever something next touched the row, so a CLI that ended at 14:36:24
+ * read as ended at 14:36:40 once the replacement spawned. The return value is
+ * unchanged: true whenever the row is exited afterwards.
  */
 export function retireRecord(
   sessionRepo: SessionRepository,
   recordId: string,
 ): boolean {
-  return sessionRepo.compareAndUpdateStatus(
+  const endedNow = sessionRepo.compareAndUpdateStatus(
     recordId,
-    ['suspended', 'orphaned', 'exited'],
+    ['suspended', 'orphaned'],
     'exited',
     { exited_at: new Date().toISOString() },
   );
+  if (endedNow) return true;
+  return sessionRepo.compareAndUpdateStatus(recordId, 'exited', 'exited');
 }
 
 /**

@@ -99,6 +99,11 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
             }
           >
             <div className="flex gap-2">
+              {/* Deliberately per-keystroke, unlike the other settings text fields.
+                  "Test connection" beside it probes BY AGENT NAME, so main reads the
+                  PERSISTED url; a commit-on-blur boundary would both leave the button
+                  disabled while typing and race the probe against the write the blur
+                  started. See SettingTextInput's docblock. */}
               <input
                 type="text"
                 value={server.url ?? ''}
@@ -131,6 +136,8 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
               label={<span className="inline-flex items-center gap-2">Authentication<OptionalTag /></span>}
             >
               <div className="flex gap-2">
+                {/* Per-keystroke for the same reason as the url above: "Test connection"
+                    probes the persisted credentials. */}
                 <input
                   type="text"
                   value={basicAuth.username}
@@ -155,6 +162,8 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
             {...settingProps('agent.executionWorkingDirectory')}
             label={<span className="inline-flex items-center gap-2">Server Working Directory<OptionalTag /></span>}
           >
+            {/* Per-keystroke, matching its siblings above rather than being the one
+                field in this section with a different commit boundary. */}
             <input
               type="text"
               value={usage.workingDirectory ?? ''}

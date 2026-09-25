@@ -1,7 +1,7 @@
 /**
  * Task-template-variable parity guard (see .claude/rules/task-template-vars-parity.md).
  *
- * src/shared/task-template-vars.ts is the single declaration of the 10
+ * src/shared/task-template-vars.ts is the single declaration of the 12
  * task-template keywords (auto_command + spawn_agent promptTemplate share it).
  * It drives the UI chip list (BoardManagerDialog.tsx), the main-process
  * resolver map (task-template-resolvers.ts), and the docs tables. This test
@@ -13,7 +13,12 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { TASK_TEMPLATE_VAR_NAMES, TASK_TEMPLATE_VARS } from '../../src/shared/task-template-vars';
+import {
+  TASK_TEMPLATE_VAR_NAMES,
+  TASK_TEMPLATE_VARS,
+  TEMPLATE_VARIABLE_PATTERN,
+  templateVarsFor,
+} from '../../src/shared/task-template-vars';
 import { TASK_TEMPLATE_RESOLVERS, resolveTaskTemplateVars } from '../../src/main/agent/shared/task-template-resolvers';
 import { interpolateTaskTemplate } from '../../src/main/agent/shared/template-utils';
 import type { Task } from '../../src/shared/types';
@@ -65,6 +70,44 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
     for (const entry of TASK_TEMPLATE_VARS) {
       expect(entry.chip).toBe(`{{${entry.name}}}`);
     }
+  });
+
+  it('every name is matched by the shared pattern, so it can actually substitute', () => {
+    // Nothing enforced this before, and it is not cosmetic: a name like
+    // `pr-url` passes every other assertion in this file while silently never
+    // substituting, because both interpolators tokenize on `\w+`. The shared
+    // pattern IS the definition now, so asking it directly cannot drift.
+    for (const name of TASK_TEMPLATE_VAR_NAMES) {
+      const matches = [...`{{${name}}}`.matchAll(TEMPLATE_VARIABLE_PATTERN)];
+      expect(matches.length, `${name} is not a substitutable name`).toBe(1);
+      expect(matches[0][1]).toBe(name);
+    }
+  });
+
+  it('every entry declares at least one context', () => {
+    // An entry with no context is offered nowhere, which makes it dead weight
+    // that still has to be resolved and documented.
+    for (const entry of TASK_TEMPLATE_VARS) {
+      expect(entry.contexts.length, `${entry.name} declares no context`).toBeGreaterThan(0);
+    }
+  });
+
+  it('the picker filters by context, so a spawn prompt is never offered a move keyword', () => {
+    const spawn = templateVarsFor('spawn').map((entry) => entry.name);
+    const automation = templateVarsFor('automation').map((entry) => entry.name);
+
+    // The four move keywords have no meaning outside a move: a spawn prompt is
+    // not one, so offering them there would be offering a permanent empty
+    // string.
+    for (const name of ['column', 'fromColumn', 'toColumn', 'trigger']) {
+      expect(spawn, `${name} must not be offered in a spawn prompt`).not.toContain(name);
+      expect(automation, `${name} must be offered in an automation`).toContain(name);
+    }
+
+    // Everything else is available in both, and an automation sees the whole
+    // catalog.
+    expect(automation.length).toBe(TASK_TEMPLATE_VAR_NAMES.length);
+    expect(spawn.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - 4);
   });
 
   it('every chip is documented in docs/transition-engine.md', () => {
@@ -189,6 +232,61 @@ describe('{{port}} in a flag-shaped template: the documented drop-and-collapse h
   });
 });
 
+describe('{{projectPath}}: the one project-scoped keyword (red-green)', () => {
+  // Asserted through interpolateTaskTemplate, not the raw resolver value:
+  // the semantic that matters is what a user's template delivers, and
+  // asserting resolveTaskTemplateVars(...).projectPath directly would just
+  // restate the resolver's own `projectPath ?? ''` line.
+  it('resolves the path verbatim when a project is open', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask(),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: null,
+      projectPath: 'C:\\Users\\dev\\repo',
+    });
+    expect(interpolateTaskTemplate('git -C {{projectPath}} status', vars)).toBe('git -C C:\\Users\\dev\\repo status');
+  });
+
+  // .claude/rules/task-template-vars-parity.md clause 6: an empty-valued
+  // placeholder is DROPPED and surrounding horizontal whitespace collapses.
+  // For {{projectPath}} that reads worse than {{port}}'s bare "--port":
+  // "git -C {{projectPath}} merge {{branchName}}" with no project open
+  // collapses to "git -C merge feature-x", where git takes the SUBCOMMAND as
+  // the -C argument. It still fails loudly (measured: "fatal: cannot change
+  // to 'merge'", exit 128), but the error names a directory nobody asked for
+  // rather than the value that went missing. Pinning the collapsed string
+  // stops a future "helpful" change from altering it for this keyword.
+  it('collapses to a mis-parsing "git -C merge <branch>" when no project is open', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask({ branch_name: 'feature-x' }),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: null,
+      projectPath: null,
+    });
+    expect(interpolateTaskTemplate('git -C {{projectPath}} merge {{branchName}}', vars)).toBe('git -C merge feature-x');
+  });
+
+  // The regression this whole keyword exists to prevent: a future "helpful"
+  // change making {{worktreePath}} fall back to the project path (forbidden
+  // by clause 5) would leave both resolving to the SAME value. Asserting
+  // only that each is individually non-empty would still pass under that
+  // regression, so this pins the inequality directly with distinct fixtures.
+  it('stays distinct from {{worktreePath}} for a task that has a worktree', () => {
+    const vars = resolveTaskTemplateVars({
+      task: makeTask({ worktree_path: 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\x' }),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+      devPort: null,
+      projectPath: 'C:\\Users\\dev\\repo',
+    });
+    expect(vars.projectPath).not.toBe(vars.worktreePath);
+    expect(vars.projectPath).toBe('C:\\Users\\dev\\repo');
+    expect(vars.worktreePath).toBe('C:\\Users\\dev\\repo\\.kangentic\\worktrees\\x');
+  });
+});
+
 describe('interpolateTaskTemplate: drop-and-collapse semantics', () => {
   it('drops an empty-valued placeholder along with its leading separator', () => {
     expect(interpolateTaskTemplate('/code-review {{baseBranch}}', { baseBranch: '' })).toBe('/code-review');
@@ -262,8 +360,12 @@ describe('BoardManagerDialog variable list is sourced from the catalog', () => {
   );
 
   it('renders the variable list by mapping the shared catalog', () => {
-    expect(source).toContain("import { TASK_TEMPLATE_VARS } from '../../../shared/task-template-vars'");
-    expect(source).toMatch(/TASK_TEMPLATE_VARS\.map\(/);
+    expect(source).toMatch(/from '\.\.\/\.\.\/\.\.\/shared\/task-template-vars'/);
+    // Either the whole catalog or one context of it. The context filter is
+    // still the shared declaration, and offering a keyword where it cannot
+    // resolve is the thing `contexts` exists to prevent.
+    expect(source).toMatch(/(TASK_TEMPLATE_VARS|templateVarsFor\([^)]*\))/);
+    expect(source).toMatch(/(TASK_TEMPLATE_VARS|AUTOMATION_TEMPLATE_VARS)\.map\(/);
   });
 
   it('hardcodes no template-variable chips of its own', () => {

@@ -26,6 +26,14 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
 vi.mock('../../src/main/db/repositories/action-repository', () => ({
   ActionRepository: class { list() { return []; } listTransitions() { return []; } },
 }));
+// buildBoardConfigFromDb reads each column's automations too, so the export has
+// to come from the same empty-DB stubs. Without this the real repository runs
+// against the mocked `getProjectDb` (undefined), the write-back throws, and the
+// on-disk columns never change, which reads as a cache that failed to
+// invalidate rather than as a missing stub.
+vi.mock('../../src/main/db/repositories/automation-repository', () => ({
+  AutomationRepository: class { listAll() { return []; } listForColumn() { return []; } },
+}));
 
 import { BoardConfigManager } from '../../src/main/config/board-config-manager';
 import { TEAM_FILE, LOCAL_FILE } from '../../src/main/config/board-config/config-helpers';

@@ -19,11 +19,18 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
   isDebuggerAttached: vi.fn(() => false),
   detachDebugger: vi.fn(),
   ensureFocusEmulation: vi.fn(),
+  waitForDialogInterception: vi.fn(async () => {}),
 }));
 
 import { webContents, BrowserWindow } from 'electron';
-import { attachDebugger, ensureFocusEmulation, isDebuggerAttached } from '../../src/main/browser/cdp/cdp';
+import {
+  attachDebugger,
+  ensureFocusEmulation,
+  isDebuggerAttached,
+  waitForDialogInterception,
+} from '../../src/main/browser/cdp/cdp';
 import { withGuest, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
+import { KeyboardFocusNotInGuestError } from '../../src/main/browser/cdp/keyboard-focus';
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
 import { resetGuestDriveQueuesForTests } from '../../src/main/browser/guest-drive-queue';
 import {
@@ -80,7 +87,7 @@ describe('withGuest - agent input signalling', () => {
     // leaves a drive in flight stalls every later one.
     resetGuestDriveQueuesForTests();
     browserPaneRegistry.detachAll();
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
     resetAgentInputSignalForTests();
     signalled = [];
@@ -121,6 +128,40 @@ describe('withGuest - agent input signalling', () => {
     }
 
     expect(focusCalls).toEqual([]);
+  });
+
+  it('WAITS for dialog interception before running the body', async () => {
+    // Found by a live agent, not by review. `attachDebugger` is synchronous
+    // and its domain enables are fire-and-forget, so the FIRST drive against a
+    // guest used to run while `Page.enable` was still in flight. A click that
+    // opened a `confirm()` in that window raced ahead of the interceptor:
+    // Chromium showed its own native modal, the renderer blocked, every later
+    // command queued behind it, and nothing on the agent side could recover -
+    // only the user dismissing the box. Every drive after the first was fine,
+    // which is exactly why a sweep that calls anything else first never sees it.
+    let interceptionResolved = false;
+    let releaseInterception = (): void => undefined;
+    vi.mocked(waitForDialogInterception).mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        releaseInterception = () => { interceptionResolved = true; resolve(); };
+      }),
+    );
+
+    let bodyRan = false;
+    const drive = withGuest(
+      { selector: { projectId: 'p' }, capability: 'interact', config: config() },
+      async () => { bodyRan = true; return true; },
+    );
+
+    // Give the driver every chance to run the body early.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bodyRan, 'the body must not run while Page.enable is still in flight').toBe(false);
+
+    releaseInterception();
+    await drive;
+    expect(interceptionResolved).toBe(true);
+    expect(bodyRan).toBe(true);
   });
 
   it('arms focus emulation before running the operation', async () => {
@@ -263,7 +304,7 @@ describe('withGuest - capability gating', () => {
     // leaves a drive in flight stalls every later one.
     resetGuestDriveQueuesForTests();
     browserPaneRegistry.detachAll();
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
   });
 
@@ -306,25 +347,46 @@ describe('withGuest - resolution and attach', () => {
   });
 
   it('attaches lazily then runs the body', async () => {
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
-    const result = await withGuest({ selector: { sessionId: 's', projectId: 'p' }, capability: 'observe', config: config() }, async (guestWebContents) => (guestWebContents as { id: number }).id);
+    const result = await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() }, async (guestWebContents) => (guestWebContents as { id: number }).id);
     expect(result).toEqual({ ok: true, data: 7 });
     expect(vi.mocked(attachDebugger)).toHaveBeenCalledTimes(1);
   });
 
+  it('hands the body the RESOLVED ENTRY alongside the guest', async () => {
+    // `set_viewport` picks between emulation, a window resize and a lane
+    // resize from `entry.kind` plus the pop-out registry. A `WebContents`
+    // cannot answer either question, and deriving it from `hostWebContents`
+    // would couple the choice to a Chromium detail. If this argument is ever
+    // dropped, every call quietly routes down the docked-pane branch, so pin
+    // it here rather than only inside the tool.
+    browserPaneRegistry.register({ handle: 'lane_z', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null, kind: 'lane' });
+    seedGuest(7);
+    const seen: { sessionId: string; kind: string }[] = [];
+    const result = await withGuest(
+      { selector: { sessionId: 'lane_z', projectId: 'p' }, capability: 'observe', config: config() },
+      async (_guestWebContents, entry) => {
+        seen.push({ sessionId: entry.sessionId, kind: entry.kind });
+        return 'ok';
+      },
+    );
+    expect(result).toEqual({ ok: true, data: 'ok' });
+    expect(seen).toEqual([{ sessionId: 'lane_z', kind: 'lane' }]);
+  });
+
   it('does not re-attach when the debugger is already attached', async () => {
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
     vi.mocked(isDebuggerAttached).mockReturnValue(true);
-    await withGuest({ selector: { sessionId: 's', projectId: 'p' }, capability: 'observe', config: config() }, async () => 'ok');
+    await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() }, async () => 'ok');
     expect(vi.mocked(attachDebugger)).not.toHaveBeenCalled();
   });
 
   it('reports pane-destroyed when the guest no longer resolves', async () => {
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(999); // 7 does not resolve
-    const result = await withGuest({ selector: { sessionId: 's', projectId: 'p' }, capability: 'observe', config: config() }, async () => 'ok');
+    const result = await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() }, async () => 'ok');
     expect(result).toMatchObject({ ok: false, error: { kind: 'pane-destroyed' } });
   });
 
@@ -333,12 +395,29 @@ describe('withGuest - resolution and attach', () => {
     expect(result).toMatchObject({ ok: false, error: { kind: 'no-pane-open' } });
   });
 
+  it('reports surface-gone for a retired handle, verbatim, without attaching CDP or running the body', async () => {
+    // The tab an agent was driving went away. The registry's answer names the
+    // replacement; the driver must surface it untouched rather than collapsing
+    // it into no-pane-open, and must not attach to anything.
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.unregister('pane_s', 'guest-destroyed');
+    const body = vi.fn(async () => 'ran');
+    const result = await withGuest(
+      { selector: { sessionId: 'pane_s', projectId: 'p', callerTaskId: 't' }, capability: 'observe', config: config() },
+      body,
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'surface-gone' } });
+    expect(result.ok === false && result.error.detail).toContain('pane_s');
+    expect(body).not.toHaveBeenCalled();
+    expect(vi.mocked(attachDebugger)).not.toHaveBeenCalled();
+  });
+
   it('refuses a foreign-project target without running the body or attaching CDP', async () => {
-    browserPaneRegistry.register({ sessionId: 's2', taskId: 't2', projectId: 'proj-2', webContentsId: 8, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s2', ownerSessionId: 's2', taskId: 't2', projectId: 'proj-2', webContentsId: 8, url: null });
     seedGuest(8);
     const body = vi.fn(async () => 'ran');
     const result = await withGuest(
-      { selector: { sessionId: 's2', projectId: 'proj-1' }, capability: 'observe', config: config() },
+      { selector: { sessionId: 'pane_s2', projectId: 'proj-1' }, capability: 'observe', config: config() },
       body,
     );
     expect(result).toMatchObject({ ok: false, error: { kind: 'foreign-project' } });
@@ -351,12 +430,12 @@ describe('withGuest - resolution and attach', () => {
   // Electron 41; blurred and occluded windows are unaffected. Refusing up front
   // is what keeps a popped-out pane safe to minimize.
   it('refuses when the pane host window is minimized, instead of hanging', async () => {
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
     vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({ isMinimized: () => true } as never);
     const body = vi.fn(async () => 'ran');
     const result = await withGuest(
-      { selector: { sessionId: 's', projectId: 'p' }, capability: 'observe', config: config() },
+      { selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() },
       body,
     );
     expect(result).toMatchObject({ ok: false, error: { kind: 'pane-not-rendering' } });
@@ -365,42 +444,55 @@ describe('withGuest - resolution and attach', () => {
   });
 
   it('runs normally when the host window is present and not minimized', async () => {
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
     vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({ isMinimized: () => false } as never);
     const result = await withGuest(
-      { selector: { sessionId: 's', projectId: 'p' }, capability: 'observe', config: config() },
+      { selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() },
       async () => 'ok',
     );
     expect(result).toEqual({ ok: true, data: 'ok' });
   });
 
   it('refuses a foreign target BEFORE the liveness check, so it cannot evict another project entry', async () => {
-    browserPaneRegistry.register({ sessionId: 's2', taskId: 't2', projectId: 'proj-2', webContentsId: 8, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s2', ownerSessionId: 's2', taskId: 't2', projectId: 'proj-2', webContentsId: 8, url: null });
     seedGuest(999); // 8 does not resolve, so an unscoped path would say pane-destroyed
     const result = await withGuest(
-      { selector: { sessionId: 's2', projectId: 'proj-1' }, capability: 'observe', config: config() },
+      { selector: { sessionId: 'pane_s2', projectId: 'proj-1' }, capability: 'observe', config: config() },
       async () => 'ok',
     );
     expect(result).toMatchObject({ ok: false, error: { kind: 'foreign-project' } });
-    expect(browserPaneRegistry.get('s2')).toBeDefined();
+    expect(browserPaneRegistry.get('pane_s2')).toBeDefined();
   });
 
   it('reports cdp-attach-failed when attach returns false', async () => {
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
     vi.mocked(attachDebugger).mockReturnValue(false);
-    const result = await withGuest({ selector: { sessionId: 's', projectId: 'p' }, capability: 'observe', config: config() }, async () => 'ok');
+    const result = await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() }, async () => 'ok');
     expect(result).toMatchObject({ ok: false, error: { kind: 'cdp-attach-failed' } });
   });
 
   it('wraps a thrown body error as driver-error', async () => {
-    browserPaneRegistry.register({ sessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
-    const result = await withGuest({ selector: { sessionId: 's', projectId: 'p' }, capability: 'observe', config: config() }, async () => {
+    const result = await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() }, async () => {
       throw new Error('boom');
     });
     expect(result).toMatchObject({ ok: false, error: { kind: 'driver-error', detail: 'boom' } });
+  });
+
+  it('reports a key refused for lack of pane focus as pane-not-focused, naming the selector fix', async () => {
+    // Its own kind, not a driver-error: the page did nothing wrong, and the
+    // agent has one specific fix. A driver-error here reads as "the page
+    // broke" and sends the agent looking in the wrong place.
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    seedGuest(7);
+    const result = await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'interact', config: config() }, async () => {
+      throw new KeyboardFocusNotInGuestError();
+    });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'pane-not-focused' } });
+    expect(result.ok ? '' : result.error.detail).toContain('selector');
   });
 });
 

@@ -10,6 +10,8 @@ export { useTaskActions } from './useTaskActions';
 export { taskHasDescriptionContent } from './description-content';
 export { TaskDetailHostProvider, useTaskDetailHost } from './task-detail-host';
 export { BoardTaskDetailHost } from './BoardTaskDetailHost';
+export { adjacentSwimlane } from './adjacent-swimlane';
 export type { AttachmentWithPreview, AttachmentsState } from './useAttachments';
 export type { BranchConfigState } from './useBranchConfig';
 export type { TaskDetailHostValue, TaskDetailHostConfig } from './task-detail-host';
+export type { ColumnStepDirection } from './adjacent-swimlane';

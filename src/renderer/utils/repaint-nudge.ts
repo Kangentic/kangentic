@@ -33,7 +33,13 @@
  * The before/after grid comparison is REPORTING ONLY. It never gates the nudge.
  * That is what keeps this threshold-free while still producing a real-world
  * defect rate, which is the evidence an upstream report needs.
+ *
+ * UNWIND(claude-code#83714): this entire module is a workaround for that
+ * upstream renderer defect. When upstream fixes it, delete the module along
+ * with its useTerminal wiring and tests.
  */
+
+import type { PacedLane } from './write-batcher';
 
 /** FocusOut then FocusIn. Costs the TUI one render and moves no cursor. */
 export const REPAINT_NUDGE_BYTES = '\x1b[O\x1b[I';
@@ -65,9 +71,16 @@ export const REPAINT_NUDGE_BYTES = '\x1b[O\x1b[I';
  */
 const FOCUS_REPORT_PATTERN = /^\x1b\[[IO]$/;
 const SGR_MOUSE_REPORT_PATTERN = /^\x1b\[<(\d+);\d+;\d+[Mm]$/;
-const X10_MOUSE_REPORT_PATTERN = /^\x1b\[M([\s\S])/;
+/** A complete X10 report is CSI M plus exactly three bytes (button, x, y).
+ *  Anchored at both ends like the SGR pattern above: a payload that only
+ *  STARTS with a report (trailing bytes, two reports joined) must not
+ *  classify as one. */
+const X10_MOUSE_REPORT_PATTERN = /^\x1b\[M([\s\S])[\s\S]{2}$/;
 /** Bit 5 of a mouse report's button byte marks motion (drift or drag). */
 const MOUSE_MOTION_BIT = 32;
+/** Bit 6 of a mouse report's button code marks a wheel event: 64=up, 65=down,
+ *  66=left, 67=right, with modifier bits (4 shift, 8 meta, 16 ctrl) added on. */
+const MOUSE_WHEEL_BIT = 64;
 
 /**
  * True when `data` is something the USER did, rather than a report xterm
@@ -84,6 +97,96 @@ export function isUserInputData(data: string): boolean {
   if (x10Report) return ((x10Report[1].charCodeAt(0) - 32) & MOUSE_MOTION_BIT) === 0;
 
   return true;
+}
+
+/**
+ * True when `data` is a single mouse report (SGR or X10), motion and wheel
+ * included. Used by the input path to give each report its OWN paced PTY
+ * write (write-batcher.ts): a fullscreen TUI processes a chunk as one input
+ * batch, so a burst of wheel reports coalesced into one write becomes one
+ * multi-line jump, and the TUI's differential frame for that jump
+ * intermittently mis-assembles (verified by controlled injection: spaced
+ * reports render clean, the same reports in one chunk splice stale rows).
+ * Unlike isUserInputData above - an arming policy about intent - this is
+ * about encoding, so motion counts too.
+ */
+export function isMouseReport(data: string): boolean {
+  return SGR_MOUSE_REPORT_PATTERN.test(data) || X10_MOUSE_REPORT_PATTERN.test(data);
+}
+
+/** The one lane every motion report (drift or drag, any button, any
+ *  modifier) joins. It supersedes ITSELF: each arrival purges every pending
+ *  motion report, so at most the newest pointer position ever waits in the
+ *  queue. Superseding across button/modifier variants is deliberate - a
+ *  click, release, or wheel report carries its own coordinates, so a stale
+ *  intermediate position serves no consumer. */
+const MOTION_LANE: PacedLane = { laneKey: 'motion', supersedesLaneKey: 'motion' };
+
+/**
+ * The paced-write lane for a mouse report, or undefined for reports that
+ * must never be capped or superseded (clicks, releases, non-reports:
+ * dropping a release would stick a button). Lane keys use the DECODED
+ * button code, so X10 wheel bytes (96/97 on the wire) share lanes with
+ * their SGR twins (64/65): they are the same physical wheel. This
+ * deliberately re-runs the anchored patterns isMouseReport just tested; two
+ * anchored regex executions per report are negligible and keep the routing
+ * line's tripwire shape simple.
+ *
+ * WHEEL reports get a per-direction lane. The supersede target is
+ * `buttonCode ^ 1`: the low bit is direction within an axis, so 64/65
+ * (up/down), 66/67 (left/right), and modifier-shifted pairs like ctrl+wheel
+ * 80/81 supersede only each other. Cross-axis and cross-modifier lanes
+ * never purge one another: a trackpad diagonal scroll interleaves vertical
+ * and horizontal reports, and a stray horizontal tick must not eat the
+ * pending vertical queue.
+ *
+ * MOTION reports (bit 5, drift and drags alike) share the single
+ * self-superseding MOTION_LANE. Motion generates at the display's refresh
+ * rate while the paced queue drains at most one report per pace interval,
+ * so a laneless motion stream GROWS the queue whenever refresh outpaces the
+ * floor - measured 2026-08-28 on a 143Hz display: a two-second cursor
+ * traverse left 117 motion reports pending, nearly two seconds of stale
+ * drain. The queue is FIFO, so every wheel report and click arriving after
+ * the traverse waited out that whole backlog (the flick-after-move lag the
+ * wheel lane cap could not fix, since the cap bounds wheel COUNT, not wheel
+ * position behind motion). Keeping only the newest position restores
+ * near-native latency for everything queued behind motion, and is
+ * semantics-safe: a TUI tracking hover or a drag selection only acts on the
+ * latest position, and the press/release events that bound a drag are
+ * laneless and always delivered.
+ *
+ * UNWIND(claude-code#83714): lanes bound the paced queue that workaround
+ * introduces; delete this with writePaced.
+ */
+export function mouseReportLane(data: string): PacedLane | undefined {
+  let buttonCode: number;
+  const sgrReport = SGR_MOUSE_REPORT_PATTERN.exec(data);
+  if (sgrReport !== null) {
+    // Wheel and motion events are press-encoded only (final byte M). A
+    // report with a release final (lowercase m) stays laneless rather than
+    // risk dropping a release.
+    if (!data.endsWith('M')) return undefined;
+    buttonCode = Number(sgrReport[1]);
+  } else {
+    const x10Report = X10_MOUSE_REPORT_PATTERN.exec(data);
+    if (x10Report === null) return undefined;
+    buttonCode = x10Report[1].charCodeAt(0) - 32;
+  }
+  // Real button codes stay below 256 (base + modifier + extension bits). A
+  // larger value, reachable only from a synthetic or pasted chunk, can pass
+  // the bitwise checks via ToInt32 wrapping while laneKey keeps the raw
+  // number and supersedesLaneKey the wrapped one (4294967360 ^ 1 is 65) - an
+  // inconsistent pair that could purge a legitimate lane. Laneless is the
+  // safe reading, and it also covers Number() overflowing to Infinity.
+  if (buttonCode > 255) return undefined;
+  if ((buttonCode & MOUSE_WHEEL_BIT) !== 0) {
+    // A code with both wheel and motion bits is nonstandard; laneless is
+    // the conservative reading.
+    if ((buttonCode & MOUSE_MOTION_BIT) !== 0) return undefined;
+    return { laneKey: `wheel:${buttonCode}`, supersedesLaneKey: `wheel:${buttonCode ^ 1}` };
+  }
+  if ((buttonCode & MOUSE_MOTION_BIT) !== 0) return MOTION_LANE;
+  return undefined;
 }
 
 /**

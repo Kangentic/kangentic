@@ -27,7 +27,7 @@ export const TAIL_BYTES = 256 * 1024;
 /**
  * Parsed tail, keyed by path and invalidated by (size, mtime).
  *
- * Verification polls at 25ms for up to ~2s per command, but the agent writes to
+ * Verification polls at 25ms for up to ~4s per command, but the agent writes to
  * the transcript far less often than that, so the overwhelming majority of
  * polls would re-read and re-split bytes that have not changed. A `stat` costs
  * microseconds against a read plus a `split()` over tens of thousands of lines.

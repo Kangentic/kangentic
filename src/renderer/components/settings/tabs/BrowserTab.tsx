@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Loader2, Trash2 } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
-import { SettingRow, SettingToggleRow, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SettingRow, SettingToggleRow, SettingTextInput, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { useToastStore } from '../../../stores/toast-store';
@@ -41,19 +41,19 @@ export function BrowserTab({ config }: { config: AppConfig }) {
         onChange={(value) => updateProject({ browser: { enabled: value } })}
       />
       <SettingRow {...settingProps('browser.defaultUrl')}>
-        <input
-          type="text"
+        <SettingTextInput
           value={browserConfig.defaultUrl ?? ''}
-          onChange={(event) => {
+          onCommit={(nextDefaultUrl) => {
             // Persist empty string (not undefined) when cleared. deepMergeConfig
             // skips `undefined` values (object-utils.ts:94), so passing
             // `undefined` would be a no-op and leave the existing value in
             // the persisted overrides. Empty string survives the merge, and
             // useBrowserUrl's `||` fallthrough treats it as "no default".
-            updateProject({ browser: { defaultUrl: event.target.value.trim() } });
+            updateProject({ browser: { defaultUrl: nextDefaultUrl.trim() } });
           }}
           placeholder="http://localhost:5173"
-          className={`${INPUT_CLASS} placeholder-fg-faint`}
+          ariaLabel="Default browser pane URL"
+          className="placeholder-fg-faint"
           disabled={!enabled}
         />
       </SettingRow>

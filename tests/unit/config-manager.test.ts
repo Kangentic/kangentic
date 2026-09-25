@@ -238,6 +238,78 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
     expect(config.agent.cliPaths).toEqual({ gemini: '/usr/bin/gemini' });
     expect(config.agent.maxConcurrentSessions).toBe(4);
   });
+
+  it('renames the product pair\'s retired theme ids across all three theme keys and persists it', async () => {
+    // kangentic-light / kangentic-dark existed on main for three days before the pair
+    // was named clay / rust; a retired id would otherwise paint as the classless dark.
+    fs.writeFileSync(configPath, JSON.stringify({
+      theme: 'kangentic-dark', themeFollowsSystem: true, themeLight: 'kangentic-light', themeDark: 'kangentic-dark',
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.theme).toBe('rust');
+    expect(config.themeLight).toBe('clay');
+    expect(config.themeDark).toBe('rust');
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect([raw.theme, raw.themeLight, raw.themeDark]).toEqual(['rust', 'clay', 'rust']);
+  });
+
+  it('does not rewrite the config file on a second construction once its theme ids are already migrated', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      theme: 'kangentic-dark', themeLight: 'kangentic-light', themeDark: 'kangentic-dark',
+    }));
+
+    const firstManager = await createConfigManager();
+    firstManager.load();
+    const rawAfterFirstConstruction = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect([rawAfterFirstConstruction.theme, rawAfterFirstConstruction.themeLight, rawAfterFirstConstruction.themeDark])
+      .toEqual(['rust', 'clay', 'rust']);
+
+    // Backdate so a spurious rewrite is unmissable: safeWriteJson's write-to-temp-then-rename
+    // always stamps a fresh mtime on the destination, so a rewrite at "now" cannot collide
+    // with a stamp a minute in the past the way two same-millisecond stat calls could.
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(configPath, backdated, backdated);
+    const before = fs.statSync(configPath).mtimeMs;
+
+    // A fresh instance, not the same one that just migrated: this is what a second app
+    // launch against the already-migrated file looks like.
+    vi.resetModules();
+    const { ConfigManager } = await import('../../src/main/config/config-manager');
+    const secondManager = new ConfigManager();
+    secondManager.load();
+
+    const after = fs.statSync(configPath).mtimeMs;
+    expect(after).toBe(before);
+
+    const rawAfterSecondConstruction = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect([rawAfterSecondConstruction.theme, rawAfterSecondConstruction.themeLight, rawAfterSecondConstruction.themeDark])
+      .toEqual(['rust', 'clay', 'rust']);
+  });
+
+  it('does not rewrite a global config whose theme ids are already current', async () => {
+    // hasMigratedWindowLightDismissDefault and hasPurgedSeededDiscoveredModels both default to
+    // false, and neither of those migrations is gated on `parsed` - both would otherwise fire
+    // unconditionally on this file's first load. Set both markers true so only the theme-id
+    // migration is under test.
+    fs.writeFileSync(configPath, JSON.stringify({
+      theme: 'rust', themeLight: 'clay', themeDark: 'rust', themeFollowsSystem: true,
+      hasMigratedWindowLightDismissDefault: true, hasPurgedSeededDiscoveredModels: true,
+    }));
+    // Backdate so a spurious write is unmissable rather than possibly landing in the same
+    // millisecond as the fixture write above.
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(configPath, backdated, backdated);
+    const before = fs.statSync(configPath).mtimeMs;
+
+    const cm = await createConfigManager();
+    cm.load();
+
+    const after = fs.statSync(configPath).mtimeMs;
+    expect(after).toBe(before);
+  });
 });
 
 describe('Config Manager -- terminal.* project-override migration', () => {
@@ -288,6 +360,57 @@ describe('Config Manager -- terminal.* project-override migration', () => {
 
     const raw = JSON.parse(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8'));
     expect(raw).not.toHaveProperty('terminal');
+  });
+
+  it('renames a retired product-pair theme id in a project override and persists it', async () => {
+    const projectDir = path.join(tmpDir, 'proj-theme');
+    writeProjectOverrides(projectDir, { theme: 'kangentic-light', themeDark: 'kangentic-dark' });
+
+    const cm = await createConfigManager();
+    const overrides = cm.loadProjectOverrides(projectDir);
+
+    expect(overrides?.theme).toBe('clay');
+    expect(overrides?.themeDark).toBe('rust');
+    const raw = JSON.parse(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8'));
+    expect([raw.theme, raw.themeDark]).toEqual(['clay', 'rust']);
+  });
+
+  it('rewrites a project override once and does not rewrite it again on a second loadProjectOverrides call', async () => {
+    const projectDir = path.join(tmpDir, 'proj-theme-idempotent');
+    writeProjectOverrides(projectDir, { theme: 'kangentic-light', themeDark: 'kangentic-dark' });
+
+    const cm = await createConfigManager();
+    const firstOverrides = cm.loadProjectOverrides(projectDir);
+    expect(firstOverrides?.theme).toBe('clay');
+    expect(firstOverrides?.themeDark).toBe('rust');
+
+    // Backdate so a spurious second write is unmissable: the two stat calls here bracket only
+    // a synchronous readFileSync + JSON.parse, not the async work the sibling "does not rewrite
+    // the file when there is nothing to migrate" test gets for free, so same-millisecond mtimes
+    // would otherwise pass whether or not the second call actually rewrote the file.
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(projectOverridesPath(projectDir), backdated, backdated);
+    const before = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
+    const secondOverrides = cm.loadProjectOverrides(projectDir);
+    const after = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
+
+    expect(after).toBe(before);
+    expect(secondOverrides?.theme).toBe('clay');
+    expect(secondOverrides?.themeDark).toBe('rust');
+  });
+
+  it('does not rewrite a project override whose theme ids are already current', async () => {
+    const projectDir = path.join(tmpDir, 'proj-theme-clean');
+    writeProjectOverrides(projectDir, { theme: 'rust', themeLight: 'clay', themeDark: 'rust' });
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(projectOverridesPath(projectDir), backdated, backdated);
+    const before = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
+
+    const cm = await createConfigManager();
+    cm.loadProjectOverrides(projectDir);
+
+    const after = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
+    expect(after).toBe(before);
   });
 
   it('does not rewrite the file when there is nothing to migrate', async () => {
@@ -627,6 +750,81 @@ describe('Config Manager -- windowLightDismiss `single` to `focused` default mig
   });
 });
 
+describe('Config Manager -- discoveredModelsByAgent one-time purge', () => {
+  // `loadAgentList` used to seed this cache from each adapter's `capabilities.models`
+  // with a union that only ever grew, so any model an adapter ever reported became
+  // permanent - including Cursor's hardcoded fallback list. Deleting that constant does
+  // not reach a config already on disk, so the map is cleared once. A seeded entry is
+  // byte-identical to a learned one, so there is nothing to filter on and all of it goes.
+
+  it('clears a persisted map and records the marker on disk', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      discoveredModelsByAgent: {
+        cursor: ['Claude 3.5 Sonnet', 'GPT-4 Turbo', 'GPT-4o'],
+        claude: ['claude-opus-4-8'],
+      },
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.discoveredModelsByAgent).toEqual({});
+    expect(config.hasPurgedSeededDiscoveredModels).toBe(true);
+
+    // Must reach DISK, not just the in-memory copy: the renderer's writers spread the
+    // current value, so a stale map left on disk comes back on the next launch.
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.discoveredModelsByAgent).toEqual({});
+    expect(raw.hasPurgedSeededDiscoveredModels).toBe(true);
+  });
+
+  it('leaves models learned after the purge alone', async () => {
+    // The marker is the whole point: models the user actually runs are re-learned and
+    // must then persist. Without it, every launch would wipe the cache.
+    fs.writeFileSync(configPath, JSON.stringify({
+      discoveredModelsByAgent: { cursor: ['claude-sonnet-5-high'] },
+      hasPurgedSeededDiscoveredModels: true,
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.discoveredModelsByAgent).toEqual({ cursor: ['claude-sonnet-5-high'] });
+    // Reading the marker back keeps this falsifiable: without it the assertion above
+    // passes trivially on a build that has no purge at all.
+    expect(config.hasPurgedSeededDiscoveredModels).toBe(true);
+  });
+
+  it('does not re-purge a model learned after the first load', async () => {
+    // End to end through one manager: purge, then write a learned model back the way
+    // `rememberDiscoveredModel` does, then load again.
+    fs.writeFileSync(configPath, JSON.stringify({
+      discoveredModelsByAgent: { cursor: ['GPT-4 Turbo'] },
+    }));
+
+    const cm = await createConfigManager();
+    expect(cm.load().discoveredModelsByAgent).toEqual({});
+
+    cm.save({ discoveredModelsByAgent: { cursor: ['composer-2.5'] } });
+
+    vi.resetModules();
+    const cmNextLaunch = await createConfigManager();
+    expect(cmNextLaunch.load().discoveredModelsByAgent).toEqual({ cursor: ['composer-2.5'] });
+  });
+
+  it('leaves an unparseable config file on disk instead of overwriting it with defaults', async () => {
+    // Same deferral as the windowLightDismiss migration, for the same reason: this one
+    // is not `parsed`-gated either, so it is the other block that can reach the catch
+    // branch, where save() would replace a hand-repairable file with bare defaults.
+    const corruptContents = '{ "discoveredModelsByAgent": {}, }';
+    fs.writeFileSync(configPath, corruptContents);
+
+    const cm = await createConfigManager();
+    expect(cm.load().hasPurgedSeededDiscoveredModels).toBe(true);
+    expect(fs.readFileSync(configPath, 'utf-8')).toBe(corruptContents);
+  });
+});
+
 describe('Config Manager -- load() parse-validity guard', () => {
   // JSON.parse can succeed on content that is valid JSON but not a usable config
   // object: `null`, an array, or a bare primitive (number/string/boolean). None of
@@ -673,6 +871,66 @@ describe('Config Manager -- load() parse-validity guard', () => {
       expect(() => cm.load()).not.toThrow();
     },
   );
+});
+
+describe('Config Manager -- unwritable data directory (DESKTOP-14/DESKTOP-13)', () => {
+  // A FILE sitting where a directory needs to be created makes mkdirSync fail
+  // with ENOTDIR/ENOENT reliably on every OS - the same "data directory
+  // unwritable" failure class as the Sentry install (a relocated userData on a
+  // removable volume), without depending on chmod/permission semantics that
+  // differ between POSIX and Windows.
+
+  it('save() does not throw, returns false, and keeps serving the in-memory value; a later successful write persists both changes', async () => {
+    const blockerPath = path.join(tmpDir, 'blocker');
+    fs.writeFileSync(blockerPath, '');
+    process.env.KANGENTIC_DATA_DIR = path.join(blockerPath, 'config-dir');
+    vi.resetModules();
+    const cm = await createConfigManager();
+
+    let persisted = true;
+    expect(() => { persisted = cm.save({ theme: 'dark' }); }).not.toThrow();
+    expect(persisted).toBe(false);
+    // The failed write must not roll back the value that was already
+    // accepted into memory - this is what lets the session keep working.
+    expect(cm.load().theme).toBe('dark');
+
+    // Remove the blocking file so the same directory can now be created, and
+    // confirm the next successful write carries BOTH the earlier-failed
+    // value and the new one - nothing set during the outage is lost.
+    fs.rmSync(blockerPath, { force: true });
+    expect(cm.save({ sidebarVisible: false })).toBe(true);
+
+    const onDisk = JSON.parse(
+      fs.readFileSync(path.join(blockerPath, 'config-dir', 'config.json'), 'utf-8'),
+    );
+    expect(onDisk.theme).toBe('dark');
+    expect(onDisk.sidebarVisible).toBe(false);
+  });
+
+  it('saveProjectOverrides() does not throw and returns false when the project directory cannot be created', async () => {
+    const cm = await createConfigManager();
+    const blockerPath = path.join(tmpDir, 'project-blocker');
+    fs.writeFileSync(blockerPath, '');
+
+    // saveProjectOverrides writes to <projectPath>/.kangentic/config.json, so
+    // passing a FILE as the project path makes that subdirectory uncreatable.
+    let persisted = true;
+    expect(() => { persisted = cm.saveProjectOverrides(blockerPath, { theme: 'dark' }); }).not.toThrow();
+    expect(persisted).toBe(false);
+  });
+
+  it('load() on an unwritable data directory does not throw and falls back to defaults', async () => {
+    const blockerPath = path.join(tmpDir, 'blocker2');
+    fs.writeFileSync(blockerPath, '');
+    process.env.KANGENTIC_DATA_DIR = path.join(blockerPath, 'config-dir');
+    vi.resetModules();
+    const { ConfigManager } = await import('../../src/main/config/config-manager');
+    const { DEFAULT_CONFIG } = await import('../../src/shared/types');
+    const cm = new ConfigManager();
+
+    expect(() => cm.load()).not.toThrow();
+    expect(cm.load().theme).toBe(DEFAULT_CONFIG.theme);
+  });
 });
 
 describe('Config Manager -- terminal.colors replace semantics', () => {
@@ -976,6 +1234,42 @@ describe('Config Manager -- divergent-cache clobber across instances (characteri
     // The stale-cached instance's own write still succeeds - this is a silent
     // clobber, not a failed write, which is what makes it dangerous.
     expect(raw.windowBounds).toEqual({ x: 0, y: 0, width: 800, height: 600 });
+  });
+});
+
+describe('Config Manager -- graphicsAccelerationEnabled / graphicsAccelerationOffBy default merge', () => {
+  // Both fields are REQUIRED on AppConfig, defaulting to true / null. The claim
+  // (shared/types.ts's DEFAULT_CONFIG comment) is that upgrading an existing
+  // install changes nothing and needs no migration, because deepMergeConfig
+  // never writes a default over a key that is simply absent from the file.
+  // That is true by construction, but nothing pinned it: resolveGraphicsMode()
+  // in src/main/index.ts compares `=== false`, so a missing key resolving to
+  // `undefined` instead of `true` would still happen to compare correctly -
+  // exactly the kind of accident that breaks silently the day someone writes
+  // `if (!config.graphicsAccelerationEnabled)` instead.
+
+  it('defaults to enabled with no off-by reason when the config file has neither key', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ theme: 'dark' }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    // toBe, not a truthy/falsy check: undefined must fail this.
+    expect(config.graphicsAccelerationEnabled).toBe(true);
+    expect(config.graphicsAccelerationOffBy).toBe(null);
+  });
+
+  it('preserves a persisted app-driven off choice through the default merge', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      graphicsAccelerationEnabled: false,
+      graphicsAccelerationOffBy: 'app',
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.graphicsAccelerationEnabled).toBe(false);
+    expect(config.graphicsAccelerationOffBy).toBe('app');
   });
 });
 

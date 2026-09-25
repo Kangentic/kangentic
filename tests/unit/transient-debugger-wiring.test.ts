@@ -60,12 +60,19 @@ function makeSliceStore(
   let state: Partial<SessionStore> & Record<string, unknown> = {
     sessions: initialSessions,
     _sessionByTaskId: buildSessionByTaskId(initialSessions),
+    // Every per-session map `withoutSessions` scrubs, plus activeSessionId,
+    // which it clears when the removed id held it. The real store initializes
+    // all of them, so a fake missing one is a fake that has drifted: the
+    // transient removers scrub through that shared helper (session-index.ts),
+    // and it reads each one unconditionally.
+    activeSessionId: null,
     sessionUsage: {},
     sessionFirstOutput: {},
     sessionActivity: {},
     sessionActivityReason: {},
     sessionEvents: {},
     seenIdleSessions: {},
+    sessionMessageTrails: {},
     spawnProgress: {},
     commandBarVisible: false,
     transientSessions: initialTransientSessions,
@@ -429,10 +436,12 @@ describe('killTransientSessionBySlot', () => {
     killTransientMock.mockReset();
   });
 
-  it('is a no-op when no entry exists for the (project, slot) pair', async () => {
+  it('reports no-session (not a silent success) when no entry exists for the (project, slot) pair', async () => {
     const { slice, getState } = makeSliceStore();
-    // No entries at all - should return without calling IPC or mutating state.
-    await slice.killTransientSessionBySlot('proj-1', 'slot-1');
+    // No entries at all - no IPC, no state mutation, and the caller is TOLD so.
+    // Reporting this apart from 'killed' is the point: a caller that cannot tell the
+    // difference will claim it stopped a PTY that may still be running.
+    await expect(slice.killTransientSessionBySlot('proj-1', 'slot-1')).resolves.toBe('no-session');
     expect(killTransientMock).not.toHaveBeenCalled();
     expect(getState().transientSessions).toEqual({});
   });
@@ -453,7 +462,7 @@ describe('killTransientSessionBySlot', () => {
       },
     );
 
-    await slice.killTransientSessionBySlot(FAKE_PROJECT_ID, 'slot-1');
+    await expect(slice.killTransientSessionBySlot(FAKE_PROJECT_ID, 'slot-1')).resolves.toBe('killed');
 
     expect(killTransientMock).toHaveBeenCalledWith(session.id);
     expect(getState().transientSessions[transientKey(FAKE_PROJECT_ID, 'slot-1')]).toBeUndefined();
@@ -476,8 +485,9 @@ describe('killTransientSessionBySlot', () => {
       },
     );
 
-    // Must not throw even though IPC rejects.
-    await expect(slice.killTransientSessionBySlot(FAKE_PROJECT_ID, 'slot-1')).resolves.toBeUndefined();
+    // Must not throw even though IPC rejects, but must report 'failed' rather than
+    // passing the rejection off as a completed kill.
+    await expect(slice.killTransientSessionBySlot(FAKE_PROJECT_ID, 'slot-1')).resolves.toBe('failed');
 
     // Cleanup must still have run despite the IPC failure.
     expect(getState().transientSessions[transientKey(FAKE_PROJECT_ID, 'slot-1')]).toBeUndefined();

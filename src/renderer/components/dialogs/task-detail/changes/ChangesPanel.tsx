@@ -1,14 +1,20 @@
 import '../../../../monacoConfig';
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
+import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, ArrowLeft, ArrowUp, ArrowDown, Check } from 'lucide-react';
+import { PrLink } from '../../../PrLink';
 import { DetachableSurfaceHeader } from '../../../../pop-out/DetachableSurfaceHeader';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
+import { DiffViewOptionsMenu } from './DiffViewOptionsMenu';
 import { DiffErrorBoundary } from './DiffErrorBoundary';
+import { ChangesHistorySection, HISTORY_SECTION_HEADER_PX } from './ChangesHistorySection';
 import { CommitGraphPanel } from '../graph/CommitGraphPanel';
 import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
-import { useKeybinding } from '../../../../hooks/useKeybinding';
+import { useToastStore } from '../../../../stores/toast-store';
+import { POP_OUT_SURFACES } from '../../../../../shared/pop-out';
+import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
+import { MousePointerClick } from 'lucide-react';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult, GitFileHistoryCommit, Task } from '../../../../../shared/types';
 
@@ -17,16 +23,26 @@ import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, Gi
 // hmr-safe: never mutated; a referential-identity sentinel for "no viewed files".
 const EMPTY_VIEWED_FILES = new Set<string>();
 
-// File-tree width constraints (px) for the Changes panel two-pane layout.
-const FILE_TREE_DEFAULT_WIDTH = 220;          // default width until a drag sets a per-task width
-const FILE_TREE_DRAG_MIN = 160;               // minimum tree width while dragging the divider
+// Rail (file-tree column) width constraints. The DEFAULT is proportional:
+// clamp(220px, 25%, 420px) of the panel row, pure CSS, so a split<->expanded
+// flip re-derives the width with no observer and the expanded panel widens
+// filenames instead of stranding a fixed-px rail in a full-window row - while
+// the width dividend past the 420px cap all goes to the diff pane. A manual
+// drag still stores exact px (TortoiseGit-style precise control), render-
+// clamped so a width stored against a wider panel never starves the diff.
+// The skeleton in TaskDetailBody.tsx mirrors the default clamp - keep in sync.
+const RAIL_DEFAULT_WIDTH_CLAMP = 'clamp(220px, 25%, 420px)';
+const FILE_TREE_DEFAULT_WIDTH = 220;          // drag-state seed before any stored width exists
+const FILE_TREE_DRAG_MIN = 200;               // minimum rail width while dragging the divider
 const DIFF_PANE_DRAG_MIN = 240;               // minimum diff-pane width while dragging the divider
 
-// Vertical-split constraints (px) between the commit-history region (top) and
-// the detail pane (bottom).
+// Vertical-split constraints (px) for the History section at the BOTTOM of the
+// rail: the section body's height vs the file-tree region above it.
 const HISTORY_DEFAULT_HEIGHT = 200;
-const HISTORY_DRAG_MIN = 88;
-const DETAIL_REGION_DRAG_MIN = 160;
+// Min body height: the pinned Uncommitted row plus ~1.5 commit rows at 44px.
+const HISTORY_DRAG_MIN = 120;
+// Min height kept for the tree region above the section while dragging.
+const TREE_REGION_DRAG_MIN = 160;
 
 interface ChangesPanelProps {
   entityId: string;
@@ -47,8 +63,9 @@ interface ChangesPanelProps {
   emptyMessage?: string;
   /** Current panel layout mode (task-detail only - distinct from the internal
    *  DiffViewer split/inline `viewMode` state below). When provided along with
-   *  a handler, the panel renders an expand-or-collapse control in the diff
-   *  toolbar (and a fallback row when no diff is mounted). */
+   *  a handler, the panel renders an expand-or-collapse control in the shared
+   *  surface header - it acts on the whole Changes surface, not the current
+   *  diff, so it does not belong in the diff toolbar. */
   panelMode?: 'split' | 'expanded';
   onExpand?: () => void;
   onCollapse?: () => void;
@@ -62,6 +79,12 @@ interface ChangesPanelProps {
    *  the standalone dialog, the command-terminal embed, and the pop-out root
    *  itself (which must not offer to detach again). */
   popOutParams?: { taskId: string; projectId: string };
+  /** When set, file rows offer "open this file's diff in its own OS window"
+   *  (double-click + the context menu item). SEPARATE from `popOutParams`
+   *  because that prop also gates the whole-surface detach header, which the
+   *  detached Changes window deliberately omits while still offering the
+   *  per-file affordance. Absent for the command-terminal embed (no task). */
+  filePopOutParams?: { taskId: string; projectId: string };
 }
 
 interface ContentCacheEntry {
@@ -78,8 +101,10 @@ interface DisplayedFileContent {
   filePath: string;
 }
 
-export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task, popOutParams }: ChangesPanelProps) {
+export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task, popOutParams, filePopOutParams }: ChangesPanelProps) {
   const effectiveScrollKey = scrollKey ?? entityId;
+  // Live combo for the empty-state hint (tracks rebinds; '' when unbound).
+  const nextFileCombo = useFormattedCombo('changes.nextFile');
   // Expand-full is a PANEL-level action (it acts on the whole Changes surface, not
   // the current diff), so it lives in the shared surface header alongside the
   // pop-out control - NOT in the diff toolbar with the diff/git tools. The
@@ -168,11 +193,15 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   }, [entityId, toggleChangesFileViewed]);
 
   // Refs for values needed inside callbacks to avoid stale closures
-  // and subscription churn on every file selection or re-render.
+  // and subscription churn on every file selection or re-render. Written on
+  // commit (a layout effect, ahead of every passive effect and handler that
+  // reads them), never during render, which the compiler rules forbid.
   const selectedFileRef = useRef(selectedFile);
-  selectedFileRef.current = selectedFile;
   const filesRef = useRef(files);
-  filesRef.current = files;
+  useLayoutEffect(() => {
+    selectedFileRef.current = selectedFile;
+    filesRef.current = files;
+  });
 
   // Stale-while-revalidate content cache. Each entry stores the fetch result
   // and the generation it was fetched in. When fs.watch fires, the generation
@@ -330,21 +359,37 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // Stable refs for fetch callbacks - used in the subscription effect and
   // handleSelectFile to avoid re-subscribing or re-creating on every render.
   const fetchFilesRef = useRef(fetchFiles);
-  fetchFilesRef.current = fetchFiles;
   const fetchFileContentRef = useRef(fetchFileContent);
-  fetchFileContentRef.current = fetchFileContent;
   const fetchBranchSummaryRef = useRef(fetchBranchSummary);
-  fetchBranchSummaryRef.current = fetchBranchSummary;
   const fetchUncommittedCountRef = useRef(fetchUncommittedCount);
-  fetchUncommittedCountRef.current = fetchUncommittedCount;
   // Selection ref for the fs.watch subscription effect below, which must not
   // re-subscribe on every commit-selection change (see that effect's comment).
   const selectedCommitRef = useRef(changesSelectedCommit);
-  selectedCommitRef.current = changesSelectedCommit;
   // Scope ref for the same subscription effect, to decide whether fetchFiles's
   // result already covers the Uncommitted-row count (see onDiffChanged below).
   const scopeRef = useRef(scope);
-  scopeRef.current = scope;
+  // All written on commit, in a layout effect that runs ahead of the passive
+  // effects below that read them; never during render.
+  useLayoutEffect(() => {
+    fetchFilesRef.current = fetchFiles;
+    fetchFileContentRef.current = fetchFileContent;
+    fetchBranchSummaryRef.current = fetchBranchSummary;
+    fetchUncommittedCountRef.current = fetchUncommittedCount;
+    selectedCommitRef.current = changesSelectedCommit;
+    scopeRef.current = scope;
+  });
+
+  // Adoption signal, once per mount. Every host gates this component on a
+  // state the user put it in (TaskDetailBody's changesPresent,
+  // CommandTerminalWindow's changesOpen, the standalone dialog's own open
+  // state, the existence of the pop-out window), so a mount is always a real
+  // open, including the one a restore replays. That matters because main
+  // dedups BOTH events this sends: feature_used once per UTC day, and
+  // feature_first_use once per INSTALL, which a mount with no real open behind
+  // it would burn for good. One effect covers all four hosts.
+  useEffect(() => {
+    window.electronAPI?.analytics?.trackFeatureUsed('changes_panel');
+  }, []);
 
   // Fetch file list + branch context + the Uncommitted-row count on mount, and
   // re-fetch whenever the scope, base branch, or commit selection changes.
@@ -359,6 +404,34 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       fetchUncommittedCountRef.current();
     }
   }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
+
+  // Truthful `behind`: without a fetch, the counts only reflect the last time
+  // anyone fetched, so a branch can read "0 behind" while origin has moved on.
+  // refreshRemote makes the HANDLER run the throttled all-remotes fetch first
+  // (5s budget, never rejects). One remote-refreshed summary per panel
+  // identity (worktreePath / projectPath / baseBranch), NOT per scope or
+  // commit-selection change - browsing commits must never re-fetch the
+  // network. Runs after the flagless mount fetch above, so the header shows
+  // the cheap local counts immediately and corrects them within the probe
+  // budget (or silently keeps them when offline). The fetch is inline rather
+  // than a callback, so a result that lands after the identity has moved on
+  // is dropped instead of overwriting the next identity's summary.
+  // hmr-safe: a Vite Fast Refresh remount re-runs this like a fresh mount;
+  // that is accepted because the handler's fetch is throttled to one real
+  // fetch per repo per 30s and never rejects - do not "fix" that throttle
+  // window down on the strength of the mount-only comment above.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const summary = await window.electronAPI.git.branchSummary({ worktreePath, projectPath, baseBranch, refreshRemote: true });
+        if (!cancelled) setBranchSummary(summary);
+      } catch {
+        // Best-effort context: leave the previous summary in place on failure.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [worktreePath, projectPath, baseBranch]);
 
   // Restore content for the persisted selected file after files load.
   // `files` is in the dependency array so this re-evaluates after the initial
@@ -378,7 +451,16 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       restoredRef.current = true;
       setSelectedFile(files[0].path);
       fetchFileContentRef.current(files[0].path);
+      return;
     }
+    // The diff is EMPTY (a clean worktree, or a scope/commit with no files)
+    // while a persisted selection still names a file. Neither branch above can
+    // fire, so without this the stale path stayed selected: the toolbar showed
+    // a filename that is not in the list and the editor sat on its boot
+    // spinner forever, because content is only ever fetched for a listed file.
+    // Deliberately does NOT set restoredRef - a file arriving later (the agent
+    // writes one and the fs-watch refetch lands) should still auto-select.
+    if (selectedFile) setSelectedFile(null);
   }, [files, selectedFile, setSelectedFile]);
 
   // On a scope change, allow the restore effect to re-run so it re-selects the
@@ -446,6 +528,57 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     fetchFileContentRef.current(filePath);
   }, [setSelectedFile]);
 
+  // Detach ONE file's diff into its own OS window ('changes-file' pop-out kind).
+  // The params capture the diff selection the row was double-clicked in (the
+  // pinned commit when one is selected, the live scope otherwise) plus the boot
+  // seed - paths, the file's list entry, and the task label - so the window
+  // fetches and titles itself without waiting on store hydration (see
+  // PopOutChangesFileParams). The cap is enforced main-side (maxInstances); a
+  // refused open resolves false and is surfaced as a toast.
+  // task and filePopOutParams are read through a ref / primitives rather than
+  // depended on directly: both get a fresh identity on every board-store push
+  // (an actively-working task refreshes constantly), and this callback feeds
+  // every FileRowView's memo'd onOpenInNewWindow prop - an unstable identity
+  // here re-renders every visible row on every push, which the sibling
+  // onSelect / onToggleViewed / onContextMenu handlers deliberately avoid.
+  const taskRef = useRef(task);
+  useLayoutEffect(() => {
+    taskRef.current = task;
+  });
+  const filePopOutTaskId = filePopOutParams?.taskId;
+  const filePopOutProjectId = filePopOutParams?.projectId;
+  const handleOpenFileWindow = useCallback((filePath: string) => {
+    const currentTask = taskRef.current;
+    if (!filePopOutTaskId || !filePopOutProjectId || !currentTask) return;
+    const entry = filesRef.current.find((file) => file.path === filePath);
+    if (!entry) return;
+    void (async () => {
+      try {
+        const opened = await window.electronAPI.popOut.open('changes-file', {
+          taskId: filePopOutTaskId,
+          projectId: filePopOutProjectId,
+          filePath,
+          scope: changesSelectedCommit ? undefined : scope,
+          commitOid: changesSelectedCommit ?? undefined,
+          projectPath,
+          worktreePath,
+          baseBranch,
+          status: entry.status,
+          oldPath: entry.oldPath,
+          binary: entry.binary,
+          taskDisplayId: currentTask.display_id,
+          taskTitle: currentTask.title,
+        });
+        if (!opened) {
+          const maxInstances = POP_OUT_SURFACES['changes-file'].maxInstances;
+          useToastStore.getState().addToast({ message: `File diff window limit reached (${maxInstances}). Close one to open another.` });
+        }
+      } catch {
+        useToastStore.getState().addToast({ message: 'Could not open the file diff window.' });
+      }
+    })();
+  }, [filePopOutTaskId, filePopOutProjectId, changesSelectedCommit, scope, projectPath, worktreePath, baseBranch]);
+
   const markChangesFileViewed = useSessionStore((state) => state.markChangesFileViewed);
 
   // Cross-file change navigation. When next/prev-change in the DiffViewer reaches a
@@ -502,13 +635,14 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const [isResizingTree, setIsResizingTree] = useState(false);
   const panelRowRef = useRef<HTMLDivElement>(null);
 
-  // Apply the stored (manual) width. Fires only when the stored value itself
-  // changes - NOT on isResizingTree - so the release does not momentarily re-apply
-  // a stale width and snap the panel (the janky double-move). A live drag is
-  // local-only and untouched.
-  useEffect(() => {
+  // Track the stored (manual) width in the ref. Fires only when the stored value
+  // itself changes - NOT on isResizingTree - so the release does not momentarily
+  // re-apply a stale width and snap the panel (the janky double-move). The
+  // local state is only rendered while a drag is live, so it is seeded from
+  // this ref at drag start rather than synced here (a setState in an effect is
+  // the cascading-render shape the compiler rules forbid).
+  useLayoutEffect(() => {
     if (storedFileTreeWidth === undefined) return;
-    setFileTreeWidth(storedFileTreeWidth);
     fileTreeWidthRef.current = storedFileTreeWidth;
   }, [storedFileTreeWidth]);
 
@@ -517,6 +651,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     const container = panelRowRef.current;
     if (!container) return;
     setIsResizingTree(true);
+    // Start the live width where the rail already is, so the first frame of
+    // the drag (before any mousemove) does not jump.
+    setFileTreeWidth(fileTreeWidthRef.current);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
@@ -540,7 +677,25 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     document.addEventListener('mouseup', onMouseUp);
   }, [setChangesFileTreeWidth, entityId]);
 
+  // Double-click-to-reset: clear the stored width so the rail returns to its
+  // proportional default (the render falls through to RAIL_DEFAULT_WIDTH_CLAMP
+  // once the stored value is gone).
+  const handleTreeResizeReset = useCallback(() => {
+    setChangesFileTreeWidth(entityId, null);
+    fileTreeWidthRef.current = FILE_TREE_DEFAULT_WIDTH;
+  }, [setChangesFileTreeWidth, entityId]);
+
   const selectedFileEntry = useMemo(() => files.find((file) => file.path === selectedFile), [files, selectedFile]);
+
+  // Rendered rail width: local px while dragging (1:1 pointer tracking), the
+  // stored px render-clamped when a drag has ever set one, else the
+  // proportional default. The clamp's percentage resolves against the panel
+  // row (the rail's flex container), so mode flips re-derive it for free.
+  const railWidthStyle = isResizingTree
+    ? `${fileTreeWidth}px`
+    : storedFileTreeWidth !== undefined
+      ? `clamp(${FILE_TREE_DRAG_MIN}px, ${storedFileTreeWidth}px, calc(100% - ${DIFF_PANE_DRAG_MIN + 4}px))`
+      : RAIL_DEFAULT_WIDTH_CLAMP;
 
   // Base-branch badge, shown in the Uncommitted detail's branch header: just
   // the base branch name, tone-coded (see FileTreePanel's baseLabelCustom) so
@@ -554,40 +709,92 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const isCustomBase = !!task?.base_branch && task.base_branch !== (defaultBaseBranch || 'main');
   const baseLabel = baseBranch;
 
+  // The empty-diff sentence names what was searched. This pane is the only
+  // place the surface states emptiness, so a bare "No changes" leaves the user
+  // guessing whether the panel failed or they are simply looking at the wrong
+  // scope - naming it points at where the changes actually are.
+  const emptyDiffMessage = changesSelectedCommit
+    ? 'This commit changed no files'
+    : scope === 'staged'
+      ? 'No staged changes'
+      : scope === 'branch'
+        ? `No changes vs ${baseLabel}`
+        : 'No uncommitted changes';
+
   // Commit-detail header info: metadata for the selected commit if it was set
   // by a click this session, else just the short hash (a restored selection
   // has no metadata until the user re-clicks the row).
   const commitHeaderMeta = selectedCommitMeta && selectedCommitMeta.hash === changesSelectedCommit ? selectedCommitMeta : null;
 
-  // Vertical-split state between the commit-history region (top) and the
-  // detail pane (bottom), per task, mirroring the file-tree width resize below.
-  const changesPanelRootRef = useRef<HTMLDivElement>(null);
+  // Fade the rail's slot-swap content in only when the pin CHANGES live (a
+  // restored pin renders on first paint without the class - restore-flat).
+  const previousPinRef = useRef(changesSelectedCommit);
+  const [pinSwapFade, setPinSwapFade] = useState(false);
+  useEffect(() => {
+    if (previousPinRef.current === changesSelectedCommit) return;
+    previousPinRef.current = changesSelectedCommit;
+    setPinSwapFade(true);
+    const timer = setTimeout(() => setPinSwapFade(false), 140);
+    return () => clearTimeout(timer);
+  }, [changesSelectedCommit]);
+
+  // History section state: expanded flag (per task, persisted only when true -
+  // collapsed is the default) and the expanded body's height, both mirroring
+  // the file-tree width pattern above. The section lives at the BOTTOM of the
+  // rail column, so the drag math measures up from the rail's bottom edge.
+  const railRef = useRef<HTMLDivElement>(null);
+  const historyOpen = useSessionStore((state) => state.changesHistoryOpen[entityId] ?? false);
+  const setChangesHistoryOpen = useSessionStore((state) => state.setChangesHistoryOpen);
+  const handleHistoryToggle = useCallback(() => {
+    setChangesHistoryOpen(entityId, !useSessionStore.getState().changesHistoryOpen[entityId]);
+  }, [entityId, setChangesHistoryOpen]);
+  // Commit count for the section header, reported by the (possibly hidden)
+  // graph panel so the collapsed header stays informative.
+  const [historyCommitCount, setHistoryCommitCount] = useState<number | null>(null);
+  const [historyTruncated, setHistoryTruncated] = useState(false);
+  const handleGraphLoaded = useCallback((commitCount: number, truncated: boolean) => {
+    setHistoryCommitCount(commitCount);
+    setHistoryTruncated(truncated);
+  }, []);
   const storedHistoryHeight = useSessionStore((state) => state.changesHistoryHeight[entityId]);
   const setChangesHistoryHeightStore = useSessionStore((state) => state.setChangesHistoryHeight);
-  const [historyHeight, setHistoryHeight] = useState<number>(storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
+  // The live height while a drag is in flight; the stored height otherwise.
+  // Derived rather than synced from the store in an effect (the
+  // cascading-render shape the compiler rules forbid). The ref carries the
+  // latest value for the release handler, which commits it to the store.
+  const [liveHistoryHeight, setLiveHistoryHeight] = useState<number>(storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
   const historyHeightRef = useRef<number>(storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
   const [isResizingHistory, setIsResizingHistory] = useState(false);
+  const historyHeight = isResizingHistory ? liveHistoryHeight : (storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (storedHistoryHeight === undefined) return;
-    setHistoryHeight(storedHistoryHeight);
     historyHeightRef.current = storedHistoryHeight;
   }, [storedHistoryHeight]);
 
   const handleHistoryResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
-    const container = changesPanelRootRef.current;
+    const container = railRef.current;
     if (!container) return;
     setIsResizingHistory(true);
+    // Start the live height where the section already is, so the first frame
+    // of the drag (before any mousemove) does not jump.
+    setLiveHistoryHeight(historyHeightRef.current);
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       const rect = container.getBoundingClientRect();
       if (rect.height === 0) return;
-      // Keep at least HISTORY_DRAG_MIN for the history list and DETAIL_REGION_DRAG_MIN for the detail pane.
-      const next = Math.max(HISTORY_DRAG_MIN, Math.min(rect.height - DETAIL_REGION_DRAG_MIN, moveEvent.clientY - rect.top));
-      setHistoryHeight(next);
+      // The section sits at the rail bottom, so dragging UP grows the body:
+      // pointer-to-rail-bottom distance, minus the always-visible section
+      // header. Keep HISTORY_DRAG_MIN for the body and TREE_REGION_DRAG_MIN for
+      // the tree region above.
+      const next = Math.max(
+        HISTORY_DRAG_MIN,
+        Math.min(rect.height - TREE_REGION_DRAG_MIN, rect.bottom - moveEvent.clientY - HISTORY_SECTION_HEADER_PX),
+      );
+      setLiveHistoryHeight(next);
       historyHeightRef.current = next;
     };
     const onMouseUp = () => {
@@ -602,6 +809,13 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     document.addEventListener('mouseup', onMouseUp);
   }, [setChangesHistoryHeightStore, entityId]);
 
+  // Double-click-to-reset: clear the stored height and return the section body
+  // to its default.
+  const handleHistoryResizeReset = useCallback(() => {
+    setChangesHistoryHeightStore(entityId, null);
+    historyHeightRef.current = HISTORY_DEFAULT_HEIGHT;
+  }, [setChangesHistoryHeightStore, entityId]);
+
   // Shared detachable-surface header (task-detail embed only): the panel's true
   // first row, above the commit-history region. It also OWNS the branch context
   // (branch + base badge + ahead/behind + last commit) that the file-tree's
@@ -612,8 +826,26 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const surfaceHeaderAhead = branchSummary?.ahead ?? 0;
   const surfaceHeaderBehind = branchSummary?.behind ?? 0;
   const surfaceHeaderLastCommit = branchSummary?.lastCommit ?? null;
+  // Review progress (n/m viewed) in the surface header, hidden until the first
+  // mark. Deliberately duplicates the rail's changes-viewed-count: this one is
+  // the at-a-glance summary that survives the rail scrolling or a maximized
+  // diff; the rail's stays with the list it describes.
+  const viewedCount = useMemo(
+    () => files.reduce((count, file) => (viewedFiles.has(file.path) ? count + 1 : count), 0),
+    [files, viewedFiles],
+  );
+  const surfaceHeaderViewed = files.length > 0 && viewedCount > 0 ? (
+    <span
+      className="flex items-center gap-1 text-[11px] text-fg-muted tabular-nums flex-shrink-0"
+      title={`${viewedCount} of ${files.length} files marked viewed`}
+      data-testid="changes-header-viewed"
+    >
+      <Check size={12} className={viewedCount === files.length ? 'text-green-400' : 'text-fg-faint'} />
+      {viewedCount}/{files.length}
+    </span>
+  ) : null;
   const surfaceHeader = popOutParams ? (
-    <DetachableSurfaceHeader kind="changes" params={popOutParams} actions={expandCollapseControl}>
+    <DetachableSurfaceHeader kind="changes" params={popOutParams} actions={<>{surfaceHeaderViewed}{expandCollapseControl}</>}>
       <GitBranch size={14} className="text-fg-muted flex-shrink-0" aria-hidden />
       <span
         className="text-xs font-medium text-fg-secondary truncate flex-shrink-0 max-w-[45%]"
@@ -632,6 +864,16 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         >
           {baseLabel}
         </span>
+      )}
+      {task?.pr_url && (
+        <PrLink
+          prUrl={task.pr_url}
+          prNumber={task.pr_number}
+          prState={task.pr_state}
+          prMergeReadiness={task.pr_merge_readiness}
+          testId="changes-pr-link"
+          className="shrink-0"
+        />
       )}
       {(surfaceHeaderAhead > 0 || surfaceHeaderBehind > 0) && (
         <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0 text-[11px]" title={`${surfaceHeaderAhead} ahead, ${surfaceHeaderBehind} behind base branch`}>
@@ -668,33 +910,46 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const renderFilesBody = (): React.ReactNode => {
   // Compact header identifying the selected commit, shown above the detail
   // pane whenever a commit (not Uncommitted) is selected.
+  // Two-line, rail-width layout: it renders at the TOP of the rail column, in
+  // the region the scope segmented control vacates while a commit is pinned
+  // (FileTreePanel suppresses the control when `scope` is undefined), so
+  // pinning swaps the slot's content instead of inserting a full-width row and
+  // jumping the whole layout. The error / empty branches below render the same
+  // element full-width, where the two-line shape still reads fine.
   const commitDetailHeader = changesSelectedCommit ? (
     <div
-      className="flex items-center gap-2 border-b border-edge px-3 py-1.5 flex-shrink-0"
+      className={`border-b border-edge px-2 py-1.5 flex-shrink-0 ${pinSwapFade ? 'rail-slot-in' : ''}`}
       data-testid="commit-detail-header"
     >
-      <button
-        type="button"
-        onClick={handleSelectUncommitted}
-        title="Back to Uncommitted changes"
-        className="p-1 -ml-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors flex-shrink-0"
-        data-testid="commit-detail-back"
-      >
-        <ArrowLeft size={14} />
-      </button>
-      <span className="font-mono text-xs text-fg-secondary flex-shrink-0">
-        {commitHeaderMeta?.shortHash ?? changesSelectedCommit.slice(0, 7)}
-      </span>
-      {commitHeaderMeta && <span className="truncate text-xs text-fg">{commitHeaderMeta.subject}</span>}
-      {commitHeaderMeta && (
-        <span className="truncate text-[11px] text-fg-faint flex-shrink-0">
-          {commitHeaderMeta.authorName}
-          {commitHeaderMeta.authorTimestamp && ` · ${formatRelativeTime(commitHeaderMeta.authorTimestamp)}`}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <button
+          type="button"
+          onClick={handleSelectUncommitted}
+          title="Back to Uncommitted changes"
+          className="p-1 -ml-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors flex-shrink-0"
+          data-testid="commit-detail-back"
+        >
+          <ArrowLeft size={14} />
+        </button>
+        <span className="font-mono text-xs text-fg-secondary flex-shrink-0">
+          {commitHeaderMeta?.shortHash ?? changesSelectedCommit.slice(0, 7)}
         </span>
+        <span className="ml-auto flex-shrink-0 text-[11px] text-fg-faint tabular-nums">
+          +{totalInsertions}/-{totalDeletions}
+        </span>
+      </div>
+      {commitHeaderMeta && (
+        <div
+          className="mt-0.5 flex items-center gap-1.5 min-w-0 pl-6"
+          title={`${commitHeaderMeta.subject}\n${commitHeaderMeta.authorName}${commitHeaderMeta.authorTimestamp ? ` · ${formatRelativeTime(commitHeaderMeta.authorTimestamp)}` : ''}`}
+        >
+          <span className="truncate text-xs text-fg">{commitHeaderMeta.subject}</span>
+          <span className="flex-shrink-0 truncate max-w-[45%] text-[11px] text-fg-faint">
+            {commitHeaderMeta.authorName}
+            {commitHeaderMeta.authorTimestamp && ` · ${formatRelativeTime(commitHeaderMeta.authorTimestamp)}`}
+          </span>
+        </div>
       )}
-      <span className="ml-auto flex-shrink-0 text-[11px] text-fg-faint">
-        +{totalInsertions}/-{totalDeletions}
-      </span>
     </div>
   ) : null;
 
@@ -728,46 +983,160 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
 
   return (
     <div className="flex flex-col h-full">
-      {commitDetailHeader}
       <div ref={panelRowRef} className="flex-1 min-h-0 flex">
-        {/* File tree - left panel (drag-resizable) */}
-        <div className="flex-shrink-0 overflow-hidden" style={{ width: fileTreeWidth }}>
-          <FileTreePanel
-            files={files}
-            selectedFile={selectedFile}
-            onSelect={handleSelectFile}
-            totalInsertions={totalInsertions}
-            totalDeletions={totalDeletions}
-            branchSummary={changesSelectedCommit ? undefined : branchSummary}
-            showBranchHeader={!popOutParams}
-            viewedFiles={viewedFiles}
-            onToggleViewed={handleToggleViewed}
-            scope={changesSelectedCommit ? undefined : scope}
-            onScopeChange={changesSelectedCommit ? undefined : handleScopeChange}
-            baseLabel={changesSelectedCommit ? undefined : baseLabel}
-            baseLabelCustom={changesSelectedCommit ? undefined : isCustomBase}
-            worktreePath={worktreePath}
-            projectPath={projectPath}
-            onSelectHistoryCommit={handleSelectHistoryCommit}
-          />
+        {/* Rail - left column (drag-resizable): commit context, file tree, and
+            the collapsible History section pinned at the bottom. */}
+        <div ref={railRef} className="flex-shrink-0 overflow-hidden flex flex-col" style={{ width: railWidthStyle }}>
+          {commitDetailHeader}
+          <div className="flex-1 min-h-0">
+            <FileTreePanel
+              files={files}
+              selectedFile={selectedFile}
+              onSelect={handleSelectFile}
+              totalInsertions={totalInsertions}
+              totalDeletions={totalDeletions}
+              branchSummary={changesSelectedCommit ? undefined : branchSummary}
+              showBranchHeader={!popOutParams}
+              viewedFiles={viewedFiles}
+              onToggleViewed={handleToggleViewed}
+              scope={changesSelectedCommit ? undefined : scope}
+              onScopeChange={changesSelectedCommit ? undefined : handleScopeChange}
+              baseLabel={changesSelectedCommit ? undefined : baseLabel}
+              baseLabelCustom={changesSelectedCommit ? undefined : isCustomBase}
+              prLink={task?.pr_url
+                ? { url: task.pr_url, number: task.pr_number, state: task.pr_state, mergeReadiness: task.pr_merge_readiness }
+                : undefined}
+              loaded={loaded}
+              worktreePath={worktreePath}
+              projectPath={projectPath}
+              onSelectHistoryCommit={handleSelectHistoryCommit}
+              onOpenInNewWindow={filePopOutParams && task ? handleOpenFileWindow : undefined}
+            />
+          </div>
+
+          {/* Drag handle: resize the History body vs. the tree region above.
+              Rendered only while the section is open (a collapsed header is not
+              resizable). 1px visual line, ~9px invisible hit zone; double-click
+              resets to the default height (VS Code convention). */}
+          {task && historyOpen && (
+            <div
+              onMouseDown={handleHistoryResizeStart}
+              onDoubleClick={handleHistoryResizeReset}
+              className={`relative h-1 flex-shrink-0 cursor-row-resize transition-colors ${isResizingHistory ? 'bg-accent' : 'bg-edge hover:bg-accent/50'}`}
+              role="separator"
+              aria-orientation="horizontal"
+              title="Drag to resize - double-click to reset"
+              data-testid="changes-history-resize"
+              // The drag state as DATA, not just as a Tailwind class. A drag
+              // test that dispatches moves straight after mousedown races the
+              // handler installing its document listeners, and under CI load
+              // the early moves land on nothing - the resize then commits the
+              // untouched default and the test fails once, then passes on
+              // retry. Polling this attribute is the "wait for the condition"
+              // the cross-platform rule asks for.
+              data-resizing={isResizingHistory ? 'true' : 'false'}
+            >
+              <span className="absolute inset-x-0 -inset-y-1" />
+            </div>
+          )}
+
+          {/* History: the commit browser, collapsed to its header row by default.
+              Only when a `task` is provided (the graph needs its PR marker); the
+              command-terminal embed stays Uncommitted-only with a plain rail. */}
+          {task && (
+            <ChangesHistorySection
+              open={historyOpen}
+              onToggle={handleHistoryToggle}
+              bodyHeight={historyHeight}
+              commitCount={historyCommitCount}
+              truncated={historyTruncated}
+              pinnedShortHash={changesSelectedCommit ? (commitHeaderMeta?.shortHash ?? changesSelectedCommit.slice(0, 7)) : null}
+              animateHeight={!isResizingHistory}
+            >
+              <CommitGraphPanel
+                projectPath={projectPath}
+                worktreePath={worktreePath}
+                baseBranch={baseBranch}
+                task={task}
+                isFocused={isFocused}
+                onSelectCommit={handleSelectCommit}
+                onSelectUncommitted={handleSelectUncommitted}
+                selectedCommit={changesSelectedCommit}
+                uncommittedCount={uncommittedFileCount}
+                compact
+                onLoaded={handleGraphLoaded}
+              />
+            </ChangesHistorySection>
+          )}
         </div>
 
-        {/* Drag handle: widen the file tree to see long branch names / file paths. */}
+        {/* Drag handle: widen the file tree to see long branch names / file
+            paths. 1px visual line, ~9px invisible hit zone; double-click
+            resets to the proportional default width (VS Code convention). */}
         <div
           onMouseDown={handleTreeResizeStart}
-          className={`w-1 flex-shrink-0 cursor-col-resize transition-colors ${isResizingTree ? 'bg-accent' : 'bg-edge hover:bg-accent/50'}`}
+          onDoubleClick={handleTreeResizeReset}
+          className={`relative w-1 flex-shrink-0 cursor-col-resize transition-colors ${isResizingTree ? 'bg-accent' : 'bg-edge hover:bg-accent/50'}`}
           role="separator"
           aria-orientation="vertical"
+          title="Drag to resize - double-click to reset"
           data-testid="changes-tree-resize"
-        />
+          // Same drag-state signal as the history resizer above.
+          data-resizing={isResizingTree ? 'true' : 'false'}
+        >
+          <span className="absolute inset-y-0 -inset-x-1" />
+        </div>
 
         {/* Diff viewer - right panel */}
         <div className="flex-1 min-h-0">
           {!selectedFile ? (
             <div className="flex flex-col h-full">
-              <div className="flex items-center justify-center flex-1 text-xs text-fg-disabled">
-                Select a file to view changes
+              {/* The toolbar row survives with no file selected, carrying only
+                  the controls that still mean something: View options and its
+                  "Open settings" footer. Without it a clean worktree had NO
+                  route to the diff preferences from inside the Changes surface
+                  at all - the whole row lives in DiffViewer, which does not
+                  mount until a file is picked, so the user had to already have
+                  a change in order to set how changes render. Keeping the row
+                  also stops the diff jumping down ~30px the moment the first
+                  file is selected. File-specific controls (change navigation,
+                  markdown preview, split/inline, blame) are omitted rather than
+                  disabled: there is no file for them to act on, so a greyed
+                  control would imply one exists and is unavailable. */}
+              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-edge flex-shrink-0" data-testid="diff-toolbar-no-file">
+                <div className="ml-auto flex items-center gap-1">
+                  <DiffViewOptionsMenu />
+                </div>
               </div>
+              {/* Three states, not two. An empty diff has nothing to select, so
+                  telling the user to pick a file would be a dead end - but
+                  during the FIRST fetch the list is empty too, and this pane is
+                  now the only voice for emptiness (the rail dropped its
+                  duplicate), so an ungated message here would state a false
+                  negative beside the rail's skeleton rows. Paint nothing until
+                  `loaded`, mirroring FileTreePanel's own gate. */}
+              {files.length === 0 ? (
+                loaded ? (
+                  <div className="flex flex-col items-center justify-center flex-1 gap-2 p-4 text-center" data-testid="diff-no-changes">
+                    <Check size={22} className="text-fg-disabled" />
+                    {/* Naming the scope is what makes ONE message self-explanatory:
+                        "No changes" under Working while History shows commits reads
+                        as a broken panel, where "No uncommitted changes" points at
+                        where to look instead. */}
+                    <span className="text-sm text-fg-muted">{emptyDiffMessage}</span>
+                  </div>
+                ) : (
+                  <div className="flex-1" />
+                )
+              ) : (
+                <div className="flex flex-col items-center justify-center flex-1 gap-2 p-4 text-center">
+                  <MousePointerClick size={22} className="text-fg-disabled" />
+                  <span className="text-sm text-fg-muted">Select a file to view changes</span>
+                  {nextFileCombo && (
+                    <span className="text-xs text-fg-faint">{nextFileCombo} - next changed file</span>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <DiffErrorBoundary>
@@ -777,7 +1146,12 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
                 language={fileContent?.result.language ?? 'plaintext'}
                 filePath={selectedFile}
                 contentFilePath={fileContent?.filePath ?? null}
-                scrollKey={effectiveScrollKey}
+                // Scoped by what is under review: the same file at the same
+                // scrollTop means different CONTENT under a different commit or
+                // scope, so each review context remembers its own position
+                // instead of restoring one context's offset against another's
+                // text.
+                scrollKey={`${effectiveScrollKey}:${changesSelectedCommit ?? scope}`}
                 status={selectedFileEntry?.status ?? 'M'}
                 viewMode={viewMode}
                 onViewModeChange={(mode) => updateConfig({ diffViewMode: mode })}
@@ -799,39 +1173,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   };
 
   return (
-    <div ref={changesPanelRootRef} className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       {surfaceHeader}
-      {/* Commit-history region (top): the master browse surface. Only shown when
-          a `task` is provided (the history browser needs the graph's PR marker);
-          the command-terminal embed stays Uncommitted-only, filling the whole panel. */}
-      {task && (
-        <>
-          <div className="flex-shrink-0 overflow-hidden" style={{ height: historyHeight }}>
-            <CommitGraphPanel
-              projectPath={projectPath}
-              worktreePath={worktreePath}
-              baseBranch={baseBranch}
-              task={task}
-              isFocused={isFocused}
-              onSelectCommit={handleSelectCommit}
-              onSelectUncommitted={handleSelectUncommitted}
-              selectedCommit={changesSelectedCommit}
-              uncommittedCount={uncommittedFileCount}
-            />
-          </div>
-
-          {/* Drag handle: resize the history region vs. the detail pane below. */}
-          <div
-            onMouseDown={handleHistoryResizeStart}
-            className={`h-1 flex-shrink-0 cursor-row-resize transition-colors ${isResizingHistory ? 'bg-accent' : 'bg-edge hover:bg-accent/50'}`}
-            role="separator"
-            aria-orientation="horizontal"
-            data-testid="changes-history-resize"
-          />
-        </>
-      )}
-
-      {/* Detail pane (bottom): the selected row's diff (Uncommitted or a commit). */}
+      {/* The review surface: rail (tree + History section) beside the diff. */}
       <div className="flex-1 min-h-0">
         {renderFilesBody()}
       </div>

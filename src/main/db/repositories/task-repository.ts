@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState } from '../../../shared/types';
+import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 
@@ -140,6 +140,32 @@ export class TaskRepository {
   }
 
   /**
+   * Every task, archived included, whose linked PR is `prNumber`, newest
+   * `updated_at` first. The PR linker's inferred tiers use it to refuse a PR
+   * another task on this board already holds; archived rows count because a
+   * Done task keeps its link. No `archived_at` filter, unlike `getByBranchName`.
+   */
+  listByPRNumber(prNumber: number): Task[] {
+    const rows = this.db.prepare(`${TaskRepository.SELECT_WITH_COUNT}
+      WHERE t.pr_number = ?
+      ORDER BY t.updated_at DESC`).all(prNumber) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  /**
+   * Every task, archived included, that holds `branchName` as its local
+   * `branch_name` or as the `pushed_branch` its work went to, newest
+   * `updated_at` first. The PR linker's remote-tip tier uses it to refuse a
+   * branch another task on this board owns, before any PR exists for it.
+   */
+  listByBranchOrPushedBranch(branchName: string): Task[] {
+    const rows = this.db.prepare(`${TaskRepository.SELECT_WITH_COUNT}
+      WHERE (t.branch_name = ? OR t.pushed_branch = ?)
+      ORDER BY t.updated_at DESC`).all(branchName, branchName) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  /**
    * Allocate the next display_id. MONOTONIC: the high-water mark in
    * `project_meta` only moves forward, so deleting the highest-numbered task
    * never hands its number to the next one created. That matters because a
@@ -181,19 +207,54 @@ export class TaskRepository {
   }
 
   /**
-   * Persist a freshly created worktree: its path, its branch, and the directory
-   * name that must never change again.
+   * Persist a freshly created worktree: its path, its branch, the directory
+   * name that must never change again, and the base it was actually cut from.
    *
    * Atomic on purpose. Written as two statements, a crash in between would leave
    * `worktree_path` set with `worktree_folder` still null; the
    * `basename(worktree_path)` fallback would mask that until the task reached
    * Done, which nulls the path and would lose the folder permanently.
+   *
+   * `resolvedBaseBranch` is the observed base, not the user's choice, and is the
+   * only point that can record it: by the time any consumer asks, the resolution
+   * is gone. It goes to `resolved_base_branch`, never `base_branch` - see
+   * `Task.resolved_base_branch` for why backfilling that one changes spawn
+   * behavior.
    */
-  recordWorktree(id: string, worktreePath: string, branchName: string, worktreeFolder: string): void {
+  recordWorktree(
+    id: string,
+    worktreePath: string,
+    branchName: string,
+    worktreeFolder: string,
+    resolvedBaseBranch?: string | null,
+  ): void {
     this.db.transaction(() => {
-      this.update({ id, worktree_path: worktreePath, branch_name: branchName });
+      this.update({
+        id,
+        worktree_path: worktreePath,
+        branch_name: branchName,
+        // Omitted rather than nulled when absent, so a caller that cannot supply
+        // it never erases a base an earlier creation did record.
+        ...(resolvedBaseBranch ? { resolved_base_branch: resolvedBaseBranch } : {}),
+      });
       this.setWorktreeFolder(id, worktreeFolder);
+      // A task that once fell back to the shared checkout and now has a
+      // worktree must not keep claiming otherwise. Inside the transaction so
+      // the path and the reason can never disagree.
+      this.setWorktreeSkipReason(id, null);
     })();
+  }
+
+  /**
+   * Persist why the task's last spawn ran WITHOUT a worktree (see
+   * `WorktreeSkipReason`), or null once it has one again. Deliberately does NOT
+   * bump `updated_at`: this is spawn telemetry, not a user edit, and a spawn that
+   * skips a worktree must not reorder the board or trip "recently updated". The
+   * generic `update()` column list omits the column for the same reason
+   * `worktree_folder` is omitted, so a normal task edit never clobbers it.
+   */
+  setWorktreeSkipReason(taskId: string, reason: WorktreeSkipReason | null): void {
+    this.db.prepare('UPDATE tasks SET worktree_skip_reason = ? WHERE id = ?').run(reason, taskId);
   }
 
   /**
@@ -274,15 +335,19 @@ export class TaskRepository {
       session_id: null,
       worktree_path: null,
       worktree_folder: null,
+      worktree_skip_reason: null,
       branch_name: input.customBranchName?.trim() || null,
       pr_number: null,
       pr_url: null,
       pr_state: null,
+      pr_merge_readiness: null,
       head_sha: null,
+      pushed_branch: null,
       external_id: input.externalId ?? null,
       external_source: input.externalSource ?? null,
       external_url: input.externalUrl ?? null,
       base_branch: input.baseBranch || null,
+      resolved_base_branch: null,
       use_worktree: input.useWorktree != null ? (input.useWorktree ? 1 : 0) : null,
       labels,
       priority,
@@ -307,9 +372,9 @@ export class TaskRepository {
     };
 
     this.db.prepare(`
-      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, run_mode, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.created_at, task.updated_at);
+      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, run_mode, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.pr_merge_readiness, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.created_at, task.updated_at);
 
     return task;
   }
@@ -329,9 +394,9 @@ export class TaskRepository {
     const updated: Task = { ...merged, ...applyProfileExclusivity(merged, input) };
 
     this.db.prepare(`
-      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, head_sha = ?, base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, updated_at = ?
+      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, pr_merge_readiness = ?, head_sha = ?, pushed_branch = ?, base_branch = ?, resolved_base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, updated_at = ?
       WHERE id = ?
-    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.head_sha, updated.base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.updated_at, updated.id);
+    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.pr_merge_readiness, updated.head_sha, updated.pushed_branch, updated.base_branch, updated.resolved_base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.updated_at, updated.id);
 
     return updated;
   }
@@ -506,6 +571,38 @@ export class TaskRepository {
       WHERE t.archived_at IS NOT NULL
       ORDER BY t.archived_at DESC`).all() as TaskRow[];
     return rows.map(rowToTask);
+  }
+
+  /**
+   * Total task count, active plus archived, as a bare COUNT(*). For callers
+   * that need only the number (board_snapshot's bucketed count): list() would
+   * materialize every row plus the attachment-count join just to take .length.
+   */
+  countAll(): number {
+    const { count } = this.db
+      .prepare('SELECT COUNT(*) AS count FROM tasks')
+      .get() as { count: number };
+    return count;
+  }
+
+  /**
+   * How many tasks are archived, as a bare COUNT(*). For a caller that needs
+   * only the number: `listArchived()` materializes every archived row plus the
+   * attachment-count join just to take `.length`, which on a mature board is
+   * hundreds of rows carrying full descriptions. Mirrors `countAll()`.
+   *
+   * The MCP read tools substitute this project-wide count for the done lane's
+   * OWN count. That holds only because every archiving path lands in that lane:
+   * `archive()` has exactly one caller, `handleTaskMove`, which calls it in the
+   * same tick it moves the task into a `role === 'done'` swimlane. If a second
+   * archiving path is ever added, those callers need a swimlane_id filter
+   * instead of this method.
+   */
+  countArchived(): number {
+    const { count } = this.db
+      .prepare('SELECT COUNT(*) AS count FROM tasks WHERE archived_at IS NOT NULL')
+      .get() as { count: number };
+    return count;
   }
 
   /**

@@ -64,6 +64,17 @@ const ENGINE_SINK_FILES: Record<string, string> = {
   'src/main/ipc/handlers/session-reconcile.ts':
     'restartSessionForSettingsChange: suspend-and-respawn in place to apply CLI flags to an EXISTING '
     + 'session; not a first-spawn entry point',
+  'src/main/ipc/handlers/task-move.ts':
+    "Phase 1's automation hooks, and neither is a spawn of any kind. One runs the SOURCE column's "
+    + "exit rows as the task leaves; the other runs the DESTINATION column's enter rows on a WARM "
+    + 'move, where the session is already live and Priority 3 would otherwise return without running '
+    + 'them at all. Neither passes startAgent: on exit the runner cannot start one, and on the warm '
+    + 'path the session exists by construction. The shape is pinned below, so this entry cannot '
+    + 'quietly widen into a real spawn path',
+  'src/main/ipc/helpers/automation-run-again.ts':
+    'AUTOMATION_RUN_AGAIN: re-runs ONE existing automation against the task\'s current state. Not a '
+    + 'spawn either, and it cannot become one: executeSingleAutomation passes no startAgent, so a row '
+    + 'that needs an agent and finds no session skips with that reason',
 };
 
 /**
@@ -73,7 +84,9 @@ const ENGINE_SINK_FILES: Record<string, string> = {
  */
 const PTY_SINK_FILES: Record<string, string> = {
   'src/main/transition-engine/transition-engine.ts':
-    'executeSpawnAgent (the engine sink every board-driven spawn funnels into) and the run_script action',
+    'executeSpawnAgent: the engine sink every board-driven spawn funnels into. The retired run_script '
+    + 'ACTION used to spawn here too; the automation adapter that replaced it runs an ordinary child '
+    + 'process, because an interactive shell never exits and its script could not be awaited',
   'src/main/transition-engine/session-startup/auto-spawn.ts':
     'startup reconcile; prepares every spawn via prepareAgentSpawn (asserted below)',
   'src/main/transition-engine/session-startup/resume-suspended.ts':
@@ -104,7 +117,7 @@ function isCommentLine(line: string): boolean {
   return trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*');
 }
 
-type SinkCall = { relativePath: string; location: string };
+type SinkCall = { relativePath: string; line: number; location: string };
 
 function collectSinkCalls(pattern: RegExp): SinkCall[] {
   const calls: SinkCall[] = [];
@@ -114,25 +127,66 @@ function collectSinkCalls(pattern: RegExp): SinkCall[] {
     lines.forEach((line, index) => {
       if (isCommentLine(line)) return;
       if (pattern.test(line)) {
-        calls.push({ relativePath, location: `${relativePath}:${index + 1}` });
+        calls.push({ relativePath, line: index + 1, location: `${relativePath}:${index + 1}` });
       }
     });
   }
   return calls;
 }
 
-function fileHasNonCommentCall(relativePath: string, callName: string): boolean {
+// Lines strictly BEFORE `beforeLine` (1-based), so a call sharing a line with the
+// site being checked does not count as preceding it.
+function fileHasNonCommentCallBefore(relativePath: string, beforeLine: number, callName: string): boolean {
   const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8');
   return source
     .split('\n')
+    .slice(0, beforeLine - 1)
     .some((line) => !isCommentLine(line) && line.includes(`${callName}(`));
 }
 
-const ENGINE_SINK_PATTERN = /\.(executeTransition|resumeSuspendedSession)\s*\(/;
+function fileHasNonCommentCall(relativePath: string, callName: string): boolean {
+  return fileHasNonCommentCallBefore(relativePath, Number.POSITIVE_INFINITY, callName);
+}
+
+type ReceiverCall = SinkCall & { receiver: string };
+
+// Like collectSinkCalls, but captures the receiver identifier so a pairing check can
+// demand the SAME receiver instead of a variable literally named `adapter`. Without
+// this, a future spawn site written `claudeAdapter.buildCommand(...)` is never
+// collected at all, and the scan passes by finding nothing rather than by finding it
+// safe. A leading `.` also keeps method DECLARATIONS (`buildCommand(options) {`) out.
+function collectReceiverCalls(methodName: string): ReceiverCall[] {
+  const pattern = new RegExp(`\\b([A-Za-z_$][\\w$]*)\\.${methodName}\\s*\\(`);
+  const calls: ReceiverCall[] = [];
+  for (const filePath of collectSourceFiles(MAIN_DIR)) {
+    const relativePath = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+    lines.forEach((line, index) => {
+      if (isCommentLine(line)) return;
+      const match = pattern.exec(line);
+      if (match === null) return;
+      calls.push({
+        relativePath,
+        line: index + 1,
+        location: `${relativePath}:${index + 1}`,
+        receiver: match[1],
+      });
+    });
+  }
+  return calls;
+}
+
+// `executeSingleAutomation` is in here with the two spawn sinks even though it
+// cannot spawn. It reaches the same engine from outside it, so leaving it
+// unscanned would mean a second public entry point growing its own callers
+// with no test watching, which is the exact shape this scan exists to stop.
+const ENGINE_SINK_PATTERN = /\.(executeTransition|resumeSuspendedSession|executeSingleAutomation)\s*\(/;
+/** The same names, global, for counting every occurrence in one file. */
+const ENGINE_SINK_PATTERN_GLOBAL = new RegExp(ENGINE_SINK_PATTERN.source, 'g');
 const PTY_SINK_PATTERN = /sessionManager\.spawn\s*\(/;
 
 describe('spawn entry-point parity: engine sinks', () => {
-  it('every direct engine.executeTransition / engine.resumeSuspendedSession call site is classified', () => {
+  it('every direct engine.executeTransition / resumeSuspendedSession / executeSingleAutomation call site is classified', () => {
     const unclassified = collectSinkCalls(ENGINE_SINK_PATTERN)
       .filter((call) => !(call.relativePath in ENGINE_SINK_FILES))
       .map((call) => call.location);
@@ -144,6 +198,31 @@ describe('spawn entry-point parity: engine sinks', () => {
         + `Either route through spawnAgent / prepareAgentSpawn, or add a justified ENGINE_SINK_FILES `
         + `entry here and update ${RULE_FILE}.`,
     ).toEqual([]);
+  });
+});
+
+describe("spawn entry-point parity: task-move's allowlisted engine calls never spawn", () => {
+  // The allowlist is per FILE, so admitting task-move.ts would otherwise let a
+  // future direct spawn call slip in beside the automation hooks with no test to
+  // say so. Pin the shape instead: exactly two engine calls, one per trigger,
+  // with no startAgent anywhere near either.
+  const source = fs.readFileSync(path.join(REPO_ROOT, 'src/main/ipc/handlers/task-move.ts'), 'utf-8');
+
+  it('makes exactly two engine calls, one per trigger', () => {
+    const calls = source.match(ENGINE_SINK_PATTERN_GLOBAL) ?? [];
+    expect(calls).toHaveLength(2);
+    // The source column as the task leaves, and the destination column as it
+    // arrives on a warm move. A third call, or either of these turning into a
+    // `resumeSuspendedSession`, fails here.
+    expect(source).toMatch(/executeTransition\(\s*task,\s*fromLane,\s*'exit'/);
+    expect(source).toMatch(/executeTransition\(\s*task,\s*toLane,\s*'enter'/);
+  });
+
+  it('passes no startAgent on either, so neither can become a spawn path', () => {
+    // The PROPERTY, not the word: the call sites carry comments saying there is
+    // no startAgent, and a bare-word scan fails on its own explanation.
+    // Matches both `startAgent:` and the `startAgent,` shorthand.
+    expect(source).not.toMatch(/startAgent\s*[:,]/);
   });
 });
 
@@ -202,6 +281,66 @@ describe('spawn entry-point parity: chokepoints actually run the shared preamble
   });
 });
 
+describe('spawn entry-point parity: every buildCommand site runs ensureTrust first', () => {
+  // `adapter.ensureTrust` is the adapter's pre-spawn global-config step (trust
+  // entries, and for Claude the diff-panel write in diff-panel.ts). The
+  // Command Terminal (transient-sessions.ts) is allowlisted out of both
+  // chokepoints above, so nothing else guarantees it keeps calling it - and a
+  // maximized Command Terminal is exactly where Claude's diff panel would
+  // otherwise come back. Pin: every file that builds an agent command calls
+  // ensureTrust( on the SAME receiver, on an earlier non-comment line.
+  //
+  // Deliberate limits of a static scan, so nobody reads it as more than it is:
+  // it proves line ORDER within a file, not that the two calls sit on one
+  // control-flow path, and it only sees paths that build their command through
+  // an adapter (a raw passthrough spawning a caller-supplied command string is
+  // invisible to it). Runtime ordering is pinned by the handler-level tests.
+  it('every buildCommand( call site is preceded by the same receiver calling ensureTrust(', () => {
+    const buildSites = collectReceiverCalls('buildCommand');
+    expect(buildSites.length, 'expected at least one buildCommand( call site').toBeGreaterThan(0);
+    const missing = buildSites
+      .filter((site) => !fileHasNonCommentCallBefore(site.relativePath, site.line, `${site.receiver}.ensureTrust`))
+      .map((site) => `${site.location} (receiver: ${site.receiver})`);
+    expect(
+      missing,
+      `buildCommand( without an earlier ensureTrust( on the same receiver:\n`
+        + `${missing.join('\n')}\n\n`
+        + `Pre-spawn global-config state (trust entries, Claude's diff-panel write) must apply on `
+        + `every path that builds an agent command, including the Command Terminal. Call `
+        + `<receiver>.ensureTrust(cwd) before building the command. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+});
+
+describe('spawn entry-point parity: every buildCommand site resolves the shim launch first', () => {
+  // On Windows an npm-installed CLI resolves to its `.cmd` shim, which a
+  // PowerShell or Git Bash host launches through cmd.exe, and cmd.exe keeps
+  // only the first line of a multi-line prompt (#353). resolveShimLaunch
+  // (src/main/agent/shared/shim-launch.ts) swaps in the sibling shim the host
+  // can run, or flattens the prompt, and it has to run on every path that
+  // builds an agent command or one launcher silently truncates while the
+  // others work. Same static-scan limits as the ensureTrust check above; the
+  // runtime wiring per chokepoint is pinned by
+  // prepare-spawn-shim-launch-wiring.test.ts, transition-engine.test.ts, and
+  // transient-session-spawn-shim-launch.test.ts.
+  it('every buildCommand( call site is preceded by a resolveShimLaunch( call in the same file', () => {
+    const buildSites = collectReceiverCalls('buildCommand');
+    expect(buildSites.length, 'expected at least one buildCommand( call site').toBeGreaterThan(0);
+    const missing = buildSites
+      .filter((site) => !fileHasNonCommentCallBefore(site.relativePath, site.line, 'resolveShimLaunch'))
+      .map((site) => site.location);
+    expect(
+      missing,
+      `buildCommand( without an earlier resolveShimLaunch( in the same file:\n`
+        + `${missing.join('\n')}\n\n`
+        + `A .cmd / .bat head must be resolved for the PTY shell before any builder sees it, or a `
+        + `multi-line prompt reaches the agent as its first line only on Windows (#353). Call `
+        + `resolveShimLaunch({ agentPath, shell, prompt }) after ensureTrust and hand the builder its `
+        + `agentPath and prompt. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+});
+
 describe('spawn entry-point parity: single lock call site', () => {
   it('lockAdvancedOverridesOnFirstSpawn is only referenced inside spawn-preamble.ts', () => {
     const outsideCalls = collectSinkCalls(/\blockAdvancedOverridesOnFirstSpawn\s*\(/)
@@ -215,5 +354,43 @@ describe('spawn entry-point parity: single lock call site', () => {
         + `call site can drift out of that ordering. Route the path through a spawn chokepoint `
         + `instead. See ${RULE_FILE}.`,
     ).toEqual([]);
+  });
+});
+
+describe('spawn entry-point parity: explicitStart is a user-gesture option', () => {
+  /**
+   * `explicitStart` lifts spawnAgent's `auto_spawn` default and its
+   * manually-paused guard, both of which exist to stop an AUTOMATIC spawn from
+   * overriding a choice the user made. The option therefore belongs only to a
+   * path a user gesture drives. The declaration, the gates, and the forward
+   * live in agent-spawn.ts; the one caller is the phone's start-session verb
+   * body. A create, promote, unarchive, startup, or reconcile path growing
+   * `{ explicitStart: true }` would silently un-pause a task the user paused,
+   * and nothing but this scan would notice.
+   */
+  const EXPLICIT_START_FILES = new Set([
+    'src/main/ipc/helpers/agent-spawn.ts',
+    'src/main/ipc/handlers/session-start.ts',
+  ]);
+
+  it('explicitStart is referenced only by agent-spawn.ts and the start-session body', () => {
+    const outsideReferences = collectSinkCalls(/\bexplicitStart\b/)
+      .filter((reference) => !EXPLICIT_START_FILES.has(reference.relativePath))
+      .map((reference) => reference.location);
+    expect(
+      outsideReferences,
+      `explicitStart referenced outside its two classified files:\n`
+        + `${outsideReferences.join('\n')}\n\n`
+        + `The option bypasses the auto_spawn default and the manual-pause guard, so only a `
+        + `user-initiated path may pass it. If this is a new user gesture, add the file here `
+        + `with a reason; an automatic or reconcile caller never sets it. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+
+  it('the one caller still passes it, so the scan is not vacuous', () => {
+    expect(fileHasNonCommentCall('src/main/ipc/handlers/session-start.ts', 'autoSpawnForTask')).toBe(true);
+    const callerReferences = collectSinkCalls(/explicitStart:\s*true/)
+      .filter((reference) => reference.relativePath === 'src/main/ipc/handlers/session-start.ts');
+    expect(callerReferences.length).toBeGreaterThan(0);
   });
 });

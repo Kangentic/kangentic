@@ -139,7 +139,17 @@ type(scope): subject
 ```
 
 Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`,
-`revert`. The scope is optional. Keep the subject short and in the imperative mood. Examples:
+`revert`. Keep the subject short and in the imperative mood.
+
+The scope is optional and is not checked by the hook. When you use one, prefer a scope already in use
+over a new spelling of one (`agent` not `agents`, `session` not `sessions`, `db` not `database`).
+These are the ones in most active use:
+
+`agent` `session` `pty` `terminal` `command-terminal` `board` `backlog` `ui` `renderer` `ipc` `db`
+`git` `worktree` `browser` `mcp` `activity` `mobile-bridge` `protocol` `settings` `changes` `pr`
+`ci` `test` `e2e` `deps` `release`
+
+The list is illustrative, not exhaustive. A new subsystem gets a new scope. Examples:
 
 - `fix(session): resume when worktree branch is deleted`
 - `feat(board): add keyboard shortcut for moving tasks between columns`
@@ -156,9 +166,10 @@ Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `buil
 
 ### What to expect
 
-- Your PR must be green on all of the CI checks before it can merge: **Lint (ESLint)**,
-  **Type check (tsc)**, **Unit tests (Vitest)**, **Build (production bundle)**, **UI tests
-  (Playwright)**, and **E2E tests (Electron)**. The lint check runs with `--max-warnings 0`, so any
+- Your PR must be green on all of the CI checks before it can merge: **Lint, Typecheck, Build**,
+  **Unit tests (Vitest)**, **UI tests (Playwright)**, **E2E tests (Electron)**, and **cla**. Lint,
+  typecheck and the build run as three steps of one check, each reporting its own pass or fail, so
+  one failing step does not hide the others. The lint step runs with `--max-warnings 0`, so any
   warning fails it.
 - If a check fails, push a fix and CI re-runs automatically. Contributors cannot re-run checks
   directly (that requires write access), so to re-trigger a run for a failure unrelated to your
@@ -221,7 +232,8 @@ Look for issues labeled **good first issue** for approachable tasks. If you want
 
 ## Code of Conduct
 
-Be respectful, constructive, and collaborative. We're all here to build something useful.
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Report unacceptable behavior to
+support@kangentic.com.
 
 ## Questions?
 

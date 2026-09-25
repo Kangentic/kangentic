@@ -11,13 +11,50 @@
   let swimlanes = [];
   let archivedTasks = [];
   let actions = [];
+  // Column automations. Nothing is seeded: a fresh board has none, which is
+  // what the app now does too (the seeded actions that used to become them were
+  // each a no-op or a duplicate of the fallback spawn).
+  //
+  // A demo scene seeds rows through `window.__mockAutomations`, hydrated LAZILY
+  // on the first `automations.list()` rather than here. The web build injects
+  // the mock BEFORE demo/boot.js assigns a scene's seeds (demo/index.html names
+  // the five-script order), so a module-scope read of the global would always
+  // see nothing. Every other demo seed is read the same way, inside the API
+  // function; `__mockBoardProfiles` below is the module-scope exception, and it
+  // works only because a Playwright spec sets it via addInitScript.
+  let automations = [];
+  let automationsHydrated = false;
+  let swimlanePatchesHydrated = false;
+  // Run records. Seedable through `__mockPreConfigure` so a spec can read run
+  // history (`runsForTask`) without executing anything; `runAgain` appends to it.
+  let automationRuns = [];
+  let automationFailureListeners = [];
+  let automationInterruptedListeners = [];
   let sessions = [];
   let attachments = [];
   let backlogTasks = [];
   let activityCache = {};
+  // sessionId -> AssistantMessageTrailEntry[] (oldest first), what
+  // sessions.getMessageTrails() serves; __mockFireMessageTrail writes it too
+  // so a re-sync after the push sees the same trail main would report.
+  let messageTrailCache = {};
+  // sessionId -> ActivityStatsSnapshot, what sessions.getActivityStats() serves
+  // for the Developer tab's activity debug overlay. Seeded via
+  // __mockPreConfigure; empty here, so a session with no snapshot keeps the
+  // production "session unknown" answer.
+  let activityStatsCache = {};
   let eventCache = {};
   let summaryCache = {};
   let currentProjectId = null;
+  // A row tagged with a projectId belongs to that project alone, the way each
+  // project's tasks and archive live in its own DB, and an untagged row shows
+  // everywhere. tasks.list and the archived lists both filter by this rule.
+  function belongsToCurrentProject(row) {
+    return !row.projectId || row.projectId === currentProjectId;
+  }
+  function visibleArchivedTasks() {
+    return archivedTasks.filter(belongsToCurrentProject);
+  }
   let projectConfigs = {};
   let nextDisplayId = 1;
   let bulkDeleteProgressCallbacks = [];
@@ -60,6 +97,15 @@
   let browserPaneOpenSubscribers = [];
   let browserPaneCloseSubscribers = [];
   let browserAgentInputSubscribers = [];
+  // Viewport overrides an agent imposed, keyed by guest webContentsId, plus the
+  // pane subscribers that render them as the toolbar chip.
+  let browserViewportSubscribers = [];
+  let browserViewportSeed = {};
+  // Tasks whose one browser surface is currently OFFSCREEN. Only main can see
+  // these (an offscreen BrowserWindow has no renderer to register itself), so
+  // the UI tier drives them through the emit/seed helpers below.
+  let browserOffscreenSubscribers = [];
+  let browserOffscreenSeed = [];
   let browserDownloadSubscribers = [];
   let browserUserKeySubscribers = [];
   // Guest mouse back/forward presses forwarded from main. A real guest
@@ -70,12 +116,62 @@
   // (e.g. focus() instead of toggling the in-app overlay) without a real
   // OS window. See window.__mockPopOut below.
   let popOutCalls = [];
+  let popOutOpenResult = true;
+  // Which pop-out instance keys main currently reports as open, plus the
+  // popOut:changed push subscribers. A spec drives both through
+  // window.__mockFirePopOutChanged below, which is the ONLY way to exercise the
+  // real push path (App.tsx subscribes onChanged at mount).
+  let popOutOpenKeys = [];
+  let popOutChangedSubscribers = [];
+
+  /**
+   * Mirror of shared/pop-out.ts popOutInstanceKey, for the mock's isOpen(). This file is
+   * loaded via addInitScript as plain browser JS, so it cannot import the real builder and
+   * has to hand-copy it. Two things drift silently if pop-out.ts changes: the global-kind
+   * list below duplicates GLOBAL_KINDS, and the segment order duplicates the builder's.
+   * Update both together. Nothing catches a drift today because electronAPI.popOut.isOpen()
+   * has no caller in src/ - the renderer reads openness off pop-out-store instead - so this
+   * mirror is only here to keep the fake API self-consistent with listOpen().
+   */
+  function popOutKeyOf(kind, params) {
+    if (kind === 'stats' || kind === 'monitor') return kind;
+    const taskKey = kind + ':' + (params && params.projectId) + ':' + (params && params.taskId);
+    if (kind === 'changes-file') return taskKey + ':' + (params && params.filePath);
+    return taskKey;
+  }
+  // Call log for window.electronAPI.window.* (minimize/maximize/close), so a
+  // test can assert a title-bar / pop-out-frame control invoked the right verb
+  // without a real OS window. See window.__mockWindowControls below.
+  let windowControlCalls = [];
 
   // Resolve the git diff fixture for a request. A test can seed a single fixture
   // via window.__mockGitDiff, per-scope fixtures via window.__mockGitDiffByScope
-  // = { working: {...}, staged: {...}, branch: {...} }, or per-commit fixtures
+  // = { working: {...}, staged: {...}, branch: {...} }, per-commit fixtures
   // via window.__mockGitDiffByCommit = { '<oid>': {...} } (checked first, since a
-  // commit selection overrides scope).
+  // commit selection overrides scope), or per-worktree fixtures via
+  // window.__mockGitDiffByWorktree = { '<worktree folder>': { working, staged, branch } },
+  // matched on the request's worktreePath (the sample install seeds one per task).
+  // Resolve a per-worktree fixture map (keyed by worktree FOLDER name) for a request's
+  // worktreePath. A worktree path ends in its folder, so the path's last segment is tried
+  // first. The substring scan below it is unanchored: it matches any key that appears anywhere
+  // in the path, so two slugs where one is a prefix of the other would resolve by Object.keys
+  // order rather than by which folder the path is actually in. Today's slugs carry random
+  // suffixes and do not collide, which is why the scan is kept as the fallback rather than
+  // replaced outright. Shared by diffFiles, branchSummary, commitGraph, fileHistory, and blame,
+  // which the sample install seeds per task (window.__mock*ByWorktree).
+  function resolveByWorktree(byWorktree, worktreePath) {
+    if (!byWorktree || !worktreePath) return null;
+    var segments = worktreePath.split(/[\\/]/);
+    var lastSegment = segments[segments.length - 1] || segments[segments.length - 2] || '';
+    if (byWorktree[lastSegment]) return byWorktree[lastSegment];
+    var folders = Object.keys(byWorktree);
+    for (var folderIndex = 0; folderIndex < folders.length; folderIndex++) {
+      var folder = folders[folderIndex];
+      if (worktreePath.indexOf(folder) !== -1 && byWorktree[folder]) return byWorktree[folder];
+    }
+    return null;
+  }
+
   function resolveGitDiffFixture(request) {
     var commitOid = request && request.commitOid;
     var byCommit = (typeof window !== 'undefined' && window.__mockGitDiffByCommit) || null;
@@ -83,14 +179,21 @@
     var scope = (request && request.scope) || 'branch';
     var byScope = (typeof window !== 'undefined' && window.__mockGitDiffByScope) || null;
     if (byScope && byScope[scope]) return byScope[scope];
+    var byWorktree = (typeof window !== 'undefined' && window.__mockGitDiffByWorktree) || null;
+    var forWorktree = resolveByWorktree(byWorktree, (request && request.worktreePath) || '');
+    if (forWorktree && forWorktree[scope]) return forWorktree[scope];
     return (typeof window !== 'undefined' && window.__mockGitDiff) || null;
   }
 
   let config = Object.assign({
     theme: 'dark',
+    themeFollowsSystem: false,
+    themeLight: 'light',
+    themeDark: 'dark',
     sidebarVisible: true,
     boardLayout: 'horizontal',
     cardDensity: 'default',
+    cardPreview: 'agent-latest-message',
     columnWidth: 'default',
     showTaskNumbers: false,
     terminalPanelVisible: true,
@@ -100,6 +203,8 @@
     diffDefaultScope: 'working',
     diffIgnoreWhitespace: false,
     diffCollapseUnchanged: false,
+    diffWrapLines: false,
+    diffUseInlineWhenNarrow: true,
     diffFileSort: 'name',
     diffFlatList: false,
     terminal: {
@@ -134,6 +239,9 @@
       initScript: null,
       linkNodeModules: true,
       prRefreshIntervalMinutes: 5,
+      autoFetchIntervalMinutes: 5,
+      prEvaluateBranchPolicies: false,
+      prBypassCountsAsReady: true,
     },
     mcpServer: {
       enabled: true,
@@ -212,12 +320,66 @@
     // true, because the mock models an established install (like hasCompletedFirstRun
     // above) that has already crossed the single -> focused default flip.
     hasMigratedWindowLightDismissDefault: true,
+    // true for the same reason: an established install has already run the one-shot
+    // purge of seeded entries out of discoveredModelsByAgent (ConfigManager.load).
+    hasPurgedSeededDiscoveredModels: true,
+    discoveredModelsByAgent: {},
     autoNameAskedTaskIds: [],
     autoNameRateLimitPerHour: 60,
     restoreWindowPosition: true,
     windowBounds: null,
     windowMaximized: false,
   }, window.__mockConfigOverrides || {});
+
+  // Graphics recovery test hook (Sentry DESKTOP-18/DESKTOP-W): main can write
+  // graphicsAccelerationEnabled: false during whenReady AFTER this renderer's
+  // first config read, which is exactly the race App.tsx's own re-read
+  // (useConfigStore.getState().loadConfig() inside the notice handler) exists
+  // to close. Arm with window.__mockGraphicsAccelerationWriteLandsAfterBoot
+  // (set before load, alongside a config seeded with the STALE pre-write
+  // value): the first STALE_CALL_BUDGET config.get()/getGlobal() calls each
+  // report the seeded value untouched, and every call after that reports
+  // main's real write (graphicsAccelerationEnabled: false,
+  // graphicsAccelerationOffBy: 'app'), mirroring configManager.save() in
+  // src/main/index.ts's whenReady block.
+  //
+  // The budget is 4, not 1, because two OTHER things call loadConfig() during
+  // boot with nothing to do with the GPU notice, and each is doubled by
+  // React.StrictMode (src/renderer/index.tsx), which runs every mount effect
+  // twice in this dev-server-backed tier:
+  //   1. App.tsx's own top-level `loadConfig()` call (the boot read itself).
+  //   2. useProjectSwitchEffect's mount-time reload (its null-branch with no
+  //      project open, or its cold-path branch with one - either way, this
+  //      fires once per mount).
+  // That is 2 sources x 2 StrictMode passes = 4 incidental calls, all
+  // dispatched synchronously in the same tick and settled before the GPU
+  // notice's chain can reach its own inner loadConfig() call (behind two
+  // extra microtask hops through readStatus().catch().then()). Empirically
+  // confirmed via console instrumentation: with the notice's own re-read
+  // removed, calls stop at exactly 4 (all stale); with it present, a genuine
+  // 5th call lands after (corrected). Only the FIRST StrictMode pass's
+  // readStatus() call ever produces a notice - it consumes
+  // window.__mockGpuNoticePending on read, so the second pass's call is a
+  // silent no-op - which is why the notice contributes exactly one extra
+  // call rather than two.
+  //
+  // A spec exercising this must also pass `omitProject: true` and seed
+  // `onboardedProjectIds` to a defined array (see graphics-recovery.spec.ts):
+  // with a project seeded, useProjectSwitchEffect's cold path re-fires a
+  // SECOND time once the project resolves (consuming budget beyond this
+  // fixed accounting), and App.tsx's one-time onboardedProjectIds backfill
+  // fires its own incidental updateConfig() otherwise.
+  var GRAPHICS_ACCELERATION_STALE_CALL_BUDGET = 4;
+  var graphicsAccelerationGetCallCount = 0;
+  var graphicsAccelerationGetGlobalCallCount = 0;
+  function withStaleGraphicsAccelerationOverride(effectiveConfig, callCount) {
+    if (!window.__mockGraphicsAccelerationWriteLandsAfterBoot) return effectiveConfig;
+    if (callCount <= GRAPHICS_ACCELERATION_STALE_CALL_BUDGET) return effectiveConfig;
+    return Object.assign({}, effectiveConfig, {
+      graphicsAccelerationEnabled: false,
+      graphicsAccelerationOffBy: 'app',
+    });
+  }
 
   function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -303,6 +465,9 @@
     var git = source.git || {};
     var result = {};
     if (source.theme !== undefined) result.theme = source.theme;
+    if (source.themeFollowsSystem !== undefined) result.themeFollowsSystem = source.themeFollowsSystem;
+    if (source.themeLight !== undefined) result.themeLight = source.themeLight;
+    if (source.themeDark !== undefined) result.themeDark = source.themeDark;
     // terminal.* (shell, fontSize, fontFamily, cursorStyle,
     // backspaceSendsCtrlH) is global-only now - see the comment on
     // pickOverridableSubset() in src/main/config/config-manager.ts.
@@ -317,6 +482,9 @@
       initScript: git.initScript,
       linkNodeModules: git.linkNodeModules,
       prRefreshIntervalMinutes: git.prRefreshIntervalMinutes,
+      autoFetchIntervalMinutes: git.autoFetchIntervalMinutes,
+      prEvaluateBranchPolicies: git.prEvaluateBranchPolicies,
+      prBypassCountsAsReady: git.prBypassCountsAsReady,
     });
     if (pickedGit) result.git = pickedGit;
     return result;
@@ -390,6 +558,32 @@
     mockConfigChangedListeners.slice().forEach(function (listener) { listener(); });
   };
 
+  // What config.set / setProjectOverrides / setProjectOverridesByPath resolve with.
+  // Defaults to a write that reached disk; a test forces the failure path by setting
+  // window.__mockConfigSetPersisted = false, which is what the settings panel's
+  // "This setting did not save" toast keys off (Sentry DESKTOP-1C). Read per call,
+  // not captured once, so a test can flip it mid-run to simulate a disk recovering.
+  // Note the real ConfigManager.save() updates its in-memory config even when the
+  // write fails, so the mock deliberately still applies the partial before returning
+  // persisted: false.
+  function configSetResult() {
+    return { persisted: window.__mockConfigSetPersisted !== false };
+  }
+
+  // A REJECTED write is a different failure from one that degraded: the real
+  // project-scoped handlers throw for an unknown or unopened project, and the settings
+  // panel reports that separately (with no data-folder clause).
+  //
+  // Called BEFORE the mock applies the partial, because the real handlers throw their
+  // precondition before ever reaching ConfigManager - nothing is written on that path.
+  // Rejecting after the mutation would leave mock state a rejected real write never
+  // produces, which is a trap for any later test that asserts on state after a reject.
+  function rejectConfigSetIfConfigured() {
+    if (window.__mockConfigSetRejects) {
+      throw new Error(String(window.__mockConfigSetRejects));
+    }
+  }
+
   // Board Profiles live in kangentic.json, not the DB, so the mock keeps them
   // in a plain module-scope array. Declared here (alongside noop) rather than
   // beside the boardConfig object, whose neighbouring `state` bindings belong to
@@ -398,9 +592,50 @@
     ? JSON.parse(JSON.stringify(window.__mockBoardProfiles))
     : [];
 
+  /**
+   * Copy `window.__mockAutomations` into the live array, once. Called from
+   * `automations.list()` rather than at module scope, so a demo scene's seed
+   * (assigned after this file runs) is still picked up. After the first call the
+   * array is the mock's own state again, so `replaceForColumn` behaves normally.
+   */
+  function hydrateSeededAutomations() {
+    if (automationsHydrated) return;
+    automationsHydrated = true;
+    if (!Array.isArray(window.__mockAutomations)) return;
+    window.__mockAutomations.forEach(function (row, index) {
+      automations.push(Object.assign(
+        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, created_at: now(), updated_at: now() },
+        row,
+        { config: Object.assign({}, row.config) },
+      ));
+    });
+  }
+
+  /**
+   * Apply `window.__mockSwimlanePatches` ({ swimlaneId: Partial<Swimlane> }) to
+   * the seeded columns, once, for the same load-order reason as the automations
+   * above. A column field the sample install fixes for every lane
+   * (`handoff_context`) is a per-scene patch rather than a dataset change,
+   * because changing the dataset would move every docs figure already placed.
+   */
+  function hydrateSeededSwimlanePatches() {
+    if (swimlanePatchesHydrated) return;
+    swimlanePatchesHydrated = true;
+    var patches = window.__mockSwimlanePatches;
+    if (!patches || typeof patches !== 'object') return;
+    Object.keys(patches).forEach(function (swimlaneId) {
+      var lane = swimlanes.find(function (row) { return row.id === swimlaneId; });
+      if (lane) Object.assign(lane, patches[swimlaneId]);
+    });
+  }
+
   // Test override conventions consumed below (set via addInitScript before this mock loads):
   //   - window.__mockBoardProfiles: pre-seeded BoardProfile[] for boardConfig.getBoardProfiles()
   //   - window.__mockAgentListOverrides: per-agent override of agents.list() entries
+  //   - window.__mockAutomations: pre-seeded automation rows, hydrated on first automations.list()
+  //   - window.__mockSwimlanePatches: per-column field overrides, applied on first swimlanes.list()
+  //   - window.__mockInitialExit: one session-exit push fired when sessions.onExit registers
+  //   - window.__mockBoardConfigChanged: a projectId pushed when boardConfig.onChanged registers
   //   - window.__mockFolderPath: path returned by dialog.selectFolder() (consume-once)
   //   - window.__mockDefaultAgentOverride: default_agent for the next project created
   //     via projects.create() or projects.openByPath(); cleared after first use
@@ -414,6 +649,33 @@
   window.__mockFireUpdateDownloaded = function (info) {
     var listeners = window.__mockUpdateDownloadedListeners.slice();
     listeners.forEach(function (fn) { fn(info); });
+  };
+
+  // Update-blocked test hooks (Sentry DESKTOP-1A), same eager pattern as the
+  // update-downloaded hooks above. Main latches this push, so a spec that
+  // wants the "already toasted" case fires once and asserts on the toast
+  // count rather than expecting the mock to deduplicate.
+  window.__mockUpdateBlockedListeners = [];
+  window.__mockFireUpdateBlocked = function (message) {
+    var listeners = window.__mockUpdateBlockedListeners.slice();
+    listeners.forEach(function (fn) { fn(message); });
+  };
+
+  // Host memory pressure test hooks (Sentry DESKTOP-16), same eager pattern
+  // as the update-downloaded hooks above: `__mockFireHostMemoryPressure`
+  // exists before any renderer subscriber has registered.
+  window.__mockHostMemoryPressureListeners = [];
+  window.__mockFireHostMemoryPressure = function (event) {
+    var listeners = window.__mockHostMemoryPressureListeners.slice();
+    listeners.forEach(function (fn) { fn(event); });
+  };
+
+  // Host memory recovery test hooks (Sentry DESKTOP-16): the clear-side edge
+  // for the pressure push above, same eager pattern.
+  window.__mockHostMemoryRecoveryListeners = [];
+  window.__mockFireHostMemoryRecovery = function (event) {
+    var listeners = window.__mockHostMemoryRecoveryListeners.slice();
+    listeners.forEach(function (fn) { fn(event); });
   };
 
   // Announcements test hooks: installed eagerly for the same reason as the
@@ -503,6 +765,8 @@
           swimlanes = [];
           archivedTasks = [];
           actions = [];
+          automations = [];
+          automationRuns = [];
           sessions = [];
           attachments = [];
         }
@@ -593,6 +857,7 @@
           isDirectory: true,
           isGitRepo: true,
           isInsideWorktree: false,
+          hasCommits: true,
           currentBranch: 'main',
           suggestedName: name,
           alreadyRegisteredProjectId: existing ? existing.id : null,
@@ -728,6 +993,26 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onListChanged: function (callback) {
+        // Tests can fire the project-list-changed push via
+        // `window.__mockFireProjectListChanged()`. Carries no payload; the
+        // renderer is expected to refetch `list()` / `getCurrent()`.
+        if (!window.__mockProjectListChangedListeners) {
+          window.__mockProjectListChangedListeners = [];
+        }
+        window.__mockProjectListChangedListeners.push(callback);
+        if (!window.__mockFireProjectListChanged) {
+          window.__mockFireProjectListChanged = function () {
+            var listeners = (window.__mockProjectListChangedListeners || []).slice();
+            listeners.forEach(function (fn) { fn(); });
+          };
+        }
+        return function () {
+          var listeners = window.__mockProjectListChangedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
       onAutoOpened: function (callback) {
         // Tests can fire the programmatic auto-open path via
         // `window.__mockFireProjectAutoOpened(projectId)`. Useful for
@@ -809,9 +1094,7 @@
         // (mirrors the real per-project DBs, where switching projects swaps the
         // whole task set). Untagged tasks are returned for every project, so the
         // many single-project specs that never set a projectId are unaffected.
-        var visible = tasks.filter(function (t) {
-          return !t.projectId || t.projectId === currentProjectId;
-        });
+        var visible = tasks.filter(belongsToCurrentProject);
         // withAttachmentCounts copies each row (Object.assign), so this payload
         // is a genuine snapshot of the board AT CALL TIME and cannot be mutated
         // by a later move.
@@ -864,11 +1147,15 @@
           session_id: null,
           worktree_path: null,
           worktree_folder: null,
+          worktree_skip_reason: null,
           branch_name: input.customBranchName || null,
+          pushed_branch: null,
           pr_number: null,
           pr_url: null,
           pr_state: null,
+          pr_merge_readiness: null,
           base_branch: input.baseBranch || null,
+          resolved_base_branch: null,
           use_worktree: input.useWorktree != null ? (input.useWorktree ? 1 : 0) : null,
           labels: input.labels || [],
           priority: input.priority || 0,
@@ -1090,6 +1377,34 @@
           archivedTasks.push(archived);
           tasks.splice(idx, 1);
         }
+
+        // Mirror main-process behavior: a cross-column move into a todo-role
+        // lane tears the task's session down (cleanupTaskResources ->
+        // SessionManager.remove()), and main announces each removal on
+        // session:removed AFTER the renderer's own optimistic eviction has
+        // run. Splice in place: `sessions` is the closure array
+        // __mockPreConfigure hands out, so tests that hold a reference keep
+        // seeing the same array. The push is guarded on the helper being
+        // installed (it is, once App.tsx has subscribed).
+        if (targetLane && targetLane.role === 'todo' && oldSwimlaneId !== newSwimlaneId) {
+          var removedSessions = [];
+          for (var sessionIndex = sessions.length - 1; sessionIndex >= 0; sessionIndex--) {
+            if (sessions[sessionIndex].taskId === input.taskId) {
+              removedSessions.unshift(sessions[sessionIndex]);
+              sessions.splice(sessionIndex, 1);
+            }
+          }
+          tasks[idx] = Object.assign({}, tasks[idx], { session_id: null });
+          if (typeof window !== 'undefined' && window.__mockFireRemoved) {
+            removedSessions.forEach(function (removedSession) {
+              window.__mockFireRemoved(
+                removedSession.id,
+                Object.assign({}, removedSession),
+                removedSession.projectId,
+              );
+            });
+          }
+        }
       },
       cancelSpawn: async function (taskId) {
         // Record cancellations so UI tests can assert the stall toast's Cancel
@@ -1100,23 +1415,41 @@
         }
       },
       listArchived: async function () {
-        return withAttachmentCounts(archivedTasks);
+        return withAttachmentCounts(visibleArchivedTasks());
       },
       listArchivedPreview: async function (limit) {
         // Mirror the repo: newest-first by archived_at, then LIMIT. Sorting a
         // copy so seeds with more than `limit` archived tasks pick the correct
         // preview subset (the same rows the real SELECT ... ORDER BY DESC would).
         var boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-        var sorted = archivedTasks.slice().sort(function (a, b) {
+        var visible = visibleArchivedTasks();
+        var sorted = visible.slice().sort(function (a, b) {
           return String(b.archived_at || '').localeCompare(String(a.archived_at || ''));
         });
         return {
-          totalCount: archivedTasks.length,
+          totalCount: visible.length,
           tasks: withAttachmentCounts(sorted.slice(0, boundedLimit)),
         };
       },
-      onAutoMoved: function () {
-        return noop;
+      onAutoMoved: function (callback) {
+        // Tests fire this via
+        // window.__mockFireTaskAutoMoved(taskId, targetSwimlaneId, taskTitle, projectId).
+        if (!window.__mockTaskAutoMovedListeners) window.__mockTaskAutoMovedListeners = [];
+        window.__mockTaskAutoMovedListeners.push(callback);
+        if (!window.__mockFireTaskAutoMoved) {
+          window.__mockFireTaskAutoMoved = function (taskId, targetSwimlaneId, taskTitle, projectId) {
+            var listeners = (window.__mockTaskAutoMovedListeners || []).slice();
+            listeners.forEach(function (listener) { listener(taskId, targetSwimlaneId, taskTitle, projectId); });
+          };
+        }
+        // A REAL unsubscribe, matching the preload bridge: App.tsx pushes this
+        // onto its cleanups array, and a noop would leave the unmounted
+        // renderer's listener attached across an HMR re-subscribe.
+        return function () {
+          var listeners = window.__mockTaskAutoMovedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       onSpawnBlocked: function (callback) {
         // Tests fire this via window.__mockFireTaskSpawnBlocked(taskId, title, message, projectId).
@@ -1134,6 +1467,23 @@
         // remount, HMR update or project switch.
         return function () {
           var listeners = window.__mockTaskSpawnBlockedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
+      onSpawnWarning: function (callback) {
+        // Tests fire this via window.__mockFireTaskSpawnWarning(taskId, message, projectId).
+        if (!window.__mockTaskSpawnWarningListeners) window.__mockTaskSpawnWarningListeners = [];
+        window.__mockTaskSpawnWarningListeners.push(callback);
+        if (!window.__mockFireTaskSpawnWarning) {
+          window.__mockFireTaskSpawnWarning = function (taskId, message, projectId) {
+            var listeners = (window.__mockTaskSpawnWarningListeners || []).slice();
+            listeners.forEach(function (listener) { listener(taskId, message, projectId); });
+          };
+        }
+        // A REAL unsubscribe, for the same reason onSpawnBlocked returns one.
+        return function () {
+          var listeners = window.__mockTaskSpawnWarningListeners || [];
           var index = listeners.indexOf(callback);
           if (index !== -1) listeners.splice(index, 1);
         };
@@ -1236,6 +1586,23 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onMovedByMobile: function (callback) {
+        // Tests can fire this via window.__mockFireTaskMovedByMobile(projectId).
+        if (!window.__mockTaskMovedByMobileListeners) window.__mockTaskMovedByMobileListeners = [];
+        window.__mockTaskMovedByMobileListeners.push(callback);
+        if (!window.__mockFireTaskMovedByMobile) {
+          window.__mockFireTaskMovedByMobile = function (projectId) {
+            var listeners = (window.__mockTaskMovedByMobileListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](projectId); }
+          };
+        }
+        // A REAL unsubscribe, matching the preload bridge - never a noop.
+        return function () {
+          var listeners = window.__mockTaskMovedByMobileListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
       onSpawnProgress: function (callback) {
         // Tests can fire this via window.__mockFireSpawnProgress(taskId, label).
         if (!window.__mockSpawnProgressListeners) window.__mockSpawnProgressListeners = [];
@@ -1263,6 +1630,15 @@
         };
       },
       unarchive: async function (input) {
+        // Test hook: record every call (task id), mirroring tasks.move's
+        // __mockMoveProjectIds counter, so a test can assert this path was
+        // never reached (e.g. a gate that should keep a hotkey off an
+        // archived task's window).
+        if (typeof window !== 'undefined') {
+          if (!window.__mockUnarchiveCallIds) window.__mockUnarchiveCallIds = [];
+          window.__mockUnarchiveCallIds.push(input.id);
+        }
+
         // Test hook: simulate a main-process failure (e.g. worktree conflict).
         // Real main process leaves archivedTasks unchanged before throwing, so
         // the mock also leaves them unchanged and throws. The renderer's catch
@@ -1352,10 +1728,20 @@
         if (input.enableWorktree && !task.worktree_path) {
           updates.worktree_path = '/mock/worktrees/' + task.id.slice(0, 8);
           updates.branch_name = task.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + task.id.slice(0, 8);
+          // Mirrors TaskRepository.recordWorktree: a task that gains a worktree
+          // stops claiming it runs in the shared checkout.
+          updates.worktree_skip_reason = null;
           updates.use_worktree = 1;
         }
         tasks[idx] = Object.assign({}, task, updates);
         return withAttachmentCount(tasks[idx]);
+      },
+      updateFromBase: async function (input) {
+        var exists = tasks.some(function (t) { return t.id === input.taskId; });
+        if (!exists) throw new Error('Task not found: ' + input.taskId);
+        // Tests steer the outcome by setting window.__mockUpdateFromBaseResult
+        // to any TaskUpdateFromBaseResult shape.
+        return window.__mockUpdateFromBaseResult || { status: 'already-up-to-date', baseBranch: 'main' };
       },
       bulkUnarchive: async function (ids, targetSwimlaneId) {
         for (var i = 0; i < ids.length; i++) {
@@ -1393,18 +1779,25 @@
         var mode = tasks[idx].session_id ? 'live' : 'persisted';
         return { ok: true, mode: mode };
       },
-      resolvePr: async function (taskId) {
+      resolvePr: async function (taskId, projectId) {
         // Test hook: spec can override the response by setting
         // window.__mockResolvePrResult before calling. Defaults to returning the
         // task unchanged (no PR linked) - real resolution needs the gh CLI.
+        // Takes the projectId the preload forwards, like the real handler.
         if (typeof window !== 'undefined') {
           if (!window.__mockResolvePrCalls) window.__mockResolvePrCalls = [];
-          window.__mockResolvePrCalls.push(taskId);
+          window.__mockResolvePrCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
           if (typeof window.__mockResolvePrResult === 'function') {
             return window.__mockResolvePrResult(taskId);
           }
         }
         var found = tasks.find(function (t) { return t.id === taskId; }) || null;
+        // Mirror the real anchor gate: a task with nothing to search by is
+        // `no-anchor`, never `not-found`.
+        var hasAnchor = !!(found && (
+          found.pr_number != null || found.worktree_path || found.branch_name || found.head_sha || found.pushed_branch
+        ));
+        if (found && !hasAnchor) return { task: found, linked: false, reason: 'no-anchor' };
         var isLinked = !!(found && found.pr_url);
         return { task: found, linked: isLinked, reason: isLinked ? 'unchanged' : 'not-found' };
       },
@@ -1462,7 +1855,12 @@
 
     swimlanes: {
       list: async function () {
-        return swimlanes.slice().sort(function (a, b) {
+        hydrateSeededSwimlanePatches();
+        // A row that carries a projectId belongs to that project only (the real DB is per
+        // project); a row without one stays global, so single-project specs are unchanged.
+        return swimlanes.filter(function (s) {
+          return !s.projectId || s.projectId === currentProjectId;
+        }).sort(function (a, b) {
           return a.position - b.position;
         });
       },
@@ -1564,39 +1962,99 @@
       },
     },
 
-    actions: {
+    automations: {
       list: async function () {
-        return actions;
+        hydrateSeededAutomations();
+        // A sorted COPY: the store holds what this returns, and handing out the
+        // live array would let a renderer mutation reach the mock's state.
+        return automations
+          .slice()
+          .sort(function (left, right) {
+            if (left.swimlane_id !== right.swimlane_id) return left.swimlane_id < right.swimlane_id ? -1 : 1;
+            if (left.trigger !== right.trigger) return left.trigger === 'enter' ? -1 : 1;
+            return left.position - right.position;
+          })
+          .map(function (row) {
+            return Object.assign({}, row, { config: Object.assign({}, row.config) });
+          });
       },
-      create: async function (input) {
-        var action = Object.assign({ id: uuid(), created_at: now() }, input);
-        actions.push(action);
-        return action;
-      },
-      update: async function (input) {
-        var idx = actions.findIndex(function (a) {
-          return a.id === input.id;
+      replaceForColumn: async function (swimlaneId, rows) {
+        // Mirrors the repository: whole-column delete-and-insert, with position
+        // assigned PER TRIGGER so the two groups never interleave.
+        automations = automations.filter(function (row) {
+          return row.swimlane_id !== swimlaneId;
         });
-        if (idx >= 0) {
-          actions[idx] = Object.assign({}, actions[idx], input);
-          return actions[idx];
+        var nextPosition = { enter: 0, exit: 0 };
+        (rows || []).forEach(function (row) {
+          var trigger = row.trigger === 'exit' ? 'exit' : 'enter';
+          automations.push({
+            id: row.id || uuid(),
+            swimlane_id: swimlaneId,
+            name: row.name,
+            type: row.type,
+            trigger: trigger,
+            position: nextPosition[trigger],
+            enabled: row.enabled !== false,
+            config: Object.assign({}, row.config),
+            created_at: now(),
+            updated_at: now(),
+          });
+          nextPosition[trigger] += 1;
+        });
+        return automations.filter(function (row) {
+          return row.swimlane_id === swimlaneId;
+        });
+      },
+      runsForTask: async function (taskId) {
+        return automationRuns
+          .filter(function (run) { return run.task_id === taskId; })
+          .slice()
+          .sort(function (left, right) { return left.started_at < right.started_at ? 1 : -1; })
+          .map(function (run) { return Object.assign({}, run); });
+      },
+      runAgain: async function (automationId, taskId) {
+        var automation = automations.find(function (row) { return row.id === automationId; });
+        if (!automation) {
+          return { ok: false, error: 'That automation no longer exists. It was probably deleted or renamed in the Column Manager.' };
         }
-        throw new Error('Action not found: ' + input.id);
+        var lane = swimlanes.find(function (row) { return row.id === automation.swimlane_id; });
+        // A fresh run row, which is the half the spec asserts: a re-run must be
+        // visible in the log rather than only in the toast.
+        var run = {
+          id: uuid(),
+          automation_id: automation.id,
+          automation_name: automation.name,
+          type: automation.type,
+          task_id: taskId,
+          swimlane_id: automation.swimlane_id,
+          trigger: automation.trigger,
+          status: 'succeeded',
+          detail: 'Ran again.',
+          attempts: 1,
+          started_at: now(),
+          finished_at: now(),
+        };
+        automationRuns.push(run);
+        return {
+          ok: true,
+          runId: run.id,
+          automationName: automation.name,
+          columnName: lane ? lane.name : '',
+          status: 'succeeded',
+          detail: run.detail,
+        };
       },
-      delete: async function (id) {
-        actions = actions.filter(function (a) {
-          return a.id !== id;
-        });
+      onRunFailed: function (callback) {
+        automationFailureListeners.push(callback);
+        return function () {
+          automationFailureListeners = automationFailureListeners.filter(function (entry) { return entry !== callback; });
+        };
       },
-    },
-
-    transitions: {
-      list: async function () {
-        return [];
-      },
-      set: async function () {},
-      getForTransition: async function () {
-        return [];
+      onRunsInterrupted: function (callback) {
+        automationInterruptedListeners.push(callback);
+        return function () {
+          automationInterruptedListeners = automationInterruptedListeners.filter(function (entry) { return entry !== callback; });
+        };
       },
     },
 
@@ -1631,6 +2089,20 @@
           isolatedSwimlaneId: null,
           agentSessionId: null,
         };
+        // Main's respawn drops the task's paused rows from its registry
+        // (session-spawn-flow.ts), so the resumed session is the task's only one. Main
+        // sends no removal push for them: the renderer drops its copy when the new row's
+        // status push lands (withSessionUpserted keeps one row per task). The removal
+        // push below is the mock's own, not main's.
+        // Spliced in place, not reassigned: __mockPreConfigure hands callers this array.
+        for (var pausedIndex = sessions.length - 1; pausedIndex >= 0; pausedIndex--) {
+          var paused = sessions[pausedIndex];
+          if (paused.taskId !== taskId || paused.status !== 'suspended') continue;
+          sessions.splice(pausedIndex, 1);
+          if (typeof window !== 'undefined' && window.__mockFireRemoved) {
+            window.__mockFireRemoved(paused.id, Object.assign({}, paused), paused.projectId);
+          }
+        }
         sessions.push(newSession);
         // Default activity to 'idle' on spawn (matches real backend behavior)
         activityCache[newSession.id] = 'idle';
@@ -1771,6 +2243,25 @@
             for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, exitCode, projectId, intentional); }
           };
         }
+        // A demo scene reaches an in-app toast by seeding the PUSH that raises
+        // it, never the toast store: App.tsx's own subscription decides, gated
+        // on notifications.toasts.onAgentCrash, exactly as on the desktop.
+        // Fired once, on the first registration, because a scene is data and
+        // has no way to call a function.
+        if (window.__mockInitialExit && !window.__mockInitialExitFired) {
+          window.__mockInitialExitFired = true;
+          var exitSeed = window.__mockInitialExit;
+          // Deferred a task, so the callback this call is installing receives it.
+          // It reaches THAT callback only, where real main broadcasts SESSION_EXIT
+          // to every listener on the channel. Enough for the scenes that seed it
+          // (App.tsx is the sole subscriber when the toast scene boots), but a
+          // scene that opened a Command Terminal first would have its own
+          // onExit registration consume the one-shot and App.tsx would see
+          // nothing. Fan out over __mockExitListeners if that scene ever exists.
+          window.setTimeout(function () {
+            callback(exitSeed.sessionId, exitSeed.exitCode || 0, exitSeed.projectId || null, false);
+          }, 0);
+        }
         return function () {
           var listeners = window.__mockExitListeners || [];
           var idx = listeners.indexOf(callback);
@@ -1793,8 +2284,61 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
-      onUsage: function () {
-        return noop;
+      onRemoved: function (callback) {
+        // Tests can fire this via window.__mockFireRemoved(sessionId, session, projectId).
+        // The mock's own tasks.move fires it for a move into a todo-role
+        // column, mirroring SessionManager.remove() on the main side. The third
+        // argument matches the real preload, which forwards session.projectId.
+        if (!window.__mockRemovedListeners) window.__mockRemovedListeners = [];
+        window.__mockRemovedListeners.push(callback);
+        if (!window.__mockFireRemoved) {
+          window.__mockFireRemoved = function (sessionId, session, projectId) {
+            var listeners = (window.__mockRemovedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, session, projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockRemovedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onUsage: function (callback) {
+        // Tests can fire this via window.__mockFireUsage(sessionId, usage, projectId).
+        if (!window.__mockUsageListeners) window.__mockUsageListeners = [];
+        window.__mockUsageListeners.push(callback);
+        if (!window.__mockFireUsage) {
+          window.__mockFireUsage = function (sessionId, usage, projectId) {
+            var listeners = (window.__mockUsageListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, usage, projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockUsageListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      getMessageTrails: async function () {
+        return Object.assign({}, messageTrailCache);
+      },
+      onMessageTrail: function (callback) {
+        // Tests can fire this via
+        // window.__mockFireMessageTrail(sessionId, entries, projectId).
+        if (!window.__mockMessageTrailListeners) window.__mockMessageTrailListeners = [];
+        window.__mockMessageTrailListeners.push(callback);
+        if (!window.__mockFireMessageTrail) {
+          window.__mockFireMessageTrail = function (sessionId, entries, projectId) {
+            messageTrailCache[sessionId] = entries;
+            var listeners = (window.__mockMessageTrailListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, entries, projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockMessageTrailListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       getActivity: async function (/* projectId */) {
         return Object.assign({}, activityCache);
@@ -1810,10 +2354,13 @@
         // assert on reason content, so an empty record is fine.
         return {};
       },
-      getActivityStats: async function (/* sessionId */) {
-        // Debug overlay only; UI tests rarely need this. Return null
-        // to mirror "session unknown" path.
-        return null;
+      getActivityStats: async function (sessionId) {
+        // Debug overlay only; UI tests rarely need this. Returning null
+        // mirrors the production "session unknown" path, which is also what a
+        // session with no seeded snapshot gets. The web build seeds
+        // `activityStatsCache` from the sample install so the overlay has
+        // something real to draw; see demo-dataset.ts.
+        return activityStatsCache[sessionId] || null;
       },
       onActivity: function (callback) {
         // Tests can fire this via
@@ -1857,6 +2404,7 @@
       },
       spawnTransient: async function (input) {
         var id = crypto.randomUUID();
+        var branch = input.branch || 'main';
         var session = {
           id: id,
           taskId: id,
@@ -1869,11 +2417,44 @@
           exitCode: null,
           resuming: false,
           transient: true,
+          // Main stamps the slot and the RESOLVED branch onto the session row, and
+          // the renderer re-pairs a surviving PTY to its window by that slot after
+          // a reload. Omitting them here would let a UI test pass against a row
+          // shape production never produces.
+          commandTerminalSlot: input.slot || null,
+          commandTerminalBranch: branch,
+          commandTerminalLabel: null,
           isolatedSwimlaneId: null,
           agentSessionId: null,
         };
         sessions.push(session);
-        return { session: session, branch: input.branch || 'main' };
+        return { session: session, branch: branch };
+      },
+      setTransientLabel: async function (sessionId, label) {
+        // Mirrors main: retained on the session row (first write wins) so a
+        // recovered terminal keeps its derived name. Trims and rejects a blank
+        // for the same reason main does - the store already trims before it
+        // calls, so a mock without this guard only diverges for a test that
+        // drives the API directly, which is exactly when the divergence lies.
+        var session = sessions.find(function (session) { return session.id === sessionId; });
+        var trimmed = (label || '').trim();
+        if (trimmed && session && session.transient && !session.commandTerminalLabel) {
+          session.commandTerminalLabel = trimmed;
+        }
+      },
+      setTransientBranch: async function (sessionId, branch) {
+        // Mirrors main: the renderer re-derives the branch from live HEAD and
+        // main records the newest reading (LAST write wins, unlike the label).
+        // Call log for assertions: window.__mockSetTransientBranchCalls.
+        if (typeof window !== 'undefined') {
+          window.__mockSetTransientBranchCalls = window.__mockSetTransientBranchCalls || [];
+          window.__mockSetTransientBranchCalls.push({ sessionId: sessionId, branch: branch });
+        }
+        var session = sessions.find(function (session) { return session.id === sessionId; });
+        var trimmed = (branch || '').trim();
+        if (trimmed && session && session.transient) {
+          session.commandTerminalBranch = trimmed;
+        }
       },
       killTransient: async function (sessionId) {
         var index = sessions.findIndex(function (s) { return s.id === sessionId; });
@@ -1955,6 +2536,12 @@
             ],
           });
         }
+        // Burn rates derived from THIS fixture's own totals and range, the way
+        // the service computes them: one shared denominator, each numerator
+        // the field its own tile renders. Hardcoded constants here used to
+        // contradict the fixture's cost and tokens, so a UI test could not
+        // check the property the tiles are supposed to have.
+        var rangeHours = Math.max(nowMs - rangeStartMs, 60000) / 3600000;
         return {
           scope: scope,
           period: period,
@@ -1976,12 +2563,21 @@
             filesChanged: 58,
             compactionCount: 2,
             totalDurationMs: 4 * hourMs,
+            activeMs: 90 * 60 * 1000,
+            activeSessionsCovered: 6,
             turnInputTokens: 60000,
             turnOutputTokens: 20000,
             cacheCreationTokens: 30000,
             cacheReadTokens: 900000,
-            burnRateTokensPerHour: 24000,
-            burnRateUsdPerHour: 1.54,
+            subagentInputTokens: 180000,
+            subagentOutputTokens: 45000,
+            subagentCacheCreationTokens: 90000,
+            subagentCacheReadTokens: 5200000,
+            subagentTurnCount: 190,
+            subagentCount: 8,
+            subagentNestedCount: 2,
+            burnRateTokensPerHour: (60000 + 20000) / rangeHours,
+            burnRateUsdPerHour: 12.34 / rangeHours,
           },
           previousKpis: period === 'all' ? null : {
             totalCostUsd: 10.0,
@@ -1996,12 +2592,21 @@
             filesChanged: 50,
             compactionCount: 1,
             totalDurationMs: 3 * hourMs,
+            activeMs: 72 * 60 * 1000,
+            activeSessionsCovered: 5,
             turnInputTokens: 50000,
             turnOutputTokens: 16000,
             cacheCreationTokens: 24000,
             cacheReadTokens: 700000,
-            burnRateTokensPerHour: 20000,
-            burnRateUsdPerHour: 1.3,
+            subagentInputTokens: 150000,
+            subagentOutputTokens: 36000,
+            subagentCacheCreationTokens: 72000,
+            subagentCacheReadTokens: 4100000,
+            subagentTurnCount: 160,
+            subagentCount: 6,
+            subagentNestedCount: 1,
+            burnRateTokensPerHour: (50000 + 16000) / rangeHours,
+            burnRateUsdPerHour: 10.0 / rangeHours,
           },
           tokenSeries: tokenSeries,
           costSeries: costSeries,
@@ -2018,10 +2623,22 @@
             { effort: null, inputTokens: 40000, outputTokens: 10000, costUsd: 3.0, sessionCount: 3 },
             { effort: 'low', inputTokens: 20000, outputTokens: 6000, costUsd: 1.34, sessionCount: 1 },
           ],
+          // Subagent rollup carries no cost by design: the session's reported
+          // cost already covers its whole subagent tree.
+          bySubagentType: [
+            { agentType: 'review-finder', inputTokens: 90000, outputTokens: 22000, cacheCreationTokens: 45000, cacheReadTokens: 3100000, turnCount: 96, subagentCount: 4, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
+            { agentType: 'test-builder', inputTokens: 60000, outputTokens: 15000, cacheCreationTokens: 30000, cacheReadTokens: 1500000, turnCount: 62, subagentCount: 2, nestedTurnCount: 18, nestedSubagentCount: 1, maxSpawnDepth: 2 },
+            { agentType: 'Explore', inputTokens: 30000, outputTokens: 8000, cacheCreationTokens: 15000, cacheReadTokens: 600000, turnCount: 32, subagentCount: 2, nestedTurnCount: 12, nestedSubagentCount: 1, maxSpawnDepth: 2 },
+          ],
+          // 'codex' is in byAgent above and reports no subagent usage, so the
+          // Subagents tile has to say so rather than render a bare dash.
+          subagentBlindAgents: ['codex'],
+          liveLedgerBaseline: { costUsd: 0 },
+          earliestTurnMs: nowMs - 30 * dayMs,
           perProject: scope.kind === 'all'
             ? [
-                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, filesChanged: 47, totalDurationMs: 3 * hourMs, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
-                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, filesChanged: 12, totalDurationMs: hourMs, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
+                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, filesChanged: 47, totalDurationMs: 3 * hourMs, activeMs: 55 * 60 * 1000, activeSessionsCovered: 4, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
+                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, filesChanged: 12, totalDurationMs: hourMs, activeMs: 20 * 60 * 1000, activeSessionsCovered: 2, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
               ]
             : undefined,
         };
@@ -2038,6 +2655,13 @@
       __stopCalls: [],
       stop: async function (dictationSessionId, expectedFrames) {
         window.electronAPI.dictation.__stopCalls.push({ dictationSessionId, expectedFrames });
+        // Test hook: window.__mockDictationStopError, a string, makes stop()
+        // reject with an Error carrying that message - so a spec can exercise
+        // useDictation's finalizeOnRelease() catch branch (a real engine fault
+        // decoding the utterance) without a real crash.
+        if (typeof window !== 'undefined' && window.__mockDictationStopError) {
+          throw new Error(window.__mockDictationStopError);
+        }
         return 'This is a test of dictation.';
       },
       __cancelCalls: [],
@@ -2075,7 +2699,12 @@
         return true;
       },
       getInfo: async function () {
-        return {
+        // Test hook: window.__mockDictationInfoOverrides merges over the
+        // defaults (e.g. { workerUnavailable: true, workerError: '...' } to
+        // exercise DictationTab's worker-crashed banner), matching the
+        // probePath() override idiom above.
+        var overrides = (typeof window !== 'undefined' && window.__mockDictationInfoOverrides) || {};
+        var defaults = {
           hardware: { cpuModel: 'Mock CPU', cpuCores: 8, totalRamGb: 16, hasAvx2: true, gpu: 'none', gpuDescription: 'Integrated', platform: 'linux', arch: 'x64' },
           tier: 'accurate-base',
           selectedEngineId: 'stub',
@@ -2088,7 +2717,9 @@
           finalModels: [],
           selectedLiveModelId: null,
           selectedFinalModelId: null,
+          workerUnavailable: false,
         };
+        return Object.assign({}, defaults, overrides);
       },
       // Push-event subscribers. Tests drive these via window.__emitDictationPartial
       // (dictationSessionId, text) and window.__emitDictationFinal(...).
@@ -2165,15 +2796,18 @@
       get: async function () {
         // Return effective config: global merged with current project's overrides
         var currentProject = projects.find(function (p) { return p.id === currentProjectId; });
-        if (currentProject && projectConfigs[currentProject.path]) {
-          return deepMerge(config, projectConfigs[currentProject.path]);
-        }
-        return config;
+        graphicsAccelerationGetCallCount++;
+        var effective = (currentProject && projectConfigs[currentProject.path])
+          ? deepMerge(config, projectConfigs[currentProject.path])
+          : config;
+        return withStaleGraphicsAccelerationOverride(effective, graphicsAccelerationGetCallCount);
       },
       getGlobal: async function () {
-        return config;
+        graphicsAccelerationGetGlobalCallCount++;
+        return withStaleGraphicsAccelerationOverride(config, graphicsAccelerationGetGlobalCallCount);
       },
       set: async function (partial) {
+        rejectConfigSetIfConfigured();
         config = deepMerge(config, partial);
         // hotkeyOverrides is a dictionary-style map (CONFIG_DICTIONARY_PATHS in
         // config-manager.ts): the real save REPLACES it wholesale so a deleted
@@ -2203,6 +2837,7 @@
         if (partial && partial.terminal && Object.prototype.hasOwnProperty.call(partial.terminal, 'colors')) {
           config.terminal.colors = Object.assign({}, partial.terminal.colors);
         }
+        return configSetResult();
       },
       // Synchronous sibling of set() for the quit/unload flush. Mirrors the real
       // configManager.save dictionary-path replace semantics (hotkeyOverrides + workspaceByProject + commandTerminalWorkspace + terminal.colors).
@@ -2232,16 +2867,20 @@
         return null;
       },
       setProjectOverrides: async function (overrides) {
+        rejectConfigSetIfConfigured();
         var currentProject = projects.find(function (p) { return p.id === currentProjectId; });
         if (currentProject) {
           projectConfigs[currentProject.path] = overrides;
         }
+        return configSetResult();
       },
       getProjectOverridesByPath: async function (projectPath) {
         return projectConfigs[projectPath] || null;
       },
       setProjectOverridesByPath: async function (projectPath, overrides) {
+        rejectConfigSetIfConfigured();
         projectConfigs[projectPath] = overrides;
+        return configSetResult();
       },
       syncDefaultToProjects: async function () {
         return 0;
@@ -2251,6 +2890,23 @@
         return function () {
           const index = mockConfigChangedListeners.indexOf(callback);
           if (index >= 0) mockConfigChangedListeners.splice(index, 1);
+        };
+      },
+      onWriteFailed: function (callback) {
+        // Tests fire this via window.__mockFireConfigWriteFailed(message).
+        if (!window.__mockConfigWriteFailedListeners) window.__mockConfigWriteFailedListeners = [];
+        window.__mockConfigWriteFailedListeners.push(callback);
+        if (!window.__mockFireConfigWriteFailed) {
+          window.__mockFireConfigWriteFailed = function (message) {
+            var listeners = (window.__mockConfigWriteFailedListeners || []).slice();
+            listeners.forEach(function (listener) { listener(message); });
+          };
+        }
+        // A REAL unsubscribe, for the same reason onSpawnBlocked returns one.
+        return function () {
+          var listeners = window.__mockConfigWriteFailedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
         };
       },
     },
@@ -2318,8 +2974,12 @@
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
-            // KEEP IN SYNC with ClaudeAdapter.pastedImageReferenceTemplate: the text
-            // injected for a pasted/dropped image instead of a bare file path.
+            // KEEP IN SYNC with ClaudeAdapter.pastedImageNativeExtensions: the image
+            // extensions Claude attaches natively from a bracketed-paste path, so the
+            // renderer pastes the bare quoted path for these.
+            pastedImageNativeExtensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+            // KEEP IN SYNC with ClaudeAdapter.pastedImageReferenceTemplate: the fallback
+            // text pasted for an image outside the native set (bmp, svg).
             pastedImageReferenceTemplate: 'Read this image: {path} ',
             // Capabilities mirror what discoverClaudeCapabilities() would return
             // for a real Claude install: parsed from `claude --help` plus the
@@ -2334,10 +2994,13 @@
           },
           {
             name: 'codex', displayName: 'Codex CLI', found: false, path: null, version: null,
+            // KEEP IN SYNC with CodexAdapter.permissions in src/main/agent/adapters/codex/codex-adapter.ts
             permissions: [
-              { mode: 'plan', label: 'Suggest (Read-Only)' },
-              { mode: 'acceptEdits', label: 'Auto-Edit' },
-              { mode: 'bypassPermissions', label: 'Full Auto (Sandboxed)' },
+              { mode: 'plan', label: 'Safe Read-Only Browsing' },
+              { mode: 'dontAsk', label: 'Read-Only Non-Interactive (CI)' },
+              { mode: 'default', label: 'Automatically Edit, Ask for Untrusted' },
+              { mode: 'acceptEdits', label: 'Auto (Preset)' },
+              { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
@@ -2504,6 +3167,16 @@
                 'token counts appear inline in its output.',
             },
           },
+          {
+            name: 'goose', displayName: 'Goose CLI', found: false, path: null, version: null,
+            // KEEP IN SYNC with GooseAdapter.permissions in src/main/agent/adapters/goose/goose-adapter.ts
+            permissions: [
+              { mode: 'plan', label: 'Plan (Chat Only, No File Access)' },
+              { mode: 'default', label: 'Default (Smart Approve)' },
+              { mode: 'bypassPermissions', label: 'Auto (Skip All Approvals)' },
+            ],
+            defaultPermission: 'default',
+          },
         ];
         return defaults.map(function (agent) {
           var override = overrides[agent.name];
@@ -2631,11 +3304,17 @@
     analytics: {
       // Records rather than discarding, like the other fire-and-forget mocks, so a
       // UI test can assert what a boundary actually reported.
-      // context carries { boundary, panel?, componentStack? }.
+      // context carries { boundary, panel? }.
       trackRendererError: function (message, context) {
         window.__mockTrackRendererErrorCalls = window.__mockTrackRendererErrorCalls || [];
         window.__mockTrackRendererErrorCalls.push({ message: message, context: context });
       },
+      trackFeatureUsed: function (feature) {
+        window.__mockTrackFeatureUsedCalls = window.__mockTrackFeatureUsedCalls || [];
+        window.__mockTrackFeatureUsedCalls.push(feature);
+      },
+      // Sentry never initializes under the UI harness.
+      errorReportingEnabled: false,
     },
 
     app: {
@@ -2812,36 +3491,103 @@
         }
         return { hasPendingChanges: false, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
       },
-      branchSummary: async function () {
+      prefetchRemotes: async function (checkPath) {
+        // Test hook: record every prefetch so drag-prefetch-remotes.spec.ts can
+        // assert the board warms the fetch for a worktree-backed card at drag
+        // start and never for a card without a worktree.
+        if (typeof window !== 'undefined') {
+          window.__mockPrefetchRemotesCalls = window.__mockPrefetchRemotesCalls || [];
+          window.__mockPrefetchRemotesCalls.push(checkPath);
+          // Test hook: force this call to reject, so a test can pin that the
+          // fire-and-forget `.catch(() => {})` in handleDragStart is load-bearing
+          // and a rejecting prefetch cannot break the drag. Default off (falsy)
+          // so no existing spec's behavior changes. Set
+          // window.__mockPrefetchRemotesShouldReject = true before the drag.
+          if (window.__mockPrefetchRemotesShouldReject) {
+            throw new Error('mock prefetchRemotes rejection');
+          }
+        }
+      },
+      branchSummary: async function (request) {
+        // Test hook: record every branchSummary call (worktreePath, projectPath,
+        // baseBranch, refreshRemote) so a test can assert how the mount-only
+        // remote-refresh opt-in (ChangesPanel's refreshBranchSummaryFromRemote)
+        // differs from the flagless fs.watch refetch (fetchBranchSummary) -
+        // used by changes-panel-remote-refresh.spec.ts. Mirrors the diffFiles
+        // call log above.
+        if (typeof window !== 'undefined') {
+          window.__mockBranchSummaryCalls = window.__mockBranchSummaryCalls || [];
+          window.__mockBranchSummaryCalls.push({
+            worktreePath: (request && request.worktreePath) || null,
+            projectPath: (request && request.projectPath) || null,
+            baseBranch: (request && request.baseBranch) || null,
+            refreshRemote: Boolean(request && request.refreshRemote),
+          });
+        }
         // Test hook: override the header context (branch name, ahead/behind, last commit).
         if (typeof window !== 'undefined' && window.__mockBranchSummary) {
           return window.__mockBranchSummary;
         }
+        // Per-worktree summaries, as the sample install seeds them (one per task with a
+        // worktree), keyed by worktree folder name.
+        var summaryForWorktree = typeof window !== 'undefined'
+          ? resolveByWorktree(window.__mockBranchSummaryByWorktree, (request && request.worktreePath) || '')
+          : null;
+        if (summaryForWorktree) return summaryForWorktree;
         return { currentBranch: null, ahead: 0, behind: 0, lastCommit: null };
       },
-      commitGraph: async function () {
+      worktreeHead: async function () {
+        // Test hook: window.__mockWorktreeHead = { branch, sha } drives the
+        // Command Terminal's branch-pill re-derive. Both null means "unknown",
+        // which the renderer treats as keep-what-we-have, so a spec that never
+        // sets it sees the spawn-time branch exactly as before.
+        if (typeof window !== 'undefined' && window.__mockWorktreeHead) {
+          return window.__mockWorktreeHead;
+        }
+        return { branch: null, sha: null };
+      },
+      commitGraph: async function (request) {
         // Test hook: seed the commit-graph pane via window.__mockCommitGraph =
         // { commits: [{ hash, shortHash, parents, authorName, authorTimestamp, subject }],
         //   tipHash, baseHash, mergeBaseHash, currentBranch, truncated }.
         if (typeof window !== 'undefined' && window.__mockCommitGraph) {
           return window.__mockCommitGraph;
         }
+        // Per-worktree graphs (window.__mockCommitGraphByWorktree, keyed by worktree folder), as
+        // the sample install seeds a scaffolded project's real history.
+        var graphForWorktree = typeof window !== 'undefined'
+          ? resolveByWorktree(window.__mockCommitGraphByWorktree, (request && request.worktreePath) || '')
+          : null;
+        if (graphForWorktree) return graphForWorktree;
         return { commits: [], tipHash: null, baseHash: null, mergeBaseHash: null, currentBranch: null, truncated: false };
       },
-      fileHistory: async function () {
+      fileHistory: async function (request) {
         // Test hook: seed the file-history popover via window.__mockFileHistory =
         // { commits: [{ hash, shortHash, authorName, authorTimestamp, subject }] }.
         if (typeof window !== 'undefined' && window.__mockFileHistory) {
           return window.__mockFileHistory;
         }
+        // Per-worktree, per-file (window.__mockFileHistoryByWorktree[folder][filePath]).
+        var historyForWorktree = typeof window !== 'undefined'
+          ? resolveByWorktree(window.__mockFileHistoryByWorktree, (request && request.worktreePath) || '')
+          : null;
+        var filePath = (request && request.filePath) || '';
+        if (historyForWorktree && historyForWorktree[filePath]) return historyForWorktree[filePath];
         return { commits: [] };
       },
-      blame: async function () {
+      blame: async function (request) {
         // Test hook: seed the blame gutter via window.__mockBlame =
         // { lines: [{ line, hash, shortHash, author, date }] }.
         if (typeof window !== 'undefined' && window.__mockBlame) {
           return window.__mockBlame;
         }
+        // Per-worktree, per-file (window.__mockBlameByWorktree[folder][filePath]), the blame of
+        // the working tree a recorded session left behind.
+        var blameForWorktree = typeof window !== 'undefined'
+          ? resolveByWorktree(window.__mockBlameByWorktree, (request && request.worktreePath) || '')
+          : null;
+        var blamePath = (request && request.filePath) || '';
+        if (blameForWorktree && blameForWorktree[blamePath]) return blameForWorktree[blamePath];
         return { lines: [] };
       },
     },
@@ -2952,14 +3698,18 @@
             session_id: null,
             worktree_path: null,
             worktree_folder: null,
+            worktree_skip_reason: null,
             branch_name: null,
+            pushed_branch: null,
             pr_number: null,
             pr_url: null,
             pr_state: null,
+            pr_merge_readiness: null,
             external_id: item.external_id || null,
             external_source: item.external_source || null,
             external_url: item.external_url || null,
             base_branch: null,
+            resolved_base_branch: null,
             use_worktree: null,
             labels: item.labels || [],
             priority: item.priority || 0,
@@ -3103,71 +3853,63 @@
       importCheckCli: async function (/* source */) {
         return { available: true, authenticated: true };
       },
-      importFetch: async function (input) {
-        // Track call count and last arguments for test assertions.
-        // Tests can read window.__mockImportFetchCallCount and
-        // window.__mockImportFetchLastArgs to verify fetch behavior.
+      importGetCached: async function (input) {
+        // Instant, no-network cache read. Tests seed window.__mockImportCached with
+        // { issues: [...] } (or an array), and can read window.__mockImportGetCachedCallCount
+        // / window.__mockImportGetCachedLastArgs.
         if (typeof window !== 'undefined') {
-          window.__mockImportFetchCallCount = (window.__mockImportFetchCallCount || 0) + 1;
-          window.__mockImportFetchLastArgs = input;
-          if (!window.__mockImportFetchCallLog) window.__mockImportFetchCallLog = [];
-          window.__mockImportFetchCallLog.push({ state: input && input.state, page: input && input.page });
+          window.__mockImportGetCachedCallCount = (window.__mockImportGetCachedCallCount || 0) + 1;
+          window.__mockImportGetCachedLastArgs = input;
         }
-        // Persistent forced failure: window.__mockImportFetchFailUntilCleared = true
-        // makes EVERY call reject until a test explicitly sets it back to false.
-        // A one-shot flag is unsafe here because React StrictMode double-invokes
-        // the dialog's mount effect in dev, so more than one call can be issued
-        // before the "current" (non-superseded) one settles; a persistent flag
-        // guarantees whichever call ends up current still observes the failure.
-        // Checked before the artificial delay so a test does not have to wait
-        // through it to observe the failure.
-        if (typeof window !== 'undefined' && window.__mockImportFetchFailUntilCleared) {
-          throw new Error('Mock import fetch failure');
+        // Forced failure, so a test can prove a cache-read error is non-fatal and the
+        // reconcile still populates the dialog.
+        if (typeof window !== 'undefined' && window.__mockImportGetCachedFailUntilCleared) {
+          throw new Error('Mock import cache read failure');
         }
-        // Optional artificial delay so tests can interact with the dialog
-        // between page N landing and page N+1 resolving (streaming races).
-        var delayMs = (typeof window !== 'undefined' && window.__mockImportFetchPageDelayMs) || 0;
+        var cached = (typeof window !== 'undefined' && window.__mockImportCached) || null;
+        if (Array.isArray(cached)) return { issues: cached };
+        if (cached && Array.isArray(cached.issues)) return { issues: cached.issues };
+        return { issues: [] };
+      },
+      importReconcile: async function (input) {
+        // Background reconcile. Tests read window.__mockImportReconcileCallCount /
+        // window.__mockImportReconcileLastArgs and seed window.__mockImportReconcile
+        // with { issues, added, updated, removed }.
+        if (typeof window !== 'undefined') {
+          window.__mockImportReconcileCallCount = (window.__mockImportReconcileCallCount || 0) + 1;
+          window.__mockImportReconcileLastArgs = input;
+          if (!window.__mockImportReconcileCallLog) window.__mockImportReconcileCallLog = [];
+          window.__mockImportReconcileCallLog.push({ mode: input && input.mode });
+        }
+        // Persistent forced failure (StrictMode double-invoke safe, mirrors the old
+        // import-fetch flag): every call rejects until a test clears it.
+        if (typeof window !== 'undefined' && window.__mockImportReconcileFailUntilCleared) {
+          throw new Error('Mock import reconcile failure');
+        }
+        // Optional delay so a test can observe the cached paint before the reconcile
+        // resolves, and assert the fetchSequenceRef supersession.
+        var delayMs = (typeof window !== 'undefined' && window.__mockImportReconcileDelayMs) || 0;
         if (delayMs > 0) {
           await new Promise(function (resolve) { setTimeout(resolve, delayMs); });
         }
-        // Per-state multi-page preset: window.__mockImportFetchPagesByState is an
-        // object keyed by the request's state ('open' / 'closed' / 'all'), each
-        // value an array of { issues, totalCount, hasNextPage } page responses
-        // (1-indexed via input.page). Lets a test seed genuinely distinct data
-        // per state filter, so a stale in-flight page from the previous filter is
-        // distinguishable from the new filter's data.
-        var pagesByState = (typeof window !== 'undefined' && window.__mockImportFetchPagesByState) || null;
-        if (pagesByState) {
-          var stateKey = (input && input.state) || 'open';
-          var statePages = pagesByState[stateKey];
-          if (statePages) {
-            var statePageNumber = (input && input.page) || 1;
-            var stateResponse = statePages[statePageNumber - 1];
-            if (stateResponse) return stateResponse;
-          }
-          return { issues: [], totalCount: 0, hasNextPage: false };
+        var byMode = (typeof window !== 'undefined' && window.__mockImportReconcileByMode) || null;
+        if (byMode) {
+          var modeKey = (input && input.mode) || 'incremental';
+          if (byMode[modeKey]) return byMode[modeKey];
         }
-        // Multi-page preset: window.__mockImportFetchPages is an array of
-        // { issues, totalCount, hasNextPage } responses, one per page (1-indexed
-        // via input.page). Lets tests exercise the dialog's unbounded auto-paging.
-        var pages = (typeof window !== 'undefined' && window.__mockImportFetchPages) || null;
-        if (pages) {
-          var page = (input && input.page) || 1;
-          var response = pages[page - 1];
-          if (response) return response;
-          return { issues: [], totalCount: 0, hasNextPage: false };
-        }
-        var preset = (typeof window !== 'undefined' && window.__mockImportFetchPreset) || null;
+        var preset = (typeof window !== 'undefined' && window.__mockImportReconcile) || null;
         if (preset) {
-          // The single preset returns the SAME response for every page. Since the
-          // dialog auto-pages unconditionally on hasNextPage, honoring a true
-          // value past page 1 here would loop forever. Use __mockImportFetchPages
-          // (below) to test real multi-page streaming instead.
-          var presetPage = (input && input.page) || 1;
-          if (presetPage > 1) return { issues: [], totalCount: preset.totalCount || 0, hasNextPage: false };
-          return preset;
+          if (Array.isArray(preset)) return { issues: preset, added: 0, updated: 0, removed: 0 };
+          return {
+            // Pass `issues` through verbatim (including a malformed null) so a test
+            // can exercise the dialog's error path.
+            issues: ('issues' in preset) ? preset.issues : [],
+            added: preset.added || 0,
+            updated: preset.updated || 0,
+            removed: preset.removed || 0,
+          };
         }
-        return { issues: [], totalCount: 0, hasNextPage: false };
+        return { issues: [], added: 0, updated: 0, removed: 0 };
       },
       importExecute: async function (input) {
         // Capture the last call argument so tests can inspect the payload.
@@ -3253,7 +3995,7 @@
     //     desktop auto-enrolling on the phone's confirm frame. Production
     //     pairing is driven by a main-process PUSH (mobile:pairingConfirmed),
     //     not a renderer-initiated confirm call, so this seeds a device with
-    //     the full ten-verb grant and fires that push directly, exactly as
+    //     the full every-verb grant and fires that push directly, exactly as
     //     MobileBridgeService does on a successful ceremony.
     mobile: (function () {
       var state = {
@@ -3272,11 +4014,13 @@
       var mockDeviceCounter = 0;
 
       // Mirrors packages/protocol/src/capabilities/verbs.ts's CAPABILITY_VERBS -
-      // pairing grants all ten, not a read-only subset.
+      // pairing grants every verb, not a read-only subset. Hand-mirrored, so a
+      // new verb is appended here too; tests/unit/mobile-capability-verbs-parity.test.ts
+      // reads this literal as text and fails when it drifts from the protocol.
       var FULL_CAPABILITY_SET = [
         'read-stream', 'read-board', 'read-diff', 'send-user-message', 'move-task',
         'answer-permission-prompt', 'interactive-terminal', 'board-tool-read',
-        'board-tool-write', 'register-push',
+        'board-tool-write', 'register-push', 'start-session',
       ];
 
       if (typeof window !== 'undefined') {
@@ -3319,6 +4063,7 @@
             capabilities: FULL_CAPABILITY_SET.slice(),
             pairedAt: new Date().toISOString(),
             connectionState: 'connected',
+            connectionStateSince: new Date().toISOString(),
           };
           state.devices.push(device);
           state.pairingInProgress = false;
@@ -3446,10 +4191,32 @@
       exists: async function () { return false; },
       export: async function () {},
       apply: async function (/* projectId */) { return []; },
-      onChanged: function (/* callback(projectId) */) { return noop; },
+      onChanged: function (callback) {
+        // The push main sends when kangentic.json changes on disk. A demo scene
+        // seeds the projectId through `window.__mockBoardConfigChanged` and this
+        // fires it once, on the first registration, so the app raises its own
+        // reconciliation dialog rather than the demo drawing one. Same shape as
+        // the seeded activity push in sessions.onActivity above.
+        if (window.__mockBoardConfigChanged && !window.__mockBoardConfigChangedFired) {
+          window.__mockBoardConfigChangedFired = true;
+          var projectId = window.__mockBoardConfigChanged;
+          window.setTimeout(function () { callback(projectId); }, 0);
+        }
+        return noop;
+      },
       onShortcutsChanged: function (/* callback(projectId) */) { return noop; },
       getBoardProfiles: async function () { return mockBoardProfiles; },
-      setBoardProfiles: async function (profiles) { mockBoardProfiles = profiles; },
+      // window.__mockBoardProfilesSaveError makes the write reject, for a spec
+      // covering the failure path. It throws BEFORE assigning, deliberately:
+      // board-store's catch reloads via getBoardProfiles() before it toasts, so
+      // the last good array has to survive or the spec fails on a second,
+      // different error instead of the one under test.
+      setBoardProfiles: async function (profiles) {
+        if (window.__mockBoardProfilesSaveError) {
+          throw new Error(String(window.__mockBoardProfilesSaveError));
+        }
+        mockBoardProfiles = profiles;
+      },
       onBoardProfilesChanged: function (/* callback(projectId) */) { return noop; },
       getShortcuts: async function () { return []; },
       setShortcuts: async function (/* actions, target */) {},
@@ -3475,6 +4242,58 @@
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };
+      },
+      onUpdateBlocked: function (callback) {
+        // Fired via `window.__mockFireUpdateBlocked('<sentence>')`; the
+        // listener array and the fire hook are installed eagerly at
+        // mock-bootstrap time (see top of file), not lazily here.
+        window.__mockUpdateBlockedListeners.push(callback);
+        return function () {
+          var listeners = window.__mockUpdateBlockedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+    },
+
+    hostMemory: {
+      onPressure: function (callback) {
+        window.__mockHostMemoryPressureListeners.push(callback);
+        return function () {
+          var listeners = window.__mockHostMemoryPressureListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onRecovery: function (callback) {
+        window.__mockHostMemoryRecoveryListeners.push(callback);
+        return function () {
+          var listeners = window.__mockHostMemoryRecoveryListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+    },
+
+    // noticePending is consumed on read, like the real handler, so a spec
+    // asserting the toast fires exactly once gets main's real behaviour.
+    // Arm with window.__mockGpuNoticePending / __mockGpuSoftwareRendering
+    // before load.
+    gpuHealth: {
+      readStatus: function () {
+        // Test hook: simulate the invoke itself rejecting (a stale preload, a
+        // handler throw). Set window.__mockGpuHealthReadStatusRejects = true
+        // before load. App.tsx guards this call with .catch, so the only
+        // observable effect should be "no toast, otherwise a normal boot".
+        if (window.__mockGpuHealthReadStatusRejects === true) {
+          return Promise.reject(new Error('mock gpuHealth.readStatus rejection'));
+        }
+        var noticePending = window.__mockGpuNoticePending === true;
+        window.__mockGpuNoticePending = false;
+        return Promise.resolve({
+          softwareRendering: window.__mockGpuSoftwareRendering === true,
+          noticePending: noticePending,
+        });
       },
     },
 
@@ -3531,20 +4350,31 @@
     },
 
     window: {
-      minimize: noop,
-      maximize: noop,
-      close: noop,
+      minimize: function () { windowControlCalls.push('minimize'); },
+      maximize: function () { windowControlCalls.push('maximize'); },
+      close: function () { windowControlCalls.push('close'); },
       flashFrame: noop,
       isFocused: function () { return Promise.resolve(true); },
     },
 
     popOut: {
-      open: function (kind, params) { popOutCalls.push({ type: 'open', kind: kind, params: params }); return Promise.resolve(); },
+      // Resolves the seedable boolean (window.__mockPopOut.setOpenResult): false
+      // simulates the main-side maxInstances cap refusing the open.
+      open: function (kind, params) { popOutCalls.push({ type: 'open', kind: kind, params: params }); return Promise.resolve(popOutOpenResult); },
       close: function (kind, params) { popOutCalls.push({ type: 'close', kind: kind, params: params }); return Promise.resolve(); },
       focus: function (kind, params) { popOutCalls.push({ type: 'focus', kind: kind, params: params }); return Promise.resolve(); },
-      isOpen: function (/* kind, params */) { return Promise.resolve(false); },
-      listOpen: function () { return Promise.resolve([]); },
-      onChanged: function (/* callback(openInstanceKeys) */) { return noop; },
+      isOpen: function (kind, params) { return Promise.resolve(popOutOpenKeys.indexOf(popOutKeyOf(kind, params)) !== -1); },
+      // Resolves the same set __mockFirePopOutChanged last pushed, so App.tsx's
+      // mount-time loadOpen() (and its HMR re-sync) cannot land late and clobber
+      // a simulated open set.
+      listOpen: function () { return Promise.resolve(popOutOpenKeys.slice()); },
+      onChanged: function (callback) {
+        popOutChangedSubscribers.push(callback);
+        return function () {
+          var index = popOutChangedSubscribers.indexOf(callback);
+          if (index !== -1) popOutChangedSubscribers.splice(index, 1);
+        };
+      },
       descriptor: null,
     },
 
@@ -3611,6 +4441,11 @@
             labelColors: (config.backlog && config.backlog.labelColors) || {},
             defaultBaseBranch: config.git.defaultBaseBranch,
             worktreesEnabled: config.git.worktreesEnabled,
+            // Required by TaskDetailBundle.config, and `useBranchConfig` indexes
+            // it without a guard. This file is plain .js, so tsc cannot catch a
+            // missing field here: omitting it threw on every monitor-hosted
+            // detail render and the ErrorBoundary tore down the whole app.
+            agentExecution: (config.agent && config.agent.execution) || {},
             browserEnabled: !(config.browser && config.browser.enabled === false),
           },
         });
@@ -3636,8 +4471,12 @@
       // spec assert that a mounted monitor subscribes and an unmounted one stops
       // (the property that keeps main from watching PTY output for nobody).
       __peekSubscribeCalls: [],
-      setPeekSubscribed: function (subscribed) {
+      // The session ids each subscribe named (null when it named none), so a spec
+      // can assert which rows the renderer asked main to sample.
+      __peekWantedCalls: [],
+      setPeekSubscribed: function (subscribed, sessionIds) {
         window.electronAPI.monitor.__peekSubscribeCalls.push(subscribed);
+        window.electronAPI.monitor.__peekWantedCalls.push(Array.isArray(sessionIds) ? sessionIds.slice() : null);
         return Promise.resolve();
       },
       // Push peeks from a spec with window.__mockFireMonitorPeek({ 's1': ['line'] }).
@@ -3660,6 +4499,15 @@
 
     clipboard: {
       readImage: function () { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890.png'); },
+      // Call log for test assertions (each entry is the PNG byte length the drop
+      // path handed over). Reset with window.electronAPI.clipboard.__saveImageCalls.length = 0.
+      // Answers with a fixed path, the way main answers a decodable image; a spec
+      // that needs the "not an image" null overrides this per page.
+      __saveImageCalls: [],
+      saveImage: function (pngBytes) {
+        window.electronAPI.clipboard.__saveImageCalls.push(pngBytes ? pngBytes.byteLength : 0);
+        return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-normalized.png');
+      },
       // Call log for test assertions. Reset with window.electronAPI.clipboard.__writeTextCalls.length = 0.
       __writeTextCalls: [],
       writeText: function (text) {
@@ -3683,6 +4531,17 @@
 
     memory: {
       getStatus: function () { return Promise.resolve(Object.assign({}, memoryStatus)); },
+      // Fire-and-forget worker warm-up on a Smart-mode Quick Find open. Recorded
+      // (one timestamp per call) so a UI test can assert it fires at least once
+      // per open, never in keyword mode, and no further as the user types. Not
+      // an exact count: StrictMode double-invokes the mount effect, and the
+      // second send is a no-op against the worker's memoized init.
+      prewarm: function () {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockMemoryPrewarmCalls) window.__mockMemoryPrewarmCalls = [];
+          window.__mockMemoryPrewarmCalls.push(Date.now());
+        }
+      },
       rebuildIndex: function (projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockRebuildIndexCalls) window.__mockRebuildIndexCalls = [];
@@ -3862,8 +4721,19 @@
       // mock just resolves so the renderer can exercise the success/error
       // toast paths via test-time monkeypatching.
       clearStorage: function () { return Promise.resolve(); },
+      // Real impl syncs the worktree jar with the project identity jar in main.
+      // The mock resolves instantly so the pane's jar-sync gate opens and every
+      // browser-pane spec still mounts (a test can monkeypatch it to a slow
+      // promise to exercise the timeout-proceed path).
+      ensureJar: function () { return Promise.resolve(); },
       registerPane: function (input) { browserPaneCalls.push({ type: 'register', input: input }); return Promise.resolve(); },
-      unregisterPane: function (sessionId, webContentsId) { browserPaneCalls.push({ type: 'unregister', sessionId: sessionId, webContentsId: webContentsId }); return Promise.resolve(); },
+      unregisterPane: function (webContentsId) { browserPaneCalls.push({ type: 'unregister', webContentsId: webContentsId }); return Promise.resolve(); },
+      // The user's Close control and the visibility report, recorded in the same
+      // log so a spec can assert a close was DELIBERATE (main retires the handle
+      // with `user-closed` and stands no lane up) and what the agent would be
+      // told about where the pane is.
+      closePaneByUser: function (webContentsId) { browserPaneCalls.push({ type: 'user-close', webContentsId: webContentsId }); return Promise.resolve(); },
+      setPaneVisibility: function (webContentsId, visibility) { browserPaneCalls.push({ type: 'visibility', webContentsId: webContentsId, visibility: visibility }); return Promise.resolve(); },
       // Ctrl+wheel zoom is applied in the main process and broadcast back.
       // The UI tier has no main process, so the mock just registers the
       // callback and returns a no-op unsubscribe.
@@ -3898,6 +4768,58 @@
           const index = browserAgentInputSubscribers.indexOf(callback);
           if (index >= 0) browserAgentInputSubscribers.splice(index, 1);
         };
+      },
+      // Main -> renderer "an agent set this guest's viewport" push, behind the
+      // pane's viewport chip. Driven from a test via
+      // window.__mockBrowser.emitViewportOverride(webContentsId, override|null).
+      onViewportOverride: function (callback) {
+        browserViewportSubscribers.push(callback);
+        return function () {
+          const index = browserViewportSubscribers.indexOf(callback);
+          if (index >= 0) browserViewportSubscribers.splice(index, 1);
+        };
+      },
+      // The pane element's measured size, which only the renderer can know.
+      setPaneWidgetSize: function (webContentsId, width, height) {
+        browserPaneCalls.push({ type: 'widget-size', webContentsId: webContentsId, width: width, height: height });
+        return Promise.resolve();
+      },
+      // What the pane asks on registration, for an override set before it
+      // mounted. Tests seed it via window.__mockBrowser.seedViewportOverride().
+      getViewportOverride: function (webContentsId) {
+        return Promise.resolve(browserViewportSeed[webContentsId] || null);
+      },
+      clearViewportOverride: function (webContentsId) {
+        browserPaneCalls.push({ type: 'viewport-clear', webContentsId: webContentsId });
+        delete browserViewportSeed[webContentsId];
+        browserViewportSubscribers.forEach(function (callback) { callback(webContentsId, null); });
+        return Promise.resolve(true);
+      },
+      // Main -> renderer "these tasks hold their surface offscreen" push, which
+      // is what lights the card globe and the Browser pill for a surface no
+      // <webview> backs. Driven via
+      // window.__mockBrowser.emitOffscreenSurfaces([taskId, ...]).
+      onOffscreenSurfaces: function (callback) {
+        browserOffscreenSubscribers.push(callback);
+        return function () {
+          const index = browserOffscreenSubscribers.indexOf(callback);
+          if (index >= 0) browserOffscreenSubscribers.splice(index, 1);
+        };
+      },
+      // The mount-time read, for a surface that was already offscreen before
+      // this renderer existed. Seeded via
+      // window.__mockBrowser.seedOffscreenSurfaces([taskId, ...]).
+      getOffscreenSurfaces: function () {
+        return Promise.resolve(browserOffscreenSeed.slice());
+      },
+      closeOffscreenSurface: function (taskId, projectId) {
+        browserPaneCalls.push({ type: 'offscreen-close', taskId: taskId, projectId: projectId ?? null });
+        const index = browserOffscreenSeed.indexOf(taskId);
+        if (index < 0) return Promise.resolve(false);
+        browserOffscreenSeed.splice(index, 1);
+        const next = browserOffscreenSeed.slice();
+        browserOffscreenSubscribers.slice().forEach(function (callback) { callback(next); });
+        return Promise.resolve(true);
       },
       // Main -> renderer "a pane download finished" push, behind the toast.
       // Driven via window.__mockBrowser.emitDownloadDone({fileName, filePath, state}).
@@ -4032,6 +4954,31 @@
         callback(webContentsId, active);
       });
     },
+    /** Fire main's "an agent set this guest's viewport" push. Pass null to
+     *  clear it. Only the pane whose guest id matches should react. */
+    emitViewportOverride: function (webContentsId, override) {
+      browserViewportSubscribers.slice().forEach(function (callback) {
+        callback(webContentsId, override);
+      });
+    },
+    /** Seed an override so a pane that mounts LATER finds one on registration,
+     *  which is the pop-out case the push alone cannot cover. */
+    seedViewportOverride: function (webContentsId, override) {
+      browserViewportSeed[webContentsId] = override;
+    },
+    /** Fire main's "these tasks hold their surface offscreen" push. Pass the
+     *  WHOLE set, as main does: an empty array means none. */
+    emitOffscreenSurfaces: function (taskIds) {
+      browserOffscreenSeed = taskIds.slice();
+      browserOffscreenSubscribers.slice().forEach(function (callback) {
+        callback(taskIds.slice());
+      });
+    },
+    /** Seed the set a renderer reads on mount, for a surface that was already
+     *  offscreen before this renderer existed (a reload, or an HMR update). */
+    seedOffscreenSurfaces: function (taskIds) {
+      browserOffscreenSeed = taskIds.slice();
+    },
     /** Fire main's "a pane download finished" push. */
     emitDownloadDone: function (download) {
       browserDownloadSubscribers.slice().forEach(function (callback) {
@@ -4048,12 +4995,13 @@
   };
 
   /**
-   * Test hook: inspect the pop-out engine's open/close/focus call log. The
-   * renderer's pop-out store itself is driven directly via
-   * window.__zustandStores.popOut (exposed dev-only in App.tsx) - a test sets
-   * openInstanceKeys there to simulate "a surface just detached", the same
-   * shape the real popOut:changed push delivers. This hook is only for
-   * asserting which verb a trigger (title-bar button, PopOutButton) called.
+   * Test hook: inspect the pop-out engine's open/close/focus call log. This hook
+   * is only for asserting which verb a trigger (title-bar button, PopOutButton)
+   * called. To simulate a surface actually detaching or its window closing, fire
+   * window.__mockFirePopOutChanged below - it drives the real popOut:changed
+   * push, so the renderer's own side effects run. (Older specs poke
+   * window.__zustandStores.popOut directly, which mirrors the store but skips
+   * those effects.)
    */
   /**
    * Test hook: simulate a task detail being hosted in a DIFFERENT renderer (the
@@ -4070,9 +5018,56 @@
   window.__mockPopOut = {
     reset: function () {
       popOutCalls = [];
+      popOutOpenResult = true;
+      // The open SET is reset too, not just the call log: a shared-page suite
+      // that fires a push would otherwise leave a surface reported as detached
+      // for every later test in the file. Registered onChanged subscribers are
+      // deliberately NOT dropped - App.tsx subscribes once at mount, so
+      // clearing them would silently make every later push a no-op.
+      popOutOpenKeys = [];
     },
     getCalls: function () {
       return popOutCalls.slice();
+    },
+    /** Seed what popOut.open resolves: false = the maxInstances cap refused. */
+    setOpenResult: function (value) {
+      popOutOpenResult = value;
+    },
+  };
+
+  /**
+   * Test hook: fire main's popOut:changed push with the given open-instance-key
+   * set, e.g. window.__mockFirePopOutChanged(['changes:p1:t1']) to detach a
+   * task's Changes view and then ([]) to close that window.
+   *
+   * Drives the REAL renderer path (App.tsx's onChanged subscription), not just
+   * the pop-out store, which is what makes the push's side effects observable -
+   * closing a `changes` window leaves its in-app panel closed rather than
+   * reclaiming the split. Also updates what listOpen() resolves, so the
+   * mount-time loadOpen() cannot land afterwards and undo the pushed set.
+   *
+   * Deliberately not cleared by __mockPopOut.reset(): App.tsx subscribes once at
+   * mount, and dropping the subscriber would silently make every later push a
+   * no-op.
+   */
+  window.__mockFirePopOutChanged = function (openInstanceKeys) {
+    popOutOpenKeys = (openInstanceKeys || []).slice();
+    popOutChangedSubscribers.slice().forEach(function (callback) {
+      callback(popOutOpenKeys.slice());
+    });
+  };
+
+  /**
+   * Test hook: inspect window.electronAPI.window.* call log (minimize/
+   * maximize/close), e.g. to assert PopOutWindowFrame's Escape handler called
+   * (or did not call) window.close() without a real OS window.
+   */
+  window.__mockWindowControls = {
+    reset: function () {
+      windowControlCalls = [];
+    },
+    getCalls: function () {
+      return windowControlCalls.slice();
     },
   };
 
@@ -4088,9 +5083,13 @@
       tasks: tasks,
       archivedTasks: archivedTasks,
       swimlanes: swimlanes,
+      automations: automations,
+      automationRuns: automationRuns,
       sessions: sessions,
       backlogTasks: backlogTasks,
       activityCache: activityCache,
+      messageTrailCache: messageTrailCache,
+      activityStatsCache: activityStatsCache,
       eventCache: eventCache,
       summaryCache: summaryCache,
       projectConfigs: projectConfigs,
@@ -4166,6 +5165,7 @@
       ['sessions', 'getActivity'],
       ['sessions', 'getActivityReasons'],
       ['sessions', 'getEventsCache'],
+      ['sessions', 'getMessageTrails'],
     ];
     watched.forEach(function (pair) {
       var namespace = pair[0];

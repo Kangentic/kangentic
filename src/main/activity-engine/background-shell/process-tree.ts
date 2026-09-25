@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
+import { isProcessAlive } from '../../shared/process-liveness';
 
 /**
  * Shape of the long-lived PowerShell child. `stdio: ['pipe', 'pipe', 'ignore']`
@@ -33,6 +34,33 @@ export interface ProcessInfo {
   ppid: number;
   /** Lowercase basename of the executable (e.g. "bash", "node"). */
   comm: string;
+}
+
+/**
+ * A session's descendant PIDs as of one enumerating watcher cycle.
+ *
+ * Exists so a session teardown can kill what the session left running WITHOUT
+ * enumerating processes itself. Measured on a 505-process Windows host, a cold
+ * `powershell -NoProfile` spawn costs ~670ms even for a pid/ppid/name-only
+ * projection - the cost is process startup, not the query - and a teardown runs
+ * on the drag-to-Done path, which the board's jitter budget cannot absorb. The
+ * watcher already walks this exact subtree every enumerating cycle and discards
+ * all but a count, so publishing it here is one array assignment and the
+ * teardown reads it for free.
+ *
+ * `capturedAt` is what makes it safe to act on: PIDs are recycled aggressively
+ * on Windows, so a consumer must reject a stale snapshot rather than kill a pid
+ * that has since been reassigned. The watcher's skip cycles also prune dead pids
+ * out of the set as they exit, so a recycled pid is never inherited by an entry
+ * that was left standing while dead.
+ */
+export interface CapturedSessionTree {
+  /** The session's PTY pid, i.e. the shell the agent CLI runs under. */
+  rootPid: number;
+  /** Every descendant pid observed, at any depth. */
+  pids: number[];
+  /** `Date.now()` of the cycle that observed them. */
+  capturedAt: number;
 }
 
 export interface ProcessTreeProbe {
@@ -113,14 +141,7 @@ class WindowsProbe implements ProcessTreeProbe {
   private disposed = false;
 
   isAlive(pid: number): boolean {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (err: unknown) {
-      const code = (err as NodeJS.ErrnoException).code;
-      return code === 'EPERM';
-    }
+    return isProcessAlive(pid);
   }
 
   async listDescendants(rootPid: number): Promise<ProcessInfo[]> {
@@ -393,14 +414,7 @@ class PosixProbe implements ProcessTreeProbe {
   dispose(): void { /* no-op */ }
 
   isAlive(pid: number): boolean {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (err: unknown) {
-      const code = (err as NodeJS.ErrnoException).code;
-      return code === 'EPERM';
-    }
+    return isProcessAlive(pid);
   }
 
   async listDescendants(rootPid: number): Promise<ProcessInfo[]> {
@@ -668,7 +682,9 @@ export function hasNoNonConsoleDescendants(descendants: readonly ProcessInfo[]):
  * shell allowlist, but cmd is a wrapper inside bash, not a separate
  * logical bg shell. We use immediate-parent (not transitive ancestor)
  * because the agent CLI itself is sometimes launched through a shell
- * shim (pwsh -> npm-shim cmd.exe -> node[claude]). A transitive rule
+ * shim (pwsh -> npm-shim cmd.exe -> node[claude], the shape a `.cmd`
+ * head keeps when no sibling shim can run; see
+ * src/main/agent/shared/shim-launch.ts). A transitive rule
  * would treat that shim cmd as a "shell-like ancestor" of every bash
  * the agent spawns and skip them all, breaking the count.
  *

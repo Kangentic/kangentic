@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { AppConfig, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace } from '../../shared/types';
-import { DEFAULT_CONFIG } from '../../shared/types';
+import type { AppConfig, ConfigSetResult, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
+import { DEFAULT_CONFIG, resolveTheme } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 import { computeDismissedIdsAfterDismiss } from '../../shared/announcements';
 import { parseModelId } from '../../shared/model-id';
@@ -32,6 +32,15 @@ if (import.meta.hot) {
   });
 }
 
+/** The OS appearance query. In Electron `prefers-color-scheme` follows the OS because
+ *  `nativeTheme.themeSource` is `'system'`, so no IPC is needed; the UI tier's Chromium
+ *  answers it too (and Playwright can emulate either side). Null where `matchMedia`
+ *  does not exist (a unit test that imports the store under node). */
+// hmr-safe: a fresh query object on HMR is equivalent; the listener is re-attached below and removed on dispose
+const systemAppearance: MediaQueryList | null = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null;
+
 /** Throttle for the on-demand model rescan a Model dropdown fires when it opens
  *  (`rescanModels`). Models ship rarely and each forced rescan spawns a fresh
  *  hidden /model PTY probe, so re-opening a dropdown within this window is a
@@ -48,7 +57,9 @@ interface ConfigStore {
   globalConfig: AppConfig;
   loading: boolean;
   loadConfig: () => Promise<void>;
-  updateConfig: (partial: DeepPartial<AppConfig>) => Promise<void>;
+  /** Persist a global config partial. Resolves with whether the write reached disk;
+   *  only the settings panel acts on that (see `ConfigSetResult`). */
+  updateConfig: (partial: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
   /** Dismiss the onboarding checklist for a project (adds its id to `onboardedProjectIds`). */
   markProjectOnboarded: (projectId: string) => void;
   /** Dismiss an in-app announcement (adds its id to `dismissedAnnouncementIds`,
@@ -133,6 +144,16 @@ interface ConfigStore {
    *  returns to the same section instead of resetting to the first tab. */
   lastSettingsTab: string | null;
   setLastSettingsTab: (tabId: string) => void;
+  /** The theme the Theme tab is trying on while the pointer rests on a tile, or null.
+   *  Renderer-only and never persisted: the html class and the diff pane show it in
+   *  place of `config.theme` without writing anything, and the grid clears it when the
+   *  pointer leaves, on any commit, and on unmount. */
+  themePreview: ThemeMode | null;
+  setThemePreview: (theme: ThemeMode | null) => void;
+  /** The OS appearance, read off `prefers-color-scheme` and kept live by the media
+   *  query listener below. Only `resolveTheme` consults it, and only when
+   *  `config.themeFollowsSystem` is on. */
+  systemPrefersDark: boolean;
 
   // -- Onboarding checklist + walkthrough (ephemeral UI state, like settingsOpen) --
   /** Whether the checklist dialog is on screen. Distinct from `onboardedProjectIds`:
@@ -166,7 +187,10 @@ interface ConfigStore {
   // -- Project overrides --
   projectOverrides: DeepPartial<AppConfig> | null;
   loadProjectOverrides: () => Promise<void>;
-  updateProjectOverride: (partial: DeepPartial<AppConfig>) => Promise<void>;
+  /** Persist a project-override partial. Same `persisted` contract as `updateConfig`;
+   *  resolves `{ persisted: true }` for the no-project-open no-op, since no write was
+   *  attempted. */
+  updateProjectOverride: (partial: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
 
 }
 
@@ -246,6 +270,16 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     return workspace;
   };
 
+  /** The tail of the project-override write chain; see `updateProjectOverride`. */
+  // hmr-safe: this lives in the store factory's closure, not module scope, so the Pattern A
+  // scan does not reach it and a Fast Refresh of this module replaces it with a fresh
+  // resolved chain. That is acceptable rather than overlooked: the chain only ORDERS writes,
+  // and a write already in flight has reached main before the reload, so nothing is lost on
+  // disk. The reload's own loadConfig() re-reads it. Do not pin this without pinning the
+  // store instance too (Pattern E), or the chain and the store it writes into come from
+  // different generations.
+  let projectOverrideWrites: Promise<void> = Promise.resolve();
+
   return {
     config: DEFAULT_CONFIG,
     globalConfig: DEFAULT_CONFIG,
@@ -257,6 +291,8 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     workspaceSeeded: false,
     settingsOpen: false,
     lastSettingsTab: lastSettingsTabHmr,
+    themePreview: null,
+    systemPrefersDark: systemAppearance?.matches ?? false,
     onboardingChecklistOpen: false,
     walkthroughStep: null,
     onboardingStepsCompleted: onboardingStepsCompletedHmr,
@@ -271,7 +307,11 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     },
 
     updateConfig: async (partial) => {
-      await window.electronAPI.config.set(partial);
+      // The result is returned, not acted on here: this method also carries the
+      // window-layout blobs, the model caches and announcement dismissals, which are
+      // not things the user asked for. Only the settings panel's `updateSetting`
+      // reads it (Sentry DESKTOP-1C).
+      const result = await window.electronAPI.config.set(partial);
       const configs = await refreshConfigs();
       set(withSeededWorkspace(configs));
       // Global settings can change every project's effective config, so
@@ -286,6 +326,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       if (partial.agent) {
         get().loadAgentList();
       }
+      return result;
     },
 
     markProjectOnboarded: (projectId) => {
@@ -394,26 +435,13 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       const agentList = await window.electronAPI.agents.list(forceRefresh);
       set({ agentList, agentListLoaded: true });
 
-      // Seed the discovered-models cache from `capabilities.models` so every
-      // launch starts with at least the JSONL-walk result merged in. Only writes
-      // when there's actually new material - avoids a config round-trip on every
-      // detection refresh.
-      const current = get().config.discoveredModelsByAgent ?? {};
-      const updates: Record<string, string[]> = {};
-      for (const info of agentList) {
-        const fresh = info.capabilities?.models;
-        if (!fresh || fresh.length === 0) continue;
-        const existing = current[info.name] ?? [];
-        const union = new Set<string>([...existing, ...fresh]);
-        if (union.size > existing.length) {
-          updates[info.name] = Array.from(union).sort((a, b) => a.localeCompare(b));
-        }
-      }
-      if (Object.keys(updates).length > 0) {
-        get().updateConfig({
-          discoveredModelsByAgent: { ...current, ...updates },
-        });
-      }
+      // Deliberately does NOT seed `discoveredModelsByAgent` from
+      // `capabilities.models`. `useKnownModels` already unions the live
+      // capabilities at read time, so seeding added nothing but permanence:
+      // the union only ever grew, so a model an adapter stopped reporting
+      // could never leave a picker. That is how a hardcoded Cursor fallback
+      // list outlived its own deletion. The persisted cache now holds only
+      // what `rememberDiscoveredModel` learns from a model actually running.
     },
 
     rememberDiscoveredModel: (agent, model) => {
@@ -499,6 +527,23 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       if (open) {
         set({ settingsOpen: true });
       } else {
+        // A focused SettingTextInput commits on blur; blurring HERE, before
+        // projectSettingsPath is cleared below, routes that commit through the
+        // normal (already-correct) blur path. Without this, closing the panel while
+        // a field is focused relies on SettingTextInput's own unmount-flush effect
+        // instead, which fires as a DIRECT CONSEQUENCE of this same close - by the
+        // time it runs, projectSettingsPath is already null, and updateProjectOverride
+        // would treat the edit as the no-project-open no-op and silently drop it.
+        //
+        // Scoped to the panel's own subtree, not a bare activeElement.blur(). This
+        // action also runs programmatically with focus somewhere else entirely (the
+        // walkthrough closes and reopens the panel on the next frame), and an
+        // unscoped blur would then pull focus out of whatever the user was actually
+        // in, a terminal included.
+        const focused = typeof document !== 'undefined' ? document.activeElement : null;
+        if (focused instanceof HTMLElement && focused.closest('[data-testid="settings-panel"]')) {
+          focused.blur();
+        }
         set({
           settingsOpen: false,
           projectSettingsPath: null,
@@ -513,6 +558,10 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     setLastSettingsTab: (tabId) => {
       lastSettingsTabHmr = tabId;
       set({ lastSettingsTab: tabId });
+    },
+
+    setThemePreview: (theme) => {
+      if (get().themePreview !== theme) set({ themePreview: theme });
     },
 
     // -- Project settings --
@@ -541,28 +590,108 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       }
     },
 
-    updateProjectOverride: async (partial) => {
-      const projectPath = get().projectSettingsPath;
-      if (!projectPath) return;
-      const current = get().projectOverrides || {};
-      const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
-      await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
-      const effective = deepMergeConfig(get().globalConfig, merged);
-      set({ projectOverrides: merged, config: effective });
+    updateProjectOverride: (partial) => {
+      // Captured synchronously, at call time - NOT lazily inside the deferred `write`
+      // below, which only runs once the write chain's tail settles (at least one
+      // microtask later). A SettingTextInput's unmount-flush effect can call this as
+      // a DIRECT CONSEQUENCE of setSettingsOpen(false), which nulls projectSettingsPath
+      // / projectOverrides in the SAME synchronous update that triggers the unmount -
+      // so a lazy `get()` inside `write` would already see them cleared. This snapshot
+      // is what a flush chases across a close so a project-scoped edit made right
+      // before Escape (or the settings.toggle shortcut) is not silently discarded.
+      // setSettingsOpen(false) also blurs the focused field before it clears state,
+      // which is what lets a NORMAL blur-triggered commit (routed through here) see
+      // these still-valid values in the first place.
+      const capturedProjectPath = get().projectSettingsPath;
+      const capturedProjectOverrides = get().projectOverrides;
+      // Each write merges over the PREVIOUS write's result, not over the snapshot
+      // both read at call time. The Theme tab commits on every arrow key and can
+      // fire a tile commit and the follow-system toggle inside one round trip;
+      // unchained, whichever landed last would carry only its own keys and
+      // silently drop the other's. So `projectOverrides` is still read LIVE here
+      // first - the capture above is a FALLBACK for when the live copy has been
+      // cleared by a close that raced this same commit, not a replacement for it.
+      const write = async (): Promise<ConfigSetResult> => {
+        const projectPath = get().projectSettingsPath ?? capturedProjectPath;
+        // Nothing was attempted, so nothing failed. Reporting `persisted: false` here
+        // would make the settings panel toast "this setting did not save" for the
+        // no-project-open no-op, which is a different thing entirely.
+        if (!projectPath) return { persisted: true };
+        const current = get().projectOverrides ?? capturedProjectOverrides ?? {};
+        const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
+        const result = await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
+        // Only the project still being edited gets the optimistic local update, the same
+        // guard `loadProjectOverrides` uses. The disk write above is what matters and has
+        // already happened; this `set` just saves the open panel a refetch. Unguarded, a
+        // flush that lands after a close would leave non-null overrides in a store whose
+        // panel is shut, and a flush that lands after the panel REOPENED on a different
+        // project would merge this project's overrides over that one's global config.
+        // Neither was reachable before the capture-at-call-time fallback above, because
+        // the cleared path made this whole branch a no-op.
+        if (get().projectSettingsPath === projectPath) {
+          const effective = deepMergeConfig(get().globalConfig, merged);
+          set({ projectOverrides: merged, config: effective });
+        }
+        return result;
+      };
+      // The chain tail stays Promise<void> so a write's result cannot leak into the
+      // NEXT write's `then`; the caller gets its own promise carrying the result.
+      const written = projectOverrideWrites.then(write, write);
+      projectOverrideWrites = written.then(() => undefined, () => undefined);
+      return written;
     },
 
   };
 });
 
-// Sync resolved theme -> localStorage + <html> class whenever it changes.
-// Runs outside React render so the DOM is always in sync, including for
-// the FOUC-prevention script on next load.
+/** The committed theme as the app resolves it: the hand-picked one, or with
+ *  `themeFollowsSystem` on, the pair member for the OS's current side. */
+export function resolvedTheme(state: Pick<ConfigStore, 'config' | 'systemPrefersDark'>): ThemeMode {
+  return resolveTheme(state.config, state.systemPrefersDark);
+}
+
+/** The theme the app is painting right now: a hover preview from the Theme tab while
+ *  one is resting, otherwise the resolved committed theme. */
+export function shownTheme(state: Pick<ConfigStore, 'config' | 'themePreview' | 'systemPrefersDark'>): ThemeMode {
+  return state.themePreview ?? resolvedTheme(state);
+}
+
+// Keep the OS reading live. A theme following the system repaints through the
+// subscription below the moment the OS flips, with no restart and no config write.
+if (systemAppearance) {
+  const onAppearanceChange = (event: MediaQueryListEvent) => useConfigStore.setState({ systemPrefersDark: event.matches });
+  systemAppearance.addEventListener('change', onAppearanceChange);
+  // The callback body sits on its own line so the suppression covers only the
+  // `import.meta.hot` access, as the dispose block at the top of the file does.
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot?.dispose(() => {
+    systemAppearance.removeEventListener('change', onAppearanceChange);
+  });
+}
+
+// Sync the shown theme -> <html> class whenever it changes, and the RESOLVED committed
+// theme -> localStorage, which seeds the FOUC-prevention script on the next launch and
+// so must never see a preview. Runs outside React render so the DOM is always in sync.
 useConfigStore.subscribe((state, prevState) => {
-  if (state.config.theme !== prevState.config.theme) {
-    try { localStorage.setItem('kng-resolved-theme', state.config.theme); } catch { /* localStorage may be unavailable */ }
+  const resolved = resolvedTheme(state);
+  if (resolved !== resolvedTheme(prevState)) {
+    try { localStorage.setItem('kng-resolved-theme', resolved); } catch { /* localStorage may be unavailable */ }
+    // A commit from the Theme tab parks the preview ON the committed theme while the
+    // config write is in flight, so the app never drops back to the old theme for the
+    // round trip. Once the write lands the preview is redundant; retire it here, where
+    // the catch-up is visible, and nothing repaints because shown stays the same. A
+    // parked commit for the OTHER OS side never equals `resolved`, so it is the grid's
+    // own landing watch that ends that one (`commit` in ThemeTab.tsx).
+    if (state.themePreview === resolved) {
+      useConfigStore.setState({ themePreview: null });
+      return;
+    }
+  }
+  const shown = shownTheme(state);
+  if (shown !== shownTheme(prevState)) {
     const classList = document.documentElement.classList;
     classList.forEach(className => { if (className.startsWith('theme-')) classList.remove(className); });
-    if (state.config.theme !== 'dark') classList.add(`theme-${state.config.theme}`);
+    if (shown !== 'dark') classList.add(`theme-${shown}`);
   }
 });
 

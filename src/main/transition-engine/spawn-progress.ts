@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
+import { sendToRenderer } from '../ipc/send-to-renderer';
 
 // ---------------------------------------------------------------------------
 // Spawn progress: typed phases emitted to the renderer during task move
@@ -11,14 +12,28 @@ import { IPC } from '../../shared/ipc-channels';
 // Phase flow (contextual per task):
 //   Worktree task:      fetching → creating-worktree → [init-script] → starting-agent
 //   Custom branch task: fetching → switching-branch  → starting-agent
-//   Base branch task:   starting-agent
-//   Has worktree:       starting-agent
-//   Cross-agent:        packaging-handoff → detecting-agent → starting-agent
+//   Base branch task:   fetching → switching-branch  → starting-agent
+//   Has worktree:       starting-agent (a base-drift probe may decorate it, see below)
+//   Cross-agent:        switching-agent → starting-agent → packaging-handoff → detecting-agent
 //   Restore from Done:  resuming → (whichever of the above the task needs)
+//   Model change:       switching-model → (whichever of the above the task needs)
+//   Effort respawn:     applying-settings → (whichever of the above the task needs)
+//   Session switch:     new-session → (whichever of the above the task needs)
+//   In-place restart:   switching-model | applying-settings | resending-command
+//                       (restartSessionForSettingsChange: no git work follows)
 //
 // 'resuming' is emitted by TASK_UNARCHIVE / TASK_BULK_UNARCHIVE before any git
 // work, so the card is never silent while the lane resolves and the git op
-// queues. Every other phase is emitted by the git helpers themselves.
+// queues. 'switching-model', 'switching-agent', 'applying-settings', and
+// 'new-session' are emitted the same way by task-move.ts's Phase 1
+// suspend-for-respawn branches, before the suspend that would otherwise leave
+// the card reading a stale "Paused" for the whole unlocked Phase 2 window (see
+// suspendLiveSessionForRespawn). The in-place restart in session-reconcile.ts
+// (a ContextBar model pick, a Board Profile propagation, or the auto_command
+// escalation) emits its phase before its suspend for the same reason, and
+// because the mobile bridge attaches whatever label is in flight to the
+// suspend's `session-ended` so the phone can tell a respawn from a park.
+// Every other phase is emitted by the git helpers themselves.
 //
 // QUERYABLE STATE (not just fire-once IPC): the latest in-flight label per
 // task is also retained in a module-level map so the renderer can re-derive
@@ -39,6 +54,91 @@ import { IPC } from '../../shared/ipc-channels';
  * label here forever.
  */
 const inFlightSpawnProgress = new Map<string, { label: string; updatedAt: number }>();
+
+/**
+ * Per-task staleness note appended to every label until the spawn clears
+ * (e.g. "base 3 behind", "base fetch failed"). The map stores BASE labels and
+ * the note is applied at the send/read boundaries, so the pushed string and
+ * the getInFlightSpawnProgress() snapshot can never disagree. A note string
+ * must never start with "Waiting" and always TRAILS the label - the renderer's
+ * stall watcher classifies git-queue waits by sniffing label text.
+ */
+const spawnStaleNotes = new Map<string, string>();
+
+/**
+ * A note that arrived while the task had no in-flight entry, waiting for the
+ * spawn's next label push. The REUSE spawn path emits nothing between the move
+ * and Phase 3's 'starting-agent', and the drift probe (a throttle-hit fetch
+ * plus one rev-list) usually resolves inside that empty window - dropping the
+ * note there meant reuse drift effectively never surfaced (caught live in a
+ * preview; the unit tests had masked it by pre-seeding a label). Entries are
+ * generation-guarded: a pending note can only attach to the spawn that
+ * requested the probe, never a future one. `storedAt` only feeds the sweep.
+ */
+const pendingStaleNotes = new Map<string, { note: string; probeGeneration: number; storedAt: number }>();
+
+/**
+ * Per-task count of spawn clears (null pushes). A probe captures the value at
+ * its start; any clear between then and the note arriving bumps it, which
+ * voids the note.
+ *
+ * Entries are swept once untouched for STALE_PROBE_HORIZON_MS (see
+ * getInFlightSpawnProgress) so the map cannot grow with every task id the app
+ * ever spawned. Dropping an entry resets that task's baseline to zero, which
+ * is safe because the horizon outlives any probe's UNTOUCHED stretch: a
+ * running probe holds its token for at most the fetch timeout plus the
+ * rev-list timeout, beginSpawnStaleProbe touches the entry at capture, and
+ * touchSpawnStaleProbe re-touches it when a git-queue-delayed probe finally
+ * starts running, so a live probe's baseline never goes stale mid-flight.
+ * After a reset both capture and compare read zero - the ordering semantics
+ * simply restart.
+ */
+const spawnClearGenerations = new Map<string, { value: number; touchedAt: number }>();
+
+/**
+ * Sweep horizon for the two probe-bookkeeping maps above. Comfortably past
+ * the longest possible probe (15s fetch cap + 5s rev-list cap + process
+ * margins), so no entry that could still matter is ever dropped.
+ */
+const STALE_PROBE_HORIZON_MS = 60_000;
+
+function currentClearGeneration(taskId: string): number {
+  return spawnClearGenerations.get(taskId)?.value ?? 0;
+}
+
+/** Apply the task's staleness note, if any, to a base label. */
+function decorateLabel(taskId: string, label: string): string {
+  const note = spawnStaleNotes.get(taskId);
+  return note ? `${label} (${note})` : label;
+}
+
+/**
+ * Start-of-probe marker for a fire-and-forget staleness probe. Returns the
+ * task's current clear generation; pass it to setSpawnStaleNote so a note that
+ * resolves after this spawn already cleared is dropped instead of decorating
+ * the task's NEXT spawn. Touches the entry so the sweep cannot drop a baseline
+ * out from under a probe that is still running.
+ */
+export function beginSpawnStaleProbe(taskId: string): number {
+  const entry = spawnClearGenerations.get(taskId);
+  if (!entry) return 0;
+  entry.touchedAt = Date.now();
+  return entry.value;
+}
+
+/**
+ * Re-touch a task's clear-generation baseline from a probe that is still
+ * alive. The drift probe queues on the per-project git lock at background
+ * priority, so its wall-clock lifetime is its queue wait plus its own git
+ * work and can exceed STALE_PROBE_HORIZON_MS on a busy queue. Calling this
+ * when the probe actually starts running keeps the sweep from dropping (and a
+ * later clear from re-numbering) the baseline its token compares against,
+ * which could otherwise let a stale note decorate a newer spawn.
+ */
+export function touchSpawnStaleProbe(taskId: string): void {
+  const entry = spawnClearGenerations.get(taskId);
+  if (entry) entry.touchedAt = Date.now();
+}
 
 /**
  * Fired on a task's transition INTO or OUT OF the map (active=true/false),
@@ -73,15 +173,31 @@ function pushSpawnProgress(mainWindow: BrowserWindow, taskId: string, label: str
   const wasTracked = inFlightSpawnProgress.has(taskId);
   if (label === null) {
     inFlightSpawnProgress.delete(taskId);
+    spawnStaleNotes.delete(taskId);
+    pendingStaleNotes.delete(taskId);
+    spawnClearGenerations.set(taskId, { value: currentClearGeneration(taskId) + 1, touchedAt: Date.now() });
   } else {
+    // Promote a pending note the moment its spawn produces a label. The
+    // generation re-check is belt and braces: a clear deletes pendings, so a
+    // surviving entry is already same-spawn.
+    const pending = pendingStaleNotes.get(taskId);
+    if (pending) {
+      pendingStaleNotes.delete(taskId);
+      if (pending.probeGeneration === currentClearGeneration(taskId)) {
+        spawnStaleNotes.set(taskId, pending.note);
+      }
+    }
     inFlightSpawnProgress.set(taskId, { label, updatedAt: Date.now() });
   }
   const isTracked = label !== null;
   if (wasTracked !== isTracked) {
     for (const listener of spawnProgressTransitionListeners) listener(taskId, isTracked);
   }
-  if (mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC.TASK_SPAWN_PROGRESS, taskId, label);
+  // Through the recorded chokepoint, not a raw `webContents.send`: a label is
+  // what tells a card and a paired phone that a suspend is a respawn rather
+  // than a park, so when that goes wrong the IPC log is where the answer is
+  // looked for, and a raw send left every spawn-progress push out of it.
+  sendToRenderer(mainWindow, IPC.TASK_SPAWN_PROGRESS, taskId, label === null ? null : decorateLabel(taskId, label));
 }
 
 /**
@@ -95,16 +211,70 @@ export function getInFlightSpawnProgress(): Record<string, string> {
   for (const [taskId, entry] of inFlightSpawnProgress) {
     if (now - entry.updatedAt > SPAWN_PROGRESS_TTL_MS) {
       inFlightSpawnProgress.delete(taskId);
+      spawnStaleNotes.delete(taskId);
       continue;
     }
-    result[taskId] = entry.label;
+    result[taskId] = decorateLabel(taskId, entry.label);
+  }
+  // Bound the probe-bookkeeping maps: entries untouched past the horizon can
+  // no longer influence any live probe (see the constant's JSDoc), and without
+  // this sweep both maps grow with every task id ever spawned this session.
+  for (const [taskId, generationEntry] of spawnClearGenerations) {
+    if (now - generationEntry.touchedAt > STALE_PROBE_HORIZON_MS) {
+      spawnClearGenerations.delete(taskId);
+    }
+  }
+  for (const [taskId, pending] of pendingStaleNotes) {
+    if (now - pending.storedAt > STALE_PROBE_HORIZON_MS) {
+      pendingStaleNotes.delete(taskId);
+    }
   }
   return result;
 }
 
-/** Test-only: reset the module-level map between unit test cases. */
+/**
+ * Attach a staleness note to a task's in-flight spawn so every remaining
+ * phase label carries it (e.g. "Starting agent... (base 3 behind)"). When an
+ * entry exists, the current label is re-pushed immediately so the card updates
+ * without waiting for the next phase boundary.
+ *
+ * With no in-flight entry, behavior depends on `probeGeneration`:
+ * - Omitted: no-op. A caller without a probe token has no proof its spawn is
+ *   still the live one, and must not decorate a future, unrelated spawn.
+ * - From beginSpawnStaleProbe: the note is PENDED and applied to the task's
+ *   next label push, but only while no clear has happened since the probe
+ *   started. This is the reuse-spawn shape: the map is empty from the move
+ *   until Phase 3's 'starting-agent', which is exactly when the drift probe
+ *   tends to resolve.
+ */
+export function setSpawnStaleNote(
+  mainWindow: BrowserWindow,
+  taskId: string,
+  note: string,
+  probeGeneration?: number,
+): void {
+  const entry = inFlightSpawnProgress.get(taskId);
+  if (entry) {
+    if (probeGeneration !== undefined && probeGeneration !== currentClearGeneration(taskId)) {
+      // The spawn that requested the probe ended and ANOTHER is already in
+      // flight; its own probe (if any) owns the note.
+      return;
+    }
+    spawnStaleNotes.set(taskId, note);
+    pushSpawnProgress(mainWindow, taskId, entry.label);
+    return;
+  }
+  if (probeGeneration === undefined) return;
+  if (probeGeneration !== currentClearGeneration(taskId)) return;
+  pendingStaleNotes.set(taskId, { note, probeGeneration, storedAt: Date.now() });
+}
+
+/** Test-only: reset the module-level maps between unit test cases. */
 export function __resetSpawnProgressForTest(): void {
   inFlightSpawnProgress.clear();
+  spawnStaleNotes.clear();
+  pendingStaleNotes.clear();
+  spawnClearGenerations.clear();
 }
 
 /** Valid spawn progress phases. */
@@ -116,7 +286,12 @@ export type SpawnPhase =
   | 'switching-branch'
   | 'starting-agent'
   | 'packaging-handoff'
-  | 'detecting-agent';
+  | 'detecting-agent'
+  | 'switching-model'
+  | 'switching-agent'
+  | 'applying-settings'
+  | 'new-session'
+  | 'resending-command';
 
 /** Phase → user-facing label (single source of truth for display text). */
 const PHASE_LABELS: Record<SpawnPhase, string> = {
@@ -133,6 +308,23 @@ const PHASE_LABELS: Record<SpawnPhase, string> = {
   'starting-agent': 'Starting agent...',
   'packaging-handoff': 'Packaging handoff context...',
   'detecting-agent': 'Detecting agent...',
+  // The four labels below are emitted by task-move.ts's Phase 1
+  // suspend-for-respawn branches, all through the shared
+  // suspendLiveSessionForRespawn helper, always BEFORE the suspend that
+  // follows. Naming the swap here rather than a generic "Starting agent..."
+  // is what keeps a model/agent/effort change from reading as a fresh cold
+  // spawn.
+  'switching-model': 'Switching model...',
+  'switching-agent': 'Switching agent...',
+  'applying-settings': 'Applying new settings...',
+  'new-session': 'Starting new session...',
+  // The in-place restarts that go through restartSessionForSettingsChange
+  // (session-reconcile.ts) emit their phase the same way, before the suspend.
+  // This one is rung 3 of the auto_command delivery ladder: keystrokes could
+  // not be confirmed, so the session is resumed with the command as its
+  // prompt. Named for what it is rather than "Starting new session..." (it is
+  // a resume) so the card and the phone say why the terminal churned.
+  'resending-command': 'Re-sending command...',
 };
 
 /** Get the user-facing label for a spawn phase. */
@@ -179,6 +371,8 @@ function describeGitJobLabel(runningLabel: string): string {
       return 'Switching branch';
     case 'rename-branch':
       return 'Renaming branch';
+    case 'update-from-base':
+      return 'Updating from base';
     case 'background-prune':
       return 'Pruning worktrees';
     default:

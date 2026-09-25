@@ -183,6 +183,7 @@ function BoardTaskDetailContent({
       titleBarPointerDown={titleBarPointerDown}
       requestClose={requestClose}
       retainedProjectId={managedWindow.retainedProjectId}
+      parked={managedWindow.parked === true}
     />
   );
 }

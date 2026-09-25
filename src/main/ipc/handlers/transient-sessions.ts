@@ -2,12 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
-import simpleGit from 'simple-git';
+import simpleGit, { type SimpleGit } from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { fetchIfStale } from '../../git/fetch-throttle';
-import { trackEvent } from '../../analytics/analytics';
+import { resolveProjectDefaultBaseBranch } from '../helpers/default-base-branch';
+import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
+import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
+import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
   SpawnTransientSessionInput,
@@ -38,33 +41,56 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
 
     const detection = await adapter.detect(cliPathOverride);
-    if (!detection.found || !detection.path) throw new Error(`${adapter.displayName} CLI not found. Please install it first.`);
+    if (!detection.found || !detection.path) throw new AgentCliNotFoundError(agentName, adapter.displayName);
+    // The shell the PTY types the command into: it decides the quoting style
+    // and which shim variant a `.cmd` head is swapped for (shim-launch.ts).
+    const shell = await context.sessionManager.getShell();
     const permissionMode = config.agent.permissionMode as PermissionMode;
     const transientTaskId = uuidv4();
 
     // Fetch latest from origin and checkout the requested branch before spawning.
     // This ensures Claude Code loads up-to-date commands/skills from the remote.
+    // This runs on a COLD spawn only: reattaching to a live PTY never touches
+    // git, so a reattach can never move HEAD out from under a running agent.
     const git = simpleGit(projectRoot);
-    const targetBranch = input.branch || config.git.defaultBaseBranch || 'main';
+    // The board-overlaid default, the same chain every task spawn and the
+    // renderer's branch pill resolve, so main's checkout target and the pill's
+    // default cannot disagree when kangentic.json sets the base.
+    const targetBranch = input.branch || resolveProjectDefaultBaseBranch(context, projectRoot);
 
     // Best-effort fetch from origin (throttled, network-failure-safe)
     const startPoint = await fetchIfStale(git, projectRoot, targetBranch);
 
-    let branch = targetBranch;
+    let branch: string;
     let checkoutError: string | undefined;
     try {
       const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-      if (currentBranch !== targetBranch) {
-        await git.checkout(targetBranch);
-      }
-      branch = targetBranch;
+      // An AUTO checkout (no branch picked) has no user gesture behind it beyond
+      // opening a terminal, and a plain `git checkout` carries non-conflicting
+      // uncommitted changes onto the base branch silently, so someone with work
+      // in progress on a feature branch would find it sitting on the base. Stay
+      // put when tracked files are modified. An explicit picker choice keeps
+      // git's own behavior (and the failure toast below). Probed only when a
+      // switch is actually due; untracked files do not count, matching
+      // WorktreeManager.checkoutBranch.
+      const stayPut = currentBranch !== targetBranch && !input.branch && (await hasTrackedChanges(git));
+      if (stayPut) {
+        branch = currentBranch;
+        checkoutError = `Staying on "${currentBranch}": the working tree has uncommitted changes, so this terminal did not switch to "${targetBranch}".`;
+      } else {
+        if (currentBranch !== targetBranch) {
+          await git.checkout(targetBranch);
+        }
+        branch = targetBranch;
 
-      // Fast-forward merge to incorporate fetched remote changes
-      if (startPoint.startsWith('origin/')) {
-        try {
-          await git.merge([startPoint, '--ff-only']);
-        } catch {
-          // ff-only failed (dirty tree, diverged history) - use local state
+        // Fast-forward merge to incorporate fetched remote changes. Skipped on
+        // the stay-put path above: it would fast-forward the WRONG branch.
+        if (startPoint.startsWith('origin/')) {
+          try {
+            await git.merge([startPoint, '--ff-only']);
+          } catch {
+            // ff-only failed (dirty tree, diverged history) - use local state
+          }
         }
       }
     } catch (error) {
@@ -82,18 +108,39 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     // Create session directory for status/events bridge files so the
     // shimmer overlay can detect when Claude Code is ready.
     const sessionDirectory = path.join(projectRoot, '.kangentic', 'sessions', transientTaskId);
+    // sync-write-ok: this must throw, not degrade, for the same reason as
+    // prepare-spawn.ts's session directory - a Command Terminal with no
+    // session directory has nowhere to write status/events. This handler
+    // already throws plain Errors above for earlier preconditions (no
+    // project open, CLI not found), and both of spawnTransientSession's
+    // renderer callers (CommandTerminalWindow.tsx) already catch and toast
+    // any rejection of this invoke.
     fs.mkdirSync(sessionDirectory, { recursive: true });
     const statusOutputPath = path.join(sessionDirectory, 'status.json');
     const eventsOutputPath = path.join(sessionDirectory, 'activity.json');
 
+    // The same pre-spawn global-config step the task chokepoints run: trust
+    // for the project root, kangentic pre-enabled in the agent's MCP list, and
+    // Claude's diff panel closed. A Command Terminal is the likeliest maximized
+    // pane, so it needs the diff-panel write most of all. Pinned by
+    // tests/unit/spawn-entry-point-parity.test.ts (line order) and
+    // tests/unit/transient-session-spawn-ensure-trust.test.ts (the runtime
+    // guarantee: awaited, called once, with projectRoot, before buildCommand).
+    await adapter.ensureTrust(projectRoot);
+    // A `.cmd` head under a PowerShell or Git Bash host launches through
+    // cmd.exe; hand the builder the sibling shim the shell can run instead
+    // (shim-launch.ts). No prompt here, but the head must match what task
+    // spawns use, so a Command Terminal never runs a different process shape.
+    const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt: undefined });
     const commandOptions = {
-      agentPath: detection.path,
+      agentPath: launch.agentPath,
       taskId: transientTaskId,
       cwd: projectRoot,
       permissionMode,
       projectRoot,
       statusOutputPath,
       eventsOutputPath,
+      shell,
       mcpServerEnabled: config.mcpServer.enabled,
       mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
       mcpServerToken: context.mcpServerHandle?.token,
@@ -127,23 +174,51 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       rows: input.rows,
     });
 
-    trackEvent('transient_session_spawn', { agent: adapter.name });
+    // Volume for these sessions comes from session_spawn (isTransient: true),
+    // adoption from this feature; the old transient_session_spawn event was a
+    // third answer to the same question and was removed rather than renamed.
+    trackFeatureUsed('command_terminal');
     return { session, branch, checkoutError };
+  });
+
+  // Retain the renderer-derived terminal name on the live session. Purely so it
+  // survives a renderer reload: the pairing map that normally holds it is
+  // renderer-only memory, and `planTransientRecovery` reads this back off the
+  // session row to restore the name with the slot and branch.
+  ipcMain.handle(IPC.SESSION_SET_TRANSIENT_LABEL, (_, sessionId: string, label: string) => {
+    context.sessionManager.setCommandTerminalLabel(sessionId, label);
+  });
+
+  // The branch the terminal's checkout is actually on, re-derived from live
+  // HEAD by the renderer. Same passive-holder shape as the label, but last
+  // write wins: the Monitor row and a post-reload adopt read it back.
+  ipcMain.handle(IPC.SESSION_SET_TRANSIENT_BRANCH, (_, sessionId: string, branch: string) => {
+    context.sessionManager.setCommandTerminalBranch(sessionId, branch);
   });
 
   ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string) => {
     // Capture session info before removal for cleanup
     const session = context.sessionManager.getSession(sessionId);
+    // kill, capture the exit, THEN remove: awaitExit resolves at once for a
+    // row that is gone, and a young session's kill waits out its exit-sequence
+    // grace (SessionManager.kill). The handler still returns now - the window
+    // closes at once; only the directory delete waits for the shell.
+    context.sessionManager.kill(sessionId);
+    const sessionExited = context.sessionManager.awaitExit(sessionId);
     context.sessionManager.remove(sessionId);
 
-    // Clean up the transient session directory on disk
+    // Clean up the transient session directory on disk once the process is
+    // gone. Deleting it under a still-exiting Claude made its SessionEnd hook
+    // write into a missing directory.
     if (session?.transient) {
       const sessionDirectory = path.join(session.cwd, '.kangentic', 'sessions', session.taskId);
-      try {
-        fs.rmSync(sessionDirectory, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup
-      }
+      void sessionExited.then(() => {
+        try {
+          fs.rmSync(sessionDirectory, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup
+        }
+      });
     }
   });
 
@@ -204,4 +279,16 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       return { ok: true, injected: true };
     },
   );
+}
+
+/**
+ * Whether the working tree has modifications to TRACKED files (staged or not).
+ * Untracked files are ignored: a checkout carries them along harmlessly, and
+ * counting them would pin every terminal to its current branch the moment a
+ * build artifact appears. The same filter `WorktreeManager.checkoutBranch` and
+ * `TASK_UPDATE_FROM_BASE` use.
+ */
+async function hasTrackedChanges(git: SimpleGit): Promise<boolean> {
+  const status = await git.status();
+  return status.files.some((file) => file.index !== '?' && file.working_dir !== '?');
 }

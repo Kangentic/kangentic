@@ -34,8 +34,29 @@ const SESSION_ID = `sess-reconcile-${RUN_ID}`;
  * whose session is `status='suspended'` in the renderer cache. Each test
  * then overrides `sessions.reconcile` to drive either the heal path or
  * the confirm-suspended path before opening the dialog.
+ *
+ * `liveSiblingId` adds a SECOND row for the same task, `status='running'`,
+ * listed AFTER the suspended one: the shape main's registry exported when a
+ * stale suspended row leaked ahead of the task's live PTY.
  */
-async function launchWithStaleSuspendedTask(): Promise<{ browser: Browser; page: Page }> {
+async function launchWithStaleSuspendedTask(
+  options: { liveSiblingId?: string } = {},
+): Promise<{ browser: Browser; page: Page }> {
+  const liveSiblingSeed = options.liveSiblingId
+    ? `
+      state.sessions.push({
+        id: '${options.liveSiblingId}',
+        taskId: '${TASK_ID}',
+        projectId: '${PROJECT_ID}',
+        pid: 60208,
+        status: 'running',
+        shell: 'bash',
+        cwd: '/mock/reconcile-${RUN_ID}',
+        startedAt: ts,
+        exitCode: null,
+        resuming: false,
+      });`
+    : '';
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
@@ -89,6 +110,7 @@ async function launchWithStaleSuspendedTask(): Promise<{ browser: Browser; page:
         exitCode: null,
         resuming: false,
       });
+      ${liveSiblingSeed}
 
       state.tasks.push({
         id: '${TASK_ID}',
@@ -388,6 +410,51 @@ test.describe('Task detail proactive reconcile - genuinely suspended', () => {
     // Negative assertion: the probe path produces no uncaught errors.
     // The store action's catch logs a warning, not a pageerror, so a
     // clean console is the right signal here.
+    await page.waitForTimeout(300);
+    expect(getPageErrors()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Two rows for one task, stale first: the selector must prefer the live row.
+//
+// Main's registry once exported [suspended, running] for a task (a leaked
+// placeholder or a settings restart the spawn did not fully drain). The hook
+// resolved the FIRST array match and painted "Resume session" over a running
+// agent, while the board card (which resolves through the index) showed it
+// running. The probe could not heal it either: the running row's id was
+// already in the array, so the heal replaced it in place and left the stale
+// sibling in front. The probe is disabled here so a heal cannot mask a
+// first-wins regression in the selector itself.
+// ---------------------------------------------------------------------------
+test.describe('Task detail - stale suspended row listed ahead of the live session', () => {
+  let browser: Browser;
+  let page: Page;
+  const LIVE_SESSION_ID = `sess-live-${RUN_ID}`;
+
+  test.beforeAll(async () => {
+    ({ browser, page } = await launchWithStaleSuspendedTask({ liveSiblingId: LIVE_SESSION_ID }));
+  });
+
+  test.afterAll(async () => {
+    await browser?.close();
+  });
+
+  test('opens into the live terminal without the reconcile probe', async () => {
+    await page.evaluate(() => {
+      window.electronAPI.sessions.reconcile = async function () {
+        return null;
+      };
+    });
+    const getPageErrors = collectPageErrors(page);
+
+    await openTaskDialog(page);
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await expect(dialog.locator('button:has-text("Resume session")')).toBeHidden({ timeout: 3000 });
+    // Hidden because the LIVE row won, not because no session resolved at all.
+    await expect(dialog.getByText('No active session')).toBeHidden({ timeout: 3000 });
+
     await page.waitForTimeout(300);
     expect(getPageErrors()).toHaveLength(0);
   });

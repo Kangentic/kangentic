@@ -103,14 +103,50 @@ export default defineConfig({
       retries: process.env.CI ? 1 : 0,
     },
     {
+      // Marketing stills and videos, and the scene rig demo/posters.mjs drives on
+      // every release. 60s because a driver scene's own budget is 30s on its own
+      // (a 20s ready wait plus a 10s gesture wait, tests/captures/helpers/scene-page.ts)
+      // and a cold CI runner pays a module load on top; the two video captures set
+      // their own 300s. The CI retry mirrors the ui, electron, and demo projects, and
+      // relies on CAPTURE_OUTPUT_ROOT to land a retried shot in the same directory
+      // (tests/captures/helpers/output-dir.ts). It is scoped in practice by the
+      // poster job's file filter, not by this project: nothing on CI runs the whole
+      // project, and a job that did would also retry the two five-minute videos.
+      // workers stays 1: the three driver drags are a timed pointer sequence, and a
+      // starved worker drops them.
       name: 'captures',
       testDir: './tests/captures',
       testMatch: '**/*.capture.ts',
-      timeout: 30_000,
+      timeout: 60_000,
       workers: 1,
+      retries: process.env.CI ? 1 : 0,
       use: {
         browserName: 'chromium',
         headless: true,
+      },
+    },
+    {
+      // Web demo smoke tier: boots the STATIC build in dist/demo (written by
+      // `npm run build:demo`) through demo/static-server.mjs, which the spec
+      // starts itself in beforeAll on an ephemeral port. It has NO entry in the
+      // shared `webServer` below on purpose: that block starts for every project
+      // filter, so a dist/demo server there would break the ui tier (and every
+      // local `--project=ui` run) whenever the demo build is absent. The spec
+      // surfaces a missing build as one named error instead. workers=1 because
+      // the file is a handful of serial page loads against one server; the CI
+      // retry mirrors the ui and electron projects.
+      name: 'demo',
+      testDir: './tests/demo',
+      testMatch: '**/*.spec.ts',
+      timeout: 30_000,
+      workers: 1,
+      retries: process.env.CI ? 1 : 0,
+      use: {
+        browserName: 'chromium',
+        headless: true,
+        // The site frame's size, which every terminal recording was made for (demo/README.md,
+        // geometry): a boot replayed into a wider or narrower terminal is not the same frame.
+        viewport: { width: 1600, height: 1000 },
       },
     },
   ],

@@ -446,7 +446,7 @@ test.describe('BrowserAutomationTab master-switch gating', () => {
 // ToggleCard's optional `info` prop renders an aria-hidden Info icon beside the
 // label, with the info text as its `title` tooltip. Clicking the icon must NOT
 // flip the switch (the icon's onClick calls stopPropagation). The Board
-// Manager's "Receive context from prior agent" toggle (Handoff section) is the
+// Manager's "Hand off context when the agent changes" toggle (Handoff section) is the
 // sole current usage; "Auto-spawn" in the same dialog has no `info` and is the
 // negative case. "Auto-spawn" was renamed "Start an agent here" (2026-07-26).
 
@@ -472,7 +472,7 @@ test.describe('ToggleCard info icon', () => {
   test('a ToggleCard with `info` renders an Info icon with the expected title', async () => {
     await openManagerByHeader('Code Review'); // auto_spawn=true, so Handoff renders inline
 
-    const handoffSwitch = page.getByRole('switch', { name: 'Receive context from prior agent' });
+    const handoffSwitch = page.getByRole('switch', { name: 'Hand off context when the agent changes' });
     await expect(handoffSwitch).toBeVisible();
 
     // ToggleIndicator is also an aria-hidden span but carries no `title`, so
@@ -498,7 +498,7 @@ test.describe('ToggleCard info icon', () => {
   test('clicking the info icon does not toggle the switch', async () => {
     await openManagerByHeader('Code Review');
 
-    const handoffSwitch = page.getByRole('switch', { name: 'Receive context from prior agent' });
+    const handoffSwitch = page.getByRole('switch', { name: 'Hand off context when the agent changes' });
     await expect(handoffSwitch).toHaveAttribute('aria-checked', 'false');
 
     await handoffSwitch.locator('span[title]').click();
@@ -510,7 +510,7 @@ test.describe('ToggleCard info icon', () => {
     // Sanity: clicking the label text (not the icon) still flips it, proving
     // the switch itself is wired correctly and the prior click was a no-op
     // specifically because of the icon, not some other reason.
-    await handoffSwitch.locator('text=Receive context from prior agent').first().click();
+    await handoffSwitch.locator('text=Hand off context when the agent changes').first().click();
     await expect(handoffSwitch).toHaveAttribute('aria-checked', 'true');
 
     // Discard the dirty change on close (closeManager accepts the confirm).

@@ -203,6 +203,33 @@ export function useAgentDrivenInvalidation(): void {
       }));
     }
 
+    if (tasks?.onMovedByMobile) {
+      cleanups.push(tasks.onMovedByMobile((movedProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        const matchesActiveProject = !movedProjectId || movedProjectId === activeProjectId;
+        console.debug('[agent-push] task:movedByMobile received', {
+          pushProjectId: movedProjectId,
+          activeProjectId,
+          action: matchesActiveProject ? 'reload' : 'invalidate-cache',
+        });
+        if (matchesActiveProject) {
+          scheduleBoardReload();
+        } else {
+          invalidateProject(movedProjectId);
+        }
+        // Deliberately no toast, for a different reason than the two quiet
+        // channels above: this one is not the app reconciling itself, it is the
+        // user acting from their own phone. They already saw it land there, and
+        // the card moving on the board is the confirmation. Routing it through
+        // onUpdatedByAgent would announce "Task updated by agent", which is the
+        // wrong provenance twice over - no agent, and not an update.
+        //
+        // The reload is the whole fix: without it the board renders the card in
+        // the column it left, and useWindowAutoCloseOnDone (which decides from
+        // useBoardStore) never closes a detail window on a move to Done.
+      }));
+    }
+
     const swimlanes = window.electronAPI?.swimlanes;
     if (swimlanes?.onUpdatedByAgent) {
       cleanups.push(swimlanes.onUpdatedByAgent((_swimlaneId, swimlaneName, updatedByAgentProjectId) => {

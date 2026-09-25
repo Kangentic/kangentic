@@ -176,6 +176,42 @@ describe('notifySpawnBlocked - every failure reaches the user', () => {
     expect(sentMessage(send)).toBe(error.message);
   });
 
+  it('keeps an AgentCliNotFoundError message verbatim, with no step prefix', async () => {
+    // The spawn step used to only log, so a task whose agent CLI was missing
+    // moved into the column, showed a healthy-looking card, and never spawned.
+    // The typed error is already written for a user and names the remedy, so
+    // it is passed through exactly like BranchCheckoutBlockedError.
+    const { AgentCliNotFoundError } = await import(
+      '../../src/main/agent/shared/agent-cli-not-found'
+    );
+    const send = vi.fn();
+    const error = new AgentCliNotFoundError('codex', 'Codex CLI');
+
+    notifySpawnBlocked(makeContext(send), makeTask(), 'agent', error, 'explicit-project');
+
+    expect(sentMessage(send)).toBe(error.message);
+    expect(sentMessage(send)).toContain('Settings > Agent');
+    expect(sentMessage(send)).not.toContain('Agent did not start:');
+    // The stutter guard, at the surface the user actually reads.
+    expect(sentMessage(send)).not.toMatch(/CLI CLI/i);
+  });
+
+  it('names the agent step for an opaque spawn failure', () => {
+    // Not narrowed to a missing CLI: an arbitrary engine failure would
+    // otherwise keep the silent-card symptom that this step exists to close.
+    const send = vi.fn();
+
+    notifySpawnBlocked(
+      makeContext(send),
+      makeTask(),
+      'agent',
+      new Error('worktree is locked'),
+      'explicit-project',
+    );
+
+    expect(sentMessage(send)).toBe('Agent did not start: worktree is locked');
+  });
+
   it('sends only the FIRST line of a multi-line git error', () => {
     const send = vi.fn();
 

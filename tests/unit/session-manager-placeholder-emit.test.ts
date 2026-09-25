@@ -26,8 +26,10 @@ vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
   return { ShellResolver: MockShellResolver };
 });
 
-vi.mock('../../src/shared/paths', () => ({
+vi.mock('../../src/shared/paths', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/shared/paths')>()),
   adaptCommandForShell: (command: string) => command,
+  buildSpawnClearPrelude: () => '',
   isUncPath: (p: string) => /^[\\/]{2}[^\\/]/.test(p),
 }));
 
@@ -38,6 +40,13 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 import type { Session } from '../../src/shared/types';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import type { ManagedSession, SessionRegistry } from '../../src/main/pty/session-registry';
+import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
+import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
+import type { FirstOutputTracker } from '../../src/main/pty/lifecycle/first-output-tracker';
+import type { ResizeManager } from '../../src/main/pty/lifecycle/resize-manager';
+import type { SessionFileManager } from '../../src/main/pty/lifecycle/session-file-manager';
+import type { SessionIdManager } from '../../src/main/pty/lifecycle/session-id-manager';
 
 describe('SessionManager.registerSuspendedPlaceholder emit', () => {
   let manager: SessionManager;
@@ -75,7 +84,7 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     });
 
     expect(emittedIds).toHaveLength(1);
-    expect(emittedIds[0]).toBe(returned.id);
+    expect(emittedIds[0]).toBe(returned!.id);
   });
 
   it('emitted session payload has status suspended, correct taskId and projectId', () => {
@@ -110,15 +119,34 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     });
 
     expect(emittedSession).not.toBeNull();
-    expect(returned.id).toBe(emittedSession!.id);
-    expect(returned.status).toBe(emittedSession!.status);
-    expect(returned.taskId).toBe(emittedSession!.taskId);
-    expect(returned.projectId).toBe(emittedSession!.projectId);
+    expect(returned!.id).toBe(emittedSession!.id);
+    expect(returned!.status).toBe(emittedSession!.status);
+    expect(returned!.taskId).toBe(emittedSession!.taskId);
+    expect(returned!.projectId).toBe(emittedSession!.projectId);
+  });
+
+  it('a second call for the same task emits nothing, inserts nothing, and returns null', () => {
+    // Recovery can run twice for a project in one process (an explicit open
+    // during startup activation). Each pass used to add a placeholder, and the
+    // spawn that eventually replaced them drained only one.
+    const emittedIds: string[] = [];
+    manager.on('session-changed', (sessionId: string) => {
+      emittedIds.push(sessionId);
+    });
+    const input = { taskId: 'task-placeholder-6', projectId: 'project-placeholder-6', cwd: '/mock/cwd' };
+
+    const first = manager.registerSuspendedPlaceholder(input);
+    const second = manager.registerSuspendedPlaceholder(input);
+
+    expect(second).toBeNull();
+    expect(emittedIds).toEqual([first!.id]);
+    const rowsForTask = manager.listSessions().filter((session) => session.taskId === 'task-placeholder-6');
+    expect(rowsForTask.map((session) => session.id)).toEqual([first!.id]);
   });
 
   it('emits session-changed synchronously before registerSuspendedPlaceholder returns', () => {
     let emitFiredBeforeReturn = false;
-    let returned: Session | undefined;
+    let returned: Session | null | undefined;
 
     manager.on('session-changed', () => {
       // At the moment of emit, returned is still undefined because
@@ -135,6 +163,124 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     expect(emitFiredBeforeReturn).toBe(true);
     // Returned must still be defined after the call completes.
     expect(returned).toBeDefined();
-    expect(returned.id).toBeTruthy();
+    expect(returned!.id).toBeTruthy();
+  });
+
+  it('clears the evicted exited row\'s per-session caches (buffer, telemetry, first-output tracker, resize manager, session files, session-id manager)', () => {
+    // registerSuspendedPlaceholder replaces an exited row rather than leaving
+    // it stranded (the DB record was just upgraded to suspended, so the task
+    // must be resumable). The manager's eviction loop must also drop what the
+    // auxiliary modules still hold for that dead id - otherwise stale
+    // scrollback/usage/first-output/resize/session-file/session-id state from
+    // the crashed session would survive under an id nothing in the registry
+    // references anymore. This exercises all six modules the eviction loop
+    // touches: three via the shared `clearSessionCaches` tail (buffer,
+    // telemetry, first-output tracker) and three the loop calls directly
+    // ahead of that tail (session-id manager, session files, and resize
+    // manager, which is also reached via `clearSessionCaches`).
+    const exitedSessionId = 'sess-exited-cache-test';
+    const registryAccess = (manager as unknown as { registry: SessionRegistry }).registry;
+    registryAccess.set(exitedSessionId, {
+      id: exitedSessionId,
+      taskId: 'task-exit-cache',
+      projectId: 'project-exit-cache',
+      pty: null,
+      status: 'exited',
+      shell: '',
+      cwd: '/mock/cwd',
+      startedAt: new Date().toISOString(),
+      exitCode: 1,
+      resuming: false,
+      transient: false,
+      exitSequence: ['\x03'],
+    } as ManagedSession);
+
+    const privateManager = manager as unknown as {
+      bufferManager: PtyBufferManager;
+      telemetry: SessionTelemetry;
+      firstOutputTracker: FirstOutputTracker;
+      resizeManager: ResizeManager;
+      sessionFiles: SessionFileManager;
+      sessionIdManager: SessionIdManager;
+    };
+    const bufferRemoveSpy = vi.spyOn(privateManager.bufferManager, 'removeSession');
+    const telemetryRemoveSpy = vi.spyOn(privateManager.telemetry, 'removeSession');
+    const firstOutputRemoveSpy = vi.spyOn(privateManager.firstOutputTracker, 'removeSession');
+    const resizeRemoveSpy = vi.spyOn(privateManager.resizeManager, 'removeSession');
+    const sessionFilesRemoveSpy = vi.spyOn(privateManager.sessionFiles, 'removeSession');
+    const sessionIdRemoveSpy = vi.spyOn(privateManager.sessionIdManager, 'removeSession');
+
+    const placeholder = manager.registerSuspendedPlaceholder({
+      taskId: 'task-exit-cache',
+      projectId: 'project-exit-cache',
+      cwd: '/mock/cwd',
+    });
+
+    expect(placeholder).not.toBeNull();
+    expect(placeholder!.status).toBe('suspended');
+    expect(bufferRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(telemetryRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(firstOutputRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(resizeRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(sessionFilesRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(sessionIdRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+  });
+
+  it('announces the evicted exited row on session-removed, before the placeholder\'s status push', () => {
+    // Every row that leaves the registry announces it (remove() does the
+    // same). The placeholder's status push alone makes it the task's only row
+    // in the renderer, but only a removal drops the evicted id's per-session
+    // map entries; without it a dead session's usage stays behind under an id
+    // nothing references (#661's context bar, by another route).
+    const exitedSessionId = 'sess-exited-announce';
+    const registryAccess = (manager as unknown as { registry: SessionRegistry }).registry;
+    registryAccess.set(exitedSessionId, {
+      id: exitedSessionId,
+      taskId: 'task-exit-announce',
+      projectId: 'project-exit-announce',
+      pty: null,
+      status: 'exited',
+      shell: '',
+      cwd: '/mock/cwd',
+      startedAt: new Date().toISOString(),
+      exitCode: 1,
+      resuming: false,
+      transient: false,
+      exitSequence: ['\x03'],
+    } as ManagedSession);
+    const emitted: Array<{ event: string; sessionId: string; taskId: string }> = [];
+    manager.on('session-removed', (sessionId: string, session: Session) => {
+      emitted.push({ event: 'session-removed', sessionId, taskId: session.taskId });
+    });
+    manager.on('session-changed', (sessionId: string, session: Session) => {
+      emitted.push({ event: 'session-changed', sessionId, taskId: session.taskId });
+    });
+
+    const placeholder = manager.registerSuspendedPlaceholder({
+      taskId: 'task-exit-announce',
+      projectId: 'project-exit-announce',
+      cwd: '/mock/cwd',
+    });
+
+    expect(placeholder).not.toBeNull();
+    expect(emitted).toEqual([
+      { event: 'session-removed', sessionId: exitedSessionId, taskId: 'task-exit-announce' },
+      { event: 'session-changed', sessionId: placeholder!.id, taskId: 'task-exit-announce' },
+    ]);
+  });
+
+  it('emits no session-removed when there was no exited row to evict', () => {
+    const removedIds: string[] = [];
+    manager.on('session-removed', (sessionId: string) => {
+      removedIds.push(sessionId);
+    });
+
+    manager.registerSuspendedPlaceholder({
+      taskId: 'task-placeholder-clean',
+      projectId: 'project-placeholder-clean',
+      cwd: '/mock/cwd',
+    });
+
+    expect(removedIds).toEqual([]);
   });
 });

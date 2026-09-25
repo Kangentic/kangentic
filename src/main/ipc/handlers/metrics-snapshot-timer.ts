@@ -1,6 +1,7 @@
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { captureSessionMetrics } from './session-metrics';
 import type { SessionManager } from '../../pty/session-manager';
 import type { Session } from '../../../shared/types';
@@ -67,7 +68,7 @@ function snapshotRunningSessions(sessionManager: SessionManager): void {
       const db = getProjectDb(projectId);
       const sessionRepo = new SessionRepository(db);
       const usageHistoryRepo = new UsageHistoryRepository(db);
-      db.transaction(() => {
+      const snapshotProjectBatch = db.transaction(() => {
         for (const session of sessions) {
           try {
             const record = sessionRepo.getLatestForTask(session.taskId);
@@ -87,7 +88,10 @@ function snapshotRunningSessions(sessionManager: SessionManager): void {
             // siblings' captures in this batch.
           }
         }
-      })();
+      });
+      // A synchronous sqlite transaction on the main thread, on a timer: the
+      // dev lag monitor records it when it runs long (see event-loop-lag.ts).
+      timeSyncWork('metrics-snapshot', snapshotProjectBatch);
     } catch {
       // Best-effort: a project DB may be transiently unavailable. A throw here
       // aborts only this project's batch; other projects still snapshot.

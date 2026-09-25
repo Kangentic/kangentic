@@ -21,6 +21,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { ReactNode } from 'react';
 import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight, Zap } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
+import { IconSlot } from '../IconSlot';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
@@ -32,7 +33,8 @@ import { useKeybinding, useFormattedCombo } from '../../hooks/useKeybinding';
 import { ContextBar } from '../terminal/ContextBar';
 import { CommandTerminalPane, type TerminalGridGetter } from './CommandTerminalPane';
 import { useSessionStore } from '../../stores/session-store';
-import { transientKey } from '../../stores/session-store/transient-session-slice';
+import { transientKey, type TransientKillOutcome } from '../../stores/session-store/transient-session-slice';
+import { findAdoptableTransientSession } from '../../stores/session-store/transient-recovery';
 import { commandTerminalChangesEntityId } from '../../stores/session-store/task-changes-panel-slice';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -43,14 +45,44 @@ import { ICON_REGISTRY } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
-import { getIsHmrReload } from '../../utils/hmr-flag';
 import { useLayerStore } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
-import type { AgentCommand } from '../../../shared/types';
+import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
+
+/** What a window attaches to at mount; see `resolveMountAttach`. */
+type MountAttach =
+  | { kind: 'reattach'; sessionId: string }
+  | { kind: 'adopt'; sessionId: string; session: Session }
+  | null;
+
+/**
+ * Decide, from the store as it stands at the first render, whether the slot's
+ * window reattaches to its own live PTY, adopts a reload survivor, or spawns.
+ *
+ * A stale map entry (the session died while the layer was hidden and the exit
+ * is not yet applied) is not a reattach: it falls through to the adopt check
+ * and then to a spawn, with the launch shimmer. Being adoptable is a strictly
+ * stronger condition than "this is an HMR remount": it means main is running a
+ * live PTY for this exact slot, which is reason enough to attach shimmer-free
+ * however the renderer got here, including a cold page reload, where the map
+ * is gone and the HMR flag reads false.
+ */
+function resolveMountAttach(slot: string): MountAttach {
+  const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+  if (!currentProjectId) return null;
+  const state = useSessionStore.getState();
+  const existing = state.transientSessions[transientKey(currentProjectId, slot)];
+  if (existing && state.sessions.some((session) => session.id === existing.sessionId && session.status === 'running')) {
+    return { kind: 'reattach', sessionId: existing.sessionId };
+  }
+  const adoptable = findAdoptableTransientSession(state.sessions, state.transientSessions, currentProjectId, slot);
+  if (adoptable) return { kind: 'adopt', sessionId: adoptable.id, session: adoptable };
+  return null;
+}
 
 /**
  * The Stop button glyph, carrying the same activity ring the task-detail header folds into its
@@ -63,17 +95,29 @@ const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPa
  * Ring and square are one packaged mark, so the hand-computed `47 16` dash that used to be
  * duplicated here and in `TaskDetailHeader` is gone. See `PauseButtonIcon` for why 20 is the
  * size that reproduces the old glyph exactly.
+ *
+ * These branches return DIFFERENT element types, so activity changing swaps the whole subtree
+ * rather than re-rendering one, and a node destroyed mid-press makes Chromium drop the click.
+ * The single `IconSlot` below the branching is the one element the swap does NOT destroy, and
+ * it absorbs the pointer on the glyph's behalf. Wrapping once rather than inside each branch
+ * is what makes that structural: a future branch cannot forget it. `PauseButtonIcon` has the
+ * same shape over five branches and does the same.
  */
-function StopButtonIcon({ isThinking, isIdle }: { isThinking: boolean; isIdle: boolean }): ReactNode {
+function StopButtonIcon({ isThinking, isIdle, stopping }: { isThinking: boolean; isIdle: boolean; stopping: boolean }): ReactNode {
+  // The slot is 20 across every state, while each glyph keeps the size it already drew at
+  // (the 20px mark reads level with the 18px lucide glyphs), so the button never resizes.
+  return <IconSlot size={20}>{stopGlyph({ isThinking, isIdle, stopping })}</IconSlot>;
+}
+
+function stopGlyph({ isThinking, isIdle, stopping }: { isThinking: boolean; isIdle: boolean; stopping: boolean }): ReactNode {
+  if (stopping) return <Loader2 size={18} className="animate-spin" />;
   if (isThinking || isIdle) {
     return (
-      <span className="grid place-items-center w-5 h-5">
-        <ActivityMark
-          mark={isThinking ? 'control-stop-working' : 'control-stop-idle'}
-          size={20}
-          className={isThinking ? 'text-active' : 'text-attention'}
-        />
-      </span>
+      <ActivityMark
+        mark={isThinking ? 'control-stop-working' : 'control-stop-idle'}
+        size={20}
+        className={isThinking ? 'text-active' : 'text-attention'}
+      />
     );
   }
   return <CircleStop size={18} />;
@@ -97,21 +141,44 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // open flag and per-entity panel state (selected file, scroll, scope, ...)
   // never leak across Command Terminal windows.
   const commandTerminalEntityId = commandTerminalChangesEntityId(slot);
-  const useStore = useLayerStore();
-  const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
-  const closeWindow = useStore((state) => state.closeWindow);
+  const layerStore = useLayerStore();
+  const toggleMaximizeWindow = layerStore((state) => state.toggleMaximizeWindow);
+  const closeWindow = layerStore((state) => state.closeWindow);
   // Window-layout parity with the task-detail window: pop-out (untile back to
   // floating) for a pane that is currently part of a tile group.
-  const untileWindow = useStore((state) => state.untileWindow);
-  const isTiled = useStore((state) => state.windows[windowId]?.leafId != null);
+  const untileWindow = layerStore((state) => state.untileWindow);
+  const isTiled = layerStore((state) => state.windows[windowId]?.leafId != null);
   const { hideLayer } = useCommandTerminalLayer();
 
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [branch, setBranch] = useState<string | null>(null);
+  // What this window attaches to at mount, decided ONCE, before the first
+  // paint, so the mount effect below only performs side effects and the two
+  // states seeded from it never need a synchronous set inside that effect.
+  // `reattach`: the slot's map entry names a live PTY (the layer was hidden
+  // and reopened, or an HMR remount). `adopt`: no map entry, but main still
+  // runs a PTY stamped with this slot (a renderer reload destroys the map while
+  // every transient PTY survives; `syncSessions` normally re-pairs first, so
+  // this covers a window that mounts ahead of it - strip it and
+  // `command-terminal.spec.ts`'s "adopts the live PTY for its slot" test spawns
+  // a second PTY and strands the first). `null`: spawn.
+  const [mountAttach] = useState<MountAttach>(() => resolveMountAttach(slot));
+  const [sessionId, setSessionId] = useState<string | null>(mountAttach?.sessionId ?? null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  // Stop is async (kill IPC, then close). Without a pending state the button looks
+  // inert for the duration, which is exactly how a DROPPED click presented, so the
+  // two were indistinguishable to the user.
+  const [stopping, setStopping] = useState(false);
+  // Set inside an effect, not at ref init: StrictMode remounts synthetically in dev
+  // and a ref-init value alone stays false after the synthetic cleanup.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const config = useConfigStore((s) => s.config);
   const rawProjectPath = useProjectStore((s) => s.currentProject?.path ?? null);
-  // Also the source for CommandTerminalPane's own pasteImageTemplate lookup
+  // Also the source for CommandTerminalPane's own pasteImageCapability lookup
   // (SESSION_INJECT_SETTINGS uses the same signal) - kept here too since
   // ContextBar's agentFallback below needs it regardless of the pane.
   const projectAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
@@ -190,6 +257,21 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // identical across a project's terminals by construction. `commandTerminalTitle`
   // is shared with the Agent Monitor so both surfaces print the same name.
   const windowTitle = transientLabel ?? commandTerminalTitle(slot);
+  // The branch is read from the pairing map, never held here: every path that
+  // used to set it locally (spawn, adopt, a picker switch) already writes the
+  // map entry, and the layer's HEAD tracker (`useTrackHeadBranch`) corrects
+  // that entry on reattach and on every watcher fire. A per-window copy would
+  // be a second, stale answer to a per-project question. The ref bridges the
+  // one gap: a picker switch scrubs the entry before the respawn writes the new
+  // one, and the pill should not flash the default branch in between. It is
+  // state set during render (React's "information from previous renders"
+  // pattern) rather than a ref, which render may neither read nor write.
+  const mapBranch = useSessionStore((state) =>
+    projectId ? state.transientSessions[transientKey(projectId, slot)]?.branch ?? null : null,
+  );
+  const [lastKnownBranch, setLastKnownBranch] = useState<string | null>(null);
+  if (mapBranch && mapBranch !== lastKnownBranch) setLastKnownBranch(mapBranch);
+  const branch = mapBranch ?? lastKnownBranch;
 
   // Spawn this slot's transient session on mount, or reattach to an existing one
   // (the PTY survives a layer hide, so reopening reattaches instead of
@@ -205,23 +287,20 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       return;
     }
 
-    const existing = state.transientSessions[transientKey(currentProjectId, slot)];
-    if (existing) {
-      // Reattach only if the PTY is still alive; a stale map entry (session died
-      // while stashed) falls through to a fresh spawn.
-      const alive = state.sessions.find((session) => session.id === existing.sessionId && session.status === 'running');
-      if (alive) {
-        setSessionId(existing.sessionId);
-        setBranch(existing.branch);
-        setTerminalReady(true);
-        return;
-      }
+    // Reattach only. No fetch, no checkout: the PTY may be running an agent,
+    // and moving HEAD under it is the class of thing #558 refused. The branch
+    // pill is corrected from live HEAD by the layer's tracker instead. The
+    // session id was seeded from `mountAttach` at the first render.
+    if (mountAttach?.kind === 'reattach') return;
+
+    if (mountAttach?.kind === 'adopt') {
+      state.adoptTransientSession(currentProjectId, slot, mountAttach.session);
+      return;
     }
 
     state.spawnTransientSession(slot)
       .then((result) => {
         setSessionId(result.session.id);
-        setBranch(result.branch);
         if (result.checkoutError) {
           useToastStore.getState().addToast({ message: result.checkoutError, variant: 'warning' });
         }
@@ -242,30 +321,22 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const hasFirstOutput = useSessionStore((state) => (sessionId ? !!state.sessionFirstOutput[sessionId] : false));
   const hasUsage = useSessionStore((state) => (sessionId ? !!state.sessionUsage[sessionId] : false));
   const hasSessionStarted = hasFirstOutput || hasUsage;
-  // On an HMR remount, skip the shimmer when reattaching to a live transient
-  // session (otherwise useState(false) would flash the launch overlay).
-  const [terminalReady, setTerminalReady] = useState(() => {
-    if (!getIsHmrReload()) return false;
-    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
-    if (!currentProjectId) return false;
-    // Reattach shimmer-free only if the slot's session is still alive; a stale
-    // entry (session died while the layer was hidden, exit event not yet applied)
-    // must fall through to the spawn path WITH the shimmer, mirroring the mount
-    // effect's alive check below.
-    const state = useSessionStore.getState();
-    const existing = state.transientSessions[transientKey(currentProjectId, slot)];
-    return !!existing && state.sessions.some((session) => session.id === existing.sessionId && session.status === 'running');
-  });
-
-  useEffect(() => {
-    if (hasSessionStarted && !terminalReady) setTerminalReady(true);
-  }, [hasSessionStarted, terminalReady]);
+  // The launch shimmer lifts when the session has started, or when something
+  // else says the terminal is ready: an exit before any usage arrives, or a
+  // mount that attached to a PTY already running (a reattach after the layer
+  // was hidden, an HMR remount, or an adopted reload survivor), which must not
+  // flash the launch overlay over a conversation that is already running.
+  // Derived, not synced: `terminalReady` used to be state that an effect set
+  // from `hasSessionStarted`, which is the cascading-render shape React's
+  // compiler rules forbid. The latch holds the two non-derivable answers.
+  const [readyLatch, setReadyLatch] = useState(() => mountAttach !== null);
+  const terminalReady = readyLatch || hasSessionStarted;
 
   // Lift the shimmer if the session exits before usage arrives.
   useEffect(() => {
     if (!sessionId || terminalReady) return;
     const cleanup = window.electronAPI.sessions.onExit((exitSessionId) => {
-      if (exitSessionId === sessionId) setTerminalReady(true);
+      if (exitSessionId === sessionId) setReadyLatch(true);
     });
     return cleanup;
   }, [sessionId, terminalReady]);
@@ -301,12 +372,22 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     // guaranteed to happen after that unmount commits.
     const grid = gridGetterRef.current?.() ?? undefined;
     try {
-      await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
+      // Act on the outcome here too, not just in handleTerminate: this path scrubs the
+      // slot and immediately spawns a replacement on it, so a kill that failed leaves the
+      // old PTY running and unreachable while a new one starts under a fresh checkout.
+      // Warn rather than abort - the user asked for the branch switch, and the respawn is
+      // still the useful half of it.
+      const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
+      if (killOutcome === 'failed') {
+        useToastStore.getState().addToast({
+          message: 'Could not stop the old terminal. Its process may still be running.',
+          variant: 'warning',
+        });
+      }
       setSessionId(null);
-      setTerminalReady(false);
+      setReadyLatch(false);
       const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch, grid);
       setSessionId(result.session.id);
-      setBranch(result.branch);
       if (result.checkoutError) {
         useToastStore.getState().addToast({ message: result.checkoutError, variant: 'warning' });
       }
@@ -319,17 +400,48 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // Stop = destroy THIS terminal's PTY and close its window. The layer's count
   // bridge hides the whole layer when the last window closes. Hiding the layer
   // (the X / Ctrl+Shift+P / backdrop) is separate and keeps every PTY alive.
+  //
+  // The window closes on EVERY path, including a kill that found nothing to kill:
+  // the user asked for this terminal to go away. All three outcomes used to be
+  // silent, so a kill that quietly did nothing looked exactly like the dropped
+  // click this button was also suffering from.
+  //
+  // Only 'failed' is surfaced. 'no-session' is deliberately quiet even though it
+  // carries the same "a PTY may still be running" risk, because in the case that
+  // actually reaches it the window is genuinely all there is to close. The one
+  // known gap: Stop clicked while the initial spawn IPC is still in flight finds
+  // no map entry yet (spawnTransientSession inserts it only after the await), so
+  // the spawn completes unattended and the next layer-open reconciles a window
+  // back for it. Closing the spawn race needs cancellation plumbed through the
+  // mount effect; until then this path cannot tell that case apart from a slot
+  // that never had a PTY, which is why it stays silent rather than crying wolf.
   const handleTerminate = useCallback(async () => {
+    if (stopping) return;
+    setStopping(true);
     const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    let outcome: TransientKillOutcome = 'no-session';
     try {
       if (currentProjectId) {
-        await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
+        outcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
       }
     } catch {
-      // Best-effort cleanup.
+      outcome = 'failed';
+    }
+    if (outcome === 'failed') {
+      useToastStore.getState().addToast({
+        message: 'Could not stop the terminal. Its process may still be running.',
+        variant: 'error',
+      });
     }
     closeWindow(windowId);
-  }, [closeWindow, windowId, slot]);
+    // This runs on essentially every Stop, not just the rare path: closeWindow is a
+    // plain Zustand set(), so React cannot commit the unmount between these two
+    // statements. Usually it is a harmless setState just ahead of that unmount. It
+    // is load-bearing only when the close is a no-op (an id the store no longer
+    // holds, which closeWindow returns early on), where no unmount ever follows and
+    // the button would otherwise be stranded disabled with a spinner and no way back.
+    if (mountedRef.current) setStopping(false);
+  }, [closeWindow, windowId, slot, stopping]);
 
   const handleCommandSelect = useCallback((command: AgentCommand) => {
     setShowCommandPalette(false);
@@ -360,23 +472,29 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   useKeybinding('panel.maximize', () => handleToggleMaximized(), { capture: true });
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden" data-testid="command-terminal-window">
+    <div className="flex h-full w-full flex-col overflow-hidden" data-testid="command-terminal-window" data-command-slot={slot}>
       {/* Header. Priority-plus layout: the title keeps a ~50ch floor; the pills
           reclaim the space above it and fold into the kebab as the window narrows
           (useHeaderPillOverflow). */}
       <div ref={headerRef} className="flex items-center gap-3 px-4 h-[54px] border-b border-edge flex-shrink-0 select-none min-w-0">
         {/* Leading cluster: Stop (protected, measured as one unit). */}
         <div ref={leadingRef} className="flex items-center flex-shrink-0">
+          {/* StopButtonIcon's branches all render through IconSlot, so the node under the
+              pointer survives an activity change mid-press (see IconSlot). */}
           <button
             onClick={handleTerminate}
-            className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 ${
-              showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
+            disabled={stopping}
+            className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
+              stopping ? 'text-fg-muted' : showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
             }`}
-            title="Stop terminal"
-            aria-label="Stop terminal"
+            title={stopping ? 'Stopping...' : 'Stop terminal'}
+            // Tracks `stopping` like the title and the kebab item's label: an explicit
+            // aria-label wins the accessible-name computation, so leaving it static would
+            // hide the pending state from exactly the users who cannot see the spinner.
+            aria-label={stopping ? 'Stopping terminal' : 'Stop terminal'}
             data-testid="command-bar-terminate-button"
           >
-            <StopButtonIcon isThinking={isThinking} isIdle={isIdle} />
+            <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
           </button>
         </div>
 
@@ -514,8 +632,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
                   <KebabMenuDivider />
                   <KebabMenuItem
                     icon={<CircleStop size={14} />}
-                    label="Stop terminal"
+                    label={stopping ? 'Stopping...' : 'Stop terminal'}
                     onClick={() => { close(); handleTerminate(); }}
+                    disabled={stopping}
                     destructive
                     data-testid="command-bar-kebab-stop"
                   />
@@ -615,10 +734,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
                   </div>
                 }
               >
+                {/* The effective base (board-overlaid), not "HEAD": the Working and
+                    Staged scopes never read baseBranch, and the Branch scope, the
+                    ahead/behind, and the base badge all measure against it. A literal
+                    "HEAD" resolved origin/HEAD, the remote's default branch, which is
+                    not the project's base when the two differ. */}
                 <ChangesPanel
                   entityId={commandTerminalEntityId}
                   projectPath={projectPath}
-                  baseBranch="HEAD"
+                  baseBranch={defaultBranch}
                 />
               </Suspense>
             </PanelErrorBoundary>

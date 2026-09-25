@@ -11,6 +11,7 @@ import type {
   SubmissionVerifier,
   AgentCapabilities,
   TranscriptEntry,
+  TranscriptTurnUsage,
   TranscriptUsage,
   TranscriptToolCounts,
   AgentRemoteExecutionInfo,
@@ -45,6 +46,92 @@ export interface ParsedTranscriptWindow {
   sourcePath: string | null;
   nextByteOffset: number;
   totalBytes: number;
+}
+
+/**
+ * One subagent turn's token usage, already folded to exactly one entry per API
+ * message by the adapter. Agent-agnostic: the indexer writes these to the
+ * turn-usage ledger without knowing where they came from or how the agent
+ * spells a subagent.
+ */
+export interface SubagentUsageTurn {
+  /** Stable, collision-free ledger key. Must be reproducible across re-walks of
+   *  an appended transcript and disjoint from main-thread turn uuids. */
+  turnUuid: string;
+  /** Identifies the subagent within its session. Non-null by construction: this
+   *  is the discriminator that marks the ledger row as not-main-thread. */
+  subagentId: string;
+  /** The subagent's declared type, or null when the agent recorded none. */
+  agentType: string | null;
+  spawnDepth: number | null;
+  /** Tool-use id of the call that spawned this subagent. Resolves to the emitting
+   *  turn through `turn_spawn_links` (see `SubagentSpawnLink`): a main-thread turn
+   *  at depth 1, another subagent's turn deeper. Null when the agent recorded none. */
+  parentToolUseId: string | null;
+  /** Epoch ms, or null when the agent reported no timestamp. */
+  ts: number | null;
+  model: string | null;
+  usage: TranscriptTurnUsage;
+}
+
+/**
+ * One subagent-spawning tool call, mapping that call's id to the turn that
+ * emitted it. This is the other half of `SubagentUsageTurn.parentToolUseId`,
+ * which on its own names a tool-use id no row is keyed by.
+ *
+ * Collected INDEPENDENTLY of the usage fold, deliberately. Both parsers drop
+ * turns before they reach the ledger (the main path skips an entry with no
+ * `usage`, the subagent path skips a message group whose counts are all zero),
+ * and a link lost to either filter is lost for good: a re-walk reproduces the
+ * same drop, so that subtree is permanently unattributable. A link is therefore
+ * emitted whether or not its turn produced a ledger row.
+ */
+export interface SubagentSpawnLink {
+  /** The spawning call's tool-use id, as it appears in a child's
+   *  `parentToolUseId`. Unique per call; the ledger's PK dedups a re-walk. */
+  toolUseId: string;
+  /** The turn that emitted the call, in the same key space as
+   *  `conversation_turn_usage.turn_uuid`. */
+  turnUuid: string;
+}
+
+/**
+ * Cheap staleness signature for a session's subagent transcripts, computed
+ * without parsing them. A subagent's bytes go to its own file, so the MAIN
+ * transcript's mtime and size do not move while a subagent runs: the subagent
+ * side needs its own signature or a fan-out's turns are never seen as stale.
+ *
+ * Shaped around a per-SESSION directory, which is a Claude fact rather than a
+ * general one: Codex writes each thread's rollout into a date directory and
+ * Gemini writes every session, main and subagent alike, into one per-project
+ * `chats/` directory. Signing either would invalidate on any unrelated session's
+ * change. Widening this is part of adding a second agent, not a detail of it.
+ */
+export interface SubagentTranscriptSignature {
+  fileCount: number;
+  totalSize: number;
+  maxMtimeMs: number;
+}
+
+/**
+ * Result of `AgentAdapter.parseSubagentUsage`.
+ *
+ * `directoryPresent: false` means the agent has no subagent transcripts for this
+ * session (pruned, or it never fanned out) and is recorded as a coverage gap, so
+ * a missing history is never mistaken for a quiet period. `complete: false`
+ * means at least one transcript could not be read through to the end; the turns
+ * returned are still valid and idempotent, but the caller must not mark the
+ * session indexed or it will never retry.
+ */
+export interface ParsedSubagentUsage {
+  directoryPresent: boolean;
+  complete: boolean;
+  sourcePath: string;
+  turns: SubagentUsageTurn[];
+  /** Spawning calls made BY these subagents, which is what lets a nested subagent
+   *  resolve to the subagent that spawned it rather than only to a depth number.
+   *  Empty when the agent has no nesting or recorded no spawn calls. */
+  spawnLinks: SubagentSpawnLink[];
 }
 
 /**
@@ -85,7 +172,14 @@ export interface CommandOptions {
   nonInteractive?: boolean;
   statusOutputPath?: string; // path where the status bridge writes JSON
   eventsOutputPath?: string; // path where the event bridge appends JSONL
-  shell?: string; // target shell name - controls quoting style (single vs double quotes)
+  /**
+   * Target shell name. Controls quoting style (single vs double quotes). The
+   * spawn chokepoints also use it to swap a `.cmd` / `.bat` head for the
+   * sibling shim that shell can run before the builder sees `agentPath`
+   * (src/main/agent/shared/shim-launch.ts); builders never inspect the
+   * extension.
+   */
+  shell?: string;
   mcpServerEnabled?: boolean; // whether to enable Kangentic MCP server (delivery is adapter-specific: --mcp-config flag, settings file, or env var)
   /** In-process MCP HTTP server URL for this project. Required when mcpServerEnabled is true. */
   mcpServerUrl?: string;
@@ -189,7 +283,14 @@ export interface AgentAdapter {
    */
   discoverCapabilities?(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities>;
 
-  /** Pre-approve a working directory so the agent does not prompt for trust. */
+  /**
+   * Pre-approve a working directory so the agent does not prompt for trust, and apply any other
+   * pre-spawn global-config state the adapter needs for a clean start (Claude also keeps its
+   * fullscreen diff panel closed here). Every spawn path calls this before `buildCommand`,
+   * including the Command Terminal. Pinned by `tests/unit/spawn-entry-point-parity.test.ts`
+   * (line order, every path) and `tests/unit/transient-session-spawn-ensure-trust.test.ts`
+   * (the Command Terminal's runtime ordering, which a static scan cannot see).
+   */
   ensureTrust(workingDirectory: string): Promise<void>;
 
   /**
@@ -237,9 +338,11 @@ export interface AgentAdapter {
    * spawn. Returns `null` (or omits the method entirely) when the adapter
    * needs no env injection. Used by adapters whose CLI has no flag-based
    * MCP wiring and must deliver the Kangentic MCP server config via env
-   * (e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`). Adapters that wire MCP
-   * via a CLI flag (Claude `--mcp-config`) or settings file (Codex hooks)
-   * do not implement this.
+   * (e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`), or whose native
+   * permission/autonomy control is an env var rather than a flag (e.g.
+   * Goose's `GOOSE_MODE`). Adapters that wire MCP via a CLI flag (Claude
+   * `--mcp-config`) or settings file (Codex hooks), and whose permission
+   * modes map to CLI flags, do not implement this.
    */
   buildEnv?(options: SpawnCommandOptions): Record<string, string> | null;
 
@@ -344,14 +447,75 @@ export interface AgentAdapter {
    * touches every session on the machine, so retaining would evict the live
    * viewer's hot parse state in favour of one-shot indexing churn - which is
    * precisely how the incremental-state cache came to be packed with the
-   * largest transcripts on the machine.
+   * largest transcripts on the machine. `attributedMessageIds` does not bend
+   * that rule: the state is the CALLER's, threaded in and bounded, and the
+   * implementation keeps no reference to it between calls.
+   *
+   * `attributedMessageIds` exists because an agent that reports one API
+   * message's token usage on several transcript lines must attribute it once,
+   * and a per-window dedupe attributes it again on the far side of a seam. That
+   * is invisible to search chunking and wrong for the turn-usage ledger, which
+   * keys a row per line. The walker creates ONE set and passes it to every
+   * window; an implementation seeds its dedupe from it, adds the ids it
+   * attributes, and prunes it to a small bound before returning, so a window
+   * that attributes nothing passes the carry through. This is shaped on the
+   * generic capability rather than inside one adapter because the hazard is
+   * generic: any agent whose usage is per-message and whose parse is windowed
+   * has it. (`agent-adapters-boundary.md` bars branching on an agent NAME, not
+   * shaping a capability, so it does not apply.) Adapters whose usage is
+   * already one-per-line can ignore the argument.
    */
   parseTranscriptWindow?(
     agentSessionId: string,
     cwd: string,
     startByte: number,
     maxBytes: number,
+    attributedMessageIds?: Set<string>,
   ): Promise<ParsedTranscriptWindow>;
+
+  /**
+   * Optional: the cheap staleness signature of this session's subagent
+   * transcripts, or null when the agent keeps none for it.
+   *
+   * Separate from the main transcript's signature on purpose. A subagent writes
+   * to its own file, so the main transcript's mtime and size are unchanged while
+   * a fan-out runs: an indexer that only watched the main signature would never
+   * see the subagent turns at all.
+   */
+  statSubagentTranscripts?(agentSessionId: string, cwd: string): SubagentTranscriptSignature | null;
+
+  /**
+   * Optional: parse this session's subagent (sub-conversation) token usage into
+   * agent-agnostic turns for the durable turn-usage ledger.
+   *
+   * The adapter owns ALL format and location knowledge, including how one API
+   * message's repeated records fold into a single turn. That fold is not
+   * shareable with the main-transcript parser: Claude's subagent files re-emit a
+   * message mid-stream, so the main path's first-record-wins rule undercounts
+   * subagent output by 30% while remaining exactly right for the main thread.
+   *
+   * Must NOT throw on a missing, partial, or corrupt history: report it through
+   * `directoryPresent` / `complete` so the caller can record a coverage gap or
+   * retry later. Adapters with no subagent concept omit this; the ledger then
+   * simply carries main-thread rows for that agent, as it always has.
+   */
+  parseSubagentUsage?(agentSessionId: string, cwd: string): Promise<ParsedSubagentUsage>;
+
+  /**
+   * Optional: the name of the tool this agent spawns a subagent with, as it
+   * appears in a transcript's `tool_use` blocks (Claude: `Task`).
+   *
+   * Declared here rather than matched inside the retrieval layer because the tool
+   * name is agent knowledge, and `agent-adapters-boundary.md` puts that in the
+   * adapter. A generic reader that hardcoded `Task` would need surgery to admit
+   * the next agent; this one only needs the string.
+   *
+   * Filtering by it is what keeps `turn_spawn_links` small: a session emits
+   * thousands of tool-use ids and only the spawning ones are ever referenced. An
+   * adapter that omits it records no links, which costs nothing and is the right
+   * answer for an agent with no subagent concept.
+   */
+  readonly subagentSpawnToolName?: string;
 
   /**
    * Optional: parse CUMULATIVE lifetime token usage for a session from the
@@ -430,13 +594,41 @@ export interface AgentAdapter {
    *     ESCALATE is a separate declaration - see
    *     `canEscalateOnVerificationFailure`.
    *
-   * Example (Gemini, Droid, Cursor, Warp, Ollama):
+   * Example (Gemini, Droid, Cursor, Warp, Ollama, Goose):
    *   - Both contexts: returns null. For the first three that is a MEASURED
    *     verdict - their history flushes at turn-end or too variably to bound a
-   *     ~2s delivery budget (numbers in `docs/command-injection.md`) - not an
-   *     unexplored gap. Warp and Ollama expose no usable history at all.
+   *     ~4s delivery budget (numbers in `docs/command-injection.md`) - not an
+   *     unexplored gap. Warp and Ollama expose no usable history at all, and
+   *     Goose parses none.
    */
   getSubmissionVerifier?(contextType: SubmissionContextType): SubmissionVerifier | null;
+
+  /**
+   * Optional: read a STARTUP failure out of the CLI's own final output.
+   *
+   * Called by the PTY exit listener when a task session ends on its own
+   * (never for a kill or a suspend), with the raw output the CLI wrote and its
+   * exit code. Return a user-facing sentence when that output says the CLI
+   * never became a working agent; `null` for a normal end, a crash the
+   * adapter cannot name, or anything it is unsure about. A sentence surfaces
+   * through the same "Agent did not start" notice a failed worktree or
+   * checkout raises, so the failure is seen instead of reading as an agent
+   * that went quiet.
+   *
+   * The case this exists for is Claude's `--resume <id>` of a conversation it
+   * can no longer find (its transcript cleaned up, or the project folder
+   * moved): the CLI prints "No conversation found with session ID" and exits
+   * about a second in, the card goes quiet, and nothing said why. This is
+   * deliberately NOT a pre-spawn guard that downgrades the resume: that was
+   * built and reverted in #255, because a path Kangentic computes can be wrong
+   * while the conversation is fine, and a silent downgrade loses it. Here the
+   * evidence is the CLI's own verdict after it looked, and the response is a
+   * notice, not a decision.
+   *
+   * An agent-specific string in an adapter, surfaced through this generic
+   * shape, per `agent-adapters-boundary`.
+   */
+  describeStartupFailure?(finalOutput: string, exitCode: number): string | null;
 
   /**
    * Optional: whether a SLASH-prefixed `auto_command` can be verified in this
@@ -569,18 +761,33 @@ export interface AgentAdapter {
   readonly reportsRateLimits?: boolean;
 
   /**
-   * Set by adapters whose CLI does not reliably auto-attach an image from a
-   * bare file path (i.e. most CLIs - a typed/pasted path is read as plain
-   * text, never auto-recognized as an image attachment). Kangentic saves a
-   * pasted-clipboard or dropped image to a temp PNG (this capture is reliable
-   * even where the CLI's own native clipboard reader silently fails, e.g.
-   * Claude Code on Windows with Snipping Tool images) and injects this
-   * template instead of the bare path, so the agent reliably reads the file
-   * as an image rather than treating the path as inert text.
+   * Image file extensions (lowercase, no dot) the CLI attaches natively when
+   * their path arrives as a bracketed paste. Kangentic saves a pasted-clipboard
+   * or dropped image to a file (this capture is reliable even where the CLI's
+   * own clipboard reader silently fails, e.g. Claude Code on Windows with
+   * Snipping Tool images) and delivers the shell-quoted path through xterm's
+   * `terminal.paste()`, the way a native terminal delivers a drop. A CLI that
+   * scans a paste for image paths (Claude Code: `[Image #N]`) then attaches the
+   * file inline in the user turn, with no `Read` tool call and no extra model
+   * round trip. An extension outside this set falls back to
+   * `pastedImageReferenceTemplate`. Omit when the CLI attaches nothing from a
+   * pasted path.
+   *
+   * A plain string array on purpose: this value crosses IPC in
+   * `AgentDetectionInfo`, and structured clone turns a RegExp into `{}`.
+   */
+  readonly pastedImageNativeExtensions?: readonly string[];
+
+  /**
+   * Fallback text for an image the CLI cannot attach from a bare path: an
+   * extension outside `pastedImageNativeExtensions`, or every image when that
+   * set is not declared (a typed path is plain text to most CLIs). The text is
+   * still delivered through `terminal.paste()`, so the agent reads an explicit
+   * instruction instead of an inert path.
    *
    * `{path}` is replaced with the shell-quoted absolute path to the saved
-   * PNG. A template without `{path}` has the quoted path appended after a
-   * space. Omit (falsy) to inject the bare quoted path (legacy behavior).
+   * file. A template without `{path}` has the quoted path appended after a
+   * space. Omit (falsy) to paste the bare quoted path.
    */
   readonly pastedImageReferenceTemplate?: string;
 

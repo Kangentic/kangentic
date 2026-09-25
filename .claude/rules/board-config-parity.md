@@ -23,7 +23,9 @@ The per-column merge in `config-helpers.ts` (`{ ...team, ...local }`) propagates
 
 ## Enforcement (self-maintaining)
 
-- **Compile-time:** `tests/unit/board-config-parity.test.ts` declares `SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, 'team' | 'db-only'>`. `npm run typecheck` FAILS until a newly-added swimlane field is classified. Classifying it `'team'` then requires a `ROUNDTRIP_CASES` entry (or `STRUCTURAL_TEAM_FIELDS`), whose build/apply assertions fail until the field is actually wired.
+- **Test (mechanical, CI):** `tests/unit/board-config-parity.test.ts` declares `SWIMLANE_FIELD_SHARING` and fails when it does not classify exactly the fields the `Swimlane` interface declares, reading them out of `src/shared/types.ts` at runtime (`tests/unit/helpers/shared-type-source.ts`). Classifying a field `'team'` then requires a `ROUNDTRIP_CASES` entry (or `STRUCTURAL_TEAM_FIELDS`), whose build/apply assertions fail until the field is actually wired. Runs in CI via `npm run test:unit`.
+
+  The map also carries a `Record<keyof Swimlane, 'team' | 'db-only'>` annotation, and until 2026-09-15 this section claimed that annotation made `npm run typecheck` fail on an unclassified field. It never did in CI: `tsconfig.json` includes only `src/**` and `packages/protocol/src/**`, so tsc never reads `tests/`. The annotation is an editor aid; the runtime test is the guarantee. Do not replace it with a type-level check.
 - **Review:** the `migration-safety` agent (`.claude/agents/migration-safety.md`, check #7) flags an unsynced new column field during `/code-review`.
 
 Do not weaken these by classifying a real team setting as `'db-only'` to silence the test - that reintroduces the gap.

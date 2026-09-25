@@ -159,6 +159,10 @@ export function registerMonitorHandlers(context: IpcContext): void {
   };
 
   context.sessionManager.on('session-changed', schedulePush);
+  // A direct remove (project delete, SESSION_RESET, an aborted spawn) leaves
+  // the registry with no 'exit' to ride; the detached monitor re-lists its
+  // session store on this push, which is what drops the row there.
+  context.sessionManager.on('session-removed', schedulePush);
   context.sessionManager.on('exit', schedulePush);
   context.boardEvents.onBoardChanged(schedulePush);
 
@@ -192,14 +196,16 @@ export function registerMonitorHandlers(context: IpcContext): void {
    * follows the union. The renderer sends its own unsubscribe on unmount; the
    * three hooks below cover every way it can go away without getting to.
    */
-  ipcMain.handle(IPC.MONITOR_SET_PEEK_SUBSCRIBED, (event, subscribed: boolean) => {
+  ipcMain.handle(IPC.MONITOR_SET_PEEK_SUBSCRIBED, (event, subscribed: boolean, sessionIds?: string[]) => {
     const sender = event.sender;
     const rendererId = sender.id;
     if (!subscribed) {
       peekTracker.unsubscribe(rendererId);
       return;
     }
-    peekTracker.subscribe(rendererId);
+    // The renderer names the sessions whose cards draw a peek; main taps and
+    // samples only those. Omitted means every session.
+    peekTracker.subscribe(rendererId, Array.isArray(sessionIds) ? new Set(sessionIds) : null);
     if (peekTeardownWatched.has(rendererId)) return;
     peekTeardownWatched.add(rendererId);
 

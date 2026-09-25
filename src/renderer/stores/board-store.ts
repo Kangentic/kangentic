@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { BoardStore } from './board-store/types';
 import { createTaskSlice } from './board-store/task-slice';
 import { createSwimlaneSlice } from './board-store/swimlane-slice';
+import { createAutomationsSlice } from './board-store/automations-slice';
 import { createArchivedTasksSlice } from './board-store/archived-tasks-slice';
 import { createTaskCompletionSlice } from './board-store/task-completion-slice';
 import { createBoardConfigSlice } from './board-store/board-config-slice';
@@ -52,6 +53,7 @@ export function createBoardStore() {
     ...createBoardManagerSlice(...args),
     ...createBoardFilterSlice(...args),
     ...createLanePinSlice(...args),
+    ...createAutomationsSlice(...args),
   }));
 }
 

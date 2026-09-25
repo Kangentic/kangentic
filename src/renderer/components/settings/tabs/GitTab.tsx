@@ -1,10 +1,11 @@
 import type { AppConfig } from '../../../../shared/types';
 import { BranchPicker } from '../../dialogs/BranchPicker';
-import { SettingRow, SettingToggleRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SettingRow, SettingToggleRow, Select, SettingTextInput, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
-/** Preset cadences for the background PR-state refresh timer. "off" disables the timer (the on-open sweep still runs). */
-const PR_REFRESH_OPTIONS: { value: string; label: string }[] = [
+/** Preset cadences for the two background timers (PR-state refresh, remote
+ *  fetch). "off" disables the timer; the on-open sweep still runs for both. */
+const INTERVAL_OPTIONS: { value: string; label: string }[] = [
   { value: '2', label: 'Every 2 minutes' },
   { value: '5', label: 'Every 5 minutes' },
   { value: '10', label: 'Every 10 minutes' },
@@ -38,24 +39,26 @@ export function GitTab({ config }: { config: AppConfig }) {
         />
       </SettingRow>
       <SettingRow {...settingProps('git.copyFiles')}>
-        <input
-          type="text"
+        {/* The split/trim/filter runs at the COMMIT, not per keystroke: typing
+            ".env, .env.local" used to write a differently-shaped array per character. */}
+        <SettingTextInput
           value={(config.git.copyFiles ?? []).join(', ')}
-          onChange={(event) => {
-            const files = event.target.value.split(',').map((file) => file.trim()).filter(Boolean);
+          onCommit={(nextCopyFiles) => {
+            const files = nextCopyFiles.split(',').map((file) => file.trim()).filter(Boolean);
             updateProject({ git: { copyFiles: files } });
           }}
           placeholder=".env, .env.local"
-          className={`${INPUT_CLASS} placeholder-fg-faint`}
+          ariaLabel="Files to copy into a worktree"
+          className="placeholder-fg-faint"
         />
       </SettingRow>
       <SettingRow {...settingProps('git.initScript')}>
-        <input
-          type="text"
+        <SettingTextInput
           value={config.git.initScript || ''}
-          onChange={(event) => updateProject({ git: { initScript: event.target.value || null } })}
+          onCommit={(nextInitScript) => updateProject({ git: { initScript: nextInitScript || null } })}
           placeholder="npm install"
-          className={`${INPUT_CLASS} placeholder-fg-faint`}
+          ariaLabel="Worktree init script"
+          className="placeholder-fg-faint"
         />
       </SettingRow>
       <SettingToggleRow
@@ -71,11 +74,34 @@ export function GitTab({ config }: { config: AppConfig }) {
             updateProject({ git: { prRefreshIntervalMinutes: raw === 'off' ? null : parseInt(raw, 10) } });
           }}
         >
-          {PR_REFRESH_OPTIONS.map((option) => (
+          {INTERVAL_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
         </Select>
       </SettingRow>
+      <SettingRow {...settingProps('git.autoFetchIntervalMinutes')}>
+        <Select
+          value={config.git.autoFetchIntervalMinutes == null ? 'off' : String(config.git.autoFetchIntervalMinutes)}
+          onChange={(event) => {
+            const raw = event.target.value;
+            updateProject({ git: { autoFetchIntervalMinutes: raw === 'off' ? null : parseInt(raw, 10) } });
+          }}
+        >
+          {INTERVAL_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </Select>
+      </SettingRow>
+      <SettingToggleRow
+        {...settingProps('git.prEvaluateBranchPolicies')}
+        checked={config.git.prEvaluateBranchPolicies}
+        onChange={(value) => updateProject({ git: { prEvaluateBranchPolicies: value } })}
+      />
+      <SettingToggleRow
+        {...settingProps('git.prBypassCountsAsReady')}
+        checked={config.git.prBypassCountsAsReady}
+        onChange={(value) => updateProject({ git: { prBypassCountsAsReady: value } })}
+      />
     </>
   );
 }

@@ -574,6 +574,42 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     await expect(page.locator('text=Delete failure item')).not.toBeVisible();
   });
 
+  test('a rejected create keeps the dialog open with the title intact and toasts an error', async () => {
+    // Previously unhandled: handleSubmit's try/finally had no catch, so a
+    // rejected backlog.create reached only the global unhandledrejection
+    // analytics listener - nothing shown to the user, and the dialog closed
+    // nowhere (it also never closed, since onClose() sits after the awaited
+    // create), so this pins both the toast and that no data is lost.
+    await openBacklogView(page);
+
+    await page.evaluate(() => {
+      const api = window as unknown as { __originalBacklogCreate?: typeof window.electronAPI.backlog.create };
+      api.__originalBacklogCreate = window.electronAPI.backlog.create;
+      window.electronAPI.backlog.create = async () => {
+        throw new Error('mock create failure');
+      };
+    });
+
+    await openNewBacklogDialog(page);
+    await page.locator('[data-testid="backlog-task-title"]').fill('Create failure item');
+    await page.locator('[data-testid="create-backlog-task-btn"]').click();
+
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't save backlog task" });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+    const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    await expect(dialog).toBeVisible();
+    await expect(page.locator('[data-testid="backlog-task-title"]')).toHaveValue('Create failure item');
+
+    // Restore the real mock and close cleanly so later tests are unaffected.
+    await page.evaluate(() => {
+      const api = window as unknown as { __originalBacklogCreate?: typeof window.electronAPI.backlog.create };
+      if (api.__originalBacklogCreate) window.electronAPI.backlog.create = api.__originalBacklogCreate;
+    });
+    await page.keyboard.press('Escape');
+    await page.locator('button:has-text("Discard")').click();
+    await expect(dialog).not.toBeVisible();
+  });
+
   // "Don't ask again" on a SUCCESSFUL delete persists skipDeleteConfirm - the
   // failure test above only proves it stays false on rejection.
   test('checking "don\'t ask again" on a successful delete persists skipDeleteConfirm', async () => {
@@ -681,6 +717,52 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     await expect(dialog.locator('[data-testid="backlog-task-external-link"]')).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();
+  });
+
+  // Coverage gap: only addFile's failure toast (useAttachments.ts, covered in
+  // tests/ui/attachment-add-failure.spec.ts) had a test - removeAttachment's
+  // failure toast for a SAVED attachment (the backlogAttachments.remove IPC
+  // path, not the pending/local-only branch) had none.
+  test('a rejected backlogAttachments.remove surfaces the "Couldn\'t remove" warning toast, and the chip stays', async () => {
+    await page.evaluate(() => {
+      window.electronAPI.backlogAttachments.list = async () => [{
+        id: 'ba-remove-failure',
+        backlog_task_id: 'unused',
+        filename: 'notes.pdf',
+        file_path: '/mock/notes.pdf',
+        media_type: 'application/pdf',
+        size_bytes: 10,
+        created_at: new Date().toISOString(),
+      }];
+      window.electronAPI.backlogAttachments.remove = async () => {
+        throw new Error('EBADF: bad file descriptor, unlink');
+      };
+    });
+
+    await seedBacklogEditItem(page, 'Has a saved attachment that fails to remove');
+    const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
+    const chip = dialog.locator('[data-testid="attachment-chip"]');
+    await expect(chip).toBeVisible();
+
+    await chip.locator('[data-testid="attachment-remove"]').click();
+
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't remove the attachment" });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast).toContainText('bad file descriptor');
+
+    // The rejected remove must not drop the chip.
+    await expect(chip).toHaveCount(1);
+
+    // Form has no OTHER edits, and the rejected remove never touched
+    // `attachments` state, so it is still clean - Escape closes directly.
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+
+    // Restore the default mocks for any later test in this describe.
+    await page.evaluate(() => {
+      window.electronAPI.backlogAttachments.list = async () => [];
+      window.electronAPI.backlogAttachments.remove = async () => {};
+    });
   });
 
   // Positive direction of the isDirty fix above: a PENDING attachment (one

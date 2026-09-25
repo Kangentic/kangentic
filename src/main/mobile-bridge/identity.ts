@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PATHS } from '../config/paths';
 import { decryptSecret, encryptSecret, isGenuineEncryptionAvailable } from '../boards/shared/auth';
+import { safeWriteJson } from '../safe-write';
 import {
   bytesToHex,
   generateEd25519KeyPair,
@@ -91,14 +92,15 @@ export function loadBridgeIdentity(): BridgeIdentity | null {
 }
 
 function saveBridgeIdentity(identity: BridgeIdentity): void {
-  fs.mkdirSync(PATHS.configDir, { recursive: true });
   const encrypted = encryptSecret(JSON.stringify(toStored(identity)));
   const payload: StoredShape = { encrypted };
   // mode 0o600: best-effort defense-in-depth for the file holding the
   // encrypted private-key material (no-op on Windows, honored on POSIX at
   // create time). The payload is already safeStorage-encrypted; this just
-  // narrows who can read the ciphertext at rest.
-  fs.writeFileSync(identityPath(), JSON.stringify(payload, null, 2), { mode: 0o600 });
+  // narrows who can read the ciphertext at rest. Degrades rather than throws
+  // (see safe-write.ts) - an unwritable config directory must not reject
+  // pairing, and the shared write-failure-notice latch tells the user once.
+  safeWriteJson(identityPath(), payload, 'mobile_bridge_identity', { mode: 0o600 });
 }
 
 /**

@@ -124,12 +124,14 @@ export interface WatchdogHold {
   reset(state: SessionEngineState): void;
   /**
    * If true, the synthesized idle goes through the stability window
-   * (400ms) rather than committing immediately. Used by the
-   * bg-shells/pending-tools hatches because they synthesize idle from
-   * a long absence of signal - a stability window catches the rare
-   * case where a delayed hook arrives within 400ms of the hatch.
-   * Stale-thinking opts out: the hold predicate already requires
-   * 180 sec of silence, so flicker risk is nil.
+   * (`DEFAULT_IDLE_STABILITY_WINDOW_MS`) rather than committing
+   * immediately. Used by the bg-shells/pending-tools hatches because
+   * they synthesize idle from a long absence of signal - a stability
+   * window catches the rare case where a delayed hook arrives within
+   * that window of the hatch. Stale-thinking opts out: it waits at
+   * least `DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS` of silence before
+   * firing (`DEFAULT_STALE_THINKING_TIMEOUT_MS` on a normal turn), so
+   * flicker risk is nil.
    */
   applyStabilityWindow: boolean;
 }

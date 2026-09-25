@@ -1,48 +1,36 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useProjectStore } from '../stores/project-store';
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
 import { useKeybinding } from './useKeybinding';
 import { reconcileCommandTerminalWindows } from '../components/command-bar/CommandTerminalLayer';
 
-/** Preserved across HMR so the command bar overlay stays mounted during
- *  hot module replacement instead of resetting to closed. */
-// @ts-expect-error -- Vite handles import.meta.hot
-const hmrCommandBarOpen: boolean = import.meta.hot?.data?.commandBarOpen ?? false;
-
-// @ts-expect-error -- Vite handles import.meta.hot
-if (import.meta.hot) {
-  // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.dispose((data: Record<string, unknown>) => {
-    data.commandBarOpen = _lastIsOpen;
-  });
-}
-
-/** Tracks the latest isOpen value. Read by the HMR dispose() snapshot AND by
- *  `open()`'s reconcile gate (`!_lastIsOpen` stands in for "layer currently
- *  unmounted"), so it must stay in sync with the real open state. */
-let _lastIsOpen = hmrCommandBarOpen;
-
 /**
  * Registers Ctrl+Shift+P / Cmd+Shift+P to open the command bar overlay.
  * Returns open/close state and handlers.
+ *
+ * The open state IS the session store's `commandBarVisible`: TerminalPanel's
+ * focus priority and the dictation target already read it there, and the store
+ * is pinned across HMR (hmr-patterns.md, Pattern E), so the overlay stays open
+ * through a Fast Refresh with no module-scope snapshot of its own. It used to
+ * be local state mirrored INTO the store by an effect, which needed that
+ * snapshot and a second effect to close it, both of the cascading-render shape
+ * React's compiler rules forbid.
  */
 export function useCommandBar() {
-  const [isOpen, setIsOpen] = useState(hmrCommandBarOpen);
+  const isOpen = useSessionStore((s) => s.commandBarVisible);
   const currentProjectId = useProjectStore((s) => s.currentProject?.id);
   const pendingOpenCommandTerminal = useSessionStore((s) => s._pendingOpenCommandTerminal);
   const hideNonce = useSessionStore((s) => s.commandBarHideNonce);
 
-  // Keep module-scoped tracker in sync for HMR dispose()
+  // Close command bar when project changes - it will reattach on next open.
+  // Skipping the initial value keeps a mount from closing a layer that HMR
+  // just preserved.
+  const seenProjectId = useRef(currentProjectId);
   useEffect(() => {
-    _lastIsOpen = isOpen;
-    // Sync store so TerminalPanel can include transient session in focus priority
-    useSessionStore.getState().setCommandBarVisible(isOpen);
-  }, [isOpen]);
-
-  // Close command bar when project changes - it will reattach on next open
-  useEffect(() => {
-    setIsOpen(false);
+    if (currentProjectId === seenProjectId.current) return;
+    seenProjectId.current = currentProjectId;
+    useSessionStore.getState().setCommandBarVisible(false);
   }, [currentProjectId]);
 
   const open = useCallback(() => {
@@ -62,12 +50,13 @@ export function useCommandBar() {
     // `skipWhenEmpty` defers the empty-store case to `useEnsureCommandWindow`, which
     // restores the saved layout blob first; reconciling an empty store here would
     // open default-geometry windows and defeat that restore.
-    if (!_lastIsOpen) reconcileCommandTerminalWindows({ skipWhenEmpty: true });
-    setIsOpen(true);
+    const sessionState = useSessionStore.getState();
+    if (!sessionState.commandBarVisible) reconcileCommandTerminalWindows({ skipWhenEmpty: true });
+    sessionState.setCommandBarVisible(true);
   }, []);
 
   const close = useCallback(() => {
-    setIsOpen(false);
+    useSessionStore.getState().setCommandBarVisible(false);
   }, []);
 
   // Consume pending-open flag set by notification clicks for transient sessions.
@@ -89,7 +78,7 @@ export function useCommandBar() {
   useEffect(() => {
     if (hideNonce === seenHideNonce.current) return;
     seenHideNonce.current = hideNonce;
-    setIsOpen(false);
+    useSessionStore.getState().setCommandBarVisible(false);
   }, [hideNonce]);
 
   useKeybinding('commandBar.toggle', () => {

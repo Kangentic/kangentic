@@ -11,7 +11,13 @@
  *   - no-op when autoNameAskedTaskIds field is absent from the config
  *   - no-op when no IDs in the input match the stored list
  *   - no-op when the input list is empty
- *   - swallows errors thrown by configManager.save()
+ *
+ * configManager.save() itself is guaranteed never to throw (see
+ * src/main/config/write-failure-notice.ts): a write failure degrades to a
+ * source-keyed report and a one-time toast instead. So there is no
+ * "swallows a save() throw" case to cover here - the real contract makes it
+ * unreachable, and mocking a throwing save() would test behavior no real
+ * ConfigManager can produce.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -92,15 +98,12 @@ import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 function makeConfigManager(opts: {
   loadResult?: { autoNameAskedTaskIds?: string[] } | (() => { autoNameAskedTaskIds?: string[] });
-  saveThrows?: boolean;
 }) {
   const loadFn = typeof opts.loadResult === 'function'
     ? opts.loadResult
     : vi.fn(() => opts.loadResult ?? {});
 
-  const saveFn = opts.saveThrows
-    ? vi.fn(() => { throw new Error('disk full'); })
-    : vi.fn();
+  const saveFn = vi.fn(() => true);
 
   return {
     load: typeof opts.loadResult === 'function' ? opts.loadResult : loadFn,
@@ -197,17 +200,6 @@ describe('drainAutoNameAskedIds', () => {
 
     // Early return before any load/save
     expect(configManager.save).not.toHaveBeenCalled();
-  });
-
-  it('swallows errors thrown by configManager.save() without propagating', () => {
-    const configManager = makeConfigManager({
-      loadResult: { autoNameAskedTaskIds: ['task-1'] },
-      saveThrows: true,
-    });
-    const context = makeContext(configManager);
-
-    // Should not throw
-    expect(() => drainAutoNameAskedIds(context, ['task-1'])).not.toThrow();
   });
 
   it('swallows errors thrown by configManager.load() without propagating', () => {

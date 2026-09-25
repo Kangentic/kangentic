@@ -3,8 +3,12 @@ import type { ReactNode } from 'react';
 interface DialogFooterActionsProps {
   onCancel: () => void;
   submitLabel: string;
-  /** Replaces `submitLabel` while the submit is in flight. */
-  busyLabel?: string;
+  /**
+   * The submit is in flight: the button disables and keeps its label. It used
+   * to swap in a "Saving..." label, which grew the button and shifted Cancel
+   * for the length of the round trip, so the footer changed shape on every
+   * press. A control must not change shape when pressed.
+   */
   busy?: boolean;
   disabled?: boolean;
   /**
@@ -35,7 +39,6 @@ interface DialogFooterActionsProps {
 export function DialogFooterActions({
   onCancel,
   submitLabel,
-  busyLabel,
   busy = false,
   disabled = false,
   onSubmit,
@@ -60,7 +63,7 @@ export function DialogFooterActions({
           className="rounded bg-accent-emphasis px-4 py-1.5 text-xs text-accent-on transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           data-testid={submitTestId}
         >
-          {busy && busyLabel ? busyLabel : submitLabel}
+          {submitLabel}
         </button>
       </div>
     </div>

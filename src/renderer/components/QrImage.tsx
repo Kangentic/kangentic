@@ -17,14 +17,18 @@ interface QrImageProps {
  * nothing until the encode resolves, so callers never see a broken image.
  */
 export function QrImage({ value, alt, size = 220, testId }: QrImageProps) {
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  // The encoded image is stored with the input it was encoded for, so a new
+  // value or size reads as "not yet encoded" at once, with no effect having to
+  // clear the previous image first.
+  const encodeKey = JSON.stringify([value, size]);
+  const [encoded, setEncoded] = useState<{ key: string; dataUrl: string } | null>(null);
+  const qrDataUrl = encoded?.key === encodeKey ? encoded.dataUrl : null;
 
   useEffect(() => {
     let cancelled = false;
-    setQrDataUrl(null);
     QRCode.toDataURL(value, { margin: 1, width: size })
       .then((dataUrl) => {
-        if (!cancelled) setQrDataUrl(dataUrl);
+        if (!cancelled) setEncoded({ key: encodeKey, dataUrl });
       })
       .catch((error: unknown) => {
         // Fail closed to "no image": a value that exceeds QR capacity (e.g. an
@@ -36,7 +40,7 @@ export function QrImage({ value, alt, size = 220, testId }: QrImageProps) {
     return () => {
       cancelled = true;
     };
-  }, [value, size]);
+  }, [value, size, encodeKey]);
 
   if (!qrDataUrl) return null;
   return (

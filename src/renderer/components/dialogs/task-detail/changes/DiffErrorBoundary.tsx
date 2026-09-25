@@ -1,5 +1,6 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
+import { reportBoundaryError } from '../../../../error-reporting';
 
 /** Scoped error boundary prevents Monaco failures from crashing the entire app. */
 export class DiffErrorBoundary extends React.Component<
@@ -17,6 +18,16 @@ export class DiffErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('DiffViewer error:', error, info.componentStack);
+    // Boundary-caught errors never reach Sentry's global handlers (React
+    // swallows them); see ErrorBoundary.componentDidCatch. This boundary was
+    // the only one in the tree not forwarding them, so a diff-viewer render
+    // crash reached the console and nothing else.
+    //
+    // It still catches only RENDER-phase throws. The diff subsystem's known
+    // crash class (Sentry DESKTOP-19) is thrown asynchronously from inside
+    // Monaco, so it bypasses React entirely and reaches Sentry through the
+    // global handlers instead. Do not read this boundary as covering it.
+    reportBoundaryError(error);
   }
 
   render() {

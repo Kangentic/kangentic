@@ -15,7 +15,18 @@
  * Handles the sequences observed in agent TUI repaints (CUP, CUU/CUD/
  * CUF/CUB, CHA, VPA, ED, EL, ECH, CR, LF, BS); everything else (SGR colors,
  * OSC titles, mode toggles) is consumed and ignored.
+ *
+ * Character widths come from `wcwidthV11` - the same Unicode 11 table every
+ * xterm in the app runs - so a frame that pads rows to the full width counting
+ * emoji as double (Claude Code's autowrap layout) wraps here exactly where it
+ * wraps in the real terminals, and where main's serialized frames (which the
+ * prompt-options probe feeds in) assume it wraps. A wide glyph occupies its
+ * cell plus an empty-string spacer cell, so `text()`'s `join('')` adds no
+ * phantom column. Deliberately unhandled: erasing or overwriting half a wide
+ * glyph leaves the other half in place, and BS over one moves a single column
+ * - no consumer parses frames where that matters.
  */
+import { wcwidthV11 } from '../../shared/xterm-unicode11';
 
 const DEFAULT_COLS = 200;
 const DEFAULT_ROWS = 50;
@@ -48,7 +59,15 @@ export class VirtualScreen {
       } else if (char === '\b') {
         this.cursorColumn = Math.max(0, this.cursorColumn - 1);
       } else if (char >= ' ') {
-        this.putChar(char);
+        // Advance by CODE POINT, not code unit, so an astral glyph's surrogate
+        // pair lands in one cell instead of splitting across two. The cast is
+        // safe: the loop guard keeps index < data.length, so codePointAt
+        // cannot return undefined.
+        const codepoint = data.codePointAt(index) as number;
+        const glyph = String.fromCodePoint(codepoint);
+        this.putChar(glyph, wcwidthV11(codepoint), codepoint);
+        index += glyph.length;
+        continue;
       }
       index++;
     }
@@ -59,13 +78,33 @@ export class VirtualScreen {
     return this.grid.map((row) => row.join('').replace(/\s+$/u, '')).join('\n');
   }
 
-  private putChar(char: string): void {
-    if (this.cursorColumn >= this.cols) {
+  private putChar(glyph: string, width: 0 | 1 | 2, codepoint: number): void {
+    if (width === 0) {
+      // The V11 table zeroes the DEL/C1 controls (0x7F-0x9F) as well as
+      // combining marks; gluing a control onto a parsed label would corrupt
+      // it, so only genuine combining marks join the preceding glyph.
+      if (codepoint >= 0xa0) this.appendCombining(glyph);
+      return;
+    }
+    // Identical to the old `cursorColumn >= cols` for width 1; a wide glyph
+    // that does not fit wraps whole instead of straddling the row edge.
+    if (this.cursorColumn + width > this.cols) {
       this.cursorColumn = 0;
       this.lineFeed();
     }
-    this.grid[this.cursorRow][this.cursorColumn] = char;
-    this.cursorColumn++;
+    this.grid[this.cursorRow][this.cursorColumn] = glyph;
+    if (width === 2 && this.cursorColumn + 1 < this.cols) {
+      this.grid[this.cursorRow][this.cursorColumn + 1] = '';
+    }
+    this.cursorColumn += width;
+  }
+
+  /** Attach a combining mark to the previously written cell (skipping a wide glyph's spacer); dropped at column 0. */
+  private appendCombining(glyph: string): void {
+    let column = this.cursorColumn - 1;
+    if (column >= 0 && this.grid[this.cursorRow][column] === '') column--;
+    if (column < 0) return;
+    this.grid[this.cursorRow][column] += glyph;
   }
 
   private lineFeed(): void {

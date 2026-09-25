@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, CirclePause, Paperclip, Trash2 } from 'lucide-react';
+import { Loader2, CirclePause, Paperclip, Trash2, Globe } from 'lucide-react';
 import { formatRelativeTime } from '../../lib/datetime';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -13,11 +13,12 @@ import { useProjectStore } from '../../stores/project-store';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
-import { useTaskProgress } from '../../utils/task-progress';
+import { useTaskProgress, taskDetailSurfaceFor } from '../../utils/task-progress';
 import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { ActivityMark } from '../ActivityMark';
 import { ContextUsageFooter } from './ContextUsageFooter';
+import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } from './CardMessageTrail';
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type { Task } from '../../../shared/types';
@@ -64,11 +65,14 @@ function CardStatusBar({
 }
 
 const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardProps) {
-  // A single `useShallow`-gated selector replaces four individual subscriptions.
-  // Scaling: 100 cards × 4 subs each = 400 selector invocations per session-store
+  // A single `useShallow`-gated selector replaces five individual subscriptions.
+  // Scaling: 100 cards × 5 subs each = 500 selector invocations per session-store
   // update; with one selector it drops to 100, and shallow equality still skips
-  // re-renders when the projected object hasn't actually changed.
-  const { sessionId, isHighlighted, isResuming, activityReason } = useSessionStore(
+  // re-renders when the projected object hasn't actually changed. The message
+  // trail rides here for the same reason: main pushes a session's trail array
+  // only when a line is new, so its reference is stable between pushes and the
+  // shallow compare skips every other card's write.
+  const { sessionId, isHighlighted, isResuming, activityReason, messageTrail } = useSessionStore(
     useShallow(
       useCallback(
         (s: ReturnType<typeof useSessionStore.getState>) => {
@@ -78,6 +82,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             isHighlighted: !!resolvedSessionId && resolvedSessionId === s.activeSessionId,
             isResuming: s._sessionByTaskId.get(task.id)?.resuming ?? false,
             activityReason: resolvedSessionId ? s.sessionActivityReason[resolvedSessionId] : undefined,
+            messageTrail: resolvedSessionId ? s.sessionMessageTrails[resolvedSessionId] : undefined,
           };
         },
         [task.id],
@@ -86,6 +91,14 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   );
   const setDetailTaskId = useSessionStore((s) => s.setDetailTaskId);
   const displayState = useTaskProgress(task.id, sessionId);
+  // A browser is running for this task, in ANY state: showing, hidden behind
+  // the terminal, parked in a closed window, or OFFSCREEN (main's fallback
+  // when no pane can mount). The last two have no pill anywhere on screen,
+  // which is why the card carries this - an offscreen surface with no globe is
+  // a browser the user cannot know about, let alone close.
+  const browserAlive = useSessionStore(
+    (s) => s.browserGuestTasks.has(task.id) || s.browserOffscreenTasks.has(task.id),
+  );
 
   const {
     attributes,
@@ -114,9 +127,19 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   const handleClick = (e: React.MouseEvent) => {
     if (isDragOverlay) return;
     e.stopPropagation();
-    // To Do tasks with no session open straight into edit mode (the window then
-    // starts in the edit form). The window-manager bridge reads this intent.
-    setDetailTaskId(task.id, { initialEdit: displayState.kind === 'none' && !task.archived_at });
+    // A task with nothing session-shaped to show opens straight into edit mode
+    // (the window then starts in the edit form). The window-manager bridge
+    // reads this intent. Decided by the SAME classifier the detail body paints
+    // from, lane included, so the card and the window cannot disagree: a To Do
+    // task edits whatever stale row the store may still hold for it (#661),
+    // and a task whose window would show a terminal opens in view mode. The
+    // lane is read at click time, like the other handlers below, rather than
+    // subscribed: it costs nothing across a hundred memoized cards.
+    const laneRole = useBoardStore.getState().swimlanes
+      .find((lane) => lane.id === task.swimlane_id)?.role ?? null;
+    setDetailTaskId(task.id, {
+      initialEdit: taskDetailSurfaceFor(displayState.kind, laneRole) === 'inert' && !task.archived_at,
+    });
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -187,6 +210,26 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   );
   const cardDensity = useConfigStore((state) => state.config.cardDensity);
   const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
+  const cardPreview = useConfigStore((state) => state.config.cardPreview);
+  // `messageTrail` (from the shared selector above) is the session's agent
+  // message trail as main pushes it on change. NEVER fetched here: a board
+  // renders every card at once, and a per-card transcript read is the one way
+  // this feature ships broken. Falls back to the description while a task has
+  // no session or its agent has not said anything yet, so the default setting
+  // never blanks a card.
+  //
+  // RUNNING is a condition of showing it at all, not just of styling it. A trail
+  // deliberately outlives its session ("a paused or exited card keeps what its
+  // agent last said", `message-trail-tracker.ts`), and this card only ever tested
+  // that the trail was non-empty, so a paused, exited or Done card printed agent
+  // prose in the description's slot with no activity mark and no progress bar to
+  // say who wrote it. Gating on `running` makes the trail and the mark one
+  // signal: if there is a glyph in the title row, there is agent output below it.
+  // Idle and permission count as running - an agent waiting on you is still on
+  // the task - which is why this reads `kind`, not the activity bucket.
+  const trailMode = trailModeFor(cardPreview);
+  const isLive = displayState.kind === 'running';
+  const shownTrail = trailMode && isLive && messageTrail && messageTrail.length > 0 ? messageTrail : null;
 
   // Subtle, muted `#N` (display_id) matching the task-detail header format. Right-aligned
   // and shrink-0 so a long title truncates before the number; rendered only when the
@@ -221,7 +264,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           onClick={handleClick}
           onContextMenu={handleContextMenu}
           data-task-id={task.id}
-          className={`bg-surface-raised/60 border border-edge/50 rounded-md px-2.5 py-1.5 cursor-grab active:cursor-grabbing hover:border-edge-input transition-colors group/card ${
+          className={`bg-surface-raised/60 border border-edge/50 rounded-md px-2.5 py-1.5 cursor-grab active:cursor-grabbing select-none hover:border-edge-input transition-colors group/card ${
             isDragOverlay ? 'shadow-xl' : ''
           }`}
         >
@@ -238,11 +281,26 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               </button>
             )}
           </div>
-          {task.description && (
+          {/* This card is dimmer overall, so its trail keeps the `text-fg-faint`
+              one step above its `text-fg-disabled` description rather than the
+              full card's muted tone. The well is the same either way. It marks
+              agent output, and that does not get quieter because the card is.
+              This path is the Done column's completed list (`DoneSwimlane`), the
+              only caller that passes `compact`. It is reached only by a RUNNING
+              session, and moving a task into Done suspends its agent, so in
+              practice this branch draws during the move and not after it. Kept
+              rather than deleted because "in practice" is not "never". The
+              suspend is asynchronous, and a card that rendered a bare trail
+              during that window would be the exact mismatch this change removes. */}
+          {shownTrail && trailMode ? (
             <div className="mt-0.5">
-              <span className="text-xs text-fg-disabled truncate block">{stripMarkdown(task.description)}</span>
+              <CardMessageTrail entries={shownTrail} lines={1} mode={trailMode} lineClass="text-fg-faint" terminal />
             </div>
-          )}
+          ) : task.description ? (
+            <div className="mt-0.5">
+              <span className="text-xs text-fg-disabled truncate block" data-testid="task-card-description">{stripMarkdown(task.description)}</span>
+            </div>
+          ) : null}
           <div className="mt-1">
             <LabelPills labels={taskLabels} labelColors={labelColors} />
           </div>
@@ -290,6 +348,11 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   const boardDensity = compact ? 'compact' : cardDensity;
   const isCompactDensity = boardDensity === 'compact';
   const isComfortableDensity = boardDensity === 'comfortable';
+  // The description slot's clamp per density. Compact used to print no excerpt
+  // at all; it now always shows exactly one line, so a compact board still says
+  // what each agent is doing. Shared with the monitor card through
+  // `excerptLinesFor`, so the two surfaces cannot clamp differently.
+  const excerptLines = excerptLinesFor(boardDensity);
 
   return (
     <>
@@ -301,7 +364,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         data-task-id={task.id}
-        className={`border rounded-md ${isComfortableDensity ? 'p-3' : 'p-2.5'} cursor-grab active:cursor-grabbing transition-colors bg-surface-raised ${
+        className={`border rounded-md ${isComfortableDensity ? 'p-3' : 'p-2.5'} cursor-grab active:cursor-grabbing select-none transition-colors bg-surface-raised ${
           isHighlighted ? 'border-[2px] border-fg-faint/60' : isIdle ? 'border-edge/40' : 'border-edge hover:border-edge-input'
         } ${isIdle ? 'animate-pulse-subtle' : ''
         } ${isDragOverlay ? 'shadow-xl' : ''}`}
@@ -331,6 +394,34 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           )}
           <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
           {displayIdBadge}
+          {/* A solid green globe at the far RIGHT, after the ticket number, at
+              the badge's scale (12). Four cuts were compared side by side on a
+              live board, and the two decisions that survived are:
+                - PLACEMENT: right cluster, not beside the activity mark. That
+                  slot is the agent's state; a globe there competed with the
+                  activity ring and shifted every title's start. Placement is
+                  also what makes green safe here - green next to the ring's
+                  green lost its identity, but past the title and the ticket
+                  number it reads as its own thing.
+                - NO running dot, unlike the pill: the pill is persistent chrome
+                  (always rendered, so it needs a marker to say whether a guest
+                  is behind it), while this globe renders ONLY while a guest is
+                  running - its presence IS the signal, and at 12px the dot was
+                  a smudge on the glyph rather than a second reading.
+              Solid, not pulsing: a running guest is a steady fact, and a pulse
+              on every such card is motion the board does not need. Whether the
+              agent is DRIVING the page is shown in the pane. Not a click
+              target: the card's own click opens the task, where the kebab's
+              "Close browser" is. */}
+          {browserAlive && (
+            <span
+              className="text-active shrink-0 flex"
+              title="Browser running for the agent. Close it from the task menu to free memory."
+              data-testid="task-card-browser-alive"
+            >
+              <Globe size={12} aria-label="Browser running" />
+            </span>
+          )}
         </div>
 
         {!isCompactDensity && task.pr_url && (
@@ -339,14 +430,22 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               prUrl={task.pr_url}
               prNumber={task.pr_number}
               prState={task.pr_state}
+              prMergeReadiness={task.pr_merge_readiness}
               testId="task-card-pr-link"
             />
           </div>
         )}
 
-        {!isCompactDensity && task.description && (
-          <div className={`text-xs text-fg-faint mt-1 ${isComfortableDensity ? 'line-clamp-5' : 'line-clamp-3'}`}>{stripMarkdown(task.description)}</div>
-        )}
+        {/* One tone for every line, the `text-fg-muted` the newest line already
+            had. Nothing on this card gets brighter or dimmer than it is today;
+            the well is what says the agent wrote this. */}
+        {shownTrail && trailMode ? (
+          <div className="mt-1">
+            <CardMessageTrail entries={shownTrail} lines={excerptLines} mode={trailMode} lineClass="text-fg-muted" terminal />
+          </div>
+        ) : task.description ? (
+          <div className={`text-xs text-fg-faint mt-1 ${EXCERPT_CLAMP_CLASS[excerptLines]}`} data-testid="task-card-description">{stripMarkdown(task.description)}</div>
+        ) : null}
 
         <div className={isCompactDensity ? 'mt-1' : 'mt-1.5'}>
           <LabelPills labels={taskLabels} labelColors={labelColors} />

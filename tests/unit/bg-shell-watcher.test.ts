@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   BgShellWatcher,
   AGENT_ABSENCE_CONFIRM_CYCLES,
+  CAPTURED_TREE_MAX_AGE_MS,
   NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES,
   POLL_BACKOFF_STAGE_ONE_TREE_CYCLES,
   POLL_BACKOFF_STAGE_TWO_TREE_CYCLES,
@@ -3033,6 +3034,153 @@ describe('BgShellWatcher', () => {
       // interval would have stretched to 200ms after five and produced ~7.
       await vi.advanceTimersByTimeAsync(1000);
       expect(probe.listAllCalls).toBeGreaterThanOrEqual(9);
+      watcher.dispose();
+    });
+  });
+
+  /**
+   * The descendant snapshot session teardown reaps from. The watcher already
+   * walks this subtree every enumerating cycle; publishing it is what lets a
+   * drag-to-Done kill a leaked dev server without paying ~670ms of PowerShell
+   * startup on the interaction path.
+   */
+  describe('getCapturedDescendants', () => {
+    /** A session with a bg shell, so `sessionNeedsTree` keeps cycles enumerating. */
+    function makeTreeSession(descendants: ProcessInfo[]) {
+      const harness = makeWatcher();
+      harness.rootPids.set('s1', 1234);
+      harness.probe.alive.add(1234);
+      harness.probe.trees.set(1234, descendants);
+      harness.shellCounts.set('s1', 1);
+      harness.watcher.registerSession('s1');
+      return harness;
+    }
+
+    it('returns null before any cycle has enumerated', () => {
+      const { watcher } = makeTreeSession([{ pid: 5001, ppid: 1234, comm: 'bash' }]);
+      expect(watcher.getCapturedDescendants('s1')).toBeNull();
+      watcher.dispose();
+    });
+
+    it('returns null for a session that was never registered', () => {
+      const { watcher } = makeTreeSession([]);
+      expect(watcher.getCapturedDescendants('never-registered')).toBeNull();
+      watcher.dispose();
+    });
+
+    it('publishes the FULL subtree, including non-shell grandchildren', async () => {
+      // The incident's shape: `func.exe` is a grandchild of a bg shell, and the
+      // shell-like filter the watcher uses for its own counting drops it. A reap
+      // that consumed the filtered list would miss the actual leaked server.
+      const { watcher } = makeTreeSession([
+        { pid: 5001, ppid: 1234, comm: 'bash' },
+        { pid: 5002, ppid: 5001, comm: 'func' },
+      ]);
+      await watcher.pollNow();
+
+      const captured = watcher.getCapturedDescendants('s1');
+      expect(captured?.rootPid).toBe(1234);
+      expect(captured?.pids.sort((a, b) => a - b)).toEqual([5001, 5002]);
+      watcher.dispose();
+    });
+
+    it('does not clobber a good snapshot when the probe fails', async () => {
+      const { watcher, probe } = makeTreeSession([{ pid: 5001, ppid: 1234, comm: 'bash' }]);
+      await watcher.pollNow();
+      expect(watcher.getCapturedDescendants('s1')?.pids).toEqual([5001]);
+
+      // A timed-out PowerShell returns [] for every session. Storing that would
+      // silently turn every subsequent reap into a no-op.
+      probe.failProbe = true;
+      await watcher.pollNow();
+
+      expect(watcher.getCapturedDescendants('s1')?.pids).toEqual([5001]);
+      watcher.dispose();
+    });
+
+    it('refuses a snapshot older than the staleness ceiling', async () => {
+      const { watcher } = makeTreeSession([{ pid: 5001, ppid: 1234, comm: 'bash' }]);
+      await watcher.pollNow();
+      expect(watcher.getCapturedDescendants('s1')).not.toBeNull();
+
+      // PID reuse is the hazard: an old snapshot can name a pid the OS has
+      // since handed to something else.
+      vi.setSystemTime(Date.now() + CAPTURED_TREE_MAX_AGE_MS + 1);
+
+      expect(watcher.getCapturedDescendants('s1')).toBeNull();
+      watcher.dispose();
+    });
+
+    it('drops the snapshot on re-register, which swaps in a new root pid', async () => {
+      const { watcher, rootPids, probe } = makeTreeSession([
+        { pid: 5001, ppid: 1234, comm: 'bash' },
+      ]);
+      await watcher.pollNow();
+      expect(watcher.getCapturedDescendants('s1')).not.toBeNull();
+
+      // A resume re-registers with a fresh PTY. The old subtree belongs to a
+      // dead root, and those pids may already be somebody else's.
+      rootPids.set('s1', 4321);
+      probe.alive.add(4321);
+      watcher.registerSession('s1');
+
+      expect(watcher.getCapturedDescendants('s1')).toBeNull();
+      watcher.dispose();
+    });
+
+    it('keeps the snapshot fresh across quiet cycles instead of letting it age out', async () => {
+      // sessionNeedsTree stops enumerating once the bg shell is gone, but the
+      // leaked grandchild is still running. Without the skip-cycle refresh the
+      // snapshot would pass CAPTURED_TREE_MAX_AGE_MS and a Done move minutes
+      // later would reap nothing.
+      const harness = makeTreeSession([
+        { pid: 5001, ppid: 1234, comm: 'bash' },
+        { pid: 5002, ppid: 5001, comm: 'func' },
+      ]);
+      harness.probe.alive.add(5001);
+      harness.probe.alive.add(5002);
+      await harness.watcher.pollNow();
+      expect(harness.watcher.getCapturedDescendants('s1')?.pids).toHaveLength(2);
+
+      // Go quiet: no tracked shells, no pending tools, so cycles now skip.
+      harness.shellCounts.set('s1', 0);
+      await harness.watcher.pollNow();
+      vi.setSystemTime(Date.now() + CAPTURED_TREE_MAX_AGE_MS - 1);
+      await harness.watcher.pollNow();
+      vi.setSystemTime(Date.now() + CAPTURED_TREE_MAX_AGE_MS - 1);
+
+      const captured = harness.watcher.getCapturedDescendants('s1');
+      expect(captured?.pids.sort((a, b) => a - b)).toEqual([5001, 5002]);
+      harness.watcher.dispose();
+    });
+
+    it('drops a pid on the cycle it dies, so a recycled pid is never inherited', async () => {
+      const harness = makeTreeSession([
+        { pid: 5001, ppid: 1234, comm: 'bash' },
+        { pid: 5002, ppid: 5001, comm: 'func' },
+      ]);
+      harness.probe.alive.add(5001);
+      harness.probe.alive.add(5002);
+      await harness.watcher.pollNow();
+
+      // The wrapper shell exits; the dev server it started keeps running.
+      harness.shellCounts.set('s1', 0);
+      harness.probe.alive.delete(5001);
+      await harness.watcher.pollNow();
+
+      // 5001 is gone for good, so the OS handing that number to something else
+      // can never make this snapshot aim a kill at it. 5002 is still the leak.
+      expect(harness.watcher.getCapturedDescendants('s1')?.pids).toEqual([5002]);
+      harness.watcher.dispose();
+    });
+
+    it('returns a copy, so a caller cannot mutate watcher state', async () => {
+      const { watcher } = makeTreeSession([{ pid: 5001, ppid: 1234, comm: 'bash' }]);
+      await watcher.pollNow();
+
+      watcher.getCapturedDescendants('s1')!.pids.push(9999);
+
+      expect(watcher.getCapturedDescendants('s1')?.pids).toEqual([5001]);
       watcher.dispose();
     });
   });

@@ -56,6 +56,7 @@ function makeMinimalConfig(): AppConfig {
     sidebarVisible: true,
     boardLayout: 'horizontal',
     cardDensity: 'default',
+    cardPreview: 'agent-messages',
     columnWidth: 'default',
     showTaskNumbers: false,
     terminalPanelVisible: true,

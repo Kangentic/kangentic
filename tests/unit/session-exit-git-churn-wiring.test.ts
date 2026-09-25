@@ -105,7 +105,7 @@ const mockGetProjectRepos = vi.fn(() => ({
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
   ensureTaskWorktree: vi.fn(async () => {}),
-  createTransitionEngine: vi.fn(() => ({ executeTransition: vi.fn(async () => {}), resumeSuspendedSession: vi.fn(async () => {}) })),
+  createTransitionEngine: vi.fn(() => ({ executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })), resumeSuspendedSession: vi.fn(async () => {}) })),
   resolveSpawnOverrides: vi.fn(() => ({})),
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({

@@ -52,6 +52,7 @@ export class GitHubIssuesAdapter implements BoardAdapter {
       input.perPage,
       input.searchQuery,
       input.state,
+      input.since,
     );
 
     const externalIds = rawIssues.map((issue) => String(issue.number));

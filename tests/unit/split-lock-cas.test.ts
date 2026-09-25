@@ -71,6 +71,15 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
 }));
 
+// handleTaskMove fires this itself now (it used to live at the call sites these
+// tests bypass), so without the mock every successful move here runs the real
+// helper against mocked repositories. It swallows its own errors, so the damage
+// is invisible rather than absent - the same reason the other task-move suites
+// already mock it.
+vi.mock('../../src/main/pr/pr-linking', () => ({
+  autoLinkPRForTask: vi.fn(),
+}));
+
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
@@ -185,6 +194,7 @@ function createMockContext() {
   return {
     currentProjectId: 'proj-1',
     currentProjectPath: '/mock/project',
+    boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
@@ -269,7 +279,7 @@ describe('TASK_MOVE split-lock CAS', () => {
     });
 
     mockCreateTransitionEngine.mockReturnValue({
-      executeTransition: vi.fn(async () => {}),
+      executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
       resumeSuspendedSession: vi.fn(async () => {}),
     });
 
@@ -282,7 +292,7 @@ describe('TASK_MOVE split-lock CAS', () => {
       taskId: 'task-1',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
     expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(1);
@@ -314,7 +324,7 @@ describe('TASK_MOVE split-lock CAS', () => {
       taskId: 'task-1',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     await phase2Entered;
 
@@ -338,7 +348,7 @@ describe('TASK_MOVE split-lock CAS', () => {
       taskId: 'task-1',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     await phase2Entered;
 
@@ -412,11 +422,18 @@ describe('TASK_MOVE Priority 3a - agent handoff', () => {
     });
 
     mockCreateTransitionEngine.mockReturnValue({
-      executeTransition: vi.fn(async () => {}),
+      executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
       resumeSuspendedSession: vi.fn(async () => {}),
     });
 
     context = createMockContext();
+    // Phase 1 now reconciles task.session_id against the registry before the
+    // Priority ladder; the shared context's `getSession` answers null for
+    // every id (the SESSION_RESUME scenarios above want a stale pointer), so
+    // this session has to read as live for the handoff branch to see it.
+    context.sessionManager.getSession.mockImplementation((id: string) => (
+      id === 'sess-running' ? { id, taskId: 'task-3a', status: 'running' } : null
+    ));
     registerTaskMoveHandlers(context as never);
   });
 
@@ -428,7 +445,7 @@ describe('TASK_MOVE Priority 3a - agent handoff', () => {
       taskId: 'task-3a',
       targetSwimlaneId: 'lane-review',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     // Phase 1 must have suspended the old session.
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-running');
@@ -463,7 +480,7 @@ describe('TASK_MOVE Priority 3a - agent handoff', () => {
       taskId: 'task-3a',
       targetSwimlaneId: 'lane-review',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     await phase2Entered;
 
@@ -529,7 +546,7 @@ describe('TASK_MOVE AbortError cleanup', () => {
     });
 
     mockCreateTransitionEngine.mockReturnValue({
-      executeTransition: vi.fn(async () => {}),
+      executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
       resumeSuspendedSession: vi.fn(async () => {}),
     });
 
@@ -562,7 +579,7 @@ describe('TASK_MOVE AbortError cleanup', () => {
       taskId: 'task-abort',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 0,
-    });
+    }, 'renderer');
 
     await phase2Entered;
 
@@ -577,7 +594,7 @@ describe('TASK_MOVE AbortError cleanup', () => {
       taskId: 'task-abort',
       targetSwimlaneId: 'lane-doing',
       targetPosition: 1,
-    });
+    }, 'renderer');
 
     // Neither move should throw - AbortError is caught and returns void.
     await expect(firstMovePromise).resolves.toBeUndefined();
@@ -723,7 +740,7 @@ describe('TASK_MOVE Phase 2 worktree error - revert locked micro-step', () => {
     });
 
     mockCreateTransitionEngine.mockReturnValue({
-      executeTransition: vi.fn(async () => {}),
+      executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
       resumeSuspendedSession: vi.fn(async () => {}),
     });
 
@@ -740,7 +757,7 @@ describe('TASK_MOVE Phase 2 worktree error - revert locked micro-step', () => {
         taskId: 'task-revert',
         targetSwimlaneId: 'lane-doing',
         targetPosition: 0,
-      }),
+      }, 'renderer'),
     ).rejects.toThrow('Worktree setup failed: branch already exists');
 
     // Forward move ran: task went to lane-doing.
@@ -972,5 +989,74 @@ describe('SESSION_RESUME Phase 1 self-heal (live session already exists)', () =>
       ([patch]) => patch.id === 'task-self-heal' && patch.session_id === null,
     );
     expect(sessionIdNullingCall).toBeUndefined();
+  });
+});
+
+/**
+ * SESSION_SUSPEND runs the same reconcile SESSION_RESUME does (#682
+ * follow-up). On the raw pointer, a pause on a task whose CLI had ended by
+ * itself marked its exited record `suspended` and suspended a registry row
+ * that was not live.
+ */
+describe('SESSION_SUSPEND reconciles task.session_id before suspending', () => {
+  let context: ReturnType<typeof createMockContext>;
+  let storedTask: MockTask;
+
+  function registryRow(status: 'running' | 'exited'): Session {
+    return {
+      id: 'sess-pointer',
+      taskId: 'task-pause',
+      projectId: 'proj-1',
+      pid: 54321,
+      status,
+      shell: '/bin/bash',
+      cwd: '/mock/project',
+      startedAt: new Date().toISOString(),
+      exitCode: status === 'exited' ? 0 : null,
+      resuming: false,
+      agentSessionId: null,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedHandlers.clear();
+
+    const doingLane = createMockSwimlane('lane-doing', { auto_spawn: true });
+    storedTask = createMockTask('task-pause', { swimlane_id: 'lane-doing', session_id: 'sess-pointer' });
+    mockGetProjectRepos.mockReturnValue({
+      tasks: {
+        getById: vi.fn(() => storedTask),
+        update: vi.fn((patch: Partial<MockTask> & { id: string }) => {
+          storedTask = { ...storedTask, ...patch };
+        }),
+      },
+      swimlanes: { getById: vi.fn((id: string) => ({ 'lane-doing': doingLane }[id] ?? null)) },
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { add: vi.fn(), listForTask: vi.fn(() => []) },
+    });
+    context = createMockContext();
+    registerSessionHandlers(context as never);
+  });
+
+  it('does nothing for a pointer at an exited registry row, and clears the pointer', async () => {
+    context.sessionManager.getSession.mockImplementation(() => registryRow('exited'));
+    const handler = capturedHandlers.get(IPC.SESSION_SUSPEND);
+    if (!handler) throw new Error('SESSION_SUSPEND handler not registered');
+
+    await handler(null, 'task-pause');
+
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(storedTask.session_id).toBeNull();
+  });
+
+  it('suspends the live session the pointer names', async () => {
+    context.sessionManager.getSession.mockImplementation(() => registryRow('running'));
+    const handler = capturedHandlers.get(IPC.SESSION_SUSPEND);
+    if (!handler) throw new Error('SESSION_SUSPEND handler not registered');
+
+    await handler(null, 'task-pause');
+
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-pointer');
   });
 });

@@ -8,6 +8,7 @@ import { AsanaAdapter } from './adapters/asana';
 import { JiraAdapter } from './adapters/jira';
 import { LinearAdapter } from './adapters/linear';
 import { TrelloAdapter } from './adapters/trello';
+import { trackFeatureUsed } from '../analytics/usage';
 
 /**
  * Central registry of board integration adapters. Mirrors the agent registry
@@ -62,6 +63,10 @@ export class BoardRegistry {
     if (adapter.status === 'stub') {
       throw new Error(`${adapter.displayName} integration is not yet implemented.`);
     }
+    // Adoption signal: this is the one funnel every import fetch and execute
+    // goes through, and a stub throws above so an unimplemented provider never
+    // counts. Main dedups to once per day.
+    trackFeatureUsed('board_integration');
     return adapter;
   }
 }

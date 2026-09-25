@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { CommandVerifier, InjectionVerifyMode } from '../../../transition-engine/terminal-submit-scheduler';
 import { readTranscriptTailLines } from '../../shared/transcript-tail-cache';
 
@@ -83,11 +84,14 @@ export function createSlashCommandVerifier(
     }
     const parsed = parseSlashCommand(command);
     if (!parsed) return true; // Non-slash text: no JSONL signal expected.
-    // sentAt is the timestamp of the Enter the caller is asking us to confirm
-    // (passed through from `pollWithRetries`, advanced on each retry-Enter).
-    // Bounding the JSONL scan to entries at-or-after `sentAt - tolerance`
-    // prevents stale entries from earlier retries / earlier columns from being
-    // treated as confirmation for the current command.
+    // sentAt is the timestamp of the FIRST Enter pressed for this command.
+    // `submitKeystrokes` keeps it fixed across its retry-Enters: a later
+    // attempt confirming an earlier attempt's submission is the right answer,
+    // and advancing the watermark per retry made every later attempt blind to
+    // the first one's entry once a newer sibling (an attachment, a pr-link)
+    // sat between it and the tail. Bounding the scan to entries at-or-after
+    // `sentAt - tolerance` is what keeps an earlier column's invocation from
+    // confirming this one.
     if (internalTimeout === undefined) {
       // Single-scan mode: caller controls the polling cadence. Returning
       // immediately keeps verification latency tied to file-flush latency
@@ -121,100 +125,221 @@ function parseSlashCommand(command: string): { name: string; args: string } | nu
 // `src/main/agent/shared/transcript-tail-cache.ts` so every adapter's verifier
 // shares ONE cache instance. Claude-specific record parsing stays below.
 
+/**
+ * 50ms tolerance on the watermark: the system clock may differ by a hair from
+ * the `Date.now()` the Enter was stamped with. Anything substantially older
+ * than the first Enter is an earlier column's or an earlier session's entry.
+ */
+const WATERMARK_TOLERANCE_MS = 50;
+
+/** Decides whether one parsed tail entry is the submission being verified. */
+type EntryMatcher = (entry: Record<string, unknown>) => boolean;
+
+/**
+ * Walk the transcript tail backwards, newest entry first, and stop at the
+ * first entry older than the watermark. Both modes share this walk so the
+ * watermark rule and the miss diagnostic cannot drift between them; only the
+ * per-entry matcher differs.
+ *
+ * Every `false` return is described to the log through `logScanMiss` (rate
+ * limited). The two incidents that motivated the diagnostic were
+ * indistinguishable from the "unconfirmed after 5 attempts" line alone: one
+ * was a transcript that had not flushed yet, the other a scan that stopped on
+ * a newer sibling before reaching the entry. The `newest` and `stop` fields
+ * tell those apart at a glance.
+ */
+async function scanTail(
+  jsonlPath: string,
+  command: string,
+  sentAt: number,
+  matches: EntryMatcher,
+): Promise<boolean> {
+  const watermark = sentAt - WATERMARK_TOLERANCE_MS;
+  const lines = await readTranscriptTailLines(jsonlPath);
+  if (lines === null) {
+    logScanMiss(jsonlPath, command, watermark, { stop: 'unreadable', newestTs: null, scanned: 0 });
+    return false;
+  }
+  let newestTs: number | null = null;
+  let scanned = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(entry)) continue;
+    scanned++;
+
+    const ts = parseTimestamp(entry.timestamp);
+    // The first timestamped entry met from the tail is the newest one on disk.
+    if (ts !== null && newestTs === null) newestTs = ts;
+    if (ts !== null && ts < watermark) {
+      logScanMiss(jsonlPath, command, watermark, {
+        stop: 'watermark',
+        stopEntry: describeEntry(entry),
+        stopEntryTs: ts,
+        newestTs,
+        scanned,
+      });
+      return false;
+    }
+
+    if (matches(entry)) return true;
+  }
+  logScanMiss(jsonlPath, command, watermark, { stop: 'exhausted', newestTs, scanned });
+  return false;
+}
+
+/**
+ * `command-match`: a discrete `<command-name>` / `<command-args>` invocation
+ * with exactly these args. Combined args (e.g. "claude-opus-4-7\n/effort
+ * xhigh") fail this check by design - that is the failure mode we want to
+ * detect and retry. A queued submission is deliberately NOT accepted here:
+ * this mode exists for the adapter's own settings writes, and "the CLI took
+ * the text" says nothing about whether it parsed as the discrete invocation
+ * the args must prove.
+ */
 async function scanForMatch(
   jsonlPath: string,
   commandName: string,
   expectedArgs: string,
   sentAt: number,
 ): Promise<boolean> {
-  // Scan from the tail backwards. We expect the matching entry to be near
-  // the end of the file (just-written), and we can stop as soon as we cross
-  // the sentAt watermark.
-  const lines = await readTranscriptTailLines(jsonlPath);
-  if (lines === null) return false;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (!line) continue;
-    let entry: unknown;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(entry)) continue;
-
-    const ts = parseTimestamp(entry.timestamp);
-    if (ts !== null && ts < sentAt - 50) {
-      // 50ms tolerance: the system clock may differ by a hair from
-      // performance.now-derived sentAt. Anything substantially older
-      // than our send means we've scanned past our window - stop.
-      return false;
-    }
-
+  const command = expectedArgs ? `${commandName} ${expectedArgs}` : commandName;
+  return scanTail(jsonlPath, command, sentAt, (entry) => {
     const commandTagContent = extractCommandTagContent(entry);
-    if (!commandTagContent) continue;
-
-    // Require BOTH the command name and an exact-match args body. Combined
-    // args (e.g. "claude-opus-4-7\n/effort xhigh") fail this check by
-    // design - that is the failure mode we want to detect and retry.
-    if (commandTagContent.name !== commandName) continue;
-    if (commandTagContent.args !== expectedArgs) continue;
-    return true;
-  }
-  return false;
+    if (!commandTagContent) return false;
+    return commandTagContent.name === commandName && commandTagContent.args === expectedArgs;
+  });
 }
 
 /**
- * Confirm that EXACTLY `command` became a user turn at or after `sentAt`.
+ * Confirm that EXACTLY `command` was submitted at or after `sentAt`.
  *
  * Exactness is the entire point. The reported bug submits
  * `instead can we/pull-request` as one message, and that string CONTAINS
  * `/pull-request` - a substring test would confirm the precise failure this
  * verifier exists to catch as a successful delivery.
  *
- * Two shapes count as the same submission:
+ * Three shapes count as the same submission:
  *   1. the raw user text equals the command (plain prose, or a `/foo` Claude
  *      did not recognize and therefore left as literal text);
  *   2. the entry was rewritten into `<command-name>` / `<command-args>` tags
  *      because Claude DID recognize it, in which case `/name args`
- *      reconstructs what the user typed.
+ *      reconstructs what the user typed;
+ *   3. a `queue-operation` `enqueue` whose `content` equals the command. Text
+ *      submitted while a turn is running is QUEUED by the CLI: the enqueue
+ *      entry is written at once, and the user turn only when the queue drains
+ *      at the end of the running turn, which can be minutes later. From the
+ *      enqueue on the CLI owns the text (it dequeues it as the next turn or
+ *      absorbs it mid-turn), so keystroke delivery is complete and every
+ *      further Enter is a no-op. Without this shape a mid-turn injection could
+ *      never confirm inside the retry budget, and the escalation restart then
+ *      ran the command a second time (#682). A queued message the user pulls
+ *      back with Up arrow inside the burst would read as delivered; that is
+ *      their own action within a two-second window and is not modelled.
  */
 async function scanForSubmittedText(
   jsonlPath: string,
   command: string,
   sentAt: number,
 ): Promise<boolean> {
-  const lines = await readTranscriptTailLines(jsonlPath);
-  if (lines === null) return false;
   const expected = command.trim();
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (!line) continue;
-    let entry: unknown;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(entry)) continue;
-
-    const ts = parseTimestamp(entry.timestamp);
-    if (ts !== null && ts < sentAt - 50) return false;
+  return scanTail(jsonlPath, command, sentAt, (entry) => {
+    const queued = extractQueuedText(entry);
+    if (queued !== null) return queued.trim() === expected;
 
     const tagged = extractCommandTagContent(entry);
     if (tagged) {
       const reconstructed = tagged.args ? `${tagged.name} ${tagged.args}` : tagged.name;
-      if (reconstructed.trim() === expected) return true;
       // A recognized command whose tags do not reconstruct to what we sent is
       // a DIFFERENT submission (the combined-args concatenation case). Keep
       // scanning rather than accepting it.
-      continue;
+      return reconstructed.trim() === expected;
     }
 
     const userText = extractUserText(entry);
-    if (userText !== null && userText.trim() === expected) return true;
+    return userText !== null && userText.trim() === expected;
+  });
+}
+
+/**
+ * Text the CLI accepted into its message queue, or null for any other entry.
+ * Only `enqueue` carries delivery meaning; `dequeue` and `remove` describe
+ * what happened to a message already accepted.
+ */
+function extractQueuedText(entry: Record<string, unknown>): string | null {
+  if (entry.type !== 'queue-operation') return null;
+  if (entry.operation !== 'enqueue') return null;
+  return typeof entry.content === 'string' ? entry.content : null;
+}
+
+/** Why one scan returned false. */
+interface ScanMiss {
+  stop: 'watermark' | 'exhausted' | 'unreadable';
+  /** The entry the watermark check stopped on (`stop === 'watermark'`). */
+  stopEntry?: string;
+  stopEntryTs?: number;
+  /** Newest top-level timestamp on disk, whatever that entry was. */
+  newestTs: number | null;
+  /** Entries parsed before the walk ended. */
+  scanned: number;
+}
+
+/**
+ * At most one miss line per `(transcript, command)` per interval. The poll
+ * cadence is 25ms, so an unthrottled line per miss would be 40 lines a second
+ * per in-flight command; a burst that confirms on its first poll logs nothing.
+ *
+ * Two tiers. The burst itself (about four seconds of polling) gets the tight
+ * interval, which is where the diagnostic earns its keep: the first few lines
+ * say whether the transcript had flushed yet and what the walk stopped on.
+ * Past `MISS_LOG_TIGHT_LINES` lines for one key the command has left the
+ * burst and is being re-checked by the escalation gate, a slow poll that can
+ * run for two minutes on an unreadable transcript; a line every 500ms there
+ * is 240 copies of the same fact, so the interval widens.
+ */
+const MISS_LOG_INTERVAL_MS = 500;
+const MISS_LOG_SLOW_INTERVAL_MS = 5_000;
+const MISS_LOG_TIGHT_LINES = 10;
+const MISS_LOG_KEY_TTL_MS = 60_000;
+const missLogState = new Map<string, { loggedAt: number; lines: number }>();
+
+function logScanMiss(jsonlPath: string, command: string, watermark: number, miss: ScanMiss): void {
+  const key = `${jsonlPath}\n${command}`;
+  const now = Date.now();
+  const previous = missLogState.get(key);
+  const interval = previous && previous.lines >= MISS_LOG_TIGHT_LINES ? MISS_LOG_SLOW_INTERVAL_MS : MISS_LOG_INTERVAL_MS;
+  if (previous !== undefined && now - previous.loggedAt < interval) return;
+  missLogState.set(key, { loggedAt: now, lines: (previous?.lines ?? 0) + 1 });
+  for (const [staleKey, state] of missLogState) {
+    if (now - state.loggedAt > MISS_LOG_KEY_TTL_MS) missLogState.delete(staleKey);
   }
-  return false;
+  const stop = miss.stop === 'watermark'
+    ? `watermark (${miss.stopEntry ?? '?'} @ ${formatIso(miss.stopEntryTs)})`
+    : miss.stop;
+  console.log(
+    `[slash-verifier] "${command}" not yet in ${path.basename(jsonlPath)}: stop=${stop}, `
+      + `watermark=${formatIso(watermark)}, newest=${formatIso(miss.newestTs)}, scanned=${miss.scanned}`,
+  );
+}
+
+/** `type/subtype` (or `type/operation` for queue entries) for the miss line. */
+function describeEntry(entry: Record<string, unknown>): string {
+  const type = typeof entry.type === 'string' ? entry.type : '?';
+  const qualifier = typeof entry.subtype === 'string'
+    ? entry.subtype
+    : typeof entry.operation === 'string' ? entry.operation : null;
+  return qualifier ? `${type}/${qualifier}` : type;
+}
+
+function formatIso(epochMs: number | null | undefined): string {
+  if (epochMs === null || epochMs === undefined || !Number.isFinite(epochMs)) return 'none';
+  return new Date(epochMs).toISOString();
 }
 
 /**

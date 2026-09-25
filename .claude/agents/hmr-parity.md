@@ -1,6 +1,7 @@
 ---
 name: hmr-parity
 model: sonnet
+effort: medium
 description: |
   Dev-mode parity auditor. Verifies that new features keep `npm start` (Vite HMR) visually and behaviourally indistinguishable from a fresh production boot, by checking the four HMR primitives documented in `.claude/rules/hmr-patterns.md`: Preserve, Re-sync, Re-key, Cleanup.
 
@@ -30,7 +31,6 @@ description: |
   User refactors App.tsx's `vite:afterUpdate` handler and reorders the cleanup calls.
   -> Spawn hmr-parity. It will verify all known Pattern D cleanups (`.drop-highlight` removal, `bumpHmrGeneration()` bump) are still present and ordered correctly.
   </example>
-model: sonnet
 tools: Read, Glob, Grep
 ---
 

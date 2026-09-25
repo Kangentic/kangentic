@@ -10,6 +10,17 @@ Electron app with two processes:
 
 Context isolation is enabled -- the renderer has no direct access to Node.js APIs.
 
+### Renderer crash recovery
+
+A recoverable renderer death (`render-process-gone` with reason `oom` or `crashed`, never
+`clean-exit` or `killed`) reloads the main window automatically instead of leaving it dead and
+blank. PTY sessions live in main and are untouched by a renderer-only crash, so a reload costs the
+user a repaint, not their work. Reloads are bounded (`RENDERER_RELOAD_MAX` per
+`RENDERER_RELOAD_WINDOW_MS`, `src/main/diagnostics/renderer-recovery.ts`): a machine still starved
+of memory would kill a freshly reloaded renderer too, so past the bound a native dialog explains
+what happened instead of retrying forever. See `src/main/diagnostics/host-memory.ts` (Sentry
+DESKTOP-16) for the host memory pressure sampler this pairs with.
+
 ## Data Flow
 
 ```
@@ -17,8 +28,10 @@ User drags task between columns
   → BoardStore.moveTask() -- optimistic UI update
   → IPC task:move
   → Main: update DB positions
+  → Main: TransitionEngine runs the SOURCE column's On exit automations
   → Main: check priority rules (To Do? Done? Active session? No session?)
-  → Main: TransitionEngine executes action chain (create_worktree → spawn_agent)
+  → Main: TransitionEngine runs the TARGET column's On enter automations
+  → Main: the agent starts before the first automation that needs it
   → SessionManager spawns PTY (or queues it)
   → PTY streams output → 16ms batched flush → IPC session:data → xterm render
   → Bridge scripts write status/activity/events files → fs.watch → IPC → Zustand stores
@@ -28,7 +41,7 @@ User drags task between columns
 
 All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src/preload/preload.ts` mirrors them as `window.electronAPI.*`.
 
-### Projects (19 channels)
+### Projects (20 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `project:list` | invoke | Fetch all projects (ordered by position) |
@@ -50,6 +63,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `project:moveProgress` | on | Event: progress during a one-step project move (`phase`: `moving`/`copying`, `copiedEntries`, `totalEntries`) |
 | `project:autoOpened` | on | Event: project auto-opened on launch |
 | `project:pathMissing` | on | Event: a registered project path no longer exists on disk |
+| `project:listChanged` | on | Event: the project list changed server-side (a stale project pruned, or a recovered global DB); tells the renderer to refetch `project:list` and `project:getCurrent` |
 
 ### Dev-only (preview)
 Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in the production channel totals above.
@@ -73,7 +87,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (26 channels)
+### Tasks (29 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -89,17 +103,20 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:bulk-delete-progress` | on | Event: progress payload during bulk task delete (completed/total/failures) |
 | `task:bulk-unarchive` | invoke | Restore multiple archived tasks to a target swimlane |
 | `task:switchBranch` | invoke | Switch base branch or enable worktree for a task |
+| `task:updateFromBase` | invoke | One-click "Update from base": fetch the task's effective base and fast-forward its worktree from `origin/<base>`. Refuses while a session is running; returns a discriminated `TaskUpdateFromBaseResult` (updated / already-up-to-date / cannot-ff / dirty-tree / fetch-failed / no-remote) rather than throwing for expected outcomes |
 | `task:setRuntimeOverride` | invoke | Set per-task model/effort override; applies live via slash injection, suspend+respawn, or persisted-only depending on session state and adapter capability |
-| `task:resolvePr` | invoke | Authoritatively resolve and link the PR for a task's branch via the gh CLI; refreshes `pr_state`, `pr_url`, `pr_number` |
+| `task:resolvePr` | invoke | Authoritatively resolve and link a task's PR through the repository's PR connector (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in [pr-integration.md](pr-integration.md) (number, worktree branch, commit, stored branch, pushed branch, remote tip); refreshes `pr_state`, `pr_merge_readiness`, `pr_url`, `pr_number`. Returns `no-anchor` only when the task has nothing to search by |
 | `task:autoMoved` | on | Event: task was auto-moved by transition engine |
 | `task:createdByAgent` | on | Event: task was created by an agent via MCP tool call |
 | `task:updatedByAgent` | on | Event: task was updated by an agent via MCP tool call |
 | `task:deletedByAgent` | on | Event: task was deleted by an agent via MCP tool call |
 | `task:sessionResync` | on | Event: quiet (toast-free) board re-sync after a column model-change session restart, so the board store's stale `task.session_id` reloads |
-| `task:prLinkChanged` | on | Event: quiet (toast-free) board re-sync after the APP reconciled a task's PR link or state - the refresh sweep, the session-idle auto-link, the forced re-resolve that follows a link write, or the task-detail "Link / refresh PR" control. Distinct from `task:updatedByAgent` because no agent made the change: an agent's own `update_task` / `link_pr` still goes out on that channel and still toasts. Payload is the bare `projectId` |
-| `task:spawnBlocked` | on | Event: the task was created, promoted, unarchived or MCP-auto-spawned, but its agent could not start because its worktree could not be created or its branch could not be checked out. Any git failure at those two steps fires this, not only the case where another task holds the checkout. Those paths deliberately keep the task, so without this the result is indistinguishable from a healthy spawn |
+| `task:prLinkChanged` | on | Event: quiet (toast-free) board re-sync after the APP reconciled a task's PR link or state - the refresh sweep, the session-idle auto-link, the `pr-candidate` resolve after an agent's PR command, the forced re-resolve that follows a link write, or the task-detail "Link / refresh PR" control. Distinct from `task:updatedByAgent` because no agent made the change: an agent's own `update_task` / `link_pr` still goes out on that channel and still toasts. Payload is the bare `projectId` |
+| `task:movedByMobile` | on | Event: quiet (toast-free) board reload after a task was moved from the paired mobile app. A third provenance, distinct from both siblings above: `task:updatedByAgent` would announce "Task updated by agent" for a card the user dragged on their own phone, and this is not the app reconciling itself either. Payload is the bare `projectId` |
+| `task:spawnBlocked` | on | Event: the task's agent could not start. Fires for three steps, and the entry points differ per step. WORKTREE and CHECKOUT: only on create, promote, unarchive, or MCP auto-spawn, which deliberately keep the task (a move instead rejects the invoke, which the renderer already toasts). Any git failure at those two steps fires this, not only the case where another task holds the checkout. AGENT (the spawn itself, most often a CLI that is not installed or not on PATH): every board-driven entry point including a drag move, because `spawnAgent`'s catch swallows that error and resolves the invoke, so this event is the only user-visible notice on that path. Without it the result is indistinguishable from a healthy spawn |
+| `task:spawnWarning` | on | Event: non-blocking spawn anomaly - the agent still started, but its base branch could not be freshened (network or credential fetch failure), so it may be running from a stale base. The message is composed in main and toasted verbatim, cooldown-guarded per project and reason class so a bulk unarchive while offline produces one toast, not one per task |
 | `task:autoCommandResult` | on | Event: the outcome of a task's auto_command injection (`AutoCommandResultNotice`: state, command, reason, discardedDraft, interruptedTurn, escalated). Rationed by `shouldNotify` so a routine delivery stays silent and only a failure, an escalation, or a discarded draft reaches the user |
-| `task:spawnProgress` | on | Event: spawn progress phase label during a task move or a restore from Done |
+| `task:spawnProgress` | on | Event: spawn progress phase label during any board-driven spawn (move, create into a spawning column, backlog promote, MCP auto-spawn, restore from Done). A staleness note may trail the label, e.g. `Starting agent... (base 3 behind)` |
 | `task:getSpawnProgress` | invoke | Fetch the queryable in-flight spawn-progress map (taskId -> phase label) so `syncSessions` can reconcile after HMR / project switch |
 | `task:setDetailViewState` | invoke | Persist the task-detail dialog's layout blob (debounced from the renderer) so it restores across restarts. Pass null to clear. Does not bump `updated_at`. |
 
@@ -129,12 +146,13 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `backlog:changedByAgent` | on | Event: backlog was modified by an agent via MCP tool call |
 | `backlog:labelColorsChanged` | on | Event: label color mappings changed by agent via MCP tool call |
 
-### Backlog Import (6 channels)
+### Backlog Import (7 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `backlog:importCheckCli` | invoke | Check if the CLI tool for a source is available and authenticated |
-| `backlog:importFetch` | invoke | Fetch items from an external source (GitHub Issues, GitHub Projects, Azure DevOps, Asana) |
-| `backlog:importExecute` | invoke | Import selected items into the backlog with attachment download |
+| `backlog:importGetCached` | invoke | Read the persistent remote-item cache for a source (no network), for an instant dialog paint |
+| `backlog:importReconcile` | invoke | Fetch items changed since the cache high-water mark, merge and prune, and return the merged set |
+| `backlog:importExecute` | invoke | Import selected items into the backlog, hydrating deferred per-item detail (e.g. Azure DevOps comments) and downloading attachments |
 | `backlog:importSourcesList` | invoke | List saved import sources for the current project |
 | `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). Providers with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
 | `backlog:importSourcesRemove` | invoke | Remove a saved import source |
@@ -165,22 +183,20 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `swimlane:reorder` | invoke | Reorder swimlanes by ID array |
 | `swimlane:updatedByAgent` | on | Push event when an MCP agent changes a project's columns: a column create, update, or delete, or (reusing the same deliberately kind-agnostic signal) a same-column task reorder via `kangentic_reorder_tasks` / `kangentic_move_task`'s `position`, where no swimlane field itself changed |
 
-### Actions (4 channels)
+### Automations (6 channels)
+
+Replaced the `action:*` and `transition:*` channels, which had no renderer callers.
+
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `action:list` | invoke | Fetch all actions |
-| `action:create` | invoke | Create action with type and config |
-| `action:update` | invoke | Update action |
-| `action:delete` | invoke | Delete action |
+| `automation:list` | invoke | Fetch every column's automations |
+| `automation:replaceForColumn` | invoke | Replace one column's whole list (the Column Manager's Save) |
+| `automation:runsForTask` | invoke | Run history for a task, newest first |
+| `automation:runAgain` | invoke | Re-run ONE automation against the task's current state, writing a fresh run row |
+| `automation:runFailed` | on | Push event when a run failed or was interrupted, rationed per automation |
+| `automation:runsInterrupted` | on | Push event after the project-open sweep, one summary per open |
 
-### Transitions (3 channels)
-| Channel | Pattern | Purpose |
-|---------|---------|---------|
-| `transition:list` | invoke | Fetch all transitions |
-| `transition:set` | invoke | Set action chain for lane A→B |
-| `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
-
-### Sessions (37 channels)
+### Sessions (42 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -201,30 +217,35 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `session:getActivityStats` | invoke | Fetch a raw engine-counter snapshot for the debug overlay |
 | `session:getEvents` | invoke | Fetch activity log events for one session |
 | `session:getEventsCache` | invoke | Fetch cached event arrays. Optional `projectId` scopes to one project. |
+| `session:getMessageTrails` | invoke | Fetch every session's agent message trail (sessionId -> `AssistantMessageTrailEntry[]`, oldest first) so `syncSessions` can seed the board cards on mount and after an HMR reload |
+| `session:messageTrail` | on | A session's agent message trail changed (the whole trail, plus `projectId`). Pushed by the main-side `MessageTrailTracker` only when a new line appears; never buffered, since it coalesces at the source |
 | `session:setFocused` | invoke | Set which sessions are visible in the renderer (optimizes IPC traffic) |
 | `session:setMounted` | invoke | Set which sessions this renderer has an xterm MOUNTED for. Broader than the focused set: a parked terminal is unfocused but still holds a grid, and main must not reshape a PTY something is still rendering at its own size |
 | `session:notifyUserInterrupt` | invoke | Notify telemetry of a user Ctrl+C; arms the 3-second settle timer that synthesizes Interrupted if hooks don't recover |
 | `session:data` | on | Terminal output available (includes `projectId`) |
 | `session:drainAck` | send | Renderer-to-main flow-control ack for per-session PTY backpressure; fire-and-forget (no projectId) |
 | `session:ptyResized` | on | The PTY's grid actually changed (`cols`, `rows`, `PtyResizeOrigin`). Broadcast to every window; the mounted owner xterm uses it to detect and heal a width divergence (xterm re-sends dims only when its own size changes) |
-| `session:firstOutput` | on | Alternate screen buffer detected - TUI ready (includes `projectId`) |
+| `session:firstOutput` | on | The adapter's readiness escape matched (Claude: cursor-hide `\x1b[?25l`), lifting the shimmer overlay. A heuristic, not proof the agent is up - a shell preamble can carry the same escape (includes `projectId`) |
 | `session:exit` | on | Session exited (includes `projectId`) |
 | `session:status` | on | Session changed - pushes full `Session` object (includes `projectId`) |
+| `session:removed` | on | Session left main's registry for good (`SessionManager.remove()`: a To Do reset, a task or project delete, a session reset, an aborted spawn). Carries the row's last `Session` snapshot and `projectId`. Its own channel because the status handler can only upsert; the renderer drops the row and every per-session map entry keyed on the id. The main-side handler also purges that session from the background usage and event buffers, so a tick held for `BACKGROUND_FLUSH_MS` cannot flush after the removal and write its numbers back under a row the renderer has dropped |
 | `session:usage` | on | Usage data updated (includes `projectId`) |
-| `session:activity` | on | Activity state changed (includes `projectId`, `taskId`) |
+| `session:activity` | on | Activity state or reason changed (includes `projectId`, `taskId`). Two main-side emitters feed this one channel: `activity` on a real state transition, and `activity-reason` when the state holds but the reason's kind moves (a fan-out starting mid-turn, say). Only the first reaches the desktop notifier, the mobile push notifier, turn-completion auto-move, and the activity-interval recorder, which all read an `activity` emit as a transition. |
 | `session:event` | on | Structured event (includes `projectId`) |
 | `session:idleTimeout` | on | Session idle timeout fired |
 | `session:getSummary` | invoke | Get summary of a single session |
 | `session:listSummaries` | invoke | Get summaries of multiple sessions |
 | `session:getToolBreakdown` | invoke | Fetch live per-tool call breakdown for an active session (from the in-memory accumulator, not the DB) |
-| `session:spawnTransient` | invoke | Spawn ephemeral command terminal session (no task, no DB) |
+| `session:spawnTransient` | invoke | Spawn an ephemeral Command Terminal session (no task, no DB) at the project root. A cold spawn with no branch picked checks out the project's default base (board default, then config, then `main`) and fast-forwards it; when tracked files are modified it stays on the current branch instead and says so through `checkoutError`, since a checkout with no gesture behind it would carry that work onto the base. A picked branch keeps git's own behavior. Reattaching to a live PTY never runs any of this |
 | `session:killTransient` | invoke | Kill a transient session and clean up session directory |
+| `session:setTransientLabel` | invoke | Record a Command Terminal's auto-derived name on its live registry row (first write wins). The renderer derives the name and has already applied it locally; main retains it purely so it survives a renderer reload, alongside the slot and branch that `toSession` carries. |
+| `session:setTransientBranch` | invoke | Record the branch a Command Terminal's checkout is actually on, re-derived from live HEAD by the renderer, on its live registry row. Last write wins, unlike the label: HEAD moves, and the newest reading is the true one. Main holds it passively for the Monitor row and a post-reload adopt. |
 | `session:injectSettings` | invoke | Inject a model/effort change into a live transient session's PTY via slash commands. Session-keyed (no task row, no DB persistence); backs the command-terminal context bar picker. |
 
 ### Usage Stats (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `usage:getDashboardStats` | invoke | Composite usage-statistics payload for the dashboard (KPIs, bucketed token/cost time series, by-model / by-agent breakdowns), for one project or rolled up across every registered project, over the Live/Today/Week/Month/All Time ranges. Sources from the append-only `usage_history` + `conversation_turn_usage` ledgers so totals survive task deletion, bulk-archive, and revert-to-backlog; also merges in-flight sessions from the live `SessionManager` on top (skipped for a day drill or custom window, which are pure ledger accounting) so the SESSIONS KPI and Live view are not undercounted. Read-only; the explicit scope argument carries the project id. |
+| `usage:getDashboardStats` | invoke | Composite usage-statistics payload for the dashboard (KPIs, bucketed token/cost time series, by-model / by-agent / by-effort / by-subagent-type breakdowns, plus `subagentBlindAgents`, the agents present in the range whose adapter cannot report subagent usage at all - so an empty subagent breakdown is distinguishable from an unmeasured one), for one project or rolled up across every registered project, over the Live/Today/Week/Month/All Time ranges. Sources from the append-only `usage_history` + `conversation_turn_usage` + `session_activity_intervals` ledgers (per-leg session cost, per-turn tokens, and agent-working time respectively) so totals survive task deletion, bulk-archive, and revert-to-backlog; also merges in-flight sessions from the live `SessionManager` on top (skipped for a day drill or custom window, which are pure ledger accounting) so the SESSIONS KPI and Live view are not undercounted. Read-only; the explicit scope argument carries the project id. |
 
 ### Agent Monitor (8 channels)
 Machine-global, like the Mobile Bridge channels: the monitor aggregates live sessions across
@@ -233,14 +254,14 @@ is `monitor:getTaskDetail`, which names a project explicitly because it reads ON
 project that may not be the open one.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `monitor:getSnapshot` | invoke | Cross-project snapshot of every live and recently-finished agent session: owning project, task title / ticket number / column, activity state and reason, agent, model, runtime, last event, context-window usage, and a seed of the live output peek. A Command Terminal row carries no task, so it is titled by its window slot and names its branch where a task names its column. Built by joining the process-global session registry and activity/event/usage caches against each owning project's DB. Per-project setup is memoized once per snapshot; the row build itself is one indexed task read plus one session read per monitored session. Read-only. |
+| `monitor:getSnapshot` | invoke | Cross-project snapshot of every live and recently-finished agent session: owning project, task title / ticket number / column, activity state and reason, agent, model, runtime, last event, context-window usage, the task description capped at 600 characters (what the card draws in Card Preview's description mode, and what a paused or finished row falls back to in the two agent-message modes), and a seed of the live output peek. A Command Terminal row carries no task, so it is titled by its window slot and names its branch where a task names its column. Built by joining the process-global session registry and activity/event/usage caches against each owning project's DB. Per-project setup is memoized once per snapshot; the row build itself is one indexed task read plus one session read per monitored session. Read-only. |
 | `monitor:subscribe` | invoke | Register the calling renderer as a live monitor consumer and return a fresh snapshot in the same round trip, so a mounting monitor cannot race the next push for its first frame. Main builds and fans out `monitor:changed` only while at least one subscriber is registered; with every monitor closed, a session event costs no snapshot build at all. Main drops the registration itself when the renderer closes, crashes, or hard-reloads (the task-detail-ownership teardown trio), so a lost renderer cannot pin the pipeline on. |
 | `monitor:unsubscribe` | invoke | Explicit counterpart of `monitor:subscribe`, called when the monitor closes. |
-| `monitor:getTaskDetail` | invoke | Everything the task-detail surface needs about a task's OWN project (task row, project name/path, swimlanes, shortcuts, label colors, base branch, worktree/browser flags), so a host that is not that project's board can render it. One bundle rather than stamping five read channels with a projectId. Returns null when the project or task is gone, so the caller closes rather than rendering a husk. Read-only. |
+| `monitor:getTaskDetail` | invoke | Everything the task-detail surface needs about a task's OWN project (task row, project name/path, swimlanes, shortcuts, label colors, base branch, worktree/browser flags, and the per-agent execution map the branch hint needs to tell a local agent from a remote one), so a host that is not that project's board can render it. One bundle rather than stamping five read channels with a projectId. Returns null when the project or task is gone, so the caller closes rather than rendering a husk. Read-only. |
 | `monitor:revealTask` | invoke | Ask main to reveal a task in the MAIN window (switching project if needed) and focus it. Used by the DETACHED monitor, which is its own renderer with its own stores and so cannot open a task by setting local state. Re-emits the existing `notification:clicked` push so there is one reveal path, not two. |
-| `monitor:changed` | on | Fanned to every window (main + open pop-outs) when the DB-resident half of a row changes (a session spawned or exited, or an agent retitled/moved a task), debounced at 250ms and gated on a live `monitor:subscribe` registration. Live activity does NOT come through here - it rides the unbuffered `session:activity` push and is patched onto rows in place, so a state change needs no round trip. |
+| `monitor:changed` | on | Fanned to every window (main + open pop-outs) when the DB-resident half of a row changes (a session spawned or exited, or an agent retitled/moved a task), debounced at 250ms and gated on a live `monitor:subscribe` registration. Live activity does NOT come through here - it rides the unbuffered `session:activity` push and is patched onto rows in place, so a state or reason change needs no round trip. |
 | `monitor:peek` | on | The live output peek: the last few rendered terminal lines per session, fanned to every subscribed window and patched onto rows in place like activity. Only sessions whose visible text actually changed are sent, so a repainting TUI whose content is unchanged produces no traffic. Sampled from the parsed grid at most twice a second. |
-| `monitor:setPeekSubscribed` | invoke | Start or stop the peek stream for the CALLING renderer, ref-counted per renderer id so the in-app monitor and a detached pop-out subscribe independently. Separate from `monitor:subscribe` because it gates a DIFFERENT standing cost: that one gates snapshot building, this one gates a PTY output listener plus a sampling timer. A closed monitor pays neither. |
+| `monitor:setPeekSubscribed` | invoke | Start or stop the peek stream for the CALLING renderer, ref-counted per renderer id so the in-app monitor and a detached pop-out subscribe independently, naming the session ids whose cards actually draw a peek (the slot follows Card Preview, so most cards draw the agent's message trail instead). Main taps and samples only the named sessions, and none at all for an empty list; the renderer re-sends the list whenever it changes and main seeds only the sessions new to it. Separate from `monitor:subscribe` because it gates a DIFFERENT standing cost: that one gates snapshot building, this one gates a PTY output listener plus a sampling timer. A closed monitor pays neither. |
 
 ### Task Detail Ownership (5 channels)
 Machine-global, and deliberately outside the `task:` prefix: these mutate no task, they arbitrate
@@ -256,19 +277,20 @@ from a host's complete mounted set, never accumulated from claim/release - see
 | `detail:syncOwned` | send | A host reports the COMPLETE set of details it currently owns, derived from its window store. Replaces a claim/release pair: a lost or out-of-order message cannot strand a claim, which used to make a task permanently unopenable. Owns, not merely mounts: a window RETAINED for a backgrounded project stays mounted but is excluded, since it is holding a Browser pane's guest alive rather than presenting that task's detail, and leaving it in would block the Agent Monitor from hosting the same task. Main reconciles per `(webContentsId, host)`. |
 | `detail:remoteOwners` | on | Main publishing which details are held by a DIFFERENT renderer, filtered per recipient. Terminal ownership ("one xterm per PTY") was renderer-local, so a detail hosted in the detached monitor left the main window free to mount a second xterm on the same live PTY. Only main sees both sides. |
 
-### Config (10 channels)
+### Config (11 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides) |
 | `config:getGlobal` | invoke | Fetch global-only AppConfig (no project overrides) |
-| `config:set` | invoke | Update global config (partial merge) |
-| `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down |
+| `config:set` | invoke | Update global config (partial merge). Resolves `ConfigSetResult` (`{ persisted }`), which says whether the write reached disk. Only the settings panel acts on it: this channel also carries window layouts, model caches and announcement dismissals, so a failure here is not necessarily something a user asked for (Sentry DESKTOP-1C) |
+| `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down. Puts the same boolean on `event.returnValue`, which the preload bridge discards: there is no renderer left to tell |
 | `config:getProject` | invoke | Fetch project-level config overrides |
-| `config:setProject` | invoke | Update project-level overrides |
+| `config:setProject` | invoke | Update project-level overrides; resolves `ConfigSetResult` |
 | `config:getProjectByPath` | invoke | Fetch project overrides by filesystem path |
-| `config:setProjectByPath` | invoke | Update project overrides by filesystem path |
-| `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs |
-| `config:changed` | on | Bare-signal event fanned to every window (main + open pop-outs) after any `config:set` persists; subscribers re-fetch via `config:get` so theme/settings sync live across windows |
+| `config:setProjectByPath` | invoke | Update project overrides by filesystem path; resolves `ConfigSetResult` for a background project as well as the current one |
+| `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs. Returns a bare count rather than `ConfigSetResult`: one click writes one file per project, and the count already excludes the ones that failed |
+| `config:changed` | on | Bare-signal event fanned to every window (main + open pop-outs) after any `config:set` is applied; subscribers re-fetch via `config:get` so theme/settings sync live across windows |
+| `config:writeFailed` | on | Push to the main window only, not broadcast to pop-outs (`ToastContainer` mounts in `AppLayout` alone, so a pop-out has no toast host): a synchronous write to the data directory failed, so the change applies to this session but will not persist. Carries the user-facing message, which names the cause when the errno gives one (disk full, no permission, read-only volume, drive unavailable). Latched per failing source in `src/main/config/write-failure-notice.ts`, so it fires at most once until a later write to that source succeeds (Sentry DESKTOP-14/DESKTOP-13, DESKTOP-1C) |
 
 ### Keybindings (1 channel)
 | Channel | Pattern | Purpose |
@@ -297,7 +319,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `mobile:getStatus` | invoke | Report bridge status: enabled, secure-storage availability, identity fingerprint, relay URL, relay transport state, paired device count, pairing-in-progress |
 | `mobile:startPairing` | invoke | Mint a pairing token, connect the pairing relay slot, and return the QR payload URI. Supersedes a stale in-progress ceremony rather than throwing |
 | `mobile:cancelPairing` | invoke | Cancel an in-progress pairing ceremony |
-| `mobile:listDevices` | invoke | List paired devices (id, display name, capabilities, paired-at, live connection state) |
+| `mobile:listDevices` | invoke | List paired devices (id, display name, capabilities, paired-at, live connection state and the time it last changed) |
 | `mobile:revokeDevice` | invoke | Revoke a paired device: drop it from the signed roster and tear down its session |
 | `mobile:renameDevice` | invoke | Rename a paired device (re-signs the roster entry, preserves paired-at) |
 | `mobile:setDeviceCapabilities` | invoke | Update a paired device's granted capability verbs (re-signs the roster entry); no longer surfaced as settings-tab UI, kept as the enforcement/future-preset seam |
@@ -324,7 +346,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageReferenceTemplate, supportsSummarize, remoteExecution) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, capabilities, remoteExecution, launchOptions) |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 
 ### Handoffs (1 channel)
@@ -347,18 +369,20 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 |---------|---------|---------|
 | `font:getAvailable` | invoke | List detected system fonts (monospace-filtered when detectable) for the Terminal tab's Font Family picker |
 
-### Git (12 channels)
+### Git (14 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `git:detect` | invoke | Detect git installation (path, version, minimum version check) |
 | `git:listBranches` | invoke | List branches for a repository |
 | `git:diffFiles` | invoke | List changed files with status and stats for a scope (working / staged / branch), or for a single commit (`<oid>^..<oid>`) when `commitOid` is set, overriding `scope` |
 | `git:fileContent` | invoke | Fetch original and modified file content for diff display (per scope, or for a single commit when `commitOid` is set) |
-| `git:diffSubscribe` | send | Subscribe to file-system watcher for live diff updates on a worktree (working tree plus git metadata) |
-| `git:diffUnsubscribe` | send | Unsubscribe from diff change watcher for a worktree |
+| `git:diffSubscribe` | send | Subscribe to file-system watcher for live diff updates on a worktree (working tree plus git metadata). Refcounted per sender window, so N windows (the in-app panel, the detached Changes window, per-file diff windows) can watch one path; the underlying watch arms once |
+| `git:diffUnsubscribe` | send | Release THIS window's subscription for a worktree; the watcher and merge-base cache are torn down only when the path's last subscriber leaves (a destroyed window releases its subscriptions automatically) |
 | `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk |
 | `git:checkPendingChanges` | invoke | Check whether a path has uncommitted or unpushed changes |
-| `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch, ahead/behind commit counts vs the base branch, and the HEAD tip commit (hash, subject, timestamp). Cheap enough to run on every panel open and watcher fire |
+| `git:prefetchRemotes` | invoke | Warm the throttled all-remotes fetch for a worktree (fire-and-forget, non-interactive) so a following `checkPendingChanges` skips or joins it rather than starting its own; the board calls it when a worktree-backed card drag begins, and main skips it when `git.autoFetchIntervalMinutes` is off |
+| `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch, ahead/behind commit counts vs the base branch, and the HEAD tip commit (hash, subject, timestamp). Cheap enough to run on every panel open and watcher fire. An optional `refreshRemote` flag makes the handler run the throttled all-remotes fetch first so `behind` reflects the actual remote; the panel passes it once per mount, never on watcher fires |
+| `git:worktreeHead` | invoke | A checkout's live HEAD (`branch`, `sha`): two rev-parse calls, no fetch. `branch` is null on a detached HEAD or a git error and `sha` is null only on a git error, so the pair tells the two apart. The Command Terminal layer re-derives every window's branch pill from it on reattach and on every `git:diffChanged`. Unqueued, like `git:branchSummary` |
 | `git:commitGraph` | invoke | Topo-ordered commit history (commits with parent links plus resolved tip / base / merge-base anchors) for the Changes panel's commit-history browser. Local-only and fail-safe, like `git:branchSummary` |
 | `git:fileHistory` | invoke | Commits touching a single file (`git log --follow`), newest first, for the Changes panel's per-file history popover. Local-only and fail-safe |
 | `git:blame` | invoke | Per-line blame (`git blame --line-porcelain`) - short hash, author, date per line of the file's current content - for the DiffViewer blame gutter. Local-only and fail-safe |
@@ -378,56 +402,80 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `window:isFocused` | invoke | Check if the sending window has focus (for the renderer's spawn-stall/plan-complete notification gating; the idle/crash desktop notifier resolves focus synchronously in main instead - see `src/main/notifications/desktop-notifier.ts`) |
 
 ### Pop-out Windows (6 channels)
-Detach a registered UI surface (usage stats, git changes, the task Browser pane, the Agent Monitor, the Memory Graph) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`.
+Detach a registered UI surface (usage stats, git changes, a single changed file's diff, the task Browser pane, the Agent Monitor, the Memory Graph) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`. Most kinds are singletons per instance key; `changes-file` is additive (one window per file, opened by double-clicking a Changes file row) with a main-side `maxInstances` cap and a cascade offset for each additional window of the kind. It opens maximized until the user resizes, moves, or maximizes one (that preference then persists per kind, like every pop-out; un-maximizing restores the default float).
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open |
+| `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open; resolves `false` when the kind's `maxInstances` cap refused the open (currently only `changes-file`) |
 | `popOut:close` | invoke | Close a surface's pop-out window |
 | `popOut:focus` | invoke | Focus (and restore if minimized) a surface's pop-out window |
 | `popOut:isOpen` | invoke | Whether a surface's pop-out window is currently open |
 | `popOut:listOpen` | invoke | List the instance keys of every currently-open pop-out window |
-| `popOut:changed` | on | Event: the set of open pop-out windows changed; pushed to the main window only, mirrored into `pop-out-store.ts` so in-app triggers (title bar, headers) flip between "open" and "focus" |
+| `popOut:changed` | on | Event: the set of open pop-out windows changed; pushed to the main window only. Handled by `renderer/pop-out/pop-out-changed.ts`, which mirrors the set into `pop-out-store.ts` (so in-app triggers - title bar, headers - flip between "open" and "focus") and then applies the effects a window CLOSING implies: a closed `changes` window leaves its task's inline Changes panel CLOSED rather than reclaiming the split. Those effects hang off this push and NOT off `pop-out-store.setOpen()`, which `popOut:listOpen` also drives on mount and on every HMR re-sync; `browser` masks its pane the same way but deliberately still reclaims on close |
 
-### Analytics (1 channel)
+### Analytics (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`, `componentStack?`) saying where it came from. See [Analytics](analytics.md). |
+| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`) saying where it came from. See [Analytics](analytics.md). |
+| `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Analytics](analytics.md). |
 
 ### App (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `app:getVersion` | invoke | Get Electron app version string |
 
-### Clipboard (2 channels)
+### Clipboard (3 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `clipboard:readImage` | invoke | Read the native clipboard image, cap its long edge at `IMAGE_LONG_EDGE_CAP`, prune stale `pasted-image-*` files from the temp directory (24h age limit, 40-file cap), save it to a temp file, returns file path or null |
+| `clipboard:saveImage` | invoke | Save PNG bytes the renderer decoded from a dropped image (a format the agent CLI cannot attach from a path, such as bmp) into the same temp directory under the same cap and prune; returns the file path, or null when the bytes are not a decodable image or the write failed |
 | `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 
-### Browser pane (14 channels)
+### Browser pane (24 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `browser:captureSend` | invoke | Composite the embedded webview frame + draw overlay + picked element into a PNG, write it to the session captures dir, and submit a structured prompt to the agent's PTY via PasteEngine |
 | `browser:urlGet` | invoke | Get the project default URL and per-task URL override for a given task. Takes a trailing `projectId` (the TASK's project, not the open board's) resolved via `resolveProjectContext`: a popped-out or retained pane outlives a project switch, so the ambient current project would route it to the wrong sidecar |
 | `browser:urlSetTask` | invoke | Persist a per-task URL override. Same trailing `projectId` |
 | `browser:urlClearTask` | invoke | Remove the per-task URL override (falls back to project default). Same trailing `projectId` |
-| `browser:clearStorage` | invoke | Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches across the per-worktree embedded browser partitions (and the legacy shared jar). Saved URLs are kept. |
+| `browser:clearStorage` | invoke | Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches across the project's task-keyed embedded browser partitions, its identity jar, and the legacy shared jar. Saved URLs are kept. |
+| `browser:jarEnsure` | invoke | Sync a task's cookie jar with the project identity jar before the pane's guest attaches, so it opens already signed into shared non-localhost (IdP) sessions. Takes the pane's own `projectId` (no ambient fallback, since the pane's partition is computed from that same value) and never rejects; the renderer caps the wait at 3s |
 | `browser:zoomChanged` | push | Broadcast the new zoom factor after Ctrl+wheel is applied in the main process (the webview's `zoom-changed` event lives on WebContents, not the DOM tag, so the renderer learns about wheel zoom only via this push). Carries the guest's `webContentsId` alongside the factor: one window can host several panes, and a factor-only broadcast made all of them adopt a zoom applied to just one |
 | `browser:paneRegister` | invoke | Register an open Browser pane's guest webContents (taskId, sessionId, webContentsId, url) with the main-process pane registry so the `kangentic_browser_*` MCP tools can target it. The handler backfills `projectId` from the session registry rather than trusting the renderer's ambient current project, since that is the field cross-project scoping is enforced on |
-| `browser:paneUnregister` | invoke | Unregister a Browser pane on unmount, scoped to the webContentsId that instance registered with (compare-and-delete) so an out-of-order unmount between the in-app pane and its pop-out cannot clobber a newer registration; the guest's own `destroyed` event is the backstop |
+| `browser:paneUnregister` | invoke | Unregister a Browser pane on unmount, keyed on the `webContentsId` that instance registered with. The registry is keyed on the guest, so this removes only that guest's entry: an out-of-order unmount between the in-app pane and its pop-out cannot clobber a newer registration for the same task, and a malformed id is a harmless no-op. The guest's own `destroyed` event is the backstop |
+| `browser:paneUserClose` | invoke | The user's Close browser control, sent BEFORE the pane unmounts so the guest's surface handle retires with reason `user-closed`. That reason is deliberately outside the hand-off allowlist (`HANDOFF_REASONS`), so no offscreen lane is stood up to re-spend the memory the user just reclaimed; the agent's next call on the old handle gets `surface-gone` saying the user closed it. The unmount that follows unregisters a guest the registry no longer knows, which is a no-op |
+| `browser:paneVisibility` | invoke | Renderer to main: where a registered pane currently sits on screen (`showing` / `hidden` / `parked`; lanes are `offscreen`). Only the renderer knows, since a pane can be held behind the terminal or parked with its window closed while its guest stays mounted and driveable. Surfaced to agents through `kangentic_browser_list_panes` and `kangentic_browser_open_pane` so a tool call can tell whether the user can see what it is doing |
 | `browser:paneOpenRequest` | push | Main asking the renderer to open a task's Browser pane, behind `kangentic_browser_open_pane`. Pane open state is renderer-owned (`browserOpenTasks`), so main cannot set it directly. Fire-and-forget: main validates every precondition itself (the open project, the per-project `browser.enabled` gate, the task row, the URL it seeds first) and then awaits the pane REGISTRY rather than a reply, because only a registered live guest proves the pane is driveable |
 | `browser:paneCloseRequest` | push | Main asking the renderer to close Browser panes, behind `kangentic_browser_close_pane`. Carries the taskIds main computed from the pane registry: the renderer must not re-derive them, since `browserOpenTasks` is not project-keyed and the board store holds only the open project's tasks, so a retained backgrounded pane would be invisible to a board lookup |
 | `browser:agentInput` | push | An agent has started or stopped driving a guest, carrying the guest's `webContentsId` (one window hosts several panes). Debounced to the whole BURST rather than each tool call: announcing every call made the pane hand focus back between consecutive calls, measured at 810 focus events in one drive against 11 debounced. Drives the visible state - the terminal dims and the pane is marked - and arms the focus guard. See `.claude/rules/agent-driven-focus.md` |
+| `browser:viewportOverride` | push | Main to renderer: the emulated viewport a guest is now laying out against. The pane cannot see this for itself, because an override is a CDP-session property main owns and the guest's own widget size never changes, so without the push the page silently renders at a width nothing on screen accounts for. Drawn as a chip with a reset control, which is also the user's escape hatch once the agent that set it is gone |
+| `browser:viewportClear` | invoke | The user clearing a pane's viewport override from that chip. Separate from the agent's own `reset`, so the user is never waiting on an agent to give their pane back |
+| `browser:paneWidgetSize` | invoke | Renderer to main: the `<webview>` element's own size in CSS pixels. Main cannot measure it (its window is the whole app, several times the pane) and it is what a requested viewport is fitted against, so without this report a fit computes a zoom of 1 and leaves the page cropped |
+| `browser:viewportGet` | invoke | Which override, if any, this guest is already under. A pane that mounts AFTER the override was set, a pop-out or a re-register, missed the push, so it asks once on registration rather than showing nothing |
+| `browser:offscreenSurfaces` | push | Main to renderer: which tasks currently hold their one browser surface in its OFFSCREEN form. The whole set on every change, never a delta, because a renderer that missed one push would stay wrong forever. This is what makes an offscreen surface visible at all: the card globe and the task-detail Browser pill both read `browserGuestTasks`, written in exactly one place (`BrowserPane.tsx`, on the guest's `dom-ready`), so a main-process offscreen window set nothing and the user had no way to know one existed, let alone close it |
+| `browser:offscreenSurfacesGet` | invoke | The same set, asked for once on mount and after an HMR update. A push-only channel leaves a reloaded renderer blank until the next change, and an offscreen surface can sit unchanged for a whole session |
+| `browser:offscreenClose` | invoke | The user's "Close browser" on a task whose surface is offscreen. There is no guest in `browserGuestTasks` to retire and no pane to unmount, so the ordinary close path is a silent no-op for it, which would leave a control that says Close and does nothing. Main destroys the offscreen window directly |
 | `browser:userKeyDuringDrive` | push | A keystroke the user made while an agent held the guest's focus, already encoded as terminal bytes (`src/shared/terminal-key-encoding.ts`). Main intercepts it at `before-input-event` so it never reaches the page, and the pane writes it to the terminal the user was typing in. CDP input does not travel that path, so an event arriving mid-drive is the user's |
 | `browser:downloadDone` | push | A download from a guest finished, carrying `{ fileName, filePath, state }` for the toast and its "Show in folder" action (which reuses the existing `shell:showItemInFolder`). Sent to the INITIATING guest's host window, resolved per download rather than captured at install time, since one `Session` serves every pane in a worktree |
 | `browser:guestMouseButton` | push | A guest page's mouse BACK / FORWARD button went down or up, carrying the guest's `webContentsId` and a MAIN-stamped `at`. A guest consumes the mouse outright - measured, one real back press produced 31 events inside the page and ZERO on the host window - so no renderer listener can see the button that push-to-talk and back-navigation both live on. `webContents.on('input-event')` does see it, and reports a true down/up PAIR, which is what makes push-to-HOLD possible rather than a one-shot toggle. The timestamp is stamped in main because the renderer's own clock is congested by the work a press starts (mic permission, engine start, AudioWorklet load: an 80ms timer measured 414ms), which would misfile a tap as a hold |
 
-### Updater (3 channels)
+### Updater (4 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `updater:check` | invoke | Check for application updates |
 | `updater:install` | invoke | Install downloaded update (quit and install) |
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
+| `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/analytics.md` |
+
+### Host memory pressure (2 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `hostMemory:pressure` | on | Event: host commit headroom crossed below the warning threshold (edge-triggered, not a per-tick heartbeat). Carries `{ sample, activeAgentCount }`. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
+| `hostMemory:recovered` | on | Event: host commit headroom recovered past the hysteresis line after a warning was latched (fires once per recovery, not on every healthy tick). Carries `{ sample }`. Clears the persistent toast `hostMemory:pressure` raised. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
+
+### GPU health (1 channel)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `gpuHealth:status` | invoke | How this launch is rendering, and whether the user still needs telling. Returns `GpuGraphicsStatus` (`{ softwareRendering, noticePending }`) via `ElectronAPI.gpuHealth.readStatus()`. A PULL, unlike its neighbour above: both facts are decided during boot, before the renderer can have registered a listener, and the escalation record behind them is already cleared by then, so a dropped push would lose the notice for good. Reading consumes `noticePending`, so a renderer reload cannot re-toast. See `src/main/diagnostics/gpu-health.ts` (Sentry DESKTOP-18 / DESKTOP-W) |
 
 ### Announcements (4 channels)
 | Channel | Pattern | Purpose |
@@ -449,12 +497,13 @@ Read-only structured-transcript access for the conversation viewer. Prefer the e
 | `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
-### Memory (9 channels)
+### Memory (10 channels)
 Conversation-memory semantic layer (Smart-mode search) and the Memory Graph surface built on it.
 See the Memory settings tab.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `memory:status` | invoke | Report the conversation-memory index status for the Smart-mode palette UI. |
+| `memory:prewarm` | on | Spawn + init the embedding worker ahead of the first Smart query (fire-and-forget, embeds nothing). Sent on a Smart-mode Quick Find open: the worker is released once it has gone long enough without a query or pending index work (see `memory.semanticEnabled` in `docs/configuration.md` for the windows), and the typing that follows the open is the window its cold start needs. A no-op when semantic is off, the model is absent, or the worker has crashed past its cap. |
 | `memory:rebuildIndex` | invoke | Purge the current project's conversation index and re-run the backfill sweep (recovery from a corrupt/stale index; Memory settings "Rebuild index"). |
 | `memory:graphSnapshot` | invoke | Cheap read of the cached Memory Graph projection plus its coverage strip. Never runs the projection pass. Returns `MemoryGraphSnapshot \| null`. |
 | `memory:graphRefresh` | invoke | Ask for a background refresh of one project's projection. Returns immediately; completion arrives via `memory:graphChanged`. |
@@ -467,8 +516,8 @@ See the Memory settings tab.
 ### Diagnostics (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `diagnostics:logAppend` | invoke | Renderer / preload forwards a `LogEntry` to the main process. The main-side log mirror persists `error` and `warn` levels unconditionally and `info` / `debug` / `log` when `developer.persistConsoleLogs` is on. NDJSON written to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`. |
-| `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`. Always-on - no toggle. |
+| `diagnostics:logAppend` | invoke | Renderer / preload forwards a `LogEntry` to the main process. The main-side log mirror persists `error` and `warn` levels unconditionally and `info` / `debug` / `log` when `developer.persistConsoleLogs` is on. NDJSON written to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, falling back to `<configDir>/logs/` while no project is open (the same fallback crash capture uses). |
+| `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`, falling back to the app's own config directory when no project is open (a crash must never be silently dropped for that reason). Always-on - no toggle. |
 
 ### Dictation (14 channels)
 By-session-id, not task-scoped (no `projectId`), in the same category as `session:write`.
@@ -487,7 +536,7 @@ By-session-id, not task-scoped (no `projectId`), in the same category as `sessio
 | `transcribe:modelProgress` | on | Push: first-use model download progress |
 | `transcribe:downloadModel` | invoke | Pre-download the selected model from settings |
 | `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks (fire-and-forget) |
-| `transcribe:prewarm` | on | Pre-load the selected engine so the next press is instant; `null` releases the warm engines (fire-and-forget) |
+| `transcribe:prewarm` | on | Pre-load the selected engine's live (streaming) model so the next press streams partials at once; the accurate model loads on the first press itself, overlapped with the utterance. `null` (dictation disabled) releases the worker outright (fire-and-forget) |
 
 ## Database
 
@@ -504,19 +553,20 @@ Overridable via `KANGENTIC_DATA_DIR` env var.
 
 Stores the project list. Tables:
 
-- **projects** -- id, name, path, github_url, default_agent, last_opened, created_at
+- **projects** -- id, name, path, github_url, default_agent, default_model, default_effort, group_id, position, last_opened, created_at
 - **global_config** -- key/value store for app-wide settings
-- **project_groups** -- sidebar grouping for projects. Fields: id, name, position, collapsed
+- **project_groups** -- sidebar grouping for projects. Fields: id, name, position, is_collapsed
 
 ### Per-Project DB (`<configDir>/projects/<projectId>.db`)
 
 Created on project open. Stored in the global config directory (not inside the project). Tables:
 
-- **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null), position, color, icon, is_archived, permission_mode, auto_spawn, auto_command, auto_command_mode, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at
-- **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, auto_command_state, auto_command_text, auto_command_error, auto_command_at, profile_id, run_mode, session_id, worktree_path, worktree_folder, branch_name, pr_number, pr_url, pr_state, head_sha, base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, archived_at, created_at, updated_at
-- **actions** -- Executable steps. Types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `create_worktree`, `cleanup_worktree`, `create_pr`, `webhook`. Config stored as JSON.
-- **swimlane_transitions** -- Maps lane pairs to action chains. Fields: from_swimlane_id (`*` = any), to_swimlane_id, action_id, execution_order
-- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, timestamps
+- **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null, set only at create, narrowed on read via `normalizeSwimlaneRole` and normalized when applied from `kangentic.json`, with an unconditional migration repairing any stray value already on disk. See [database.md](database.md)), position, color, icon, is_archived, permission_mode, auto_spawn, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at, description (plus the retired `auto_command` / `auto_command_mode`, which the column's message automation replaced)
+- **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, auto_command_state, auto_command_text, auto_command_error, auto_command_at, profile_id, run_mode, session_id, worktree_path, worktree_folder, worktree_skip_reason, branch_name, pushed_branch, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, base_branch, resolved_base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, archived_at, created_at, updated_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
+- **column_automations** -- What runs when a task enters or leaves a column. Fields: id, swimlane_id, name, type (`send_message`, `run_script`, `webhook`, `notify`, plus the legacy `spawn_agent`), trigger (`enter`/`exit`), position, enabled, config_json, created_at, updated_at. One list per column, numbered per trigger, with names unique per column
+- **automation_runs** -- One row per execution, so an outcome survives a restart and a rename. Fields: id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status (`running`/`succeeded`/`failed`/`skipped`/`interrupted`), detail, attempts, started_at, finished_at. Swept on project open: stale `running` rows become `interrupted`, then the newest 200 are kept
+- **actions**, **swimlane_transitions** -- Retired by the migration that created `column_automations`. Left on disk only so an older build can still read the file; nothing reads them after the migration. See [database.md](database.md)
+- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, isolated_swimlane_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, started_at, suspended_at, exited_at, suspended_by, total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, applied_model, applied_effort, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed, tool_breakdown, compaction_count (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
 - **backlog_tasks** -- Staging area tasks (Backlog View). Pre-board tasks with priority, labels, and optional external source tracking.
 - **backlog_attachments** -- File attachments for backlog tasks, mirroring `task_attachments`. Copied to `task_attachments` on promote.
@@ -574,25 +624,45 @@ When a task moves between swimlanes, the IPC handler checks priorities in order:
 1. **Target is To Do** → Kill session, preserve worktree
 2. **Target is Done** → Suspend session (resumable), archive task
 3. **Target has auto_spawn=false** → Suspend session
-4. **Task has active session** → A permission-mode delta (destination's effective mode differs from the session record's spawn-time mode) suspends and respawns so the new `--permission-mode` / `--model` / `--effort` land as CLI flags. Otherwise live-inject model/effort/auto_command when the adapter supports it, respawn on a concrete model/effort delta without live-swap, or keep the session alive. See [Transition Engine](transition-engine.md) Priority 3 for the full sub-case order.
-5. **Task has no session** → Create worktree (if enabled), execute transition action chain. For resumed sessions, `auto_command` is preloaded as the resume prompt. For fresh spawns, it is injected via `TerminalSubmitScheduler.scheduleKeystrokes`. Note that escalation to a restart-with-prompt is wired ONLY on the warm-session column move (`task-move.ts`); neither fresh-spawn call site passes an `escalate` handler, so an unconfirmed fresh-spawn `auto_command` stops at `failed`. See [Command Injection](command-injection.md) for the delivery ladder.
+4. **Task has active session** → A permission-mode delta (destination's effective mode differs from the session record's spawn-time mode) suspends and respawns so the new `--permission-mode` / `--model` / `--effort` land as CLI flags. Otherwise live-inject model/effort/the column's message when the adapter supports it, respawn on a concrete model/effort delta without live-swap, or keep the session alive. Either keep-alive return then runs the destination's On enter group, with the already-delivered message named to the runner so it is not sent twice. See [Transition Engine](transition-engine.md) Priority 3 for the full sub-case order.
+5. **Task has no session** → Create worktree (if enabled), run the destination's On enter group with the fallback spawn handed in, so the agent starts right before the first automation that needs it. For resumed sessions, the column's message is preloaded as the resume prompt. For fresh spawns, it is injected via `TerminalSubmitScheduler.scheduleKeystrokes`. Note that escalation to a restart-with-prompt is wired ONLY on the warm-session column move (`task-move.ts`); neither fresh-spawn call site passes an `escalate` handler, so an unconfirmed fresh-spawn message stops at `failed`. See [Command Injection](command-injection.md) for the delivery ladder.
 
-Transitions only fire for case 5. The action chain runs in `execution_order`: typically `create_worktree` → `spawn_agent`.
+The SOURCE column's On exit group runs ahead of all five, in Phase 1 inside the short lock, after
+the DB write and before the priority branches: Priority 1 kills the session, so an exit automation
+that needs the agent has to find it still attached. An exit row never aborts the move, and the
+group is capped at 60 seconds in aggregate whatever the adapters declare, because holding the
+short lock is what wedges that task's next move. Every row is isolated: a failure records its
+outcome in `automation_runs` and the next row still runs.
 
-### Action Types
+### Automation adapters
 
-| Type | What it does |
-|------|-------------|
-| `spawn_agent` | Build Claude CLI command, spawn PTY. Resumes if suspended session exists. |
-| `send_command` | Write interpolated text to running PTY stdin |
-| `run_script` | Spawn one-off shell command (no persistence) |
-| `kill_session` | Suspend session, clear task.session_id |
-| `create_worktree` | Create git worktree with sparse-checkout |
-| `cleanup_worktree` | Remove worktree directory and optionally branch |
-| `create_pr` | Reserved. Not yet implemented. |
-| `webhook` | POST to URL with interpolated body |
+Each type is an adapter under `src/main/automations/adapters/`, registered in
+`automation-registry.ts` and declared once in `AUTOMATION_MANIFEST`
+(`src/shared/automation-manifest.ts`), which the renderer reads for the picker, the dialog's
+fields, and the row sentence. The engine dispatches through the registry, so a new type is one
+folder and one manifest entry. See `.claude/rules/automation-adapters.md` for the contract.
 
-Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{attachments}}`, `{{port}}`. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
+| Type | Label | Needs | Timeout | What it does |
+|------|-------|-------|---------|-------------|
+| `send_message` | Send message to agent | the agent | the scheduler's own 120s | Deliver an interpolated message to the task's agent, through the three delivery rungs |
+| `run_script` | Run script | none | 10 minutes by default, per automation | Run a script as a child process in the task's worktree, awaiting the exit and recording the code |
+| `webhook` | Call webhook | none | 30s | Send a request with an interpolated body, retried on a transport error, 429 or 5xx with an idempotency key |
+| `notify` | Notify me | none | none | Raise one desktop notification through the same path `DesktopNotifier` uses |
+| `spawn_agent` | Start agent | none | none | Legacy. Kept so a row carrying a custom `promptTemplate` still runs; never offered for a new automation |
+
+The retired types are `kill_session`, `create_worktree` and `cleanup_worktree`
+(`RETIRED_ACTION_TYPES`). They are gone, rows and all: each was a no-op or a duplicate of the move
+path. A hand-written `kangentic.json` naming one is warned and skipped rather than rejected.
+`create_pr` survives only in the `ActionType` union and has no adapter and no migration case, so it
+takes the same warn-and-skip path without being named in that list.
+
+`send_command` is NOT retired. It is read as an alias for `send_message`, and its `command` field as
+an alias for `message`, by the board-config reader (`apply-automations.ts`), the MCP and command
+paths, and the legacy-action migration alike, so a hand-written file that predates the rename still
+opens. Neither alias is written back. See
+[Configuration](configuration.md#column-automations).
+
+Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}` and `{{trigger}}` in a column automation, where there is a move to read them from. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
 
 ## PTY Session Manager
 
@@ -601,18 +671,18 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 ### Spawn Flow
 
 1. Check concurrency limit → queue if full (returns placeholder with `status: 'queued'`)
-2. Kill any existing PTY for the same task (orphan dedup)
+2. Drain every existing registry row for the task (kill each PTY, preserve its files, carry scrollback over from the most recently started one) so the registry holds one row per task; the full step list is in [session-lifecycle.md](session-lifecycle.md#spawn-flow)
 3. Resolve shell and arguments (platform-specific)
 4. Spawn PTY via node-pty
 5. Start two file watchers (status, events)
 6. Set up output handler (16ms batched flush)
-7. After 100ms delay, write the CLI command to PTY stdin
+7. After 100ms delay, write the CLI command to PTY stdin (agent spawns are prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient Command Terminals are not)
 
 ### Output Streaming
 
 - **Buffer:** PTY `onData` accumulates into per-session buffer
 - **Flush:** 16ms interval (~60fps) emits buffered data via IPC `session:data`
-- **Scrollback:** 512KB ring buffer per session. Used to restore terminal content when switching views.
+- **Scrollback:** 512KB ring buffer per session, used to restore terminal content when switching views. Alt-screen sessions and sessions whose ring spans a geometry change restore from the parsed grid instead - see [session-lifecycle](session-lifecycle.md).
 
 ### File Watchers
 
@@ -624,6 +694,18 @@ Two watchers per session, reading files written by bridge scripts:
 | Events | `events.jsonl` | 50ms | `session:event` -- tool_start/end, prompt, idle; `session:activity` -- thinking/idle (derived) |
 
 Events watcher uses byte offset tracking to only read new lines (no full re-read). Activity state (thinking/idle) is derived from event types -- see [Activity Detection](activity-detection.md).
+
+Both go through `FileWatcher` (`src/main/pty/readers/file-watcher.ts`), which pairs an `fs.watch`
+fast path with a 1s poll that runs unconditionally as the fallback. Two behaviors are load-bearing
+on Windows, where a directory `fs.watch` whose target is deleted emits `rename` at roughly 150k
+events/sec forever, with no `error` event, until `close()`:
+
+- Both files are created (empty) before their watcher is constructed, so each watcher arms on the
+  FILE. When a watcher has to fall back to watching the parent DIRECTORY (the file does not exist
+  yet), it counts raw events ahead of its filename filter and disarms itself on a flood, dropping
+  to the poll and re-arming on the file once it appears.
+- Deleting a live session's directory is therefore survivable: the watcher releases its handle,
+  `repairMissingEventsDir` recreates the directory, and the poll picks the file back up.
 
 ### Shell Resolution
 
@@ -652,7 +734,11 @@ Shell-specific adaptations:
 | Repaint-settle max wait | 400 ms | Ceiling for the post-resize repaint wait before sampling scrollback |
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
-| Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills PTYs immediately) |
+| Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills mature PTYs immediately) |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
+| KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
+| YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s boot-canary window plus margin) |
+| YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` |
 
 Stale-thinking detection is no longer a `SessionManager` constant. It now lives in the activity engine watchdog (`src/main/activity-engine/engine/`), which emits a synthetic idle transition after `DEFAULT_STALE_THINKING_TIMEOUT_MS` (180000 ms) of no activity signal while in the "thinking" state. The engine is event-driven, so there is no separate polling timer. See [Activity Detection](activity-detection.md).
@@ -673,7 +759,7 @@ All stores in `src/renderer/stores/`. They call `window.electronAPI.*` for IPC a
 
 ### BoardStore (`board-store.ts`)
 
-State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `completingTaskIds`, `completionGates`, `recentlyArchivedId`, `lanePins`, `pendingMoveConfirms` (with `pendingMoveConfirm` as its head)
+State: `tasks`, `swimlanes`, `automations`, `automationsLoaded`, `archivedTasks`, `loading`, `completingTask`, `completingTaskIds`, `completionGates`, `recentlyArchivedId`, `lanePins`, `pendingMoveConfirms` (with `pendingMoveConfirm` as its head)
 
 - **Optimistic updates** -- all mutations update UI immediately, then sync via IPC. Errors revert via full `loadBoard()`.
 - **Stale move protection** - per-task `moveGenerations` counters prevent older async reloads from clobbering newer moves of the same task.
@@ -681,6 +767,7 @@ State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `comp
 - **Move confirmations queue** - `pendingMoveConfirms` is FIFO. As a single slot, a second confirmation overwrote the first, and that move had already returned `ok` without calling the IPC, leaving an optimistic placement no write backed.
 - **Session cascade** -- after task move, reloads sessions to detect spawns/kills from transition engine. Auto-activates new sessions with toast notification.
 - **Completion animation** -- `setCompletingTask()` mounts the FlyingCard with the captured drop rect; a per-task completion gate joins the fly finishing (`markCompletionAnimationDone`) and the move being approved (`approveCompletion`, after a clean worktree probe or a confirmed dialog), and `persistCompletion` runs the actual move once both signals land.
+- **Automations** (`board-store/automations-slice.ts`) -- `loadAutomations()` fetches every column's list, `replaceAutomationsForColumn()` writes one column's whole list and re-reads, and `runAutomationAgain()` re-runs one row for the failure toast's Run again and returns the result. `selectAutomationCounts(swimlaneId)` derives the runnable enter/exit counts the rail, the board glyph and the overview all read, so the same number cannot mean three things.
 
 ### SessionStore (`session-store.ts`)
 
@@ -688,6 +775,7 @@ State: `sessions`, `activeSessionId`, `detailTaskId`, `dialogSessionIds`, `sessi
 
 - **Terminal ownership handoff** -- `dialogSessionIds` (a string array) lists every session owned by an open task-detail window, so the bottom panel never renders an xterm for a session a window already owns (one xterm per PTY). It replaced the scalar `dialogSessionId` once task detail became modeless and multiple windows can stack. When a window claims a session, the panel unmounts that session's xterm; on release, the panel recreates from scrollback. The array is renderer-GLOBAL, not per-layer: `useWindowSessionClaims` reconciles it across every window-manager instance in the renderer (`allWindowManagers` - board, Command Terminal, Agent Monitor), resolving each window's taskId through its manager's `anchorToTaskId` since the board anchors by taskId and the monitor by `projectId:taskId`. A reconciler that walked one layer would treat the other layers' claims as stale and erase them, putting a second xterm on a live PTY.
 - **HMR store re-sync** -- The `vite:afterUpdate` handler in `App.tsx` re-fetches all IPC-backed stores (project, config, board, session) after Vite HMR replaces modules, preventing stores from reverting to defaults. A unit test (`hmr-resync.test.ts`) enforces that new stores are included. Usage and events are scoped to the current project; activity is fetched unscoped so sidebar badges work across all projects.
+- **HMR instance pin (Pattern E)** - The store instance is pinned in `import.meta.hot.data.sessionStore`, so a re-eval (usually a `session-store/` slice edit) cannot hand part of the tree a second, empty store. Re-sync alone could not cover renderer-only state that no `load*` call restores: the browser-pane sets reading empty for one commit unmounted every live `<webview>`. It pins WITHOUT self-accepting, unlike the other Pattern E stores, because it sits in an import cycle (session-store -> the arrival-focus arbiter -> dictation-target -> session-store) and Vite turns an `invalidate()` from inside a cycle into a full page reload. The separate `project-store` <-> `session-store` cycle was broken outright via `stores/session-lifecycle-hooks.ts` and is guarded by `tests/unit/renderer-store-import-cycles.test.ts`. Measure any change here with `scripts/hmr-guest-probe.mjs`. See `.claude/rules/hmr-patterns.md`.
 - **Project switch cleanup** -- On project switch, `activeSessionId`, `dialogSessionIds`, `detailTaskId`, `sessionUsage`, and `sessionEvents` are cleared before re-syncing. A generation counter invalidates in-flight syncs from the previous project. `sessionActivity` and `sessions` are preserved for sidebar badge rendering. After sync completes, any `_pendingOpenTaskId` (set by notification click) is applied and cleared.
 - **Event capping** -- max 500 events per session to bound DOM size in ActivityLog.
 - **Queue position** -- `getQueuePosition()` returns 1-indexed position sorted by startedAt.
@@ -696,7 +784,7 @@ State: `sessions`, `activeSessionId`, `detailTaskId`, `dialogSessionIds`, `sessi
 
 State: `config` (AppConfig), `globalConfig`, `appVersion`, `agentList`, `gitInfo`, `settingsOpen`, `projectOverrides`
 
-- **Theme subscription** -- watches theme changes, updates `<html>` class for CSS variables.
+- **Theme subscription** -- resolves the shown theme (the Theme tab's hover preview if one is resting, else `resolveTheme(config, systemPrefersDark)`: the hand-picked `theme`, or with `themeFollowsSystem` on, the pair member for the OS side read off `prefers-color-scheme`), swaps the `theme-*` class on `<html>` (no class for `dark`), and mirrors the RESOLVED committed theme, never a preview, to `localStorage` to seed the next launch's FOUC guard. A media-query listener keeps `systemPrefersDark` live, so a follow-system install repaints when the OS flips with no restart or config write.
 - **App version** -- `loadAppVersion()` fetches the Electron app version via IPC.
 - **Agent inventory** - `loadAgentList()` probes every registered agent adapter and returns per-agent found/path/version/displayName (`AgentDetectionInfo[]`); consumers look up their own agent's entry rather than reading a single Claude-only detection result.
 - **Git detection** -- `detectGit()` checks for git installation, version, and minimum version requirement.
@@ -761,6 +849,10 @@ For each session, a merged settings file is created at `.kangentic/sessions/<ses
 5. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
 6. Write merged file, pass to CLI via `--settings`
 
+### Global Config Writes
+
+Before every Claude spawn (task chokepoints and the Command Terminal alike), `ClaudeAdapter.ensureTrust()` read-modify-writes the global `~/.claude.json` under one lock: trust for the working directory, `kangentic` in the project's enabled MCP servers, and `diffSidebarOpen: false` so Claude Code 2.1.260's fullscreen diff panel stays closed at launch (it is a global-config key only, so `--settings` cannot carry it). One lock is all the three share: only the diff-panel write is atomic (temp file + rename) and bails on a file it cannot parse, while the two trust writers still rewrite in place and fall back to an empty object on a parse failure. Details in [Global Config Writes](agent-integration.md#global-config-writes-claudejson).
+
 ## Session Recovery
 
 On project open (`src/main/transition-engine/session-startup/`):
@@ -774,15 +866,45 @@ On project open (`src/main/transition-engine/session-startup/`):
 
 ## Performance
 
-- **WebGL xterm with an attachment budget** - attempts the WebGL renderer first and recovers from context loss (2s/10s retries, then permanent DOM fallback). Live WebGL attachments are capped at `WEBGL_ATTACH_BUDGET` (8) page-wide, below Chromium's ~16-context limit: a coordinator (`useFocusedSessionsSync`) keeps the most-recently-focused terminal windows on WebGL and temporarily suspends the rest to the DOM renderer (`suspendedByBudget` in the renderer report - not a context loss, never escalates to the permanent fallback), re-attaching on focus (`src/renderer/utils/terminal-webgl.ts`, `terminal-visibility.ts`). The coordinator applies that plan BEFORE it publishes the parked set: swapping the renderer changes the cell metric a fit divides by, and a revealed terminal fits itself synchronously, so a fit taken on a renderer the terminal is about to stop using sizes the grid wrong (see the fit-on-the-renderer-you-keep bullet in [session-lifecycle.md](session-lifecycle.md))
+- **WebGL xterm with an attachment budget** - attempts the WebGL renderer first and recovers from context loss on a retry schedule of 2s, 10s, 30s, 30s, 60s and then every 120s, with no permanent fallback. The tail is sized to outlast Chromium's 3D-API block: after a second GPU-process crash within two minutes Chromium refuses WebGL for the page's domain until the older crash entry ages out, up to 120s later, so the old two-retry ladder always failed in exactly the case it ran in (Sentry DESKTOP-T). A terminal on the DOM renderer that is not budget-suspended always has a retry armed (`retryArmed` and `failedAttempts` in the renderer report). Live WebGL attachments are capped at `WEBGL_ATTACH_BUDGET` (8) page-wide, below Chromium's ~16-context limit: a coordinator (`useFocusedSessionsSync`) keeps the most-recently-focused terminal windows on WebGL and temporarily suspends the rest to the DOM renderer (`suspendedByBudget` in the renderer report - not a context loss, does not advance the retry schedule), re-attaching on focus (`src/renderer/utils/terminal-webgl.ts`, `terminal-visibility.ts`). The coordinator applies that plan BEFORE it publishes the parked set: swapping the renderer changes the cell metric a fit divides by, and a revealed terminal fits itself synchronously, so a fit taken on a renderer the terminal is about to stop using sizes the grid wrong (see the fit-on-the-renderer-you-keep bullet in [session-lifecycle.md](session-lifecycle.md))
 - **Parked-window write gating** - a terminal window that is off-view (board layer parked on the Backlog view, or occluded by a maximized same-layer window) leaves the focused-session set, so main stops emitting its PTY data at the source; any stragglers are acked-and-dropped by the renderer queue (never parsed, never wedging backpressure). On reveal the terminal repaints from the scrollback ring via `reloadScrollback` (`src/renderer/utils/parked-terminals.ts`, `focused-sessions.ts`). Reveal is the narrow edge: a session can leave the focused set without being parked at all (a detail window a detached monitor owns, a hidden panel, a closed command bar over a transient), so `src/renderer/utils/focused-terminals.ts` repaints on the wider unfocused-to-focused edge too. See the focus-edge catch-up bullet in [session-lifecycle.md](session-lifecycle.md) for the mechanism
-- **Serialized terminal construction** - building an xterm (construct + `open` + WebGL context + fit) costs ~75ms, peaking at 130ms, of which the WebGL context alone is 13-29ms on a COLD first context and 7.4-9.6ms once the GPU process is warm (a real session opens warm far more often than cold, so the unqualified range overstated the steady state). A later phase-split pass over that same measurement - the dev-only `init-timing` renderer trace emitted from `initTerminal` (`src/renderer/hooks/useTerminal.ts`) - puts construct plus WebGL context together at 82-87% of the synchronous beat (median 84%), leaving the fit as the small remainder; that split is the ceiling on what reusing a terminal across an ownership handoff could ever save, since the fit is per-host and has to run either way. Each host defers its own init by a frame, but that is the SAME frame for every host mounting in one commit, so a burst (dragging a batch of tasks into a spawning column, restoring a workspace) compounded into a single multi-hundred-ms block with no paint and no input. `src/renderer/utils/terminal-init-queue.ts` runs at most one construction per animation frame, FIFO. It does not reduce the work, it caps the longest single block at one terminal's cost so input keeps being processed between them; a lone terminal still inits on the very next frame. Measured with `kangentic_devtools_event_loop_lag`'s long-frame ring, which is where the ~75ms figure comes from
+- **Serialized terminal construction** - building an xterm (construct + `open` + WebGL context + fit) costs ~75ms, peaking at 130ms, of which the WebGL context alone is 13-29ms on a COLD first context and 7.4-9.6ms once the GPU process is warm (a real session opens warm far more often than cold, so the unqualified range overstated the steady state). A later phase-split pass over that same measurement - the dev-only `init-timing` renderer trace emitted from `initTerminal` (`src/renderer/hooks/useTerminal.ts`) - puts construct plus WebGL context together at 82-87% of the synchronous beat (median 84%), leaving the fit as the small remainder; that split is the ceiling on what reusing a terminal across an ownership handoff could ever save, since the fit is per-host and has to run either way. Each host defers its own init by a frame, but that is the SAME frame for every host mounting in one commit, so a burst (dragging a batch of tasks into a spawning column, restoring a workspace) compounded into a single multi-hundred-ms block with no paint and no input. `src/renderer/utils/terminal-init-queue.ts` runs at most one construction per animation frame, FIFO. It does not reduce the work, it caps the longest single block at one terminal's cost so input keeps being processed between them; a lone terminal still inits on the very next frame. Measured with `kangentic_devtools_event_loop_lag`'s long-frame ring, which is where the ~75ms figure comes from. The queue also holds every construction for the length of a board card drag (the coalescer's `isBoardDragActive`, resumed via `onBoardDragEnd` one frame after the drop frame): the 2026-09-16 drag audit measured a construction at 21 to 42ms on the production build, which is 3 to 6 refresh periods at 144Hz, and the pane a drop spawns mounts while the user is already dragging the next card of a batch. Only construction is held; the xterm write queue streams through a drag on purpose (see [board-drag-perf-audit.md](board-drag-perf-audit.md))
 - **Resize debouncing** -- PTY resize calls debounced at 200ms, suppressed during panel drag
-- **Repaint-settled scrollback** - after a geometry-changing resize (cols or rows), `getScrollback` waits for the agent TUI's async repaint to land before sampling, so a restored terminal never replays a frame drawn for a stale geometry; while the agent is actively streaming (never quiesces) the wait settles early on the post-resize repaint marker instead of burning the max-wait ceiling (see [session-lifecycle](session-lifecycle.md))
+- **Repaint-settled scrollback** - after a geometry-changing resize (cols or rows), `getScrollback` waits for the agent TUI's async repaint to land before sampling, so a restored terminal never replays a frame drawn for a stale geometry; while the agent is actively streaming (never quiesces) the wait settles early on the post-resize repaint marker instead of burning the max-wait ceiling, and a marker-less repaint (Claude's idle default renderer redraws without a full-screen erase) settles on its quiesce once the marker-arrival window has passed rather than riding the whole ceiling (see [session-lifecycle](session-lifecycle.md))
 - **Activity log** -- plain DOM list instead of xterm. Events flow through JSONL files, not terminal output.
 - **Terminal ownership handoff** -- one xterm instance per session at a time prevents duplicate resize calls that corrupt TUI output. Enforced ACROSS renderers, not just within one: main pushes `detail:remoteOwners` (per-recipient, own claims filtered out) so the bottom panel yields its terminal to a detail hosted in the detached Agent Monitor. Without it the panel and the pop-out each mounted an xterm on the same PTY and fitted it to two different widths.
 - **Output batching** -- 16ms flush interval prevents per-character IPC overhead
 - **Scrollback cap** -- 512KB prevents unbounded memory growth
+
+## Automation Adapters
+
+`src/main/automations/`
+
+One folder per automation type, mirroring `src/main/boards/` and `src/main/pr/`. The registry
+dispatches by type, so the transition engine, the IPC handlers and the renderer contain no
+per-type branching.
+
+```
+src/main/automations/
+  shared/
+    automation-adapter.ts   # AutomationAdapter contract + AutomationContext
+    automation-errors.ts    # the typed failures a run records
+  adapters/
+    send-message/           # deliver the column's message to the agent
+    run-script/             # child process in the task's worktree, awaits the exit
+    webhook/                # request with retry, idempotency key, response.ok check
+    notify/                 # one desktop notification
+    legacy/spawn-agent.ts   # status 'legacy', never offered for a new automation
+  automation-registry.ts    # AutomationRegistry + automationRegistry singleton
+  automation-runner.ts      # per-row isolation, timeouts, and the automation_runs record
+  automation-run-outcome.ts # rationed failure push to the renderer
+  interpolate-config.ts     # per-field escaping from the manifest's `escape`
+  column-message.ts         # which row is the column's message, for the profile overlay
+```
+
+The manifest (`src/shared/automation-manifest.ts`) is renderer-safe and holds each type's label,
+description, icon name, `needs`, fields, timeout and retry policy.
+`tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree.
 
 ## Board Adapters
 
@@ -822,7 +944,8 @@ src/main/boards/
 `BoardAdapter` (in `shared/types.ts`) declares:
 - Required metadata: `id` (matches `ExternalSource`), `displayName`, `icon`, `status` (`'stable' | 'stub'`).
 - Required setup methods: `checkPrerequisites()` (structured CLI + auth check), `checkCli()` (legacy wrapper for back-compat).
-- Required import methods: `fetch()`, `downloadImages()`. Optional `downloadFileAttachments()` for providers with explicit attachment relations (Azure DevOps).
+- Required import methods: `fetch()` (whose `input.since` drives incremental reconcile), `downloadImages()`. Optional `downloadFileAttachments()` for providers with explicit attachment relations (Azure DevOps).
+- Optional import-performance methods: `hydrateForImport()` (fetch deferred per-item detail such as Azure DevOps comments for the selected items at import time) and `listExternalIds()` (cheap id-only listing so the reconcile can prune deleted items). Both implemented by Azure DevOps.
 - Optional future methods: `authenticate()`, `listProjects()`, `listIssues()`, `pushUpdates()`. Reserved for live discovery and write-back. No provider implements these yet.
 
 Stub adapters (`jira`, `linear`, `trello`) implement the required surface with method bodies that throw `Error('<Provider> adapter is not yet implemented')`. The IPC handler short-circuits stubs by checking `adapter.status === 'stub'` before dispatch, returning a structured error to the renderer.
@@ -838,7 +961,7 @@ No edits to IPC handlers or the renderer are required - dispatch is registry-dri
 
 ### IPC channels
 
-Backlog Import group (6 channels): `backlog:importCheckCli`, `backlog:importFetch`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. All dispatch through `boardRegistry.getOrThrow(source)` in `src/main/ipc/handlers/backlog.ts`.
+Backlog Import group (7 channels): `backlog:importCheckCli`, `backlog:importGetCached`, `backlog:importReconcile`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. The fetch/import channels dispatch through `boardRegistry.requireStable(source)` in `src/main/ipc/handlers/backlog.ts`. `importGetCached` reads the per-project `remote_item_cache` table with no network; `importReconcile` fetches only items changed since the cache high-water mark, merges them, and auto-prunes items the remote no longer has.
 
 Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
 
@@ -856,7 +979,7 @@ Phase 1 (shipped) covers identity/roster/pairing/transport and the deny-by-defau
 - [Agent Integration](agent-integration.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
 - [Board Integration](board-integration.md) -- BoardAdapter interface, registry, how to add a new provider
 - [Mobile Bridge](mobile-bridge.md) - Pairing ceremony, signed device roster, capability verbs, relay transport
-- [Transition Engine](transition-engine.md) -- Action types, templates, priority rules
+- [Transition Engine](transition-engine.md) -- Automation adapters, triggers, template variables, priority rules
 - [Database](database.md) -- Full schema reference, migrations, repository pattern
 - [Configuration](configuration.md) -- Config cascade, all settings keys
 - [Cross-Platform](cross-platform.md) -- Shell resolution, path handling, packaging

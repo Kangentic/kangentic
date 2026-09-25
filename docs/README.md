@@ -23,15 +23,17 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 ### Architecture
 - [Architecture](architecture.md) -- Process model, data flow, IPC channels, stores
 - [Session Lifecycle](session-lifecycle.md) -- State machine, spawn flow, queue, suspend, resume, crash recovery
-- [Transition Engine](transition-engine.md) -- Action types, templates, execution flow, priority rules, cross-agent handoff
+- [Transition Engine](transition-engine.md) -- Column automations and their adapters, templates and escaping, execution flow, priority rules, cross-agent handoff
 - [Database](database.md) -- Schema (including session_transcripts and handoffs tables), migrations, repository pattern, connection management
+- [Command Terminal](command-terminal.md) - The second window-manager layer: slot-keyed windows, global geometry against per-project population, the reattach and branch rules, and the title-bar controls
+- [Activity Marks](activity-marks.md) - The nine activity glyphs: upstream ownership, why motion is composited, the click the mark ate, and the geometry and sizing history
 
 ### Integration
 - [Agent Integration](agent-integration.md) -- Adapter interface, Claude/Codex/Gemini/Aider CLI details, permission modes, detection, command building
 - [Adapter Session History](adapter-session-history.md) - Native session-history file formats Kangentic reads for real-time telemetry; the authoritative reference for the sessionHistory hook
-- [Command Injection](command-injection.md) - Per-column auto-commands and model/effort injection, verifier contract, retry semantics, and the measured per-agent support matrix (plus how to graduate an agent)
+- [Command Injection](command-injection.md) - How a column's message to its agent and its model/effort settings reach a live session, the verifier contract, retry semantics, and the measured per-agent support matrix (plus how to graduate an agent)
 - [Board Integration](board-integration.md) -- BoardAdapter interface, registry, GitHub/Azure DevOps/Jira/Linear/etc., how to add a new provider
-- [PR Integration](pr-integration.md) - PRConnector interface, registry, GitHub connector, the confidence-ladder linker, background refresh, where PR state is stored
+- [PR Integration](pr-integration.md) - PRConnector interface, registry and its remote-ownership gate, GitHub/Azure DevOps connectors, the confidence-ladder linker, background refresh, where PR state is stored
 - [Mobile Bridge](mobile-bridge.md) - Desktop half of the mobile companion app: `@kangentic/protocol` package, pairing ceremony, signed device roster, capability verbs, relay transport
 - [Handoff](handoff.md) -- Cross-agent context transfer: extraction, packaging, markdown rendering, prompt delivery
 - [MCP Server](mcp-server.md) -- Board management tools for agents, file-based command queue, .mcp.json safety
@@ -53,3 +55,4 @@ Point-in-time findings documents. Kept for the reasoning they record; not mainta
 evergreen references.
 
 - [Transcript Pipeline Audit](transcript-pipeline-audit.md) (2026-06-12) - Hardening the session-transcript pipeline for cross-agent consumption: per-adapter `parseTranscript`, Claude parser fidelity fixes, verified against real session files
+- [Board Card Drag Performance Audit](board-drag-perf-audit.md) (2026-09-16) - Measuring the board drag on a production build: the gesture drops no frames, the one stall inside it was an xterm construction from a previous drop's spawn, and dev mode is 4 to 7x slower on every synchronous cost

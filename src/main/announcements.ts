@@ -38,7 +38,7 @@ let cachedActive: Announcement[] = [];
  */
 export async function checkAnnouncements(): Promise<void> {
   const url = process.env.KANGENTIC_ANNOUNCEMENTS_URL ?? ANNOUNCEMENTS_URL;
-  let feed: Announcement[] | null = null;
+  let feed: Announcement[] | null;
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!response.ok) {

@@ -151,15 +151,24 @@ describe('mcp tool-list parity', () => {
     ).toEqual([]);
   });
 
-  it('every manifest tool is documented in docs/mcp-server.md', () => {
+  it('every manifest tool has its own heading in docs/mcp-server.md', () => {
+    // A mention anywhere in the file used to satisfy this, which let two browser
+    // tools live under a shared prose heading with no anchor of their own. That
+    // is silent breakage rather than cosmetic: mcpToolDocsUrl() deep-links to
+    // `#<tool name>`, and markdown derives the anchor from the heading text, so
+    // a tool with no heading of its own links to nothing on the docs site.
     const docContent = fs.readFileSync(DOCS_PATH, 'utf-8');
+    const headings = new Set(
+      Array.from(docContent.matchAll(/^### (kangentic_\w+)$/gm), (match) => match[1]),
+    );
     const undocumented = MCP_TOOL_MANIFEST.map((entry) => entry.name)
-      .filter((name) => !docContent.includes(name))
+      .filter((name) => !headings.has(name))
       .sort();
     expect(
       undocumented,
-      `These tools are not documented in docs/mcp-server.md (the exhaustive reference). Add a `
-        + `description for each:\n${undocumented.join('\n')}`,
+      `These tools have no "### <tool name>" heading in docs/mcp-server.md (the exhaustive `
+        + `reference). Give each its own heading so its docs anchor resolves:\n`
+        + `${undocumented.join('\n')}`,
     ).toEqual([]);
   });
 });

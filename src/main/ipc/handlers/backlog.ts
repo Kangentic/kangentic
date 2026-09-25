@@ -3,14 +3,17 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectDb } from '../../db/database';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
+import { RemoteItemCacheRepository } from '../../db/repositories/remote-item-cache-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
-import { ActionRepository } from '../../db/repositories/action-repository';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked, spawnAgent, openAttachmentFile } from '../helpers';
 import { isAbortError } from '../../../shared/abort-utils';
+import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
 import type {
@@ -18,8 +21,11 @@ import type {
   BacklogTaskUpdateInput,
   BacklogPromoteInput,
   BacklogDemoteInput,
+  ExternalIssue,
   ExternalSource,
-  ImportFetchInput,
+  ImportCacheQuery,
+  ImportReconcileInput,
+  ImportReconcileResult,
   ImportExecuteInput,
   Task,
 } from '../../../shared/types';
@@ -57,6 +63,59 @@ function savePendingAttachments(
   for (const attachment of pendingAttachments) {
     backlogAttachmentRepo.add(projectPath, backlogTaskId, attachment.filename, attachment.data, attachment.media_type);
   }
+}
+
+/** Per-round-trip page size for the reconcile fetch (GitHub caps per_page at 100; ADO ignores it). */
+const RECONCILE_PAGE_SIZE = 100;
+
+/**
+ * How stale a cache may get before a provider with no cheap id listing is forced
+ * through a full, authoritative pass. Those providers only prune on a full
+ * reconcile, and the only user action that asks for one is the all-imported
+ * empty state's Refresh link, which a user who imports a subset never sees. Without
+ * this, an item deleted on the remote would stay in their Import dialog forever.
+ */
+const FULL_RECONCILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * In-flight reconciles keyed by (project, source, repository). Two reconciles for
+ * one key interleave destructively: the second's upsert can commit between the
+ * first's keep-list snapshot and its prune, so the first deletes rows the second
+ * just wrote. The renderer's own sequence token only orders one dialog's
+ * responses, and a second window is a second renderer. Chaining is enough here
+ * because a reconcile is idempotent, so the follower simply re-runs against
+ * whatever state the leader left.
+ */
+const inFlightReconciles = new Map<string, Promise<ImportReconcileResult>>();
+
+function serializeReconcile(
+  key: string,
+  run: () => Promise<ImportReconcileResult>,
+): Promise<ImportReconcileResult> {
+  const previous = inFlightReconciles.get(key);
+  // Swallow the predecessor's rejection: a failed reconcile must not fail the
+  // next one, it only has to finish first.
+  const chained = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(run);
+  inFlightReconciles.set(key, chained);
+  void chained.catch(() => undefined).finally(() => {
+    if (inFlightReconciles.get(key) === chained) inFlightReconciles.delete(key);
+  });
+  return chained;
+}
+
+/**
+ * Re-stamp `alreadyImported` on cached issues from the live backlog. The flag is
+ * never persisted (it goes stale as the user imports), so it is recomputed on
+ * every read of the cache.
+ */
+function stampAlreadyImported(
+  backlogRepo: BacklogRepository,
+  source: ExternalSource,
+  issues: ExternalIssue[],
+): ExternalIssue[] {
+  if (issues.length === 0) return issues;
+  const imported = backlogRepo.findByExternalIds(source, issues.map((issue) => issue.externalId));
+  return issues.map((issue) => ({ ...issue, alreadyImported: imported.has(issue.externalId) }));
 }
 
 export function registerBacklogHandlers(context: IpcContext): void {
@@ -119,7 +178,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const backlogRepo = new BacklogRepository(db);
     const tasks = new TaskRepository(db);
     const swimlanes = new SwimlaneRepository(db);
-    const actions = new ActionRepository(db);
+    const automations = new AutomationRepository(db);
+    const automationRuns = new AutomationRunRepository(db);
     const attachments = new AttachmentRepository(db);
 
     const backlogAttachments = new BacklogAttachmentRepository(db);
@@ -187,9 +247,13 @@ export function registerBacklogHandlers(context: IpcContext): void {
             // for the same task. AbortController is wired up outside the lock so
             // a concurrent move can preempt this promotion before it acquires.
             await withTaskLock(task.id, async () => {
+              // Promotion spawns used to be progress-silent; the card now shows
+              // the same fetch/branch/worktree phases the drag path does. The
+              // finally clears on every exit, including the abort path.
+              const onProgress = createProgressCallback(context.mainWindow, task.id);
               try {
                 try {
-                  await ensureTaskWorktree(context, task, tasks, projectPath, { signal });
+                  await ensureTaskWorktree(context, task, tasks, projectPath, { signal, onProgress, projectId });
                 } catch (worktreeError) {
                   if (isAbortError(worktreeError)) throw worktreeError;
                   console.error('[BACKLOG_PROMOTE] Worktree creation failed:', worktreeError);
@@ -198,7 +262,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 }
 
                 try {
-                  await ensureTaskBranchCheckout(context, task, projectPath, { signal });
+                  await ensureTaskBranchCheckout(context, task, projectPath, { signal, onProgress, projectId });
                 } catch (checkoutError) {
                   if (isAbortError(checkoutError)) throw checkoutError;
                   console.error('[BACKLOG_PROMOTE] Branch checkout failed:', checkoutError);
@@ -207,7 +271,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 }
 
                 const sessionRepo = new SessionRepository(db);
-                const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+                const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
                 // projectId/projectPath so the spawn preamble (override lock +
                 // agent resolution) sees the project defaults instead of null.
                 await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane: targetSwimlane, signal, projectId, projectPath, attachments });
@@ -220,6 +284,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 }
                 throw error;
               } finally {
+                clearSpawnProgress(context.mainWindow, task.id);
                 if (promotionControllers.get(task.id) === promotionController) {
                   promotionControllers.delete(task.id);
                 }
@@ -359,14 +424,114 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return adapter.checkCli();
   });
 
-  ipcMain.handle(IPC.BACKLOG_IMPORT_FETCH, async (_, input: ImportFetchInput) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
-    const db = getProjectDb(context.currentProjectId);
+  // Paint instantly from the persistent cache, no network. alreadyImported is
+  // re-stamped from the live backlog so a just-imported item shows imported offline.
+  ipcMain.handle(IPC.BACKLOG_IMPORT_GET_CACHED, (_, input: ImportCacheQuery) => {
+    const projectId = input.projectId ?? context.currentProjectId;
+    if (!projectId) throw new Error('No project is currently open');
+    const db = getProjectDb(projectId);
+    const cacheRepo = new RemoteItemCacheRepository(db);
+    const backlogRepo = new BacklogRepository(db);
+    const issues = cacheRepo.getForSource(input.source, input.repository);
+    return { issues: stampAlreadyImported(backlogRepo, input.source, issues) };
+  });
+
+  // Fetch items changed since the cache high-water mark, merge them in, prune
+  // items the remote no longer has, and return the full merged set. A 'full' mode
+  // (or an empty cache) re-fetches everything.
+  ipcMain.handle(IPC.BACKLOG_IMPORT_RECONCILE, async (_, input: ImportReconcileInput) => {
+    const projectId = input.projectId ?? context.currentProjectId;
+    if (!projectId) throw new Error('No project is currently open');
+    return serializeReconcile(
+      `${projectId}::${input.source}::${input.repository}`,
+      () => runReconcile(projectId, input),
+    );
+  });
+
+  async function runReconcile(
+    projectId: string,
+    input: ImportReconcileInput,
+  ): Promise<ImportReconcileResult> {
+    const db = getProjectDb(projectId);
+    const cacheRepo = new RemoteItemCacheRepository(db);
     const backlogRepo = new BacklogRepository(db);
     const adapter = boardRegistry.requireStable(input.source);
+    const findAlreadyImported = (source: ExternalSource, externalIds: string[]) =>
+      backlogRepo.findByExternalIds(source, externalIds);
 
-    return adapter.fetch(input, (source, externalIds) => backlogRepo.findByExternalIds(source, externalIds));
-  });
+    // A provider with a cheap id listing prunes on every reconcile, so its cache
+    // never goes stale. The others prune only on a full pass, so escalate one when
+    // the cache has gone too long without it (MIN(fetched_at) is the last time a
+    // full pass stamped every row). An unparseable timestamp compares NaN and
+    // simply does not escalate. One case stays escalated for good: if the remote
+    // really does empty out, nothing is upserted, so MIN(fetched_at) never advances
+    // and every open re-fetches. That is the deliberate cost of never pruning
+    // against an empty set - a full fetch of nothing is cheap, and the alternative
+    // was deleting the cache on a transient failure.
+    const oldestFetchedAt = cacheRepo.getOldestFetchedAt(input.source, input.repository);
+    const overdueForFullPass = !adapter.listExternalIds
+      && oldestFetchedAt !== undefined
+      && Date.now() - new Date(oldestFetchedAt).getTime() > FULL_RECONCILE_MAX_AGE_MS;
+
+    const isFull = input.mode === 'full'
+      || cacheRepo.count(input.source, input.repository) === 0
+      || overdueForFullPass;
+    const since = isFull ? undefined : cacheRepo.getWatermark(input.source, input.repository);
+
+    // Fetch changed items across all states so the single cache bucket stays
+    // complete. ADO returns everything in one page; GitHub loops real pages.
+    const fetched: ExternalIssue[] = [];
+    let page = 1;
+    for (;;) {
+      const result = await adapter.fetch(
+        { source: input.source, repository: input.repository, page, perPage: RECONCILE_PAGE_SIZE, state: 'all', since },
+        findAlreadyImported,
+      );
+      fetched.push(...result.issues);
+      if (!result.hasNextPage) break;
+      page += 1;
+    }
+
+    // A source can return the same item on two pages when its ordering shifts
+    // between sequential fetches, so dedupe by externalId (keeping the last, freshest
+    // copy) before the upsert. Without this the added/updated counts double-count a
+    // duplicate and the same row is written twice.
+    const dedupedById = new Map<string, ExternalIssue>();
+    for (const issue of fetched) dedupedById.set(issue.externalId, issue);
+    const toCache = [...dedupedById.values()];
+
+    const syncTime = new Date().toISOString();
+    const { added, updated } = cacheRepo.upsertMany(input.source, input.repository, toCache, syncTime);
+
+    // Auto-prune: a cheap id listing (ADO) prunes on every reconcile; without one,
+    // only a full fetch is authoritative enough to prune (its result IS the set). The
+    // fetched items are already committed, so a prune failure (a transient CLI error on
+    // the second call) must not fail the whole reconcile and hide the just-synced data;
+    // degrade to no prune this round instead.
+    // An EMPTY authoritative set never prunes. "The remote really has nothing" and
+    // "the provider could not answer" arrive here as the same empty array, and
+    // pruning against it deletes every cached row for the source - the whole cache,
+    // silently, on a transient CLI hiccup. Skipping costs a stale row until the next
+    // pass returns a real answer; not skipping costs the cache this feature exists to
+    // keep. The asymmetry is what decides it, so an emptied remote clears its rows on
+    // the first pass that can actually say so.
+    let removed = 0;
+    try {
+      if (adapter.listExternalIds) {
+        const keepIds = await adapter.listExternalIds({ source: input.source, repository: input.repository });
+        if (keepIds.length > 0) {
+          removed = cacheRepo.pruneMissing(input.source, input.repository, keepIds);
+        }
+      } else if (isFull && toCache.length > 0) {
+        removed = cacheRepo.pruneMissing(input.source, input.repository, toCache.map((issue) => issue.externalId));
+      }
+    } catch (error) {
+      console.warn('[BACKLOG_IMPORT_RECONCILE] prune step failed; skipping prune this round', error);
+    }
+
+    const all = cacheRepo.getForSource(input.source, input.repository);
+    return { issues: stampAlreadyImported(backlogRepo, input.source, all), added, updated, removed };
+  }
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_EXECUTE, async (_, input: ImportExecuteInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
@@ -379,11 +544,32 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const externalIds = input.issues.map((issue) => issue.externalId);
     const alreadyImportedIds = backlogRepo.findByExternalIds(input.source, externalIds);
 
+    // Fetch deferred per-item detail (e.g. ADO comments) for the selected items
+    // and fold it into each body, so the imported backlog item carries the same
+    // content the pre-defer list fetch used to. Deferring this moved the call from
+    // list time to import time, which also moved when its failure lands: a
+    // transient CLI error used to fail a list the user could just reopen, and would
+    // now throw away an import they had already chosen items for. Comments are
+    // supplementary, so degrade to the un-hydrated bodies and still import.
+    let issuesToImport = input.issues;
+    let detailUnavailable = 0;
+    if (adapter.hydrateForImport) {
+      try {
+        issuesToImport = await adapter.hydrateForImport(input.repository, input.issues);
+      } catch (error) {
+        console.warn('[BACKLOG_IMPORT_EXECUTE] hydrate step failed; importing without deferred detail', error);
+        // Report it rather than degrading silently. The items import fine, but they
+        // are missing content the user would otherwise have got, and nothing else on
+        // the item says so.
+        detailUnavailable = input.issues.length;
+      }
+    }
+
     const importedItems = [];
     let skippedDuplicates = 0;
     let totalSkippedAttachments = 0;
 
-    for (const issue of input.issues) {
+    for (const issue of issuesToImport) {
       if (alreadyImportedIds.has(issue.externalId)) {
         skippedDuplicates++;
         continue;
@@ -439,6 +625,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
       imported: importedItems.length,
       skippedDuplicates,
       skippedAttachments: totalSkippedAttachments,
+      detailUnavailable,
       items: importedItems,
     };
   });

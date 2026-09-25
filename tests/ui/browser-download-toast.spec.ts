@@ -68,7 +68,11 @@ test.describe('Browser pane download toast', () => {
     const warningToast = page.locator('[data-testid="toast"]')
       .filter({ hasText: 'Download did not finish: archive.zip' });
     await expect(warningToast).toBeVisible({ timeout: 5000 });
-    await expect(warningToast.getByText('Show in folder')).toHaveCount(0);
+    // One-shot count, not toHaveCount(0) - see toastCountRightNow in ./helpers.
+    // The trap reaches a CHILD too: if the action were wrongly rendered, the
+    // whole toast would auto-dismiss inside the retry window and the child count
+    // would reach 0 on its own.
+    expect(await warningToast.getByText('Show in folder').count()).toBe(0);
   });
 
   test('a cancelled download also toasts as "did not finish"', async () => {

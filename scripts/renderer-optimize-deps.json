@@ -2,10 +2,10 @@
   "react", "react-dom", "react-dom/client",
   "react/jsx-runtime", "react/jsx-dev-runtime",
   "@dnd-kit/core", "@dnd-kit/sortable", "@dnd-kit/utilities",
-  "@xterm/xterm", "@xterm/addon-webgl", "@xterm/addon-serialize",
+  "@xterm/xterm", "@xterm/addon-webgl", "@xterm/addon-serialize", "@xterm/addon-unicode11",
   "lucide-react", "react-colorful",
   "zustand", "zustand/react/shallow",
-  "monaco-editor", "monaco-editor/esm/vs/base/common/errors",
+  "monaco-editor", "monaco-editor/base/common/errors",
   "recharts",
   "three", "camera-controls",
   "turndown", "turndown-plugin-gfm"

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
-import { launchPage, waitForBoard, createProject, dismissOnboardingChecklist } from './helpers';
+import { launchPage, waitForBoard, createProject, dismissOnboardingChecklist, toastCountRightNow } from './helpers';
 
 /**
  * Coverage for useAddProject's branches (src/renderer/hooks/useAddProject.ts): the
@@ -152,5 +152,45 @@ test.describe('Add project flow', () => {
     await expect(page.locator('[role="button"]').filter({ hasText: 'add-project-suggested-name' })).toHaveCount(0);
 
     await dismissOnboardingChecklist(page);
+  });
+
+  test('does not show the git-setup toasts when an already-registered reopen fails', async () => {
+    ({ browser, page } = await launchPage());
+    await createProject(page, 'add-project-reopen-fail-existing');
+
+    // probePath deliberately does NOT report alreadyRegisteredProjectId, even
+    // though the picked path exactly matches the existing project's own path
+    // - this exercises openProjectByPath's OWN dedup (a normalized path
+    // match against the renderer's project list) rather than the earlier
+    // alreadyRegisteredProjectId short-circuit, which returns before ever
+    // reaching ensureGit or openProjectByPath.
+    await page.evaluate(() => {
+      (window as unknown as { __mockProbePathOverrides: Record<string, unknown> }).__mockProbePathOverrides = {
+        alreadyRegisteredProjectId: null,
+      };
+      (window as unknown as { __mockEnsureGitResult: Record<string, unknown> }).__mockEnsureGitResult = {
+        ok: true,
+        created: true,
+        error: null,
+      };
+      (window as unknown as { __mockFolderPath: string }).__mockFolderPath =
+        '/mock/projects/add-project-reopen-fail-existing';
+      window.electronAPI.projects.open = async function () {
+        throw new Error('Simulated reopen failure');
+      };
+    });
+
+    await page.locator('[data-testid="sidebar-new-project-button"]').click();
+
+    // Positive signal the reopen actually ran and failed (openProject's own
+    // toast), so the absence of the git toasts below is not just "nothing
+    // ran yet".
+    await expect(
+      page.locator('[data-testid="toast"]').filter({ hasText: 'Could not open that project' }),
+    ).toBeVisible({ timeout: 5000 });
+
+    // One-shot counts, not toHaveCount(0) - see toastCountRightNow.
+    expect(await toastCountRightNow(page, 'Started a git repo in this folder')).toBe(0);
+    expect(await toastCountRightNow(page, 'Could not set up git here')).toBe(0);
   });
 });

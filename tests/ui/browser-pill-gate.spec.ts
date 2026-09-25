@@ -157,10 +157,17 @@ test.describe('Browser pill gate (browser.enabled = true)', () => {
     await expect(page.locator('[data-testid="browser-pane"]')).toBeVisible();
     await expect(page.locator('[data-testid="changes-expand"]')).toBeHidden();
 
-    // Re-open Changes -- closes Browser.
+    // Re-open Changes - displaces Browser.
     await changesPill.click();
     await expect(page.locator('[data-testid="changes-expand"]')).toBeVisible();
-    await expect(page.locator('[data-testid="browser-pane"]')).toBeHidden();
+    // Displacing the Browser pane no longer UNMOUNTS it. `handleToggleChanges`
+    // closes it through `toggleBrowserOpen`, which holds (`browserHeldTasks`),
+    // so an agent mid-drive is not interrupted by the user reading a diff: the
+    // pane moves to its own slot at `opacity: 0` and keeps its guest. Assert the
+    // held slot rather than visibility, since Playwright counts an opacity-0
+    // element as VISIBLE and `toBeHidden()` here would only pass if the guest
+    // had been destroyed, which is the regression this now guards against.
+    await expect(page.locator('[data-testid="task-detail-browser-held"]')).toHaveCount(1);
   });
 });
 

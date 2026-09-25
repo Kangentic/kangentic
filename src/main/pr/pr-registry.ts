@@ -10,20 +10,42 @@
  * `adapters/<provider>/`, then import it and add it to the `connectors` array
  * below. Keep all provider-specific logic inside its adapter - no provider-name
  * branching here (mirrors .claude/rules/agent-adapters-boundary.md).
+ *
+ * `matchesRemote` is REQUIRED on the contract and is the reason a second
+ * provider can exist at all: the `resolvePR*` functions dispatch only to the
+ * connectors that OWN the repo's remote, so a connector whose CLI is missing
+ * can neither pre-empt the owner nor let an unowned repo report a clean
+ * "no PR" - which `pr-linking.ts` would act on by CLEARING the task's link.
+ * The dispatch rules live in `shared/pr-dispatch.ts`; read its header before
+ * changing them.
  */
 
-import type { PRConnector, DetectedPR, ResolvedPR } from './shared/pr-connector';
+import type { PRConnector, DetectedPR, ResolvedPR, PRResolveOptions } from './shared/pr-connector';
+import { dispatchResolve, selectOwningConnectors, type ResolveKind } from './shared/pr-dispatch';
+import { readRemoteUrls } from '../git/git-remotes';
 import { gitHubPRConnector } from './adapters/github/github-connector';
+import { azureDevOpsPRConnector } from './adapters/azure-devops/azure-devops-connector';
 
 // Re-export the contract + errors so consumers have a single import surface.
-export type { PRConnector, DetectedPR, ResolvedPR, PRState } from './shared/pr-connector';
+export type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness, PRResolveOptions } from './shared/pr-connector';
 export { PRResolverUnavailableError, PRResolverTransientError } from './shared/pr-errors';
 
 // --- Registry: add new providers here ---
 const connectors: PRConnector[] = [
   gitHubPRConnector,
-  // Future: gitLabMRConnector, bitbucketPRConnector, azureDevOpsPRConnector
+  azureDevOpsPRConnector,
+  // Future: gitLabMRConnector, bitbucketPRConnector
 ];
+
+/**
+ * The registered connectors, read-only, so `tests/unit/pr-connector-gate.test.ts`
+ * can assert over the REAL array rather than a hand-maintained copy. That guard
+ * is the CI backstop for `matchesRemote`: the contract can require the member
+ * but not that it discriminates, and a connector that claims every remote
+ * silently re-opens the clean-miss link wipe this whole layer prevents.
+ * Not for dispatch - callers use the functions below.
+ */
+export const registeredPRConnectors: readonly PRConnector[] = connectors;
 
 // --- Platform-agnostic API ---
 
@@ -32,7 +54,16 @@ export function matchesPRCommand(commandDetail: string): boolean {
   return connectors.some((connector) => connector.matchesCommand(commandDetail));
 }
 
-/** Try all registered connectors against scrollback, return first match. */
+/**
+ * Try all registered connectors against scrollback, return first match.
+ *
+ * Deliberately NOT remote-gated: it takes no cwd, it is the DEGRADATION
+ * fallback used precisely when the resolver could not run (often because the
+ * remotes were unreadable, so there would be nothing to gate on), and it only
+ * ever ADDS a link - which blocks the link-clearing path rather than arming it.
+ * Connectors' URL patterns are host-specific and disjoint, so first-match is
+ * unambiguous.
+ */
 export function detectPR(scrollback: string): DetectedPR | null {
   for (const connector of connectors) {
     const result = connector.extract(scrollback);
@@ -41,40 +72,90 @@ export function detectPR(scrollback: string): DetectedPR | null {
   return null;
 }
 
+/** Shared plumbing for the three resolve functions: read the remotes once, then dispatch. */
+async function resolveVia(
+  repoCwd: string,
+  kind: ResolveKind,
+  invoke: (connector: PRConnector) => Promise<ResolvedPR | null>,
+): Promise<ResolvedPR | null> {
+  return dispatchResolve({
+    connectors,
+    remoteUrls: await readRemoteUrls(repoCwd),
+    repoCwd,
+    kind,
+    invoke,
+  });
+}
+
 /**
- * Authoritatively resolve the PR for a branch via the first registered connector
- * that supports `resolveForBranch` and returns a match. Connector errors
- * (`PRResolverUnavailableError`) propagate so the caller can degrade to `detectPR`.
+ * Authoritatively resolve the PR for a branch via the connectors that own this
+ * repo's remote. Throws `PRResolverUnavailableError` / `PRResolverTransientError`
+ * when no owning connector could complete a check, so the caller degrades to
+ * `detectPR` instead of treating it as "no PR".
  */
 export async function resolvePRForBranch(
   repoCwd: string,
   branchName: string,
   baseBranch?: string,
+  options?: PRResolveOptions,
 ): Promise<ResolvedPR | null> {
-  for (const connector of connectors) {
-    if (!connector.resolveForBranch) continue;
-    const result = await connector.resolveForBranch(repoCwd, branchName, baseBranch);
-    if (result) return result;
-  }
-  return null;
+  // Non-null asserted: dispatchResolve only invokes connectors it filtered on `kind`.
+  return resolveVia(repoCwd, 'resolveForBranch', (connector) =>
+    connector.resolveForBranch!(repoCwd, branchName, baseBranch, options),
+  );
 }
 
-/** Resolve a PR by number via the first connector that supports it. */
-export async function resolvePRByNumber(repoCwd: string, prNumber: number): Promise<ResolvedPR | null> {
-  for (const connector of connectors) {
-    if (!connector.resolveByNumber) continue;
-    const result = await connector.resolveByNumber(repoCwd, prNumber);
-    if (result) return result;
-  }
-  return null;
+/**
+ * Resolve a PR by number via the connectors that own this repo's remote.
+ * `options` is forwarded untouched (see `PRResolveOptions`); a caller that only
+ * needs the PR's state, like `local-only-commits.ts`, omits it.
+ */
+export async function resolvePRByNumber(
+  repoCwd: string,
+  prNumber: number,
+  options?: PRResolveOptions,
+): Promise<ResolvedPR | null> {
+  return resolveVia(repoCwd, 'resolveByNumber', (connector) =>
+    connector.resolveByNumber!(repoCwd, prNumber, options),
+  );
 }
 
-/** Resolve the PR associated with a commit SHA via the first connector that supports it. */
-export async function resolvePRByCommit(repoCwd: string, commitSha: string, branchHint?: string): Promise<ResolvedPR | null> {
-  for (const connector of connectors) {
-    if (!connector.resolveByCommit) continue;
-    const result = await connector.resolveByCommit(repoCwd, commitSha, branchHint);
-    if (result) return result;
-  }
-  return null;
+/**
+ * Can the commit anchor be TRUSTED for this repo? True only when every owning
+ * connector that implements `resolveByCommit` declares
+ * `verifiesCommitOwnership`, so a repo owned by a connector that does not (or
+ * that forgot to say) keeps the commit tier switched off rather than leaning on
+ * the linker's cheap base-relative gate to catch a mislink it cannot see.
+ *
+ * Conservative on every uncertain path: unreadable remotes, no owning
+ * connector, and no commit-capable owner all answer false. NEVER THROWS, unlike
+ * the resolvers - a degrade here would be indistinguishable from "the commit
+ * tier is not available", and the tiers below it must still run. That rests on
+ * `readRemoteUrls` never rejecting and `matchesRemote` being synchronous and
+ * pure; both are pinned in `git-remotes.test.ts` and `pr-connector-gate.test.ts`.
+ *
+ * Call it with the SAME `repoCwd` the commit dispatch will use, and select
+ * owners the same way `dispatchResolve` does for `resolveByCommit`
+ * (`allowSecondaryFallback: true`). A gate that judged a different repo path or
+ * a different owner set would answer about connectors the tier never reaches.
+ * Sharing the path also makes it free: `readRemoteUrls` caches on the resolved
+ * path, so the gate warms the entry `resolvePRByCommit` reads a line later.
+ */
+export async function commitAnchorSelfVerifies(repoCwd: string): Promise<boolean> {
+  const remoteUrls = await readRemoteUrls(repoCwd);
+  if (!remoteUrls) return false;
+  const owners = selectOwningConnectors(connectors, remoteUrls, { allowSecondaryFallback: true });
+  const capable = owners.filter((connector) => connector.resolveByCommit);
+  return capable.length > 0 && capable.every((connector) => connector.verifiesCommitOwnership === true);
+}
+
+/** Resolve the PR associated with a commit SHA via the connectors that own this repo's remote. */
+export async function resolvePRByCommit(
+  repoCwd: string,
+  commitSha: string,
+  branchHint?: string,
+): Promise<ResolvedPR | null> {
+  return resolveVia(repoCwd, 'resolveByCommit', (connector) =>
+    connector.resolveByCommit!(repoCwd, commitSha, branchHint),
+  );
 }

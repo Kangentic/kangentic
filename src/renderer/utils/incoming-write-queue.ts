@@ -68,6 +68,13 @@ export interface IncomingWriteQueueOptions {
    * and no bytes are acked, so main-side backpressure naturally throttles the
    * PTY at the source. Used to stop mid-drag xterm parsing (a board drag).
    * Resume via `kick()`. Distinct from `shouldDrop`, which acks-and-discards.
+   *
+   * Worst-case hold duration is the CALLER's release signal, not anything
+   * bounded here. useTerminal's replay hold (`scrollbackPendingRef`) is the
+   * long pole: if a replay dies mid-flight, the only unconditional release is
+   * the scrollback watchdog (5s) forcing settleScrollback. The 2026-08-28
+   * fidelity audit observed zero watchdog releases through a mass-resume
+   * boot, so this is a documented bound, not an observed cost.
    */
   shouldHold?: () => boolean;
   /** Report `bytes` consumed (written or dropped) to main's flow control. */

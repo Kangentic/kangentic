@@ -34,6 +34,30 @@ if (args.includes('--version')) {
   process.exit(0);
 }
 
+// Capability discovery reads --help for `--model` support, then asks the CLI
+// itself for its models. Both must answer or the adapter reports no list.
+if (args.includes('--help')) {
+  console.log('Usage: agent [options] [command] [prompt...]');
+  console.log('  --model <model>           Model to use (e.g., gpt-5, sonnet-4)');
+  console.log('  --list-models             List available models and exit');
+  process.exit(0);
+}
+
+// Real shape: an "Available models" header, `<id> - <Display Name>` lines, a
+// `Tip:` footer. `(default)` and `(current)` are state markers the adapter
+// strips; a trailing parenthetical that is part of the name is kept.
+if (args.includes('--list-models')) {
+  console.log('Available models');
+  console.log('');
+  console.log('auto - Auto (default)');
+  console.log('gpt-5.3-codex-high - Codex 5.3 High');
+  console.log('composer-2.5 - Composer 2.5 (current)');
+  console.log('claude-sonnet-5-high - Claude Sonnet 5 1M');
+  console.log('');
+  console.log('Tip: use --model <id> (or /model <id> in interactive mode) to switch.');
+  process.exit(0);
+}
+
 let sessionId = null;
 let resumed = false;
 let prompt = null;

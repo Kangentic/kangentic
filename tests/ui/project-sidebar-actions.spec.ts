@@ -205,4 +205,79 @@ test.describe('Project Relocation', () => {
     await page.locator('button:has-text("Cancel")').click();
     await expect(page.getByRole('heading', { name: 'Project Folder Not Found' })).toBeHidden();
   });
+
+  test('Locate Folder toasts success only when the guarded re-open actually lands', async () => {
+    // ProjectPathMissingDialog's handleLocate only calls openProject itself
+    // when the missing-path project differs from the one already current
+    // (relocateProject's own internal re-open only fires for the CURRENT
+    // project) - so a second project has to be current to exercise that
+    // guard branch at all.
+    const testProjectId = await page.evaluate(async () => {
+      const projects = await window.electronAPI.projects.list();
+      return projects.find((p) => p.name === 'TestProject')?.id ?? null;
+    });
+    expect(testProjectId).not.toBeNull();
+    await createProject(page, 'relocate-guard-landed-current');
+
+    await page.evaluate((id) => {
+      (window as unknown as { __mockFireProjectPathMissing: (projectId: string) => void })
+        .__mockFireProjectPathMissing(id as string);
+    }, testProjectId);
+    await expect(page.getByRole('heading', { name: 'Project Folder Not Found' })).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as Record<string, unknown>).__mockFolderPath = '/mock/relocate-guard-landed';
+    });
+    await page.getByRole('button', { name: 'Locate Folder...' }).click();
+
+    await expect(
+      page.locator('[data-testid="toast"]').filter({ hasText: 'now points at /mock/relocate-guard-landed' }),
+    ).toBeVisible({ timeout: 5000 });
+  });
+
+  test('Locate Folder does not toast success when the guarded re-open fails', async () => {
+    const testProjectId = await page.evaluate(async () => {
+      const projects = await window.electronAPI.projects.list();
+      return projects.find((p) => p.name === 'TestProject')?.id ?? null;
+    });
+    expect(testProjectId).not.toBeNull();
+    await createProject(page, 'relocate-guard-failed-current');
+
+    // Main can no longer resolve the guarded re-open. A generic failure (not
+    // the path-missing/not-found sentinels) hits openProject's plain
+    // 'failed' branch, which reports itself with a toast.
+    await page.evaluate(() => {
+      window.electronAPI.projects.open = async function () {
+        throw new Error('Simulated reopen failure');
+      };
+    });
+
+    await page.evaluate((id) => {
+      (window as unknown as { __mockFireProjectPathMissing: (projectId: string) => void })
+        .__mockFireProjectPathMissing(id as string);
+    }, testProjectId);
+    await expect(page.getByRole('heading', { name: 'Project Folder Not Found' })).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as Record<string, unknown>).__mockFolderPath = '/mock/relocate-guard-failed';
+    });
+    await page.getByRole('button', { name: 'Locate Folder...' }).click();
+
+    // Positive signal the guarded re-open actually ran and failed, rather
+    // than the click doing nothing: openProject's own failure toast.
+    await expect(
+      page.locator('[data-testid="toast"]').filter({ hasText: 'Could not open that project' }),
+    ).toBeVisible({ timeout: 5000 });
+
+    // A one-shot count, not expect(...).toHaveCount(0): toasts auto-dismiss
+    // after their configured duration, so a retrying assertion would keep
+    // polling past that window and report "0" once the (wrongly shown)
+    // success toast had already expired on its own, masking the bug this
+    // test exists to catch.
+    const successToastCount = await page
+      .locator('[data-testid="toast"]')
+      .filter({ hasText: 'now points at' })
+      .count();
+    expect(successToastCount).toBe(0);
+  });
 });

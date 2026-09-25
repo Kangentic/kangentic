@@ -254,22 +254,360 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await expect(page.locator('[data-testid="diff-prev-change"]')).toBeVisible();
     await expect(page.locator('[data-testid="diff-next-change"]')).toBeVisible();
 
+    // The rendering preferences live behind the labelled "View options" menu
+    // (they were icon-only toggles nobody could read without hovering), so
+    // each assertion opens the menu, reads aria-checked, and clicks the item.
+    const viewOptions = page.locator('[data-testid="diff-view-options"]');
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    const openViewOptions = async () => {
+      await viewOptions.click();
+      await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+    };
+
     // Whitespace toggle starts off (config default false) and flips on click.
-    const whitespace = page.locator('[data-testid="diff-ignore-whitespace"]');
-    await expect(whitespace).toHaveAttribute('aria-pressed', 'false');
+    await openViewOptions();
+    const whitespace = optionsMenu.locator('[data-testid="diff-ignore-whitespace"]');
+    await expect(whitespace).toHaveAttribute('aria-checked', 'false');
     await whitespace.click();
-    await expect(whitespace).toHaveAttribute('aria-pressed', 'true');
+    await expect(whitespace).toHaveAttribute('aria-checked', 'true');
     // Restore so the global config does not bleed into other specs.
     await whitespace.click();
-    await expect(whitespace).toHaveAttribute('aria-pressed', 'false');
+    await expect(whitespace).toHaveAttribute('aria-checked', 'false');
 
-    // Collapse-unchanged starts off and flips on.
-    const collapse = page.locator('[data-testid="diff-collapse-unchanged"]');
-    await expect(collapse).toHaveAttribute('aria-pressed', 'false');
+    // Collapse-unchanged starts off and flips on (menu stays open between
+    // toggles - these are view options, not one-shot actions).
+    const collapse = optionsMenu.locator('[data-testid="diff-collapse-unchanged"]');
+    await expect(collapse).toHaveAttribute('aria-checked', 'false');
     await collapse.click();
-    await expect(collapse).toHaveAttribute('aria-pressed', 'true');
+    await expect(collapse).toHaveAttribute('aria-checked', 'true');
     await collapse.click();
-    await expect(collapse).toHaveAttribute('aria-pressed', 'false');
+    await expect(collapse).toHaveAttribute('aria-checked', 'false');
+
+    // Wrap-long-lines starts off and flips on.
+    const wrapLines = optionsMenu.locator('[data-testid="diff-wrap-lines"]');
+    await expect(wrapLines).toHaveAttribute('aria-checked', 'false');
+    await wrapLines.click();
+    await expect(wrapLines).toHaveAttribute('aria-checked', 'true');
+    await wrapLines.click();
+    await expect(wrapLines).toHaveAttribute('aria-checked', 'false');
+
+    // Inline-when-narrow is the fourth option, defaulting ON.
+    await expect(optionsMenu.locator('[data-testid="diff-inline-when-narrow"]')).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('Escape over the open View options menu closes only the menu, not the task window', async () => {
+    // KebabMenu carries a capture-phase Escape handler (preventDefault +
+    // stopImmediatePropagation) precisely so the host task-detail window's own
+    // bubble-phase Escape-to-close listener never sees the keystroke while a
+    // menu is open. Nothing previously asserted this as a positive behavior -
+    // a leaked Escape would ALSO hide the menu (because it closes the whole
+    // dialog), so a "menu not visible" assertion alone cannot tell the two
+    // apart. Assert both: the menu closes AND the dialog survives.
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/EscapeGuard.tsx',
+            status: 'M',
+            insertions: 1,
+            deletions: 1,
+            binary: false,
+            original: 'const a = 1;\n',
+            modified: 'const a = 2;\n',
+            language: 'typescript',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+
+    await page.keyboard.press('Escape');
+    await expect(optionsMenu).not.toBeVisible({ timeout: 5000 });
+    // Fixed budget, not a poll (anti-pattern 6: a negative assertion cannot be
+    // polled for). A leaked Escape closes the dialog through its own ~150ms
+    // CSS exit animation (--overlay-exit-duration), so checking visibility
+    // immediately would pass even with the guard broken - the dialog is still
+    // mid-animation and technically "visible" at that instant. Give the
+    // animation a generous window to finish, then assert it is still there.
+    await page.waitForTimeout(400);
+    await expect(dialog).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('the View options menu\'s "Open settings" action opens Settings on the Changes tab', async () => {
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/OpenSettings.tsx',
+            status: 'M',
+            insertions: 1,
+            deletions: 1,
+            binary: false,
+            original: 'const a = 1;\n',
+            modified: 'const a = 2;\n',
+            language: 'typescript',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+
+    // The item calls setLastSettingsTab('changes') then setSettingsOpen(true) -
+    // both must land: the panel opens, and it opens on the tab that owns these
+    // very keys rather than whatever tab was last viewed.
+    await optionsMenu.locator('[data-testid="diff-open-settings"]').click();
+
+    const settingsPanel = page.locator('[data-testid="settings-panel"]');
+    await expect(settingsPanel).toBeVisible({ timeout: 5000 });
+    // 'Git Diff View' is the Changes tab's diffViewMode row label - content
+    // only that tab renders, so its presence is proof the tab landed there
+    // (not just that some Settings tab opened).
+    await expect(settingsPanel.getByText('Git Diff View')).toBeVisible();
+
+    // Close via the store directly rather than Escape: a task-detail window
+    // with a running session sits underneath, and this test's job is to check
+    // the menu action's effect, not re-litigate Escape propagation (covered
+    // above).
+    await page.evaluate(() => {
+      (window as unknown as {
+        __zustandStores: { config: { getState: () => { setSettingsOpen: (open: boolean) => void } } };
+      }).__zustandStores.config.getState().setSettingsOpen(false);
+    });
+    await expect(settingsPanel).not.toBeVisible({ timeout: 5000 });
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('wrap toggle actually reflows long lines in BOTH diff panes', async () => {
+    // aria-pressed only proves the button flipped. This asserts Monaco really wrapped,
+    // and covers both panes: Monaco force-sets wordWrapOverride1 AND override2 to 'off'
+    // on the ORIGINAL editor whenever the diff renders inline, but restores only
+    // override1 when it goes back side-by-side, and override2 outranks override1. That
+    // left the LEFT pane permanently unwrapped until DiffViewer started clearing the
+    // stale override. Counting rendered .view-line elements (not pixels) keeps this
+    // independent of font metrics, which differ between local Windows and CI's Linux.
+    const longLine = `const veryLongIdentifier = '${'wrap-me-'.repeat(250)}';`;
+    await page.evaluate((line) => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/LongLines.tsx',
+            status: 'M',
+            insertions: 1,
+            deletions: 1,
+            binary: false,
+            // Both sides carry a long line so each pane is independently testable.
+            original: `${line}\nconst shared = 1;\n`,
+            modified: `${line}\nconst shared = 2;\n`,
+            language: 'typescript',
+          },
+        ],
+      };
+    }, longLine);
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    // Maximize AND expand the Changes surface so the diff editor clears Monaco's
+    // ~900px side-by-side breakpoint; below it Monaco renders inline on its own and
+    // there is no left pane to check. Maximizing alone is not enough.
+    await page.locator('[data-testid="task-detail-maximize"]').click();
+    await page.locator('[data-testid="changes-expand"]').click();
+    const sideBySide = page.locator('.monaco-diff-editor.side-by-side');
+    await expect(sideBySide).toBeVisible({ timeout: 8000 });
+
+    // Count the rendered rows Monaco produced for each pane's content.
+    const renderedRows = () =>
+      page.evaluate(() => {
+        const rows = (selector: string) =>
+          document.querySelectorAll(`.monaco-diff-editor ${selector} .view-line`).length;
+        return { original: rows('.editor.original'), modified: rows('.editor.modified') };
+      });
+
+    // Wrap lives in the "View options" menu; open it, flip the option, and
+    // close so the menu never overlaps the panes being measured.
+    const wrapMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    const toggleWrap = async (expectedAfter: 'true' | 'false') => {
+      await page.locator('[data-testid="diff-view-options"]').click();
+      await expect(wrapMenu).toBeVisible({ timeout: 5000 });
+      const item = wrapMenu.locator('[data-testid="diff-wrap-lines"]');
+      await item.click();
+      await expect(item).toHaveAttribute('aria-checked', expectedAfter);
+      await page.keyboard.press('Escape');
+      await expect(wrapMenu).not.toBeVisible({ timeout: 5000 });
+    };
+
+    // Unwrapped: the long line is one row, so each pane renders only a handful.
+    await expect.poll(async () => (await renderedRows()).modified).toBeLessThan(10);
+    expect((await renderedRows()).original).toBeLessThan(10);
+
+    await toggleWrap('true');
+
+    // Wrapped: a 2000-character line reflows into many rows at any plausible width.
+    await expect.poll(async () => (await renderedRows()).modified).toBeGreaterThan(15);
+    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(15);
+
+    // Survives a side-by-side -> inline -> side-by-side round trip, which is the exact
+    // sequence that strands override2 on the original editor.
+    await page.locator('[data-testid="diff-view-inline"]').click();
+    await page.locator('[data-testid="diff-view-split"]').click();
+    await expect(sideBySide).toBeVisible();
+    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(15);
+
+    // Turning wrap back off restores single-row rendering.
+    await toggleWrap('false');
+    await expect.poll(async () => (await renderedRows()).original).toBeLessThan(10);
+
+    // Restore shared state: collapse, un-maximize, clear the diff, close the dialog.
+    await page.locator('[data-testid="changes-collapse"]').click();
+    await page.locator('[data-testid="task-detail-maximize"]').click();
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('inline-when-narrow renders the diff inline below Monaco\'s breakpoint, and turning it off forces side-by-side despite the width', async () => {
+    // Deliberately the INVERSE setup from the wrap test above: do NOT maximize
+    // or expand the Changes surface. The wrap test's own comment notes that
+    // maximizing alone is not enough to clear Monaco's ~900px side-by-side
+    // breakpoint - the unexpanded, unmaximized dialog is already narrower than
+    // that on its own, which is exactly the "narrow pane" case this option
+    // governs.
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/InlineNarrow.tsx',
+            status: 'M',
+            insertions: 1,
+            deletions: 1,
+            binary: false,
+            original: 'const a = 1;\n',
+            modified: 'const a = 2;\n',
+            language: 'typescript',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    // Explicitly select Side by side: the point of the assertion below is that
+    // Monaco silently falls back to inline DESPITE this selection, not that
+    // inline was picked directly.
+    await page.locator('[data-testid="diff-view-split"]').click();
+
+    const sideBySide = page.locator('.monaco-diff-editor.side-by-side');
+
+    // Below the breakpoint, Monaco's own useInlineViewWhenSpaceIsLimited
+    // (config default true) renders inline regardless of the split-view
+    // selection.
+    await expect(page.locator('.monaco-diff-editor')).toBeVisible({ timeout: 8000 });
+    await expect(sideBySide).not.toBeVisible();
+
+    const optionsMenu = page.locator('[data-testid="diff-view-options-menu"]');
+    const inlineWhenNarrow = optionsMenu.locator('[data-testid="diff-inline-when-narrow"]');
+
+    // Turn "Inline when narrow" off: side-by-side must now render despite the
+    // unchanged (still-narrow) width.
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+    await expect(inlineWhenNarrow).toHaveAttribute('aria-checked', 'true');
+    await inlineWhenNarrow.click();
+    await expect(inlineWhenNarrow).toHaveAttribute('aria-checked', 'false');
+    await page.keyboard.press('Escape');
+    await expect(optionsMenu).not.toBeVisible({ timeout: 5000 });
+
+    await expect(sideBySide).toBeVisible({ timeout: 8000 });
+
+    // Restore the default (on) so the global config does not bleed into other
+    // specs - the same width renders inline again.
+    await page.locator('[data-testid="diff-view-options"]').click();
+    await expect(optionsMenu).toBeVisible({ timeout: 5000 });
+    await inlineWhenNarrow.click();
+    await expect(inlineWhenNarrow).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
+    await expect(optionsMenu).not.toBeVisible({ timeout: 5000 });
+    await expect(sideBySide).not.toBeVisible({ timeout: 8000 });
 
     await page.evaluate(() => {
       (window as unknown as Record<string, unknown>).__mockGitDiff = null;
@@ -328,7 +666,9 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await expect(preview).toBeVisible();
     await expect(preview.locator('h1')).toHaveText('New Heading');
     await expect(page.locator('[data-testid="diff-view-split"]')).not.toBeVisible();
-    await expect(page.locator('[data-testid="diff-ignore-whitespace"]')).not.toBeVisible();
+    // The whole view-options menu is diff-only, so its trigger goes with the
+    // rest of the diff controls while the rendered preview is showing.
+    await expect(page.locator('[data-testid="diff-view-options"]')).not.toBeVisible();
 
     // Toggle back returns to the diff and restores the diff-only controls.
     await previewToggle.click();

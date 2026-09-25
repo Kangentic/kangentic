@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22.12+ (vitest 5 declares `^22.12.0 || ^24.0.0 || >=26.0.0`, so 22.0 through 22.11 cannot run the unit tier)
 - Git 2.25+ (worktree support)
 - Platform-specific:
   - **Windows:** Visual Studio Build Tools (for better-sqlite3 native compilation)
@@ -97,7 +97,7 @@ src/
         session-metrics.ts # Session summary and metrics aggregation
         sessions.ts        # SESSION_* handlers, PTY event listeners
         system.ts          # Config, Claude, Shell, Git, Dialog, Window, Notifications
-        task-branch.ts     # TASK_SWITCH_BRANCH handler
+        task-branch.ts     # TASK_SWITCH_BRANCH / TASK_UPDATE_FROM_BASE handlers
         task-crud.ts       # TASK_LIST, CREATE, UPDATE, DELETE, archive handlers
         task-move.ts       # TASK_MOVE handler with priority rules
         tasks.ts           # Task handler orchestrator, bulk operations
@@ -105,7 +105,10 @@ src/
     pty/                   # Terminal session management
       paste-engine.ts      # Bracketed-paste primitive (driven by TerminalSubmit.submitContent)
       pty-buffer-manager.ts # Output buffering, scrollback ring buffer (512KB)
-      session-file-watcher.ts # fs.watch for status.json and events.jsonl
+      readers/             # Telemetry file readers
+        file-watcher.ts    # fs.watch fast path + polling fallback, with a storm guard
+        status-file-reader.ts # Watches status.json + events.jsonl for a session
+        session-history-reader.ts # Tails an agent's native history file
       session-manager.ts   # PTY spawn, output streaming, lifecycle
       session-queue.ts     # Concurrency limiter with reentrancy-safe promotion
       shell-resolver.ts    # Cross-platform shell detection
@@ -117,6 +120,7 @@ src/
         user-interrupt-coordinator.ts # 3s settle timer for Ctrl+C; synthesizes Interrupted on stuck state
         usage-accumulator.ts # Per-tool stats
         pr-command-detector.ts # PR command pattern detector
+        push-command-detector.ts # git push destination capture (the pushed_branch PR anchor)
         pty-activity-tracker.ts # PTY-byte fallback for non-hook agents
   preload/
     preload.ts             # Context bridge (window.electronAPI)
@@ -167,28 +171,95 @@ scripts/
 Three parallel processes:
 
 1. **Vite dev server** -- serves renderer with HMR on port 5173 (5174+ in worktrees)
-2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js` and `src/preload/preload.ts` → `.vite/build/preload.js`
+2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the three `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/retrieval/embedder/embed-worker.ts`, `src/main/git/line-count/line-count-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
 3. **Electron** -- launched with `MAIN_WINDOW_VITE_DEV_SERVER_URL` pointing to Vite
 
-Native modules (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `font-list`, `simple-git`) are marked external in esbuild -- loaded at runtime from `node_modules`.
+The esbuild externals (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `sqlite-vec`, `@huggingface/transformers`, `font-list`, plus `electron` itself) are not bundled. They load at runtime from `node_modules`. The list is declared identically in `scripts/build.js` and `scripts/dev.js`, so change one and change the other. Everything else, `simple-git` included, is bundled. Getting an external into a packaged build is a separate question, covered under Packaging below.
 
 Flags:
 - `--port=<n>` - override Vite port
 - `--ephemeral` - isolated data directory, auto-cleaned on exit (used for worktree previews). The data directory is wiped on every boot, so a previous (possibly crashed) preview's clones never persist. Because the wipe also takes the markers that say what the user has already seen, the boot seeds them back: `hasCompletedFirstRun`, `lastWhatsNewShownVersion`, and every announcement in the committed `announcements.json` stamped read and dismissed. Without that last one the megaphone badge and the announcement banner returned on every preview launch.
 - `--fresh` - ephemeral preview with NO project pre-cloned or auto-opened, so the app starts on the Welcome Screen. Use it to exercise the first-launch experience (pick a folder, land on the board, onboarding checklist). Implies the same wipe as `--ephemeral`, but deliberately gets NONE of the seeded markers above, so onboarding, What's New, and unread announcements all present as they would to a real first-time user.
 
+**Single-instance lock warning:** a non-ephemeral launch whose Electron process exits almost immediately with code 0 means another Kangentic instance (usually the installed app) already holds the single-instance lock -- the loser exits silently and the holder's window is focused, which looks exactly like a successful dev launch while you are actually using the other build. `dev.js` detects that signature (non-ephemeral, exit 0, under 5s from spawn) and prints an unmissable warning: quit the other instance (including its tray icon and any background processes in Task Manager), then run `npm start` again. Ephemeral previews skip the lock and can never trigger it.
+
+**Dev build marker:** a dev build names itself `Kangentic (dev)` in the title-bar wordmark and in the OS window title, so a dogfooding `npm start` window is tellable from a packaged build in the taskbar without clicking into it. Both strings are gated on the build-time `__KANGENTIC_DEV__` flag and are dead-code-eliminated from a production build. A worktree preview is a dev window, so it gains the wordmark suffix on top of its preview pill, while its own `#<id> - <title>` label still wins the OS title. The two marketing captures (`walkthrough.capture.ts`, `agent-orchestration.capture.ts`) render against the Vite dev server, where the flag is true, so `hideDevOnlyChrome` in `tests/captures/helpers/capture-page.ts` hides the badge; a capture entry point that forgets the call fails `tests/unit/capture-dev-chrome-parity.test.ts`. The scene captures (`scenes.capture.ts`) render against the built demo, which has no badge, and call it only to satisfy that test.
+
 ### Production (`npm run build` / `scripts/build.js`)
 
+0. Sets `NODE_ENV=production` and prints whether the Sentry symbol upload is enabled or skipped.
+   Both are load-bearing. The Sentry bundler plugins skip their upload when `NODE_ENV` is
+   `development` and say so only at debug level, and printing nothing at all when the token was
+   absent is how two releases shipped with unreadable stacks.
 1. `tsc --noEmit` (type check)
 2. Vite builds renderer → `.vite/build/renderer/main_window/`
-3. esbuild bundles main + preload (minified)
+3. esbuild bundles main + preload + the three utility-process workers (embed, line-count, dictation), minified
 4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`) to `.vite/build/`
+5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
+   Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token. A
+   missing token is a no-op; with a token present, a failed upload FAILS the build rather than
+   warning past it.
+
+### Web demo (`npm run build:demo` / `demo/vite.config.mts`)
+
+The renderer built for a plain browser, so the site and the docs can embed the actual app. A
+second Vite invocation, never a second entry in the shared config: it reuses `vite.config.mts` as
+a factory, forces production semantics (`__KANGENTIC_DEV__` false, the Sentry plugins dropped by
+name, no sourcemaps), and writes `dist/demo/`, which is gitignored and outside every packaging
+glob. One plugin injects five classic scripts ahead of the module bundle: the scene registry, the
+boot script (`demo/boot.js`: the URL contract, config overrides, still and embed styles, the
+hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
+pre-reveal step runner, and a silent microphone in place of `getUserMedia`), the webview shim
+(`demo/webview-shim.js`: an iframe standing in for Electron's `<webview>` in the Browser pane,
+onto a bundled page with the project's own data at its dev URL), `tests/ui/mock-electron-api.js`
+verbatim, and the generated seed (the sample install from `tests/captures/helpers/demo-dataset.ts`
+plus, per recording under `tests/captures/fixtures/demo/`, its opening and final terminal frames,
+its working-tree diff split into the three scopes, the last output peek its Monitor row shows and,
+for a working session, how that peek changes over the recording, the agent message trail a board
+card prints under the default Card Preview, and the scaffolded project's git history, blame, and
+per-commit diffs from `tests/captures/fixtures/demo/history/`, captured by
+`scripts/capture-demo-history.mjs` from the repo `scripts/lib/demo-scaffold-repo.mjs` builds
+out of the scaffold's `commits.json`). The
+plugin also emits every
+recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
+mounts to replay the session as it happened, the agent boots a drag or a new Command
+Terminal starts (recorded per task and per project by `scripts/capture-demo-sessions.mjs` from
+the dataset), and the `claude --resume` boot a Resume replays for a session paused at its
+recording's end (recorded by the same script as `resume-<sessionId>.json`), plus the agent transcript behind a session under `transcripts/` (from
+`tests/captures/fixtures/demo/transcripts/`, derived by main's own parsers), which the
+conversation viewer fetches when it opens. The five scripts, the recordings, the transcripts, and the guest pages carry a content hash in their
+names, as Vite's own chunks do, so a copy GitHub Pages cached from an earlier release is never
+paired with a new seed. Beside them it emits `scenes.json` unhashed: the scene list (name, reach, the alt text a
+docs figure carries, the maintainer description), the frame size (1600 by 1000), and the app
+version, generated from the same registry the page boots, which is what kangentic.com reads at
+build time to embed a scene by name. `--base=<path>` on the CLI
+moves the base path; the GitHub Pages deploy (`.github/workflows/deploy-demo.yml`, called from
+the release graph after `publish-release`) builds with `--base=/kangentic/`. `demo/README.md`
+documents the URL contract, the scenes, the numbers, and the Electron-only surfaces that stay
+inert in a browser.
+
+The scene registry (`tests/captures/scenes.ts`) has a second consumer: `npm run capture` builds
+the demo, then `tests/captures/features/scenes.capture.ts` opens every scene in it by URL and
+screenshots it per theme into the gitignored `captures/<timestamp>/scenes/`, playing the gesture
+a `driver` scene needs (a held drag, a right-click) with Playwright. The rig has no scene applier
+of its own; `demo/boot.js` is the applier for both consumers. `npm run demo:posters`
+(`demo/posters.mjs`) drives that same rig for the site's docs figures: every scene in the `clay`
+and `rust` themes at the frame's 2x (`CAPTURE_THEMES`, `CAPTURE_RESOLUTIONS`, and
+`CAPTURE_OUTPUT_ROOT` into `dist/demo-posters/`), checked against the build's own `scenes.json`
+(every scene at every theme, every PNG 3200 by 2000, the build's version equal to
+`package.json`'s) and zipped with a `manifest.json` as `dist/demo-posters-<version>.zip`. The
+manifest also carries each poster's `focus` rect, which the rig measures on the still and writes
+beside it as a `.focus.json` sidecar. `release.yml`'s `demo-posters` job installs Roboto, runs it
+after `publish-release`, and attaches the zip to the release; `demo/README.md` ("The poster set")
+carries the manifest shape and the reasons.
 
 ### Worktree Dev
 
 In worktrees, `dev.js` bypasses `vite.config.mts` and creates an inline Vite config. This avoids pattern-matching issues where `.kangentic/**` in the watch ignore would match the worktree's own path. It also gives worktree servers an isolated Vite dep cache (`<worktree>/.kangentic/vite-cache`; `vite.config.mts` uses `.kangentic/vite-cache-tests` when loaded from a worktree, e.g. Playwright's webServer), because the worktree's `node_modules` is a junction to the main repo's, and sharing the default `node_modules/.vite` would let a worktree server boot invalidate the running main server's cache and break its dynamic imports.
 
-`scripts/worktree-preview.js` creates a `node_modules` junction/symlink from the worktree to the repo root, then opens a native terminal running the dev server.
+`scripts/worktree-preview.js` creates a `node_modules` junction/symlink from the worktree to the repo root, then opens a native terminal running the dev server. `--env KEY=VALUE` (repeatable) sets a variable in that dev server's environment by splicing it into the terminal command: the tab the launcher opens inherits the terminal host's environment, not the launcher's, so a variable set on the launcher's own process never reaches `dev.js`. Values may not contain quotes, newlines, or `& | < > ^ %`, and the command is visible in the process list, so it must not carry a secret. `tests/unit/worktree-preview-env.test.ts` pins the cmd.exe and POSIX quoting.
+
+`node scripts/worktree-preview.js --stop --port=<port>` writes a stop file; `dev.js` then asks Electron to quit through the dev inspection bridge (`POST /quit`) so the app runs its real quit path (sessions suspended, PTYs killed, the run recorded as a clean exit), and kills it only if that has not finished within 8s. Once Electron is gone nothing holds the two repo clones under `.kangentic/data`, so the ephemeral removal actually runs and takes ten seconds or more on Windows; the launcher waits up to 45s for the dev server to exit before force-killing.
 
 `node scripts/worktree-preview.js --wait --port=<port>` blocks until that preview exits, then exits with a code that says why: `0` clean (terminal closed or `--stop`), `1` watcher usage/setup error, `2` crashed (dev server exited non-zero), `3` vanished (force-killed with no recorded exit). `dev.js`'s `cleanup()` writes a small `{ pid, exitCode }` record under `os.tmpdir()` (see `scripts/preview-exit-record.js`) as its first statement, since ephemeral mode removes the whole worktree `.kangentic/` directory on exit and nothing under the worktree would otherwise survive to tell the watcher how the server exited. The `/preview` skill runs this backgrounded by default so the harness delivers a task-notification when the preview exits.
 
@@ -253,6 +324,31 @@ npx playwright test --project=electron
   excerpt. The pure matching predicate is unit-tested in `tests/unit/e2e-janitor.test.ts`; the
   janitor reuses the scan and kill primitives from `src/main/git/zombie-reaper.ts`.
 
+### Demo smoke (`tests/demo/`)
+
+```bash
+npm run build:demo
+npm run test:demo
+```
+
+- **Runner:** Playwright with headless Chromium, one worker, against `dist/demo/` served by
+  `demo/static-server.mjs` from `beforeAll` (deliberately not a `webServer` entry, which would
+  start for every project filter and break the UI tier whenever the build is absent)
+- **What it asserts:** every bootable scene in the registry reaches its `ready` element (the
+  loop iterates `SCENES`, so a new entry is covered with no test change) and, where it names a
+  `focus`, that element is a real region rather than nothing, an empty box, or the whole frame; a
+  `driver` scene is refused by name, `scenes.json` is served and matches the registry, the ready
+  message carries a dialog scene's focus rect, Escape posts `kangentic-demo-escape` when the app
+  has nothing of its own to close and stays silent when it does, a task window takes the first
+  Escape even with its terminal under the pointer, Escape posts from a Command Terminal, from the
+  bottom panel's terminal, and after a window parks, `embed=1` hides the window
+  controls, `theme=` applies, an unknown
+  scene shows the error card, a `state=` blob naming only part of a nested config block is
+  refused, the console stays clean, and boot makes no request off the serving
+  origin
+- **Build required** before running; the `demo` CI job and the Pages deploy both run it on the
+  exact bytes they ship
+
 ### Decision Guide
 
 | What you're testing | Tier |
@@ -260,6 +356,7 @@ npx playwright test --project=electron
 | Pure function, parser, utility | Unit |
 | Component rendering, user interaction, form validation | UI |
 | Real IPC, PTY spawning, terminal output, file I/O | E2E |
+| The web build boots and stays embeddable | Demo smoke |
 
 Release-time manual validation against real authenticated agent CLIs lives in [release-checklist.md](release-checklist.md). Automated tests use mock fixtures and intentionally do not exercise real model latency, real tool calls, or conversation continuity across resume.
 
@@ -315,6 +412,9 @@ npm run test:unit                 # Unit (separate runner)
 - **Test selectors** -- `data-testid` and `data-swimlane-name` attributes
 - **Escape key** -- all dialogs use global `useEffect` listener
 - **IPC channels** -- `src/shared/ipc-channels.ts` is the single source of truth
+- **Dependency blocks** - `dependencies` is at most the esbuild externals (minus `electron`) plus whatever `electron-builder.yml`'s `files:` names directly. Every external except `electron` has to be there; the `files:` half is a permission, not a requirement, since most of what it names arrives transitively and carries no root declaration. Everything else is bundled and belongs in `devDependencies`. electron-builder copies the whole production closure into the asar, so a stray entry there ships its entire transitive tree for nothing. See `.claude/rules/dependency-block-parity.md`
+- **`allowScripts`** - the block at the bottom of `package.json` is live npm 12 config, not leftovers from a tool nobody uses. npm blocks a dependency's install script unless `allowScripts` covers it, so deleting the key leaves `npm ci` exiting 0 with no electron binary and an uncompiled better-sqlite3. `npm install-scripts ls` shows what npm is blocking; `tests/unit/allow-scripts-coverage.test.ts` fails when a package with an install script is not covered
+- **Lockfile metadata** - never regenerate `package-lock.json` against a populated `node_modules`. npm writes every already-installed package with no `resolved` and no `integrity`, which drops `npm ci`'s supply-chain verification for most of the tree without failing anything. `npm install --package-lock-only` does not repair it; `node scripts/repair-lockfile-integrity.js` does, and `tests/unit/lockfile-integrity.test.ts` fails CI when an entry is missing either field
 
 ## Environment Variables
 
@@ -364,12 +464,14 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 
 Native modules:
 - `better-sqlite3` - rebuilt against Electron headers via `scripts/rebuild-native.js`
-- `node-pty` - uses prebuilt NAPI binaries, no rebuild needed
-- `sherpa-onnx-node` - prebuilt platform-specific binaries, no rebuild needed (voice dictation; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
+- `node-pty` - uses prebuilt NAPI binaries, no rebuild needed. The one exception is its macOS `spawn-helper`: `build/afterPack.js` compiles Kangentic's own (`build/spawn-helper/spawn-helper.c`, via `build/install-spawn-helper.js`) over the prebuilt one. It clears the inherited mach exception ports before exec, and the afterPack and afterSign gates prove that on the built binary. A macOS package build therefore needs Xcode or the Command Line Tools installed
+- `sherpa-onnx-node` - prebuilt platform-specific binaries, no rebuild needed (voice dictation, running in its own `kangentic-dictation` utilityProcess worker - see DESKTOP-X in `.claude/rules/dictation-out-of-process.md`; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
 - `font-list` - shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
 - `sqlite-vec` - a loadable SQLite extension shipped as per-platform binary packages, no rebuild needed (conversation-memory retrieval; unpacked via the `sqlite-vec-*` glob in `asarUnpack`, since dlopen cannot read an extension inside asar)
 - `onnxruntime-node` - prebuilt native binaries (`onnxruntime_binding.node`, plus `onnxruntime.dll` and `DirectML.dll` on Windows), no rebuild needed (the embed worker's execution provider; unpacked via `asarUnpack`)
 - `@huggingface/transformers` and `onnxruntime-web` - pure JavaScript, but both shipped and unpacked so the embed worker resolves them from the unpacked tree
+- `onnxruntime-common`, `sharp` (with its `@img/*` platform binding), `detect-libc`, `semver` - what transformers.js requires at module scope; unpacked for the same reason, since the worker never looks inside the asar. `build/afterPack.js` loads the worker's externals from the unpacked tree after packing and fails the build if any of this closure is missing (`build/verify-unpacked-worker.js`)
+- `bindings` and `file-uri-to-path` - pure JavaScript, and better-sqlite3's own transitive closure rather than anything this app imports. They carry a root `dependencies` entry only because `electron-builder.yml`'s `files:` names them directly, which is what `.claude/rules/dependency-block-parity.md` keeps them in that block for
 
 Security fuses enabled: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation.
 

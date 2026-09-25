@@ -34,8 +34,17 @@ export {
 export { deriveShortAuthenticationString, type ShortAuthenticationString } from './crypto/sas';
 export { deriveSessionSlotId, derivePairingSlotId } from './crypto/slot';
 
-export type { JsonValue, BridgeMessage, HeartbeatMessage, CapabilityRequestMessage, CapabilityResponseMessage, EventMessage } from './wire/messages';
-export { encodeMessage, decodeMessage, MAX_FRAME_LENGTH, MAX_DECODED_LENGTH, COMPRESSION_THRESHOLD } from './wire/framing';
+export type { JsonValue, BridgeMessage, HeartbeatMessage, CapabilityRequestMessage, CapabilityResponseMessage, CapabilityErrorCode, EventMessage } from './wire/messages';
+export {
+  encodeMessage,
+  decodeMessage,
+  UnsupportedVerbError,
+  isUnsupportedVerbError,
+  UNSUPPORTED_VERB_ERROR_CODE,
+  MAX_FRAME_LENGTH,
+  MAX_DECODED_LENGTH,
+  COMPRESSION_THRESHOLD,
+} from './wire/framing';
 export { isJsonValue, isRecord } from './wire/json-value';
 export { SessionFrameKind, wrapSessionFrame, unwrapSessionFrame } from './wire/session-frame';
 
@@ -46,6 +55,7 @@ export {
   parseReadDiffResponsePayload,
   parseTranscriptWindowResponsePayload,
   parseRegisterPushRequestPayload,
+  parseStartSessionResponsePayload,
   type CapabilityRequestPayloadMap,
   type CapabilityResponsePayloadMap,
   type ReadStreamRequestPayload,
@@ -75,6 +85,9 @@ export {
   type BoardToolResponsePayload,
   type RegisterPushRequestPayload,
   type RegisterPushResponsePayload,
+  type StartSessionRequestPayload,
+  type StartSessionResponsePayload,
+  type StartSessionOutcome,
 } from './wire/payloads';
 
 export {
@@ -163,6 +176,9 @@ export {
   parseBacklogItemWire,
   parseDiffFileListWire,
   parseDiffFileContentWire,
+  isTodoRole,
+  isDoneRole,
+  BOARD_COLUMN_ROLES,
   type TranscriptBlockWire,
   type TranscriptEntryWire,
   type TranscriptTurnUsageWire,
@@ -174,6 +190,7 @@ export {
   type SessionEventWire,
   type TerminalDimensionsWire,
   type BoardColumnWire,
+  type BoardColumnRoleWire,
   type BoardTaskWire,
   type BacklogItemWire,
   type DiffFileStatusWire,

@@ -13,7 +13,7 @@ import type { SubmissionVerifier } from '../../../../shared/types';
  * MEASURED (grok 1.0.0, interactive TUI via node-pty on Windows): the user
  * turn is appended to `chat_history.jsonl` 313ms after Enter - a
  * flush-on-SUBMIT write that landed well before the turn finished (2.1s),
- * comfortably inside the ~2s delivery budget. `updates.jsonl` flushed the
+ * comfortably inside the ~4s delivery budget. `updates.jsonl` flushed the
  * same turn only at 1.7s, which is why the verifier reads chat_history and
  * not the chunked updates stream (whose `user_message_chunk` records can
  * also split a long message and would never trim-equal the submitted

@@ -38,7 +38,10 @@ const INSTRUCTIONS_PANE_LIST_CAP = 5;
 function buildBrowserSection(activeProjectId: string | null): string[] {
   const lines = [
     'BROWSER VERIFICATION (kangentic_browser_* tools):',
-    'When the user asks you to verify, check, look at, click, type, or test something in the running app or a page in the browser, prefer the kangentic_browser_* tools - they drive the embedded Browser pane of a task (the dev server the user has loaded). Use them over any external or desktop browser-automation tool (for example a Chrome-extension browser MCP) and over writing a separate Playwright/Puppeteer script: those drive a separate real browser, not the in-app pane the user is looking at. Call kangentic_browser_list_panes first; target a tool with sessionId or taskId, or omit both to use your own task\'s pane (or the single pane open in this project). These tools only drive Browser panes in this project; one in another project is refused. If no pane is open, call kangentic_browser_open_pane with a url to open and load your own task\'s pane - you do not need to ask the user. Call kangentic_browser_close_pane when you are done to put the pane away. Do not drive the browser proactively when the user has not asked about on-screen behavior.',
+    'Use the kangentic_browser_* tools for ANY request to verify, check, look at, click, type, or test something in the running app or a web page. They drive the embedded Browser pane of a task, which is the dev server the user actually has on screen.',
+    'Do NOT use mcp__claude-in-chrome__* tools, a desktop or system browser, a computer-use tool, or a Playwright/Puppeteer/Selenium script for this. Every one of those drives a DIFFERENT browser from the one the user is watching, with different cookies and a different session, so what you observe there is not what the user sees and cannot verify their app. Reach for one only if the user explicitly names it.',
+    'OPEN THE PANE. If no browser is open, call kangentic_browser_open_pane with a url - you do not need to ask the user, and "the user closed it" is not a reason to avoid reopening it. A task has exactly ONE browser surface, so there is nothing to choose: that call either shows the pane or, when your project is not the one currently open, brings the same surface up offscreen and tells you so.',
+    'Call kangentic_browser_list_panes first; target a tool with the surface handle it lists (passed as sessionId) or with a taskId, or omit both to use your own task\'s surface (a caller with no task falls back to the single pane open in this project). A handle names one tab for its lifetime; if that tab is gone the call fails with surface-gone and names the replacement. These tools only drive Browser panes in this project; one in another project is refused. Call kangentic_browser_close_pane when you are done to put the pane away. Do not drive the browser proactively when the user has not asked about on-screen behavior.',
   ];
   const panes = browserPaneRegistry
     .list()
@@ -54,7 +57,7 @@ function buildBrowserSection(activeProjectId: string | null): string[] {
       .map((pane) => `task ${pane.taskId}${pane.url ? ` (${pane.url})` : ''}`)
       .join(', ');
     lines.push(
-      `${panes.length} Browser panes are currently open: ${summary}. Drive a specific one with the kangentic_browser_* tools by passing its sessionId or taskId - drive these panes, not a separate external browser.`,
+      `${panes.length} Browser panes are currently open: ${summary}. Drive a specific one with the kangentic_browser_* tools by passing its handle as sessionId or its taskId - drive these panes, not a separate external browser.`,
     );
   }
   return lines;
@@ -92,7 +95,7 @@ export function buildServerInstructions(
     'Tools that accept an optional `project` argument default to the active project above. Set `project` to the target project name whenever the user names a different registered project, however they phrase it. This includes phrase-embedded references, not just the explicit "create a task in X" form. Treat all of these as targeting project X: "in X", "in the X board", "on X\'s board", "the X to do", "X\'s backlog", "add it to X". When the target is any registered project other than the active one, pass its name as `project` rather than relying on the active default. Do not file a task into the active project when the user clearly targeted another one.',
     '',
     'LABELS WITH A LONG DESCRIPTION (known limitation):',
-    'When a kangentic_create_task or kangentic_update_task call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. To make labels stick, set them in a separate labels-only kangentic_update_task call after creating or updating the task with the long description.',
+    'When a kangentic_create_task or kangentic_update_task call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. To make labels stick, set them in a separate labels-only kangentic_update_task call after creating or updating the task with the long description. You do not have to detect this yourself: when it happens the tool response says so and names the task to follow up on.',
     '',
     'EDITING A LONG TASK DESCRIPTION:',
     'For an incremental change to a long task description, prefer kangentic_update_task\'s `descriptionEdits` (exact find/replace, like the file Edit tool) or `appendDescription` over resending the whole `description`. They cost far fewer tokens and cannot silently drop or alter untouched sections. Reserve `description` for a genuine full rewrite.',

@@ -23,12 +23,46 @@ import { buildTaskXml } from './prompt-xml';
  * has a port only once its agent asked for one via kangentic_reserve_dev_ports,
  * so `devPort` is null for most tasks and that is the normal state.
  * See .claude/rules/task-template-vars-parity.md clause 7.
+ *
+ * `projectPath` is the only keyword resolved straight from the open project's
+ * checkout rather than from a task field ({{baseBranch}} also reads project
+ * scope, but through the caller-resolved `defaultBaseBranch` above, and only
+ * when the task sets no override). It is `string | null` (null with no project
+ * open) rather than optional, so a TSC-CHECKED call site that forgets to pass
+ * it fails the build instead of silently resolving empty. That guarantee stops
+ * at `src/`: tsconfig excludes `tests/`, so a test building this context by
+ * hand can omit the field and get '' - the same latitude the pre-existing
+ * `devPort` cases in task-template-vars-parity.test.ts already take. Do not
+ * confuse it with the raw-read {{worktreePath}}: {{worktreePath}} is where the
+ * task is isolated (empty when it has none) and must never fall back to the
+ * project path (clause 5); {{projectPath}} is always the main checkout.
  */
 export interface TaskTemplateContext {
   task: Task;
   defaultBaseBranch: string;
   attachmentPaths: string[];
   devPort: number | null;
+  projectPath: string | null;
+  /**
+   * The project's display name. One line in the engine factory, which already
+   * reads `projectRepo.getById(projectId)` for `default_agent` and drops the
+   * rest of the row.
+   */
+  projectName: string | null;
+  /**
+   * The move, when there is one. A spawn prompt is not a move, so these are
+   * null there and the picker does not offer the four keywords that read them
+   * (see `contexts` in `task-template-vars.ts`). `column` is the column the
+   * automation BELONGS to, which equals `toColumn` on enter and `fromColumn` on
+   * exit; it exists separately so a row can name itself without knowing which
+   * end it is on.
+   */
+  move: {
+    column: string;
+    fromColumn: string | null;
+    toColumn: string | null;
+    trigger: 'enter' | 'exit';
+  } | null;
 }
 
 type TaskTemplateResolver = (ctx: TaskTemplateContext) => string;
@@ -49,6 +83,13 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
     return clean ? `: ${clean}` : '';
   },
   taskId: ({ task }) => task.id,
+  taskNumber: ({ task }) => String(task.display_id),
+  // Coalesced here rather than at each call site so every consumer sees the
+  // same '' for "no project open". That empty value is flag-shaped under
+  // drop-and-collapse (clause 6); docs/transition-engine.md documents how it
+  // fails, below the Template Variables table.
+  projectPath: ({ projectPath }) => projectPath ?? '',
+  projectName: ({ projectName }) => projectName ?? '',
   // Raw reads: empty is correct for a task with no worktree/branch, and must
   // not fall back to a project-level default the way {{baseBranch}} does.
   worktreePath: ({ task }) => task.worktree_path || '',
@@ -58,6 +99,21 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   baseBranch: ({ task, defaultBaseBranch }) => task.base_branch || defaultBaseBranch || 'main',
   prUrl: ({ task }) => task.pr_url || '',
   prNumber: ({ task }) => (task.pr_number ? String(task.pr_number) : ''),
+  // Raw reads, every one, per clause 5: empty is the correct answer for a task
+  // with no PR, no tracker link and no labels, and none of them has a
+  // project-level value to fall back to.
+  prState: ({ task }) => task.pr_state || '',
+  issueKey: ({ task }) => task.external_id || '',
+  issueUrl: ({ task }) => task.external_url || '',
+  // Comma-space, not comma: this is prose going into a message or a webhook
+  // body, read by a person or an agent, not a machine-parsed list.
+  //
+  // `?? []` rather than a bare dereference, matching every sibling resolver's
+  // `|| ''`. The schema column is NOT NULL and the repository always parses it,
+  // so a real row has an array; a Task assembled BY HAND does not, and
+  // `tsconfig` excludes `tests/`, so nothing catches that at build time. Empty
+  // is the honest answer for a task with no labels either way.
+  labels: ({ task }) => (task.labels ?? []).join(', '),
   attachments: ({ attachmentPaths }) => (attachmentPaths.length > 0 ? `\n${attachmentPaths.join('\n')}` : ''),
   // The task's lowest RESERVED port, or empty when it has reserved none -
   // which is the normal state, since nothing is reserved until something asks
@@ -71,6 +127,14 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   // reserve and use a port itself over templating one in, unless the task is
   // known to hold a reservation.
   port: ({ devPort }) => (devPort != null ? String(devPort) : ''),
+  // The move. Empty outside one, which is why the picker does not offer these
+  // in a spawn prompt: a value that is always empty is worse than absent.
+  // `fromColumn` is also legitimately empty for a task born into a column
+  // rather than moved into one.
+  column: ({ move }) => move?.column ?? '',
+  fromColumn: ({ move }) => move?.fromColumn ?? '',
+  toColumn: ({ move }) => move?.toColumn ?? '',
+  trigger: ({ move }) => move?.trigger ?? '',
 };
 
 /** Resolve every task template variable for the given context. */

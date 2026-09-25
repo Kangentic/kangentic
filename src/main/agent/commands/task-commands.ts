@@ -16,10 +16,12 @@ import {
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
+import { prNumberFromUrl } from '../../../shared/pr-url';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo } from '../../git/git-checks';
+import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import type { TaskUpdateInput, PermissionMode, TaskRunMode } from '../../../shared/types';
+import type { Task, TaskUpdateInput, PermissionMode, TaskRunMode } from '../../../shared/types';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
 
@@ -95,13 +97,14 @@ export function computeUpdatedDescription(
  * already encodes the number), which would otherwise leave the OLD number in the
  * row - the next non-force resolve then resolves that stale number and silently
  * overwrites the URL back to the previous PR. Deriving it here keeps the two in
- * agreement, and mirrors `buildPrFields` in the task-detail edit form, which has
- * always derived the number from the URL the same way.
+ * agreement, and mirrors `buildPrFields` in the task-detail edit form, which
+ * derives the number from the URL through the same shared helper.
+ *
+ * The implementation lives in `src/shared/pr-url.ts` so this and the renderer's
+ * `buildPrFields` cannot drift apart: they used to carry separate `/pull/(\d+)`
+ * regexes, which silently produced a null number for every Azure DevOps
+ * `/pullrequest/<id>` URL.
  */
-function prNumberFromUrl(prUrl: string): number | null {
-  const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
-  return prNumberMatch ? parseInt(prNumberMatch[1], 10) : null;
-}
 
 /**
  * Resolve a just-written PR link so its state lands immediately, instead of
@@ -130,6 +133,11 @@ function scheduleLinkTimeResolve(
   void linkPRForTask(taskId, {
     tasks: taskRepo,
     projectPath: context.getProjectPath(),
+    defaultBaseBranch: context.getDefaultBaseBranch?.(),
+    resolveOptions: context.getPrResolveOptions?.(),
+    // `/pull-request` links its PR here and then waits on CI inside one turn,
+    // so no idle arrives to start the in-flight re-poll; this write has to.
+    repollInFlightVerdict: context.getPrRepollInFlight?.(),
     force: true,
     preserveLinkOnNotFound: true,
     onLinked: (linked) => context.onTaskPrLinkChanged?.(linked),
@@ -289,7 +297,9 @@ export const handleCreateTask: CommandHandler = async (
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
 
-  const resolution = resolveColumn(db, columnName);
+  const resolution = resolveColumn(db, columnName, 'todo', {
+    refuseDone: 'a task cannot be created there',
+  });
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }
@@ -451,10 +461,10 @@ export const handleUpdateTask: CommandHandler = (
   if (newPrNumber !== null) updates.pr_number = Number(newPrNumber);
   else if (newPrUrl !== null) updates.pr_number = prNumberFromUrl(String(newPrUrl));
   // Re-pointing the link invalidates any state carried over from the old PR. The
-  // three fields must always agree (the linker writes them atomically), and a
+  // four PR fields must always agree (the linker writes them atomically), and a
   // stale terminal `merged`/`closed` would otherwise short-circuit every
   // non-force resolve, freezing the task on a PR it no longer points at. The
-  // link-time resolve scheduled below refills it.
+  // link-time resolve scheduled below refills them.
   //
   // Unless the write re-points nothing. A `/pull-request` flow routinely writes
   // the link a sweep or auto-link already discovered, and nulling `pr_state`
@@ -473,7 +483,10 @@ export const handleUpdateTask: CommandHandler = (
     && typeof effectivePrNumber === 'number'
     && effectivePrNumber === task.pr_number
     && task.pr_state != null;
-  if ((newPrUrl !== null || newPrNumber !== null) && !prLinkUnchanged) updates.pr_state = null;
+  if ((newPrUrl !== null || newPrNumber !== null) && !prLinkUnchanged) {
+    updates.pr_state = null;
+    updates.pr_merge_readiness = null;
+  }
   if (newAgent !== null) updates.agent = newAgent;
   if (newPriority !== null) updates.priority = Number(newPriority);
   if (newLabels !== null) updates.labels = newLabels;
@@ -600,10 +613,29 @@ export const handleUpdateTask: CommandHandler = (
 };
 
 /**
+ * The anchors the ladder searched for a task, for a not-found message that
+ * reads differently from "nothing to search by".
+ */
+function describeSearchedAnchors(task: Task): string {
+  const anchors: string[] = [];
+  if (task.pr_number != null) anchors.push(`PR #${task.pr_number}`);
+  if (task.worktree_path) anchors.push('its worktree branch');
+  else if (task.branch_name) anchors.push(`branch "${task.branch_name}"`);
+  if (task.pushed_branch) anchors.push(`pushed branch "${task.pushed_branch}"`);
+  if (task.head_sha) anchors.push(`commit ${task.head_sha.slice(0, 7)}`);
+  return anchors.join(', ');
+}
+
+/**
  * Authoritatively resolve and link the PR for a task via the confidence ladder
- * (PR number -> worktree branch -> commit SHA -> stored slug). Works without a
- * live session, picks up human/web-UI-created PRs the scraper misses, and
- * refreshes the linked PR's state (open/draft/merged/closed) on re-run.
+ * (PR number -> worktree branch -> commit SHA -> stored branch -> pushed
+ * branch -> remote tip). Works without a live session, picks up human/web-UI-
+ * created PRs the scraper misses, and refreshes the linked PR's state
+ * (open/draft/merged/closed) and merge readiness on re-run.
+ *
+ * `branch` (optional) is the remote branch the work was pushed to. It is
+ * recorded as the task's `pushed_branch` before the ladder runs, which is how
+ * an agent anchors a task that has no worktree and nothing else recorded.
  */
 export const handleLinkPr: CommandHandler = async (
   params: Record<string, unknown>,
@@ -616,9 +648,31 @@ export const handleLinkPr: CommandHandler = async (
 
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
-  const task = resolveTask(taskRepo, taskId);
+  let task = resolveTask(taskRepo, taskId);
   if (!task) {
     return { success: false, error: `Task "${taskId}" not found` };
+  }
+
+  const branch = typeof params.branch === 'string' ? params.branch.trim() : '';
+  if (params.branch != null && params.branch !== '' && !isSafeBranchName(branch)) {
+    return {
+      success: false,
+      error: `branch ${JSON.stringify(params.branch)} is not a valid git branch name. Pass the remote branch the work was pushed to, for example "feature/my-change".`,
+    };
+  }
+  // Refused for the same name the automatic capture refuses, and for the same
+  // reason: a merge-back's `git push origin HEAD:develop` would otherwise make
+  // Tier 5 answer with the base branch's own PR. A refusal rather than a silent
+  // skip, because the caller named this branch explicitly and can correct it.
+  const effectiveBase = task.base_branch || task.resolved_base_branch || context.getDefaultBaseBranch?.();
+  if (branch && branch === effectiveBase) {
+    return {
+      success: false,
+      error: `branch "${branch}" is this task's base branch, not a PR source branch. Pass the branch the work was pushed to, or omit branch to resolve from what is already recorded.`,
+    };
+  }
+  if (branch && branch !== task.branch_name && branch !== task.pushed_branch) {
+    task = taskRepo.update({ id: task.id, pushed_branch: branch });
   }
 
   let result;
@@ -626,8 +680,14 @@ export const handleLinkPr: CommandHandler = async (
     result = await linkPRForTask(task.id, {
       tasks: taskRepo,
       projectPath: context.getProjectPath(),
+      defaultBaseBranch: context.getDefaultBaseBranch?.(),
+      resolveOptions: context.getPrResolveOptions?.(),
+      repollInFlightVerdict: context.getPrRepollInFlight?.(),
       force: true,
       onLinked: (linked) => context.onTaskUpdated(linked),
+      // The agent's call is announced above; a re-poll flipping the verdict
+      // when CI settles is the app's own reconcile and goes out quietly.
+      onRepollLinked: context.onTaskPrLinkChanged,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -635,37 +695,43 @@ export const handleLinkPr: CommandHandler = async (
   }
 
   const linkedTask = result.task;
+  // Same suffix shape as the linker's own log line, so the two stay in step.
+  const readinessNote = linkedTask?.pr_merge_readiness ? `, merge ${linkedTask.pr_merge_readiness}` : '';
   switch (result.status) {
     case 'linked':
     case 'unchanged':
       return {
         success: true,
-        message: `PR #${linkedTask?.pr_number} (${linkedTask?.pr_state ?? 'open'}) linked to "${task.title}".`,
+        message: `PR #${linkedTask?.pr_number} (${linkedTask?.pr_state ?? 'open'}${readinessNote}) linked to "${task.title}".`,
         data: {
           id: linkedTask?.id,
           displayId: linkedTask?.display_id,
           prUrl: linkedTask?.pr_url,
           prNumber: linkedTask?.pr_number,
           prState: linkedTask?.pr_state,
+          prMergeReadiness: linkedTask?.pr_merge_readiness,
         },
       };
     case 'resolver-unavailable':
-      return { success: false, error: result.message ?? 'GitHub CLI not available. Install gh and run: gh auth login' };
+      return { success: false, error: result.message ?? 'No PR resolver available for this repository' };
     case 'transient-error':
-      return { success: false, error: result.message ?? 'Temporary GitHub error while resolving the PR - try again.' };
+      return { success: false, error: result.message ?? 'Temporary error while resolving the PR - try again.' };
     case 'no-anchor':
+      // A refusal, not a pass: nothing was searched. `isError` lets the agent
+      // self-correct instead of reading "linked: false" as "no PR exists".
       return {
-        success: true,
-        message: `"${task.title}" has no branch, worktree, or PR number to resolve a PR from.`,
-        data: { id: task.id, linked: false },
+        success: false,
+        error: `"${task.title}" has nothing recorded to search by: no pull request number, worktree, branch, commit, or pushed branch. Pass branch (the remote branch the work was pushed to) to kangentic_link_pr, or set prUrl or prNumber with kangentic_update_task, then call kangentic_link_pr again.`,
       };
     case 'not-found':
-    default:
+    default: {
+      const searched = describeSearchedAnchors(linkedTask ?? task);
       return {
         success: true,
-        message: `No PR found for "${task.title}".`,
+        message: `No PR found for "${task.title}"${searched ? ` (searched by ${searched})` : ''}.`,
         data: { id: task.id, linked: false },
       };
+    }
   }
 };
 
@@ -946,7 +1012,9 @@ export function handleMoveTaskToProject(
   }
 
   const targetDb = target.getProjectDb();
-  const resolution = resolveColumn(targetDb, params.column ?? null, 'todo');
+  const resolution = resolveColumn(targetDb, params.column ?? null, 'todo', {
+    refuseDone: 'a relocated task cannot land there',
+  });
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }

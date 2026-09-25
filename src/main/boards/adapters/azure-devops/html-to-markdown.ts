@@ -11,22 +11,70 @@
  * Tested in tests/unit/azure-devops-html-converter.test.ts.
  */
 
-/** Strip all HTML tags from a string. */
+/**
+ * Strip all HTML tags from a string, repeating until nothing changes.
+ *
+ * One pass of this regex is in fact already a fixed point: a `<` survives a
+ * pass only when it has no `>` after it or is immediately followed by one, and
+ * removing text can never introduce a `>`. So the loop is a guard against a
+ * future edit to the pattern, not a fix for a reachable input today.
+ */
 function stripTags(html: string): string {
-  return html.replace(/<[^>]+>/g, '');
+  let previous = '';
+  let current = html;
+  while (current !== previous) {
+    previous = current;
+    current = current.replace(/<[^>]+>/g, '');
+  }
+  return current;
 }
 
-/** Decode common HTML entities. */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  nbsp: ' ',
+};
+
+/**
+ * A numeric entity's code point, or null when it is outside Unicode's range.
+ *
+ * `String.fromCharCode` truncates to 16 bits, so every astral character came
+ * out as an unrelated private-use one: an emoji written `&#128512;` decoded to
+ * U+F600 rather than U+1F600. `fromCodePoint` pairs the surrogates instead, but
+ * it THROWS above U+10FFFF where `fromCharCode` silently wrapped, so an absurd
+ * entity has to be caught here and left as the author wrote it rather than
+ * taking the whole work-item description down.
+ */
+function codePointOrNull(digits: string, radix: number): number | null {
+  const codePoint = parseInt(digits, radix);
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return null;
+  return codePoint;
+}
+
+/**
+ * Decode common HTML entities, exactly one level deep.
+ *
+ * One pass over an alternation, not a chain of `.replace()` calls, because no
+ * ordering of a chain decodes exactly one level for every input. Whichever
+ * entity runs first is the one that can be re-fed to a later pass: with `&amp;`
+ * first, `&amp;lt;` decodes twice and a work item that literally says `&lt;`
+ * renders as a stray angle bracket; with `&amp;` last, `&#38;amp;` decodes
+ * twice instead. A single pass resumes scanning AFTER each replacement, so
+ * nothing an entity decodes into can be read as part of another entity.
+ */
 function decodeEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
+  return text.replace(
+    /&(?:([a-z]+)|#(\d+)|#x([0-9a-f]+));/gi,
+    (match, name: string | undefined, decimal: string | undefined, hex: string | undefined) => {
+      if (name !== undefined) return NAMED_ENTITIES[name.toLowerCase()] ?? match;
+      const codePoint = decimal !== undefined
+        ? codePointOrNull(decimal, 10)
+        : codePointOrNull(hex ?? '', 16);
+      return codePoint === null ? match : String.fromCodePoint(codePoint);
+    },
+  );
 }
 
 /** Convert HTML (from Azure DevOps rich text) to markdown. */

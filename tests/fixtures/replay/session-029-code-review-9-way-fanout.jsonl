@@ -1,0 +1,711 @@
+{"ts":1784691275210,"type":"session_start","hookContext":"{\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"transcript_path\":\"C:\\\\Users\\\\dev\\\\.claude\\\\projects\\\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\\\00000000-0000-0000-0000-000000000000.jsonl\",\"cwd\":\"C:\\\\Users\\\\dev\\\\Documents\\\\GitHub\\\\kangentic\\\\.kangentic\\\\worktrees\\\\make-kangentic-mcp-s-cff8b5df\",\"hook_event_name\":\"SessionStart\",\"source\":\"startup\",\"model\":\"claude-opus-4-8\"}"}
+{"ts":1784691275786,"type":"prompt"}
+{"ts":1784691280443,"type":"tool_start","tool":"Bash","toolId":"toolu_01JSYhvDxUfT5Yd96zNJSBYT","detail":"npm run typecheck"}
+{"ts":1784691296142,"type":"tool_end","tool":"Bash","toolId":"toolu_01JSYhvDxUfT5Yd96zNJSBYT"}
+{"ts":1784691299144,"type":"tool_start","tool":"Bash","toolId":"toolu_017k57Fx8wtW4wV7ajGAkzjt","detail":"npx vitest run tests/unit/hmr-resync.test.ts"}
+{"ts":1784691305256,"type":"tool_end","tool":"Bash","toolId":"toolu_017k57Fx8wtW4wV7ajGAkzjt"}
+{"ts":1784691307404,"type":"tool_start","tool":"Bash","toolId":"toolu_01ACskoVWqGjHFXcXrztG3uC","detail":"git symbolic-ref --short refs/remotes/origin/HEAD"}
+{"ts":1784691307759,"type":"tool_end","tool":"Bash","toolId":"toolu_01ACskoVWqGjHFXcXrztG3uC"}
+{"ts":1784691310695,"type":"tool_start","tool":"Bash","toolId":"toolu_01B8mkTcAmNnpUf1LFaNjAUn","detail":"git diff origin/main...HEAD --stat"}
+{"ts":1784691311055,"type":"tool_end","tool":"Bash","toolId":"toolu_01B8mkTcAmNnpUf1LFaNjAUn"}
+{"ts":1784691314067,"type":"tool_start","tool":"Bash","toolId":"toolu_019nRrWwjdTB3jXW5tjyovRX","detail":"git diff HEAD --stat"}
+{"ts":1784691314454,"type":"tool_end","tool":"Bash","toolId":"toolu_019nRrWwjdTB3jXW5tjyovRX"}
+{"ts":1784691316735,"type":"tool_start","tool":"Bash","toolId":"toolu_01EfEohD32Kpn97Ybpyx4CUG","detail":"git diff HEAD"}
+{"ts":1784691317107,"type":"tool_end","tool":"Bash","toolId":"toolu_01EfEohD32Kpn97Ybpyx4CUG"}
+{"ts":1784691318883,"type":"tool_start","tool":"Bash","toolId":"toolu_01BhS1NWAvJij5e1Yz18fVJV","detail":"git ls-files --others --exclude-standard"}
+{"ts":1784691319240,"type":"tool_end","tool":"Bash","toolId":"toolu_01BhS1NWAvJij5e1Yz18fVJV"}
+{"ts":1784691321422,"type":"tool_start","tool":"Read","toolId":"toolu_01VDd6PH9nd4PHm1yTF6apKS","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691321548,"type":"tool_end","tool":"Read","toolId":"toolu_01VDd6PH9nd4PHm1yTF6apKS"}
+{"ts":1784691341462,"type":"tool_start","tool":"Bash","toolId":"toolu_01UjumrdE4PGK3heoPZewqFy","detail":"git diff HEAD --output=C:/Users/dev/AppData/Local/Temp/claude/C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df/00000000-0000-0000-0000-000000000000/scratc"}
+{"ts":1784691341834,"type":"tool_end","tool":"Bash","toolId":"toolu_01UjumrdE4PGK3heoPZewqFy"}
+{"ts":1784691364290,"type":"tool_start","tool":"Agent","toolId":"toolu_01RvmLaCEzgch8qMst3TYAZm","detail":"Correctness finder"}
+{"ts":1784691366381,"type":"subagent_start","detail":"general-purpose"}
+{"ts":1784691366411,"type":"tool_end","tool":"Agent","toolId":"toolu_01RvmLaCEzgch8qMst3TYAZm"}
+{"ts":1784691370012,"type":"tool_start","tool":"Read","toolId":"toolu_017GEEko8evRhn3moP8Q55Br","detail":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\00000000-0000-0000-0000-000000000000\\scratchpad\\review-diff.patch"}
+{"ts":1784691370271,"type":"tool_end","tool":"Read","toolId":"toolu_017GEEko8evRhn3moP8Q55Br"}
+{"ts":1784691375554,"type":"tool_start","tool":"Grep","toolId":"toolu_01H2SVaTb3vPzGTh2nmdmPUu","detail":"mcpServer"}
+{"ts":1784691375793,"type":"tool_end","tool":"Grep","toolId":"toolu_01H2SVaTb3vPzGTh2nmdmPUu"}
+{"ts":1784691379650,"type":"tool_start","tool":"Grep","toolId":"toolu_01CaxBy1Ap1CoTz9ELZxfJP7","detail":"mcpServer"}
+{"ts":1784691379830,"type":"tool_end","tool":"Grep","toolId":"toolu_01CaxBy1Ap1CoTz9ELZxfJP7"}
+{"ts":1784691380736,"type":"tool_start","tool":"Agent","toolId":"toolu_01C6Thp9wvK25vgawDpRNDLq","detail":"Conventions + best practices finder"}
+{"ts":1784691382567,"type":"subagent_start","detail":"general-purpose"}
+{"ts":1784691382595,"type":"tool_end","tool":"Agent","toolId":"toolu_01C6Thp9wvK25vgawDpRNDLq"}
+{"ts":1784691383032,"type":"tool_start","tool":"Grep","toolId":"toolu_01G4U4hsYg44wb1L386vdq5K","detail":"mcpServer"}
+{"ts":1784691383221,"type":"tool_end","tool":"Grep","toolId":"toolu_01G4U4hsYg44wb1L386vdq5K"}
+{"ts":1784691386974,"type":"tool_start","tool":"Grep","toolId":"toolu_01DvrzsQugnybcCqYLEdcYjh","detail":"updateGlobal"}
+{"ts":1784691387005,"type":"tool_start","tool":"Read","toolId":"toolu_016iDXR3NkHhey1tckvVbXqm","detail":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\00000000-0000-0000-0000-000000000000\\scratchpad\\review-diff.patch"}
+{"ts":1784691387175,"type":"tool_end","tool":"Grep","toolId":"toolu_01DvrzsQugnybcCqYLEdcYjh"}
+{"ts":1784691387283,"type":"tool_end","tool":"Read","toolId":"toolu_016iDXR3NkHhey1tckvVbXqm"}
+{"ts":1784691389938,"type":"tool_start","tool":"Grep","toolId":"toolu_01VUKqBWa8gcvk4RKhAbZgye","detail":"const updateGlobal|function updateGlobal|updateGlobal ="}
+{"ts":1784691390163,"type":"tool_end","tool":"Grep","toolId":"toolu_01VUKqBWa8gcvk4RKhAbZgye"}
+{"ts":1784691390189,"type":"tool_start","tool":"Read","toolId":"toolu_014KqGFwgjQWr4gzF5DQhnhi","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691390319,"type":"tool_end","tool":"Read","toolId":"toolu_014KqGFwgjQWr4gzF5DQhnhi"}
+{"ts":1784691392742,"type":"tool_start","tool":"Grep","toolId":"toolu_01WspWdBheWAc9vz9bkNgLng","detail":"useScopedUpdate"}
+{"ts":1784691392940,"type":"tool_end","tool":"Grep","toolId":"toolu_01WspWdBheWAc9vz9bkNgLng"}
+{"ts":1784691394327,"type":"tool_start","tool":"Read","toolId":"toolu_01Gp2atMMcozEwGxKZmue4hj","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691394445,"type":"tool_end","tool":"Read","toolId":"toolu_01Gp2atMMcozEwGxKZmue4hj"}
+{"ts":1784691394858,"type":"tool_start","tool":"Agent","toolId":"toolu_01BJwDqe1dadWr3e3PSb84W1","detail":"Maintainability finder"}
+{"ts":1784691396842,"type":"subagent_start","detail":"general-purpose"}
+{"ts":1784691396871,"type":"tool_end","tool":"Agent","toolId":"toolu_01BJwDqe1dadWr3e3PSb84W1"}
+{"ts":1784691398158,"type":"subagent_stop","detail":""}
+{"ts":1784691398597,"type":"tool_start","tool":"Read","toolId":"toolu_01R6cEKAT1avn4yLhVyNGPRk","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\adapters\\opencode\\command-builder.ts"}
+{"ts":1784691398734,"type":"tool_end","tool":"Read","toolId":"toolu_01R6cEKAT1avn4yLhVyNGPRk"}
+{"ts":1784691399274,"type":"tool_start","tool":"Grep","toolId":"toolu_01JnzMkNGVL3HsyB5PwDmYBo","detail":"function useScopedUpdate|useScopedUpdate ="}
+{"ts":1784691399498,"type":"tool_end","tool":"Grep","toolId":"toolu_01JnzMkNGVL3HsyB5PwDmYBo"}
+{"ts":1784691399917,"type":"tool_start","tool":"Read","toolId":"toolu_01QFozzdHjHCXkZASePic4Ew","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\shared\\types.ts"}
+{"ts":1784691400188,"type":"tool_end","tool":"Read","toolId":"toolu_01QFozzdHjHCXkZASePic4Ew"}
+{"ts":1784691400327,"type":"tool_start","tool":"Read","toolId":"toolu_0173pEYmHjwrUyoeVxh4SjQ9","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691400460,"type":"tool_end","tool":"Read","toolId":"toolu_0173pEYmHjwrUyoeVxh4SjQ9"}
+{"ts":1784691401528,"type":"tool_start","tool":"Read","toolId":"toolu_01Kh9xfEABBuvgUL3uBAiogg","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\renderer\\components\\settings\\setting-scope.tsx"}
+{"ts":1784691401665,"type":"tool_end","tool":"Read","toolId":"toolu_01Kh9xfEABBuvgUL3uBAiogg"}
+{"ts":1784691401726,"type":"tool_start","tool":"Read","toolId":"toolu_01NBTadg7sdsiDXqr1GHuvgP","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784691401852,"type":"tool_end","tool":"Read","toolId":"toolu_01NBTadg7sdsiDXqr1GHuvgP"}
+{"ts":1784691405314,"type":"tool_start","tool":"Grep","toolId":"toolu_01TxESrRbtP3ZizQT3HB1dVz","detail":"callbackHost|bindAddress|mcpServer"}
+{"ts":1784691405492,"type":"tool_end","tool":"Grep","toolId":"toolu_01TxESrRbtP3ZizQT3HB1dVz"}
+{"ts":1784691405736,"type":"tool_start","tool":"Agent","toolId":"toolu_01FFBMntCrFeAuQcw94UJNWu","detail":"Performance finder"}
+{"ts":1784691406170,"type":"tool_start","tool":"Grep","toolId":"toolu_01HaHwAUnffv9jMREe3WX8fc","detail":"bindAddress"}
+{"ts":1784691406357,"type":"tool_end","tool":"Grep","toolId":"toolu_01HaHwAUnffv9jMREe3WX8fc"}
+{"ts":1784691406654,"type":"tool_start","tool":"Grep","toolId":"toolu_016eS9WFHLwygrDbPpDJieEt","detail":"config:update|configManager.update|function updateConfig|updateSetting"}
+{"ts":1784691406840,"type":"tool_end","tool":"Grep","toolId":"toolu_016eS9WFHLwygrDbPpDJieEt"}
+{"ts":1784691407399,"type":"subagent_start","detail":"general-purpose"}
+{"ts":1784691407428,"type":"tool_end","tool":"Agent","toolId":"toolu_01FFBMntCrFeAuQcw94UJNWu"}
+{"ts":1784691408232,"type":"tool_start","tool":"Grep","toolId":"toolu_019QGcVYyBu27cEzT2VoLALd","detail":"mcpServer"}
+{"ts":1784691408448,"type":"tool_end","tool":"Grep","toolId":"toolu_019QGcVYyBu27cEzT2VoLALd"}
+{"ts":1784691409157,"type":"tool_start","tool":"Read","toolId":"toolu_01A6iHrcmYndqEEHnFY9eUj5","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784691409281,"type":"tool_end","tool":"Read","toolId":"toolu_01A6iHrcmYndqEEHnFY9eUj5"}
+{"ts":1784691409379,"type":"tool_start","tool":"Grep","toolId":"toolu_01PQwXiUuPKGzBq2e57ryG2L","detail":"updateSetting"}
+{"ts":1784691409584,"type":"tool_end","tool":"Grep","toolId":"toolu_01PQwXiUuPKGzBq2e57ryG2L"}
+{"ts":1784691410334,"type":"tool_start","tool":"Read","toolId":"toolu_0167GvsbezQPjJvYai5kVGkP","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691410463,"type":"tool_end","tool":"Read","toolId":"toolu_0167GvsbezQPjJvYai5kVGkP"}
+{"ts":1784691412330,"type":"tool_start","tool":"Grep","toolId":"toolu_01F73Q2XjJhP2t8q7khKdyRM","detail":"127\\.0\\.0\\.1|mcpServer"}
+{"ts":1784691412509,"type":"tool_end","tool":"Grep","toolId":"toolu_01F73Q2XjJhP2t8q7khKdyRM"}
+{"ts":1784691413708,"type":"tool_start","tool":"Grep","toolId":"toolu_01KZoxGiBU51snakwrqQbYPv","detail":"windowConfigManager\\.load"}
+{"ts":1784691413755,"type":"tool_start","tool":"Grep","toolId":"toolu_01VCR86DPy33RetrXQMvJBUe","detail":"updateSetting"}
+{"ts":1784691413947,"type":"tool_end","tool":"Grep","toolId":"toolu_01KZoxGiBU51snakwrqQbYPv"}
+{"ts":1784691413983,"type":"tool_start","tool":"Grep","toolId":"toolu_01RJuoNzeYyd9LV5u6MVR3To","detail":"callbackHost|bindAddress|Settings|opencode attach|no config-push|no delivery mechanism"}
+{"ts":1784691414000,"type":"tool_end","tool":"Grep","toolId":"toolu_01VCR86DPy33RetrXQMvJBUe"}
+{"ts":1784691414167,"type":"tool_end","tool":"Grep","toolId":"toolu_01RJuoNzeYyd9LV5u6MVR3To"}
+{"ts":1784691415131,"type":"subagent_stop","detail":""}
+{"ts":1784691415419,"type":"tool_start","tool":"Grep","toolId":"toolu_01Afse2htqsMkUX97ZZvxkGg","detail":"callbackHost|bindAddress|opencode attach|config-push|no delivery"}
+{"ts":1784691415604,"type":"tool_end","tool":"Grep","toolId":"toolu_01Afse2htqsMkUX97ZZvxkGg"}
+{"ts":1784691416372,"type":"tool_start","tool":"Grep","toolId":"toolu_016Qvqq1vy4jUtprPjcfSp3k","detail":"callbackHost|bindAddress|opencode attach|config-push|no delivery"}
+{"ts":1784691416560,"type":"tool_end","tool":"Grep","toolId":"toolu_016Qvqq1vy4jUtprPjcfSp3k"}
+{"ts":1784691417354,"type":"tool_start","tool":"Grep","toolId":"toolu_012Xr2oLBuAupgTEtcz2auXZ","detail":"opencode|'droid'|agentType ===|agent ==="}
+{"ts":1784691417543,"type":"tool_end","tool":"Grep","toolId":"toolu_012Xr2oLBuAupgTEtcz2auXZ"}
+{"ts":1784691417605,"type":"tool_start","tool":"Grep","toolId":"toolu_01BHu22ZmHyyyB1kZJmGxGaZ","detail":"class WindowConfigManager|windowConfigManager\\s*=|function.*load\\(|load\\(\\):|readFileSync|writeFileSync"}
+{"ts":1784691417806,"type":"tool_end","tool":"Grep","toolId":"toolu_01BHu22ZmHyyyB1kZJmGxGaZ"}
+{"ts":1784691418602,"type":"tool_start","tool":"Grep","toolId":"toolu_01R7VYLnNFUQ9sEaXgHfgfVG","detail":"updateConfig:|function updateConfig|updateConfig ="}
+{"ts":1784691418791,"type":"tool_end","tool":"Grep","toolId":"toolu_01R7VYLnNFUQ9sEaXgHfgfVG"}
+{"ts":1784691421426,"type":"tool_start","tool":"Read","toolId":"toolu_01HvGP7zPjEsoXDtuXNF3RVJ","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\renderer\\stores\\config-store.ts"}
+{"ts":1784691421555,"type":"tool_end","tool":"Read","toolId":"toolu_01HvGP7zPjEsoXDtuXNF3RVJ"}
+{"ts":1784691421696,"type":"tool_start","tool":"Read","toolId":"toolu_01MgadqcJAHTDn7XUq94eYhu","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\configuration.md"}
+{"ts":1784691421826,"type":"tool_end","tool":"Read","toolId":"toolu_01MgadqcJAHTDn7XUq94eYhu"}
+{"ts":1784691422215,"type":"tool_start","tool":"Grep","toolId":"toolu_01QjrdBAgaSLWz5WMgKfueZF","detail":"windowConfigManager"}
+{"ts":1784691422400,"type":"tool_end","tool":"Grep","toolId":"toolu_01QjrdBAgaSLWz5WMgKfueZF"}
+{"ts":1784691425642,"type":"tool_start","tool":"Agent","toolId":"toolu_01DhSL88Knjgk6M4DJchuvsR","detail":"Cross-file integration finder"}
+{"ts":1784691425693,"type":"tool_start","tool":"Read","toolId":"toolu_01Gy1pRtjoh6ocCLyX6TReCr","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\config\\config-manager.ts"}
+{"ts":1784691425828,"type":"tool_end","tool":"Read","toolId":"toolu_01Gy1pRtjoh6ocCLyX6TReCr"}
+{"ts":1784691426206,"type":"tool_start","tool":"Read","toolId":"toolu_01BDGY3LQBn6DgQFmjpSzLhs","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\mcp-server.md"}
+{"ts":1784691426328,"type":"tool_end","tool":"Read","toolId":"toolu_01BDGY3LQBn6DgQFmjpSzLhs"}
+{"ts":1784691427307,"type":"subagent_start","detail":"general-purpose"}
+{"ts":1784691427333,"type":"tool_end","tool":"Agent","toolId":"toolu_01DhSL88Knjgk6M4DJchuvsR"}
+{"ts":1784691429311,"type":"subagent_stop","detail":""}
+{"ts":1784691429338,"type":"tool_start","tool":"Grep","toolId":"toolu_01EFNSfyKCpujDhrD3XAEmjJ","detail":"config:set|CONFIG_SET|'config.set'|\\.set\\(|configManager\\.set"}
+{"ts":1784691429550,"type":"tool_end","tool":"Grep","toolId":"toolu_01EFNSfyKCpujDhrD3XAEmjJ"}
+{"ts":1784691429772,"type":"tool_start","tool":"Grep","toolId":"toolu_01VDisuLXkMHs9kg7NRiKnPv","detail":"startMcpHttpServer"}
+{"ts":1784691430008,"type":"tool_end","tool":"Grep","toolId":"toolu_01VDisuLXkMHs9kg7NRiKnPv"}
+{"ts":1784691430034,"type":"subagent_stop","detail":""}
+{"ts":1784691430183,"type":"tool_start","tool":"Grep","toolId":"toolu_01V2UBRaseTu5CmaZZzYXrqm","detail":"mcpServer"}
+{"ts":1784691430415,"type":"tool_end","tool":"Grep","toolId":"toolu_01V2UBRaseTu5CmaZZzYXrqm"}
+{"ts":1784691430691,"type":"tool_start","tool":"Read","toolId":"toolu_01JAFAsYu7XkuKzubcBmKm9o","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\adapters\\opencode\\command-builder.ts"}
+{"ts":1784691430816,"type":"tool_end","tool":"Read","toolId":"toolu_01JAFAsYu7XkuKzubcBmKm9o"}
+{"ts":1784691431326,"type":"tool_start","tool":"Read","toolId":"toolu_01BHnnuccv3wCn2f2hSQcBGX","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\adapters\\opencode\\opencode-adapter.ts"}
+{"ts":1784691431445,"type":"tool_end","tool":"Read","toolId":"toolu_01BHnnuccv3wCn2f2hSQcBGX"}
+{"ts":1784691431732,"type":"tool_start","tool":"Read","toolId":"toolu_015Gkdh9Nq4TvFWBWbSzXjtG","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784691431860,"type":"tool_end","tool":"Read","toolId":"toolu_015Gkdh9Nq4TvFWBWbSzXjtG"}
+{"ts":1784691432035,"type":"tool_start","tool":"Read","toolId":"toolu_01BpzNF2Aymw85gxp27caLaa","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\ipc\\handlers\\system.ts"}
+{"ts":1784691432189,"type":"tool_end","tool":"Read","toolId":"toolu_01BpzNF2Aymw85gxp27caLaa"}
+{"ts":1784691433434,"type":"tool_start","tool":"Read","toolId":"toolu_01RvKT2Xfwh9TuWMfss7vndc","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691433552,"type":"tool_end","tool":"Read","toolId":"toolu_01RvKT2Xfwh9TuWMfss7vndc"}
+{"ts":1784691434258,"type":"tool_start","tool":"Read","toolId":"toolu_01XoGmRXWaVFwCXHiqKStSiT","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784691434383,"type":"tool_end","tool":"Read","toolId":"toolu_01XoGmRXWaVFwCXHiqKStSiT"}
+{"ts":1784691436374,"type":"tool_start","tool":"Grep","toolId":"toolu_01W8QiSMGqMW8S7iRm43bo7q","detail":"class ConfigManager|save\\(|getEffectiveConfig|deepMerge|DEFAULT_CONFIG"}
+{"ts":1784691436573,"type":"tool_end","tool":"Grep","toolId":"toolu_01W8QiSMGqMW8S7iRm43bo7q"}
+{"ts":1784691438176,"type":"tool_start","tool":"Grep","toolId":"toolu_019UGdGYaVV9af5E93iY1HgE","detail":"mcpServer"}
+{"ts":1784691438320,"type":"tool_start","tool":"Read","toolId":"toolu_01PtSvJ9bDUJZ263Vy4sHWna","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\agent-integration.md"}
+{"ts":1784691438389,"type":"tool_end","tool":"Grep","toolId":"toolu_019UGdGYaVV9af5E93iY1HgE"}
+{"ts":1784691438452,"type":"tool_end","tool":"Read","toolId":"toolu_01PtSvJ9bDUJZ263Vy4sHWna"}
+{"ts":1784691438818,"type":"tool_start","tool":"Read","toolId":"toolu_014fapSGdu6ap2LDR96e3cvp","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\config\\config-manager.ts"}
+{"ts":1784691438954,"type":"tool_end","tool":"Read","toolId":"toolu_014fapSGdu6ap2LDR96e3cvp"}
+{"ts":1784691439224,"type":"tool_start","tool":"Grep","toolId":"toolu_01QiwjUCFK741bZiJP2XronG","detail":"class ConfigManager|configManager\\.load|deepMerge|mergeConfig"}
+{"ts":1784691439419,"type":"tool_end","tool":"Grep","toolId":"toolu_01QiwjUCFK741bZiJP2XronG"}
+{"ts":1784691439742,"type":"tool_start","tool":"Bash","toolId":"toolu_01JDSzXK5HjeiAWALc8nRR5Y","detail":"grep -n '^+.*--' \"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\00000000-0000-0000-0000-000000000000\\scratchpad\\"}
+{"ts":1784691439772,"type":"subagent_stop","detail":""}
+{"ts":1784691440118,"type":"tool_end","tool":"Bash","toolId":"toolu_01JDSzXK5HjeiAWALc8nRR5Y"}
+{"ts":1784691441171,"type":"tool_start","tool":"Grep","toolId":"toolu_01QKJiije9xzEZfZqYwRYzMK","detail":"windowConfigManager|configManager\\.load\\(\\)"}
+{"ts":1784691441349,"type":"tool_end","tool":"Grep","toolId":"toolu_01QKJiije9xzEZfZqYwRYzMK"}
+{"ts":1784691442095,"type":"tool_start","tool":"Agent","toolId":"toolu_01DnXVGg5nERWAf7AWRnsDxp","detail":"Test coverage red-green finder"}
+{"ts":1784691442415,"type":"tool_start","tool":"Read","toolId":"toolu_01RC6dLkCSty4oaFnXRJrLtU","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\shared\\types.ts"}
+{"ts":1784691442536,"type":"tool_end","tool":"Read","toolId":"toolu_01RC6dLkCSty4oaFnXRJrLtU"}
+{"ts":1784691442823,"type":"tool_start","tool":"Read","toolId":"toolu_017SMFJxEqqpWxa5LxGkE2Ra","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\config\\config-manager.ts"}
+{"ts":1784691442940,"type":"tool_end","tool":"Read","toolId":"toolu_017SMFJxEqqpWxa5LxGkE2Ra"}
+{"ts":1784691443759,"type":"subagent_start","detail":"general-purpose"}
+{"ts":1784691443784,"type":"tool_end","tool":"Agent","toolId":"toolu_01DnXVGg5nERWAf7AWRnsDxp"}
+{"ts":1784691444992,"type":"tool_start","tool":"Read","toolId":"toolu_01T9YqidyMKRYBX2e4qxYNmH","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\shared\\object-utils.ts"}
+{"ts":1784691445123,"type":"tool_end","tool":"Read","toolId":"toolu_01T9YqidyMKRYBX2e4qxYNmH"}
+{"ts":1784691445253,"type":"tool_start","tool":"Read","toolId":"toolu_011YoNinPsGYUjAkuuDYuznM","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691445382,"type":"tool_end","tool":"Read","toolId":"toolu_011YoNinPsGYUjAkuuDYuznM"}
+{"ts":1784691447077,"type":"subagent_stop","detail":""}
+{"ts":1784691447341,"type":"tool_start","tool":"Read","toolId":"toolu_01UqkLCDZ3FkCejkBpJfMHKp","detail":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\00000000-0000-0000-0000-000000000000\\scratchpad\\review-diff.patch"}
+{"ts":1784691447603,"type":"tool_end","tool":"Read","toolId":"toolu_01UqkLCDZ3FkCejkBpJfMHKp"}
+{"ts":1784691448901,"type":"tool_start","tool":"Bash","toolId":"toolu_01K3xG7GbSwYWJgU784kS5UQ","detail":"grep -n \"startupMcpServerConfig\\|windowConfigManager.load\\|mcpServer\" \"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8"}
+{"ts":1784691449641,"type":"tool_start","tool":"Agent","toolId":"toolu_01Vb6UZFtrRHrprRT8kjXQiC","detail":"IPC/types auditor"}
+{"ts":1784691450852,"type":"tool_start","tool":"Grep","toolId":"toolu_01XKPQQ93FdHwZDyw1QrU9fq","detail":"callbackHost|bindAddress|McpServerConfig|mcpServer:"}
+{"ts":1784691450939,"type":"tool_start","tool":"Read","toolId":"toolu_014cZpR3GERL4NVpTLGJHNoJ","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691451050,"type":"tool_end","tool":"Grep","toolId":"toolu_01XKPQQ93FdHwZDyw1QrU9fq"}
+{"ts":1784691451081,"type":"tool_end","tool":"Read","toolId":"toolu_014cZpR3GERL4NVpTLGJHNoJ"}
+{"ts":1784691451408,"type":"subagent_start","detail":"ipc-auditor"}
+{"ts":1784691451430,"type":"tool_end","tool":"Agent","toolId":"toolu_01Vb6UZFtrRHrprRT8kjXQiC"}
+{"ts":1784691451982,"type":"tool_start","tool":"Grep","toolId":"toolu_019ZycMFoyD183mCt8ozCNcE","detail":"startupMcpServerConfig|windowConfigManager\\.load|mcpServer"}
+{"ts":1784691452163,"type":"tool_end","tool":"Grep","toolId":"toolu_019ZycMFoyD183mCt8ozCNcE"}
+{"ts":1784691452655,"type":"tool_start","tool":"Read","toolId":"toolu_018t3oTjaX2M7C9VULoGEc9P","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\object-utils.ts"}
+{"ts":1784691452783,"type":"tool_end","tool":"Read","toolId":"toolu_018t3oTjaX2M7C9VULoGEc9P","detail":"File does not exist. Note: your current working directory is C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df."}
+{"ts":1784691453970,"type":"tool_start","tool":"Read","toolId":"toolu_01P9t29HpQ3xJR9WLob98mYj","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\shared\\types.ts"}
+{"ts":1784691454097,"type":"tool_end","tool":"Read","toolId":"toolu_01P9t29HpQ3xJR9WLob98mYj"}
+{"ts":1784691455126,"type":"tool_start","tool":"Read","toolId":"toolu_01D9aHZw1X39wbjvYv4TgQVt","detail":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\00000000-0000-0000-0000-000000000000\\scratchpad\\review-diff.patch"}
+{"ts":1784691455390,"type":"tool_end","tool":"Read","toolId":"toolu_01D9aHZw1X39wbjvYv4TgQVt"}
+{"ts":1784691457164,"type":"tool_start","tool":"Grep","toolId":"toolu_01UxVBoQ7XuaLGnorNgrCs5Q","detail":"deepMergeConfig|function deepMerge"}
+{"ts":1784691457337,"type":"tool_end","tool":"Grep","toolId":"toolu_01UxVBoQ7XuaLGnorNgrCs5Q"}
+{"ts":1784691457571,"type":"tool_start","tool":"Bash","toolId":"toolu_01VpPLsto3pfd3ddz1LtEBhw","detail":"find /c/Users/dev/Documents/GitHub/kangentic/.kangentic/worktrees/make-kangentic-mcp-s-cff8b5df/tests/unit -iname \"*mcp-http*\" -o -iname \"*mcp-server*\""}
+{"ts":1784691459369,"type":"subagent_stop","detail":""}
+{"ts":1784691459658,"type":"tool_end","tool":"Bash","toolId":"toolu_01VpPLsto3pfd3ddz1LtEBhw"}
+{"ts":1784691460044,"type":"tool_start","tool":"Grep","toolId":"toolu_012qBakawPqqijTQ7oYzvBST","detail":"mcpServer"}
+{"ts":1784691460072,"type":"tool_start","tool":"Read","toolId":"toolu_017RErAk9Yt2HNSpqwRsRjtH","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\shared\\object-utils.ts"}
+{"ts":1784691460202,"type":"tool_end","tool":"Read","toolId":"toolu_017RErAk9Yt2HNSpqwRsRjtH"}
+{"ts":1784691460262,"type":"tool_end","tool":"Grep","toolId":"toolu_012qBakawPqqijTQ7oYzvBST"}
+{"ts":1784691460514,"type":"tool_start","tool":"Grep","toolId":"toolu_01JcDf98Ys8nrx7dc72Kt7bk","detail":"mcpServer"}
+{"ts":1784691460699,"type":"tool_end","tool":"Grep","toolId":"toolu_01JcDf98Ys8nrx7dc72Kt7bk"}
+{"ts":1784691460772,"type":"tool_start","tool":"Grep","toolId":"toolu_01DX67pvkF7sPHqiMcYtXj3b","detail":"mcpServer"}
+{"ts":1784691460976,"type":"tool_end","tool":"Grep","toolId":"toolu_01DX67pvkF7sPHqiMcYtXj3b"}
+{"ts":1784691461018,"type":"subagent_stop","detail":""}
+{"ts":1784691461775,"type":"subagent_stop","detail":""}
+{"ts":1784691461833,"type":"tool_start","tool":"Agent","toolId":"toolu_018q1re7MhgTuCQtEVuHWhB8","detail":"Cross-platform guard"}
+{"ts":1784691462662,"type":"tool_start","tool":"Read","toolId":"toolu_01XMjLpgYouQjSYHUaMVwgWJ","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-config-gating.test.ts"}
+{"ts":1784691462781,"type":"tool_end","tool":"Read","toolId":"toolu_01XMjLpgYouQjSYHUaMVwgWJ"}
+{"ts":1784691463531,"type":"subagent_start","detail":"platform-guard"}
+{"ts":1784691463539,"type":"tool_end","tool":"Agent","toolId":"toolu_018q1re7MhgTuCQtEVuHWhB8"}
+{"ts":1784691465397,"type":"tool_start","tool":"Bash","toolId":"toolu_01HLK2CK1pPzvyDAR7hD4Jjv","detail":"grep -c \"^diff --git\" \"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\00000000-0000-0000-0000-000000000000\\scratc"}
+{"ts":1784691465728,"type":"tool_end","tool":"Bash","toolId":"toolu_01HLK2CK1pPzvyDAR7hD4Jjv"}
+{"ts":1784691466790,"type":"tool_start","tool":"Read","toolId":"toolu_011mTcz4yT13udam5SriA3ak","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\.claude\\skills\\cross-platform\\SKILL.md"}
+{"ts":1784691466820,"type":"tool_start","tool":"Read","toolId":"toolu_01E4Fio7bBJVNqgS5WdNZJo6","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\.claude\\rules\\cross-platform-parity.md"}
+{"ts":1784691466931,"type":"tool_end","tool":"Read","toolId":"toolu_011mTcz4yT13udam5SriA3ak"}
+{"ts":1784691466960,"type":"tool_end","tool":"Read","toolId":"toolu_01E4Fio7bBJVNqgS5WdNZJo6"}
+{"ts":1784691467097,"type":"tool_start","tool":"Read","toolId":"toolu_01Av3JosX8wfVudhyCVeFnyv","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\renderer\\components\\settings\\tabs\\McpServerTab.tsx"}
+{"ts":1784691467237,"type":"tool_end","tool":"Read","toolId":"toolu_01Av3JosX8wfVudhyCVeFnyv"}
+{"ts":1784691467299,"type":"tool_start","tool":"Grep","toolId":"toolu_01JQDVeneMvab3QFPcx6zWA6","detail":"config:set|config:update|configManager\\.set|updateGlobal|config\\.set\\("}
+{"ts":1784691467506,"type":"tool_end","tool":"Grep","toolId":"toolu_01JQDVeneMvab3QFPcx6zWA6"}
+{"ts":1784691467944,"type":"tool_start","tool":"Grep","toolId":"toolu_01H725L4Fj3HtsrxMoomA6Gz","detail":"mcpServer:\\s*\\{"}
+{"ts":1784691468183,"type":"tool_end","tool":"Grep","toolId":"toolu_01H725L4Fj3HtsrxMoomA6Gz"}
+{"ts":1784691468216,"type":"tool_start","tool":"Read","toolId":"toolu_01Ky7XPXHN5NhxQGBKqF6cwK","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\ui\\mock-electron-api.js"}
+{"ts":1784691468362,"type":"tool_end","tool":"Read","toolId":"toolu_01Ky7XPXHN5NhxQGBKqF6cwK"}
+{"ts":1784691469715,"type":"tool_start","tool":"Grep","toolId":"toolu_018KpqWAt6mzDVqXX1E4PfYp","detail":"^\\+\\+\\+ b/src/main/agent/mcp-http-server.ts|^@@|^\\+|^-"}
+{"ts":1784691469894,"type":"tool_end","tool":"Grep","toolId":"toolu_018KpqWAt6mzDVqXX1E4PfYp"}
+{"ts":1784691471301,"type":"tool_start","tool":"Read","toolId":"toolu_016RwNGxVnCzSX7SngrLxCA8","detail":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\00000000-0000-0000-0000-000000000000\\scratchpad\\review-diff.patch"}
+{"ts":1784691471539,"type":"tool_end","tool":"Read","toolId":"toolu_016RwNGxVnCzSX7SngrLxCA8"}
+{"ts":1784691471706,"type":"subagent_stop","detail":""}
+{"ts":1784691472075,"type":"tool_start","tool":"Grep","toolId":"toolu_01BRtoHBFbSdoNPdvBU6kT8X","detail":"callbackHost"}
+{"ts":1784691472303,"type":"tool_end","tool":"Grep","toolId":"toolu_01BRtoHBFbSdoNPdvBU6kT8X"}
+{"ts":1784691472539,"type":"tool_start","tool":"Read","toolId":"toolu_01PLiwLYwHQZybRGajMKDtMX","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\agent-list-handler.test.ts"}
+{"ts":1784691472654,"type":"tool_end","tool":"Read","toolId":"toolu_01PLiwLYwHQZybRGajMKDtMX"}
+{"ts":1784691473745,"type":"tool_start","tool":"Grep","toolId":"toolu_0152TYjcZQDWktgBo4n5Zp5J","detail":"function useScopedUpdate"}
+{"ts":1784691473927,"type":"tool_end","tool":"Grep","toolId":"toolu_0152TYjcZQDWktgBo4n5Zp5J"}
+{"ts":1784691474310,"type":"tool_start","tool":"Read","toolId":"toolu_015GfeVmC1LbbpCus4swjb2N","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691474430,"type":"tool_end","tool":"Read","toolId":"toolu_015GfeVmC1LbbpCus4swjb2N"}
+{"ts":1784691475247,"type":"subagent_stop","detail":""}
+{"ts":1784691476791,"type":"tool_start","tool":"Bash","toolId":"toolu_015M9Emq9NDV4Eb3wYqY9jfy","detail":"find /c/Users/dev/Documents/GitHub/kangentic/.kangentic/worktrees/make-kangentic-mcp-s-cff8b5df/tests -iname \"*index*\" | grep -i main"}
+{"ts":1784691478425,"type":"tool_start","tool":"Read","toolId":"toolu_01Y1mu3C2QK3LkrDhdNxxNaf","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691478536,"type":"tool_start","tool":"Grep","toolId":"toolu_01WSrLA4fLpFBtUR7K9bT6vG","detail":"mcpServer:\\s*\\{"}
+{"ts":1784691478566,"type":"tool_end","tool":"Read","toolId":"toolu_01Y1mu3C2QK3LkrDhdNxxNaf"}
+{"ts":1784691478732,"type":"tool_start","tool":"Grep","toolId":"toolu_013BgJcAetEnqBp3KXkD8zQ6","detail":"IPC.CONFIG|config:get|config:set|config:update"}
+{"ts":1784691478785,"type":"tool_end","tool":"Grep","toolId":"toolu_01WSrLA4fLpFBtUR7K9bT6vG"}
+{"ts":1784691478943,"type":"tool_end","tool":"Grep","toolId":"toolu_013BgJcAetEnqBp3KXkD8zQ6"}
+{"ts":1784691479115,"type":"tool_start","tool":"Read","toolId":"toolu_01M3j8onUGMyf5DCWDkME5LJ","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\renderer\\stores\\config-store.ts"}
+{"ts":1784691479246,"type":"tool_end","tool":"Read","toolId":"toolu_01M3j8onUGMyf5DCWDkME5LJ"}
+{"ts":1784691479508,"type":"tool_start","tool":"Grep","toolId":"toolu_0188rtUAvM2sLBnQHTNTku3z","detail":"startMcpHttpServer"}
+{"ts":1784691479716,"type":"tool_end","tool":"Grep","toolId":"toolu_0188rtUAvM2sLBnQHTNTku3z"}
+{"ts":1784691480315,"type":"tool_start","tool":"Read","toolId":"toolu_01JThTVa26WYqNFgf4evK9KR","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\agent-list-handler.test.ts"}
+{"ts":1784691480463,"type":"tool_end","tool":"Read","toolId":"toolu_01JThTVa26WYqNFgf4evK9KR"}
+{"ts":1784691482886,"type":"tool_start","tool":"Read","toolId":"toolu_011n7QYc8WHtYx9e611iTRgT","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\ipc\\handlers\\system.ts"}
+{"ts":1784691483007,"type":"tool_end","tool":"Read","toolId":"toolu_011n7QYc8WHtYx9e611iTRgT"}
+{"ts":1784691483331,"type":"subagent_stop","detail":""}
+{"ts":1784691484239,"type":"tool_start","tool":"Grep","toolId":"toolu_01NVshKLtC3D1ZFrdrdmDeqy","detail":"happens to be on this machine --"}
+{"ts":1784691484448,"type":"tool_end","tool":"Grep","toolId":"toolu_01NVshKLtC3D1ZFrdrdmDeqy"}
+{"ts":1784691484481,"type":"tool_start","tool":"Read","toolId":"toolu_0134i112ZpfW1aHsL9s1MBE2","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784691484604,"type":"tool_end","tool":"Read","toolId":"toolu_0134i112ZpfW1aHsL9s1MBE2"}
+{"ts":1784691484873,"type":"tool_start","tool":"Grep","toolId":"toolu_01MuDm2kvdGUmVD8rYaAXyMP","detail":"from '\\.\\./\\.\\./src/main/index'"}
+{"ts":1784691485086,"type":"tool_end","tool":"Grep","toolId":"toolu_01MuDm2kvdGUmVD8rYaAXyMP"}
+{"ts":1784691489259,"type":"tool_start","tool":"Read","toolId":"toolu_01KZK1yAp5v9q1CoHqfvv5J7","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691489384,"type":"tool_end","tool":"Read","toolId":"toolu_01KZK1yAp5v9q1CoHqfvv5J7"}
+{"ts":1784691489985,"type":"tool_start","tool":"Grep","toolId":"toolu_01KL5oSxNQEM4bmqcxph2tNN","detail":"--"}
+{"ts":1784691490061,"type":"tool_start","tool":"Grep","toolId":"toolu_01SzaDK7CKsUzFo99sHswMni","detail":"configManager|ConfigManager"}
+{"ts":1784691490162,"type":"tool_end","tool":"Grep","toolId":"toolu_01KL5oSxNQEM4bmqcxph2tNN"}
+{"ts":1784691490251,"type":"tool_end","tool":"Grep","toolId":"toolu_01SzaDK7CKsUzFo99sHswMni"}
+{"ts":1784691490597,"type":"tool_start","tool":"Read","toolId":"toolu_01Q35rfcdmXFdRqiZCcgzPn5","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691490717,"type":"tool_end","tool":"Read","toolId":"toolu_01Q35rfcdmXFdRqiZCcgzPn5"}
+{"ts":1784691491132,"type":"subagent_stop","detail":""}
+{"ts":1784691491389,"type":"tool_start","tool":"Grep","toolId":"toolu_01Cj2uCLuaE4BLV92bzVqf3M","detail":"remoteModeCaveat"}
+{"ts":1784691491589,"type":"tool_end","tool":"Grep","toolId":"toolu_01Cj2uCLuaE4BLV92bzVqf3M"}
+{"ts":1784691492400,"type":"tool_start","tool":"Grep","toolId":"toolu_01CS7fiAXGAdJ8rDuCj541h9","detail":"class ConfigManager|save(|deepMergeConfig"}
+{"ts":1784691492456,"type":"tool_start","tool":"Glob","toolId":"toolu_015yG5rWrusiunFvzkoz2nki","detail":"src/main/config/*.ts"}
+{"ts":1784691492579,"type":"tool_end","tool":"Grep","toolId":"toolu_01CS7fiAXGAdJ8rDuCj541h9","detail":"Search failed — ripgrep rejected the pattern, glob, or file type without searching:\nrg: regex parse error:\n    (?:class ConfigManager|save(|deepMergeConfig)\n    ^\nerror: unclosed group"}
+{"ts":1784691492676,"type":"tool_end","tool":"Glob","toolId":"toolu_015yG5rWrusiunFvzkoz2nki"}
+{"ts":1784691492824,"type":"subagent_stop","detail":""}
+{"ts":1784691493853,"type":"subagent_stop","detail":""}
+{"ts":1784691495508,"type":"subagent_stop","detail":"general-purpose"}
+{"ts":1784691495667,"type":"tool_start","tool":"Grep","toolId":"toolu_01N3J9Hu6NpsRUyYXFmagaY2","detail":"save|deepMergeConfig|getEffectiveConfig|load\\("}
+{"ts":1784691495726,"type":"subagent_stop","detail":""}
+{"ts":1784691495852,"type":"tool_end","tool":"Grep","toolId":"toolu_01N3J9Hu6NpsRUyYXFmagaY2"}
+{"ts":1784691496052,"type":"tool_start","tool":"Read","toolId":"toolu_01MEcxuXebfzSGnaQM3fP2QF","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\ui\\agent-tab-remote-execution.spec.ts"}
+{"ts":1784691496172,"type":"tool_end","tool":"Read","toolId":"toolu_01MEcxuXebfzSGnaQM3fP2QF"}
+{"ts":1784691498919,"type":"tool_start","tool":"Read","toolId":"toolu_01NC9Sqd5vpxhEEcai9EZT1h","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\config\\config-manager.ts"}
+{"ts":1784691499042,"type":"tool_end","tool":"Read","toolId":"toolu_01NC9Sqd5vpxhEEcai9EZT1h"}
+{"ts":1784691500460,"type":"tool_start","tool":"Grep","toolId":"toolu_01VArFsgDhZsuyoEmwZw2V5X","detail":"allowedHosts"}
+{"ts":1784691500651,"type":"tool_end","tool":"Grep","toolId":"toolu_01VArFsgDhZsuyoEmwZw2V5X"}
+{"ts":1784691503401,"type":"subagent_stop","detail":""}
+{"ts":1784691504718,"type":"subagent_stop","detail":"general-purpose"}
+{"ts":1784691505884,"type":"tool_start","tool":"Bash","toolId":"toolu_01XzJzT7v9wL1Zq3iaFzeHPB","detail":"powershell -NoProfile -Command \"Get-ChildItem -Path 'C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol' -Directory -ErrorA"}
+{"ts":1784691505914,"type":"tool_start","tool":"Read","toolId":"toolu_018oYDKgu68VwqzcVyKuDvBz","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\opencode-remote-execution.test.ts"}
+{"ts":1784691505944,"type":"tool_start","tool":"Grep","toolId":"toolu_01HNw6jZGQ5BF3RLS2DLiMyr","detail":"pickOverridableSubset|CONFIG_DICTIONARY_PATHS|OVERRIDABLE_KEYS|snapshotOverridableDefaults"}
+{"ts":1784691506151,"type":"tool_end","tool":"Read","toolId":"toolu_018oYDKgu68VwqzcVyKuDvBz"}
+{"ts":1784691506260,"type":"tool_end","tool":"Grep","toolId":"toolu_01HNw6jZGQ5BF3RLS2DLiMyr"}
+{"ts":1784691506738,"type":"tool_end","tool":"Bash","toolId":"toolu_01XzJzT7v9wL1Zq3iaFzeHPB"}
+{"ts":1784691506764,"type":"subagent_stop","detail":""}
+{"ts":1784691506880,"type":"tool_start","tool":"Grep","toolId":"toolu_012MLYHooQYTgapAZ1HyHMtT","detail":"snapshotOverridableDefaults|mcpServer"}
+{"ts":1784691507057,"type":"tool_end","tool":"Grep","toolId":"toolu_012MLYHooQYTgapAZ1HyHMtT"}
+{"ts":1784691507803,"type":"tool_start","tool":"Read","toolId":"toolu_014AiHoyZh9VhrGyTSJukSpm","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691507922,"type":"tool_end","tool":"Read","toolId":"toolu_014AiHoyZh9VhrGyTSJukSpm"}
+{"ts":1784691508740,"type":"subagent_stop","detail":""}
+{"ts":1784691509631,"type":"tool_start","tool":"Grep","toolId":"toolu_01FRaocc8J2f4S2J6Atsi99y","detail":"allowedHosts|enableDnsRebindingProtection"}
+{"ts":1784691509825,"type":"tool_end","tool":"Grep","toolId":"toolu_01FRaocc8J2f4S2J6Atsi99y"}
+{"ts":1784691509888,"type":"tool_start","tool":"Read","toolId":"toolu_01H98QDYkgiEGQnxW467BrhU","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\config\\config-manager.ts"}
+{"ts":1784691510009,"type":"tool_start","tool":"Grep","toolId":"toolu_016pmov2YYdM4sX1YLBju591","detail":": any|as any|<any>|any\\[\\]"}
+{"ts":1784691510040,"type":"tool_end","tool":"Read","toolId":"toolu_01H98QDYkgiEGQnxW467BrhU"}
+{"ts":1784691510190,"type":"tool_end","tool":"Grep","toolId":"toolu_016pmov2YYdM4sX1YLBju591"}
+{"ts":1784691510528,"type":"tool_start","tool":"Read","toolId":"toolu_01JrwyvC4NBFydeiaV4E5TQm","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\ui\\mock-electron-api.js"}
+{"ts":1784691510654,"type":"tool_end","tool":"Read","toolId":"toolu_01JrwyvC4NBFydeiaV4E5TQm"}
+{"ts":1784691512387,"type":"tool_start","tool":"Bash","toolId":"toolu_01BBtCCXFfQZ9SH4SVmecTCe","detail":"cd \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\" && npm run typecheck 2>&1 | tail -100"}
+{"ts":1784691512464,"type":"tool_start","tool":"Glob","toolId":"toolu_0141PB8cnteiKGuoeRjZFqq9","detail":"**/streamableHttp*.js"}
+{"ts":1784691512642,"type":"tool_end","tool":"Glob","toolId":"toolu_0141PB8cnteiKGuoeRjZFqq9"}
+{"ts":1784691513603,"type":"tool_start","tool":"Grep","toolId":"toolu_01LogiVmKL5RyPAtQ1f6ZRDT","detail":"\\bsess\\b|\\bcurIdx\\b|\\bprev\\b|\\bctx\\b|\\bcfg\\b"}
+{"ts":1784691513776,"type":"tool_end","tool":"Grep","toolId":"toolu_01LogiVmKL5RyPAtQ1f6ZRDT"}
+{"ts":1784691514678,"type":"tool_start","tool":"Bash","toolId":"toolu_01XPF1QJfXn9embEsRHA7PmP","detail":"npm run typecheck"}
+{"ts":1784691514975,"type":"subagent_stop","detail":""}
+{"ts":1784691516352,"type":"tool_start","tool":"Grep","toolId":"toolu_01MxYmgSpjQunL7finRtKV24","detail":"allowedHosts|includes\\(host\\)|validateHost"}
+{"ts":1784691516541,"type":"tool_end","tool":"Grep","toolId":"toolu_01MxYmgSpjQunL7finRtKV24"}
+{"ts":1784691517040,"type":"tool_start","tool":"Grep","toolId":"toolu_01TZfCJ7R7LoHDNDTnx3idh3","detail":"X-Kangentic-Token|enableDnsRebindingProtection|allowedHosts"}
+{"ts":1784691517264,"type":"tool_end","tool":"Grep","toolId":"toolu_01TZfCJ7R7LoHDNDTnx3idh3"}
+{"ts":1784691517624,"type":"tool_start","tool":"Grep","toolId":"toolu_0163yAyVe4rQivsZCnABHiQm","detail":"config:|electronAPI.config|configGet|config\\.get|config\\.set|CONFIG_DICTIONARY_PATHS|deepMerge"}
+{"ts":1784691517819,"type":"tool_end","tool":"Grep","toolId":"toolu_0163yAyVe4rQivsZCnABHiQm"}
+{"ts":1784691519753,"type":"tool_start","tool":"Grep","toolId":"toolu_01HL6YBJGQRFt4qccBHDjhAx","detail":"allowedHosts"}
+{"ts":1784691519969,"type":"tool_end","tool":"Grep","toolId":"toolu_01HL6YBJGQRFt4qccBHDjhAx"}
+{"ts":1784691521856,"type":"tool_end","tool":"Bash","toolId":"toolu_01XPF1QJfXn9embEsRHA7PmP"}
+{"ts":1784691522711,"type":"subagent_stop","detail":""}
+{"ts":1784691524361,"type":"tool_start","tool":"Grep","toolId":"toolu_01D8bewx4BpGHcmztQEkuR1E","detail":"import.*mcp|StreamableHTTP"}
+{"ts":1784691524541,"type":"tool_end","tool":"Grep","toolId":"toolu_01D8bewx4BpGHcmztQEkuR1E"}
+{"ts":1784691525000,"type":"tool_start","tool":"Grep","toolId":"toolu_01Y1FTVyoniNqorspNthhATZ","detail":"bindAddress|listen\\(0|allowedHosts: buildAllowedHosts"}
+{"ts":1784691525176,"type":"tool_end","tool":"Grep","toolId":"toolu_01Y1FTVyoniNqorspNthhATZ"}
+{"ts":1784691525599,"type":"subagent_stop","detail":""}
+{"ts":1784691528028,"type":"tool_start","tool":"Grep","toolId":"toolu_016fv4aHHF8r51vFFofN7dhv","detail":"startupMcpServerConfig|bindAddress:|callbackHost:"}
+{"ts":1784691528207,"type":"tool_end","tool":"Grep","toolId":"toolu_016fv4aHHF8r51vFFofN7dhv"}
+{"ts":1784691528505,"type":"tool_start","tool":"Grep","toolId":"toolu_01DjCFNXod6aNkeSwjcWDxAL","detail":"mcpServer: \\{ enabled: false \\}"}
+{"ts":1784691528750,"type":"tool_end","tool":"Grep","toolId":"toolu_01DjCFNXod6aNkeSwjcWDxAL"}
+{"ts":1784691529645,"type":"tool_start","tool":"Grep","toolId":"toolu_012VDXiK8Ht9A1B5eS6xq4fK","detail":"bindAddress|callbackHost"}
+{"ts":1784691529865,"type":"tool_start","tool":"Grep","toolId":"toolu_01TcUqBZbP4cLzzyq2FsQK66","detail":"allowedHosts|Host header|403|Invalid Host"}
+{"ts":1784691530113,"type":"tool_start","tool":"Grep","toolId":"toolu_01UCoqmPhA2BT6m3wZc3eQep","detail":"mcpServer"}
+{"ts":1784691530620,"type":"tool_end","tool":"Grep","toolId":"toolu_012VDXiK8Ht9A1B5eS6xq4fK"}
+{"ts":1784691531066,"type":"tool_end","tool":"Grep","toolId":"toolu_01TcUqBZbP4cLzzyq2FsQK66"}
+{"ts":1784691531144,"type":"tool_end","tool":"Grep","toolId":"toolu_01UCoqmPhA2BT6m3wZc3eQep"}
+{"ts":1784691535029,"type":"tool_start","tool":"Grep","toolId":"toolu_01N6JyiVDJyuvtFaxWqYNC7L","detail":"DnsRebinding|dns.rebinding|Rebinding"}
+{"ts":1784691535055,"type":"tool_start","tool":"Grep","toolId":"toolu_014xybLmQwgKiqqPFKuxwrV8","detail":"function load|readFileSync|JSON.parse"}
+{"ts":1784691535239,"type":"tool_end","tool":"Grep","toolId":"toolu_01N6JyiVDJyuvtFaxWqYNC7L"}
+{"ts":1784691535268,"type":"tool_end","tool":"Grep","toolId":"toolu_014xybLmQwgKiqqPFKuxwrV8"}
+{"ts":1784691536650,"type":"tool_start","tool":"Grep","toolId":"toolu_01PQ2jouviie3hR4HmFSGYE3","detail":"makeContext\\(\\)|: IpcContext|as IpcContext|IpcContext =|function makeContext"}
+{"ts":1784691536839,"type":"tool_end","tool":"Grep","toolId":"toolu_01PQ2jouviie3hR4HmFSGYE3"}
+{"ts":1784691537903,"type":"tool_start","tool":"Grep","toolId":"toolu_01Kp3SnFVcKJqhkaUxytzxHU","detail":"v1 limitation|known limitation|127\\.0\\.0\\.1 only|loopback only|binds 127"}
+{"ts":1784691538122,"type":"tool_end","tool":"Grep","toolId":"toolu_01Kp3SnFVcKJqhkaUxytzxHU"}
+{"ts":1784691538452,"type":"tool_start","tool":"Grep","toolId":"toolu_01DSebMNqGmns2LXPbWpt6jC","detail":"class ConfigManager|deepMerge|mergeConfig"}
+{"ts":1784691538663,"type":"tool_end","tool":"Grep","toolId":"toolu_01DSebMNqGmns2LXPbWpt6jC"}
+{"ts":1784691538712,"type":"subagent_stop","detail":""}
+{"ts":1784691539231,"type":"tool_start","tool":"Grep","toolId":"toolu_01FpA1NNmkimDEBpahjZLSgs","detail":"enableDnsRebindingProtection|allowedHosts|allowedOrigins"}
+{"ts":1784691539419,"type":"tool_end","tool":"Grep","toolId":"toolu_01FpA1NNmkimDEBpahjZLSgs"}
+{"ts":1784691540419,"type":"subagent_stop","detail":""}
+{"ts":1784691542571,"type":"tool_start","tool":"Read","toolId":"toolu_01Ky8joXAshi2e4QFjXGq7pF","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\agent-integration.md"}
+{"ts":1784691542691,"type":"tool_end","tool":"Read","toolId":"toolu_01Ky8joXAshi2e4QFjXGq7pF"}
+{"ts":1784691544217,"type":"tool_start","tool":"Bash","toolId":"toolu_01DXux3UWNLh17yGP1c4jdGR","detail":"powershell -NoProfile -Command \"Get-Content 'C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\\dist\\cjs\\server\\streama"}
+{"ts":1784691545120,"type":"tool_end","tool":"Bash","toolId":"toolu_01DXux3UWNLh17yGP1c4jdGR"}
+{"ts":1784691546960,"type":"subagent_stop","detail":""}
+{"ts":1784691549190,"type":"tool_start","tool":"Grep","toolId":"toolu_013mLpwqheeVEyVTkM9wBQ68","detail":"allowedHosts|enableDnsRebindingProtection"}
+{"ts":1784691549391,"type":"tool_end","tool":"Grep","toolId":"toolu_013mLpwqheeVEyVTkM9wBQ68"}
+{"ts":1784691549973,"type":"tool_start","tool":"Grep","toolId":"toolu_01Eud7xJLRHirPqZs1Cp4Ri5","detail":"mcpServer|MCP|executionTarget"}
+{"ts":1784691550161,"type":"tool_end","tool":"Grep","toolId":"toolu_01Eud7xJLRHirPqZs1Cp4Ri5"}
+{"ts":1784691550845,"type":"tool_start","tool":"Grep","toolId":"toolu_01RdKqAawzeatyuaEMn3i7px","detail":"mcpServer:\\s*\\{"}
+{"ts":1784691551065,"type":"tool_end","tool":"Grep","toolId":"toolu_01RdKqAawzeatyuaEMn3i7px"}
+{"ts":1784691551145,"type":"tool_start","tool":"Grep","toolId":"toolu_01RH9pcJtfuou79isfU6wVTF","detail":"context as|makeContext\\(\\) as|context,|registerAgentListHandler|listAgents\\(|handleListAgents\" "}
+{"ts":1784691551328,"type":"tool_end","tool":"Grep","toolId":"toolu_01RH9pcJtfuou79isfU6wVTF"}
+{"ts":1784691552303,"type":"tool_start","tool":"Grep","toolId":"toolu_01ERg6YvLUoqnyoRsU98gRqa","detail":"_allowedHosts|validateHostHeader|Host header|403"}
+{"ts":1784691552515,"type":"tool_end","tool":"Grep","toolId":"toolu_01ERg6YvLUoqnyoRsU98gRqa"}
+{"ts":1784691554610,"type":"subagent_stop","detail":""}
+{"ts":1784691554800,"type":"tool_start","tool":"Grep","toolId":"toolu_01Dga5tLR4gYBCr8FmpNVYxp","detail":"urlForProject|mcpServerHandle"}
+{"ts":1784691555020,"type":"tool_end","tool":"Grep","toolId":"toolu_01Dga5tLR4gYBCr8FmpNVYxp"}
+{"ts":1784691556934,"type":"tool_start","tool":"Read","toolId":"toolu_01PTv66pLt8G4nDbrpbVTiXu","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\prepare-agent-spawn.test.ts"}
+{"ts":1784691557059,"type":"tool_end","tool":"Read","toolId":"toolu_01PTv66pLt8G4nDbrpbVTiXu"}
+{"ts":1784691557621,"type":"tool_start","tool":"Read","toolId":"toolu_019izhdBqguLKhdGXpUUuCYn","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784691557752,"type":"tool_end","tool":"Read","toolId":"toolu_019izhdBqguLKhdGXpUUuCYn"}
+{"ts":1784691557904,"type":"subagent_stop","detail":""}
+{"ts":1784691559803,"type":"tool_start","tool":"Read","toolId":"toolu_015AmZbWdkPKNnnWbuSM4mcm","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\\dist\\cjs\\server\\webStandardStreamableHttp.js"}
+{"ts":1784691559927,"type":"tool_end","tool":"Read","toolId":"toolu_015AmZbWdkPKNnnWbuSM4mcm"}
+{"ts":1784691562148,"type":"tool_start","tool":"Read","toolId":"toolu_01MSWQzPdHBGzUKVjYYn9cg8","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\agent-list-handler.test.ts"}
+{"ts":1784691562279,"type":"tool_end","tool":"Read","toolId":"toolu_01MSWQzPdHBGzUKVjYYn9cg8"}
+{"ts":1784691562409,"type":"tool_start","tool":"Read","toolId":"toolu_01SJdMmswvpWJBNawEBUSPGm","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\mcp-server.md"}
+{"ts":1784691562534,"type":"tool_end","tool":"Read","toolId":"toolu_01SJdMmswvpWJBNawEBUSPGm"}
+{"ts":1784691563891,"type":"tool_start","tool":"Grep","toolId":"toolu_016DCY1X7ZKUTuuFoEJ62VSn","detail":"windowConfigManager\\.load\\(\\)\\.mcpServer|mcpServer\\.bindAddress|mcpServer\\.callbackHost"}
+{"ts":1784691564068,"type":"tool_end","tool":"Grep","toolId":"toolu_016DCY1X7ZKUTuuFoEJ62VSn"}
+{"ts":1784691566796,"type":"tool_start","tool":"Read","toolId":"toolu_013gRJGR3iD81xsEj8Se7J5M","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784691566924,"type":"tool_end","tool":"Read","toolId":"toolu_013gRJGR3iD81xsEj8Se7J5M"}
+{"ts":1784691567051,"type":"tool_start","tool":"Grep","toolId":"toolu_01Pxnh7NXt9LATJvuMWkdmRr","detail":"mcpServer"}
+{"ts":1784691567240,"type":"tool_end","tool":"Grep","toolId":"toolu_01Pxnh7NXt9LATJvuMWkdmRr"}
+{"ts":1784691568916,"type":"tool_start","tool":"Bash","toolId":"toolu_014ghGCpCcFpkXQUXsGt6kwx","detail":"cd \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\" && npm run typecheck 2>&1 | tail -n 100"}
+{"ts":1784691570771,"type":"tool_start","tool":"Grep","toolId":"toolu_016kvMsyEPBZC6dspVnoeDfw","detail":": AppConfig = \\{|AppConfig>\\(\\{|satisfies AppConfig"}
+{"ts":1784691571017,"type":"tool_end","tool":"Grep","toolId":"toolu_016kvMsyEPBZC6dspVnoeDfw"}
+{"ts":1784691571045,"type":"tool_start","tool":"Bash","toolId":"toolu_01Y93MjbHGNKnmGKcvxvKsvw","detail":"npm run typecheck"}
+{"ts":1784691571851,"type":"tool_start","tool":"Bash","toolId":"toolu_01Tsy5B4FGumKQvkdGqD9wGi","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts 2>&1 | tail -60"}
+{"ts":1784691572055,"type":"subagent_stop","detail":""}
+{"ts":1784691574374,"type":"tool_start","tool":"Bash","toolId":"toolu_01AaneUCmmrx8oQ9RGNL8irH","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts"}
+{"ts":1784691574831,"type":"tool_start","tool":"Grep","toolId":"toolu_012sJEaXixitr3omgAYURuhr","detail":"^\\+.*--"}
+{"ts":1784691575027,"type":"tool_end","tool":"Grep","toolId":"toolu_012sJEaXixitr3omgAYURuhr"}
+{"ts":1784691575130,"type":"tool_start","tool":"Grep","toolId":"toolu_01V3AaPLdMvLtyvEhnXABP13","detail":"function.*: AppConfig \\{|\\(\\): AppConfig \\{|=> AppConfig"}
+{"ts":1784691575186,"type":"tool_start","tool":"Grep","toolId":"toolu_011FCjWkpeXU2RiTXzQ4Chga","detail":"mcpServerHandle"}
+{"ts":1784691575372,"type":"tool_end","tool":"Grep","toolId":"toolu_01V3AaPLdMvLtyvEhnXABP13"}
+{"ts":1784691575403,"type":"tool_end","tool":"Grep","toolId":"toolu_011FCjWkpeXU2RiTXzQ4Chga"}
+{"ts":1784691578348,"type":"tool_end","tool":"Bash","toolId":"toolu_01Y93MjbHGNKnmGKcvxvKsvw"}
+{"ts":1784691578574,"type":"tool_end","tool":"Bash","toolId":"toolu_01AaneUCmmrx8oQ9RGNL8irH"}
+{"ts":1784691578800,"type":"subagent_stop","detail":""}
+{"ts":1784691584699,"type":"tool_start","tool":"Grep","toolId":"toolu_01EPwk1qifgArmxET5HSnPfZ","detail":"—"}
+{"ts":1784691584895,"type":"tool_end","tool":"Grep","toolId":"toolu_01EPwk1qifgArmxET5HSnPfZ"}
+{"ts":1784691584991,"type":"tool_start","tool":"Read","toolId":"toolu_01LAgccrvzeAaCWBFdD6VeXV","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\adapters\\opencode\\command-builder.ts"}
+{"ts":1784691585110,"type":"tool_end","tool":"Read","toolId":"toolu_01LAgccrvzeAaCWBFdD6VeXV"}
+{"ts":1784691586403,"type":"subagent_stop","detail":""}
+{"ts":1784691587216,"type":"subagent_stop","detail":""}
+{"ts":1784691587734,"type":"tool_start","tool":"Read","toolId":"toolu_0198H1NwgUAnE2Mi66JdZifb","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\config\\config-manager.ts"}
+{"ts":1784691587853,"type":"tool_end","tool":"Read","toolId":"toolu_0198H1NwgUAnE2Mi66JdZifb"}
+{"ts":1784691589693,"type":"subagent_stop","detail":""}
+{"ts":1784691590875,"type":"tool_start","tool":"Grep","toolId":"toolu_01U5cdvbJir2kZ6UdmZ7c5a2","detail":"startMcpHttpServer\\("}
+{"ts":1784691591092,"type":"tool_end","tool":"Grep","toolId":"toolu_01U5cdvbJir2kZ6UdmZ7c5a2"}
+{"ts":1784691592319,"type":"tool_start","tool":"Read","toolId":"toolu_01B1wLY9qCbGKZbWDiRxe423","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\ui\\mock-electron-api.js"}
+{"ts":1784691592445,"type":"tool_end","tool":"Read","toolId":"toolu_01B1wLY9qCbGKZbWDiRxe423"}
+{"ts":1784691593540,"type":"subagent_stop","detail":"general-purpose"}
+{"ts":1784691594956,"type":"tool_start","tool":"Grep","toolId":"toolu_01Mg9FfUtsxFfqC3FXtfpGbD","detail":"startMcpHttpServer"}
+{"ts":1784691595158,"type":"tool_end","tool":"Grep","toolId":"toolu_01Mg9FfUtsxFfqC3FXtfpGbD"}
+{"ts":1784691596204,"type":"tool_start","tool":"Grep","toolId":"toolu_013Wr8GtRN5eNYgQKLcjsnKo","detail":"windowConfigManager"}
+{"ts":1784691596386,"type":"tool_end","tool":"Grep","toolId":"toolu_013Wr8GtRN5eNYgQKLcjsnKo"}
+{"ts":1784691598043,"type":"tool_start","tool":"Glob","toolId":"toolu_012ivBJW1zp6n1H64CHC2kLh","detail":"tests/unit/mcp-server*"}
+{"ts":1784691598244,"type":"tool_end","tool":"Glob","toolId":"toolu_012ivBJW1zp6n1H64CHC2kLh"}
+{"ts":1784691603369,"type":"tool_start","tool":"Bash","toolId":"toolu_015dxLh2jzmQMpsGp2w8LJ2o","detail":"grep -ni 'dev\\|@.*\\.com\\|C:\\\\\\\\Users\\\\\\\\[a-z]' \"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-Documents-GitHub-kangentic--kangentic-worktrees-make-kangentic-mcp-s-cff8b5df\\feb84581-0790-48"}
+{"ts":1784691603633,"type":"subagent_stop","detail":""}
+{"ts":1784691603715,"type":"tool_end","tool":"Bash","toolId":"toolu_015dxLh2jzmQMpsGp2w8LJ2o"}
+{"ts":1784691608531,"type":"tool_start","tool":"Read","toolId":"toolu_01T7GgAUWbqpmpQ6png1b1nC","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\mcp-server.md"}
+{"ts":1784691608657,"type":"tool_end","tool":"Read","toolId":"toolu_01T7GgAUWbqpmpQ6png1b1nC"}
+{"ts":1784691611255,"type":"subagent_stop","detail":""}
+{"ts":1784691615155,"type":"tool_start","tool":"Read","toolId":"toolu_01NadMecZCGg6qfUJxGQ4omb","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\opencode-remote-execution.test.ts"}
+{"ts":1784691615288,"type":"tool_end","tool":"Read","toolId":"toolu_01NadMecZCGg6qfUJxGQ4omb"}
+{"ts":1784691621557,"type":"subagent_stop","detail":""}
+{"ts":1784691622101,"type":"tool_start","tool":"Grep","toolId":"toolu_01SLmsA2mqQomCSbvByhChuh","detail":"bindAddress|callbackHost"}
+{"ts":1784691622277,"type":"tool_end","tool":"Grep","toolId":"toolu_01SLmsA2mqQomCSbvByhChuh"}
+{"ts":1784691628904,"type":"tool_start","tool":"Grep","toolId":"toolu_01Mgq4fjfwY8rKxBgCeTQwoa","detail":"mcpServer"}
+{"ts":1784691629102,"type":"tool_end","tool":"Grep","toolId":"toolu_01Mgq4fjfwY8rKxBgCeTQwoa"}
+{"ts":1784691631169,"type":"tool_start","tool":"Read","toolId":"toolu_012B8pafjja91DDQgJEDAXh5","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691631288,"type":"tool_end","tool":"Read","toolId":"toolu_012B8pafjja91DDQgJEDAXh5"}
+{"ts":1784691634922,"type":"tool_start","tool":"Read","toolId":"toolu_019MtFHKh9SxVMCfBsgkJW83","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\config\\config-manager.ts"}
+{"ts":1784691635051,"type":"tool_end","tool":"Read","toolId":"toolu_019MtFHKh9SxVMCfBsgkJW83"}
+{"ts":1784691635393,"type":"tool_start","tool":"Read","toolId":"toolu_01FfLno9EFgmXmecM7P6qp3Q","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691635422,"type":"subagent_stop","detail":""}
+{"ts":1784691635517,"type":"tool_end","tool":"Read","toolId":"toolu_01FfLno9EFgmXmecM7P6qp3Q"}
+{"ts":1784691636769,"type":"tool_start","tool":"Read","toolId":"toolu_013VBQpoR8hctVLyni3JvS8F","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\shared\\types.ts"}
+{"ts":1784691636885,"type":"tool_end","tool":"Read","toolId":"toolu_013VBQpoR8hctVLyni3JvS8F"}
+{"ts":1784691640685,"type":"tool_start","tool":"Read","toolId":"toolu_01U4Yrrt29nf4ybx9i9RJx7V","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691640807,"type":"tool_end","tool":"Read","toolId":"toolu_01U4Yrrt29nf4ybx9i9RJx7V"}
+{"ts":1784691642313,"type":"tool_start","tool":"Grep","toolId":"toolu_011FTTgvnsGo5ZNdyXjv4DZx","detail":"CONFIG_DICTIONARY_PATHS"}
+{"ts":1784691642506,"type":"tool_end","tool":"Grep","toolId":"toolu_011FTTgvnsGo5ZNdyXjv4DZx"}
+{"ts":1784691645152,"type":"tool_start","tool":"Read","toolId":"toolu_01HxHFgHq8JnSdNz2zRDjrqw","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691645283,"type":"tool_end","tool":"Read","toolId":"toolu_01HxHFgHq8JnSdNz2zRDjrqw"}
+{"ts":1784691646865,"type":"tool_start","tool":"Grep","toolId":"toolu_01KkTcraFzdZX5TgF8KxV8mY","detail":"bindAddress|callbackHost"}
+{"ts":1784691647052,"type":"tool_end","tool":"Grep","toolId":"toolu_01KkTcraFzdZX5TgF8KxV8mY"}
+{"ts":1784691650949,"type":"tool_start","tool":"Read","toolId":"toolu_013NjfEQa3PL6MY2ih3x5rjB","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691651076,"type":"tool_end","tool":"Read","toolId":"toolu_013NjfEQa3PL6MY2ih3x5rjB"}
+{"ts":1784691653170,"type":"subagent_stop","detail":""}
+{"ts":1784691655055,"type":"tool_start","tool":"Read","toolId":"toolu_014PqJmvVBBX1yCP4ZrjRGwd","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784691655182,"type":"tool_end","tool":"Read","toolId":"toolu_014PqJmvVBBX1yCP4ZrjRGwd"}
+{"ts":1784691660186,"type":"subagent_stop","detail":"general-purpose"}
+{"ts":1784691660607,"type":"subagent_stop","detail":""}
+{"ts":1784691662115,"type":"subagent_stop","detail":"general-purpose"}
+{"ts":1784691666815,"type":"tool_start","tool":"Read","toolId":"toolu_0142FcEdEh78FXma8cBtRhpf","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\shared\\types.ts"}
+{"ts":1784691666943,"type":"tool_end","tool":"Read","toolId":"toolu_0142FcEdEh78FXma8cBtRhpf"}
+{"ts":1784691674594,"type":"tool_start","tool":"Grep","toolId":"toolu_01BP7RQHnf1TBNJFQXtAA8Hi","detail":"function mergeConfig|deepMerge|Object\\.assign.*DEFAULT_CONFIG|\\.\\.\\.DEFAULT_CONFIG"}
+{"ts":1784691674789,"type":"tool_end","tool":"Grep","toolId":"toolu_01BP7RQHnf1TBNJFQXtAA8Hi"}
+{"ts":1784691677549,"type":"tool_start","tool":"Grep","toolId":"toolu_01SfkEXBH7WKFCGNaShxJotX","detail":"mcpServer|deepMerge|function load|merge"}
+{"ts":1784691677737,"type":"tool_end","tool":"Grep","toolId":"toolu_01SfkEXBH7WKFCGNaShxJotX"}
+{"ts":1784691678929,"type":"subagent_stop","detail":""}
+{"ts":1784691683148,"type":"tool_start","tool":"Grep","toolId":"toolu_017emv41zq8J9TcVm2gvjwWz","detail":"Network Access|bindAddress|callbackHost"}
+{"ts":1784691683370,"type":"tool_end","tool":"Grep","toolId":"toolu_017emv41zq8J9TcVm2gvjwWz"}
+{"ts":1784691686689,"type":"tool_start","tool":"Grep","toolId":"toolu_013DSoxiLdi3UdtPsowmPFUm","detail":"this machine -- there is no"}
+{"ts":1784691686876,"type":"tool_end","tool":"Grep","toolId":"toolu_013DSoxiLdi3UdtPsowmPFUm"}
+{"ts":1784691696600,"type":"tool_start","tool":"Read","toolId":"toolu_01LPr3hvUtM99g3DJ3svq4GX","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691696729,"type":"tool_end","tool":"Read","toolId":"toolu_01LPr3hvUtM99g3DJ3svq4GX"}
+{"ts":1784691701513,"type":"tool_start","tool":"Grep","toolId":"toolu_01WoThDqHbbiWoMQ9PyjPJYy","detail":"bindAddress"}
+{"ts":1784691701710,"type":"tool_end","tool":"Grep","toolId":"toolu_01WoThDqHbbiWoMQ9PyjPJYy"}
+{"ts":1784691710437,"type":"tool_start","tool":"Read","toolId":"toolu_018Zv9MVpKkMupWF7aDt1S6s","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\mcp-server.md"}
+{"ts":1784691710570,"type":"tool_end","tool":"Read","toolId":"toolu_018Zv9MVpKkMupWF7aDt1S6s"}
+{"ts":1784691710761,"type":"subagent_stop","detail":""}
+{"ts":1784691715723,"type":"tool_start","tool":"Read","toolId":"toolu_01YMaiKJW39T9AMkfP3hCc5m","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\opencode-remote-execution.test.ts"}
+{"ts":1784691715849,"type":"tool_end","tool":"Read","toolId":"toolu_01YMaiKJW39T9AMkfP3hCc5m"}
+{"ts":1784691716354,"type":"subagent_stop","detail":""}
+{"ts":1784691726767,"type":"tool_start","tool":"Grep","toolId":"toolu_01RKkgWQq1AaNNMWuapzuCsk","detail":"—"}
+{"ts":1784691726962,"type":"tool_end","tool":"Grep","toolId":"toolu_01RKkgWQq1AaNNMWuapzuCsk"}
+{"ts":1784691730280,"type":"tool_start","tool":"Grep","toolId":"toolu_015vhEgmiuR4wx4MSgWU7Et7","detail":"—"}
+{"ts":1784691730453,"type":"tool_end","tool":"Grep","toolId":"toolu_015vhEgmiuR4wx4MSgWU7Et7"}
+{"ts":1784691735950,"type":"subagent_stop","detail":"general-purpose"}
+{"ts":1784691739680,"type":"tool_start","tool":"Grep","toolId":"toolu_01KF4j3m6qVHKmFCGSxjMPoF","detail":" -- "}
+{"ts":1784691739871,"type":"tool_end","tool":"Grep","toolId":"toolu_01KF4j3m6qVHKmFCGSxjMPoF"}
+{"ts":1784691753671,"type":"tool_start","tool":"Glob","toolId":"toolu_01RJxrDYMFtaH3Z8bEpus8dz","detail":"node_modules/.bin/tsc*"}
+{"ts":1784691753867,"type":"tool_end","tool":"Glob","toolId":"toolu_01RJxrDYMFtaH3Z8bEpus8dz"}
+{"ts":1784691754627,"type":"tool_start","tool":"Grep","toolId":"toolu_01UPPbRExCEEdcCpTZvd8gQy","detail":"mock-electron-api"}
+{"ts":1784691754831,"type":"tool_end","tool":"Grep","toolId":"toolu_01UPPbRExCEEdcCpTZvd8gQy"}
+{"ts":1784691759201,"type":"tool_start","tool":"Grep","toolId":"toolu_013ZfxQwXBfQzWJnYmTAHt93","detail":"DEFAULT_CONFIG|mcpServer|config\\b"}
+{"ts":1784691759382,"type":"tool_end","tool":"Grep","toolId":"toolu_013ZfxQwXBfQzWJnYmTAHt93"}
+{"ts":1784691764032,"type":"subagent_stop","detail":""}
+{"ts":1784691788620,"type":"subagent_stop","detail":"ipc-auditor"}
+{"ts":1784691922580,"type":"subagent_stop","detail":""}
+{"ts":1784691928613,"type":"subagent_stop","detail":"platform-guard"}
+{"ts":1784691949385,"type":"tool_start","tool":"Read","toolId":"toolu_01EL61SYv7jpqqS8p6pDmmXj","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\ipc\\handlers\\projects.ts"}
+{"ts":1784691949515,"type":"tool_end","tool":"Read","toolId":"toolu_01EL61SYv7jpqqS8p6pDmmXj"}
+{"ts":1784691961903,"type":"tool_start","tool":"Grep","toolId":"toolu_01FU3AEqM1WK6WtqDfDVjogo","detail":"allowedHosts"}
+{"ts":1784691962102,"type":"tool_end","tool":"Grep","toolId":"toolu_01FU3AEqM1WK6WtqDfDVjogo"}
+{"ts":1784691966280,"type":"tool_start","tool":"Grep","toolId":"toolu_012JXxKBzpXwouhC3cHgf1di","detail":"validateRequestHeaders|allowedHosts\\.includes|Host header|hostHeader"}
+{"ts":1784691966466,"type":"tool_end","tool":"Grep","toolId":"toolu_012JXxKBzpXwouhC3cHgf1di"}
+{"ts":1784691996876,"type":"tool_start","tool":"Edit","toolId":"toolu_015AkP9BwLMWU7y2E5V7MNM5","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784691997070,"type":"tool_end","tool":"Edit","toolId":"toolu_015AkP9BwLMWU7y2E5V7MNM5"}
+{"ts":1784692005276,"type":"tool_start","tool":"Edit","toolId":"toolu_015kKCtQEkm8Bz9awoFGuuLJ","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692005427,"type":"tool_end","tool":"Edit","toolId":"toolu_015kKCtQEkm8Bz9awoFGuuLJ"}
+{"ts":1784692011102,"type":"tool_start","tool":"Edit","toolId":"toolu_01Tx7syDWtXKKqMPuztj5qmJ","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692011282,"type":"tool_end","tool":"Edit","toolId":"toolu_01Tx7syDWtXKKqMPuztj5qmJ"}
+{"ts":1784692019442,"type":"tool_start","tool":"Edit","toolId":"toolu_01PbqrhDL4DBr3xM7phqhKRj","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692019589,"type":"tool_end","tool":"Edit","toolId":"toolu_01PbqrhDL4DBr3xM7phqhKRj"}
+{"ts":1784692023450,"type":"tool_start","tool":"Edit","toolId":"toolu_01XN7xAT7zs4V7Zqa3e6BQwM","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692023615,"type":"tool_end","tool":"Edit","toolId":"toolu_01XN7xAT7zs4V7Zqa3e6BQwM"}
+{"ts":1784692029073,"type":"tool_start","tool":"Edit","toolId":"toolu_01AtqNMiJg1wD9E6SXga41kG","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\shared\\types.ts"}
+{"ts":1784692029218,"type":"tool_end","tool":"Edit","toolId":"toolu_01AtqNMiJg1wD9E6SXga41kG"}
+{"ts":1784692033726,"type":"tool_start","tool":"Edit","toolId":"toolu_017NMaVXTTcmEPcthSKzsbfQ","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784692033865,"type":"tool_end","tool":"Edit","toolId":"toolu_017NMaVXTTcmEPcthSKzsbfQ"}
+{"ts":1784692041286,"type":"tool_start","tool":"Edit","toolId":"toolu_01S7S71L6xZcPRM6fZrGvBSH","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\mcp-server.md"}
+{"ts":1784692041447,"type":"tool_end","tool":"Edit","toolId":"toolu_01S7S71L6xZcPRM6fZrGvBSH"}
+{"ts":1784692053805,"type":"tool_start","tool":"Edit","toolId":"toolu_01E39KdmDmaopjuv9RWawf9G","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\mcp-server.md"}
+{"ts":1784692053939,"type":"tool_end","tool":"Edit","toolId":"toolu_01E39KdmDmaopjuv9RWawf9G"}
+{"ts":1784692058394,"type":"tool_start","tool":"Edit","toolId":"toolu_01LNvm1kY6ScrTL5nD9BGr1i","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692058530,"type":"tool_end","tool":"Edit","toolId":"toolu_01LNvm1kY6ScrTL5nD9BGr1i"}
+{"ts":1784692063309,"type":"tool_start","tool":"Edit","toolId":"toolu_01QninB1kX1iinHmPgnyGVNU","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692063446,"type":"tool_end","tool":"Edit","toolId":"toolu_01QninB1kX1iinHmPgnyGVNU"}
+{"ts":1784692067954,"type":"tool_start","tool":"Edit","toolId":"toolu_019DcmHr9DXjCodN3DgjZpaS","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\opencode-remote-execution.test.ts"}
+{"ts":1784692068097,"type":"tool_end","tool":"Edit","toolId":"toolu_019DcmHr9DXjCodN3DgjZpaS"}
+{"ts":1784692071724,"type":"tool_start","tool":"Edit","toolId":"toolu_01AESvZNKqc835yWCCQrizYb","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692071866,"type":"tool_end","tool":"Edit","toolId":"toolu_01AESvZNKqc835yWCCQrizYb"}
+{"ts":1784692074864,"type":"tool_start","tool":"Edit","toolId":"toolu_01MnxqEAVZWuyAwXyBULF3Fu","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692075002,"type":"tool_end","tool":"Edit","toolId":"toolu_01MnxqEAVZWuyAwXyBULF3Fu"}
+{"ts":1784692078689,"type":"tool_start","tool":"Edit","toolId":"toolu_01WKyh6DQCBPxJCAzLti1u8h","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692078829,"type":"tool_end","tool":"Edit","toolId":"toolu_01WKyh6DQCBPxJCAzLti1u8h"}
+{"ts":1784692082884,"type":"tool_start","tool":"Edit","toolId":"toolu_01AEUHMcyLNrJa9tgMK7tqDY","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692083036,"type":"tool_end","tool":"Edit","toolId":"toolu_01AEUHMcyLNrJa9tgMK7tqDY"}
+{"ts":1784692085632,"type":"tool_start","tool":"Read","toolId":"toolu_01Xjw84N9LsCxurcv7QAVoSE","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\ui\\mock-electron-api.js"}
+{"ts":1784692085757,"type":"tool_end","tool":"Read","toolId":"toolu_01Xjw84N9LsCxurcv7QAVoSE"}
+{"ts":1784692089100,"type":"tool_start","tool":"Edit","toolId":"toolu_01CfRH421VTZMRNxVwYSYU9K","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\ui\\mock-electron-api.js"}
+{"ts":1784692089241,"type":"tool_end","tool":"Edit","toolId":"toolu_01CfRH421VTZMRNxVwYSYU9K"}
+{"ts":1784692117581,"type":"tool_start","tool":"Agent","toolId":"toolu_01Jqt8DkzoeaM4rcapwZKBTu","detail":"Fill MCP network-config coverage holes"}
+{"ts":1784692120678,"type":"subagent_start","detail":"test-builder"}
+{"ts":1784692120707,"type":"tool_end","tool":"Agent","toolId":"toolu_01Jqt8DkzoeaM4rcapwZKBTu"}
+{"ts":1784692122837,"type":"tool_start","tool":"Bash","toolId":"toolu_01Q9TJzxMEDoJzZwfUQCViTD","detail":"npm run typecheck"}
+{"ts":1784692124229,"type":"tool_start","tool":"Read","toolId":"toolu_01QZ1bPj6jzUGCWsrNAT4jiB","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692124393,"type":"tool_end","tool":"Read","toolId":"toolu_01QZ1bPj6jzUGCWsrNAT4jiB"}
+{"ts":1784692124637,"type":"tool_start","tool":"Read","toolId":"toolu_01R7Xfsk7n7N6xMWfuKThQSX","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692124766,"type":"tool_end","tool":"Read","toolId":"toolu_01R7Xfsk7n7N6xMWfuKThQSX"}
+{"ts":1784692131526,"type":"tool_end","tool":"Bash","toolId":"toolu_01Q9TJzxMEDoJzZwfUQCViTD"}
+{"ts":1784692133278,"type":"tool_start","tool":"Bash","toolId":"toolu_01VVCndpUEx2rrNYjtCn98Q7","detail":"node -e \"console.log(require.resolve('@modelcontextprotocol/sdk/server/streamableHttp.js', {paths:['C:/Users/dev/Documents/GitHub/kangentic/.kangentic/worktrees/make-kangentic-mcp-s-cff8b5df']}))\""}
+{"ts":1784692135234,"type":"tool_end","tool":"Bash","toolId":"toolu_01VVCndpUEx2rrNYjtCn98Q7"}
+{"ts":1784692135357,"type":"tool_start","tool":"Glob","toolId":"toolu_017c1idBxxz766Jsh6CkLbBe","detail":"node_modules/@modelcontextprotocol/sdk/dist/esm/server/*streamableHttp*"}
+{"ts":1784692135562,"type":"tool_end","tool":"Glob","toolId":"toolu_017c1idBxxz766Jsh6CkLbBe"}
+{"ts":1784692138111,"type":"tool_start","tool":"Bash","toolId":"toolu_01Gjm5gpzQ3s4szYVw7GeuV6","detail":"npx vitest run tests/unit/opencode-remote-execution.test.ts"}
+{"ts":1784692138232,"type":"tool_start","tool":"Bash","toolId":"toolu_01XUAcuQc4NGgKAinW8htwPd","detail":"node -e \"console.log(require.resolve('@modelcontextprotocol/sdk/server/streamableHttp.js', {paths:['C:/Users/dev/Documents/GitHub/kangentic/.kangentic/worktrees/make-kangentic-mcp-s-cff8b5df/node_mo"}
+{"ts":1784692140181,"type":"tool_end","tool":"Bash","toolId":"toolu_01XUAcuQc4NGgKAinW8htwPd"}
+{"ts":1784692142071,"type":"tool_end","tool":"Bash","toolId":"toolu_01Gjm5gpzQ3s4szYVw7GeuV6"}
+{"ts":1784692143395,"type":"tool_start","tool":"Grep","toolId":"toolu_01YV2tm3s6CfsZK7VQAyLvwT","detail":"Invalid Host header"}
+{"ts":1784692143579,"type":"tool_end","tool":"Grep","toolId":"toolu_01YV2tm3s6CfsZK7VQAyLvwT"}
+{"ts":1784692144092,"type":"tool_start","tool":"Glob","toolId":"toolu_011hB88JtARyMkoFoPQ8TXLm","detail":"node_modules/@modelcontextprotocol/sdk/package.json"}
+{"ts":1784692144305,"type":"tool_end","tool":"Glob","toolId":"toolu_011hB88JtARyMkoFoPQ8TXLm"}
+{"ts":1784692147315,"type":"tool_start","tool":"Bash","toolId":"toolu_01JGHEEYrNE3d2czWdHPosMG","detail":"ls \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\\dist\" 2>NUL || echo NOTFOUND"}
+{"ts":1784692147467,"type":"tool_start","tool":"Grep","toolId":"toolu_019hPyFJC5QejCSdY7BP6DQP","detail":" -- "}
+{"ts":1784692147648,"type":"tool_end","tool":"Grep","toolId":"toolu_019hPyFJC5QejCSdY7BP6DQP"}
+{"ts":1784692150624,"type":"tool_start","tool":"Glob","toolId":"toolu_01NmNLs3BEmdPJVtQxsHxUri","detail":"node_modules/@modelcontextprotocol/sdk/dist/**"}
+{"ts":1784692150839,"type":"tool_end","tool":"Glob","toolId":"toolu_01NmNLs3BEmdPJVtQxsHxUri"}
+{"ts":1784692152517,"type":"subagent_stop","detail":""}
+{"ts":1784692153926,"type":"tool_start","tool":"Glob","toolId":"toolu_01YAo9X88JwPXtEf2wHSYG6c","detail":"node_modules/@modelcontextprotocol/*"}
+{"ts":1784692154120,"type":"tool_end","tool":"Glob","toolId":"toolu_01YAo9X88JwPXtEf2wHSYG6c"}
+{"ts":1784692154847,"type":"tool_start","tool":"Bash","toolId":"toolu_01E18fbHhyxmEYA9JQp8m6Td","detail":"dir \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\" /a /-c | find \"modelcontext\" /i"}
+{"ts":1784692156232,"type":"tool_start","tool":"Bash","toolId":"toolu_01HdDezd8x9MW9Q1myeAekcU","detail":"git diff HEAD --stat"}
+{"ts":1784692156600,"type":"tool_end","tool":"Bash","toolId":"toolu_01HdDezd8x9MW9Q1myeAekcU"}
+{"ts":1784692157115,"type":"tool_start","tool":"Bash","toolId":"toolu_01QjnHqd65PkgLkHbGtZV9Qe","detail":"dir \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\""}
+{"ts":1784692159006,"type":"tool_end","tool":"Bash","toolId":"toolu_01QjnHqd65PkgLkHbGtZV9Qe"}
+{"ts":1784692163901,"type":"tool_start","tool":"Grep","toolId":"toolu_017aHefqPYY4TKEaFRXGCq5c","detail":"Invalid Host header"}
+{"ts":1784692164085,"type":"tool_end","tool":"Grep","toolId":"toolu_017aHefqPYY4TKEaFRXGCq5c"}
+{"ts":1784692166148,"type":"tool_start","tool":"Bash","toolId":"toolu_017kRVdPJuyWF8NoZ3z5RMXj","detail":"dir \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\""}
+{"ts":1784692168081,"type":"tool_end","tool":"Bash","toolId":"toolu_017kRVdPJuyWF8NoZ3z5RMXj"}
+{"ts":1784692170521,"type":"tool_start","tool":"Bash","toolId":"toolu_01AzVh26K37WevvnfkdCPZji","detail":"dir \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\\dist\""}
+{"ts":1784692173042,"type":"tool_end","tool":"Bash","toolId":"toolu_01AzVh26K37WevvnfkdCPZji"}
+{"ts":1784692175751,"type":"tool_start","tool":"Grep","toolId":"toolu_01Cho41MdFxFytx8Pc68UQcC","detail":"Invalid Host header"}
+{"ts":1784692175959,"type":"tool_end","tool":"Grep","toolId":"toolu_01Cho41MdFxFytx8Pc68UQcC"}
+{"ts":1784692179459,"type":"tool_start","tool":"Grep","toolId":"toolu_01EmCwb4H5Q12EXS4GjMjXh7","detail":"Invalid Host header|allowedHosts|validateHostHeader|handleRequest"}
+{"ts":1784692179642,"type":"tool_end","tool":"Grep","toolId":"toolu_01EmCwb4H5Q12EXS4GjMjXh7"}
+{"ts":1784692183152,"type":"tool_start","tool":"Read","toolId":"toolu_01Db5cyAwPctDuFRt7P6k9kx","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\\dist\\esm\\server\\webStandardStreamableHttp.js"}
+{"ts":1784692183283,"type":"tool_end","tool":"Read","toolId":"toolu_01Db5cyAwPctDuFRt7P6k9kx"}
+{"ts":1784692184049,"type":"subagent_stop","detail":""}
+{"ts":1784692191599,"type":"tool_start","tool":"Bash","toolId":"toolu_01MeiQavmG31Mj8AUtmJcQcj","detail":"grep -rn \"interface RequestResolver\" \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http\\project-resolver.ts\""}
+{"ts":1784692191946,"type":"tool_end","tool":"Bash","toolId":"toolu_01MeiQavmG31Mj8AUtmJcQcj"}
+{"ts":1784692194160,"type":"tool_start","tool":"Read","toolId":"toolu_01W8k4zDcEPUFWCJ3ZDVyHXk","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http\\project-resolver.ts"}
+{"ts":1784692194286,"type":"tool_end","tool":"Read","toolId":"toolu_01W8k4zDcEPUFWCJ3ZDVyHXk"}
+{"ts":1784692201689,"type":"tool_start","tool":"Bash","toolId":"toolu_01NvYEmeSDC2eNYsehfkon5X","detail":"grep -n \"resolver\\.\" \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http\\task-tools.ts\" | head -30"}
+{"ts":1784692204621,"type":"tool_start","tool":"Grep","toolId":"toolu_019p2SeeGejmSbad21SENmF8","detail":"resolver\\."}
+{"ts":1784692204805,"type":"tool_end","tool":"Grep","toolId":"toolu_019p2SeeGejmSbad21SENmF8"}
+{"ts":1784692209176,"type":"tool_start","tool":"Read","toolId":"toolu_011dPbMXwS2oViZgk2o15Uqr","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http\\server-instructions.ts"}
+{"ts":1784692209296,"type":"tool_end","tool":"Read","toolId":"toolu_011dPbMXwS2oViZgk2o15Uqr"}
+{"ts":1784692216239,"type":"subagent_stop","detail":""}
+{"ts":1784692222288,"type":"tool_start","tool":"Grep","toolId":"toolu_01GqmTnB4VNamLeLyA38osKi","detail":"resolver\\.[a-zA-Z]+\\(\\)|resolver,|resolver\\)|resolver\\.[a-zA-Z]+\\(\" "}
+{"ts":1784692222476,"type":"tool_end","tool":"Grep","toolId":"toolu_01GqmTnB4VNamLeLyA38osKi"}
+{"ts":1784692226462,"type":"tool_start","tool":"Grep","toolId":"toolu_01QXnwwa2pCYPmxLcWchgiYo","detail":"export function register"}
+{"ts":1784692226659,"type":"tool_end","tool":"Grep","toolId":"toolu_01QXnwwa2pCYPmxLcWchgiYo"}
+{"ts":1784692231762,"type":"tool_start","tool":"Read","toolId":"toolu_011VFeAEtZY6LSs2cm23Etzo","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http\\diagnostics-tools.ts"}
+{"ts":1784692231889,"type":"tool_end","tool":"Read","toolId":"toolu_011VFeAEtZY6LSs2cm23Etzo"}
+{"ts":1784692236754,"type":"tool_start","tool":"Bash","toolId":"toolu_01R7CQ4SoaK2yPNV8upcX5EX","detail":"grep -n \"class RequestResolver\\|ipcContext:\" -r \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\ipc\\ipc-context.ts\""}
+{"ts":1784692237081,"type":"tool_end","tool":"Bash","toolId":"toolu_01R7CQ4SoaK2yPNV8upcX5EX"}
+{"ts":1784692239203,"type":"tool_start","tool":"Read","toolId":"toolu_01PEHRNPrnf8GUKBo7TrdEjA","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\ipc\\ipc-context.ts"}
+{"ts":1784692239321,"type":"tool_end","tool":"Read","toolId":"toolu_01PEHRNPrnf8GUKBo7TrdEjA"}
+{"ts":1784692248054,"type":"subagent_stop","detail":""}
+{"ts":1784692261324,"type":"tool_start","tool":"Grep","toolId":"toolu_01LJAH7H1ZznvJ2E5tdiJjXY","detail":"resolver\\.(defaultContextResolved|resolveProject|listProjects|listProjectsRaw|isMemoryIndexingEnabled|getMemoryEmbedder)"}
+{"ts":1784692261521,"type":"tool_end","tool":"Grep","toolId":"toolu_01LJAH7H1ZznvJ2E5tdiJjXY"}
+{"ts":1784692266743,"type":"tool_start","tool":"Edit","toolId":"toolu_01WXj5wtnDsXRz1FPTKDAFUm","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\index.ts"}
+{"ts":1784692266874,"type":"tool_end","tool":"Edit","toolId":"toolu_01WXj5wtnDsXRz1FPTKDAFUm"}
+{"ts":1784692268768,"type":"tool_start","tool":"Bash","toolId":"toolu_01W8UQyGTMKeDgZadnPWQvY6","detail":"git diff HEAD -- src/main/index.ts"}
+{"ts":1784692269171,"type":"tool_end","tool":"Bash","toolId":"toolu_01W8UQyGTMKeDgZadnPWQvY6"}
+{"ts":1784692272188,"type":"tool_start","tool":"Bash","toolId":"toolu_01TtXYEPYNLJRjykQY1ZZkyU","detail":"node -e \"\nconst http = require('node:http');\nconst server = http.createServer((req, res) => {\n  console.log('host seen:', req.headers.host);\n  res.end('ok');\n});\nserver.listen(0, '127.0.0.1', () => {\n"}
+{"ts":1784692274250,"type":"tool_start","tool":"Bash","toolId":"toolu_014YHvqYrY5pzToApmmUe2g9","detail":"git status --porcelain"}
+{"ts":1784692274534,"type":"tool_end","tool":"Bash","toolId":"toolu_01TtXYEPYNLJRjykQY1ZZkyU"}
+{"ts":1784692274701,"type":"tool_end","tool":"Bash","toolId":"toolu_014YHvqYrY5pzToApmmUe2g9"}
+{"ts":1784692278736,"type":"tool_start","tool":"Bash","toolId":"toolu_01MAPhq2RAHVHr32oDtZKbaH","detail":"node -e \"\nconst http = require('node:http');\nconst server = http.createServer((req, res) => {\n  console.log('host seen:', req.headers.host);\n  res.end('ok');\n});\nserver.listen(0, '127.0.0.1', () => {\n"}
+{"ts":1784692279676,"type":"subagent_stop","detail":""}
+{"ts":1784692280340,"type":"tool_start","tool":"Read","toolId":"toolu_01TVYJwS2Rzf3nYpKzn7m7ae","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\configuration.md"}
+{"ts":1784692280471,"type":"tool_end","tool":"Read","toolId":"toolu_01TVYJwS2Rzf3nYpKzn7m7ae"}
+{"ts":1784692281161,"type":"tool_end","tool":"Bash","toolId":"toolu_01MAPhq2RAHVHr32oDtZKbaH"}
+{"ts":1784692286938,"type":"tool_start","tool":"Edit","toolId":"toolu_01Jdst2yk5NhSnEgqo8EUXbP","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\configuration.md"}
+{"ts":1784692287085,"type":"tool_end","tool":"Edit","toolId":"toolu_01Jdst2yk5NhSnEgqo8EUXbP"}
+{"ts":1784692289545,"type":"tool_start","tool":"Read","toolId":"toolu_015kLTFfpWrzBVfN2VVfRDx1","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\mcp-server.md"}
+{"ts":1784692289675,"type":"tool_end","tool":"Read","toolId":"toolu_015kLTFfpWrzBVfN2VVfRDx1"}
+{"ts":1784692293871,"type":"tool_start","tool":"Edit","toolId":"toolu_01NP5edAmPYE6vGMWmbLpdPR","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\docs\\mcp-server.md"}
+{"ts":1784692294002,"type":"tool_end","tool":"Edit","toolId":"toolu_01NP5edAmPYE6vGMWmbLpdPR"}
+{"ts":1784692294542,"type":"tool_start","tool":"Read","toolId":"toolu_01VfR8e7UbQr7pCs5SyvqNoL","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\\dist\\esm\\server\\streamableHttp.js"}
+{"ts":1784692294685,"type":"tool_end","tool":"Read","toolId":"toolu_01VfR8e7UbQr7pCs5SyvqNoL"}
+{"ts":1784692297298,"type":"tool_start","tool":"Bash","toolId":"toolu_01FE4gwwHk65LLAbQffxmgRe","detail":"git diff HEAD --stat"}
+{"ts":1784692297690,"type":"tool_end","tool":"Bash","toolId":"toolu_01FE4gwwHk65LLAbQffxmgRe"}
+{"ts":1784692302985,"type":"tool_start","tool":"Grep","toolId":"toolu_01PqzoiiMfe8EeVNiNkfKoXT","detail":" -- "}
+{"ts":1784692303156,"type":"tool_end","tool":"Grep","toolId":"toolu_01PqzoiiMfe8EeVNiNkfKoXT"}
+{"ts":1784692305511,"type":"tool_start","tool":"Bash","toolId":"toolu_01EpCNspzJ8jzHTYZFeHQ5SY","detail":"npx vitest run tests/unit/no-em-dashes.test.ts"}
+{"ts":1784692309457,"type":"tool_end","tool":"Bash","toolId":"toolu_01EpCNspzJ8jzHTYZFeHQ5SY"}
+{"ts":1784692311224,"type":"subagent_stop","detail":""}
+{"ts":1784692311718,"type":"tool_start","tool":"Bash","toolId":"toolu_01L358k3BcGcXjmBEkFZNmWa","detail":"npx vitest run tests/unit/test-fs-writes-sandboxed.test.ts"}
+{"ts":1784692315216,"type":"tool_end","tool":"Bash","toolId":"toolu_01L358k3BcGcXjmBEkFZNmWa"}
+{"ts":1784692318186,"type":"tool_start","tool":"Bash","toolId":"toolu_015TKinu8bjv7zfDP3gmjn8U","detail":"npx vitest run tests/unit/mcp-tool-list-parity.test.ts"}
+{"ts":1784692321891,"type":"tool_end","tool":"Bash","toolId":"toolu_015TKinu8bjv7zfDP3gmjn8U"}
+{"ts":1784692323976,"type":"tool_start","tool":"Bash","toolId":"toolu_01CK3iUssq9PTbFkLRYxyxtP","detail":"npx vitest run tests/unit/mcp-server-config-gating.test.ts"}
+{"ts":1784692329890,"type":"tool_end","tool":"Bash","toolId":"toolu_01CK3iUssq9PTbFkLRYxyxtP"}
+{"ts":1784692332724,"type":"tool_start","tool":"Read","toolId":"toolu_013Uq5pSJJgKPBez2ccQdywG","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\\dist\\esm\\server\\webStandardStreamableHttp.js"}
+{"ts":1784692332850,"type":"tool_end","tool":"Read","toolId":"toolu_013Uq5pSJJgKPBez2ccQdywG"}
+{"ts":1784692337116,"type":"tool_start","tool":"Grep","toolId":"toolu_018YuLJuhsQvxv9QvcW1qXsH","detail":"handlePostRequest"}
+{"ts":1784692337304,"type":"tool_end","tool":"Grep","toolId":"toolu_018YuLJuhsQvxv9QvcW1qXsH"}
+{"ts":1784692339828,"type":"tool_start","tool":"Read","toolId":"toolu_015cMd6bsjmea3wbDmEoCJQ3","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\node_modules\\@modelcontextprotocol\\sdk\\dist\\esm\\server\\webStandardStreamableHttp.js"}
+{"ts":1784692339987,"type":"tool_end","tool":"Read","toolId":"toolu_015cMd6bsjmea3wbDmEoCJQ3"}
+{"ts":1784692340021,"type":"tool_start","tool":"Bash","toolId":"toolu_015A6YeQ9nV1kvR8AXsvmzhr","detail":"npx vitest run tests/unit/config-overridable-subset.test.ts"}
+{"ts":1784692343016,"type":"subagent_stop","detail":""}
+{"ts":1784692343584,"type":"tool_end","tool":"Bash","toolId":"toolu_015A6YeQ9nV1kvR8AXsvmzhr"}
+{"ts":1784692346728,"type":"tool_start","tool":"Bash","toolId":"toolu_019DxwfNt8MgGkHeB2cKHPsJ","detail":"git diff HEAD -- src/main/agent/mcp-http-server.ts"}
+{"ts":1784692347089,"type":"tool_end","tool":"Bash","toolId":"toolu_019DxwfNt8MgGkHeB2cKHPsJ"}
+{"ts":1784692355411,"type":"tool_start","tool":"Grep","toolId":"toolu_01Ecw8zu2fyt3pSM38bpT4me","detail":"export (interface|type) CommandContext"}
+{"ts":1784692355599,"type":"tool_end","tool":"Grep","toolId":"toolu_01Ecw8zu2fyt3pSM38bpT4me"}
+{"ts":1784692358556,"type":"tool_start","tool":"Edit","toolId":"toolu_01QgR6BMwiCK2qqoF1YzH2ej","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692358700,"type":"tool_end","tool":"Edit","toolId":"toolu_01QgR6BMwiCK2qqoF1YzH2ej"}
+{"ts":1784692367009,"type":"tool_start","tool":"Edit","toolId":"toolu_01EKCWF9KTAbEnDwpDTc21G8","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692367145,"type":"tool_end","tool":"Edit","toolId":"toolu_01EKCWF9KTAbEnDwpDTc21G8"}
+{"ts":1784692375674,"type":"subagent_stop","detail":""}
+{"ts":1784692376181,"type":"tool_start","tool":"Edit","toolId":"toolu_01MiGvXv9jFtd2PvRz2D7ZBU","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692376320,"type":"tool_end","tool":"Edit","toolId":"toolu_01MiGvXv9jFtd2PvRz2D7ZBU"}
+{"ts":1784692386604,"type":"tool_start","tool":"Edit","toolId":"toolu_01PKeKJ6b9e2KZf6rzhAMH7W","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692386734,"type":"tool_end","tool":"Edit","toolId":"toolu_01PKeKJ6b9e2KZf6rzhAMH7W"}
+{"ts":1784692387683,"type":"idle"}
+{"ts":1784692388915,"type":"tool_start","tool":"Bash","toolId":"toolu_01SCPmZWSTMsB6XzStoro4pf","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts"}
+{"ts":1784692393542,"type":"tool_end","tool":"Bash","toolId":"toolu_01SCPmZWSTMsB6XzStoro4pf"}
+{"ts":1784692400506,"type":"tool_start","tool":"Edit","toolId":"toolu_01YJp8ejc3taP3T5K9xnMP3u","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692400663,"type":"tool_end","tool":"Edit","toolId":"toolu_01YJp8ejc3taP3T5K9xnMP3u"}
+{"ts":1784692403051,"type":"tool_start","tool":"Bash","toolId":"toolu_01MVCYyHC5PZzFEtSUxYoass","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts -t \"wiring\""}
+{"ts":1784692407694,"type":"tool_end","tool":"Bash","toolId":"toolu_01MVCYyHC5PZzFEtSUxYoass","detail":"Exit code 1\nnpm notice run dev@example.com npx\nnpm notice run vitest run tests/unit/mcp-server-network-config.test.ts -t wiring\n\n RUN  v4.1.8 C:/Users/dev/Documents/GitHub/kangentic/.kangentic/work"}
+{"ts":1784692407932,"type":"subagent_stop","detail":""}
+{"ts":1784692411367,"type":"tool_start","tool":"Edit","toolId":"toolu_01E8NwEMA4QDRnN5SGSmdAs7","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692411503,"type":"tool_end","tool":"Edit","toolId":"toolu_01E8NwEMA4QDRnN5SGSmdAs7"}
+{"ts":1784692414601,"type":"tool_start","tool":"Edit","toolId":"toolu_01UvRuf771SKpa5YZEtHvwHB","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692414758,"type":"tool_end","tool":"Edit","toolId":"toolu_01UvRuf771SKpa5YZEtHvwHB"}
+{"ts":1784692416937,"type":"tool_start","tool":"Bash","toolId":"toolu_012DcPUixzKNXmE9AvaF6y1B","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts -t \"brackets|bracket\""}
+{"ts":1784692421516,"type":"tool_end","tool":"Bash","toolId":"toolu_012DcPUixzKNXmE9AvaF6y1B","detail":"Exit code 1\nnpm notice run dev@example.com npx\nnpm notice run vitest run tests/unit/mcp-server-network-config.test.ts -t brackets|bracket\n\n RUN  v4.1.8 C:/Users/dev/Documents/GitHub/kangentic/.kang"}
+{"ts":1784692428609,"type":"tool_start","tool":"Edit","toolId":"toolu_01MbJUzr3pmyqH3XmZRdkGQs","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\src\\main\\agent\\mcp-http-server.ts"}
+{"ts":1784692428741,"type":"tool_end","tool":"Edit","toolId":"toolu_01MbJUzr3pmyqH3XmZRdkGQs"}
+{"ts":1784692431741,"type":"tool_start","tool":"Bash","toolId":"toolu_019bywuaTwgdKrmasnke2cg2","detail":"git -C \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\" diff --stat src/main/agent/mcp-http-server.ts"}
+{"ts":1784692432079,"type":"tool_end","tool":"Bash","toolId":"toolu_019bywuaTwgdKrmasnke2cg2"}
+{"ts":1784692437225,"type":"tool_start","tool":"Grep","toolId":"toolu_01VmMaXn4dLQ5uP3KbRT5C4Z","detail":"allowedHosts:|hostAsSentInHeader ="}
+{"ts":1784692437402,"type":"tool_end","tool":"Grep","toolId":"toolu_01VmMaXn4dLQ5uP3KbRT5C4Z"}
+{"ts":1784692439647,"type":"subagent_stop","detail":""}
+{"ts":1784692440357,"type":"tool_start","tool":"Bash","toolId":"toolu_01JyaMFDUHr8DNi9u8Y8cQjK","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts"}
+{"ts":1784692445127,"type":"tool_end","tool":"Bash","toolId":"toolu_01JyaMFDUHr8DNi9u8Y8cQjK"}
+{"ts":1784692447821,"type":"idle_hint","detail":"Claude is waiting for your input"}
+{"ts":1784692448076,"type":"tool_start","tool":"Bash","toolId":"toolu_01PKzhuJAW2qvhmgrhWcxMF9","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts"}
+{"ts":1784692452718,"type":"tool_end","tool":"Bash","toolId":"toolu_01PKzhuJAW2qvhmgrhWcxMF9"}
+{"ts":1784692454554,"type":"tool_start","tool":"Bash","toolId":"toolu_01NxhMiVsq1qXHNzPAzVgL4Y","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts"}
+{"ts":1784692459527,"type":"tool_end","tool":"Bash","toolId":"toolu_01NxhMiVsq1qXHNzPAzVgL4Y"}
+{"ts":1784692461836,"type":"tool_start","tool":"Bash","toolId":"toolu_016LgpfTytP1gXXmyN7DMt1N","detail":"npm run typecheck"}
+{"ts":1784692469268,"type":"tool_end","tool":"Bash","toolId":"toolu_016LgpfTytP1gXXmyN7DMt1N"}
+{"ts":1784692471095,"type":"subagent_stop","detail":""}
+{"ts":1784692472494,"type":"tool_start","tool":"Bash","toolId":"toolu_01FjHKkx5ASLqhyYfKmtjetg","detail":"git -C \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\" status --porcelain"}
+{"ts":1784692472837,"type":"tool_end","tool":"Bash","toolId":"toolu_01FjHKkx5ASLqhyYfKmtjetg"}
+{"ts":1784692479454,"type":"tool_start","tool":"Bash","toolId":"toolu_018ZxUHPs1ZYEvFyreaiiS8p","detail":"git -C \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\" diff tests/ui/mock-electron-api.js"}
+{"ts":1784692479800,"type":"tool_end","tool":"Bash","toolId":"toolu_018ZxUHPs1ZYEvFyreaiiS8p"}
+{"ts":1784692487715,"type":"tool_start","tool":"Bash","toolId":"toolu_012EsimHfZox14sy5VQvvdhP","detail":"git -C \"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\" diff --stat HEAD -- src/main/agent/mcp-http-server.ts"}
+{"ts":1784692488063,"type":"tool_end","tool":"Bash","toolId":"toolu_012EsimHfZox14sy5VQvvdhP"}
+{"ts":1784692502843,"type":"subagent_stop","detail":""}
+{"ts":1784692507052,"type":"subagent_stop","detail":"test-builder"}
+{"ts":1784692508861,"type":"prompt"}
+{"ts":1784692513325,"type":"tool_start","tool":"Bash","toolId":"toolu_014n7dNWdDgpKxBt16eVg3Sh","detail":"git diff HEAD -- src/main/agent/mcp-http-server.ts src/main/index.ts src/shared/types.ts --stat"}
+{"ts":1784692513725,"type":"tool_end","tool":"Bash","toolId":"toolu_014n7dNWdDgpKxBt16eVg3Sh"}
+{"ts":1784692518919,"type":"tool_start","tool":"Bash","toolId":"toolu_01HbezkZJUZpxtk5kX4Ss2Pz","detail":"npm run typecheck"}
+{"ts":1784692526050,"type":"tool_end","tool":"Bash","toolId":"toolu_01HbezkZJUZpxtk5kX4Ss2Pz"}
+{"ts":1784692528470,"type":"tool_start","tool":"Bash","toolId":"toolu_01BUR2C6aMQB8z8dKnoFoD4d","detail":"npx vitest run tests/unit/mcp-server-network-config.test.ts"}
+{"ts":1784692533806,"type":"tool_end","tool":"Bash","toolId":"toolu_01BUR2C6aMQB8z8dKnoFoD4d"}
+{"ts":1784692536991,"type":"tool_start","tool":"Grep","toolId":"toolu_01BoQoFR8EisvyYDUq2jASgR","detail":" -- |: any|as any"}
+{"ts":1784692537171,"type":"tool_end","tool":"Grep","toolId":"toolu_01BoQoFR8EisvyYDUq2jASgR"}
+{"ts":1784692540491,"type":"tool_start","tool":"Read","toolId":"toolu_019hXXYRLpP7YYoBweKAZnEm","detail":"C:\\Users\\dev\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\make-kangentic-mcp-s-cff8b5df\\tests\\unit\\mcp-server-network-config.test.ts"}
+{"ts":1784692540621,"type":"tool_end","tool":"Read","toolId":"toolu_019hXXYRLpP7YYoBweKAZnEm"}
+{"ts":1784692546055,"type":"tool_start","tool":"Bash","toolId":"toolu_01Uo6kKgUwxorWtXMZoWKXVg","detail":"npx vitest run tests/unit/test-fs-writes-sandboxed.test.ts"}
+{"ts":1784692549926,"type":"tool_end","tool":"Bash","toolId":"toolu_01Uo6kKgUwxorWtXMZoWKXVg"}
+{"ts":1784692566475,"type":"idle"}
+{"ts":1784692626613,"type":"idle_hint","detail":"Claude is waiting for your input"}
+{"ts":1784692645684,"type":"session_end"}

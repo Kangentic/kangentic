@@ -119,7 +119,7 @@ export async function getCachedTranscript(
   const cached = cache.get(key);
 
   if (cached) {
-    let stat: { mtimeMs: number; size: number } | null = null;
+    let stat: { mtimeMs: number; size: number } | null;
     try {
       stat = await fs.stat(cached.sourcePath);
     } catch {

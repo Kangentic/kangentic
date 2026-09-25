@@ -70,11 +70,20 @@ import type { IpcContext } from '../../src/main/ipc/ipc-context';
  * ensureTaskBranchCheckout is satisfied and these tests keep exercising the
  * branch-resolution logic they were written for. The guard itself is covered by
  * branch-checkout-occupancy.test.ts.
+ *
+ * configManager/boardConfigManager back resolveEffectiveBaseBranch (the
+ * effective base for a custom-branch cut when the task has none of its own);
+ * tests override the two mocks to pin the fallback order.
  */
+const mockGetEffectiveConfig = vi.fn((): { git: { defaultBaseBranch: string } } => ({ git: { defaultBaseBranch: 'main' } }));
+const mockGetDefaultBaseBranchForPath = vi.fn((): string | undefined => undefined);
 const idleContext = {
   sessionManager: { listSessions: () => [] },
   currentProjectId: null,
   projectRepo: { list: () => [] },
+  mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+  configManager: { getEffectiveConfig: mockGetEffectiveConfig },
+  boardConfigManager: { getDefaultBaseBranchForPath: mockGetDefaultBaseBranchForPath },
 } as unknown as IpcContext;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -281,6 +290,13 @@ describe('WorktreeManager.checkoutBranch', () => {
 describe('ensureTaskBranchCheckout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The base-branch path fetches now, so the throttle cache must not leak
+    // hits between tests, and a per-test mockRejectedValue must not leak either.
+    clearFetchCache();
+    mockRunGitWithTimeout.mockReset();
+    mockRunGitWithTimeout.mockResolvedValue({ stdout: '', stderr: '' });
+    mockGetEffectiveConfig.mockReturnValue({ git: { defaultBaseBranch: 'main' } });
+    mockGetDefaultBaseBranchForPath.mockReturnValue(undefined);
   });
 
   it('skips when projectPath is null', async () => {
@@ -338,9 +354,66 @@ describe('ensureTaskBranchCheckout', () => {
     const task = makeTask({ branch_name: 'test-task-task-123', base_branch: 'main' });
     await ensureTaskBranchCheckout(idleContext, task, '/project');
 
-    // Should NOT call raw (custom branch path), should fall through to base_branch checkout
-    expect(mockGit.raw).not.toHaveBeenCalled();
+    // No custom-branch git work (existence probes, branch creation) - it fell
+    // through to the base_branch checkout. The base path's own ff-merge is the
+    // one legitimate raw call there, pinned separately below.
+    const customBranchRawCalls = mockGit.raw.mock.calls.filter(
+      (call: string[][]) => call[0]?.[0] === 'branch' || call[0]?.[0] === 'rev-parse',
+    );
+    expect(customBranchRawCalls).toHaveLength(0);
     expect(mockGit.checkout).toHaveBeenCalledWith('main');
+  });
+
+  it('base-branch path fetches the base and fast-forwards from the verified origin ref', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockGit.revparse.mockResolvedValue('main\n');
+    mockGit.status.mockResolvedValue({ files: [] });
+    mockGit.checkout.mockResolvedValue(undefined);
+    mockGit.raw.mockResolvedValue('');
+
+    const task = makeTask({ base_branch: 'develop' });
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
+
+    // The fetch targets the BASE (this path used to do zero git work: a
+    // worktrees-off task ran the agent on however-stale local develop).
+    expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
+      '/project',
+      ['fetch', 'origin', 'develop'],
+      expect.objectContaining({ timeoutMs: 15_000 }),
+    );
+    expect(mockGit.checkout).toHaveBeenCalledWith('develop');
+    expect(mockGit.raw).toHaveBeenCalledWith(['merge', '--ff-only', 'origin/develop']);
+  });
+
+  it('base-branch path skips the fast-forward when the fetch fails', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockGit.revparse.mockResolvedValue('main\n');
+    mockGit.status.mockResolvedValue({ files: [] });
+    mockGit.checkout.mockResolvedValue(undefined);
+    mockRunGitWithTimeout.mockRejectedValue(new Error('fatal: unable to access remote'));
+
+    const task = makeTask({ base_branch: 'develop' });
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
+
+    // Offline still checks out; merging a ref the fetch did not land would
+    // either fail or, worse, fast-forward onto a stale tracking ref while
+    // claiming freshness.
+    expect(mockGit.checkout).toHaveBeenCalledWith('develop');
+    expect(mockGit.raw).not.toHaveBeenCalledWith(['merge', '--ff-only', 'origin/develop']);
+  });
+
+  it('base-branch path treats a failed fast-forward as non-fatal (local ahead or diverged)', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockGit.revparse.mockResolvedValue('main\n');
+    mockGit.status.mockResolvedValue({ files: [] });
+    mockGit.checkout.mockResolvedValue(undefined);
+    // Local-only commits on the base (an admin who just ran a direct push)
+    // legitimately refuse an ff-only merge.
+    mockGit.raw.mockRejectedValue(new Error('fatal: Not possible to fast-forward, aborting.'));
+
+    const task = makeTask({ base_branch: 'develop' });
+    await expect(ensureTaskBranchCheckout(idleContext, task, '/project')).resolves.toBeUndefined();
+    expect(mockGit.checkout).toHaveBeenCalledWith('develop');
   });
 });
 
@@ -360,6 +433,8 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     clearFetchCache();
     mockRunGitWithTimeout.mockReset();
     mockRunGitWithTimeout.mockResolvedValue({ stdout: '', stderr: '' });
+    mockGetEffectiveConfig.mockReturnValue({ git: { defaultBaseBranch: 'main' } });
+    mockGetDefaultBaseBranchForPath.mockReturnValue(undefined);
   });
 
   it('fetches from origin before checking branch existence', async () => {
@@ -442,15 +517,36 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
     await ensureTaskBranchCheckout(idleContext, task, '/project');
 
-    // Should create from base_branch
+    // The cut starts from the FETCHED base ref, matching createWorktree - the
+    // whole point of the fix. Cutting from bare 'develop' here was the stale-cut
+    // bug (fetch succeeded and the ref verified, yet the local ref was used).
+    expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'maint/59294', 'origin/develop']);
+    expect(mockGit.checkout).toHaveBeenCalledWith('maint/59294');
+  });
+
+  it('falls back to the local base ref for the cut when the base fetch fails', async () => {
+    setupCheckoutMocks();
+    // Every fetch (the branch's and the base's) fails: offline.
+    mockRunGitWithTimeout.mockRejectedValue(new Error('fatal: unable to access remote'));
+    mockGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse') return Promise.reject(new Error('not found'));
+      if (args[0] === 'branch') return Promise.resolve('');
+      return Promise.resolve('');
+    });
+
+    const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
+
     expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'maint/59294', 'develop']);
     expect(mockGit.checkout).toHaveBeenCalledWith('maint/59294');
   });
 
-  it('defaults to main when creating from base_branch and base_branch is null', async () => {
+  it('uses the config default base when creating from base_branch and base_branch is null', async () => {
     setupCheckoutMocks();
+    // Red-green for the hardcoded-'main' fallback: this path used to ignore
+    // the configured default entirely.
+    mockGetEffectiveConfig.mockReturnValue({ git: { defaultBaseBranch: 'develop' } });
     mockGit.raw.mockImplementation((args: string[]) => {
-      if (args[0] === 'fetch') return Promise.reject(new Error('no remote'));
       if (args[0] === 'rev-parse') return Promise.reject(new Error('not found'));
       if (args[0] === 'branch') return Promise.resolve('');
       return Promise.resolve('');
@@ -459,7 +555,42 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     const task = makeTask({ branch_name: 'hotfix/urgent', base_branch: null });
     await ensureTaskBranchCheckout(idleContext, task, '/project');
 
-    // Should default to 'main' as the base
+    expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'hotfix/urgent', 'origin/develop']);
+  });
+
+  it('the team-shared board default wins over the config default', async () => {
+    setupCheckoutMocks();
+    mockGetEffectiveConfig.mockReturnValue({ git: { defaultBaseBranch: 'develop' } });
+    mockGetDefaultBaseBranchForPath.mockReturnValue('trunk');
+    mockGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse') return Promise.reject(new Error('not found'));
+      if (args[0] === 'branch') return Promise.resolve('');
+      return Promise.resolve('');
+    });
+
+    const task = makeTask({ branch_name: 'hotfix/urgent', base_branch: null });
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
+
+    // Board-before-config matches the CONFIG_GET / engine-factory overlay.
+    expect(mockGetDefaultBaseBranchForPath).toHaveBeenCalledWith('/project');
+    expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'hotfix/urgent', 'origin/trunk']);
+  });
+
+  it('defaults to main when neither a board nor a config default is set', async () => {
+    setupCheckoutMocks();
+    mockGetEffectiveConfig.mockReturnValue({ git: { defaultBaseBranch: '' } });
+    // The base fetch fails here so the assertion pins the bare fallback name,
+    // not the origin-prefixed form.
+    mockRunGitWithTimeout.mockRejectedValue(new Error('no remote'));
+    mockGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse') return Promise.reject(new Error('not found'));
+      if (args[0] === 'branch') return Promise.resolve('');
+      return Promise.resolve('');
+    });
+
+    const task = makeTask({ branch_name: 'hotfix/urgent', base_branch: null });
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
+
     expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'hotfix/urgent', 'main']);
   });
 
@@ -486,13 +617,63 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     expect(mockGit.checkout).toHaveBeenCalledWith('feature/offline');
   });
 
+  it('fast-forwards a pre-existing local custom branch from its fetched origin ref', async () => {
+    setupCheckoutMocks();
+    // Branch exists locally (all rev-parse probes succeed).
+    mockGit.raw.mockResolvedValue('');
+
+    const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
+
+    // A teammate pushed to the shared branch: the checkout alone would reuse
+    // the stale local tip. Exactly the transient-session pattern.
+    expect(mockGit.checkout).toHaveBeenCalledWith('maint/59294');
+    expect(mockGit.raw).toHaveBeenCalledWith(['merge', '--ff-only', 'origin/maint/59294']);
+  });
+
+  it('does not fast-forward a branch it just created', async () => {
+    setupCheckoutMocks();
+    mockGit.raw.mockImplementation((args: string[]) => {
+      // Local rev-parse fails, remote rev-parse succeeds: create from remote.
+      if (args[0] === 'rev-parse' && args[2] === 'maint/59294') {
+        return Promise.reject(new Error('fatal: not a valid object name'));
+      }
+      return Promise.resolve('');
+    });
+
+    const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
+    await ensureTaskBranchCheckout(idleContext, task, '/project');
+
+    // Cut from origin's tip a moment ago; an ff would be a no-op shell-out.
+    expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'maint/59294', 'origin/maint/59294']);
+    expect(mockGit.raw).not.toHaveBeenCalledWith(['merge', '--ff-only', 'origin/maint/59294']);
+  });
+
+  it('a failed custom-branch fast-forward is non-fatal (local ahead or diverged)', async () => {
+    setupCheckoutMocks();
+    mockGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'merge') return Promise.reject(new Error('fatal: Not possible to fast-forward, aborting.'));
+      return Promise.resolve('');
+    });
+
+    const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
+    await expect(ensureTaskBranchCheckout(idleContext, task, '/project')).resolves.toBeUndefined();
+    expect(mockGit.checkout).toHaveBeenCalledWith('maint/59294');
+  });
+
   it('skips custom branch path when task has no branch_name', async () => {
     setupCheckoutMocks();
+    mockGit.raw.mockResolvedValue('');
     const task = makeTask({ branch_name: null, base_branch: 'develop' });
     await ensureTaskBranchCheckout(idleContext, task, '/project');
 
-    // Should use base_branch checkout path, not custom branch path
-    expect(mockGit.raw).not.toHaveBeenCalled();
+    // Base_branch checkout path, not the custom branch path: no existence
+    // probes, no branch creation. The base path's own ff-merge is the one
+    // legitimate raw call.
+    const customBranchRawCalls = mockGit.raw.mock.calls.filter(
+      (call: string[][]) => call[0]?.[0] === 'branch' || call[0]?.[0] === 'rev-parse',
+    );
+    expect(customBranchRawCalls).toHaveLength(0);
     expect(mockGit.checkout).toHaveBeenCalledWith('develop');
   });
 

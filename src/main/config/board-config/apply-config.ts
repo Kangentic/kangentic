@@ -3,7 +3,10 @@ import { SwimlaneRepository, deleteSwimlaneRowWithReferences } from '../../db/re
 import { ActionRepository } from '../../db/repositories/action-repository';
 import { getProjectDb } from '../../db/database';
 import type { BoardConfig, SwimlaneRole } from '../../../shared/types';
+import { normalizeSwimlaneRole } from '../../../shared/types';
 import { CURRENT_VERSION, validateBoardConfig } from './config-helpers';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { configDeclaresAutomations, configIsAutomationAware, planColumnAutomations } from './apply-automations';
 
 /**
  * Apply a BoardConfig (already loaded + merged from kangentic.json and
@@ -44,6 +47,7 @@ export function applyBoardConfigToDb(
   const db = getProjectDb(projectId);
   const swimlaneRepo = new SwimlaneRepository(db);
   const actionRepo = new ActionRepository(db);
+  const automationRepo = new AutomationRepository(db);
 
   if (config.version > CURRENT_VERSION) {
     warnings.push(`kangentic.json uses version ${config.version}. Some features may not be supported.`);
@@ -52,12 +56,34 @@ export function applyBoardConfigToDb(
   const transaction = db.transaction(() => {
     const existingLanes = swimlaneRepo.list();
 
-    // Normalize legacy role: "backlog" → "todo" (backlog is now a separate view)
+    // Normalize legacy role: "backlog" → "todo" (backlog is now a separate view).
+    // This one PROMOTES rather than drops, so it has to run before the catch-all
+    // below - nulling it instead would leave the board with no To Do role, and the
+    // hasTodo check further down would then prepend a second To Do column.
     for (const column of config.columns) {
       if (column.role === 'backlog' as SwimlaneRole) {
         column.role = 'todo';
         if (column.name === 'Backlog') column.name = 'To Do';
       }
+    }
+
+    // Anything still outside the union is a column this build does not know as a
+    // system column, so it becomes a custom column. Without this, a teammate's
+    // kangentic.json could write an arbitrary role string straight into SQLite (the
+    // column has no CHECK constraint) where nothing could later repair it: update()
+    // does not write role. That is how a role reached the renderer's two-key icon
+    // map and crashed the Board Manager.
+    for (const column of config.columns) {
+      // Read through `unknown`: the declared type says `SwimlaneRole | undefined`, but
+      // this value came from JSON.parse, so `"role": null` arrives as a real null.
+      // A column with no role is already a custom column, so only a role that was
+      // actually present and failed the union is worth warning about.
+      const declaredRole: unknown = column.role;
+      const normalized = normalizeSwimlaneRole(declaredRole);
+      if (normalized === null && declaredRole !== undefined && declaredRole !== null) {
+        warnings.push(`Column "${column.name}" has an unknown role "${column.role}". Treated as a custom column.`);
+      }
+      column.role = normalized ?? undefined;
     }
 
     const hasTodo = config.columns.some((column) => column.role === 'todo');
@@ -134,10 +160,10 @@ export function applyBoardConfigToDb(
           // disk, which is often not the focused one, making an automatic spawn
           // from here materially riskier than one from a deliberate user edit.
           auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? existing.auto_spawn),
-          auto_command: columnConfig.autoCommand ?? existing.auto_command,
-          // Mirrors auto_command's lack of an (isTodo || isDone) guard: the two
-          // travel together, and a mode without its command is inert anyway.
-          auto_command_mode: columnConfig.autoCommandMode ?? existing.auto_command_mode,
+          // auto_command / auto_command_mode are NOT written from the config
+          // any more. The column's message is a `send_message` automation now,
+          // applied below; writing the legacy fields here would put the message
+          // somewhere nothing reads, which is precisely how it went quiet.
           agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? existing.agent_override),
           model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? existing.model_override),
           effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? existing.effort_override),
@@ -150,15 +176,15 @@ export function applyBoardConfigToDb(
           id: columnConfig.id,
           name: columnConfig.name,
           description: columnConfig.description ?? null,
-          role: columnConfig.role as SwimlaneRole | undefined,
+          role: columnConfig.role,
           color: columnConfig.color ?? '#3b82f6',
           icon: columnConfig.icon ?? null,
           is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? false)),
           is_ghost: false,
           permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? null),
           auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? true),
-          auto_command: columnConfig.autoCommand ?? null,
-          auto_command_mode: columnConfig.autoCommandMode ?? 'immediate',
+          auto_command: null,
+          auto_command_mode: 'immediate',
           agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? null),
           model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? null),
           effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? null),
@@ -167,6 +193,35 @@ export function applyBoardConfigToDb(
           session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? 'create_or_resume'),
           position: index,
         });
+      }
+    }
+
+    // --- Reconcile automations ---
+    //
+    // Runs against the post-reconcile lanes, matched by NAME, because a
+    // hand-written config may carry no column ids at all and the create above
+    // has just minted them.
+    //
+    // Only when the config declares automations anywhere: the same
+    // additive-vs-destructive rule the columns and actions above use. A
+    // hand-written file that has never mentioned automations must not silently
+    // delete the ones a user built in the app.
+    if (configDeclaresAutomations(config.columns)) {
+      const lanesByName = new Map(swimlaneRepo.list().map((lane) => [lane.name, lane]));
+      // Whether an absent `automations` key means "none" or "this writer did not
+      // know about them". Only a file that uses the key somewhere earns the
+      // first reading; see `configIsAutomationAware`.
+      const automationAware = configIsAutomationAware(config.columns);
+      for (const columnConfig of config.columns) {
+        const lane = lanesByName.get(columnConfig.name);
+        if (!lane) continue;
+        // A legacy file speaks only for the columns that carry a message. Every
+        // other column keeps what it has, because the file has said nothing
+        // about it rather than said it is empty.
+        if (!automationAware && columnConfig.autoCommand === undefined) continue;
+        const plan = planColumnAutomations(columnConfig);
+        warnings.push(...plan.warnings);
+        automationRepo.replaceForColumn(lane.id, plan.rows);
       }
     }
 

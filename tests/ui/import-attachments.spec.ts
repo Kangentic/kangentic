@@ -1,13 +1,13 @@
 /**
  * UI spec: externalRef survives the ImportDialog mapping through to importExecute.
  *
- * The key invariant: ImportDialog.tsx line 238 spreads `issue.fileAttachments`
- * directly into the importExecute payload. If that line were changed to omit
- * or remap the field, the executor would silently lose the gid needed for
- * URL refresh, reverting the core Asana attachment-import bug.
+ * The key invariant: ImportDialog's handleImport spreads `issue.fileAttachments`
+ * directly into the importExecute payload. If that were changed to omit or remap
+ * the field, the executor would silently lose the gid needed for URL refresh,
+ * reverting the core Asana attachment-import bug.
  *
  * This test drives the full user-visible flow: open the backlog import dialog,
- * fetch issues with a pre-seeded fileAttachments array, select all, click
+ * reconcile issues with a pre-seeded fileAttachments array, select all, click
  * Import, and assert that the captured importExecute payload preserves
  * fileAttachments[0].externalRef.
  */
@@ -39,22 +39,25 @@ async function seedImportSource(page: Page): Promise<void> {
   });
 }
 
-/** Seed importFetch to return one issue that has fileAttachments with externalRef. */
+/** Seed the reconcile to return one issue that has fileAttachments with externalRef. */
 async function seedFetchWithAttachment(page: Page): Promise<void> {
   await page.evaluate(() => {
-    (window as unknown as { __mockImportFetchPreset?: unknown }).__mockImportFetchPreset = {
+    (window as unknown as { __mockImportReconcile?: unknown }).__mockImportReconcile = {
       issues: [
         {
           externalId: 'task-42',
+          externalSource: 'asana',
           externalUrl: 'https://app.asana.com/0/1/42',
           title: 'Task with attached photo',
           body: 'See the attached image.',
           labels: [],
           assignee: null,
           state: 'open',
+          stateCategory: 'open',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           alreadyImported: false,
+          attachmentCount: 1,
           fileAttachments: [
             {
               url: 'https://app.asana.com/api/1.0/attachments/999/photo.png',
@@ -65,8 +68,9 @@ async function seedFetchWithAttachment(page: Page): Promise<void> {
           ],
         },
       ],
-      totalCount: 1,
-      hasNextPage: false,
+      added: 1,
+      updated: 0,
+      removed: 0,
     };
   });
 }

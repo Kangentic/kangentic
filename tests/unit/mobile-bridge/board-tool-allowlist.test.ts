@@ -39,6 +39,14 @@ describe('mobile board tool allowlist parity', () => {
     }
   });
 
+  it('excludes every column-automation tool - board configuration, and set/run reach script execution', () => {
+    for (const tool of ['list_automations', 'set_automations', 'get_automation_runs', 'run_automation']) {
+      expect(isKnownMobileBoardTool(tool)).toBe(false);
+      expect(isBoardToolAllowedForVerb(tool, 'board-tool-read')).toBe(false);
+      expect(isBoardToolAllowedForVerb(tool, 'board-tool-write')).toBe(false);
+    }
+  });
+
   it('a read-only tool is reachable only via board-tool-read', () => {
     expect(isBoardToolAllowedForVerb('search_tasks', 'board-tool-read')).toBe(true);
     expect(isBoardToolAllowedForVerb('search_tasks', 'board-tool-write')).toBe(false);

@@ -49,11 +49,12 @@ test.describe('Claude Agent -- No False Resume on New Tasks', () => {
       });
     }, { taskId: taskId!, swimlaneId: planningSwimlaneId! });
 
-    // Wait for a running session
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
+    // Wait for a running session. expect.poll, because an async predicate in
+    // page.waitForFunction resolves on its first evaluation and never waits.
+    await expect.poll(() => page.evaluate(async (tid) => {
+      const sessions = await window.electronAPI.sessions.list();
       return sessions.some((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-    }, taskId!, { timeout: 15000 });
+    }, taskId!), { timeout: 15000 }).toBe(true);
 
     // Wait for mock Claude to output a marker
     const start = Date.now();
@@ -99,18 +100,17 @@ test.describe('Claude Agent -- No False Resume on New Tasks', () => {
       });
     }, { taskId: taskId!, swimlaneId: planningSwimlaneId! });
 
-    // Wait for a running session
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      return sessions.some((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-    }, taskId!, { timeout: 15000 });
-
-    // Record the current session ID
-    const sessionBefore = await page.evaluate(async (tid) => {
+    // Wait for a running session and record its id. expect.poll, not
+    // page.waitForFunction: an async predicate there resolves on its first
+    // evaluation, so it never waited, and under load the spawn had not landed
+    // by the next read.
+    const readRunningSessionId = () => page.evaluate(async (tid) => {
       const sessions = await window.electronAPI.sessions.list();
       const s = sessions.find((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
       return s?.id ?? null;
     }, taskId!);
+    await expect.poll(readRunningSessionId, { timeout: 15000 }).not.toBeNull();
+    const sessionBefore = await readRunningSessionId();
     expect(sessionBefore).toBeTruthy();
 
     // Simulate what Vite hot-reload does: call PROJECT_OPEN again for the

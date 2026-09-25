@@ -245,6 +245,14 @@ describe('OllamaAdapter', () => {
         expect(command).toContain('"broken"');
       });
 
+      it('quotes the "--" end-of-options guard for PowerShell hosts', () => {
+        // PowerShell's binder consumes a bare -- before a .ps1 shim sees
+        // $args, so the guard must reach the process through quoteArg's
+        // quoted form.
+        const command = adapter.buildCommand(makeOptions({ prompt: 'fix the bug', shell: 'powershell' }));
+        expect(command).toContain('"--"');
+      });
+
       // ── process.platform fallback (no shell provided) ─────────────────
       // buildCommand falls back to `process.platform === 'win32'` when no
       // shell is supplied. The two tests below cover the unreached arm on CI

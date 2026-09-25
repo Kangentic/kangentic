@@ -37,10 +37,17 @@ export interface CommandWindowTransientEntry {
 /** A minimal session row: only the fields liveness needs. `status` uses the real
  *  `SessionStatus` union (a type-only import, erased at build, so the module stays
  *  runtime-pure) to keep the `'running'` liveness check typo-proof and tracking
- *  the source enum. A real `Session` still assigns structurally. */
+ *  the source enum. A real `Session` still assigns structurally.
+ *
+ *  The three optional fields carry main's own record of which Command Terminal
+ *  slot a PTY belongs to. They are optional so a fixture can still pass a bare
+ *  `{ id, status }` where the pairing is irrelevant. */
 export interface CommandWindowSessionRef {
   id: string;
   status: SessionStatus;
+  projectId?: string;
+  transient?: boolean;
+  commandTerminalSlot?: string | null;
 }
 
 export interface CommandWindowReconcilePlan {
@@ -74,16 +81,34 @@ export function planCommandWindowReconciliation(input: {
   const runningSessionIds = new Set(
     sessions.filter((session) => session.status === 'running').map((session) => session.id),
   );
-  const liveSlots = new Set(
-    Object.values(transientSessions)
+  // Two sources, unioned. The map is the renderer's own pairing; the session rows
+  // are main's, and they are what keeps this correct when the map is behind. A
+  // renderer reload destroys the map while every transient PTY survives, so a
+  // map-only read reports "no live sessions" for a project that has several, takes
+  // the branch below, and lets the kept window fresh-spawn over a live terminal.
+  const liveSlots = new Set([
+    ...Object.values(transientSessions)
       .filter((entry) => entry.projectId === projectId && runningSessionIds.has(entry.sessionId))
       .map((entry) => entry.slot),
-  );
+    // flatMap rather than filter-then-map: a boolean predicate cannot narrow
+    // `commandTerminalSlot` for the map that follows it, so that shape needs a
+    // cast to compile and the non-null-ness rests on the reader. Returning the
+    // slot from inside the guard lets the compiler prove it instead.
+    ...sessions.flatMap((session) => (
+      session.transient
+      && session.status === 'running'
+      && session.projectId === projectId
+      && session.commandTerminalSlot
+        ? [session.commandTerminalSlot]
+        : []
+    )),
+  ]);
 
   // No live session for this project: keep exactly one window (lowest slot, so
   // the layer always opens with a terminal) and close the rest. That kept window
-  // fresh-spawns for the current project via its own mount effect. Fills from the
-  // lowest slot to match `syncSessions` re-pairing (slot-1 up).
+  // fresh-spawns for the current project via its own mount effect. Reached on a
+  // genuine project switch to a project with no terminals - never merely because
+  // the pairing map was lost, which the union above rules out.
   if (liveSlots.size === 0 && windows.length > 0) {
     const bySlotAscending = [...windows].sort((first, second) => slotNumber(first.slot) - slotNumber(second.slot));
     const [, ...surplus] = bySlotAscending;

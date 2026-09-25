@@ -15,6 +15,9 @@
  * env references grok expands at load time), and the same env channel also
  * carries KANGENTIC_EVENTS_PATH for the hook bridge's `env:` sentinel - so
  * neither the per-session URL, the token, nor the events path reaches disk.
+ * Goose is the one entry here NOT about MCP: it has no permission CLI flag,
+ * so the permission dropdown is delivered as GOOSE_MODE (Goose's native
+ * autonomy env var) via buildEnv.
  * Every other adapter passes its MCP config by flag or settings file, and
  * adding buildEnv to one of those by mistake would silently double-inject.
  * This test catches that regression by iterating all registered adapters.
@@ -30,7 +33,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
  * Exhaustive list of adapter names that are EXPECTED to implement buildEnv.
  * See the file docstring for why each one is here.
  */
-const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok']);
+const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose']);
 
 describe('AgentAdapter.buildEnv interface guard', () => {
   it('exactly the adapters in ADAPTERS_WITH_BUILDENV implement buildEnv', () => {

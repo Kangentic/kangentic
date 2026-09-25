@@ -610,6 +610,61 @@ function parseMoveTaskRequestPayload(payload: JsonValue): MoveTaskRequestPayload
   };
 }
 
+// === start-session ===
+
+/**
+ * Keyed by task, not by session: the state this verb exists for is a task
+ * whose session has ENDED, so there is no live session id to name. The
+ * desktop spawns or resumes in the task's current column with that column's
+ * settings; a live session is an idempotent no-op.
+ */
+export interface StartSessionRequestPayload {
+  taskId: string;
+  projectId: string;
+}
+
+/**
+ * What the desktop did with an accepted start. `starting`: the worktree and
+ * PTY work run behind this response and the successor's arrival reaches the
+ * phone as a board / stream event, the same way a column move's does. `live`:
+ * the task already had a running session, nothing was spawned, and NO event
+ * is coming, so a phone that tapped Start from a stale screen must refresh
+ * its board and stream itself rather than wait.
+ */
+export type StartSessionOutcome = 'starting' | 'live';
+
+/**
+ * `ok` means the start was ACCEPTED (the task exists, is in a column that may
+ * run an agent, and either has no live session or already has one), not that
+ * a successor is up: the desktop answers before the worktree and PTY work so
+ * the response fits the phone's per-verb budget. `outcome` says which of the
+ * two accepted shapes this was.
+ */
+export interface StartSessionResponsePayload {
+  ok: boolean;
+  outcome: StartSessionOutcome;
+}
+
+function parseStartSessionRequestPayload(payload: JsonValue): StartSessionRequestPayload {
+  if (!isRecord(payload)) throw new Error('start-session payload must be an object');
+  if (typeof payload.taskId !== 'string') throw new Error('start-session payload missing "taskId"');
+  if (typeof payload.projectId !== 'string') throw new Error('start-session payload missing "projectId"');
+  return {
+    taskId: payload.taskId,
+    projectId: payload.projectId,
+  };
+}
+
+/** Phone-side guard: narrows a decoded start-session response before the phone acts on it. */
+export function parseStartSessionResponsePayload(payload: JsonValue): StartSessionResponsePayload {
+  if (!isRecord(payload)) throw new Error('start-session response must be an object');
+  if (typeof payload.ok !== 'boolean') throw new Error('start-session response missing "ok"');
+  if (payload.outcome !== 'starting' && payload.outcome !== 'live') {
+    throw new Error('start-session response has an invalid "outcome"');
+  }
+  return { ok: payload.ok, outcome: payload.outcome };
+}
+
 // === answer-permission-prompt ===
 
 export interface AnswerPermissionPromptRequestPayload {
@@ -791,6 +846,7 @@ export interface CapabilityRequestPayloadMap {
   'board-tool-read': BoardToolRequestPayload;
   'board-tool-write': BoardToolRequestPayload;
   'register-push': RegisterPushRequestPayload;
+  'start-session': StartSessionRequestPayload;
 }
 
 export interface CapabilityResponsePayloadMap {
@@ -804,6 +860,7 @@ export interface CapabilityResponsePayloadMap {
   'board-tool-read': BoardToolResponsePayload;
   'board-tool-write': BoardToolResponsePayload;
   'register-push': RegisterPushResponsePayload;
+  'start-session': StartSessionResponsePayload;
 }
 
 /**
@@ -835,6 +892,8 @@ export function parseCapabilityRequestPayload<Verb extends CapabilityVerb>(
       return parseBoardToolRequestPayload(payload) as CapabilityRequestPayloadMap[Verb];
     case 'register-push':
       return parseRegisterPushRequestPayload(payload) as CapabilityRequestPayloadMap[Verb];
+    case 'start-session':
+      return parseStartSessionRequestPayload(payload) as CapabilityRequestPayloadMap[Verb];
     default: {
       const exhaustiveCheck: never = verb;
       throw new Error(`Unknown capability verb: ${String(exhaustiveCheck)}`);

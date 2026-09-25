@@ -21,6 +21,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import * as ts from 'typescript';
 import {
   createExternalWindowOpenHandler,
   createWebviewWindowOpenHandler,
@@ -653,6 +654,84 @@ describe('the webview popup policy is wired into src/main/index.ts', () => {
       source,
       'src/main/index.ts must call installWebviewDownloadPolicy for the guest session, or a download falls through to Chromium\'s native save dialog, which is modal and can block an agent-driven pane',
     ).toMatch(/installWebviewDownloadPolicy\(/);
+  });
+
+  it('drops the Electron token from the guest user agent', () => {
+    expect(
+      source,
+      'src/main/index.ts must call applyBrowserUserAgent for webview contents, or the pane sends `Electron/` again and a firewall that rejects it serves a block page in place of CSS and JS',
+    ).toMatch(/applyBrowserUserAgent\(\s*contents\s*\)/);
+
+    // The regex above only proves the call exists somewhere in the file. It
+    // still passes if applyBrowserUserAgent(contents) is moved into a nested
+    // contents.on(...) listener callback, or moved above the
+    // `contents.getType() !== 'webview'` guard. Parse the real AST and check
+    // the call's lexical placement and its ordering relative to the guard, so
+    // neither relocation can slip past a check that only asks "does this text
+    // appear anywhere".
+    const sourceFile = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
+
+    let webContentsCreatedHandlerBody: ts.Block | undefined;
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node)) {
+        const calleeExpression = node.expression;
+        if (
+          ts.isPropertyAccessExpression(calleeExpression) &&
+          calleeExpression.expression.getText(sourceFile) === 'app' &&
+          calleeExpression.name.text === 'on' &&
+          node.arguments.length === 2
+        ) {
+          const [eventNameArgument, handlerArgument] = node.arguments;
+          if (
+            ts.isStringLiteral(eventNameArgument) &&
+            eventNameArgument.text === 'web-contents-created' &&
+            ts.isArrowFunction(handlerArgument) &&
+            ts.isBlock(handlerArgument.body)
+          ) {
+            webContentsCreatedHandlerBody = handlerArgument.body;
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sourceFile);
+
+    expect(
+      webContentsCreatedHandlerBody,
+      "could not find app.on('web-contents-created', (event, contents) => { ... }) with a block body in src/main/index.ts",
+    ).toBeDefined();
+    const directStatements = webContentsCreatedHandlerBody!.statements;
+
+    const webviewGuardStatementIndex = directStatements.findIndex(
+      (statement) =>
+        ts.isIfStatement(statement) &&
+        statement.expression.getText(sourceFile).includes('getType()') &&
+        statement.expression.getText(sourceFile).includes('webview'),
+    );
+    expect(
+      webviewGuardStatementIndex,
+      "could not find the if (contents.getType() !== 'webview') early return as a direct statement of the web-contents-created handler body",
+    ).toBeGreaterThanOrEqual(0);
+
+    const applyUserAgentStatementIndex = directStatements.findIndex((statement) => {
+      if (!ts.isExpressionStatement(statement)) return false;
+      const callExpression = statement.expression;
+      if (!ts.isCallExpression(callExpression)) return false;
+      if (callExpression.expression.getText(sourceFile) !== 'applyBrowserUserAgent') return false;
+      return (
+        callExpression.arguments.length === 1 &&
+        callExpression.arguments[0].getText(sourceFile) === 'contents'
+      );
+    });
+    expect(
+      applyUserAgentStatementIndex,
+      "applyBrowserUserAgent(contents) must be a DIRECT statement of the web-contents-created handler body, not nested inside a contents.on(...) listener callback. Nested there, it only runs on that listener's own later event instead of at guest construction, so the guest's first HTTP request still carries the Electron/ token a firewall may reject.",
+    ).toBeGreaterThanOrEqual(0);
+
+    expect(
+      applyUserAgentStatementIndex,
+      "applyBrowserUserAgent(contents) must run AFTER the if (contents.getType() !== 'webview') early return, or the app's own main window also gets its Electron/ token stripped.",
+    ).toBeGreaterThan(webviewGuardStatementIndex);
   });
 });
 

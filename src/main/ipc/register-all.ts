@@ -4,9 +4,9 @@ import type { ProjectOpenByPathOverrides, RendererErrorContext } from '../../sha
 import {
   trackEvent,
   sanitizeErrorMessage,
-  summarizeComponentStack,
   MAX_ANALYTICS_STRING_LENGTH,
 } from '../analytics/analytics';
+import { trackFeatureUsed, isKnownAnalyticsFeature } from '../analytics/usage';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
 import { SessionManager } from '../pty/session-manager';
@@ -181,6 +181,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     currentProjectId: null,
     currentProjectPath: null,
     recoveredProjects: new Set<string>(),
+    snapshottedProjects: new Set<string>(),
     mcpServerHandle,
     mobileBridgeService,
     boardEvents,
@@ -259,6 +260,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // component throws a non-Error value (`throw 'boom'`). A throw in here would not
   // crash (the global `uncaughtException` handler swallows it) - it would silently
   // drop the very error report this handler exists to send.
+  //
+  // No component trail: the packaged renderer bundle is minified, so a trail of
+  // React frame names arrived mangled and unread, and Sentry (which both
+  // boundaries also report to) carries the real symbolicated stack.
   ipcMain.on(
     IPC.TRACK_RENDERER_ERROR,
     (_event, message: string, errorContext?: RendererErrorContext) => {
@@ -272,14 +277,19 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       if (typeof boundary === 'string') props.boundary = boundary;
       const panel = errorContext?.panel;
       if (typeof panel === 'string') props.panel = panel.slice(0, MAX_ANALYTICS_STRING_LENGTH);
-      const componentStack = errorContext?.componentStack;
-      const components = summarizeComponentStack(
-        typeof componentStack === 'string' ? componentStack : undefined
-      );
-      if (components) props.components = components;
       trackEvent('app_error', props);
     }
   );
+
+  // Analytics: renderer feature-adoption reporting (fire-and-forget). The
+  // feature name is re-validated at RUNTIME against the curated allowlist
+  // (usage.ts) because the string is erased at the IPC boundary; an unknown
+  // value is dropped so the renderer cannot invent event vocabulary. Dedup
+  // (once per feature per day, first-use lifetime) lives in trackFeatureUsed.
+  ipcMain.on(IPC.TRACK_FEATURE_USED, (_event, feature: string) => {
+    if (typeof feature !== 'string' || !isKnownAnalyticsFeature(feature)) return;
+    trackFeatureUsed(feature);
+  });
 }
 
 // Thin wrappers -- same signatures as before, zero changes in index.ts

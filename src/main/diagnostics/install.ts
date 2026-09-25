@@ -12,8 +12,8 @@ import { installIpcRecorder } from './ipc-recorder';
  * Always installs:
  *   - IPC traffic recorder (patches `ipcMain.handle`; runtime gated)
  *   - log mirror (console.* → .kangentic/logs/<date>.log)
- *   - crash capture (uncaughtException, render-process-gone, preload-error,
- *     renderer window.onerror via IPC)
+ *   - crash capture (uncaughtException, render-process-gone, the GPU
+ *     child-process-gone, preload-error, renderer window.onerror via IPC)
  *   - debug-dump path resolver (for SessionTelemetry's ActivitySnapshotWriter)
  *
  * Verbosity / activation gates are read live via the callbacks so toggle
@@ -29,6 +29,8 @@ export interface DiagnosticsContext {
   getPersistConsoleLogs: () => boolean;
   /** Returns the current value of `developer.recordIpcTraffic`. */
   getRecordIpcTraffic: () => boolean;
+  /** `<configDir>/gpu-health.json`; see crash-capture.ts's CrashCaptureOptions. */
+  gpuHealthFilePath: string;
 }
 
 let installed = false;
@@ -53,6 +55,7 @@ export function installDiagnostics(context: DiagnosticsContext): void {
 
   startCrashCapture({
     getProjectRoot: context.getProjectRoot,
+    gpuHealthFilePath: context.gpuHealthFilePath,
   });
 
   configureDebugDumpResolver({

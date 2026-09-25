@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import type { AppConfig } from '../../shared/types';
 import { startPanelDrag } from './panel-drag';
 import { claimArrivalFocus } from '../utils/terminal-arrival-focus';
@@ -55,7 +55,6 @@ export interface TerminalResizeState {
    *  destination's state instead of animating the height change. The consumer drops the
    *  height-transition class while this is set. */
   suppressTransition: boolean;
-  contentColRef: React.RefObject<HTMLDivElement | null>;
   onToggleCollapse: () => void;
   onResizeStart: (event: React.MouseEvent) => void;
   handleTransitionEnd: () => void;
@@ -87,9 +86,15 @@ function panelArrivalSessionId(): string | null {
 }
 
 /** `switchKey` is the current project id; a change to it triggers the snap-across-switch
- *  behavior (suppress the height transition for one settle window). */
+ *  behavior (suppress the height transition for one settle window).
+ *
+ *  `contentColRef` is the content column the panel's available height is measured
+ *  against. The CALLER owns it and attaches it to the element: a ref returned inside
+ *  the state object would make React's compiler rules read every field of that
+ *  object as a ref access during render. */
 export function useTerminalResize(
   config: AppConfig,
+  contentColRef: React.RefObject<HTMLDivElement | null>,
   forceCollapsed = false,
   switchKey: string | null = null,
 ): TerminalResizeState {
@@ -105,7 +110,6 @@ export function useTerminalResize(
   // state so the showContent effect can read the latest value without re-subscribing.
   const [suppressTransition, setSuppressTransition] = useState(false);
   const suppressTransitionRef = useRef(false);
-  suppressTransitionRef.current = suppressTransition;
   const switchKeyRef = useRef(switchKey);
   const switchSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -116,24 +120,38 @@ export function useTerminalResize(
 
   const latestHeightRef = useRef(height);
   const terminalConfigRef = useRef(config.terminal);
-  terminalConfigRef.current = config.terminal;
   const effectiveCollapsedRef = useRef(effectiveCollapsed);
   // Mirrored for `onToggleCollapse`, which has no deps and would otherwise close
   // over a stale value. A toggle while `forceCollapsed` holds flips only the
   // user's preference, so no terminal mounts and nothing arrives.
   const forceCollapsedRef = useRef(forceCollapsed);
-  forceCollapsedRef.current = forceCollapsed;
+  // The three mirrors are written on commit, in a layout effect that runs ahead
+  // of every passive effect and handler below that reads them; never during
+  // render, which the compiler rules forbid.
+  useLayoutEffect(() => {
+    suppressTransitionRef.current = suppressTransition;
+    terminalConfigRef.current = config.terminal;
+    forceCollapsedRef.current = forceCollapsed;
+  });
   const availableHeightRef = useRef(0);
-  const contentColRef = useRef<HTMLDivElement>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync from config on load
-  useEffect(() => {
+  // Sync from config when it changes. A render-time adjustment on the config
+  // transition (React's "adjusting state when a prop changes" pattern) rather
+  // than an effect, so the panel never paints the old height for a frame. The
+  // initial state already comes from the mount-time config.
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (config !== syncedConfig) {
+    setSyncedConfig(config);
     const saved = config.terminal?.panelHeight;
-    if (typeof saved === 'number' && saved >= MIN_HEIGHT) {
-      setHeight(saved);
-      latestHeightRef.current = saved;
-    }
+    if (typeof saved === 'number' && saved >= MIN_HEIGHT) setHeight(saved);
+  }
+  // The ref half of that sync, which render cannot do. Keyed on the config, like
+  // the state half, so it stays the config's write and not a mirror of every
+  // `height` (the drag and clamp paths write the ref themselves).
+  useLayoutEffect(() => {
+    const saved = config.terminal?.panelHeight;
+    if (typeof saved === 'number' && saved >= MIN_HEIGHT) latestHeightRef.current = saved;
   }, [config]);
 
   // Enable transitions after first frame to prevent animation on mount
@@ -240,7 +258,7 @@ export function useTerminalResize(
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [clampHeight]);
+  }, [clampHeight, contentColRef]);
 
   const onToggleCollapse = useCallback(() => {
     // Expanding REMOUNTS the panel's TerminalTab (`showContent` gates whether it
@@ -305,5 +323,5 @@ export function useTerminalResize(
     });
   }, [height, config.terminal, clampHeight]);
 
-  return { height, collapsed: effectiveCollapsed, isResizing, showContent, ready, suppressTransition, contentColRef, onToggleCollapse, onResizeStart, handleTransitionEnd };
+  return { height, collapsed: effectiveCollapsed, isResizing, showContent, ready, suppressTransition, onToggleCollapse, onResizeStart, handleTransitionEnd };
 }

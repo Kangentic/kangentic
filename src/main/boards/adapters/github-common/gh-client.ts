@@ -50,10 +50,39 @@ interface GitHubProjectItemRaw {
 const COMMAND_TIMEOUT = 15_000;
 
 /**
- * Raw PR shape from `gh pr list --json number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository`.
- * `state` is GitHub's uppercase enum: OPEN | CLOSED | MERGED. `isCrossRepository`
- * is true for PRs opened from a fork - the disambiguator filters those out so a
- * fork PR that happens to share a branch name can't be mislinked.
+ * GitHub's raw mergeability vocabularies, as `gh pr list --json` renders them.
+ * Cast at the `JSON.parse` boundary; every consumer keeps a fallback branch
+ * because the wire can carry a value newer than these lists. `reviewDecision`
+ * includes `''`, which is how `gh` renders a null decision (no review required
+ * and none left).
+ */
+export type GhMergeable = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
+export type GhMergeStateStatus = 'BEHIND' | 'BLOCKED' | 'CLEAN' | 'DIRTY' | 'DRAFT' | 'HAS_HOOKS' | 'UNKNOWN' | 'UNSTABLE';
+export type GhReviewDecision = 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | '';
+export type GhCheckRunStatus = 'QUEUED' | 'IN_PROGRESS' | 'COMPLETED' | 'WAITING' | 'PENDING' | 'REQUESTED';
+export type GhCheckRunConclusion =
+  | 'ACTION_REQUIRED' | 'TIMED_OUT' | 'CANCELLED' | 'FAILURE' | 'SUCCESS' | 'NEUTRAL' | 'SKIPPED' | 'STARTUP_FAILURE' | 'STALE';
+export type GhStatusState = 'EXPECTED' | 'ERROR' | 'FAILURE' | 'PENDING' | 'SUCCESS';
+
+/**
+ * One entry of `statusCheckRollup`: a check run (GitHub Actions and other
+ * Checks API apps, with a lifecycle `status` and a `conclusion` once complete)
+ * or a legacy commit status context (a single `state`). `gh` carries no
+ * `isRequired` on either, so the connector cannot tell a required check from
+ * an optional one. It reads the rollup at the two places the answer can change
+ * the verdict: when `mergeStateStatus` says BLOCKED or BEHIND, the two states a
+ * merge bypass clears, and when a PR that would otherwise read `ready` still
+ * has a required review outstanding.
+ */
+export type GhStatusCheckRollupItem =
+  | { __typename: 'CheckRun'; name: string; status: GhCheckRunStatus; conclusion: GhCheckRunConclusion | null }
+  | { __typename: 'StatusContext'; context: string; state: GhStatusState };
+
+/**
+ * Raw PR shape from `gh pr list --json` with `PR_JSON_FIELDS`. `state` is
+ * GitHub's uppercase enum: OPEN | CLOSED | MERGED. `isCrossRepository` is true
+ * for PRs opened from a fork - the disambiguator filters those out so a fork
+ * PR that happens to share a branch name can't be mislinked.
  */
 export interface GhPrListItem {
   number: number;
@@ -72,10 +101,186 @@ export interface GhPrListItem {
    * Populated from the REST `merge_commit_sha` on the commit-pulls path only.
    */
   mergeCommitOid?: string;
+  /**
+   * GitHub's mergeability triple plus the check rollup, requested on the
+   * `gh pr list` / `gh pr view` paths and left undefined on the commit-pulls
+   * REST path, which does not carry them (the mirror of `mergeCommitOid`,
+   * populated on that path only). Raw GitHub vocabulary, deliberately NOT
+   * normalized here: this client is shared with the board importers, so PR
+   * semantics stay in the PR connector. The unions name the values this code
+   * knows; the cast happens where `JSON.parse` returns, and the connector's
+   * fallback branches catch anything newer.
+   */
+  mergeable?: GhMergeable;
+  mergeStateStatus?: GhMergeStateStatus;
+  reviewDecision?: GhReviewDecision;
+  statusCheckRollup?: GhStatusCheckRollupItem[];
 }
 
-/** JSON field set requested from `gh pr list` / `gh pr view`. */
-const PR_JSON_FIELDS = 'number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository';
+/**
+ * JSON field set requested from `gh pr list` / `gh pr view`. Both commands
+ * accept the same field list, so the mergeability triple and the check rollup
+ * cost no extra call. `statusCheckRollup` is a per-check-run array on every
+ * PR in the list (about 7 KB for a PR with 26 checks), which is the price of
+ * telling "a required check is still running" apart from "a required check
+ * failed": `mergeStateStatus` folds both into BLOCKED. `--limit 30` on the
+ * list path and `PR_MAX_BUFFER` on both bound the payload.
+ */
+const PR_JSON_FIELDS =
+  'number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup';
+
+/** With the check rollup in the projection a busy branch can pass Node's 1 MB default; matches the Azure client's cap. */
+const PR_MAX_BUFFER = 10 * 1024 * 1024;
+
+/**
+ * The two fields neither `gh pr list --json` nor `gh pr view --json` can
+ * project: whether the authenticated viewer can bypass branch protection and
+ * merge the PR immediately, and which status checks the base branch's
+ * protection actually requires. `{owner}` / `{repo}` are gh's own
+ * placeholders, filled from the remote of the repo at `cwd`, so no owner/name
+ * parsing is needed. `-F number=<n>` is typed (an Int), which the `Int!`
+ * variable needs.
+ *
+ * `baseRef.branchProtectionRule`, NOT `Ref.refUpdateRule`. They look
+ * interchangeable and are not: `refUpdateRule` reports the rules as they apply
+ * to the VIEWER, so on a repo where the viewer is an admin and `enforce_admins`
+ * is off it answers `requiredStatusCheckContexts: []` while the branch really
+ * requires five. That is empty for exactly the viewer this call exists to serve.
+ * `branchProtectionRule` reports the rule itself and is readable by a plain
+ * member (measured against two real repos).
+ */
+const MERGE_BYPASS_QUERY =
+  'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){viewerCanMergeAsAdmin baseRef{branchProtectionRule{requiredStatusCheckContexts}}}}}';
+
+/**
+ * What `resolveMergeBypass` answers: GitHub's raw `viewerCanMergeAsAdmin` plus
+ * the base branch's required status-check contexts. No PR semantics (this
+ * client is shared with the board importers); the PR connector decides what
+ * they mean for a verdict.
+ */
+export interface GhMergeBypass {
+  /**
+   * GraphQL `PullRequest.viewerCanMergeAsAdmin`: "can the viewer bypass branch
+   * protections and merge the pull request immediately". A CAPABILITY, not a
+   * state - observed `true` on a PR with a failed check run.
+   */
+  viewerCanMergeAsAdmin: boolean;
+  /**
+   * The context names the base branch's CLASSIC protection requires, or `null`
+   * when there is no readable rule: a branch with no classic protection (a repo
+   * on rulesets answers `branchProtectionRule: null` with no error), or a
+   * payload this code cannot read. An empty array is a real answer, meaning the
+   * branch is protected but requires no status checks.
+   */
+  requiredStatusCheckContexts: string[] | null;
+}
+
+/**
+ * The status checks a BRANCH's classic protection requires, keyed by branch
+ * rather than by PR, so the connector can cache one answer per base branch.
+ * The same field `MERGE_BYPASS_QUERY` reads off `baseRef`, and for the same
+ * reason (`branchProtectionRule`, never the viewer-relative `refUpdateRule`).
+ * Measured live: a protected branch answers its context list, an unprotected
+ * one `branchProtectionRule: null`, a missing ref `ref: null`.
+ */
+const REQUIRED_STATUS_CHECKS_QUERY =
+  'query($owner:String!,$name:String!,$ref:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$ref){branchProtectionRule{requiredStatusCheckContexts}}}}';
+
+/** The GraphQL envelope `resolveRequiredStatusChecks` reads; every level may be absent or null. */
+interface GhRequiredStatusChecksRaw {
+  data?: {
+    repository?: {
+      ref?: { branchProtectionRule?: { requiredStatusCheckContexts?: unknown } | null } | null;
+    } | null;
+  } | null;
+}
+
+/** The GraphQL envelope `resolveMergeBypass` reads; every level may be absent or null. */
+interface GhMergeBypassRaw {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        viewerCanMergeAsAdmin?: unknown;
+        baseRef?: { branchProtectionRule?: { requiredStatusCheckContexts?: unknown } | null } | null;
+      } | null;
+    } | null;
+  } | null;
+}
+
+/**
+ * The required-context list, or null when it is absent or carries anything but
+ * strings. Fails the WHOLE list closed rather than filtering, because a
+ * partially-read list looks complete to the caller and would under-require.
+ */
+function readRequiredContexts(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const contexts: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') return null;
+    contexts.push(entry);
+  }
+  return contexts;
+}
+
+/**
+ * Once-per-cause warning for the bypass probe, mirroring the Azure client's
+ * `warnPolicyEvaluationOnce`. Keyed on the failure text alone, so one
+ * repo-wide cause (a revoked scope, a GHE host without GraphQL) prints once
+ * however many PRs it touches. Bounded, evicting the oldest entry so a message
+ * that varies per PR cannot grow it without limit.
+ */
+const bypassProbeWarningsShown = new Set<string>();
+/** The most distinct causes each once-per-cause warning set remembers. */
+const MAX_WARNING_CAUSES_SHOWN = 32;
+
+/**
+ * The one line that names WHY a `gh` call failed. An execFile rejection's
+ * `message` opens with the whole command line, which embeds the PR number and
+ * so would defeat the once-per-cause dedupe; gh's reason is the first
+ * non-empty line of stderr. Falls back to the message's first line for errors
+ * this module raised itself (a `JSON.parse` failure has no stderr).
+ */
+function describeGhFailure(error: unknown): string {
+  const failure = error as { message?: string; stderr?: string };
+  const stderrLine = failure.stderr?.split('\n').map((line) => line.trim()).find((line) => line.length > 0);
+  if (stderrLine) return stderrLine;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.split('\n')[0];
+}
+
+/**
+ * Print `warning` the first time `cause` enters `shown`. Bounded at
+ * `MAX_WARNING_CAUSES_SHOWN`, evicting the oldest cause, so a message that
+ * varies per call cannot grow the set without limit.
+ */
+function warnOncePerCause(shown: Set<string>, cause: string, warning: string): void {
+  if (shown.has(cause)) return;
+  if (shown.size >= MAX_WARNING_CAUSES_SHOWN) {
+    const oldest = shown.values().next().value;
+    if (oldest !== undefined) shown.delete(oldest);
+  }
+  shown.add(cause);
+  console.warn(warning);
+}
+
+/** Once-per-cause warning for the required-checks read, bounded like the bypass one. */
+const requiredChecksWarningsShown = new Set<string>();
+
+function warnRequiredChecksOnce(baseRefName: string, message: string): void {
+  warnOncePerCause(
+    requiredChecksWarningsShown,
+    message,
+    `[github] required status checks read failed for base "${baseRefName}", merge readiness keeps GitHub's own verdict: ${message}`,
+  );
+}
+
+function warnBypassProbeOnce(prNumber: number, message: string): void {
+  warnOncePerCause(
+    bypassProbeWarningsShown,
+    message,
+    `[github] merge bypass probe failed for PR #${prNumber}, merge readiness stays blocked: ${message}`,
+  );
+}
 
 /**
  * Thrown by resolver paths when the `gh` CLI is missing or unauthenticated, so
@@ -120,9 +325,32 @@ function classifyGhError(error: unknown): 'unavailable' | 'transient' | 'not-fou
   return 'not-found';
 }
 
+/**
+ * A repository whose remotes are not GitHub. `gh` exits 1 with
+ * "none of the git remotes configured for this repository point to a known
+ * GitHub host. To tell gh about a new GitHub host, please use `gh auth login`".
+ */
+const GH_REPO_MISMATCH_PATTERN = /none of the git remotes|no git remotes (found|configured)|known GitHub host/i;
+
 /** Map a classified gh error to the throw the resolver paths use (null = swallow as not-found). */
 function ghErrorToThrow(error: unknown): GhUnavailableError | GhTransientError | null {
   const message = error instanceof Error ? error.message : String(error);
+  const text = `${message}\n${(error as { stderr?: string }).stderr ?? ''}`;
+  // Tested BEFORE the classifier, because gh's repo-mismatch message ENDS with
+  // "please use `gh auth login`" and so trips `classifyGhError`'s auth pattern -
+  // which made a permanent host mismatch report as "gh is not authenticated"
+  // and tell the user to re-login when gh was working perfectly.
+  //
+  // It stays classified 'unavailable', NOT 'not-found'. Once the registry's
+  // ownership gate is in place this branch is only reachable when our own
+  // remote read says GitHub owns the repo and gh disagrees (a submodule cwd, an
+  // `insteadOf` rewrite, a host alias). gh did not run cleanly there, so a
+  // clean 'not-found' would let pr-linking.ts CLEAR the task's link.
+  if (GH_REPO_MISMATCH_PATTERN.test(text)) {
+    return new GhUnavailableError(
+      `This repository's git remotes do not point at a GitHub host, so gh cannot resolve a PR here.\n${message}`,
+    );
+  }
   switch (classifyGhError(error)) {
     case 'unavailable':
       return new GhUnavailableError(`gh CLI not authenticated. Run: gh auth login\n${message}`);
@@ -165,6 +393,18 @@ function normalizeCommitPull(raw: GhCommitPullRaw): GhPrListItem {
     isCrossRepository,
     mergeCommitOid: raw.merge_commit_sha ?? undefined,
   };
+}
+
+/**
+ * Shift an ISO 8601 instant back by one second, so a `since` filter whose
+ * boundary may be exclusive still returns items that changed on the boundary
+ * itself. An unparseable value is returned untouched rather than turned into an
+ * epoch date, which would re-fetch the entire history.
+ */
+function rewindOneSecond(isoTimestamp: string): string {
+  const parsed = new Date(isoTimestamp);
+  if (Number.isNaN(parsed.getTime())) return isoTimestamp;
+  return new Date(parsed.getTime() - 1000).toISOString();
 }
 
 export class GitHubImporter {
@@ -231,7 +471,7 @@ export class GitHubImporter {
           '--json', PR_JSON_FIELDS,
           '--limit', '30',
         ],
-        { cwd, timeout: COMMAND_TIMEOUT },
+        { cwd, timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
       );
       const parsed = JSON.parse(stdout) as GhPrListItem[];
       return Array.isArray(parsed) ? parsed : [];
@@ -263,12 +503,98 @@ export class GitHubImporter {
           'pr', 'view', String(prNumber),
           '--json', PR_JSON_FIELDS,
         ],
-        { cwd, timeout: COMMAND_TIMEOUT },
+        { cwd, timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
       );
       return JSON.parse(stdout) as GhPrListItem;
     } catch (error: unknown) {
       const toThrow = ghErrorToThrow(error);
       if (toThrow) throw toThrow;
+      return null;
+    }
+  }
+
+  /**
+   * The viewer's merge bypass for PR `prNumber` and the base branch's required
+   * status checks, in one GraphQL call run from the repo at `cwd`. See
+   * `GhMergeBypass` for what each field means and `MERGE_BYPASS_QUERY` for why
+   * the rule is read off `baseRef`.
+   *
+   * `null` for ANY failure (gh missing, unauthenticated, transient, a payload
+   * without a boolean at the expected path, a PR the repo does not have). It
+   * never throws and never routes through `ghErrorToThrow`: this is an
+   * enrichment of a resolve that already succeeded, and a throw here would fail
+   * that resolve and freeze `pr_state` for the sweep. The cause is warned once
+   * per distinct message. A readable bypass with an UNREADABLE rule is not a
+   * failure: it answers with `requiredStatusCheckContexts: null`, which the
+   * connector reads as "fall back to the rollup alone".
+   */
+  async resolveMergeBypass(cwd: string, prNumber: number): Promise<GhMergeBypass | null> {
+    // Embedded verbatim in the typed `-F number=` argument.
+    if (!Number.isInteger(prNumber) || prNumber <= 0) return null;
+    const ghPath = await this.detect();
+    if (!ghPath) return null;
+    try {
+      const { stdout } = await execFileAsync(
+        ghPath,
+        [
+          'api', 'graphql',
+          '-F', 'owner={owner}',
+          '-F', 'name={repo}',
+          '-F', `number=${prNumber}`,
+          '-f', `query=${MERGE_BYPASS_QUERY}`,
+        ],
+        { cwd, timeout: COMMAND_TIMEOUT },
+      );
+      const parsed = JSON.parse(stdout) as GhMergeBypassRaw | null;
+      const pullRequest = parsed?.data?.repository?.pullRequest;
+      if (typeof pullRequest?.viewerCanMergeAsAdmin !== 'boolean') return null;
+      return {
+        viewerCanMergeAsAdmin: pullRequest.viewerCanMergeAsAdmin,
+        requiredStatusCheckContexts: readRequiredContexts(
+          pullRequest.baseRef?.branchProtectionRule?.requiredStatusCheckContexts,
+        ),
+      };
+    } catch (error: unknown) {
+      warnBypassProbeOnce(prNumber, describeGhFailure(error));
+      return null;
+    }
+  }
+
+  /**
+   * The status checks `baseRefName`'s classic protection requires, from the
+   * repo at `cwd`. `{ contexts: null }` is a real answer meaning "no readable
+   * rule" (an unprotected branch, a repo on rulesets, a ref that does not
+   * exist); `null` is a failure (gh missing, unauthenticated, transient, an
+   * unreadable payload). Never throws, for the reason `resolveMergeBypass`
+   * gives: it enriches a resolve that already succeeded. The cause is warned
+   * once per distinct message.
+   */
+  async resolveRequiredStatusChecks(cwd: string, baseRefName: string): Promise<{ contexts: string[] | null } | null> {
+    // Embedded verbatim in the `-F ref=` argument; an empty or option-shaped
+    // name is never a real branch.
+    if (!baseRefName || baseRefName.startsWith('-')) return null;
+    const ghPath = await this.detect();
+    if (!ghPath) return null;
+    try {
+      const { stdout } = await execFileAsync(
+        ghPath,
+        [
+          'api', 'graphql',
+          '-F', 'owner={owner}',
+          '-F', 'name={repo}',
+          '-f', `ref=refs/heads/${baseRefName}`,
+          '-f', `query=${REQUIRED_STATUS_CHECKS_QUERY}`,
+        ],
+        { cwd, timeout: COMMAND_TIMEOUT },
+      );
+      const parsed = JSON.parse(stdout) as GhRequiredStatusChecksRaw | null;
+      const repository = parsed?.data?.repository;
+      // No repository object at all is an answer this code cannot read, not
+      // "no rule": a rule-less branch still carries `repository`.
+      if (repository == null) return null;
+      return { contexts: readRequiredContexts(repository.ref?.branchProtectionRule?.requiredStatusCheckContexts) };
+    } catch (error: unknown) {
+      warnRequiredChecksOnce(baseRefName, describeGhFailure(error));
       return null;
     }
   }
@@ -309,6 +635,7 @@ export class GitHubImporter {
     perPage: number,
     searchQuery?: string,
     state?: string,
+    since?: string,
   ): Promise<{ issues: GitHubIssueRaw[]; hasNextPage: boolean }> {
     const ghPath = await this.detect();
     if (!ghPath) throw new Error('gh CLI not found');
@@ -323,6 +650,16 @@ export class GitHubImporter {
       sort: 'updated',
       direction: 'desc',
     });
+    // GitHub's REST issues endpoint filters on `updated_at` against `since`, but
+    // documents the boundary as "after", where Azure DevOps's WIQL clause is an
+    // explicit `>=`. Both adapters feed the same MAX(remote_updated_at) watermark,
+    // so the two have to agree. Rewinding one second makes this side inclusive
+    // whichever way GitHub's boundary actually falls: GitHub timestamps have
+    // one-second resolution, so an item updated in the same second as the watermark
+    // would otherwise be skipped by every later incremental fetch. The cost is
+    // re-fetching at most one second of items, which upserts idempotently - the
+    // same trade the Azure DevOps side already takes deliberately.
+    if (since) queryParams.set('since', rewindOneSecond(since));
 
     if (searchQuery) {
       // Use the GitHub search API for text queries
@@ -419,6 +756,7 @@ export class GitHubImporter {
         labels: issue.labels.map((label) => label.name),
         assignee: issue.assignee?.login ?? null,
         state: issue.state,
+        stateCategory: issue.state === 'closed' ? 'closed' : 'open',
         createdAt: issue.created_at,
         updatedAt: issue.updated_at,
         alreadyImported: alreadyImportedIds.has(externalId),
@@ -446,6 +784,10 @@ export class GitHubImporter {
         labels,
         assignee,
         state: item.status ?? 'unknown',
+        // GitHub Projects statuses are freeform columns, not an open/closed axis,
+        // and the Import dialog hides the state toggle for projects, so every item
+        // stays in the 'open' bucket and always shows under the default filter.
+        stateCategory: 'open',
         createdAt: item.content?.createdAt ?? new Date().toISOString(),
         updatedAt: item.content?.updatedAt ?? new Date().toISOString(),
         alreadyImported: alreadyImportedIds.has(externalId),

@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectRepos, openAttachmentFile } from '../helpers';
+import { runAutomationAgain } from '../helpers/automation-run-again';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
 import { propagateStrategyToLiveSessions, propagateBoardProfileChange, buildColumnStrategyChanges } from './strategy-propagation';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
-import type { BoardProfile, ShortcutConfig } from '../../../shared/types';
+import type { AutomationRunAgainResult, BoardProfile, ShortcutConfig } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /** Trigger write-back if kangentic.json exists. */
@@ -56,9 +57,21 @@ export function registerBoardHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.SWIMLANE_CREATE, (_, input) => {
-    const { swimlanes } = getProjectRepos(context);
+    // The ambient projectId, not a renderer-forwarded one: project-scoped-ipc.md
+    // enumerates its mutation set as task and session channels only, and a
+    // column edit is neither. The `if (projectId)` below narrows `string | null`
+    // for the event payload rather than guarding a reachable no-project path:
+    // with no project open, the getProjectRepos call on the next line throws
+    // first.
+    const projectId = context.currentProjectId;
+    const { swimlanes } = getProjectRepos(context, projectId);
     const result = swimlanes.create(input);
     triggerWriteBack(context);
+    // A paired phone's board snapshot is stale until it hears about a column
+    // change; only agent/MCP column edits emitted this before. The event is
+    // an invalidation signal only ({ change, ids }), so the phone re-fetches
+    // read-board rather than reading the row by id.
+    if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [result.id] });
     return result;
   });
 
@@ -103,11 +116,18 @@ export function registerBoardHandlers(context: IpcContext): void {
       projectId,
     );
 
+    // A paired phone's board snapshot (including `spawns_session`) is stale
+    // until it hears about this edit; only agent/MCP column edits emitted
+    // this before. Invalidation signal only - the phone re-fetches read-board.
+    if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [result.id] });
+
     return result;
   });
 
   ipcMain.handle(IPC.SWIMLANE_DELETE, (_, id) => {
-    const { swimlanes } = getProjectRepos(context);
+    // Ambient projectId: see the SWIMLANE_CREATE comment above.
+    const projectId = context.currentProjectId;
+    const { swimlanes } = getProjectRepos(context, projectId);
     // Snapshot before the delete: pruning profiles needs the name, which is gone
     // from the DB once the row is.
     const swimlaneToDelete = swimlanes.getById(id);
@@ -125,56 +145,60 @@ export function registerBoardHandlers(context: IpcContext): void {
       );
     }
     triggerWriteBack(context);
+    // Same invalidation signal as SWIMLANE_CREATE/UPDATE. There is no
+    // 'swimlane-deleted' member on BoardChangedEvent's change union, so this
+    // names the deleted row's id under 'swimlane-updated'; a paired phone
+    // never reads that row by id, it re-fetches the whole snapshot, so the
+    // id pointing at a row that no longer exists is harmless.
+    if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [id] });
   });
 
   ipcMain.handle(IPC.SWIMLANE_REORDER, (_, ids) => {
-    const { swimlanes } = getProjectRepos(context);
+    // Ambient projectId: see the SWIMLANE_CREATE comment above.
+    const projectId = context.currentProjectId;
+    const { swimlanes } = getProjectRepos(context, projectId);
     swimlanes.reorder(ids);
     triggerWriteBack(context);
+    if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids });
   });
 
-  // === Actions ===
-  ipcMain.handle(IPC.ACTION_LIST, () => {
-    const { actions } = getProjectRepos(context);
-    return actions.list();
+  // === Automations ===
+  //
+  // Replaces the ACTION_* and TRANSITION_* channels, which had zero renderer
+  // callers: named actions and `from -> to` transitions were never editable in
+  // the app. An automation belongs to one column, so the write is
+  // whole-column: the dialog edits a draft list and saves it, and applying a
+  // reorder, a delete and an insert as separate statements would make the
+  // unique name index reject an intermediate state the final one does not have.
+  ipcMain.handle(IPC.AUTOMATION_LIST, (_, projectId?: string | null) => {
+    const { automations } = getProjectRepos(context, projectId);
+    return automations.listAll();
   });
 
-  ipcMain.handle(IPC.ACTION_CREATE, (_, input) => {
-    const { actions } = getProjectRepos(context);
-    const result = actions.create(input);
+  ipcMain.handle(IPC.AUTOMATION_REPLACE_FOR_COLUMN, (_, swimlaneId: string, rows, projectId?: string | null) => {
+    const { automations } = getProjectRepos(context, projectId);
+    const result = automations.replaceForColumn(swimlaneId, rows);
     triggerWriteBack(context);
     return result;
   });
 
-  ipcMain.handle(IPC.ACTION_UPDATE, (_, input) => {
-    const { actions } = getProjectRepos(context);
-    const result = actions.update(input);
-    triggerWriteBack(context);
-    return result;
+  ipcMain.handle(IPC.AUTOMATION_RUNS_FOR_TASK, (_, taskId: string, projectId?: string | null) => {
+    const { automationRuns } = getProjectRepos(context, projectId);
+    return automationRuns.listForTask(taskId);
   });
 
-  ipcMain.handle(IPC.ACTION_DELETE, (_, id) => {
-    const { actions } = getProjectRepos(context);
-    actions.delete(id);
-    triggerWriteBack(context);
-  });
-
-  // === Transitions ===
-  ipcMain.handle(IPC.TRANSITION_LIST, () => {
-    const { actions } = getProjectRepos(context);
-    return actions.listTransitions();
-  });
-
-  ipcMain.handle(IPC.TRANSITION_SET, (_, fromId, toId, actionIds) => {
-    const { actions } = getProjectRepos(context);
-    actions.setTransitions(fromId, toId, actionIds);
-    triggerWriteBack(context);
-  });
-
-  ipcMain.handle(IPC.TRANSITION_GET_FOR, (_, fromId, toId) => {
-    const { actions } = getProjectRepos(context);
-    return actions.getTransitionsFor(fromId, toId);
-  });
+  // Re-runs ONE automation against the task's CURRENT state. Resolving the
+  // project explicitly rather than through `getProjectRepos`' fallback: the
+  // shared helper opens its own repositories and takes the task lock, and a
+  // null project there would act on whichever board happens to be focused.
+  ipcMain.handle(
+    IPC.AUTOMATION_RUN_AGAIN,
+    async (_, automationId: string, taskId: string, projectId?: string | null): Promise<AutomationRunAgainResult> => {
+      const resolvedProjectId = projectId ?? context.currentProjectId;
+      if (!resolvedProjectId) return { ok: false, error: 'No project is open.' };
+      return runAutomationAgain(context, resolvedProjectId, taskId, automationId);
+    },
+  );
 
   // === Board Config ===
   ipcMain.handle(IPC.BOARD_CONFIG_EXISTS, () => {

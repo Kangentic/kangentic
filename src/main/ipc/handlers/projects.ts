@@ -1,30 +1,35 @@
 import path from 'node:path';
 import fs from '../../git/original-fs';
 import { ipcMain } from 'electron';
-import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../../../shared/ipc-channels';
+import { IPC, PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../../../shared/ipc-channels';
 import { relocateProject } from './project-relocate';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../transition-engine/session-startup';
 import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
+import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
-import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo } from '../../git/git-checks';
+import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, closeProjectDb } from '../../db/database';
+import { softly } from '../../db/soft-db';
 import { PATHS } from '../../config/paths';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { ensureGitignore } from '../helpers';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
+import { trackMilestone, bucketTaskCount } from '../../analytics/usage';
+import { DEFAULT_SWIMLANES } from '../../db/migrations/default-data';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
+import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import type { Project, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
+import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
 import type { ConfigManager } from '../../config/config-manager';
@@ -99,9 +104,11 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // factory stops resolving CommandContexts for this project.
   context.boardConfigManager.detach();
 
-  // Stop this project's background PR-refresh timer (no-op if it is not the
-  // active one). Before the path-exists guard so both cleanup paths tear it down.
+  // Stop this project's background PR-refresh and remote-fetch timers (no-op if
+  // it is not the active one). Before the path-exists guard so both cleanup
+  // paths tear them down.
   prRefreshScheduler.stop(projectId);
+  gitFetchScheduler.stop(projectId);
   retrievalService.stop(projectId);
 
   // Guard: project path must exist
@@ -119,6 +126,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
       retrievalService.reconcileEmbedWorker(context);
     }
     context.recoveredProjects.delete(projectId);
+    context.snapshottedProjects.delete(projectId);
     return;
   }
 
@@ -132,6 +140,20 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     console.error('[PROJECT_DELETE] Failed to read tasks:', err);
   }
 
+  // Kill every session first, then wait for the exits together before the
+  // rows go: a young session's kill waits out its exit-sequence grace
+  // (SessionManager.kill), the worktree removal below needs the process gone,
+  // and awaitExit resolves at once for a row remove() has already deleted.
+  const sessionExits: Promise<void>[] = [];
+  for (const task of allTasks) {
+    if (task.session_id) {
+      try {
+        context.sessionManager.kill(task.session_id);
+        sessionExits.push(context.sessionManager.awaitExit(task.session_id));
+      } catch { /* may already be dead */ }
+    }
+  }
+  await Promise.all(sessionExits);
   for (const task of allTasks) {
     if (task.session_id) {
       try { context.sessionManager.remove(task.session_id); } catch { /* may already be dead */ }
@@ -187,7 +209,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // 5. Close the project DB connection before deleting files
   closeProjectDb(projectId);
 
-  // Steps 6–7 modify the project's .gitignore and .kangentic/ directory.
+  // Steps 6-7 modify the project's .gitignore and .kangentic/ directory.
   // Skip for worktrees -- their .gitignore is inherited from the parent branch
   // and should not be modified by ephemeral cleanup.
   const isWorktree = isInsideWorktree(projectPath);
@@ -245,12 +267,19 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     retrievalService.reconcileEmbedWorker(context);
   }
   context.recoveredProjects.delete(projectId);
+  context.snapshottedProjects.delete(projectId);
 
   console.log(`[PROJECT_DELETE] Cleaned up project at ${projectPath}`);
 }
 
 /**
  * Delete a project record from the global index DB.
+ *
+ * Called only from the ephemeral (`/preview`) shutdown path, during THIS
+ * process's own quit. Deliberately does not send `IPC.PROJECT_LIST_CHANGED`:
+ * this process's window is going away, and a stale sidebar row this deletion
+ * could cause belongs to a different process's renderer, which this send
+ * cannot reach.
  */
 export function deleteProjectFromIndex(context: IpcContext, id: string): void {
   context.projectRepo.delete(id);
@@ -263,6 +292,7 @@ export function deleteProjectFromIndex(context: IpcContext, id: string): void {
  */
 export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<void> {
   const projects = context.projectRepo.list();
+  let prunedAny = false;
   for (const project of projects) {
     if (!isKangenticWorktree(project.path)) continue;
 
@@ -276,6 +306,13 @@ export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<v
     try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
 
     context.projectRepo.delete(project.id);
+    prunedAny = true;
+  }
+  // Dev-only (this function only runs when !app.isPackaged, see index.ts), but a
+  // renderer that already hydrated its list before this fires would otherwise
+  // show rows main can no longer resolve (Sentry DESKTOP-V's failure mode).
+  if (prunedAny && context.mainWindow && !context.mainWindow.isDestroyed()) {
+    context.mainWindow.webContents.send(IPC.PROJECT_LIST_CHANGED);
   }
 }
 
@@ -389,6 +426,24 @@ async function pruneOrphanedTasksAndNotify(
 }
 
 /**
+ * Tell the renderer that a quit left automation runs mid-flight.
+ *
+ * ONE notice for the whole project open, never one per row: the shutdown path
+ * is synchronous by rule, so this is the expected state after any quit during a
+ * move, and a per-row storm would turn an honest signal into noise. The run
+ * rows themselves already say `interrupted`, which is the durable half.
+ *
+ * Built as a callback per call site rather than read off a return value because
+ * the sweep runs inside a fire-and-forget tail; there is nothing to await.
+ */
+function notifyRunsInterrupted(context: IpcContext, projectId: string): (count: number) => void {
+  return (count) => {
+    if (!context.mainWindow || context.mainWindow.isDestroyed()) return;
+    context.mainWindow.webContents.send(IPC.AUTOMATION_RUNS_INTERRUPTED, { projectId, count });
+  };
+}
+
+/**
  * Defer the board-config reconcile + kangentic.json export off the open/switch
  * critical path. Guarded against rapid project switching: if the user has
  * already switched again by the time the deferred tick runs, the
@@ -440,7 +495,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     throw new Error(`Project path does not exist: ${normalized}`);
   }
 
+  let created = false;
   if (!project) {
+    created = true;
     // Create a new project. overrides comes from the Add project dialog
     // (editable name, chosen default agent); falls back to the folder's
     // basename and detection-order resolution when absent (e.g. the
@@ -458,6 +515,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     // Clone settings from the last modified project (or global defaults if none).
     const defaults = getLastProjectOverrides(context.projectRepo, context.configManager, normalized);
     context.configManager.saveProjectOverrides(normalized, defaults);
+    // Adding a folder from the sidebar or the Welcome screen lands here, not
+    // in PROJECT_CREATE, so without these two calls the most common way to
+    // create a project counted nothing and the onboarding funnel's first
+    // step under-reported.
+    trackEvent('project_create');
+    trackMilestone('first_project');
   }
 
   // Skip full recovery on warm reopens: any project we've already recovered
@@ -492,6 +555,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   // Enable transcript capture for cross-agent handoffs
   context.sessionManager.setTranscriptRepository(new TranscriptRepository(getProjectDb(project.id)));
 
+  // A project seeded milliseconds ago reads as a constant (the default lanes,
+  // no tasks, no profiles) and project_create already counts it, so its first
+  // real view snapshots instead: nothing is marked, so a later switch back or
+  // the next launch's auto-open sends it.
+  if (!created) scheduleBoardSnapshot(context, project);
+
   if (!isWarmReopen) {
     // Stays synchronous: guards a rapid double-open from re-running recovery.
     context.recoveredProjects.add(project.id);
@@ -500,6 +569,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     const taskRepo = new TaskRepository(db);
     const sessionRepo = new SessionRepository(db);
     const swimlaneRepo = new SwimlaneRepository(db);
+    const automationRunRepo = new AutomationRunRepository(db);
 
     // Ordering contract (see pruneOrphanedWorktreeTasks): the prune completes
     // before session recovery reads the DB, but the whole chain runs off the
@@ -511,7 +581,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     runWithProjectLogContext(project.name, () =>
       pruneOrphanedTasksAndNotify(context, openedProject, taskRepo, sessionRepo)
         .then(() => {
-          cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+          cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
           return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path));
         })
@@ -522,6 +592,50 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   }
 
   return project;
+}
+
+/**
+ * Fire the board_snapshot analytics event once per project per app run, the
+ * first time the user VIEWS that project: the boot auto-open (openProjectByPath)
+ * or a sidebar switch (PROJECT_OPEN). Keyed on its own set rather than
+ * `recoveredProjects`, because recovery is also marked by the background
+ * activation of every other project: keyed on it, the boot project never
+ * snapshotted (already warm from openProjectByPath by the time the renderer
+ * could open it) and a later sidebar switch never did either (already warm
+ * from activateAllProjects), which is why the event sat far below app_launch.
+ * activateAllProjects deliberately does not call this: background activation
+ * is not the user looking at a board, and snapshotting every registered
+ * project per launch would cost more budget than the signal is worth.
+ *
+ * Counts only: names and content never leave the machine, and the task count
+ * is bucketed so no exact figure is sent. Deferred off the open path. The id
+ * stays marked when the read fails, so a broken DB is tried once per run and
+ * warns rather than being retried, silently, on every switch.
+ */
+function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
+  if (context.snapshottedProjects.has(project.id)) return;
+  context.snapshottedProjects.add(project.id);
+  setImmediate(() => {
+    if (isShuttingDown()) return;
+    runWithProjectLogContext(project.name, () => {
+      try {
+        const db = getProjectDb(project.id);
+        const lanes = new SwimlaneRepository(db).list();
+        const defaultNames = new Set<string>(DEFAULT_SWIMLANES.map((lane) => lane.name));
+        const taskCount = new TaskRepository(db).countAll();
+        trackEvent('board_snapshot', {
+          columns: lanes.length,
+          customColumns:
+            lanes.length !== DEFAULT_SWIMLANES.length ||
+            lanes.some((lane) => !defaultNames.has(lane.name)),
+          taskBucket: bucketTaskCount(taskCount),
+          profiles: context.boardConfigManager.getBoardProfiles(project.path).length,
+        });
+      } catch (error) {
+        console.warn('[ANALYTICS] board_snapshot failed:', error);
+      }
+    });
+  });
 }
 
 /**
@@ -564,13 +678,14 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const taskRepo = new TaskRepository(db);
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
+      const automationRunRepo = new AutomationRunRepository(db);
 
       // See openProjectByPath for rationale: the awaited prune ensures
       // recovery reads a clean DB; the slow async passes run in the
       // background and may still be in flight when activateAllProjects
       // resolves.
       await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
-      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id))
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path));
@@ -594,7 +709,22 @@ export function getLastOpenedProject(context: IpcContext): Project | undefined {
 }
 
 export function registerProjectHandlers(context: IpcContext): void {
-  ipcMain.handle(IPC.PROJECT_LIST, () => context.projectRepo.list());
+  // The three global-database READS below are softened; every write in this
+  // file still throws. Sentry DESKTOP-A/B: these were bare one-liners, so a
+  // SQLITE_IOERR on index.db crossed IPC as
+  // "Error invoking remote method 'project:list'" and the renderer got a stack
+  // trace where a message belonged. `notify` is set on the two list reads
+  // because an app with no project list is not usable and the user has earned
+  // an explanation. See src/main/db/soft-db.ts for why it is opt-in.
+  //
+  // Writes deliberately keep throwing: .claude/rules/project-scoped-ipc.md
+  // says a failed mutation must not report success.
+  ipcMain.handle(IPC.PROJECT_LIST, () => softly(
+    'project:list',
+    [] as Project[],
+    () => context.projectRepo.list(),
+    { notify: true },
+  ));
 
   ipcMain.handle(IPC.PROJECT_CREATE, (_, input) => {
     // Explicit input wins; the inherited defaults only fill what it left unset.
@@ -608,6 +738,7 @@ export function registerProjectHandlers(context: IpcContext): void {
     const defaults = getLastProjectOverrides(context.projectRepo, context.configManager, project.path);
     context.configManager.saveProjectOverrides(project.path, defaults);
     trackEvent('project_create');
+    trackMilestone('first_project');
     return project;
   });
 
@@ -621,7 +752,12 @@ export function registerProjectHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.PROJECT_OPEN, async (_, id) => {
     const project = context.projectRepo.getById(id);
-    if (!project) throw new Error(`Project ${id} not found`);
+    // Sentry DESKTOP-V: a renderer whose project list outlived the row
+    // behind it (a global-DB recovery that reopened onto a different file,
+    // or a dev-only boot prune) hit this and had no way to tell "gone" from
+    // any other failure. The sentinel lets the renderer refetch its list
+    // instead of surfacing a raw error with nothing to do about it.
+    if (!project) throw new Error(PROJECT_NOT_FOUND_PREFIX + id);
 
     // The project folder was moved or renamed on disk. Bail before any
     // directory-creating side effect below recreates an empty folder at the
@@ -658,10 +794,20 @@ export function registerProjectHandlers(context: IpcContext): void {
     // the IPC critical path and the timer is torn down on switch/delete/shutdown.
     prRefreshScheduler.startForProject(context, project);
 
+    // Background remote-tracking refresh, same lifecycle: an immediate deferred
+    // `git fetch --all --prune` so every "behind" count is measured against
+    // current refs the moment a project opens, then the periodic timer. Fetch
+    // only; nothing is pulled, merged, or rebased.
+    gitFetchScheduler.startForProject(context, project);
+
     // Background conversation-memory indexing: a deferred, switch-guarded
     // backfill sweep of unindexed sessions. Live sessions are indexed via the
     // finalize hooks attached here on first open.
     retrievalService.startForProject(context, project);
+
+    // Before the recovery block so its deferred read is queued ahead of the
+    // recovery one; independent of isWarmReopen (see scheduleBoardSnapshot).
+    scheduleBoardSnapshot(context, project);
 
     if (!isWarmReopen) {
       // Stays synchronous: guards a rapid double-open from re-running recovery.
@@ -681,12 +827,13 @@ export function registerProjectHandlers(context: IpcContext): void {
           const taskRepo = new TaskRepository(db);
           const sessionRepo = new SessionRepository(db);
           const swimlaneRepo = new SwimlaneRepository(db);
+          const automationRunRepo = new AutomationRunRepository(db);
 
           // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
           // completes before session recovery reads the DB; the slow
           // filesystem passes are fired without awaiting.
           await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
-          cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+          cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
 
           await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))
@@ -699,8 +846,15 @@ export function registerProjectHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.PROJECT_GET_CURRENT, () => {
-    if (!context.currentProjectId) return null;
-    return context.projectRepo.getById(context.currentProjectId) || null;
+    const currentProjectId = context.currentProjectId;
+    if (!currentProjectId) return null;
+    // No `notify`: project:list speaks for the pair, and this one already
+    // answers null on the cold-boot path, so a second dialog would add nothing.
+    return softly<Project | null>(
+      'project:getCurrent',
+      null,
+      () => context.projectRepo.getById(currentProjectId) || null,
+    );
   });
 
   ipcMain.handle(IPC.PROJECT_REORDER, (_, ids: string[]) => {
@@ -746,12 +900,16 @@ export function registerProjectHandlers(context: IpcContext): void {
     const isGit = isDirectory && isGitRepo(normalized);
     const insideWorktree = isDirectory && isInsideWorktree(normalized);
     const { branch } = isGit ? await readWorktreeHeadUnqueued(normalized) : { branch: null };
+    // Same gate as the branch read: only a repo can have commits, and the
+    // check shells out, so a non-repo folder never pays for it.
+    const commits = isGit ? await hasCommits(normalized) : false;
     const existingProject = context.projectRepo.list().find((p) => path.resolve(p.path) === normalized);
     return {
       exists,
       isDirectory,
       isGitRepo: isGit,
       isInsideWorktree: insideWorktree,
+      hasCommits: commits,
       currentBranch: branch,
       suggestedName: path.basename(normalized),
       alreadyRegisteredProjectId: existingProject?.id ?? null,
@@ -776,7 +934,12 @@ export function registerProjectHandlers(context: IpcContext): void {
   });
 
   // Project Groups
-  ipcMain.handle(IPC.PROJECT_GROUP_LIST, () => context.projectGroupRepo.list());
+  ipcMain.handle(IPC.PROJECT_GROUP_LIST, () => softly(
+    'projectGroup:list',
+    [] as ProjectGroup[],
+    () => context.projectGroupRepo.list(),
+    { notify: true },
+  ));
 
   ipcMain.handle(IPC.PROJECT_GROUP_CREATE, (_, input: { name: string }) => {
     return context.projectGroupRepo.create(input);

@@ -73,7 +73,7 @@ describe('resumeBlockReason', () => {
       const message = resumeBlockMessage(reason);
       expect(message.length).toBeGreaterThan(0);
       // Built from its code point so this assertion is not itself an authored
-      // long dash (see .claude/rules/text-formatting.md).
+      // long dash (see .claude/rules/writing-style.md).
       expect(message).not.toContain(String.fromCharCode(0x2014));
       expect(message).not.toContain('--');
     }

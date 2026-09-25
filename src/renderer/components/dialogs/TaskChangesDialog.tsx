@@ -17,6 +17,7 @@ interface TaskChangesDialogProps {
 
 export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
   const projectPath = useProjectStore((state) => state.currentProject?.path ?? null);
+  const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
 
   const title = (
@@ -57,6 +58,7 @@ export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
                 baseBranch={task.base_branch || defaultBaseBranch || 'main'}
                 emptyMessage="No changes on this branch"
                 task={task}
+                filePopOutParams={projectId ? { taskId: task.id, projectId } : undefined}
               />
             </Suspense>
           </PanelErrorBoundary>

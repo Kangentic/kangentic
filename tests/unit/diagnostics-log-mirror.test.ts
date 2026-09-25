@@ -6,8 +6,9 @@
  *     even when the verbosity toggle is off (errors are never silently lost).
  *   - info / debug / log are persisted only when the toggle is on.
  *   - Each persisted line is valid NDJSON conforming to the LogEntry shape.
- *   - When `getProjectRoot()` returns null, persistence is skipped without
- *     throwing (cold-start path before any project is open).
+ *   - When `getProjectRoot()` returns null (the Welcome Screen, the gap
+ *     between projects), the line lands in `<configDir>/logs/<date>.log`
+ *     instead of being dropped, the same fallback crash capture uses.
  *   - The IPC.LOG_APPEND handler is registered for the renderer-side relay.
  *
  * The module patches global `console.*` at install time, so the test
@@ -18,6 +19,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as util from 'node:util';
 
 const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -27,6 +29,18 @@ vi.mock('electron', () => ({
       ipcHandlers.set(channel, handler);
     }),
     on: vi.fn(),
+  },
+}));
+
+// The app's own config dir, which the mirror falls back to with no project
+// open. Read through a getter so each test's fresh module (vi.resetModules)
+// sees the per-test tmpdir assigned in beforeEach.
+const fallbackConfigDir = vi.hoisted(() => ({ current: '' }));
+vi.mock('../../src/main/config/paths', () => ({
+  PATHS: {
+    get configDir() {
+      return fallbackConfigDir.current;
+    },
   },
 }));
 
@@ -40,6 +54,7 @@ let originalDebug: typeof console.debug;
 beforeEach(async () => {
   ipcHandlers.clear();
   tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'log-mirror-test-'));
+  fallbackConfigDir.current = path.join(tempDirectory, 'app-config');
   originalLog = console.log;
   originalWarn = console.warn;
   originalError = console.error;
@@ -90,6 +105,18 @@ function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * The exact shape packaged Windows sync-pipe stdio produces (`uvException`):
+ * `<code>: <uv message>, <syscall>`, with `code` and `syscall` set. This is
+ * the error that reached Sentry as DESKTOP-10/11/12.
+ */
+function epipeWriteError(): NodeJS.ErrnoException {
+  const error: NodeJS.ErrnoException = new Error('EPIPE: broken pipe, write');
+  error.code = 'EPIPE';
+  error.syscall = 'write';
+  return error;
+}
+
 describe('log-mirror', () => {
   it('persists error and warn even when persistInfoDebug is false', async () => {
     const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
@@ -131,8 +158,8 @@ describe('log-mirror', () => {
     expect(levels).toEqual(['debug', 'info', 'log']);
   });
 
-  it('drops writes silently when project root is null (no project open)', async () => {
-    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+  it('falls back to the app config dir when project root is null (no project open)', async () => {
+    const { startLogMirror, resolveLogDirectory } = await import('../../src/main/diagnostics/log-mirror');
     startLogMirror({
       getProjectRoot: () => null,
       getPersistInfoDebug: () => true,
@@ -143,11 +170,22 @@ describe('log-mirror', () => {
       console.info('still no-project');
     }).not.toThrow();
 
-    // Drain the queue (no work expected - getProjectRoot returned null
-    // so nothing was queued).
+    // A global subsystem (the mobile bridge, the updater) logs whether or
+    // not a project is open; those lines used to vanish for as long as none
+    // was. They land beside crash capture's own fallback instead.
     const { flushAllForTest } = await import('../../src/main/diagnostics/async-file-queue');
     await flushAllForTest();
+    expect(resolveLogDirectory(null)).toBe(path.join(fallbackConfigDir.current, 'logs'));
+    expect(resolveLogDirectory(tempDirectory)).toBe(path.join(tempDirectory, '.kangentic', 'logs'));
     expect(fs.existsSync(path.join(tempDirectory, '.kangentic', 'logs'))).toBe(false);
+    const fallbackFile = path.join(fallbackConfigDir.current, 'logs', `${todayUtc()}.log`);
+    const lines = fs
+      .readFileSync(fallbackFile, 'utf-8')
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as { level: string; args: string[] });
+    expect(lines.map((entry) => entry.level).sort()).toEqual(['error', 'info']);
+    expect(lines.find((entry) => entry.level === 'error')?.args[0]).toBe('no-project');
   });
 
   it('registers an IPC.LOG_APPEND handler for renderer-side relay', async () => {
@@ -174,6 +212,119 @@ describe('log-mirror', () => {
       level: 'error',
       args: ['from renderer'],
     });
+  });
+});
+
+describe('echo failure containment', () => {
+  it('survives a throwing echo on every patched level (DESKTOP-10/11/12)', async () => {
+    // What the guard has to contain is any synchronous throw out of the
+    // echo call, so the spy just throws and the error's own shape is not
+    // under test here. Which real paths can throw is recorded on the catch
+    // in log-mirror.ts; this pins only that the wrapper survives one.
+    // The spy is installed before startLogMirror so it becomes the
+    // `original` each wrap calls through.
+    const throwingEcho = vi.fn(() => {
+      throw epipeWriteError();
+    });
+    console.log = throwingEcho;
+    console.warn = throwingEcho;
+    console.error = throwingEcho;
+    console.info = throwingEcho;
+    console.debug = throwingEcho;
+
+    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({
+      getProjectRoot: () => tempDirectory,
+      getPersistInfoDebug: () => true,
+    });
+
+    expect(() => console.log('a')).not.toThrow();
+    expect(() => console.warn('b')).not.toThrow();
+    expect(() => console.error('c')).not.toThrow();
+    expect(() => console.info('d')).not.toThrow();
+    expect(() => console.debug('e')).not.toThrow();
+
+    // Each call reached the throwing echo exactly once - the catch block
+    // must not itself log (which would recurse into the same failure).
+    expect(throwingEcho).toHaveBeenCalledTimes(5);
+  });
+
+  it('still persists the line when the echo throws', async () => {
+    const throwingEcho = vi.fn(() => {
+      throw epipeWriteError();
+    });
+    console.error = throwingEcho;
+
+    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({
+      getProjectRoot: () => tempDirectory,
+      getPersistInfoDebug: () => false,
+    });
+
+    expect(() => console.error('boom despite dead stdout')).not.toThrow();
+
+    const lines = await readLogLines(todayUtc());
+    const errorLine = lines.find((entry) => entry.level === 'error');
+    expect(errorLine?.args[0]).toBe('boom despite dead stdout');
+  });
+
+  // The two tests above prove the catch swallows an arbitrary throw, but
+  // they replace `original` with a mock that throws unconditionally - they
+  // never exercise what the corrected doc comment on the catch actually
+  // names as the reachable paths. Node's console does NOT let a write
+  // failure (sync throw or callback error) escape - it swallows both
+  // itself - so what escapes is upstream of the write: resolving
+  // `process.stdout`, and formatting the args. The two tests below drive
+  // the SECOND of those with the REAL, unmocked console implementation (no
+  // spy stands in for `original`), the same way a hostile object landing in
+  // a real `console.error(...)` call would in production. Split into two
+  // `it`s (rather than two assertions in one) so each gets its own
+  // independent red-green: vitest aborts a test at its first failed
+  // assertion, so a shared test would only ever observe the first hostile
+  // arg fail red.
+  it('survives a real custom-inspect throw from the REAL console formatter (arg-formatting failure)', async () => {
+    // Confirmed empirically (Node 24.15.0) that an un-wrapped
+    // `console.log('x', hostileInspect)` throws synchronously out of the
+    // real console, which is exactly what this wrap must contain.
+    const hostileInspectArgument = {
+      [util.inspect.custom]: () => {
+        throw new Error('custom inspect boom');
+      },
+    };
+
+    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({
+      getProjectRoot: () => tempDirectory,
+      getPersistInfoDebug: () => true,
+    });
+
+    expect(() => console.error('object arg:', hostileInspectArgument)).not.toThrow();
+
+    // Persistence must still succeed - stringifyArg does not invoke the
+    // custom inspect hook (JSON.stringify ignores that symbol), so the
+    // record still reaches disk.
+    const lines = await readLogLines(todayUtc());
+    const errorLine = lines.find((entry) => entry.level === 'error' && entry.args[0] === 'object arg:');
+    expect(errorLine).toBeDefined();
+  });
+
+  it('survives a real Symbol.toPrimitive throw under %s from the REAL console formatter (arg-formatting failure)', async () => {
+    // Confirmed empirically (Node 24.15.0) that this throws synchronously
+    // out of the real console even once the timestamp prefix is
+    // concatenated into the format-string slot ahead of the `%s`.
+    const hostileToPrimitiveArgument = {
+      [Symbol.toPrimitive]: () => {
+        throw new Error('toPrimitive boom');
+      },
+    };
+
+    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({
+      getProjectRoot: () => tempDirectory,
+      getPersistInfoDebug: () => true,
+    });
+
+    expect(() => console.log('%s', hostileToPrimitiveArgument)).not.toThrow();
   });
 });
 

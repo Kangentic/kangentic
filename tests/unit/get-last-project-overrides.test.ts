@@ -263,6 +263,7 @@ function makeContext(
     currentProjectPath: null,
     mcpServerHandle: null,
     recoveredProjects: new Set(),
+    snapshottedProjects: new Set(),
   };
 }
 

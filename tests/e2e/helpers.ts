@@ -261,16 +261,46 @@ export async function launchApp(options?: {
     args.push('--no-sandbox');
   }
 
-  // Retry electron.launch() with backoff - Windows can transiently fail
-  // to attach the debugger pipe under resource pressure or AV scans.
+  // Retry the whole launch-AND-first-window sequence with backoff. Two distinct
+  // transients land here and they need the same handling:
+  //
+  //  - electron.launch() THROWS. Windows fails to attach the debugger pipe
+  //    under resource pressure or AV scans. Fast, so retrying is cheap.
+  //  - launch() RESOLVES but the window never arrives. On a loaded CI runner
+  //    (8 electron workers per shard) the app can take longer to open its first
+  //    window than firstWindow() will wait.
+  //
+  // firstWindow() used to sit outside this loop on its Playwright default of
+  // 30s, so the second case got no retry at all: one slow window failed the
+  // whole hook, which is the observed flake (grok-activity-detection, CI run
+  // 34301585231, "Timeout 30000ms exceeded while waiting for event window",
+  // alongside a cluster of 25s close force-kills on the same shard).
+  //
+  // The killAppProcess() on the failure path is belt-and-braces, not the fix:
+  // Playwright does dispose the app at worker teardown, so a launched-but-
+  // windowless process is not orphaned for the whole run (measured - the
+  // janitor reports zero leaks either way). Killing it here just releases the
+  // process now instead of at worker teardown, which is worth doing when the
+  // reason we are retrying at all is that the runner is short on capacity.
+  //
+  // Budget: this runs in beforeAll, which gets the electron project's 45s test
+  // timeout, and the rest of this function can spend ~15s of it on
+  // waitForSelector. So cap each window wait well under the old 30s and stop
+  // retrying once the launch phase has eaten launchPhaseBudgetMs, rather than
+  // letting three long attempts blow the hook's budget by themselves.
   const maxLaunchAttempts = 3;
-  const baseRetryDelayMs = 2000;
+  const baseRetryDelayMs = 1500;
+  const firstWindowTimeoutMs = 12_000;
+  const launchPhaseBudgetMs = 26_000;
+  const launchStartedAt = Date.now();
   let app: ElectronApplication | undefined;
+  let page: Page | undefined;
   let lastLaunchError: Error | undefined;
 
   for (let attempt = 1; attempt <= maxLaunchAttempts; attempt++) {
+    let pendingApp: ElectronApplication | undefined;
     try {
-      app = await electron.launch({
+      pendingApp = await electron.launch({
         args,
         env: {
           ...process.env,
@@ -283,22 +313,34 @@ export async function launchApp(options?: {
         },
         colorScheme: 'dark',
       });
+      page = await pendingApp.firstWindow({ timeout: firstWindowTimeoutMs });
+      app = pendingApp;
       break;
     } catch (error) {
       lastLaunchError = error as Error;
-      if (attempt < maxLaunchAttempts) {
+      // If launch() resolved and firstWindow() was what failed, that process is
+      // still running. Release it now rather than at worker teardown. Skip the
+      // graceful close: an app with no window is the case whose close() hangs.
+      if (pendingApp) await killAppProcess(pendingApp);
+
+      const elapsedMs = Date.now() - launchStartedAt;
+      const budgetLeft = elapsedMs < launchPhaseBudgetMs;
+      if (attempt < maxLaunchAttempts && budgetLeft) {
         const retryDelayMs = baseRetryDelayMs * attempt;
-        console.error(`electron.launch() attempt ${attempt} failed, retrying in ${retryDelayMs}ms: ${lastLaunchError.message}`);
+        console.error(`electron launch attempt ${attempt} failed after ${elapsedMs}ms, retrying in ${retryDelayMs}ms: ${lastLaunchError.message}`);
         await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        continue;
       }
+      if (!budgetLeft) {
+        console.error(`electron launch attempt ${attempt} failed after ${elapsedMs}ms, out of launch-phase budget: ${lastLaunchError.message}`);
+      }
+      break;
     }
   }
 
-  if (!app) {
+  if (!app || !page) {
     throw new Error(`electron.launch() failed after ${maxLaunchAttempts} attempts: ${lastLaunchError?.message}`);
   }
-
-  const page = await app.firstWindow();
 
   // When HEADED=1 (user-invoked), maximize so the user can watch.
   // Otherwise (CI/automated), just let it run at default size.
@@ -386,6 +428,20 @@ export async function closeApp(app: ElectronApplication | undefined): Promise<vo
       `${CLOSE_TIMEOUT_MS}ms - force-killing Electron process`,
   );
 
+  await killAppProcess(app);
+}
+
+/**
+ * Kill the Electron process behind `app` immediately, skipping the graceful
+ * `app.close()` race.
+ *
+ * closeApp() waits CLOSE_TIMEOUT_MS before reaching for this, which is right at
+ * teardown but far too slow inside launchApp's retry loop: an app that never
+ * produced a window is exactly the app whose close() hangs, so waiting the full
+ * race there would spend the hook's whole timeout budget on a process we have
+ * already given up on.
+ */
+async function killAppProcess(app: ElectronApplication): Promise<void> {
   // `process()` THROWS rather than returning undefined once Playwright has torn
   // down its handle, which is exactly what happens when the app died on its own
   // while `app.close()` was still hanging - the case this force-kill path exists
@@ -591,6 +647,106 @@ export async function waitForScrollback(page: Page, marker: string, timeoutMs = 
     await page.waitForTimeout(500);
   }
   throw new Error(`Timed out waiting for scrollback containing: ${marker}`);
+}
+
+/** Result of {@link waitForTaskScrollback}: the session that produced the
+ *  marker, and the scrollback text that satisfied it. */
+export interface TaskScrollbackResult {
+  sessionId: string;
+  scrollback: string;
+}
+
+/**
+ * Poll ONE task's own session for scrollback containing marker, rather than
+ * joining every live session the way {@link waitForScrollback} does.
+ *
+ * Scoping to the specific task's session is required whenever a spec's
+ * Electron app (and therefore its set of live PTY sessions) is shared across
+ * multiple tests or attempts in one file. Without it, a CI retry that reuses
+ * the same worker - and therefore the same still-alive app - can be
+ * satisfied by a DIFFERENT session's marker: a sibling test's session, or
+ * (worse) the failed attempt's OWN leftover session, which has simply had
+ * more wall-clock time to warm up in the background while later tests in the
+ * file ran. That leftover-session risk is compounded whenever the caller
+ * reuses the same task title across attempts, since `tasks.list()` can then
+ * resolve a lookup back onto the stale task instead of the freshly created
+ * one - callers should give each attempt a title that is unique per retry
+ * (e.g. include `test.info().retry`) so this never happens.
+ *
+ * Returns both the session id (so a follow-up assertion, e.g. an
+ * activity-state poll, can stay scoped to the same session) and the
+ * scrollback text that satisfied the marker.
+ */
+export async function waitForTaskScrollback(
+  page: Page,
+  taskId: string,
+  marker: string,
+  timeoutMs = 15000,
+): Promise<TaskScrollbackResult> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const result = await page.evaluate(async (id) => {
+      const sessions: Session[] = await window.electronAPI.sessions.list();
+      const session = sessions.find((candidate) => candidate.taskId === id);
+      if (!session) return null;
+      const scrollback = await window.electronAPI.sessions.getScrollback(session.id);
+      return { sessionId: session.id, scrollback };
+    }, taskId);
+    if (result && result.scrollback.includes(marker)) return result;
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`Timed out waiting for task ${taskId}'s session scrollback containing: ${marker}`);
+}
+
+/**
+ * Poll for a session belonging to `taskId` to reach status='running' via IPC,
+ * without touching scrollback content. Returns its sessionId.
+ *
+ * Prefer this over {@link waitForTaskScrollback} when a test only needs proof
+ * that the task's session actually spawned (e.g. to grab its sessionId for a
+ * follow-up activity-state assertion) and does not need to observe any
+ * particular scrollback content.
+ *
+ * `PtyBufferManager` (`src/main/pty/buffer/pty-buffer-manager.ts`) detects a
+ * fresh session's TUI takeover - the first NORMAL-buffer full-screen clear
+ * (`\x1b[2J`) after any printable output - and, the moment that clear streams
+ * through `onData()`, stamps `tuiStartIndex` at that byte offset so
+ * `getScrollback()` strips everything before it. This is EAGER (fires on
+ * write, inside `onData`), not a lazily-cached read-time scan: once that
+ * clear has been written into the buffer, every `getScrollback()` call from
+ * then on - no matter when it happens - returns the stripped view. This is
+ * intentional production behavior (it hides pre-TUI shell noise from the
+ * replay), but it means an agent whose startup marker prints BEFORE its
+ * TUI's first repaint (Codex and Cursor both print `MOCK_*_SESSION:<id>`
+ * before their `MOCK_*_TUI_REDRAWS` mock's first `\x1b[2J`, on a fixed
+ * ~500ms interval) only has a marker readable in scrollback during the
+ * window between spawn and that first clear landing. A scrollback-marker
+ * poll that happens to make its first successful read inside that window
+ * passes immediately; one whose setup (or first poll tick) pushes past that
+ * window - e.g. under CI load - finds the marker already and permanently
+ * stripped, and spins for its full timeout even though the session spawned
+ * successfully. That reads exactly like a spawn-timing race (intermittent,
+ * worse under load, full-timeout failure with an instant pass on retry's
+ * fresh session/buffer) but is actually racing a fixed mock redraw timer,
+ * not spawn completion. Session existence via IPC is unaffected by that
+ * stripping, so it is the durable signal here.
+ */
+export async function waitForTaskSession(
+  page: Page,
+  taskId: string,
+  timeoutMs = 15000,
+): Promise<{ sessionId: string }> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const sessionId: string | null = await page.evaluate(async (id) => {
+      const sessions: Session[] = await window.electronAPI.sessions.list();
+      const session = sessions.find((candidate) => candidate.taskId === id && candidate.status === 'running');
+      return session?.id ?? null;
+    }, taskId);
+    if (sessionId) return { sessionId };
+    await page.waitForTimeout(200);
+  }
+  throw new Error(`Timed out waiting for task ${taskId}'s session to reach status='running'`);
 }
 
 /** Wait until at least one session reports status='running' via IPC. */

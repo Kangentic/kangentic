@@ -29,13 +29,19 @@ export function ProjectPathMissingDialog() {
       const { project: updated } = await relocateProject(project.id, selectedPath);
       // relocateProject only re-opens the current project; at startup (or
       // when the failed open never completed) nothing is current yet.
+      let reopened = true;
       if (useProjectStore.getState().currentProject?.id !== updated.id) {
-        await openProject(updated.id);
+        reopened = (await openProject(updated.id)) === 'opened';
       }
-      useToastStore.getState().addToast({
-        message: `Project "${updated.name}" now points at ${updated.path}`,
-        variant: 'success',
-      });
+      // A failed re-open has already reported itself (a toast, or
+      // `missingPathProject` armed again); a success toast here would lie
+      // about a switch that did not happen.
+      if (reopened) {
+        useToastStore.getState().addToast({
+          message: `Project "${updated.name}" now points at ${updated.path}`,
+          variant: 'success',
+        });
+      }
     } catch (err) {
       useToastStore.getState().addToast({
         message: err instanceof Error ? err.message : 'Failed to relocate project',

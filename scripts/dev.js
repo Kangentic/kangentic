@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const esbuild = require('esbuild');
 const rendererOptimizeDeps = require('./renderer-optimize-deps.json');
 const { copyExternalScripts } = require('./copy-external-scripts');
@@ -48,11 +49,70 @@ try {
 const stopWatcher = setInterval(() => {
   if (fs.existsSync(stopFilePath)) {
     console.log('[dev] Stop requested via stop file - shutting down');
-    cleanup(0);
+    clearInterval(stopWatcher);
+    // Ask Electron to quit through its own quit path first; cleanup() kills
+    // whatever is still running once that has either finished or timed out.
+    requestGracefulElectronQuit().finally(() => cleanup(0));
   }
 }, 500);
 // Never keep the process alive just to watch for stops.
 stopWatcher.unref();
+
+// A kill (TerminateProcess on Windows) skips Electron's before-quit entirely:
+// the synchronous cleanup never runs, PTY children are orphaned, session
+// records stay 'running', and the run reads as abrupt on the next launch. The
+// dev-only inspection bridge (loopback, port in the lockfile it writes)
+// exposes POST /quit, which runs app.quit() and so the whole real quit path.
+// Bounded: the app's own hard failsafe fires at 6s and the launcher's --stop
+// force-kills at 45s (STOP_GRACE_MS in worktree-preview.js), so 8s covers a
+// normal quit (under 2s, with a live PTY drain at most 3s more: 1.5s, plus
+// the 1.5s exit-sequence grace a just-spawned agent's kill waits out inside
+// the drain) and still yields before the launcher escalates.
+const GRACEFUL_QUIT_DEADLINE_MS = 8000;
+
+function requestGracefulElectronQuit() {
+  return new Promise((resolve) => {
+    if (!electronProc) {
+      resolve(false);
+      return;
+    }
+    let port = null;
+    try {
+      const lockfile = JSON.parse(fs.readFileSync(path.join(projectDir, '.kangentic', 'preview.lock'), 'utf-8'));
+      port = lockfile.port;
+    } catch {
+      // No inspection bridge (setting off, or not started yet): fall back to the kill.
+    }
+    if (typeof port !== 'number') {
+      console.log('[dev] No inspection bridge to ask for a graceful quit; killing Electron');
+      resolve(false);
+      return;
+    }
+    // Electron's 'close' fires cleanup(code) on its own (see the spawn below),
+    // which exits this process; the timer only matters when the quit stalls.
+    const timer = setTimeout(() => {
+      console.warn(`[dev] Electron did not quit within ${GRACEFUL_QUIT_DEADLINE_MS}ms of the graceful request; killing it`);
+      resolve(false);
+    }, GRACEFUL_QUIT_DEADLINE_MS);
+    electronProc.once('close', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    const request = http.request(
+      { host: '127.0.0.1', port, method: 'POST', path: '/quit', headers: { 'content-length': 0 } },
+      (response) => {
+        response.resume();
+        console.log(`[dev] Asked Electron to quit through the inspection bridge (HTTP ${response.statusCode})`);
+      },
+    );
+    request.on('error', (error) => {
+      clearTimeout(timer);
+      console.warn('[dev] Graceful quit request failed; killing Electron:', error.message);
+      resolve(false);
+    });
+    request.end();
+  });
+}
 
 // Detect Electron executable path per-platform
 const electronExe = process.platform === 'win32'
@@ -270,9 +330,16 @@ async function start() {
       entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
     }),
+    // Dictation (sherpa-onnx) worker (Electron utilityProcess entry, see
+    // DESKTOP-X), same dev-parity reasoning as the embed worker above.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/transcription/dictation-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/dictation-worker.js'),
+    }),
   ]);
   console.timeEnd('[dev] esbuild');
-  console.log('[dev] Main + preload + embed worker + line-count worker built');
+  console.log('[dev] Main + preload + embed worker + line-count worker + dictation worker built');
 
   // Copy external scripts (bridges + adapter plugins) next to the bundle, the
   // same step scripts/build.js runs. Without this, dev runs whatever stale copy
@@ -326,8 +393,28 @@ async function start() {
     env: spawnEnv,
   });
 
+  const electronLaunchedAt = Date.now();
   electronProc.on('close', (code) => {
     console.log(`[dev] Electron exited with code ${code}`);
+    // A near-instant code-0 exit from a NON-ephemeral launch is almost always
+    // the single-instance lock: another Kangentic (usually the installed app)
+    // already holds it, so main/index.ts calls app.exit(0) silently and the
+    // second-instance handler FOCUSES that other instance. To the person who
+    // just ran npm start, that looks exactly like a successful dev launch
+    // while they are actually using the other build (2026-08-28: days of
+    // "dogfooding main" happened on the 08-23 installed build this way, which
+    // is how already-fixed terminal regressions kept being reported as
+    // unfixed). Ephemeral previews skip the lock, so this branch cannot fire
+    // for them.
+    if (!ephemeral && code === 0 && Date.now() - electronLaunchedAt < 5000) {
+      console.error('');
+      console.error('[dev] *** Electron exited immediately: another Kangentic instance');
+      console.error('[dev] *** (usually the installed app) holds the single-instance lock.');
+      console.error('[dev] *** The window that just came to the foreground is THAT instance,');
+      console.error('[dev] *** NOT this dev build. Quit it first (check the tray and Task');
+      console.error('[dev] *** Manager background processes), then run npm start again.');
+      console.error('');
+    }
     cleanup(code || 0);
   });
 }
@@ -341,6 +428,10 @@ function cleanup(exitCode) {
   // while cleaning up) re-enter and write a SECOND, contradictory exit record.
   if (cleaningUp) return;
   cleaningUp = true;
+  // Written synchronously: stdout to a pipe is asynchronous on Windows, so a
+  // console.log this close to process.exit() can be dropped, which is how the
+  // cleanup's own progress lines went missing from every captured log.
+  logSync(`[dev] cleanup:start exitCode=${exitCode}`);
 
   // FIRST action, with nothing but the re-entrancy guard above it: the
   // ephemeral cleanup below removes the worktree's entire .kangentic/
@@ -378,16 +469,29 @@ function cleanup(exitCode) {
       const kanDir = path.join(projectDir, '.kangentic');
       const viteDir = path.join(projectDir, '.vite');
       for (const dir of [kanDir, viteDir]) {
+        const removeStartedAt = Date.now();
         try {
           fs.rmSync(dir, { recursive: true, force: true });
-          console.log(`[dev] Ephemeral cleanup: removed ${dir}`);
-        } catch {
-          // Best-effort cleanup
+          logSync(`[dev] Ephemeral cleanup: removed ${dir} in ${Date.now() - removeStartedAt}ms`);
+        } catch (removeError) {
+          // Best-effort, but say so: a silent miss here left a stale
+          // .kangentic/ behind with no trace of why.
+          logSync(`[dev] Ephemeral cleanup: could not remove ${dir}: ${removeError.message}`);
         }
       }
     }
   }
+  logSync('[dev] cleanup:done');
   process.exit(exitCode);
+}
+
+/** Synchronous stdout write for the lines that precede process.exit(). */
+function logSync(line) {
+  try {
+    fs.writeSync(1, `${line}\n`);
+  } catch {
+    // stdout is gone (terminal closed): nothing to say it to.
+  }
 }
 
 process.on('SIGINT', () => cleanup(0));

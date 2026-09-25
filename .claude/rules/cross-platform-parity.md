@@ -4,6 +4,8 @@ paths:
   - "src/main/pty/**"
   - "src/main/agent/**"
   - "src/main/git/**"
+  - "src/main/utility-process/**"
+  - "src/main/retrieval/**"
   - "src/main/**/*path*"
 ---
 
@@ -35,6 +37,14 @@ breaks on the next platform.
   succeeds while a handle is open.
 - **Line endings:** author with `\n`; never assert on or emit `\r\n` literally. Let git's
   normalization handle CRLF.
+- **A packaged Windows GUI process has no console**, so `GetStdHandle` returns NULL there and a
+  dev terminal will never show you the difference. Concretely, `utilityProcess.fork`'s `stdio`
+  must not mix `inherit` with a real handle (`pipe` or `ignore`) across the stdout and stderr
+  slots: Electron leaves the `inherit` slot's handle null, Electron's own patch to
+  `child_process_launcher_helper_win.cc` still pushes it into the child's inherit list, and
+  `SetHandleInformation` fails a fatal `PCHECK` that kills the main process (Sentry DESKTOP-S).
+  All-`inherit` and all-real are both safe. `UTILITY_PROCESS_STDIO` in
+  `src/main/utility-process/stderr-tail.ts` is the single place this is decided.
 
 ### Tests (unit, UI, E2E)
 
@@ -56,7 +66,7 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   drag/click, confirm the container has non-zero width, and prefer asserting the *effect* via
   state over re-measuring pixels.
 - **No machine-specific paths or personal info** in fixtures (use `C:\\Users\\dev`, `/mock/...`).
-  See [[text-formatting]] for the em-dash ban that also applies to authored test text.
+  See [[writing-style]] for the dash ban that also applies to authored test text.
 - **Test filesystem writes stay under `os.tmpdir()`.** Derive every write target from
   `fs.mkdtempSync(path.join(os.tmpdir(), ...))` or a mocked home directory. Never pass a
   hardcoded absolute root (`/projects/...`, `C:\\...`) to a write call (`mkdirSync`,
@@ -80,9 +90,18 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   monitor-and-fix loop) and also locally in `/merge-back` Step 0 for a direct push and in a manual
   `/test` run. Because it is a static scan it flags the absolute-write subclass on any OS, without a
   Linux runner, closing the "green locally, red on CI" gap that let `main` go red by design.
+- **Test for utility-process stdio:** `tests/unit/stderr-tail.test.ts` pins `UTILITY_PROCESS_STDIO`
+  and fails when it mixes `inherit` with a real handle. A companion scan in the same file walks
+  `src/main/**/*.ts` and fails on any `utilityProcess.fork` call that does not pass
+  `stdio: UTILITY_PROCESS_STDIO`, so a new call site cannot inline its own literal and drift. This
+  one has to be a static assertion rather than a running app, because no tier can reach the bug:
+  CI never packages, and every tier (including E2E's `_electron.launch()`) starts the app from a
+  terminal, which hands it the valid stdout handle that hides it. Both tests ride the unit tier, so
+  CI still runs them as a PR check.
 - **Review for code:** the `platform-guard` agent audits `src/main/pty`, `src/main/agent`,
   `src/main/git`, and any `path` / `fs.rm` / `child_process` usage for the code rules above
-  (hardcoded `C:\\Users\\`, missing platform guards, missing `{ force: true }`, em-dashes).
+  (hardcoded `C:\\Users\\`, missing platform guards, missing `{ force: true }`, em-dashes and
+  en-dashes).
   `/code-review` flags the test-fragility patterns on changes under `tests/`.
 - **Specialist:** the `test-builder` agent encodes the Windows/CI quirks (workers=1 lock,
   single-instance bypass, scrollback races) and is the right tool for de-flaking an
@@ -98,6 +117,7 @@ time it runs on Linux.
 
 ## Scope
 
-Committed source under the platform-sensitive `src/main/` subsystems (pty, agent, git, path
-handling) and all of `tests/`. Marketing capture fixtures (`tests/captures/`) that intentionally
-pin OS-specific rendering for screenshots are exempt from the geometry-tolerance conventions.
+Committed source under the platform-sensitive `src/main/` subsystems (pty, agent, git,
+utility-process, retrieval, path handling) and all of `tests/`. Marketing capture fixtures
+(`tests/captures/`) that intentionally pin OS-specific rendering for screenshots are exempt from
+the geometry-tolerance conventions.

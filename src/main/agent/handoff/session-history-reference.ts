@@ -42,6 +42,7 @@ function agentDisplayLabel(agent: string): string {
     case 'droid': return 'Droid';
     case 'grok': return 'Grok Build';
     case 'antigravity': return 'Antigravity CLI';
+    case 'goose': return 'Goose CLI';
     default: return agent;
   }
 }

@@ -275,7 +275,12 @@ export function StatsDashboardBody() {
           </ChartCard>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {/* Four columns only when there is a subagent card to fill the fourth;
+            otherwise a lone card would sit in a half-empty second row. */}
+        <div className={data.bySubagentSlices.length > 0
+          ? 'grid grid-cols-1 lg:grid-cols-4 gap-3'
+          : 'grid grid-cols-1 lg:grid-cols-3 gap-3'}
+        >
           <BreakdownCard
             title="By agent"
             slices={data.byAgentSlices}
@@ -303,6 +308,20 @@ export function StatsDashboardBody() {
             metric={effectiveMetric}
             animate={animateCharts}
           />
+          {data.bySubagentSlices.length > 0 && (
+            <BreakdownCard
+              title="By subagent"
+              slices={data.bySubagentSlices}
+              // Always false: these rows genuinely have no cost of their own, so
+              // this keeps the card on tokens even while the page metric is cost,
+              // rather than rendering an all-zero donut.
+              costKnown={false}
+              loading={coldLoading}
+              testId="breakdown-subagent"
+              metric={effectiveMetric}
+              animate={animateCharts}
+            />
+          )}
         </div>
 
         <ChartCard
@@ -341,9 +360,10 @@ export function StatsDashboardBody() {
         <p
           className="flex items-center gap-1.5 text-[11px] text-fg-faint w-fit cursor-help"
           title={
-            'Costs are API-equivalent as reported by agents; subscription sessions may report $0.\n' +
-            'Totals include finalized sessions plus any currently running, refreshed live as they progress.\n' +
-            'Trend lines use exact per-turn tokens, which measure differently from the session snapshots behind the totals.'
+            'Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0.\n' +
+            'Cost covers finalized sessions plus any currently running, refreshed live as they progress.\n' +
+            'Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it.\n' +
+            'Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count.'
           }
           data-testid="stats-about-numbers"
         >

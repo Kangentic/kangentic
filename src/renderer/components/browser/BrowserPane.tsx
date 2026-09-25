@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Crosshair, Eraser, Loader2, Pencil, Pin, RotateCcw, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, CircleStop, Crosshair, Eraser, Loader2, Monitor, Pencil, Pin, RotateCcw, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { closeBrowserForTask } from './close-browser';
 import { useDrawingOverlay } from './useDrawingOverlay';
 import { compositeCapture } from './captureComposite';
 import { BrowserEmptyState } from './BrowserEmptyState';
@@ -12,10 +13,11 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { useAgentInputFocusGuard } from '../../utils/agent-input-focus-guard';
 import { ANCHOR_BOUNDS_ATTRIBUTE } from '../../utils/dictation-anchor';
 import { registerBrowserNavigationTarget } from '../../utils/browser-navigation-registry';
-import { useAgentDriveStore, useIsAgentDrivingSession } from '../../stores/agent-drive-store';
+import { useAgentDriveStore } from '../../stores/agent-drive-store';
+import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
 import { PopOutButton } from '../../pop-out/PopOutButton';
-import { browserPartitionForWorktree } from '../../../shared/browser-partition';
-import type { BrowserPickedElement } from '../../../shared/types';
+import { browserPartitionForTask } from '../../../shared/browser-partition';
+import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverride } from '../../../shared/types';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
 
@@ -23,6 +25,14 @@ import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
 // free-draw annotation overlay, and a "Send to agent" button which composites
 // the capture, grabs DOM HTML + selected text, and injects a text prompt
 // (with @-mention to the saved PNG) into the task's running PTY.
+
+/**
+ * How long the pane's measured widget size waits to settle before it is
+ * reported to main. Only an agent asking for a viewport reads it, and only
+ * once, so a value mid-drag is worth nothing while the IPC to deliver it is
+ * real.
+ */
+const PANE_WIDGET_REPORT_DEBOUNCE_MS = 150;
 
 interface BrowserPaneProps {
   sessionId: string;
@@ -45,9 +55,16 @@ interface BrowserPaneProps {
    * this value, so a wrong one is a cross-project reachability bug.
    */
   projectId: string | null;
+  /**
+   * Where this pane is on the user's screen, reported to main for the agent's
+   * `list_panes` (`showing`, `hidden` behind the terminal, or `parked` in a
+   * closed window). The host decides; the pane only relays. Defaults to
+   * `showing` for hosts that never hide a pane (the pop-out window).
+   */
+  visibility?: BrowserPaneVisibility;
 }
 
-export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPaneProps) {
+export function BrowserPane({ sessionId, taskId, cwd, projectId, visibility = 'showing' }: BrowserPaneProps) {
   // Bumped by the browser-pane request bridge after `kangentic_browser_open_pane`
   // seeds this task's URL in main. Without it a pane already mounted on its empty
   // state would never see the seeded URL, since the fetch keys on taskId +
@@ -61,6 +78,32 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPanePr
     saveForProject,
     recordNavigation,
   } = useBrowserUrl(taskId, projectId, urlRefreshToken);
+
+  // Sync this task's cookie jar with the project identity jar BEFORE the guest
+  // attaches, so the pane opens already signed into shared non-localhost (IdP)
+  // sessions. A load boundary: it runs on each mount, so a reopened task picks up
+  // a sign-in made in another session (see jar-seeder.ts). Capped at 3s so a
+  // slow/failed sync never wedges the pane, and set true once and never reset,
+  // so a live or retained pane is never blanked by a re-run.
+  const [jarSynced, setJarSynced] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const markSynced = () => { if (!cancelled) setJarSynced(true); };
+    const ensureJar = window.electronAPI.browser.ensureJar;
+    // Degrade gracefully against an older main build with no jar-sync endpoint
+    // (e.g. an HMR'd renderer running against a preview that predates this):
+    // proceed unsynced rather than throw.
+    if (typeof ensureJar !== 'function') {
+      markSynced();
+      return () => { cancelled = true; };
+    }
+    const timeout = setTimeout(markSynced, 3000);
+    void ensureJar(taskId, projectId).finally(() => {
+      clearTimeout(timeout);
+      markSynced();
+    });
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, [taskId, projectId]);
 
   if (urlLoading) {
     return (
@@ -83,12 +126,25 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId }: BrowserPanePr
     );
   }
 
+  // Hold the guest's first mount until the jar sync settles (or its 3s cap), so
+  // the webview attaches with the shared login already present. Only gates the
+  // FIRST mount: jarSynced never returns to false, so a live pane is never torn
+  // down here (see retained-pane-never-remounts).
+  if (!jarSynced) {
+    return (
+      <div className="flex items-center justify-center h-full bg-surface" data-testid="browser-pane-jar-syncing">
+        <Loader2 size={20} className="animate-spin text-fg-muted" />
+      </div>
+    );
+  }
+
   return (
     <BrowserPaneActive
       sessionId={sessionId}
       taskId={taskId}
       cwd={cwd}
       projectId={projectId}
+      visibility={visibility}
       effectiveUrl={effectiveUrl}
       projectDefault={projectDefault}
       saveForProject={saveForProject}
@@ -102,6 +158,7 @@ interface BrowserPaneActiveProps {
   taskId: string;
   cwd: string;
   projectId: string | null;
+  visibility: BrowserPaneVisibility;
   effectiveUrl: string;
   projectDefault: string | null;
   saveForProject: (url: string) => Promise<void>;
@@ -113,6 +170,7 @@ function BrowserPaneActive({
   taskId,
   cwd,
   projectId,
+  visibility,
   effectiveUrl,
   projectDefault,
   saveForProject,
@@ -125,11 +183,11 @@ function BrowserPaneActive({
   // re-binding the `src` attribute on every render can collapse history to
   // a single step in some webview revisions.
   const [initialSrc] = useState(effectiveUrl);
-  // Per-worktree persistent cookie jar, locked on mount (an Electron webview
-  // partition cannot change after attach). Keyed off the session cwd so
-  // concurrent worktrees' localhost logins stay isolated. See
-  // shared/browser-partition.ts.
-  const [partition] = useState(() => browserPartitionForWorktree(cwd));
+  // Per-task persistent cookie jar, locked on mount (an Electron webview
+  // partition cannot change after attach). Keyed by task identity so it follows
+  // the task through any worktree path change; the identity jar shares the IdP
+  // login across the project. See shared/browser-partition.ts.
+  const [partition] = useState(() => browserPartitionForTask(projectId, taskId));
   const [drawMode, setDrawMode] = useState(false);
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
@@ -144,6 +202,14 @@ function BrowserPaneActive({
   // flashed in as the pane slid open. We cover it with the app's surface color
   // (plus a spinner) and lift the cover on the first dom-ready / stop-loading.
   const [pageReady, setPageReady] = useState(false);
+  // The viewport an agent imposed on this guest, or null. See the subscription
+  // below for why this is local state rather than a store.
+  const [viewportOverride, setViewportOverride] = useState<BrowserViewportOverride | null>(null);
+  // Mirrors `registeredWebContentsIdRef` as STATE, purely so effects that need
+  // to act once the guest exists can depend on it. The ref is what listeners
+  // read (it must be current inside a callback registered before the guest
+  // attached); this is what re-runs an effect when it changes.
+  const [registeredGuestId, setRegisteredGuestId] = useState<number | null>(null);
 
   const webviewRef = useRef<WebviewElement | null>(null);
   const overlayContainerRef = useRef<HTMLDivElement | null>(null);
@@ -196,7 +262,22 @@ function BrowserPaneActive({
   // that knows taskId + sessionId + the guest's webContentsId. Registers on
   // dom-ready (the id is valid once the guest attaches) and unregisters on
   // unmount; main also tracks the guest's own destroyed / did-navigate events.
+  //
+  // Two effects, deliberately. The registration is keyed on the GUEST's
+  // lifetime, not on the identity props: main mints a surface handle per guest
+  // and keeps it for as long as that guest lives, so a session rotation
+  // (`/clear`) or a retained window's project settling must NOT unregister and
+  // re-register - that would retire the handle an agent is holding for a tab
+  // that never went anywhere. The second effect re-sends `registerPane` for the
+  // same guest, which main treats as an in-place owner update.
   const registeredWebContentsIdRef = useRef<number | null>(null);
+  const registrationIdentityRef = useRef({ sessionId, taskId, projectId, visibility });
+  // Written on commit (a layout effect, ahead of every passive effect and
+  // listener that reads it), never during render: React's compiler rules
+  // forbid a render-time ref write, and a discarded render must not publish.
+  useLayoutEffect(() => {
+    registrationIdentityRef.current = { sessionId, taskId, projectId, visibility };
+  });
   useEffect(() => {
     const webview = webviewRef.current;
     if (!webview) return;
@@ -212,24 +293,72 @@ function BrowserPaneActive({
       if (!Number.isInteger(webContentsId) || webContentsId <= 0) return;
       registered = true;
       registeredWebContentsIdRef.current = webContentsId;
+      setRegisteredGuestId(webContentsId);
       let url: string | null = null;
       try {
         url = webview.getURL() || null;
       } catch {
         /* not attached */
       }
-      void window.electronAPI.browser.registerPane({ sessionId, taskId, projectId, webContentsId, url });
+      void window.electronAPI.browser.registerPane({ ...registrationIdentityRef.current, webContentsId, url });
+      // The renderer-side "a browser is alive for this task" fact: the pill's
+      // alive dot, the card's globe, and the kebab's Close read it, and Close
+      // needs this id to retire the handle in main.
+      useSessionStore.getState().setBrowserGuest(registrationIdentityRef.current.taskId, webContentsId);
     };
     webview.addEventListener('dom-ready', register);
     register();
     return () => {
       webview.removeEventListener('dom-ready', register);
-      // Pass the webContentsId THIS instance registered with, so an out-of-order
-      // unmount (e.g. this in-app pane unmounting after a pop-out window's pane
-      // already re-registered the same sessionId with a new guest) cannot
-      // clobber the newer registration - see unregisterIfMatches.
-      void window.electronAPI.browser.unregisterPane(sessionId, registeredWebContentsIdRef.current ?? undefined);
+      // Unregister the guest THIS instance registered, by its id, so an
+      // out-of-order unmount (this in-app pane unmounting after a pop-out
+      // window's pane already registered a new guest for the same task) can
+      // only ever remove its own registration. A mount that never registered
+      // (StrictMode's throwaway first mount) has nothing to send.
+      const registeredWebContentsId = registeredWebContentsIdRef.current;
+      registeredWebContentsIdRef.current = null;
+      setRegisteredGuestId(null);
+      if (registeredWebContentsId != null) {
+        void window.electronAPI.browser.unregisterPane(registeredWebContentsId);
+        useSessionStore.getState().clearBrowserGuest(registrationIdentityRef.current.taskId, registeredWebContentsId);
+      }
     };
+  }, []);
+
+  // Where the pane is (showing / hidden / parked) changed on a LIVE guest: tell
+  // main, so the agent's list_panes says whether the user can see it. The
+  // registration above carries the value current at that moment; this covers
+  // every change after it.
+  useEffect(() => {
+    const registeredWebContentsId = registeredWebContentsIdRef.current;
+    if (registeredWebContentsId == null) return;
+    void window.electronAPI.browser.setPaneVisibility(registeredWebContentsId, visibility);
+  }, [visibility]);
+
+  // The user's Close: discard this guest and free its memory. Distinct from
+  // the Browser pill, which only hides. See close-browser.ts for the sequence.
+  const handleCloseBrowser = useCallback(() => {
+    void closeBrowserForTask(taskId, projectId);
+  }, [taskId, projectId]);
+
+  // Identity changed on a LIVE guest: re-register the same guest so main
+  // updates its owner in place and keeps the handle. Never unregisters.
+  useEffect(() => {
+    const registeredWebContentsId = registeredWebContentsIdRef.current;
+    if (registeredWebContentsId == null) return;
+    let url: string | null = null;
+    try {
+      url = webviewRef.current?.getURL() || null;
+    } catch {
+      /* not attached */
+    }
+    void window.electronAPI.browser.registerPane({
+      sessionId,
+      taskId,
+      projectId,
+      webContentsId: registeredWebContentsId,
+      url,
+    });
   }, [sessionId, taskId, projectId]);
 
   // Lift the dark loading cover once the webview paints. One-shot: it stays
@@ -296,7 +425,7 @@ function BrowserPaneActive({
 
   const navigate = useCallback((target: string) => {
     const candidate = target.match(/^https?:\/\//i) ? target : `http://${target}`;
-    let parsed: URL | null = null;
+    let parsed: URL;
     try {
       parsed = new URL(candidate);
     } catch {
@@ -514,7 +643,16 @@ function BrowserPaneActive({
   // `.claude/rules/agent-driven-focus.md`.
   useAgentInputFocusGuard({ paneRef, guestWebContentsIdRef: registeredWebContentsIdRef });
 
-  const agentDriving = useIsAgentDrivingSession(sessionId);
+  // The SHAPED signal, not the router's. See `useAgentDriveVeil`: the raw one
+  // is up for about half a second on a single click, which paints and vanishes
+  // before it can be read. `stopped` distinguishes a run the user ENDED from
+  // one that wound down, which is the whole of the difference between the two
+  // exit speeds below.
+  const {
+    visible: agentDriving,
+    blocking: driveBlocking,
+    stopped: driveStopped,
+  } = useAgentDriveVeil(sessionId);
 
   // Publish the drive as VISIBLE state, keyed by session.
   //
@@ -539,6 +677,86 @@ function BrowserPaneActive({
     };
   }, [sessionId]);
 
+  // The viewport an agent imposed on THIS guest, as a chip in the toolbar.
+  //
+  // Local state, like `zoomFactor` and `agentDriving` beside it, rather than a
+  // store: the pane never remounts (see
+  // `.claude/rules/retained-pane-never-remounts.md`), so there is nothing to
+  // rehydrate, and the value belongs to one guest rather than to the app.
+  //
+  // The seed read is not redundant with the push. A pane that mounts AFTER the
+  // override was set never saw it - which is exactly the pop-out case, where
+  // the agent sizes a window whose renderer then starts up fresh - so it asks
+  // once on registration rather than showing nothing.
+  useEffect(() => {
+    const browser = window.electronAPI?.browser;
+    if (!browser?.onViewportOverride) return;
+    let cancelled = false;
+    const unsubscribe = browser.onViewportOverride((webContentsId, override) => {
+      if (webContentsId !== registeredWebContentsIdRef.current) return;
+      setViewportOverride(override);
+    });
+    if (registeredGuestId != null && browser.getViewportOverride) {
+      void browser.getViewportOverride(registeredGuestId).then((seeded) => {
+        // Never clobber a push that landed while this was in flight: the push
+        // is newer by definition.
+        if (!cancelled && seeded) setViewportOverride((current) => current ?? seeded);
+      });
+    }
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [registeredGuestId]);
+
+  // Tell main how big this pane actually is.
+  //
+  // Main cannot work it out: its only handle is the host BrowserWindow, which
+  // is the whole app, while the pane is one side of a split inside a
+  // task-detail window inside it. An agent asking to render at 1920 needs the
+  // real number to pick a zoom that fits, and with main's number the fit came
+  // out as "no zoom needed" and the page stayed cropped.
+  //
+  // The container is measured rather than the `<webview>` itself: the guest
+  // fills it exactly (`inset: 0`), and the element's own box is not observable
+  // in the same way. Reported on mount and on every resize, so dragging the
+  // split or resizing the window keeps it true; the registry drops a report
+  // that has not changed, so a drag does not churn.
+  useEffect(() => {
+    const container = overlayContainerRef.current;
+    if (!container || registeredGuestId == null) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const report = () => {
+      timer = null;
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      void window.electronAPI?.browser?.setPaneWidgetSize?.(registeredGuestId, rect.width, rect.height);
+    };
+    const observer = new ResizeObserver(() => {
+      // TRAILING debounce, not a frame coalesce. A splitter drag changes this
+      // box on every pointer move, so per-frame coalescing still sends ~60 IPC
+      // a second for the whole drag - and every one of them is stale the
+      // instant it lands. Nothing reads this value continuously: it is
+      // consumed once, when an agent asks for a viewport and the fit zoom has
+      // to be computed, so the only report that matters is the one after the
+      // drag settles. Mirrors the 200ms PTY resize debounce.
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(report, PANE_WIDGET_REPORT_DEBOUNCE_MS);
+    });
+    observer.observe(container);
+    report();
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [registeredGuestId]);
+
+  const handleClearViewport = useCallback(() => {
+    const guestId = registeredWebContentsIdRef.current;
+    if (guestId == null) return;
+    void window.electronAPI?.browser?.clearViewportOverride?.(guestId);
+  }, []);
+
   return (
     <div
       ref={paneRef}
@@ -556,7 +774,73 @@ function BrowserPaneActive({
           header - the pop-out control just takes its predictable top-right slot at
           the end of this toolbar. Hidden inside a pop-out window (its descriptor is
           set), whose OS title bar already provides identity. */}
-      <form onSubmit={handleUrlSubmit} className="flex items-center gap-1 px-2 py-1.5 border-b border-edge flex-shrink-0">
+      <form
+        onSubmit={handleUrlSubmit}
+        className="flex items-center gap-1 px-2 py-1.5 border-b border-edge flex-shrink-0"
+        data-testid="browser-url-form"
+      >
+        {/* Stop: LEADING, in the position the Command Terminal gives its Stop,
+            behind its own divider. Placement was chosen by slip risk, measured
+            on a live preview: the trailing end sits beside pop-out, a
+            high-traffic control, so a slip there costs the page's state often;
+            Back / Forward / Reload are low-traffic (the mouse back button takes
+            over), so a slip here lands on something cheap.
+
+            LABELLED and TINTED, unlike Stop terminal's icon-only control, and
+            the difference is the neighbourhood rather than a change of mind.
+            Stop terminal has no lookalikes beside it; this one sits in a row of
+            three grey nav glyphs at a similar size, so icon-only was filed by
+            the eye as a fourth nav button (tried on a live preview, at 14px and
+            again at 18px). The destructive tint is the same visual language as
+            the kebab's destructive items, so it reads as consequential before
+            the word is read.
+
+            The label NAMES THE OBJECT, and that is the part that took four
+            tries. This pane has three plausible things to "stop" - the agent
+            driving the page, the page load, and the browser itself - so a bare
+            verb ("Stop", "Close") leaves the object to inference, and two of
+            the three readings are wrong. "Close browser" cannot be read as
+            either, it pairs with the Browser pill's Hide / Show, and it matches
+            the kebab word for word. It also fails safe: a user who expects the
+            pill's hide loses a page reload, whereas a user who expects to halt
+            the agent would lose their tab AND their model of the app.
+
+            The glyph deliberately does NOT change while the agent drives. It
+            used to swap to the working activity ring, which made the control
+            read as spinner-plus-Stop, i.e. "cancel this operation" - the exact
+            wrong reading, at the moment it is most likely. The pane already
+            says "Agent typing here" and takes the accent border; this button
+            has one job and one appearance. 18px CircleStop, Stop terminal's
+            size.
+
+            Discards the guest and frees its memory; the Browser pill only
+            hides.
+
+            NOT offered inside a pop-out window (same guard the pop-out button
+            uses). This component's close path is renderer-local: it clears
+            `browserOpenTasks` in ITS OWN store, and a pop-out is a separate
+            renderer whose store the board does not share - and which renders
+            this pane unconditionally anyway. Clicking it there would retire the
+            agent's handle in main (locking it out with `surface-gone`) while
+            the guest stayed mounted and its memory stayed spent: the worst of
+            both. The pop-out's OS close button already unmounts the pane, which
+            unregisters the guest properly. */}
+        {!window.electronAPI.popOut?.descriptor && (
+        <button
+          type="button"
+          onClick={handleCloseBrowser}
+          className="flex items-center gap-1.5 px-2 py-1 rounded border border-red-400/30 bg-red-400/10 text-xs text-red-300 hover:bg-red-400/20 hover:text-red-200 transition-colors flex-shrink-0 whitespace-nowrap"
+          title="Close the browser and free its memory. Show reopens the page."
+          aria-label="Close browser"
+          data-testid="browser-close"
+        >
+          <CircleStop size={18} />
+          Close browser
+        </button>
+        )}
+        {!window.electronAPI.popOut?.descriptor && (
+          <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
+        )}
         <button
           type="button"
           onClick={() => webviewRef.current?.goBack()}
@@ -583,19 +867,13 @@ function BrowserPaneActive({
         >
           <RotateCcw size={14} />
         </button>
-        {/* Says where the keyboard is, in words. The dimmed terminal and the
-            accent border carry the same message, but colour alone is not a
-            signal everyone can read, and "why did my typing stop appearing" is
-            exactly the moment plain text helps. */}
-        {agentDriving && (
-          <span
-            className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-accent whitespace-nowrap"
-            data-testid="browser-agent-driving"
-          >
-            <Loader2 size={11} className="animate-spin" />
-            Agent typing here
-          </span>
-        )}
+        {/* The drive cue is NOT in this row. It lives over the page, in the
+            overlay container below, for three reasons that were all reported
+            from real use: an inline child here is ~110px the URL field pays
+            for, it appears and disappears on the router's 400ms burst window
+            so it shifts the row twice per pause, and it described the wrong
+            pane. The terminal is the surface that still takes your keystrokes;
+            the page is the one that cannot. */}
         <input
           type="text"
           value={urlInput}
@@ -628,12 +906,101 @@ function BrowserPaneActive({
             ? <Loader2 size={14} className="animate-spin" />
             : <Pin size={14} strokeWidth={matchesProjectDefault ? 2 : 1.75} fill={matchesProjectDefault ? 'currentColor' : 'none'} />}
         </button>
+        {/* An agent set the viewport this page lays out against. Nothing else
+            on screen can say so: the guest's own element never changes size, so
+            without this the page simply renders at a width the user cannot
+            account for - and on a docked pane it may be showing only part of
+            that layout.
+
+            It takes the ZOOM PILL'S SLOT and its shape: a grouped pill of a
+            status segment and an action, sharing one rounded surface. Matching
+            the control it stands in for keeps the row from reflowing as one
+            swaps for the other, and keeps the height identical - a taller
+            toolbar shrinks the <webview>'s flex height, which resizes the real
+            guest and relayouts the page, a visible change caused by the
+            indicator for the change.
+
+            Shows the MEASURED viewport, never the request. They differ often
+            enough to matter (a window loses its frame and this pane's own
+            chrome to the viewport, a lane can be clamped), and a number here
+            that the page never laid out against would be worse than none.
+
+            Reset is LABELLED rather than an X, for the reason Close browser is:
+            an 11px glyph in a 15px box is not a target anyone can hit, and the
+            pane has already learned once that a bare icon in this row reads as
+            something else. The word also names what it undoes, which an X does
+            not - this resets the viewport, it does not close anything. */}
+        {viewportOverride && (
+          <>
+            <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
+            {/* `h-7` is load-bearing, and it is why the zoom pill carries it
+                too: the chip REPLACES that pill, so the two must be the same
+                height or the swap moves the row.
+
+                This row is the guest's sibling in a flex column, so its height
+                is pixels the `<webview>` does not get. Left to itself the chip
+                is 26.5 (`py-1` around 11px text) against the pill's 28
+                (`p-1.5` around a 14px icon), so the page GROWS 1.5px the
+                moment an override lands. Reported from a live drive as
+                `maxWindowViewport` coming back 1272 on the first set_viewport
+                of a session and 1274 on every call after it, which reads as
+                the tool contradicting itself.
+
+                It only bites in a POP-OUT, which is what made it hard to see:
+                docked, the row is pinned at 28 by Close browser and the
+                pop-out button, and both of those are hidden inside a pop-out
+                window (the pin is `self-stretch`, so it follows rather than
+                drives). There the pill is the tallest thing in the row. */}
+            <div
+              className="flex items-stretch h-7 bg-surface-input border border-edge-input rounded overflow-hidden flex-shrink-0"
+              data-testid="browser-viewport-chip"
+            >
+              <span
+                className="flex items-center gap-1 px-2 text-[11px] text-accent whitespace-nowrap tabular-nums"
+                title={`An agent set this page to render at ${viewportOverride.measured.width} x ${viewportOverride.measured.height} CSS pixels. Reset to use the pane's own size again.`}
+              >
+                <Monitor size={11} />
+                {viewportOverride.measured.width} x {viewportOverride.measured.height}
+                {/* The scale, only when there is one. A fitted pane renders the
+                    layout smaller than life, and that is the fact the zoom pill
+                    would have carried; a real window resize is 1:1 and the
+                    suffix would be noise. */}
+                {Math.abs(zoomFactor - 1) > 0.005 && (
+                  <span className="text-accent/70">at {Math.round(zoomFactor * 100)}%</span>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={handleClearViewport}
+                className="px-2 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors border-l border-edge-input"
+                title="Reset this page to the pane's own size"
+                aria-label="Reset viewport"
+                data-testid="browser-viewport-reset"
+              >
+                Reset
+              </button>
+            </div>
+          </>
+        )}
+        {/* The zoom pill YIELDS to the viewport chip while an override is
+            active, rather than sitting beside it.
+
+            Not only for tidiness: the two govern the same thing. An override
+            is applied pre-scaled by the zoom (the page lays out at override
+            divided by zoom), so a user zooming while one is active silently
+            changes the viewport out from under the number the chip is
+            displaying. Two controls over one value, one of which quietly
+            invalidates the other's readout, is the ambiguity worth removing.
+            The chip carries the scale percentage instead, and its reset brings
+            this control straight back. */}
+        {!viewportOverride && (
+        <>
         <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
         {/* Grouped zoom pill: ZoomOut | % | ZoomIn share one rounded surface,
             individual buttons drop their own rounding so the group reads as a
             single unit (Chrome-style zoom toolbar). */}
         <div
-          className="flex items-stretch bg-surface-input border border-edge-input rounded overflow-hidden"
+          className="flex items-stretch h-7 bg-surface-input border border-edge-input rounded overflow-hidden"
           data-testid="browser-zoom-pill"
         >
           <button
@@ -669,6 +1036,8 @@ function BrowserPaneActive({
             <ZoomIn size={14} />
           </button>
         </div>
+        </>
+        )}
         {/* Pop-out in its predictable top-right slot. Hidden inside a pop-out
             window (descriptor set); shown only for the in-app embed. */}
         {!window.electronAPI.popOut?.descriptor && projectId && (
@@ -688,9 +1057,10 @@ function BrowserPaneActive({
         <webview
           ref={webviewRef as unknown as React.Ref<HTMLElement>}
           src={initialSrc}
-          // Per-worktree persistent cookie jar (browserPartitionForWorktree(cwd),
-          // computed above). Sessions sharing a checkout share the jar; concurrent
-          // worktrees stay isolated. Settings -> Browser -> Clear browser data wipes them.
+          // Per-task persistent cookie jar (browserPartitionForTask, computed
+          // above). The jar follows the task through any worktree path change;
+          // the project identity jar shares the IdP login across tasks. Settings
+          // -> Browser -> Clear browser data wipes them.
           partition={partition}
           // Electron disables window.open inside the guest OUTRIGHT unless this
           // is present, so without it the main-process window-open policy never
@@ -710,7 +1080,11 @@ function BrowserPaneActive({
             inset: 0,
             width: '100%',
             height: '100%',
-            pointerEvents: drawMode ? 'none' : 'auto',
+            // Inert while an agent drives, for the same mechanical reason as
+            // draw mode: a `<webview>` is a guest process that does not
+            // reliably honour CSS stacking, so a scrim on top of it is not
+            // enough on its own and the guest's own event capture has to go.
+            pointerEvents: drawMode || driveBlocking ? 'none' : 'auto',
           }}
           data-testid="browser-webview"
         />
@@ -735,6 +1109,113 @@ function BrowserPaneActive({
             <Loader2 size={20} className="animate-spin text-fg-muted" />
           </div>
         )}
+        {/* An agent is driving this page, said on the page rather than in the
+            toolbar.
+         *
+         *  ALWAYS MOUNTED, opacity-toggled. A conditional mount here would be
+         *  safe for the guest (the webview is child 0 and this is last), but a
+         *  transition needs both ends of the animation to exist, and mounting
+         *  at opacity 0 is the same pattern the retained-pane path already
+         *  relies on.
+         *
+         *  IT SWALLOWS THE POINTER, and that is the point rather than a side
+         *  effect. Three reasons, and the third is the one that makes it a
+         *  correctness fix rather than a cosmetic one:
+         *
+         *    1. The veil and the label already say the pane is untouchable.
+         *       Leaving the mouse live made the picture a lie.
+         *    2. A click mid-run races the agent: following a link changes the
+         *       page under a verification that is still in progress.
+         *    3. Clicking in USED TO STRAND THE USER'S TYPING. The click is a
+         *       gesture away from the guarded element, so the renderer's focus
+         *       guard disarms and `restoreTarget` goes null - while main is
+         *       still unconditionally preventDefaulting every keyDown at the
+         *       guest. Keystrokes then reached neither the page nor the
+         *       terminal and were dropped in silence. With the pointer
+         *       swallowed there is no way to reach that state.
+         *
+         *  The cost is real and is accepted: you cannot scroll the page to
+         *  follow along while a run is open. The toolbar is outside this
+         *  container and stays live throughout, so Close browser, the note
+         *  input, Draw and Inspect all still work, and a run closes on its own
+         *  timer - a stuck veil cannot lock the pane away permanently.
+         *
+         *  The veil is a NEUTRAL grey rather than black: a dark app under a
+         *  black wash is nearly unchanged, and a dark app is most of what gets
+         *  tested in here.
+         *
+         *  It is the SUPPORTING cue though, not the primary one. The breathing
+         *  ring is. Reported from a live drive as "on a white background the
+         *  dim isn't coming through" - and it WAS applied; a viewer simply
+         *  cannot tell a veiled white page from a page that is grey, because
+         *  they never see the two side by side. A tint needs a baseline and
+         *  motion does not, which is why `.kng-drive-pulse` carries the state.
+         *
+         *  Timing is owned by `useAgentDriveVeil`, not by this element: the
+         *  grace period is what stops a one-click drive painting at all. The
+         *  fade out is longer than the fade in on purpose - by the time it
+         *  runs the guest has been released, so the veil is reporting an
+         *  ending rather than a state. */}
+        {/* LAYER 1: the pointer block, and the edge that admits to it.
+         *
+         *  Runs on the RAW drive signal rather than the shaped one, and that
+         *  split is the whole point. The two answer different questions. The
+         *  veil below asks "is this a run worth announcing", which has to
+         *  wait or it flashes on a one-off call. Blocking asks "is the agent
+         *  driving RIGHT NOW", which cannot wait at all: while the two shared
+         *  an envelope the FIRST call of every run went unguarded for a whole
+         *  inter-call gap (median 1.6s, up to 4.4s), which is exactly the
+         *  window where a user click races the agent for the page.
+         *
+         *  The ring rides with it so the pane is never silently dead - a
+         *  blocked page with no visible reason is worse than an unblocked
+         *  one. An EDGE rather than a wash, so a brief block during a one-off
+         *  call reads as a pulse at the border instead of the whole page
+         *  dimming and undimming. It only BREATHES once the run is real, so
+         *  motion still means sustained control rather than a single touch. */}
+        <div
+          className={`absolute inset-0 cursor-default transition-opacity duration-150 ${
+            driveBlocking ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}
+          data-testid="browser-agent-blocking"
+          data-blocking={driveBlocking ? 'true' : 'false'}
+          aria-hidden={!driveBlocking}
+        >
+          {/* The pulse class is applied only WHILE driving, never left on the
+              resting element. An infinite opacity animation keeps being
+              ticked and composited even under `opacity: 0`, and this subtree
+              is mounted for the life of every Browser pane in every open task
+              window - so leaving it running would be a permanent background
+              cost for a cue nobody is looking at. Restarting the keyframe from
+              phase zero on each run is fine here; unlike the shared activity
+              marks there is no sibling for it to stay in phase with. */}
+          <div className={`absolute inset-0 ring-2 ring-inset ring-accent/70 ${agentDriving ? 'kng-drive-pulse' : ''}`} />
+        </div>
+        {/* LAYER 2: the announcement, which never takes the pointer - layer 1
+         *  owns that. Separated so the heavy treatment can stay slow and
+         *  deliberate while the guard underneath it is instant.
+         *
+         *  Two exit speeds, because the two ways a run ends feel nothing
+         *  alike. A run that WOUND DOWN (the link window expired) gets the
+         *  slow fade: it reads as an ending rather than as something abruptly
+         *  gone. A run the user STOPPED gets a fast one - they pressed the
+         *  key and are waiting to see that it landed. */}
+        <div
+          className={`absolute inset-0 pointer-events-none transition-opacity ${
+            agentDriving
+              ? 'opacity-100 duration-200'
+              : `opacity-0 ${driveStopped ? 'duration-100' : 'duration-500'}`
+          }`}
+          data-testid="browser-agent-driving"
+          data-driving={agentDriving ? 'true' : 'false'}
+          aria-hidden={!agentDriving}
+        >
+          <div className="absolute inset-0 bg-[rgb(113_113_122/0.26)]" />
+          <span className="absolute left-2 bottom-2 flex items-center gap-1.5 rounded bg-[rgb(9_11_18/0.82)] px-2 py-1 text-[11px] text-fg">
+            <span className={`h-1.5 w-1.5 rounded-full bg-active ${agentDriving ? 'kng-drive-pulse' : ''}`} />
+            Agent is driving
+          </span>
+        </div>
       </div>
 
       <AttachmentChips
@@ -805,7 +1286,12 @@ function BrowserPaneActive({
           Inspect
         </button>
 
-        {/* Compose zone */}
+        {/* Compose zone. A bare Enter sends, and the absent modifier check is
+            deliberate: `submitTextTarget` commits a dictation target by
+            dispatching a plain Enter on the field, so requiring Ctrl/Cmd here
+            would leave push-to-talk unable to send a note at all. Ctrl/Cmd+Enter
+            falls through the same guard and sends too, which is why the button's
+            tooltip names the short form only. */}
         <input
           ref={noteInputRef}
           type="text"
@@ -826,7 +1312,7 @@ function BrowserPaneActive({
           onClick={handleSend}
           disabled={sending}
           className="flex items-center gap-1 px-3 py-1 text-xs text-accent-on bg-accent-emphasis hover:bg-accent rounded transition-colors disabled:opacity-50"
-          title="Send to agent (Ctrl/Cmd+Enter)"
+          title="Send to agent (Enter)"
           data-testid="browser-send"
         >
           {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}

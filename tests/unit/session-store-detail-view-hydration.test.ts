@@ -117,6 +117,7 @@ function resetSliceState(): void {
     changesViewMode: {},
     changesSelectedCommit: {},
     changesHistoryHeight: {},
+    changesHistoryOpen: {},
     dividerRatio: {},
     browserOpenTasks: new Set<string>(),
     maximizedTasks: new Set<string>(),
@@ -327,6 +328,144 @@ describe('changesSelectedCommit - persists to and hydrates from detail_view_stat
     useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
 
     expect(useSessionStore.getState().changesSelectedCommit['task-hydrate-default']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// changesHistoryOpen: the Changes rail's History section expanded flag.
+// Written only when true (absent = collapsed, the new default), mirroring the
+// changesOpen / changesSelectedCommit asymmetry; collapsing drops the key from
+// the store record AND the next blob write rather than storing false.
+// Red condition (write): remove the
+// `if (state.changesHistoryOpen[taskId]) blob.changesHistoryOpen = true;` line
+// from buildDetailViewBlob and the persist test loses the key. Red condition
+// (read): remove the `if (blob.changesHistoryOpen) ...` hydration line and the
+// hydrate test fails.
+// ---------------------------------------------------------------------------
+
+describe('changesHistoryOpen - persists to and hydrates from detail_view_state', () => {
+  beforeEach(() => {
+    // Same stray-timer flush as the changesSelectedCommit block above.
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  it('persists changesHistoryOpen: true into the saved blob after setChangesHistoryOpen(id, true)', () => {
+    useSessionStore.getState().setChangesHistoryOpen('task-history', true);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [taskId, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(taskId).toBe('task-history');
+    expect(blob).toMatchObject({ changesHistoryOpen: true });
+  });
+
+  it('omits changesHistoryOpen from the blob after collapsing back (absent = collapsed default)', () => {
+    useSessionStore.getState().setChangesHistoryOpen('task-history', true);
+    useSessionStore.getState().setChangesHistoryOpen('task-history', false);
+
+    vi.advanceTimersByTime(1000);
+
+    // Both setter calls coalesce into one debounced save carrying the final state.
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(blob?.changesHistoryOpen).toBeUndefined();
+    // The store record drops the key too, staying bounded.
+    expect('task-history' in useSessionStore.getState().changesHistoryOpen).toBe(false);
+  });
+
+  it('is a no-op (no save scheduled) when setting the value it already has', () => {
+    useSessionStore.getState().setChangesHistoryOpen('task-history', false);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).not.toHaveBeenCalled();
+  });
+
+  it('hydrates changesHistoryOpen from a persisted blob back into the store', () => {
+    const task = makeTask('task-hydrate-history', JSON.stringify({ changesHistoryOpen: true }));
+
+    useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
+
+    expect(useSessionStore.getState().changesHistoryOpen['task-hydrate-history']).toBe(true);
+  });
+
+  it('leaves changesHistoryOpen unset when the persisted blob omits it (collapsed stays the default)', () => {
+    const task = makeTask('task-hydrate-collapsed', JSON.stringify({ dividerRatio: 0.5 }));
+
+    useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
+
+    expect(useSessionStore.getState().changesHistoryOpen['task-hydrate-collapsed']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setChangesFileTreeWidth / setChangesHistoryHeight: `null` CLEARS the stored
+// value (backs double-click-to-reset on the two resizers) rather than storing
+// it. Both setters destructure the taskId key out of the record when the
+// argument is null, so the key is DELETED, not set to null - buildDetailViewBlob
+// writes the key only when `!== undefined`, so a stored `null` would still
+// (wrongly) persist into the blob.
+// Red condition: stop special-casing `null` in either setter (store it as a
+// value like every other branch does) and the corresponding key-absence and
+// blob-omission assertions below fail.
+// ---------------------------------------------------------------------------
+
+describe('setChangesFileTreeWidth - null clears the stored width', () => {
+  beforeEach(() => {
+    // Flush any debounced saves left pending by earlier tests (see the
+    // changesSelectedCommit block's comment for why this is needed).
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  it('removes the taskId key from changesFileTreeWidth when set to null after being set to a number', () => {
+    useSessionStore.getState().setChangesFileTreeWidth('task-tree-width', 300);
+    expect(useSessionStore.getState().changesFileTreeWidth['task-tree-width']).toBe(300);
+
+    useSessionStore.getState().setChangesFileTreeWidth('task-tree-width', null);
+
+    expect('task-tree-width' in useSessionStore.getState().changesFileTreeWidth).toBe(false);
+  });
+
+  it('omits changesFileTreeWidth from the persisted blob after being cleared to null', () => {
+    useSessionStore.getState().setChangesFileTreeWidth('task-tree-width', 300);
+    useSessionStore.getState().setChangesFileTreeWidth('task-tree-width', null);
+
+    vi.advanceTimersByTime(1000);
+
+    // Both setter calls coalesce into one debounced save carrying the final state.
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(blob?.changesFileTreeWidth).toBeUndefined();
+  });
+});
+
+describe('setChangesHistoryHeight - null clears the stored height', () => {
+  beforeEach(() => {
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  it('removes the taskId key from changesHistoryHeight when set to null after being set to a number', () => {
+    useSessionStore.getState().setChangesHistoryHeight('task-history-height', 240);
+    expect(useSessionStore.getState().changesHistoryHeight['task-history-height']).toBe(240);
+
+    useSessionStore.getState().setChangesHistoryHeight('task-history-height', null);
+
+    expect('task-history-height' in useSessionStore.getState().changesHistoryHeight).toBe(false);
+  });
+
+  it('omits changesHistoryHeight from the persisted blob after being cleared to null', () => {
+    useSessionStore.getState().setChangesHistoryHeight('task-history-height', 240);
+    useSessionStore.getState().setChangesHistoryHeight('task-history-height', null);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(blob?.changesHistoryHeight).toBeUndefined();
   });
 });
 

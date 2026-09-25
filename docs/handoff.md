@@ -54,7 +54,7 @@ Post-spawn: handoff DB record updated with target session ID
 
 ## Session History File Locations
 
-Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 14 supported adapters) lives in [Agent Integration > Session History File Location](agent-integration.md#session-history-file-location); maintained there as the single source of truth.
+Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 15 supported adapters) lives in [Agent Integration > Session History File Location](agent-integration.md#session-history-file-location); maintained there as the single source of truth.
 
 ## Prompt Delivery
 
@@ -105,7 +105,7 @@ The toggle is a per-column setting in the Edit Column dialog, under the Agent se
 
 TUI agents (Claude Code, Codex CLI, Gemini CLI, Qwen Code, Aider, Kimi Code, Droid, OpenCode, Grok Build, Antigravity CLI) produce raw PTY output with agent-specific rendering artifacts. Antigravity's cleaner captures the last turn only (its responses carry no marker glyph, the same limitation as Gemini's redraw model). Cleanup utilities in `src/main/agent/handoff/transcript-cleanup.ts` provide shared functions (`filterNoiseLines`, `finalizeTranscript`) used by per-adapter transcript cleanup files. Each agent's cleanup lives in its adapter folder: `src/main/agent/adapters/<name>/transcript-cleanup.ts`.
 
-GitHub Copilot CLI is also a TUI agent but does not yet ship its own `transcript-cleanup.ts`, so its handoff transcripts may contain rendering artifacts until one is added. Cursor CLI, Oz CLI (Warp), and Ollama stream plain text output (no alternate screen buffer) and do not need per-adapter cleanup.
+GitHub Copilot CLI is also a TUI agent but does not yet ship its own `transcript-cleanup.ts`, so its handoff transcripts may contain rendering artifacts until one is added. Cursor CLI, Oz CLI (Warp), Ollama, and Goose CLI stream plain text output (no alternate screen buffer) and do not need per-adapter cleanup.
 
 ## See Also
 

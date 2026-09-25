@@ -1,18 +1,22 @@
 import { IPC } from '../../shared/ipc-channels';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
-import { readWorktreeHead, hasCommitsAheadOfBase } from '../git/worktree-head';
+import { readWorktreeHead, hasCommitsAheadOfBase, readRefsPointingAtSha } from '../git/worktree-head';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import {
   resolvePRForBranch,
   resolvePRByNumber,
   resolvePRByCommit,
+  commitAnchorSelfVerifies,
   detectPR,
   PRResolverUnavailableError,
   PRResolverTransientError,
 } from './pr-registry';
+import type { PRResolveOptions } from './pr-registry';
+import { createDeferredDegrade } from './shared/pr-dispatch';
+import { trackFeatureUsed } from '../analytics/usage';
 import type { TaskRepository } from '../db/repositories/task-repository';
-import type { Task, PRState, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
+import type { AppConfig, Task, PRState, PRMergeReadiness, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
 
 export interface PRLinkResult {
@@ -22,8 +26,24 @@ export interface PRLinkResult {
   message?: string;
 }
 
-/** One-time-per-run guard so the "resolver unavailable" hint isn't logged on every move. */
-let resolverUnavailableHintShown = false;
+/**
+ * One-hint-per-reason guard so the "resolver unavailable" hint isn't logged on
+ * every move.
+ *
+ * Keyed by reason rather than a single boolean: a project whose remote no
+ * connector owns would otherwise burn a process-lifetime latch on the first
+ * sweep and permanently suppress a genuinely different later hint (say, "gh is
+ * not installed") for every other project. Bounded so a message that varies by
+ * path cannot grow it without limit, evicting the OLDEST entry rather than
+ * clearing the whole set: a wholesale clear discards every already-warned
+ * message at once, so the next sweep re-warns all of them and a workspace that
+ * keeps crossing the cap settles into a clear-then-restorm cycle instead of the
+ * one-hint-per-reason behaviour this guard exists to provide. `Set` preserves
+ * insertion order, so oldest-first is just its first key (same eviction shape
+ * as `git-remotes.ts`'s `pruneExpired`).
+ */
+const resolverUnavailableHintsShown = new Set<string>();
+const MAX_RESOLVER_HINTS = 32;
 
 /**
  * Per-task throttle: timestamp (ms) of the last resolve. Auto triggers within
@@ -32,6 +52,174 @@ let resolverUnavailableHintShown = false;
  */
 const lastResolveAt = new Map<string, number>();
 const RESOLVE_TTL_MS = 60_000;
+
+/**
+ * Hold-and-re-poll for a PENDING merge verdict. GitHub answers `UNKNOWN` for a
+ * few seconds after every push while it recomputes mergeability, and Azure's
+ * `succeeded` is `unknown` whenever branch policies are not evaluated (the
+ * setting is off, or the policy call gave no readable answer). Writing that
+ * over a determined verdict on first sight blanks the card's chip for a whole
+ * sweep interval and then restores it: a flicker, not news. So a resolve that
+ * meets a pending answer on a determined verdict KEEPS the stored value and
+ * asks again after each of these delays; only when the budget is spent does
+ * `unknown` land. That final write is what lets a chip clear once its host
+ * really has stopped answering, such as an Azure PR whose policy evaluation
+ * was switched off after it read `ready`. Bounded per task, one timer in
+ * flight at a time, `unref()`'d so it never holds a quit, and cleared by the
+ * refresh scheduler on project switch / shutdown.
+ */
+const PENDING_VERDICT_RETRY_DELAYS_MS: readonly number[] = [5_000, 20_000];
+const pendingVerdictRepolls = new Map<string, { attempt: number; timer: NodeJS.Timeout | null }>();
+
+/**
+ * Re-poll for an IN-FLIGHT verdict. `queued` and `running` are answers, so they
+ * write straight through, but they are answers that expire: the next one is
+ * `ready` or `blocked`, and it arrives when CI finishes, not when the sweep
+ * next ticks. Left to the sweep, a card read `running` for up to a whole
+ * `git.prRefreshIntervalMinutes` after its last check completed, and an agent
+ * going idle right after CI could not rescue it, because the sweep's own
+ * resolve seconds earlier had stamped the 60s coalesce (measured on #720:
+ * 2m47s of lag, about 5 min without an incidental prompt).
+ *
+ * So while an open PR's PERSISTED verdict is in flight, the linker re-asks
+ * every `IN_FLIGHT_VERDICT_REPOLL_MS`. One timer per task, `unref()`'d, and
+ * cleared with the pending-verdict re-polls. The streak is bounded by
+ * `IN_FLIGHT_VERDICT_REPOLL_BUDGET_MS` from its first in-flight answer, and the
+ * bound is sticky: a spent streak stays spent until the verdict leaves the
+ * in-flight states, so a PR stuck `queued` with no runner does not restart a
+ * fresh chain on every sweep. Separate state from `pendingVerdictRepolls` on
+ * purpose: GitHub's real sequence is `running`, a brief `UNKNOWN` recompute,
+ * then `ready`, and the unknown hold that covers the middle step reads its own
+ * attempt count and its own pending timer.
+ */
+const IN_FLIGHT_VERDICT_REPOLL_MS = 30_000;
+const IN_FLIGHT_VERDICT_REPOLL_BUDGET_MS = 30 * 60_000;
+const inFlightVerdictRepolls = new Map<string, { startedAt: number; timer: NodeJS.Timeout | null; exhausted: boolean }>();
+
+/**
+ * A verdict worth holding through a transient `unknown`. `queued` / `running`
+ * count: a blocking check in flight is a real answer, and its next real answer
+ * is `ready` or `blocked`, not `unknown`.
+ *
+ * Written as "anything the platform actually answered" rather than as a list of
+ * the five, which is the same set today and stays right on its own: every
+ * member of `PRMergeReadiness` except `unknown` is a real answer, so a value
+ * added to the union is held by default instead of silently reading as
+ * undetermined until somebody notices the list had not grown.
+ */
+function isDeterminedVerdict(value: PRMergeReadiness | null): boolean {
+  return value !== null && value !== 'unknown';
+}
+
+function schedulePendingVerdictRepoll(taskId: string, deps: PRLinkDeps): void {
+  const existing = pendingVerdictRepolls.get(taskId);
+  // One in flight is enough: a sweep landing while a re-poll is pending must
+  // not consume the budget or move the deadline.
+  if (existing?.timer) return;
+  const attempt = existing?.attempt ?? 0;
+  const delay = PENDING_VERDICT_RETRY_DELAYS_MS[attempt];
+  if (delay === undefined) return;
+  const timer = setTimeout(() => {
+    const entry = pendingVerdictRepolls.get(taskId);
+    if (entry) entry.timer = null;
+    // Forced: the re-poll must bypass the 60s coalesce that would otherwise
+    // swallow it. It runs outside the task lock the scheduling resolve held.
+    // A rejection never reaches the clear at the end of `linkPRForTask`, so
+    // drop the entry here: an orphaned `{ attempt, timer: null }` would carry
+    // a half-spent budget into the next hold for this task.
+    void linkPRForTask(taskId, repollDeps(deps, { force: true })).catch((error) => {
+      clearPendingVerdictRepoll(taskId);
+      console.error(`[pr-linking] merge-readiness re-poll failed for task ${taskId.slice(0, 8)}:`, error);
+    });
+  }, delay);
+  timer.unref();
+  pendingVerdictRepolls.set(taskId, { attempt: attempt + 1, timer });
+}
+
+function clearPendingVerdictRepoll(taskId: string): void {
+  const entry = pendingVerdictRepolls.get(taskId);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  pendingVerdictRepolls.delete(taskId);
+}
+
+/**
+ * Whether this row should have an in-flight chain: the caller opted in, the PR
+ * is open (a draft's chip does not render readiness, a terminal PR never
+ * changes), and its stored verdict waits on CI. Read off the PERSISTED row, so
+ * a degraded resolve that kept the stored verdict keeps re-asking and a
+ * confident-not-found clear ends the chain.
+ */
+function wantsInFlightVerdictRepoll(task: Task, deps: PRLinkDeps): boolean {
+  return deps.repollInFlightVerdict === true
+    && task.pr_state === 'open'
+    && (task.pr_merge_readiness === 'running' || task.pr_merge_readiness === 'queued');
+}
+
+function scheduleInFlightVerdictRepoll(task: Task, deps: PRLinkDeps): void {
+  const taskId = task.id;
+  let entry = inFlightVerdictRepolls.get(taskId);
+  // One in flight is enough, and a spent streak stays spent: a sweep landing
+  // mid-chain must neither add a timer nor restart the budget.
+  if (entry?.timer || entry?.exhausted) return;
+  const now = Date.now();
+  if (!entry) {
+    entry = { startedAt: now, timer: null, exhausted: false };
+    inFlightVerdictRepolls.set(taskId, entry);
+    console.log(`[pr-linking] PR #${task.pr_number} checks in flight for "${task.title}": re-polling every ${IN_FLIGHT_VERDICT_REPOLL_MS / 1000}s`);
+  }
+  if (now - entry.startedAt >= IN_FLIGHT_VERDICT_REPOLL_BUDGET_MS) {
+    entry.exhausted = true;
+    console.log(`[pr-linking] PR #${task.pr_number} checks still in flight for "${task.title}" after ${IN_FLIGHT_VERDICT_REPOLL_BUDGET_MS / 60_000} min: leaving it to the sweep`);
+    return;
+  }
+  const timer = setTimeout(() => {
+    const current = inFlightVerdictRepolls.get(taskId);
+    if (current) current.timer = null;
+    // Adds `bypassThrottle` to skip the 60s coalesce the previous resolve just
+    // stamped. The arming caller's own flags carry through: a chain armed by
+    // `link_pr` re-polls with `force`, and one armed by a link-time resolve
+    // with `force` and `preserveLinkOnNotFound`. A terminal row never reaches
+    // this timer, since the resolve that writes one clears the chain. The scrollback is
+    // dropped so a long chain does not hold a stale string alive; this
+    // resolves a PR the row already names. Like the pending-verdict re-poll, a rejection
+    // never reaches the scheduling decision in `linkPRForTask`, so drop the
+    // entry here.
+    void linkPRForTask(taskId, repollDeps(deps, { bypassThrottle: true, getScrollback: undefined })).catch((error) => {
+      clearInFlightVerdictRepoll(taskId);
+      console.error(`[pr-linking] in-flight re-poll failed for task ${taskId.slice(0, 8)}:`, error);
+    });
+  }, IN_FLIGHT_VERDICT_REPOLL_MS);
+  timer.unref();
+  entry.timer = timer;
+}
+
+/**
+ * The deps a timer-driven re-poll resolves with: the scheduling caller's, with
+ * `overrides` applied and `onLinked` swapped for `onRepollLinked` when the
+ * caller gave one. A re-poll is the app reconciling on its own clock, so a
+ * caller whose `onLinked` announces an agent's own write (`link_pr`) must not
+ * have that announcement repeated minutes later when CI settles.
+ */
+function repollDeps(deps: PRLinkDeps, overrides: Partial<PRLinkDeps>): PRLinkDeps {
+  return { ...deps, ...overrides, onLinked: deps.onRepollLinked ?? deps.onLinked };
+}
+
+function clearInFlightVerdictRepoll(taskId: string): void {
+  const entry = inFlightVerdictRepolls.get(taskId);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  inFlightVerdictRepolls.delete(taskId);
+}
+
+/**
+ * Drop every pending merge-verdict re-poll, both the unknown holds and the
+ * in-flight chains (project switch, delete, shutdown).
+ */
+export function cancelPendingVerdictRepolls(): void {
+  for (const taskId of [...pendingVerdictRepolls.keys()]) clearPendingVerdictRepoll(taskId);
+  for (const taskId of [...inFlightVerdictRepolls.keys()]) clearInFlightVerdictRepoll(taskId);
+}
 
 export interface PRLinkDeps {
   tasks: TaskRepository;
@@ -43,6 +231,12 @@ export interface PRLinkDeps {
    * Falls back to 'main' when absent.
    */
   defaultBaseBranch?: string;
+  /**
+   * Per-project readiness settings (from config), handed unchanged to every
+   * resolve tier that can judge readiness. Read alongside `defaultBaseBranch`
+   * by `resolveProjectLinkSettings`; absent means every option off.
+   */
+  resolveOptions?: PRResolveOptions;
   /**
    * Notify the renderer that the task's PR link or state changed. Every
    * production caller routes this to the toast-free TASK_PR_LINK_CHANGED: the
@@ -60,6 +254,16 @@ export interface PRLinkDeps {
    */
   force?: boolean;
   /**
+   * Bypass the TTL coalesce only, keeping the terminal-state skip. Set by the
+   * `pr-candidate` signal: the agent's own PR command just finished, which is
+   * the strongest hint there is, and it routinely lands inside the 60s window
+   * an idle resolve stamped after the push that preceded it (push, turn ends,
+   * `gh pr create`). Coalescing it away left the card unlinked until the next
+   * idle or sweep. Unlike `force`, a merged or closed PR is still left alone:
+   * a `gh pr view` on a finished PR is not news.
+   */
+  bypassThrottle?: boolean;
+  /**
    * Suppress the confident-not-found clear. Set by link-time triggers, whose
    * whole job is to fill in the state for a link that was JUST written: a
    * resolve fired BY a write must never undo that write. A URL that resolves to
@@ -69,14 +273,71 @@ export interface PRLinkDeps {
    * (kebab refresh, MCP link_pr) leaves this unset so it can still clear.
    */
   preserveLinkOnNotFound?: boolean;
+  /**
+   * Re-poll an open PR whose persisted verdict is `queued` or `running` (see
+   * `IN_FLIGHT_VERDICT_REPOLL_MS`). Absent means off. `linkPR` sets it from
+   * the project's `git.prRefreshIntervalMinutes`, so a project with background
+   * PR refresh switched off gets no background polling from this either. The
+   * MCP command context reads the same setting through
+   * `prRepollInFlightFromGitConfig`, so an agent's own link write arms the
+   * chain too: during `/pull-request` the agent waits on CI inside one turn,
+   * so no idle arrives to arm it, and the next sweep can be minutes away.
+   */
+  repollInFlightVerdict?: boolean;
+  /**
+   * Notification for a write a timer-driven re-poll makes, in place of
+   * `onLinked`. Absent means `onLinked`. Set by a caller whose `onLinked` is
+   * the loud "Task updated by agent" channel (`link_pr`), so the CI-settled
+   * flip minutes later goes out on the quiet one.
+   */
+  onRepollLinked?: (task: Task) => void;
 }
 
 /**
  * A PR linked to a task: the subset of `ResolvedPR` the linker persists. `state`
  * is nullable here (unlike `ResolvedPR.state`) because the scrollback degradation
  * fallback links url+number even when the PR's state cannot be confirmed.
+ * `mergeReadiness` stays optional: `undefined` means the tier that answered
+ * cannot judge it (the commit tier, a connector without the field, the
+ * scrollback scraper), and the linker decides below whether that preserves the
+ * stored verdict (same PR) or starts from null (a different PR).
  */
-type LinkedPR = { url: string; number: number; state: PRState | null };
+type LinkedPR = { url: string; number: number; state: PRState | null; mergeReadiness?: PRMergeReadiness };
+
+/**
+ * Told the moment Tier 6 establishes which remote branch a task's work lives
+ * on, rather than carried out on the return value.
+ *
+ * The ladder RETHROWS a deferred degrade when no tier resolved, and a return
+ * value dies with that throw. The branch identity does not depend on the
+ * provider at all - a remote tip equal to HEAD, that tip not being base's, and
+ * commits of the task's own are all local git state - so discarding it because
+ * `gh` was missing loses it in exactly the window the capture rule exists for:
+ * the CLI comes back after the task has committed past the pushed tip, and by
+ * then no remote ref matches `head_sha` any more.
+ */
+type RecordPushedBranch = (branchName: string) => void;
+
+/**
+ * Another task on this board already holding a PR number, or already holding a
+ * remote branch name as its `branch_name` or `pushed_branch`, if any. Asked by
+ * the INFERRED tiers (3 and 6) before they answer, never by the per-task
+ * anchors (1, 2, 4, 5). Built by `linkPRForTask` from the repository's
+ * `listByPRNumber` / `listByBranchOrPushedBranch`, archived rows included (a
+ * Done task keeps its link), excluding the task being resolved.
+ */
+type FindOtherTaskHoldingPR = (prNumber: number) => Task | undefined;
+type FindOtherTaskHoldingBranch = (branchName: string) => Task | undefined;
+
+/**
+ * How many remote branches may share the task's HEAD tip before Tier 6 gives up.
+ * The no-guess rule means every survivor has to be queried (short-circuiting on
+ * the first hit would silently pick one of several ambiguous PRs), so this is a
+ * hard multiplier on provider calls, and `az` is a Python CLI with a roughly one
+ * second cold start. Three or more branches on one tip is also ambiguous enough
+ * that the distinct-number check below would usually refuse to answer anyway.
+ */
+const MAX_TIP_BRANCH_CANDIDATES = 2;
 
 /**
  * The confidence ladder - resolve a task's PR via the strongest available anchor
@@ -84,8 +345,16 @@ type LinkedPR = { url: string; number: number; state: PRState | null };
  *   1. pr_number  -> exact, branch-independent (best for refreshing state)
  *   2. worktree HEAD branch -> the real branch while actively worked
  *   3. commit SHA -> immutable, survives Done/worktree deletion and renames
- *   4. stored slug branch -> weak last resort when there is no worktree
- * A `PRResolverUnavailableError` from any tier propagates so the caller degrades.
+ *   4. stored slug branch -> a reclaimed worktree whose branch was captured on
+ *      Done, or a no-worktree task created with a custom branch
+ *   5. stored pushed branch -> the branch the agent's own `git push` named, or
+ *      the name Tier 6 recorded; the one anchor a no-worktree task can earn
+ *   6. remote branch at the HEAD tip -> infers that name when nothing recorded it
+ * A degrade error from any tier is REMEMBERED rather than propagated, so the
+ * tiers below it still run; it is rethrown unchanged only if none of them
+ * resolved, and the caller degrades then. A hit at an INFERRED tier (3 or 6)
+ * that another task on the board already holds, by PR number or by branch
+ * name, is refused and treated as a miss (see `refusedAsHeldByAnotherTask`).
  *
  * Every anchor is git state or an explicitly stored number. A PR URL written into
  * the task DESCRIPTION is deliberately not an anchor: a URL cited as background
@@ -104,18 +373,91 @@ async function resolvePRViaLadder(args: {
   branch: string | null;
   effectiveSha: string | null;
   baseBranch: string;
+  baseBranchIsKnown: boolean;
+  recordPushedBranch: RecordPushedBranch;
+  findOtherTaskHoldingPR: FindOtherTaskHoldingPR;
+  findOtherTaskHoldingBranch: FindOtherTaskHoldingBranch;
+  /** Forwarded to every readiness-capable tier; the ladder never inspects it. */
+  resolveOptions: PRResolveOptions;
 }): Promise<LinkedPR | null> {
-  const { task, cwd, projectPath, branch, effectiveSha, baseBranch } = args;
+  const {
+    task, cwd, projectPath, branch, effectiveSha, baseBranch, baseBranchIsKnown, recordPushedBranch,
+    findOtherTaskHoldingPR, findOtherTaskHoldingBranch, resolveOptions,
+  } = args;
+  /**
+   * The base to hand the branch resolvers for `disambiguate`'s base-match bonus.
+   * Deliberately NOT `baseBranch`: that one falls back to the project default
+   * and finally to 'main', and scoring a bonus against a guessed base would
+   * favour the wrong PR. Only an explicit choice or an observed resolution
+   * counts here; absent means no bonus, as before.
+   */
+  const knownBase = task.base_branch || task.resolved_base_branch || undefined;
+
+  // A degrade at one tier must not discard the tiers below it. The registry now
+  // throws when no connector OWNS the repo's remote, or when the owner has no
+  // resolver of that kind, so without this a Tier-3 throw would kill Tiers 4
+  // and 5 - and those are the tiers that rescue a task whose worktree is gone
+  // or never existed (a captured branch, a custom branch, or the branch its
+  // own push named). Errors
+  // are remembered and rethrown UNCHANGED below if no tier resolves, so the
+  // `instanceof` test in `linkPRForTask`'s catch still sets `degradeStatus`.
+  const degrade = createDeferredDegrade();
+
+  /**
+   * The board fact git cannot see. A task fast-forwarded onto a sibling's PR
+   * branch has the sibling's commits as its own HEAD: `hasOwnCommits` counts
+   * them, the commit tier answers with the sibling's PR (the connector keeps a
+   * lone candidate whose head does not match the hint ON PURPOSE, for the
+   * "pushed my tip under another name" shape), and the remote-tip tier finds
+   * the sibling's branch at that tip. Both shapes are byte-identical in git.
+   * The DB separates them: the sibling links first in the normal flow, so it
+   * already holds the number, and its push was captured as `pushed_branch`
+   * before its PR even existed. A hit held by ANOTHER task is a miss for this
+   * one: the ladder keeps descending (a refused commit hit must still let
+   * Tier 5 link this task's own PR) and the confident-not-found clear still
+   * applies. Asked by the inferred tiers only; the per-task anchors are never
+   * refused, so two tasks that legitimately share a PR (a review task and its
+   * author) both link through Tier 1. A board fact rather than a provider
+   * one, so Azure gets it identically. One log line per refusal, naming both
+   * tasks.
+   */
+  const refusedAsHeldByAnotherTask = (pr: LinkedPR, tier: 'by commit' | 'by remote tip'): boolean => {
+    const holder = findOtherTaskHoldingPR(pr.number);
+    if (!holder) return false;
+    console.log(`[pr-linking] Refused PR #${pr.number} ${tier} for "${task.title}" (#${task.display_id}): already linked to "${holder.title}" (#${holder.display_id})`);
+    return true;
+  };
+  const refusedAsAnotherTasksBranch = (candidate: string): boolean => {
+    const holder = findOtherTaskHoldingBranch(candidate);
+    if (!holder) return false;
+    console.log(`[pr-linking] Refused remote branch "${candidate}" at the tip of "${task.title}" (#${task.display_id}): it belongs to "${holder.title}" (#${holder.display_id})`);
+    return true;
+  };
 
   if (task.pr_number != null) {
-    const byNumber = await resolvePRByNumber(cwd, task.pr_number);
+    const byNumber = await degrade.attempt(() => resolvePRByNumber(cwd, task.pr_number as number, resolveOptions));
     if (byNumber) return byNumber;
   }
   if (task.worktree_path && branch) {
-    const byBranch = await resolvePRForBranch(cwd, branch, task.base_branch ?? undefined);
+    const byBranch = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase, resolveOptions));
     if (byBranch) return byBranch;
   }
-  if (effectiveSha && (await hasCommitsAheadOfBase(projectPath ?? cwd, baseBranch, effectiveSha))) {
+  // Kept lazy, and its answer remembered for Tier 6's capture rule: computing it
+  // eagerly would make every Tier-1/2 hit pay for a git read it never needs.
+  const hasOwnCommits = effectiveSha
+    ? await hasCommitsAheadOfBase(projectPath ?? cwd, baseBranch, effectiveSha)
+    : false;
+  // The commit tier runs only when BOTH gates agree. `hasOwnCommits` is the
+  // linker's cheap early-out; `commitAnchorSelfVerifies` is the connector's own
+  // declaration that a hit means the commit is that PR's work rather than
+  // history it inherited. The second gate can only ever TIGHTEN the first: a
+  // connector that does not declare it (or a future one that forgets) loses the
+  // commit tier instead of silently relying on a base-relative check that
+  // cannot see a mislink. Evaluated second so the common skip costs no
+  // remote read, and given the SAME repoCwd as the dispatch it gates: the
+  // remote cache keys on that path, so the two share one read rather than
+  // deciding ownership from two different vantage points.
+  if (effectiveSha && hasOwnCommits && (await commitAnchorSelfVerifies(projectPath ?? cwd))) {
     // Run from the main repo (projectPath) so it works even when the worktree is
     // gone. Pass the known branch as a hint so a commit shared by several PRs
     // ties back to this task (ambiguous matches resolve to null, not a guess).
@@ -124,13 +466,118 @@ async function resolvePRViaLadder(args: {
     // that PR is never this task's work. This also catches the single-parent
     // commits `gh pr merge --rebase`/`--squash` produce, which a parent-count
     // merge check misses.
-    const byCommit = await resolvePRByCommit(projectPath ?? cwd, effectiveSha, branch ?? undefined);
-    if (byCommit) return byCommit;
+    const byCommit = await degrade.attempt(() =>
+      resolvePRByCommit(projectPath ?? cwd, effectiveSha, branch ?? undefined),
+    );
+    if (byCommit && !refusedAsHeldByAnotherTask(byCommit, 'by commit')) return byCommit;
   }
   if (!task.worktree_path && branch) {
-    const bySlug = await resolvePRForBranch(cwd, branch, task.base_branch ?? undefined);
+    const bySlug = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase, resolveOptions));
     if (bySlug) return bySlug;
   }
+  // Tier 5: the branch we already established this task's work was PUSHED to,
+  // when that differs from the local one. Free (no git read) and, unlike Tier 6,
+  // it keeps working after the task commits past what it pushed and after the
+  // remote branch is deleted, because a PR keeps its source branch name.
+  if (task.pushed_branch && task.pushed_branch !== branch) {
+    const byPushed = await degrade.attempt(() =>
+      resolvePRForBranch(cwd, task.pushed_branch as string, knownBase, resolveOptions),
+    );
+    if (byPushed) return byPushed;
+  }
+  // Tier 6: a REMOTE branch whose tip is EXACTLY this task's HEAD commit.
+  //
+  // The shape every tier above misses: the local worktree branch is the
+  // Kangentic slug, the branch pushed as the PR source carries a team-convention
+  // name, and nothing reconciled them. Tiers 2 and 4 query the slug and miss;
+  // Tier 3 is gated off once the PR merged into base, because `rev-list --count
+  // <base>..<sha>` is 0 by then. Platform-agnostic, and it is the only tier that
+  // can rescue an ACTIVE Azure PR whose worktree is gone, since Azure records
+  // commit associations only at completion.
+  //
+  // LAST on purpose, and not because a tip match is weak. It is strictly more
+  // selective than Tier 3's containment match, but it is far less DEFENDED:
+  // `resolvePRForBranch` hands `disambiguate` a branchHint that every returned
+  // item already matches by construction, so its ambiguity escape hatch can
+  // never fire, and there is no per-candidate base-history filter like the
+  // commit tier's. A hit at any tier suppresses the confident-not-found clear
+  // permanently, so the least-guarded tier is the one that must only ever turn a
+  // not-found into a link, never displace a stronger tier's answer.
+  if (effectiveSha && baseBranchIsKnown) {
+    // From the MAIN repo, like the commit tier: refs/remotes lives in the common
+    // ref store, so this still answers after the worktree is reclaimed on Done.
+    const pointingAt = await readRefsPointingAtSha(projectPath ?? cwd, effectiveSha, baseBranch);
+    // The sha is a base tip, so a fresh worktree is sitting on it and every
+    // branch there belongs to whatever last landed on base. Same magnet the
+    // Tier-3 guard exists to prevent, but this form keeps working after the PR
+    // merges: it asks "is my sha base's TIP", not "is my sha contained in base".
+    const candidates = pointingAt.pointsAtBaseTip
+      ? []
+      // Tiers 2, 4, and 5 already tried these; re-querying spends a round trip
+      // on an answer we have.
+      : pointingAt.remoteBranches.filter((name) => name !== branch && name !== task.pushed_branch);
+    if (candidates.length > 0 && candidates.length <= MAX_TIP_BRANCH_CANDIDATES) {
+      const hits: Array<{ candidate: string; pr: LinkedPR }> = [];
+      for (const candidate of candidates) {
+        const hit = await degrade.attempt(() =>
+          resolvePRForBranch(cwd, candidate, knownBase, resolveOptions),
+        );
+        if (hit) hits.push({ candidate, pr: hit });
+      }
+      // Every survivor is queried rather than short-circuiting on the first hit:
+      // two branches on one tip carrying two different PRs is ambiguous, and a
+      // wrong link here is permanent. Same rule `disambiguate` applies when
+      // nothing ties the candidates back to this task. The holder refusals come
+      // AFTER the distinct check on purpose: an ambiguous pair never consults
+      // the board, and a refused sole hit stays in `hits`, so the record-only
+      // path below cannot see an empty list and store the sibling's branch.
+      if (
+        new Set(hits.map((hit) => hit.pr.number)).size === 1
+        && !refusedAsAnotherTasksBranch(hits[0].candidate)
+        && !refusedAsHeldByAnotherTask(hits[0].pr, 'by remote tip')
+      ) {
+        recordPushedBranch(hits[0].candidate);
+        return hits[0].pr;
+      }
+      // No PR yet, but the identity is still worth recording: the agent pushes
+      // the branch BEFORE opening the PR, and if we wait for a PR to appear the
+      // task may commit past the pushed tip first, after which no remote ref
+      // matches head_sha and this tier goes quiet for good.
+      //
+      // Two gates on THIS path. `hasOwnCommits` excludes the follow-on shape
+      // against a MERGED neighbour: a task cut from another task's branch with
+      // zero commits sits on that branch's tip, and once the neighbour merged
+      // the count is 0. It is base-relative, so it is blind to a neighbour that
+      // has NOT merged: a follower fast-forwarded onto a sibling's unmerged
+      // branch counts the sibling's commits as its own (the incident this
+      // guard was written for: 2 ahead of main, none of them the task's). The
+      // holder refusal covers that half from the board side, refusing a
+      // candidate another task recorded as its branch. The link path above is
+      // gated by `pointsAtBaseTip` plus the two holder refusals; without the
+      // DB it could still link a zero-commit task to a neighbour branch that
+      // merged by squash or rebase (its tip contained in base without being
+      // base's tip). Hoisting `hasOwnCommits` up to the link path is not the
+      // fix: for a merged neighbour every discriminator built from "commits
+      // ahead of base" or "is the PR merged" is already true in exactly the
+      // bad case, and the hoist costs the merged-PR rescue this tier exists
+      // for. Reviewers keep proposing it.
+      //
+      // The condition is also only as sound as `baseBranch`, which is why the
+      // base is recorded at worktree creation.
+      if (
+        hits.length === 0 && candidates.length === 1 && hasOwnCommits
+        && !refusedAsAnotherTasksBranch(candidates[0])
+      ) {
+        recordPushedBranch(candidates[0]);
+      }
+    }
+  }
+  // Nothing resolved: a tier that could not CHECK outranks the tiers that
+  // merely missed, so the caller degrades instead of clearing the link. Note
+  // this throws PAST any return value, which is why the branch identity above
+  // is reported through `recordPushedBranch` rather than returned.
+  const pendingDegrade = degrade.pending();
+  if (pendingDegrade) throw pendingDegrade;
   return null;
 }
 
@@ -145,16 +592,30 @@ async function resolvePRViaLadder(args: {
 export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<PRLinkResult> {
   return withTaskLock(taskId, async (): Promise<PRLinkResult> => {
     const task = deps.tasks.getById(taskId);
-    if (!task) return { status: 'no-anchor', task: null };
+    if (!task) {
+      // A task deleted mid-hold still fires its re-poll timer; nothing below
+      // runs, so the entry it left behind is dropped here rather than lingering
+      // until the next project switch clears every re-poll at once.
+      clearPendingVerdictRepoll(taskId);
+      clearInFlightVerdictRepoll(taskId);
+      return { status: 'no-anchor', task: null };
+    }
 
     // Auto triggers: skip terminal PRs (merged/closed can't change) and coalesce
-    // rapid re-resolves. Explicit user/agent actions (force) always run fresh.
+    // rapid re-resolves. Explicit user/agent actions (force) always run fresh;
+    // the PR-command signal (bypassThrottle) skips only the coalesce.
     if (!deps.force) {
       if (task.pr_state === 'merged' || task.pr_state === 'closed') {
         return { status: 'unchanged', task };
       }
       const last = lastResolveAt.get(taskId);
-      if (last != null && Date.now() - last < RESOLVE_TTL_MS) {
+      if (!deps.bypassThrottle && last != null && Date.now() - last < RESOLVE_TTL_MS) {
+        // Coalesced, but the in-flight chain is still armed from the stored
+        // row. A project switch or a config change cancels every chain, and
+        // the on-open sweep that should re-arm it lands inside the window the
+        // last re-poll stamped; without this the card waits a whole sweep
+        // interval again. A pending timer or a spent budget makes it a no-op.
+        if (wantsInFlightVerdictRepoll(task, deps)) scheduleInFlightVerdictRepoll(task, deps);
         return { status: 'unchanged', task };
       }
     }
@@ -180,12 +641,27 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     }
     const branch = worktreeBranch ?? task.branch_name;
     const effectiveSha = freshSha ?? task.head_sha;
-    const baseBranch = task.base_branch ?? deps.defaultBaseBranch ?? 'main';
+    // `resolved_base_branch` sits between the user's explicit choice and the
+    // project default on purpose: it is the base this task's worktree was
+    // OBSERVED to be cut from, so it is right where `base_branch` is null (most
+    // tasks) and the project default would otherwise be a guess. That guess is
+    // what made the commits-ahead-of-base guard unsound for a worktree cut from
+    // a long-lived integration branch.
+    // `||` all the way down, matching `resolveEffectiveBaseBranch`. `??` would
+    // let an empty string from any layer win, and an empty base silently
+    // disables the base-tip bail: none of its three ref forms can match
+    // `refs/heads/` or `refs/remotes/<remote>/` with nothing after the prefix,
+    // so a fresh worktree on base's tip would stop bailing and Tier 6 would
+    // magnet onto whatever last landed on base. No writer produces `''` today;
+    // this is here so none can.
+    const baseBranch = task.base_branch || task.resolved_base_branch || deps.defaultBaseBranch || 'main';
 
     // Nothing to resolve from at all. Mirrors `autoLinkPRForTask`'s gate: a task
     // with no stored number and no git state has no anchor, whatever its
-    // description happens to mention.
-    if (!cwd || (task.pr_number == null && !branch && !effectiveSha)) {
+    // description happens to mention. `pushed_branch` counts: for a task with
+    // no worktree it is the only anchor the app can record (from the agent's
+    // own push), and Tier 5 needs no worktree to resolve from it.
+    if (!cwd || (task.pr_number == null && !branch && !effectiveSha && !task.pushed_branch)) {
       // Still persist a freshly-read SHA if we have one (rare: detached HEAD worktree).
       if (freshSha && freshSha !== task.head_sha) {
         return { status: 'no-anchor', task: deps.tasks.update({ id: task.id, head_sha: freshSha }) };
@@ -199,61 +675,184 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     // the real reason and never overwrite an existing link with "not found".
     let degradeStatus: 'resolver-unavailable' | 'transient-error' | undefined;
     let degradeMessage: string | undefined;
+    /**
+     * An UNEXPECTED exception escaped the ladder. "An owning connector ran
+     * cleanly" is false in that case, so the confident-not-found clear below
+     * must not fire: without this flag a resolver bug silently wipes the task's
+     * PR link, and so would a future regression in `readRemoteUrls`'s
+     * never-rejects contract.
+     */
+    let resolveFailed = false;
+    /** Branch identity Tier 6 established, persisted alongside `head_sha`. */
+    let discoveredPushedBranch: string | null = null;
 
     try {
-      const resolved = await resolvePRViaLadder({ task, cwd, projectPath: deps.projectPath, branch, effectiveSha, baseBranch });
-      if (resolved) next = { url: resolved.url, number: resolved.number, state: resolved.state };
+      const found = await resolvePRViaLadder({
+        task, cwd, projectPath: deps.projectPath, branch, effectiveSha, baseBranch,
+        // Deliberately WIDER than `knownBase` above, which refuses the project
+        // default. The two answer different questions. `knownBase` decides
+        // whether to SCORE a base-match bonus, where a guess actively favours
+        // the wrong PR; this decides whether the base-tip bail has anything at
+        // all to measure against, where a guess that is right (one base named
+        // `main`, which is the overwhelming majority) makes the bail work and a
+        // guess that is wrong leaves it no worse than not running.
+        //
+        // Do NOT narrow this to match `knownBase`. It reads like the obviously
+        // consistent thing to do and it makes the whole tier inert: the task
+        // this was written for has `base_branch` NULL and predates
+        // `resolved_base_branch`, so it would never reach Tier 6 at all. The
+        // residual that narrowing would close is documented in
+        // docs/pr-integration.md and is not closable this way, because a task
+        // sitting on a long-lived branch's tip is byte-identical in git to one
+        // sitting on its own pushed tip.
+        // Falsy, not nullish, so this agrees with `baseBranch` above on what
+        // counts as a base. Under `!= null` an empty string at any layer would
+        // report the base as KNOWN while `baseBranch` itself fell through to the
+        // hardcoded 'main', and Tier 6 would then measure its bail against a
+        // branch nothing here was cut from. Same reason that line is `||`: no
+        // writer produces '' today, and this keeps the two from disagreeing if
+        // one ever does. It does NOT narrow the three layers, which the note
+        // above forbids.
+        baseBranchIsKnown: Boolean(
+          task.base_branch || task.resolved_base_branch || deps.defaultBaseBranch,
+        ),
+        // Assigned as Tier 6 discovers it, so a deferred degrade rethrown out of
+        // the ladder still leaves the identity here to persist below.
+        recordPushedBranch: (branchName) => { discoveredPushedBranch = branchName; },
+        // "Another task" is a board fact, so it is read from the repository
+        // rather than from git. The task's own row is excluded so a task
+        // re-confirming its own number by commit is never refused.
+        findOtherTaskHoldingPR: (prNumber) =>
+          deps.tasks.listByPRNumber(prNumber).find((other) => other.id !== task.id),
+        findOtherTaskHoldingBranch: (branchName) =>
+          deps.tasks.listByBranchOrPushedBranch(branchName).find((other) => other.id !== task.id),
+        resolveOptions: deps.resolveOptions ?? {},
+      });
+      if (found) next = { url: found.url, number: found.number, state: found.state, mergeReadiness: found.mergeReadiness };
     } catch (error) {
       if (error instanceof PRResolverUnavailableError || error instanceof PRResolverTransientError) {
         degradeStatus = error instanceof PRResolverTransientError ? 'transient-error' : 'resolver-unavailable';
         degradeMessage = error.message;
         // Degrade to the scrollback scraper (url+number only; preserve a known
-        // state when the URL is unchanged).
+        // state when the URL is unchanged). Merge readiness is left undefined:
+        // the same-PR rule below preserves it exactly as the state is preserved
+        // here, and nulls it when the scrape names a different PR.
         const scraped = deps.getScrollback ? detectPR(deps.getScrollback() ?? '') : null;
         if (scraped) {
           next = { url: scraped.url, number: scraped.number, state: scraped.url === task.pr_url ? task.pr_state : null };
         }
-        if (degradeStatus === 'resolver-unavailable' && !resolverUnavailableHintShown) {
-          resolverUnavailableHintShown = true;
+        if (degradeStatus === 'resolver-unavailable' && !resolverUnavailableHintsShown.has(error.message)) {
+          if (resolverUnavailableHintsShown.size >= MAX_RESOLVER_HINTS) {
+            const oldestHint = resolverUnavailableHintsShown.keys().next();
+            if (!oldestHint.done) resolverUnavailableHintsShown.delete(oldestHint.value);
+          }
+          resolverUnavailableHintsShown.add(error.message);
           console.warn(`[pr-linking] ${error.message}\nPR auto-linking is degraded to terminal scraping until a PR resolver is available.`);
         }
       } else {
+        resolveFailed = true;
         console.error(`[pr-linking] resolve failed for task ${taskId.slice(0, 8)}:`, error);
       }
+    }
+
+    // Merge readiness has three rules of its own, none of which `pr_state`
+    // needs, because every tier can determine a state and not every tier can
+    // determine readiness:
+    //  - PRESERVE on undetermined. A tier whose connector cannot judge it (the
+    //    commit tier on both providers, the scrollback scraper) says nothing
+    //    about the stored verdict, so `undefined` keeps it: the `pushed_branch`
+    //    rule below, applied to a column. A link that moved to a DIFFERENT PR
+    //    starts from null instead, since the old verdict describes the old PR.
+    //  - HOLD through a pending answer (see `PENDING_VERDICT_RETRY_DELAYS_MS`):
+    //    a platform `unknown` on a determined verdict of the SAME open PR keeps
+    //    the stored value and schedules a bounded re-poll; only when the budget
+    //    is spent does `unknown` land. A terminal PR is never held: the chip
+    //    does not render readiness there, and GitHub never recomputes it.
+    //  - Everything else writes, including `unknown` over null, so "asked, no
+    //    verdict yet" is recorded and distinguishable from never checked. An
+    //    in-flight `queued` / `running` writes too, and then re-polls on its own
+    //    timer until CI settles (see `IN_FLIGHT_VERDICT_REPOLL_MS`).
+    const samePr = next != null && next.url === task.pr_url && next.number === task.pr_number;
+    const holdsPendingVerdict = next != null
+      && next.mergeReadiness === 'unknown'
+      && samePr
+      && (next.state === 'open' || next.state === 'draft')
+      && isDeterminedVerdict(task.pr_merge_readiness)
+      && (pendingVerdictRepolls.get(taskId)?.attempt ?? 0) < PENDING_VERDICT_RETRY_DELAYS_MS.length;
+    let nextMergeReadiness: PRMergeReadiness | null;
+    if (next == null) {
+      nextMergeReadiness = task.pr_merge_readiness;
+    } else if (next.mergeReadiness === undefined || holdsPendingVerdict) {
+      nextMergeReadiness = samePr ? task.pr_merge_readiness : null;
+    } else {
+      nextMergeReadiness = next.mergeReadiness;
     }
 
     // Build a single update for any changed PR fields and/or the freshly-read SHA.
     const patch: TaskUpdateInput = { id: task.id };
     const prChanged = next != null
-      && (task.pr_url !== next.url || task.pr_number !== next.number || task.pr_state !== next.state);
+      && (task.pr_url !== next.url || task.pr_number !== next.number || task.pr_state !== next.state
+        || task.pr_merge_readiness !== nextMergeReadiness);
     if (prChanged && next) {
       patch.pr_url = next.url;
       patch.pr_number = next.number;
       patch.pr_state = next.state;
+      patch.pr_merge_readiness = nextMergeReadiness;
     }
     // Confident not-found: the resolver ran cleanly (no transient / unavailable
     // degrade) and matched no PR, yet the task still carries a link. Clear it so
     // a stale `merged` (or any orphaned link) never lingers - pr_number, pr_url,
-    // and pr_state always agree, written atomically in the same update below. A
-    // degraded resolve never clears (the link is preserved, as before), and
-    // neither does a link-time resolve (`preserveLinkOnNotFound`), which would
-    // otherwise undo the very write that triggered it.
-    const hadLink = task.pr_number != null || task.pr_url != null || task.pr_state != null;
-    const prCleared = next == null && !degradeStatus && hadLink && !deps.preserveLinkOnNotFound;
+    // pr_state, and pr_merge_readiness always agree, written atomically in the
+    // same update below. A degraded resolve never clears (the link is preserved,
+    // as before), and neither does a link-time resolve
+    // (`preserveLinkOnNotFound`), which would otherwise undo the very write that
+    // triggered it.
+    const hadLink = task.pr_number != null || task.pr_url != null || task.pr_state != null
+      || task.pr_merge_readiness != null;
+    const prCleared = next == null && !degradeStatus && !resolveFailed && hadLink && !deps.preserveLinkOnNotFound;
     if (prCleared) {
       patch.pr_url = null;
       patch.pr_number = null;
       patch.pr_state = null;
+      patch.pr_merge_readiness = null;
     }
     const shaChanged = freshSha != null && freshSha !== task.head_sha;
     if (shaChanged) patch.head_sha = freshSha;
+    // Never cleared here, only corrected: a resolve that simply did not reach
+    // Tier 6 (a Tier-1 hit, a base-tip bail) says nothing about whether the
+    // recorded branch is still right. Cleanup paths null it with `branch_name`.
+    const pushedBranchChanged = discoveredPushedBranch != null && discoveredPushedBranch !== task.pushed_branch;
+    if (pushedBranchChanged) patch.pushed_branch = discoveredPushedBranch;
 
     let updatedTask = task;
-    if (prChanged || prCleared || shaChanged) {
+    if (prChanged || prCleared || shaChanged || pushedBranchChanged) {
       updatedTask = deps.tasks.update(patch);
     }
+    // A held verdict re-asks on a timer; any other outcome (a determined
+    // verdict, a preserve, a clear, a miss) ends the hold and drops the budget.
+    //
+    // The in-flight chain is left untouched while a hold runs: GitHub answers
+    // `running`, then `UNKNOWN` for a few seconds while it recomputes, then
+    // `ready`, and the hold covering the middle step must neither end the
+    // streak nor restart its budget. Otherwise the chain follows the persisted
+    // row (see `wantsInFlightVerdictRepoll`).
+    if (holdsPendingVerdict) {
+      schedulePendingVerdictRepoll(taskId, deps);
+    } else {
+      clearPendingVerdictRepoll(taskId);
+      if (wantsInFlightVerdictRepoll(updatedTask, deps)) {
+        scheduleInFlightVerdictRepoll(updatedTask, deps);
+      } else {
+        clearInFlightVerdictRepoll(taskId);
+      }
+    }
     if (prChanged && next) {
-      console.log(`[pr-linking] Linked PR #${next.number} (${next.state ?? 'unknown'}) to "${task.title}": ${next.url}`);
+      const readinessNote = nextMergeReadiness ? `, merge ${nextMergeReadiness}` : '';
+      console.log(`[pr-linking] Linked PR #${next.number} (${next.state ?? 'unknown'}${readinessNote}) to "${task.title}": ${next.url}`);
+      // Adoption signal on a real or refreshed link only: the automatic sweeps
+      // that return early above and the stale-link clear below are not uses.
+      // Main dedups to once per day.
+      trackFeatureUsed('pull_request');
       deps.onLinked(updatedTask);
     } else if (prCleared) {
       console.log(`[pr-linking] Cleared stale PR link from "${task.title}" (no PR resolves for its branch)`);
@@ -278,8 +877,145 @@ interface LinkPROptions {
   scrollback?: string;
   /** Bypass the TTL coalesce + terminal-skip (explicit user/agent refresh). */
   force?: boolean;
+  /** Bypass the TTL coalesce only (the `pr-candidate` signal; see `PRLinkDeps`). */
+  bypassThrottle?: boolean;
   /** Keep a link the resolver could not match (see `PRLinkDeps`). */
   preserveLinkOnNotFound?: boolean;
+}
+
+/** The per-project settings the linker reads from config, off one effective-config read. */
+interface ProjectLinkSettings {
+  defaultBaseBranch: string | undefined;
+  resolveOptions: PRResolveOptions;
+  /** Background PR refresh is on (`git.prRefreshIntervalMinutes` > 0); see `PRLinkDeps.repollInFlightVerdict`. */
+  repollInFlightVerdict: boolean;
+}
+
+/**
+ * The project's default base branch for the ladder's base-relative guards,
+ * plus the per-resolve options every readiness-capable tier receives. One
+ * `getEffectiveConfig` read serves both: it is uncached (a `readFileSync` and
+ * `JSON.parse` of `.kangentic/config.json` per call), and this runs once per
+ * task per sweep.
+ *
+ * The base branch is board default first, then the effective config, matching
+ * `resolveEffectiveBaseBranch` (ipc/helpers/task-git.ts), which is what decides
+ * the base a worktree is actually cut from. Reading the config alone reported
+ * `main` for a project whose kangentic.json says `develop`, so the linker
+ * measured against a base no worktree here was ever cut from. Only reachable
+ * for a task with neither `base_branch` nor `resolved_base_branch`, since both
+ * outrank this.
+ *
+ * `||`, not `??`, to match `resolveEffectiveBaseBranch` exactly: an empty
+ * string in either layer has to fall through to the next one. Under `??` it
+ * would win, and an empty base defeats the base-tip bail outright, since none
+ * of its three ref forms can match `refs/heads/` or `refs/remotes/<remote>/`
+ * with nothing after the prefix.
+ *
+ * An unreadable config leaves the linker on its 'main' fallback with every
+ * option off, the in-flight re-poll included; it never fails the resolve.
+ */
+function resolveProjectLinkSettings(context: IpcContext, projectPath: string | null): ProjectLinkSettings {
+  if (!projectPath) return { defaultBaseBranch: undefined, resolveOptions: {}, repollInFlightVerdict: false };
+  try {
+    const gitConfig = context.configManager.getEffectiveConfig(projectPath).git;
+    return {
+      defaultBaseBranch: context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
+        || gitConfig?.defaultBaseBranch,
+      resolveOptions: prResolveOptionsFromGitConfig(gitConfig),
+      repollInFlightVerdict: prRepollInFlightFromGitConfig(gitConfig),
+    };
+  } catch {
+    return { defaultBaseBranch: undefined, resolveOptions: {}, repollInFlightVerdict: false };
+  }
+}
+
+/**
+ * The per-resolve PR options a project's effective `git` config selects. The
+ * ONE mapping from config keys to `PRResolveOptions`, shared by the linker's
+ * own read above and by the MCP command context (`mcp-project-context.ts`),
+ * so a background sweep and an agent-triggered resolve can never disagree
+ * about the same PR: with two hand-written copies a key added to one and not
+ * the other would write `ready` on one path and `blocked` on the other, and
+ * the chip would flicker between them. Every key comes out an explicit
+ * boolean, never undefined, so a connector's `=== true` gate reads the same
+ * value the config holds.
+ *
+ * `=== true` on both, including the default-ON `prBypassCountsAsReady`:
+ * `getEffectiveConfig` merges `DEFAULT_CONFIG`, so an absent key already reads
+ * `true` by the time it gets here. The `{}` fallbacks in the callers (no
+ * project path, an unreadable config) are the one asymmetry that setting
+ * introduced: they leave a default-on option OFF, which is the safe direction
+ * (a PR reads `blocked`, GitHub's own answer) and is deliberate.
+ */
+export function prResolveOptionsFromGitConfig(gitConfig: AppConfig['git'] | undefined): PRResolveOptions {
+  return {
+    evaluateBranchPolicies: gitConfig?.prEvaluateBranchPolicies === true,
+    bypassCountsAsReady: gitConfig?.prBypassCountsAsReady === true,
+  };
+}
+
+/**
+ * Whether a project's config lets the linker re-poll an in-flight verdict
+ * (`PRLinkDeps.repollInFlightVerdict`): background PR refresh is on. The ONE
+ * mapping, shared with the MCP command context for the same reason
+ * `prResolveOptionsFromGitConfig` is shared.
+ */
+export function prRepollInFlightFromGitConfig(gitConfig: AppConfig['git'] | undefined): boolean {
+  const refreshIntervalMinutes = gitConfig?.prRefreshIntervalMinutes;
+  return refreshIntervalMinutes != null && refreshIntervalMinutes > 0;
+}
+
+/**
+ * Record the branch a session's own `git push` named as its destination onto
+ * the session's task, as `pushed_branch`.
+ *
+ * This is the per-task PR anchor for a task with no worktree: every other
+ * anchor is written from a worktree read, and the shared checkout's HEAD is
+ * not per task (three concurrent no-worktree tasks share it). The push command
+ * belongs to exactly one session, so its destination belongs to exactly one
+ * task. Tier 5 then resolves the PR from it with no git read at all.
+ *
+ * Recorded only; nothing resolves from here. The push precedes the PR, and a
+ * non-force resolve now would stamp the 60s per-task throttle that the
+ * `pr-candidate` resolve seconds later would then be coalesced by.
+ *
+ * Refused for three names. The task's own local branch is Tier 2's / Tier 4's
+ * anchor already (and `pushed_branch` is documented as "when that differs").
+ * The stored `pushed_branch` is a no-op. The task's effective base is the one
+ * name that could link WRONGLY: a merge-back's `git push origin HEAD:develop`
+ * would otherwise make Tier 5 answer with the base branch's own PR.
+ *
+ * The patch is only `{ id, pushed_branch }` against a row re-read under the
+ * task lock, so it cannot clobber a concurrent PR-link write.
+ */
+export async function recordPushedBranchForSession(
+  context: IpcContext,
+  sessionId: string,
+  branch: string,
+): Promise<void> {
+  const projectId = context.sessionManager.getSessionProjectId(sessionId) ?? context.currentProjectId;
+  if (!projectId) return;
+  let repos: ReturnType<typeof getProjectRepos>;
+  try {
+    repos = getProjectRepos(context, projectId);
+  } catch {
+    return;
+  }
+  const { tasks } = repos;
+  const task = tasks.getBySessionId(sessionId);
+  if (!task) return;
+
+  const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
+  const { defaultBaseBranch } = resolveProjectLinkSettings(context, projectPath);
+
+  await withTaskLock(task.id, async () => {
+    const fresh = tasks.getById(task.id);
+    if (!fresh) return;
+    const effectiveBase = fresh.base_branch || fresh.resolved_base_branch || defaultBaseBranch;
+    if (branch === fresh.branch_name || branch === fresh.pushed_branch || branch === effectiveBase) return;
+    tasks.update({ id: fresh.id, pushed_branch: branch });
+  });
 }
 
 /**
@@ -309,18 +1045,16 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
   if (!task) return { status: 'no-anchor', task: null };
 
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
-  let defaultBaseBranch: string | undefined;
-  try {
-    defaultBaseBranch = projectPath ? context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch : undefined;
-  } catch {
-    defaultBaseBranch = undefined;
-  }
+  const { defaultBaseBranch, resolveOptions, repollInFlightVerdict } = resolveProjectLinkSettings(context, projectPath);
 
   return linkPRForTask(task.id, {
     tasks,
     projectPath,
     defaultBaseBranch,
+    resolveOptions,
+    repollInFlightVerdict,
     force: options.force,
+    bypassThrottle: options.bypassThrottle,
     preserveLinkOnNotFound: options.preserveLinkOnNotFound,
     getScrollback: options.scrollback != null ? () => options.scrollback : undefined,
     onLinked: (linked) => {
@@ -350,8 +1084,11 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
  * branch/worktree and a non-To Do lane.
  *
  * The shared auto-link entry point for every implicit trigger: a task-move
- * (called AFTER `handleTaskMove` returns, outside the move's task lock), the
- * plan-exit auto-move, and a session going idle (a PR was likely just created).
+ * (called from inside `handleTaskMove`'s own announce block, which runs after
+ * every one of its task locks has released, so the timing is unchanged from
+ * when each call site fired this itself), and a session going idle (a PR was
+ * likely just created). The move case now covers all four origins, including
+ * the agent and mobile ones that never reached here before.
  * All run NON-force, so the per-task 60s throttle in `linkPRForTask` coalesces
  * them.
  */
@@ -359,7 +1096,10 @@ export function autoLinkPRForTask(context: IpcContext, taskId: string, projectId
   try {
     const { tasks, swimlanes } = getProjectRepos(context, projectId);
     const task = tasks.getById(taskId);
-    if (!task || (!task.branch_name && !task.worktree_path && !task.head_sha && task.pr_number == null)) return;
+    if (
+      !task
+      || (!task.branch_name && !task.worktree_path && !task.head_sha && !task.pushed_branch && task.pr_number == null)
+    ) return;
     const lane = swimlanes.getById(task.swimlane_id);
     if (!lane || lane.role === 'todo') return;
     void linkPR(context, { projectId, taskId }).catch((error) => {

@@ -7,7 +7,7 @@
  * browser, Electron, or ipcRenderer binding is required.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // The slice imports `useProjectStore` (to stamp the project id on its debounced
 // detail-view-state saves). project-store imports session-store, which eagerly
 // creates its store from the slices - so importing the slice DIRECTLY as the
@@ -99,6 +99,199 @@ describe('toggleBrowserOpen', () => {
     expect(getState().browserOpenTasks).toBe(afterClose);
   });
 
+  // Hiding a pane from the UI HOLDS it (kept mounted, hidden, for the agent
+  // that may be driving it); only an agent's close_pane or a hydration discards
+  // it. The distinction is the `hold` option, which only the UI toggle passes.
+  describe('browser hold', () => {
+    it('starts with no held panes', () => {
+      const { getState } = createTestStore();
+      expect(getState().browserHeldTasks.size).toBe(0);
+    });
+
+    it('the UI toggle holds the pane it hides, and showing it again ends the hold', () => {
+      const { actions, getState } = createTestStore();
+      actions.toggleBrowserOpen('task-1');
+      expect(getState().browserHeldTasks.has('task-1')).toBe(false);
+
+      actions.toggleBrowserOpen('task-1');
+      expect(getState().browserOpenTasks.has('task-1')).toBe(false);
+      expect(getState().browserHeldTasks.has('task-1')).toBe(true);
+
+      actions.toggleBrowserOpen('task-1');
+      expect(getState().browserOpenTasks.has('task-1')).toBe(true);
+      expect(getState().browserHeldTasks.has('task-1')).toBe(false);
+    });
+
+    it("an explicit close without `hold` DISCARDS: the agent's close_pane path", () => {
+      const { actions, getState } = createTestStore();
+      actions.toggleBrowserOpen('task-1');
+      actions.setBrowserOpen('task-1', false);
+      expect(getState().browserOpenTasks.has('task-1')).toBe(false);
+      expect(getState().browserHeldTasks.has('task-1')).toBe(false);
+    });
+
+    it('an explicit close without `hold` also ends an existing hold', () => {
+      // The pane was hidden by the user (held), then the agent called
+      // close_pane: the discard must win, or the guest the agent asked to drop
+      // stays mounted.
+      const { actions, getState } = createTestStore();
+      actions.toggleBrowserOpen('task-1');
+      actions.toggleBrowserOpen('task-1');
+      expect(getState().browserHeldTasks.has('task-1')).toBe(true);
+
+      const heldBefore = getState().browserHeldTasks;
+      actions.setBrowserOpen('task-1', false);
+      expect(getState().browserHeldTasks.has('task-1')).toBe(false);
+      expect(getState().browserHeldTasks).not.toBe(heldBefore); // a real state change, not the idempotent skip
+    });
+
+    it("an agent's open_pane on a held pane shows it and ends the hold", () => {
+      const { actions, getState } = createTestStore();
+      actions.toggleBrowserOpen('task-1');
+      actions.toggleBrowserOpen('task-1');
+      actions.setBrowserOpen('task-1', true);
+      expect(getState().browserOpenTasks.has('task-1')).toBe(true);
+      expect(getState().browserHeldTasks.has('task-1')).toBe(false);
+    });
+
+    it('each set is replaced only when its own membership changes', () => {
+      // A subscriber keyed on one set's identity (the park reaper, a `has()`
+      // selector) must not wake for the other. Hiding an already-hidden pane
+      // with `hold` holds it (the slice cannot know whether a guest exists;
+      // only the toggle passes `hold`, against a showing pane) but leaves the
+      // open set untouched by reference.
+      const { actions, getState } = createTestStore();
+      const openBefore = getState().browserOpenTasks;
+      actions.setBrowserOpen('task-1', false, { hold: true });
+      expect(getState().browserHeldTasks.has('task-1')).toBe(true);
+      expect(getState().browserOpenTasks).toBe(openBefore);
+
+      // And a redundant hide-with-hold on an already-held pane changes nothing.
+      const heldBefore = getState().browserHeldTasks;
+      actions.setBrowserOpen('task-1', false, { hold: true });
+      expect(getState().browserHeldTasks).toBe(heldBefore);
+      expect(getState().browserOpenTasks).toBe(openBefore);
+
+      // Showing it replaces both: the open set gains the task, the held set loses it.
+      actions.setBrowserOpen('task-1', true);
+      expect(getState().browserOpenTasks).not.toBe(openBefore);
+      expect(getState().browserHeldTasks).not.toBe(heldBefore);
+      expect(getState().browserHeldTasks.size).toBe(0);
+    });
+
+    it('releaseBrowserHold ends only the named hold and leaves the open flag alone', () => {
+      const { actions, getState } = createTestStore();
+      actions.toggleBrowserOpen('task-1');
+      actions.toggleBrowserOpen('task-1');
+      actions.toggleBrowserOpen('task-2');
+      actions.toggleBrowserOpen('task-2');
+      expect(getState().browserHeldTasks).toEqual(new Set(['task-1', 'task-2']));
+
+      actions.releaseBrowserHold('task-1');
+      expect(getState().browserHeldTasks).toEqual(new Set(['task-2']));
+      expect(getState().browserOpenTasks.has('task-1')).toBe(false);
+
+      const afterRelease = getState().browserHeldTasks;
+      actions.releaseBrowserHold('task-1');
+      expect(getState().browserHeldTasks).toBe(afterRelease); // idempotent
+    });
+
+    it('holds are keyed per task', () => {
+      const { actions, getState } = createTestStore();
+      actions.toggleBrowserOpen('task-1');
+      actions.toggleBrowserOpen('task-2');
+      actions.toggleBrowserOpen('task-1');
+      expect(getState().browserHeldTasks.has('task-1')).toBe(true);
+      expect(getState().browserHeldTasks.has('task-2')).toBe(false);
+      expect(getState().browserOpenTasks.has('task-2')).toBe(true);
+    });
+  });
+
+  // The renderer's "a browser guest is alive for this task" fact, published by
+  // the pane on register / unregister. The pill dot, the card globe, and the
+  // kebab's Close all read it, and Close needs the id to retire the handle.
+  describe('browser guest map', () => {
+    it('starts empty and records a guest per task', () => {
+      const { actions, getState } = createTestStore();
+      expect(getState().browserGuestTasks.size).toBe(0);
+      actions.setBrowserGuest('task-1', 41);
+      actions.setBrowserGuest('task-2', 42);
+      expect(getState().browserGuestTasks.get('task-1')).toBe(41);
+      expect(getState().browserGuestTasks.get('task-2')).toBe(42);
+    });
+
+    it('a repeated register of the same guest changes nothing', () => {
+      const { actions, getState } = createTestStore();
+      actions.setBrowserGuest('task-1', 41);
+      const before = getState().browserGuestTasks;
+      actions.setBrowserGuest('task-1', 41);
+      expect(getState().browserGuestTasks).toBe(before);
+    });
+
+    it('clears only when the entry still names THIS guest, so a stale unmount never erases a newer one', () => {
+      // An in-app pane unmounting after a pop-out registered a newer guest for
+      // the same task must not drop the newer registration.
+      const { actions, getState } = createTestStore();
+      actions.setBrowserGuest('task-1', 41);
+      actions.setBrowserGuest('task-1', 52);
+      actions.clearBrowserGuest('task-1', 41);
+      expect(getState().browserGuestTasks.get('task-1')).toBe(52);
+      actions.clearBrowserGuest('task-1', 52);
+      expect(getState().browserGuestTasks.has('task-1')).toBe(false);
+      const after = getState().browserGuestTasks;
+      actions.clearBrowserGuest('task-1', 52);
+      expect(getState().browserGuestTasks).toBe(after); // idempotent
+    });
+  });
+
+  describe('setChangesOpen is idempotent', () => {
+    // Scoped to its own describe (rather than calling vi.useFakeTimers()
+    // inline in the test body) so a failing assertion still runs
+    // vi.useRealTimers() in afterEach and never leaks fake timers into the
+    // other 36 tests in this file.
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('a redundant call changes no state and schedules no save', () => {
+      // The pop-out close path (pop-out-changed.ts) drives this directly on
+      // every `popOut:changed` push, including pushes where the panel was
+      // already closed. The early return is what makes a repeated push a
+      // genuine no-op rather than a fresh Set plus a debounced persistence
+      // write on every diff. Set-reference identity DOES catch a dropped
+      // guard (proven below), but `vi.getTimerCount()` would not: a
+      // redundant call that lost the guard still reaches
+      // `scheduleDetailViewSave`, which clears the existing debounce timer
+      // and immediately re-sets a new one, leaving the PENDING count
+      // unchanged even though a fresh save was genuinely scheduled. Spying
+      // on setTimeout's call count (not the pending count) is what actually
+      // observes that absence of work, independent of the identity check.
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const { actions, getState } = createTestStore();
+
+      actions.setChangesOpen('task-1', true);
+      const afterFirstOpen = getState().changesOpenTasks;
+      const callsAfterFirstOpen = setTimeoutSpy.mock.calls.length;
+      expect(callsAfterFirstOpen).toBeGreaterThan(0); // the genuine open scheduled a save
+
+      actions.setChangesOpen('task-1', true);
+      expect(setTimeoutSpy.mock.calls.length).toBe(callsAfterFirstOpen); // no new debounce timer: no save
+      expect(getState().changesOpenTasks).toBe(afterFirstOpen); // same reference: no churn
+      expect(getState().changesOpenTasks.has('task-1')).toBe(true);
+
+      actions.setChangesOpen('task-1', false);
+      const callsAfterClose = setTimeoutSpy.mock.calls.length;
+      expect(callsAfterClose).toBeGreaterThan(callsAfterFirstOpen); // the genuine close scheduled a save
+      expect(getState().changesOpenTasks.has('task-1')).toBe(false);
+      const afterClose = getState().changesOpenTasks;
+
+      actions.setChangesOpen('task-1', false);
+      expect(setTimeoutSpy.mock.calls.length).toBe(callsAfterClose); // redundant close scheduled nothing
+      expect(getState().changesOpenTasks).toBe(afterClose);
+
+      setTimeoutSpy.mockRestore();
+    });
+  });
+
   it('refreshBrowserUrl bumps only its own task, from an absent start', () => {
     const { actions, getState } = createTestStore();
     expect(getState().browserUrlRefreshTokens['task-1']).toBeUndefined();
@@ -155,6 +348,134 @@ describe('toggleBrowserOpen', () => {
     actions.toggleChangesOpen(slotOneEntityId);
     expect(getState().changesOpenTasks.has(slotOneEntityId)).toBe(false);
     expect(getState().changesOpenTasks.has(slotTwoEntityId)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setBrowserOffscreenTasks
+// ---------------------------------------------------------------------------
+
+describe('setBrowserOffscreenTasks', () => {
+  it('starts with an empty offscreen set', () => {
+    const { getState } = createTestStore();
+    expect(getState().browserOffscreenTasks.size).toBe(0);
+  });
+
+  it('replaces the set on a genuine membership change', () => {
+    const { actions, getState } = createTestStore();
+    const before = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+
+    expect(getState().browserOffscreenTasks).not.toBe(before);
+    expect(getState().browserOffscreenTasks).toEqual(new Set(['task-1', 'task-2']));
+  });
+
+  it('keeps the SAME Set reference when a push repeats the current membership', () => {
+    // Every card on the board subscribes to this set, so a fresh reference on
+    // an unchanged push would re-render the whole board every time a lane is
+    // touched. This is the guard the coverage gap was about: deleting it
+    // (always doing `set({ browserOffscreenTasks: new Set(taskIds) })`) makes
+    // this assertion fail, because `afterFirstPush` would then be a distinct
+    // object from the state read after the second, identical push.
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+    const afterFirstPush = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+
+    expect(getState().browserOffscreenTasks).toBe(afterFirstPush);
+    expect(getState().browserOffscreenTasks).toEqual(new Set(['task-1', 'task-2']));
+  });
+
+  it('treats a reordered but membership-identical push as unchanged', () => {
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+    const before = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-2', 'task-1']);
+
+    expect(getState().browserOffscreenTasks).toBe(before);
+  });
+
+  it('replaces the set on a genuine membership change even when the pushed length matches', () => {
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+    const before = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-1', 'task-3']);
+
+    expect(getState().browserOffscreenTasks).not.toBe(before);
+    expect(getState().browserOffscreenTasks).toEqual(new Set(['task-1', 'task-3']));
+  });
+
+  it('a duplicate entry can fool the size-based guard into an equal-membership match', () => {
+    // Pinning the real behavior, not the intended one: the guard compares
+    // current.size to taskIds.length, so a push that drops one member but
+    // duplicates another to the same length reads as unchanged and is
+    // silently skipped. Main always pushes the whole real set with no
+    // duplicates (see the field comment), so this path is not expected to be
+    // hit in production, but a future change to the guard's shape should be a
+    // deliberate decision against this pinned case, not a silent regression.
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+    const before = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-1', 'task-1']);
+
+    expect(getState().browserOffscreenTasks).toBe(before);
+    expect(getState().browserOffscreenTasks.has('task-2')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadBrowserOffscreenTasks
+// ---------------------------------------------------------------------------
+
+describe('loadBrowserOffscreenTasks', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("applies main's pushed offscreen surfaces through setBrowserOffscreenTasks", async () => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        browser: {
+          getOffscreenSurfaces: vi.fn().mockResolvedValue(['task-1', 'task-2']),
+        },
+      },
+    });
+    const { actions, getState } = createTestStore();
+
+    await actions.loadBrowserOffscreenTasks();
+
+    expect(getState().browserOffscreenTasks).toEqual(new Set(['task-1', 'task-2']));
+  });
+
+  it('leaves state untouched when the bridge method is missing (a Vite full reload before the preload bridge re-injects)', async () => {
+    vi.stubGlobal('window', { electronAPI: {} });
+    const { actions, getState } = createTestStore();
+    const before = getState().browserOffscreenTasks;
+
+    await actions.loadBrowserOffscreenTasks();
+
+    expect(getState().browserOffscreenTasks).toBe(before);
+  });
+
+  it('swallows a rejected read and leaves state untouched', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        browser: {
+          getOffscreenSurfaces: vi.fn().mockRejectedValue(new Error('ipc unavailable')),
+        },
+      },
+    });
+    const { actions, getState } = createTestStore();
+    const before = getState().browserOffscreenTasks;
+
+    await actions.loadBrowserOffscreenTasks();
+
+    expect(getState().browserOffscreenTasks).toBe(before);
   });
 });
 

@@ -127,13 +127,19 @@ export function ConversationWindow({
   const { layer } = useWindowManager();
   const revealTaskDetail = layer.revealTaskDetail;
 
-  const useStore = useLayerStore();
-  const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
-  const untileWindow = useStore((state) => state.untileWindow);
-  const isTiled = useStore((state) => state.windows[managedWindow.id]?.state === 'tiled');
+  const layerStore = useLayerStore();
+  const toggleMaximizeWindow = layerStore((state) => state.toggleMaximizeWindow);
+  const untileWindow = layerStore((state) => state.untileWindow);
+  const isTiled = layerStore((state) => state.windows[managedWindow.id]?.state === 'tiled');
 
   const [response, setResponse] = useState<TranscriptGetResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  // "Loading" is derived: the mount fetch for THIS anchor + project has not
+  // settled. Keyed rather than a flag an effect sets (the cascading-render
+  // shape the compiler rules forbid), so a change of either reads as loading
+  // at once.
+  const fetchKey = JSON.stringify([managedWindow.anchor, currentProjectId]);
+  const [settledFetchKey, setSettledFetchKey] = useState<string | null>(null);
+  const loading = settledFetchKey !== fetchKey;
   const [copied, setCopied] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
 
@@ -156,27 +162,22 @@ export function ConversationWindow({
   // the handler always returns the full payload here.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     window.electronAPI.transcripts
       .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
       .then((result) => {
         if (cancelled) return;
-        if (isUnchangedResponse(result)) {
-          setLoading(false);
-          return;
-        }
-        setResponse(result);
-        setLoading(false);
+        if (!isUnchangedResponse(result)) setResponse(result);
+        setSettledFetchKey(fetchKey);
       })
       .catch(() => {
         if (cancelled) return;
         setResponse(null);
-        setLoading(false);
+        setSettledFetchKey(fetchKey);
       });
     return () => {
       cancelled = true;
     };
-  }, [managedWindow.anchor, currentProjectId]);
+  }, [managedWindow.anchor, currentProjectId, fetchKey]);
 
   const taskId = response?.taskId ?? null;
 
@@ -296,11 +297,13 @@ export function ConversationWindow({
   // Open-at-position: computed ONCE, synchronously, on the render where
   // `response` first becomes available - so it is ready before ConversationView
   // even mounts (avoiding the top-flash the settle-loop's visibility gate is
-  // built to prevent). Mutating a ref during render to cache a one-time
-  // derived value (never scheduling a render itself) is the same pattern
-  // ConversationView's own row reconciler uses.
-  const initialPositionRef = useRef<InitialPosition | null>(null);
-  if (initialPositionRef.current === null && response) {
+  // built to prevent). Held in state and set during render (React's "storing
+  // information from previous renders" pattern) rather than cached in a ref,
+  // which render may neither read nor write: React discards this render and
+  // restarts it with the value set, so nothing commits with the fallback.
+  const [cachedInitialPosition, setCachedInitialPosition] = useState<InitialPosition | null>(null);
+  let initialPosition = cachedInitialPosition;
+  if (initialPosition === null && response) {
     const anchor =
       pendingTuiAnchor && pendingTuiAnchor.sessionId === managedWindow.anchor ? pendingTuiAnchor : null;
     // Deliberately NOT gated on anchor.atBottom: Claude Code's TUI manages
@@ -316,12 +319,12 @@ export function ConversationWindow({
     if (anchor) {
       const rowsForMatch = reconcileDisplayRows([], response.entries);
       const matchedUuid = matchTuiViewportToRow(anchor.visibleLines, rowsForMatch);
-      initialPositionRef.current = matchedUuid ? { kind: 'uuid', uuid: matchedUuid } : { kind: 'bottom' };
+      initialPosition = matchedUuid ? { kind: 'uuid', uuid: matchedUuid } : { kind: 'bottom' };
     } else {
-      initialPositionRef.current = { kind: 'bottom' };
+      initialPosition = { kind: 'bottom' };
     }
+    setCachedInitialPosition(initialPosition);
   }
-  const initialPosition = initialPositionRef.current ?? { kind: 'bottom' };
 
   // Consume the one-shot pendingTuiAnchor exactly once, after the above has
   // had a chance to read it (a store update never invalidates the ref already
@@ -453,7 +456,7 @@ export function ConversationWindow({
           scrollToTurnUuid={activeScrollUuid}
           onConsumedScroll={consumeScroll}
           autoFollowNewMessages={autoFollowNewMessages}
-          initialPosition={initialPosition}
+          initialPosition={initialPosition ?? { kind: 'bottom' }}
           isFocused={isFocused}
         />
       )}

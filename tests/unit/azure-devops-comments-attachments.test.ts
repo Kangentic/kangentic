@@ -213,6 +213,62 @@ describe('Azure DevOps comments and attachments', () => {
     });
   });
 
+  describe('mapToExternalIssues - stateCategory bucketing', () => {
+    function withState(state: string) {
+      return {
+        id: 99,
+        fields: {
+          'System.Title': 'Bucketing test item',
+          'System.State': state,
+          'System.CreatedDate': '2026-01-01T00:00:00Z',
+          'System.ChangedDate': '2026-01-02T00:00:00Z',
+        },
+        url: 'https://dev.azure.com/org/_apis/wit/workitems/99',
+      };
+    }
+
+    it('buckets a Resolved work item as closed', () => {
+      const [issue] = importer.mapToExternalIssues([withState('Resolved')], 'org', 'project', new Set());
+      expect(issue.state).toBe('Resolved');
+      expect(issue.stateCategory).toBe('closed');
+    });
+
+    it('buckets a Closed work item as closed', () => {
+      const [issue] = importer.mapToExternalIssues([withState('Closed')], 'org', 'project', new Set());
+      expect(issue.stateCategory).toBe('closed');
+    });
+
+    it('buckets an Active work item as open', () => {
+      const [issue] = importer.mapToExternalIssues([withState('Active')], 'org', 'project', new Set());
+      expect(issue.stateCategory).toBe('open');
+    });
+
+    // Done and Removed are the two AZURE_CLOSED_STATES entries nothing else runs
+    // through the mapper, so a typo in either would ship silently.
+    it('buckets a Done work item as closed', () => {
+      const [issue] = importer.mapToExternalIssues([withState('Done')], 'org', 'project', new Set());
+      expect(issue.stateCategory).toBe('closed');
+    });
+
+    it('buckets a Removed work item as closed', () => {
+      const [issue] = importer.mapToExternalIssues([withState('Removed')], 'org', 'project', new Set());
+      expect(issue.stateCategory).toBe('closed');
+    });
+
+    it('buckets a New work item as open', () => {
+      const [issue] = importer.mapToExternalIssues([withState('New')], 'org', 'project', new Set());
+      expect(issue.stateCategory).toBe('open');
+    });
+
+    // Process templates add their own states. Anything not on the closed list has to
+    // land in open rather than in neither bucket, or it vanishes from Open and
+    // Closed while still counting under All.
+    it('buckets an unrecognized custom state as open', () => {
+      const [issue] = importer.mapToExternalIssues([withState('In Review')], 'org', 'project', new Set());
+      expect(issue.stateCategory).toBe('open');
+    });
+  });
+
   describe('convertHtmlToMarkdown for comment content', () => {
     it('converts img tags with alt text to markdown images', () => {
       const html = '<img src="https://dev.azure.com/org/_apis/wit/attachments/abc" alt="screenshot" />';

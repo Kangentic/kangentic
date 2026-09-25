@@ -23,8 +23,23 @@ async function openSettings() {
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 }
 
-/** Close any open settings panel via Escape. Clears search first if active. */
+/**
+ * Close any open settings panel via Escape, innermost layer first: an open
+ * combobox menu consumes the first Escape (see combobox-escape-layering.spec.ts),
+ * a search query clears on the next, and only then does the panel close.
+ */
 async function closeSettings() {
+  // "Open" is read off the chevron, whose aria-label flips on the same render
+  // as the menu state. The popover element is the wrong signal: a menu just
+  // closed by a click stays mounted for its exit animation, and its exit class
+  // lands a render later, so an extra press aimed at it would reach the panel.
+  // Scoped to the panel so a menu leaked elsewhere on the shared page is not
+  // mistaken for this panel's own state.
+  const openChevron = page.getByTestId('settings-panel').locator('button[aria-label="Close dropdown"]').first();
+  if (await openChevron.isVisible().catch(() => false)) {
+    await page.keyboard.press('Escape');
+    await expect(openChevron).toBeHidden({ timeout: 2000 });
+  }
   // If search has text, first Escape clears it; press again to close.
   const searchInput = page.getByTestId('settings-search');
   if (await searchInput.isVisible().catch(() => false)) {
@@ -75,10 +90,12 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Theme tab with color scheme selector', async () => {
+  test('shows Theme tab with the swatch grid', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Theme', exact: true }).click();
-    await expect(page.locator('text=Color scheme for the interface')).toBeVisible();
+    // The row's testid, not its copy: the description is product text that changes.
+    await expect(page.getByTestId('setting-row-theme')).toBeVisible();
+    await expect(page.getByTestId('theme-grid')).toBeVisible();
     await closeSettings();
   });
 
@@ -106,7 +123,7 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Board tab with width, config sync, and animation settings', async () => {
+  test('shows Board tab with width and config sync settings, and no longer Animations', async () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Board' }).click();
     await expect(page.locator('text=Column Width')).toBeVisible();
@@ -115,14 +132,32 @@ test.describe('Settings Panel', () => {
     await expect(page.locator('text=Auto-Apply Board Config Changes')).toBeVisible();
     await expect(page.getByText('Terminal Panel', { exact: true })).toBeVisible();
     await expect(page.getByText('Status Bar', { exact: true })).toBeVisible();
-    await expect(page.locator('text=Animations')).toBeVisible();
+    // Animations LEFT for the Performance tab: it toggles .no-motion on <html>,
+    // so it is app-wide rendering and never was board chrome. Asserted absent
+    // here as well as present there, so a half-done move fails on one side.
+    await expect(page.getByTestId('setting-row-animationsEnabled')).toHaveCount(0);
     await closeSettings();
   });
 
-  test('shows Task tab with card density, ticket numbers, and context bar settings', async () => {
+  test('shows Performance tab with graphics acceleration and the Animations row moved from Board', async () => {
+    await openSettings();
+    await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Performance' }).click();
+    await expect(page.getByTestId('setting-row-graphicsAccelerationEnabled')).toBeVisible();
+    await expect(page.getByTestId('setting-row-animationsEnabled')).toBeVisible();
+    // The callout is for an install Kangentic downgraded itself. This fixture
+    // is a normal one, so it must stay quiet.
+    await expect(page.getByTestId('graphics-acceleration-notice')).toHaveCount(0);
+    await closeSettings();
+  });
+
+  test('shows Task tab with card density, card preview, ticket numbers, and context bar settings', async () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Task', exact: true }).click();
     await expect(page.locator('text=Card Density')).toBeVisible();
+    // Card Preview select (cardPreview) - goes RED if its SettingRow is removed
+    // from TaskTab.tsx, while leaving all other assertions green.
+    await expect(page.locator('text=Card Preview')).toBeVisible();
+    await expect(page.getByTestId('setting-row-cardPreview').locator('select')).toHaveValue('agent-latest-message');
     // Ticket Numbers toggle row (showTaskNumbers) - goes RED if SettingToggleRow is
     // removed from TaskTab.tsx, while leaving all other assertions green.
     await expect(page.locator('text=Ticket Numbers')).toBeVisible();
@@ -557,6 +592,77 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('toggling Evaluate branch policies persists git.prEvaluateBranchPolicies to the project override', async () => {
+    // DEFAULT_CONFIG.git.prEvaluateBranchPolicies is false (src/shared/types.ts).
+    // Project creation seeds a full overridable-settings snapshot (see
+    // pickOverridableSubset), so this shared-page project already carries an
+    // explicit `false` for this key - the switch starts unchecked either way.
+    // GitTab is a PROJECT tab: the write goes through updateProject -> the
+    // project override, not global config. This pins the actual write path,
+    // not just the UI copy - settings-tab-scope-parity.test.ts only proves the
+    // registry id and tab pairing exist, not that the row's onChange closure
+    // names the right key at the right nesting level. Red-green while writing
+    // it: a wrong key OR a wrong scope (updateProject swapped for updateGlobal)
+    // both fail the aria-checked assertion here, because the seeded project
+    // override always wins the merge over a global write; the
+    // getProjectOverrides() poll below still documents the intended target.
+    await openSettings();
+    await page.getByRole('button', { name: 'Git' }).click();
+
+    const toggle = page.getByRole('switch', { name: 'Evaluate branch policies' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return (overrides as { git?: { prEvaluateBranchPolicies?: boolean } } | null)?.git?.prEvaluateBranchPolicies;
+    }, { timeout: 3000 }).toBe(true);
+
+    // Restore so later tests in this shared-page file are unaffected (this
+    // file resets nothing between tests, unlike browser-settings.spec.ts).
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return (overrides as { git?: { prEvaluateBranchPolicies?: boolean } } | null)?.git?.prEvaluateBranchPolicies;
+    }, { timeout: 3000 }).toBe(false);
+
+    await closeSettings();
+  });
+
+  test('toggling Count merge bypass as ready persists git.prBypassCountsAsReady to the project override', async () => {
+    // The mirror of the branch-policies test above for the sibling row, with
+    // the default flipped: DEFAULT_CONFIG.git.prBypassCountsAsReady is TRUE
+    // (src/shared/types.ts), so the seeded project override carries an
+    // explicit `true` and the switch starts checked. The write goes through
+    // updateProject -> the project override; the seeded override always wins
+    // the merge over a global write, so a wrong scope fails the aria-checked
+    // assertion here as well as the getProjectOverrides() poll.
+    await openSettings();
+    await page.getByRole('button', { name: 'Git' }).click();
+
+    const toggle = page.getByRole('switch', { name: 'Count merge bypass as ready' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return (overrides as { git?: { prBypassCountsAsReady?: boolean } } | null)?.git?.prBypassCountsAsReady;
+    }, { timeout: 3000 }).toBe(false);
+
+    // Restore so later tests in this shared-page file are unaffected.
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return (overrides as { git?: { prBypassCountsAsReady?: boolean } } | null)?.git?.prBypassCountsAsReady;
+    }, { timeout: 3000 }).toBe(true);
+
+    await closeSettings();
+  });
+
   test('Escape key closes panel', async () => {
     await openSettings();
     await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
@@ -602,9 +708,9 @@ test.describe('Settings Panel', () => {
       'Bypass (Unsafe)',
     ]);
 
-    // The Combobox's Escape handler doesn't stop propagation, so a single
-    // Escape (fired by closeSettings() below) closes both the popover and
-    // the whole panel in one press - no separate close needed here.
+    // The open Combobox menu consumes the first Escape itself (see
+    // combobox-escape-layering.spec.ts); closeSettings() below presses once
+    // for the menu and again for the panel, so no separate close is needed.
     await closeSettings();
   });
 
@@ -865,7 +971,7 @@ test.describe('Settings Search', () => {
     await expect(page.getByText('Font Family', { exact: true })).toBeVisible();
 
     // Should NOT show unrelated settings like Theme
-    await expect(page.getByText('Color scheme for the interface')).not.toBeVisible();
+    await expect(page.getByTestId('setting-row-theme')).not.toBeVisible();
 
     await closeSettings();
   });
@@ -888,9 +994,22 @@ test.describe('Settings Search', () => {
     const searchInput = page.getByTestId('settings-search');
     await searchInput.fill('theme');
 
-    await expect(page.getByText('Color scheme for the interface')).toBeVisible();
+    await expect(page.getByTestId('setting-row-theme')).toBeVisible();
 
     // Should NOT show terminal settings
+    await expect(page.getByText('Terminal text size in pixels')).not.toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('searching a theme name finds the Theme picker', async () => {
+    await openSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('peach');
+
+    // Every theme's name is a keyword on the Theme row, so the row is the one hit.
+    await expect(page.getByTestId('setting-row-theme')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Theme 1' })).toBeVisible();
     await expect(page.getByText('Terminal text size in pixels')).not.toBeVisible();
 
     await closeSettings();
@@ -954,8 +1073,9 @@ test.describe('Settings Search', () => {
     const searchInput = page.getByTestId('settings-search');
     await searchInput.fill('theme');
 
-    // Theme sidebar tab should have a match count badge (name includes count).
-    const themeTab = page.getByRole('button', { name: 'Theme 1' });
+    // Theme sidebar tab should have a match count badge (name includes count): the
+    // tab label is a searchable field, so every row on the tab matches "theme".
+    const themeTab = page.getByRole('button', { name: 'Theme 2' });
     await expect(themeTab).not.toHaveClass(/opacity-40/);
 
     // General sidebar tab should be dimmed (no matches for "theme" - it only

@@ -1,15 +1,60 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
-import { callHandler, runHandler, withProject, detectCrossProjectMention, sanitizeProjectName, PROJECT_SELECTOR_DESCRIPTION, type TaskCounter } from './handler-helpers';
+import { callHandler, runHandler, withProject, appendNoticeLine, detectCrossProjectMention, sanitizeProjectName, PROJECT_SELECTOR_DESCRIPTION, type TaskCounter, type McpToolResult } from './handler-helpers';
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-commands';
 import { TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
 import { resolveModelSelector, resolveEffortSelector } from '../../../shared/model-id';
+import { validateSpawnOverrides } from './spawn-override-validation';
+import { resolveColumn } from '../commands/column-resolver';
+import { TaskRepository } from '../../db/repositories/task-repository';
+import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
+import { resolveTask } from '../commands/task-resolver';
+import type { ToolArgumentNotices } from './tool-call-logging';
+import type { CommandContext } from '../commands';
 
 const PERMISSION_MODE_SCHEMA = z.enum(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto']);
 /** Literals kept in lockstep with the shared `TaskRunMode` union by tests/unit/mcp-task-tools-run-mode-schema.test.ts. */
 const RUN_MODE_SCHEMA = z.enum(['column_settings', 'agent_override']);
+
+/**
+ * The two session-track fields, shared by create_column and update_column.
+ *
+ * Neither is `.nullable()`, unlike the clearable fields beside them and unlike
+ * the same two keys in profile-tools.ts. Both DB columns are NOT NULL, so there
+ * is no "clear" state to express: going back to the default means passing
+ * "main" / "create_or_resume". Literals are kept in lockstep with the shared
+ * `SessionTarget` / `SessionSpawnStrategy` unions by
+ * tests/unit/mcp-column-field-parity.test.ts.
+ */
+const SESSION_TARGET_SCHEMA = z.enum(['main', 'isolated']);
+const SESSION_SPAWN_STRATEGY_SCHEMA = z.enum(['create_or_resume', 'always_spawn_new']);
+
+/**
+ * When the column's autoCommand reaches the agent. Same NOT NULL reasoning as
+ * the two above, so not nullable: the default is expressed by passing
+ * "immediate". Literals pinned by tests/unit/mcp-column-field-parity.test.ts.
+ */
+const AUTO_COMMAND_MODE_SCHEMA = z.enum(['immediate', 'deferred']);
+
+/**
+ * Written to lead a caller to the right answer rather than to name the enum. An
+ * agent asked to "set up a Code Review column" has only this text to tell it
+ * that a reviewer sharing the task's main session IS the agent that wrote the
+ * code, which is the failure these fields exist to prevent.
+ */
+const SESSION_TARGET_DESCRIPTION =
+  'Which session a task runs on in this column. "main" (default) continues the task\'s own conversation, '
+  + 'so the agent here remembers everything earlier columns did. "isolated" gives the column its own separate '
+  + 'conversation, keyed to the column, which is what makes a reviewer or tester independent of the agent that '
+  + 'wrote the code. Choosing "isolated" also switches the column to a fresh session per entry unless '
+  + 'sessionSpawnStrategy says otherwise.';
+const SESSION_SPAWN_STRATEGY_DESCRIPTION =
+  'What this column does with that session when a task enters it. "create_or_resume" (the default for a main-session '
+  + 'column) picks the conversation back up; "always_spawn_new" (the default once sessionTarget is "isolated") retires '
+  + 'the previous one and starts fresh, so each entry is an independent pass. Pass it explicitly only to break that '
+  + 'pairing, e.g. an isolated column that should accumulate one long side conversation.';
 
 /**
  * Build the create_task routing-check refusal shown when the call
@@ -25,6 +70,88 @@ function buildRoutingCheckMessage(activeName: string, mentioned: string[]): stri
     return `Routing check: this task was about to be created in the active project "${safeActive}", but its text mentions the registered project ${safeMentioned[0]}. No task was created. Re-run kangentic_create_task with project: ${safeMentioned[0]} to file it there, or with project: "${safeActive}" to confirm the active project.`;
   }
   return `Routing check: this task was about to be created in the active project "${safeActive}", but its text mentions these other registered projects: ${safeMentioned.join(', ')}. No task was created. Re-run kangentic_create_task with project set to the intended one (e.g. project: ${safeMentioned[0]}), or with project: "${safeActive}" to confirm the active project.`;
+}
+
+/**
+ * The `[a, b]` label suffix shared by every listing row - board rows in
+ * list_tasks and search_tasks, and backlog rows in search_tasks - so the three
+ * surfaces cannot drift into different shapes. Empty for an unlabelled item.
+ */
+function formatLabelSuffix(labels: readonly string[]): string {
+  return labels.length > 0 ? ` [${labels.join(', ')}]` : '';
+}
+
+/** Case-insensitive test for the backlog pseudo-column, which never spawns. */
+function isBacklogColumn(columnName: string | null | undefined): boolean {
+  return (columnName ?? '').trim().toLowerCase() === 'backlog';
+}
+
+/**
+ * Build the advisory line appended to a create/update whose raw arguments
+ * carried no `labels` alongside a large description. Not an error: the write
+ * succeeded and only the labels are missing, so this is a next step rather
+ * than a refusal. `followUp` is the concrete next call, supplied by each tool
+ * since only they know how to name the task without a lookup.
+ */
+function buildLabelsAbsentNotice(descriptionLength: number, followUp: string): string {
+  return `[Labels not received] This call arrived with no 'labels' argument alongside a ${descriptionLength}-char `
+    + 'description - the known large-payload drop upstream of Kangentic, in the MCP client\'s tool-call emission. '
+    + `The write itself succeeded. If you meant to label this task, ${followUp} now. `
+    + 'If you did not, ignore this line.';
+}
+
+/**
+ * Append the labels-absent advisory when THIS request's raw arguments tripped
+ * the large-description signature for `toolName`. A no-op otherwise, so a
+ * caller who deliberately sent no labels never sees a line.
+ */
+function withLabelsAbsentNotice(
+  result: McpToolResult,
+  toolName: 'kangentic_create_task' | 'kangentic_update_task',
+  notices: ToolArgumentNotices | undefined,
+  followUp: string,
+): McpToolResult {
+  const descriptionLength = notices?.labelsAbsentWithLargeDescription[toolName];
+  if (descriptionLength === undefined) return result;
+  return appendNoticeLine(result, buildLabelsAbsentNotice(descriptionLength, followUp));
+}
+
+/**
+ * Resolve the `agent_override` on the column a create is destined for, the
+ * second rung of the spawn ladder. Best-effort: an unresolvable column just
+ * drops that rung, because the handler will produce its own error for it.
+ */
+function laneAgentOverrideForColumn(context: CommandContext, columnName: string | null): string | null {
+  try {
+    const resolution = resolveColumn(context.getProjectDb(), columnName);
+    return 'error' in resolution ? null : resolution.swimlane.agent_override;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The two ladder rungs an EXISTING task supplies: its own `agent_override`
+ * (rung 1) and the one on the column it currently sits in (rung 2). Both
+ * matter - `lockAdvancedOverridesOnFirstSpawn` writes the pins onto the task at
+ * first spawn, so a task that has ever run usually carries its own agent, and
+ * reading only the column would validate a model against the wrong agent.
+ */
+function agentLadderRungsForTask(
+  context: CommandContext,
+  taskId: string,
+): { taskAgentOverride: string | null; laneAgentOverride: string | null } {
+  try {
+    const db = context.getProjectDb();
+    const task = resolveTask(new TaskRepository(db), taskId);
+    if (!task) return { taskAgentOverride: null, laneAgentOverride: null };
+    return {
+      taskAgentOverride: task.agent_override ?? null,
+      laneAgentOverride: new SwimlaneRepository(db).getById(task.swimlane_id)?.agent_override ?? null,
+    };
+  } catch {
+    return { taskAgentOverride: null, laneAgentOverride: null };
+  }
 }
 
 /**
@@ -46,16 +173,17 @@ export function registerTaskTools(
   server: McpServer,
   resolver: RequestResolver,
   taskCounter: TaskCounter,
+  toolArgumentNotices?: ToolArgumentNotices,
 ): void {
   // --- kangentic_create_task ---
   server.registerTool(
     'kangentic_create_task',
     {
-      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. ATTACHMENTS RULE: When the user\'s prompt references local files by absolute path (design handoffs, mockups, screenshots, specs, READMEs, transcripts), pass those paths in `attachments` on this same call. Default to attaching, not omitting. Do not require a second user request to add them. The only exception is files the user explicitly named as "for context only, don\'t attach." With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks get a git branch and are ready to work on immediately. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. The name counts however it is phrased, not just the explicit "create a task in X" form: "create a task in X to fix ...", "the X to do board", "add a bug to the X board", "in X", and "X\'s backlog" all target project X. Use kangentic_list_projects to find valid selectors. LABELS WITH A LONG DESCRIPTION: due to a known large-payload limitation, when this call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. In that case create the task here (you may omit labels), then set labels with a separate labels-only kangentic_update_task call right after.',
+      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. ATTACHMENTS RULE: When the user\'s prompt references local files by absolute path (design handoffs, mockups, screenshots, specs, READMEs, transcripts), pass those paths in `attachments` on this same call. Default to attaching, not omitting. Do not require a second user request to add them. The only exception is files the user explicitly named as "for context only, don\'t attach." With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks are ready to work on immediately; with worktrees on (the project default) each gets its own worktree and branch, and with `useWorktree: false` the agent works in the project directory on the branch already checked out. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. The name counts however it is phrased, not just the explicit "create a task in X" form: "create a task in X to fix ...", "the X to do board", "add a bug to the X board", "in X", and "X\'s backlog" all target project X. Use kangentic_list_projects to find valid selectors. LABELS WITH A LONG DESCRIPTION: due to a known large-payload limitation, when this call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. In that case create the task here (you may omit labels), then set labels with a separate labels-only kangentic_update_task call right after.',
       inputSchema: z.object({
         title: z.string().max(200).describe('Task title (max 200 characters)'),
         description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe('Task description. Supports markdown.'),
-        column: z.string().optional().describe('Target column name. Defaults to the To Do column on the active board. Use kangentic_list_columns to see board columns. Pass "Backlog" (case-insensitive) to create a backlog item instead of a board task. Only route to the backlog when the user explicitly asks for the backlog.'),
+        column: z.string().optional().describe('Target column name. Defaults to the To Do column on the active board. Use kangentic_list_columns to see board columns. The done-role column is not a valid target here (creating a task there would archive it off the board immediately); create it on the board and move it with kangentic_move_task. Pass "Backlog" (case-insensitive) to create a backlog item instead of a board task. Only route to the backlog when the user explicitly asks for the backlog.'),
         priority: z.number().int().min(0).max(4).optional().describe('Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items.'),
         labels: z.array(z.union([
           z.string(),
@@ -63,17 +191,17 @@ export function registerTaskTools(
             name: z.string(),
             color: z.string().regex(/^#[0-9a-fA-F]{6}$/).describe('Hex color (e.g. "#ef4444")'),
           }),
-        ])).optional().describe('Labels for categorization. Each entry can be a plain string or an object with name and hex color (e.g. ["bug", { "name": "frontend", "color": "#3b82f6" }]). Applies to both board tasks and backlog items.'),
-        branchName: z.string().optional().describe('Custom git branch name for the task (e.g. "bugfix/login-screen"). If omitted, a branch name is auto-generated from the title. Board tasks only - ignored for backlog. Git allows a branch in only one working tree at a time, so if this branch is already checked out anywhere (including the user\'s main checkout) the call is REJECTED and no task is created - the response names the path holding it.'),
+        ])).optional().describe('Labels for categorization. Each entry can be a plain string or an object with name and hex color (e.g. ["bug", { "name": "frontend", "color": "#3b82f6" }]). Applies to both board tasks and backlog items. Use kangentic_board_summary to see the labels this board already uses, and reuse one rather than inventing a near-duplicate. Passing an existing label as a plain string keeps the color it already has.'),
+        branchName: z.string().optional().describe('Custom git branch name for the task (e.g. "bugfix/login-screen"). If omitted, a branch name is auto-generated from the title. Recorded on the task and checked out when its worktree is created; with `useWorktree: false` nothing is checked out, but the conflict check below still applies, since the task can gain a worktree later. Board tasks only - ignored for backlog. Git allows a branch in only one working tree at a time, so if this branch is already checked out anywhere (including the user\'s main checkout) the call is REJECTED and no task is created - the response names the path holding it.'),
         baseBranch: z.string().optional().describe('Base branch to create the task branch from (e.g. "develop", "main"). Defaults to the project setting. Board tasks only - ignored for backlog.'),
-        useWorktree: z.boolean().optional().describe('Whether to use a git worktree for isolation. Defaults to the project setting. Set false to work in the main repo. Board tasks only - ignored for backlog.'),
+        useWorktree: z.boolean().optional().describe('Whether to use a git worktree for isolation. Omit to follow the project setting. Set true and the task gets its own worktree checked out on its own branch. Set false and nothing is checked out at all: no worktree is created, the user\'s working tree is untouched, and the agent runs in the project directory on whatever branch the repo currently has out. Board tasks only - ignored for backlog.'),
         attachments: z.array(z.object({
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),
         })).optional().describe('File attachments. Always include here any local files the user referenced in the prompt by absolute path - reading a file for context does not replace attaching it. Each entry needs `filePath` (absolute) and may override the display `filename`. Skip only when the user explicitly said the file is "for context only, don\'t attach."'),
-        agentOverride: z.string().optional().describe('Pin a specific agent for this task\'s entire lifetime (e.g. "claude", "codex"). Locks against column moves, same as the New Task dialog\'s Advanced section. Omit to resolve through the normal chain: column override -> project default -> app default.'),
-        modelOverride: z.string().max(200).optional().describe('Model to spawn this task with (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). Best-effort: a friendly name is converted to the CLI id; if the agent CLI does not recognize the result, the spawn errors and you can retry with the exact id. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
-        effortOverride: z.string().max(50).optional().describe('Effort/reasoning level to spawn this task with (e.g. "xhigh", "high"). Valid values are agent-specific. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
+        agentOverride: z.string().optional().describe('Pin a specific agent for this task\'s entire lifetime (e.g. "claude", "codex"). Locks against column moves, same as the New Task dialog\'s Advanced section. Rejected at once if it is not a registered agent, with the valid names listed. Omit to resolve through the normal chain: column override -> project default -> app default.'),
+        modelOverride: z.string().max(200).optional().describe('Model to spawn this task with (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). A friendly name is converted to the CLI id, then checked against the models the resolved agent actually offers; an unknown one is rejected here with the valid list, rather than failing later at spawn. When that agent enumerates no models, the value is accepted as given and its CLI remains the final validator. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
+        effortOverride: z.string().max(50).optional().describe('Effort/reasoning level to spawn this task with (e.g. "xhigh", "high"). Valid values are agent-specific and are checked here against the resolved agent, so an unknown one is rejected with the valid list instead of failing later at spawn. An agent with no effort levels (several have none) accepts any value. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode to spawn this task with. Omit to resolve through the normal chain: column override -> project default -> app default.'),
         autoCommand: z.string().max(4000).optional().describe('Slash command to run once the agent spawns for this task (e.g. "/code-review", "/release"). Overrides the destination column\'s auto_command for this task only. Not surfaced in the UI - MCP-only.'),
         profile: z.string().optional().describe('Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Mutually exclusive with the four *Override fields above: a profile changes per column, those pin one value for the task\'s whole life, so passing both is rejected. Omit for "Default" (every column uses its own settings). Use kangentic_list_board_profiles to see the board\'s profiles.'),
@@ -84,7 +212,7 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, runMode, prUrl, prNumber, project }) => withProject(resolver, project, (ctx, resolved) => {
+    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, runMode, prUrl, prNumber, project }) => withProject(resolver, project, async (ctx, resolved) => {
       // Rejected rather than silently resolved: the repository enforces
       // exclusivity by clearing whichever side the write did not set, so
       // accepting both would quietly discard half of what the caller asked for.
@@ -129,6 +257,29 @@ export function registerTaskTools(
           });
         }
       }
+      // Validate the agent/model/effort pins against the live agent capability
+      // surface BEFORE reserving quota, for the same reason as the guardrail
+      // above: a rejected call must not burn a slot. Skipped for the backlog,
+      // whose items never spawn and carry no pins.
+      const normalizedModel = modelOverride ? resolveModelSelector(modelOverride) : null;
+      const normalizedEffort = effortOverride ? resolveEffortSelector(effortOverride) : null;
+      // Gated on something actually being pinned, so an ordinary create - the
+      // overwhelming majority - touches neither config nor the column lookup.
+      if ((agentOverride || normalizedModel || normalizedEffort) && !isBacklogColumn(column)) {
+        const agentConfig = resolver.getAgentValidationConfig();
+        const rejection = await validateSpawnOverrides({
+          agentOverride,
+          modelOverride: normalizedModel,
+          effortOverride: normalizedEffort,
+          laneAgentOverride: laneAgentOverrideForColumn(ctx, column ?? null),
+          projectDefaultAgent: resolver.getProjectDefaultAgent(resolved.projectId),
+          cliPathOverrides: agentConfig.cliPathOverrides,
+          discoveredModelsByAgent: agentConfig.discoveredModelsByAgent,
+        });
+        if (rejection) {
+          return { content: [{ type: 'text' as const, text: `${rejection} No task was created.` }], isError: true };
+        }
+      }
       // Atomic reserve AFTER project resolution so typoed project
       // selectors (which fail in resolveProject above) don't burn
       // quota slots meant to cap actual task creations.
@@ -139,7 +290,7 @@ export function registerTaskTools(
           isError: true,
         });
       }
-      return callHandler('create_task', {
+      const result = await callHandler('create_task', {
         title,
         description: description ?? '',
         column: column ?? null,
@@ -150,8 +301,8 @@ export function registerTaskTools(
         useWorktree: useWorktree ?? null,
         attachments: attachments ?? null,
         agentOverride: agentOverride ?? null,
-        modelOverride: modelOverride ? resolveModelSelector(modelOverride) : null,
-        effortOverride: effortOverride ? resolveEffortSelector(effortOverride) : null,
+        modelOverride: normalizedModel,
+        effortOverride: normalizedEffort,
         permissionMode: permissionMode ?? null,
         autoCommand: autoCommand ?? null,
         profile: profile ?? null,
@@ -159,6 +310,22 @@ export function registerTaskTools(
         prUrl: prUrl ?? null,
         prNumber: prNumber ?? null,
       }, ctx, 'Failed to create task');
+      // The create message ends with the new row's id - `(#N, id: <uuid>)` for a
+      // board task, `(priority: <p>, id: <uuid>)` for a backlog item - and the
+      // notice is appended directly under it, so pointing at that line is enough
+      // for the follow-up to be constructible with no extra lookup. The two
+      // surfaces need DIFFERENT follow-up tools: kangentic_update_task resolves
+      // only against the tasks table, so handing it a backlog id answers
+      // `Task "<uuid>" not found` and the advisory would send the agent in a
+      // circle.
+      return withLabelsAbsentNotice(
+        result,
+        'kangentic_create_task',
+        toolArgumentNotices,
+        isBacklogColumn(column)
+          ? 'send a labels-only kangentic_update_backlog_item for the backlog id shown above'
+          : 'send a labels-only kangentic_update_task for the task id shown above',
+      );
     }, { alwaysAnnotate: true }),
   );
 
@@ -166,7 +333,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_list_columns',
     {
-      description: 'List all columns (swimlanes) on the Kangentic board. Returns column names, roles, and task counts. Pass `project` to list columns from a different project.',
+      description: 'List every column (swimlane) on the Kangentic board, in board order, with names, roles, and task counts. The `(done)` column is included and is where finished work goes - it reports a completed count rather than a live task count, because moving a task there archives it off the board. Never treat the last column in this list as the finish line; read the roles. A column marked `[isolated session]` runs tasks on its own conversation rather than the task\'s main one. Pass `project` to list columns from a different project.',
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
@@ -177,10 +344,18 @@ export function registerTaskTools(
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list columns: ${response.error}` }], isError: true };
       }
-      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number }>;
+      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number; completedCount?: number; sessionTarget?: 'isolated' }>;
       const lines = columns.map((column) => {
         const roleTag = column.role ? ` (${column.role})` : '';
-        return `- ${column.name}${roleTag}: ${column.taskCount} task(s)`;
+        // The done column breaks the "N task(s)" shape deliberately: its live
+        // count is structurally zero, so printing it reads as an empty column.
+        const count = column.completedCount !== undefined
+          ? `${column.completedCount} completed`
+          : `${column.taskCount} task(s)`;
+        // Only isolated columns are marked. A main-session column is the norm
+        // and tagging every one of them would bury the distinction.
+        const isolationTag = column.sessionTarget === 'isolated' ? ' [isolated session]' : '';
+        return `- ${column.name}${roleTag}: ${count}${isolationTag}`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     }),
@@ -202,7 +377,7 @@ export function registerTaskTools(
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list tasks: ${response.error}` }], isError: true };
       }
-      const tasks = response.data as Array<{ id: string; displayId: number; title: string; description: string; column: string; position: number }>;
+      const tasks = response.data as Array<{ id: string; displayId: number; title: string; description: string; column: string; position: number; labels: string[] }>;
       if (tasks.length === 0) {
         const filterNote = column ? ` in "${column}"` : '';
         return { content: [{ type: 'text' as const, text: `No tasks found${filterNote}.` }] };
@@ -211,7 +386,8 @@ export function registerTaskTools(
         const descriptionPreview = task.description
           ? ` - ${task.description.slice(0, 100)}${task.description.length > 100 ? '...' : ''}`
           : '';
-        return `- [${task.column}] ${task.title}${descriptionPreview} (#${task.displayId}, id: ${task.id}, position: ${task.position})`;
+        const labelString = formatLabelSuffix(task.labels);
+        return `- [${task.column}] ${task.title}${labelString}${descriptionPreview} (#${task.displayId}, id: ${task.id}, position: ${task.position})`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     }),
@@ -271,7 +447,8 @@ export function registerTaskTools(
             ? ` - ${task.description.slice(0, 100)}${task.description.length > 100 ? '...' : ''}`
             : '';
           const statusTag = task.status === 'completed' ? ' [completed]' : ` [${task.column}]`;
-          return `- ${task.title}${statusTag}${descriptionPreview} (#${task.displayId}, id: ${task.id})`;
+          const labelString = formatLabelSuffix(task.labels);
+          return `- ${task.title}${statusTag}${labelString}${descriptionPreview} (#${task.displayId}, id: ${task.id})`;
         });
         sections.push(taskLines.join('\n'));
       }
@@ -279,7 +456,7 @@ export function registerTaskTools(
       if (results.backlog.length > 0) {
         if (effectiveScope === 'both') sections.push(`\nBacklog (${results.backlog.length}):`);
         const backlogLines = results.backlog.map((item) => {
-          const labelString = item.labels.length > 0 ? ` [${item.labels.join(', ')}]` : '';
+          const labelString = formatLabelSuffix(item.labels);
           const descriptionPreview = item.description
             ? ` - ${item.description.slice(0, 100)}${item.description.length > 100 ? '...' : ''}`
             : '';
@@ -296,7 +473,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_get_task_stats',
     {
-      description: 'Get session metrics and statistics for tasks. Returns token usage, cost, duration, tool calls, and lines changed. Can query a specific task or get a summary across all completed tasks, optionally filtered by keyword. Pass `project` to query a different project.',
+      description: 'Get session metrics and statistics for tasks. Returns token usage, cost, duration, tool calls, and lines changed. For a specific taskId it also breaks the task down by subagent type (which Task-tool subagent burned what on a fan-out task such as a code review), whose cost is already inside the reported total. Can query a specific task or get a summary across all completed tasks, optionally filtered by keyword. Pass `project` to query a different project.',
       inputSchema: z.object({
         taskId: z.string().optional().describe('Task ID (numeric display ID like "42" or full UUID). If omitted, returns aggregate stats across completed tasks.'),
         query: z.string().optional().describe('Filter completed tasks by keyword in title/description before aggregating stats.'),
@@ -352,7 +529,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_get_current_task',
     {
-      description: 'Resolve the Kangentic task that corresponds to the current working directory and/or git branch. Use this at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back). Pass the agent\'s CWD and/or current branch name. Matches against tasks.worktree_path (full path or .kangentic/worktrees/<folder> segment) and tasks.branch_name. Returns the same shape as kangentic_find_task, plus `devPorts`: TCP ports this task has already reserved (usually empty). Nothing is reserved automatically - use kangentic_reserve_dev_ports when you are about to start a dev server and the project\'s configured port might already be taken by a sibling task running at the same time.',
+      description: 'Resolve the Kangentic task that corresponds to the current working directory and/or git branch. Use this at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back). Pass the agent\'s CWD and/or current branch name. Matches against tasks.worktree_path (full path or .kangentic/worktrees/<folder> segment) and tasks.branch_name. Returns the same shape as kangentic_find_task. It does not report dev-server ports - use kangentic_check_dev_ports for those, which probes each port besides. Nothing is reserved automatically - use kangentic_reserve_dev_ports when you are about to start a dev server and the project\'s configured port might already be taken by a sibling task running at the same time.',
       inputSchema: z.object({
         cwd: z.string().optional().describe('Absolute working directory path. The tool extracts the worktree folder name from .kangentic/worktrees/<folder> and matches against tasks.worktree_path.'),
         branch: z.string().optional().describe('Current git branch name. Exact (case-insensitive) match against tasks.branch_name.'),
@@ -375,7 +552,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_board_summary',
     {
-      description: 'Get a high-level summary of the Kangentic board: task counts per column, active sessions, completed task count, and aggregate cost/token usage across all sessions. Pass `project` to summarize a different project.',
+      description: 'Get a high-level summary of the Kangentic board: task counts per column, the board\'s label vocabulary with use counts, active sessions, completed task count, and aggregate cost/token usage across all sessions. Call this before labelling a task to see what labels the board already uses (counted across active, completed, and backlog items) instead of inventing a near-duplicate. Pass `project` to summarize a different project.',
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
@@ -414,13 +591,13 @@ export function registerTaskTools(
         appendDescription: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe('Text appended to the end of the current description, exactly as given (no separator is inserted). Mutually exclusive with `description`; may be combined with `descriptionEdits` (edits apply first, then this append).'),
         prUrl: z.string().url().optional().describe('Pull request URL (e.g. https://github.com/owner/repo/pull/123).'),
         prNumber: z.number().int().positive().optional().describe('Pull request number.'),
-        agent: z.string().optional().describe('Agent name to assign (e.g. "claude", "codex"). Pass empty string to clear.'),
+        agent: z.string().optional().describe('Agent name to assign (e.g. "claude", "codex"). Rejected if it is not a registered agent, with the valid names listed. Pass empty string to clear.'),
         priority: z.number().int().min(0).max(4).optional().describe('Task priority 0-4 (0 = none, 4 = highest).'),
-        labels: z.array(z.string()).optional().describe('Replace the task\'s label list. Pass [] to clear all labels. If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server.'),
+        labels: z.array(z.string()).optional().describe('Replace the task\'s label list. Pass [] to clear all labels. Use kangentic_board_summary to see the labels this board already uses. If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server.'),
         baseBranch: z.string().optional().describe('Base branch the task\'s worktree branches from (e.g. "main").'),
-        useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree.'),
-        model: z.string().max(200).optional().describe('Model override for this task (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). Best-effort: a friendly name is converted to the CLI id. Pass empty string to clear.'),
-        effort: z.string().max(50).optional().describe('Effort/reasoning level override for this task (e.g. "xhigh"). Valid values are agent-specific. Pass empty string to clear.'),
+        useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree. Set false and nothing is checked out: no worktree is created, the user\'s working tree is untouched, and the agent runs in the project directory on whatever branch the repo currently has out.'),
+        model: z.string().max(200).optional().describe('Model override for this task (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). A friendly name is converted to the CLI id, then checked against the models the resolved agent offers; an unknown one is rejected here with the valid list. When that agent enumerates no models, the value is accepted as given. Pass empty string to clear.'),
+        effort: z.string().max(50).optional().describe('Effort/reasoning level override for this task (e.g. "xhigh"). Valid values are agent-specific and checked here against the resolved agent; an agent with no effort levels accepts any value. Pass empty string to clear.'),
         permissionMode: z.union([PERMISSION_MODE_SCHEMA, z.literal('')]).optional().describe('Permission mode override for this task. Pass empty string to clear.'),
         profile: z.string().optional().describe('Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Pass empty string to clear it back to "Default". Mutually exclusive with the model/effort/agent/permissionMode pins: setting a profile clears them and setting any of them clears the profile. Use kangentic_list_board_profiles to see the board\'s profiles.'),
         runMode: RUN_MODE_SCHEMA.optional().describe('How this task gets its agent settings. "column_settings" follows each column the task moves through, and clears the model/effort/permissionMode pins. "agent_override" pins them for the task\'s whole life and clears the profile; fields left unset resolve dynamically until the task first spawns, which then locks all four. Setting any pin implies "agent_override", so you only need this to switch modes without pinning anything - and setting a pin alongside "column_settings" is rejected as a contradiction (pass the pin as an empty string to clear it instead). Omit to leave the task\'s current mode alone.'),
@@ -461,26 +638,64 @@ export function registerTaskTools(
       if (runMode === 'column_settings' && (model || effort || permissionMode)) {
         return { content: [{ type: 'text' as const, text: 'Pass either the model/effort/permissionMode pins (which already imply runMode: "agent_override") or runMode: "column_settings" (follow each column, clearing the pins), not both.' }], isError: true };
       }
-      return withProject(resolver, project, (ctx) => callHandler('update_task', {
-        taskId,
-        title: title ?? null,
-        description: description ?? null,
-        descriptionEdits: descriptionEdits ?? null,
-        appendDescription: appendDescription ?? null,
-        prUrl: prUrl ?? null,
-        prNumber: prNumber ?? null,
-        agent: agent ?? null,
-        priority: priority ?? null,
-        labels: labels ?? null,
-        baseBranch: baseBranch ?? null,
-        useWorktree: useWorktree ?? null,
-        model: model !== undefined ? (model ? resolveModelSelector(model) : null) : undefined,
-        effort: effort !== undefined ? (effort ? resolveEffortSelector(effort) : null) : undefined,
-        permissionMode: permissionMode !== undefined ? (permissionMode || null) : undefined,
-        profile: profile !== undefined ? (profile || null) : undefined,
-        runMode: runMode ?? undefined,
-        attachments: attachments ?? null,
-      }, ctx, 'Failed to update task'));
+      return withProject(resolver, project, async (ctx, resolved) => {
+        // Only the pins present on THIS call are validated. Re-checking the
+        // task's stored values would make a labels-only follow-up start failing
+        // on a task carrying a since-deprecated model pin - which is exactly
+        // the follow-up the labels notice below asks for.
+        const normalizedModel = model !== undefined ? (model ? resolveModelSelector(model) : null) : undefined;
+        const normalizedEffort = effort !== undefined ? (effort ? resolveEffortSelector(effort) : null) : undefined;
+        if (normalizedModel || normalizedEffort || agent) {
+          const agentConfig = resolver.getAgentValidationConfig();
+          const ladderRungs = agentLadderRungsForTask(ctx, taskId);
+          // An explicit `agent: ""` CLEARS the task's pin, so the stored value is
+          // about to disappear and must not anchor the ladder. Leaving it in
+          // place would validate a model against the OLD agent on a call whose
+          // whole point is to move off it, rejecting a value the post-write
+          // resolution accepts - the false-rejection direction this module
+          // promises never to take.
+          const clearsAgentPin = agent === '';
+          const rejection = await validateSpawnOverrides({
+            agentOverride: agent || null,
+            modelOverride: normalizedModel ?? null,
+            effortOverride: normalizedEffort ?? null,
+            taskAgentOverride: clearsAgentPin ? null : ladderRungs.taskAgentOverride,
+            laneAgentOverride: ladderRungs.laneAgentOverride,
+            projectDefaultAgent: resolver.getProjectDefaultAgent(resolved.projectId),
+            cliPathOverrides: agentConfig.cliPathOverrides,
+            discoveredModelsByAgent: agentConfig.discoveredModelsByAgent,
+          });
+          if (rejection) {
+            return { content: [{ type: 'text' as const, text: `${rejection} The task was not updated.` }], isError: true };
+          }
+        }
+        const result = await callHandler('update_task', {
+          taskId,
+          title: title ?? null,
+          description: description ?? null,
+          descriptionEdits: descriptionEdits ?? null,
+          appendDescription: appendDescription ?? null,
+          prUrl: prUrl ?? null,
+          prNumber: prNumber ?? null,
+          agent: agent ?? null,
+          priority: priority ?? null,
+          labels: labels ?? null,
+          baseBranch: baseBranch ?? null,
+          useWorktree: useWorktree ?? null,
+          model: normalizedModel,
+          effort: normalizedEffort,
+          permissionMode: permissionMode !== undefined ? (permissionMode || null) : undefined,
+          profile: profile !== undefined ? (profile || null) : undefined,
+          runMode: runMode ?? undefined,
+          attachments: attachments ?? null,
+        }, ctx, 'Failed to update task');
+        return withLabelsAbsentNotice(
+          result,
+          'kangentic_update_task',
+          toolArgumentNotices,
+          `send a labels-only kangentic_update_task for taskId "${taskId}"`,
+        );
+      });
     },
   );
 
@@ -488,14 +703,15 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_link_pr',
     {
-      description: 'Authoritatively resolve and link the pull request for a task\'s git branch using the gh CLI (`gh pr list --head <branch>`). Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or `gh api`, and works even when the task has no live session. Re-running refreshes the linked PR\'s state (open/draft/merged/closed). Use after opening a PR, or to backfill a task whose PR was never linked. Find the task ID first with kangentic_find_task. Pass `project` to target a different project.',
+      description: 'Authoritatively resolve and link the pull request for a task through the repository\'s PR host (GitHub via gh, Azure DevOps via az), searching by the task\'s PR number, worktree branch, commit, stored branch, and pushed branch in that order. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR\'s state (open/draft/merged/closed) and merge readiness (ready/blocked/conflicting/queued/running/unknown). Use after opening a PR, or to backfill a task whose PR was never linked. A task with no worktree has nothing to search by until its push is recorded: pass `branch` (the remote branch the work was pushed to) and it is recorded first. Find the task ID first with kangentic_find_task. Pass `project` to target a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
+        branch: z.string().optional().describe('The remote branch the work was pushed to (the PR source branch). Recorded on the task before resolving; needed when the task has no worktree and nothing else recorded.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('link_pr', { taskId }, ctx, 'Failed to resolve PR')),
+    async ({ taskId, branch, project }) => withProject(resolver, project, (ctx) => callHandler('link_pr', { taskId, branch }, ctx, 'Failed to resolve PR')),
   );
 
   // --- kangentic_move_task ---
@@ -572,26 +788,29 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_column',
     {
-      description: 'Update a swimlane (column) configuration. Supports renaming, setting a free-form description, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
+      description: 'Update a swimlane (column) configuration. Supports renaming, setting a free-form description, recoloring, toggling auto-spawn, setting the message the column sends its agent and when it is delivered, overriding the agent for the column, changing permission mode, enabling handoff context, choosing whether the column runs on an isolated session, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
       inputSchema: z.object({
-        column: z.string().describe('Column name to update (case-insensitive, e.g. "Review").'),
+        column: z.string().describe('Column name to update (case-insensitive, e.g. "Review"). The role columns (To Do, Done) can be renamed and restyled here like any other; their role itself is structural and not settable.'),
         name: z.string().max(100).optional().describe('New column name.'),
         description: z.string().max(1000).nullable().optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json. Null to clear.'),
         color: z.string().optional().describe('Hex color (e.g. "#71717a").'),
         icon: z.string().nullable().optional().describe('Lucide icon name, or null to clear.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent.'),
-        autoCommand: z.string().max(4000).nullable().optional().describe('Slash command template injected when an agent spawns in this column (e.g. "/review --strict"). Null to clear.'),
+        autoCommand: z.string().max(4000).nullable().optional().describe('The message this column sends its agent on entry (e.g. "/review --strict"). Supports template variables such as {{title}}, {{taskNumber}} and {{baseBranch}}. Writes the column\'s first send_message automation in its On enter group, creating one if it has none; null deletes it. For anything beyond that one message (scripts, webhooks, notifications, ordering, exit automations) use kangentic_set_automations.'),
+        autoCommandMode: AUTO_COMMAND_MODE_SCHEMA.optional().describe('When the message is sent: "immediate" types it as soon as the agent is ready, "deferred" waits for the agent to finish its current turn. Defaults to the row\'s existing mode, then "immediate".'),
         agentOverride: z.string().nullable().optional().describe('Force a specific agent for this column (e.g. "codex"). Null to use project default.'),
         modelOverride: z.string().max(200).nullable().optional().describe('Adapter-specific model identifier passed at spawn time (e.g. Claude "opus", "sonnet", "claude-opus-4-7"). Null to inherit the agent default.'),
         effortOverride: z.string().max(50).nullable().optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "medium", "high", "xhigh", "max"). Valid values are agent-specific. Null to inherit the agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.nullable().optional().describe('Permission mode for agents spawned in this column. Null to use project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
+        sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ column, name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
+    async ({ column, name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
       name: name ?? undefined,
       description: description === undefined ? undefined : description,
@@ -599,11 +818,14 @@ export function registerTaskTools(
       icon: icon === undefined ? undefined : icon,
       autoSpawn: autoSpawn ?? undefined,
       autoCommand: autoCommand === undefined ? undefined : autoCommand,
+      autoCommandMode,
       agentOverride: agentOverride === undefined ? undefined : agentOverride,
       modelOverride: modelOverride === undefined ? undefined : modelOverride,
       effortOverride: effortOverride === undefined ? undefined : effortOverride,
       permissionMode: permissionMode === undefined ? undefined : permissionMode,
       handoffContext: handoffContext ?? undefined,
+      sessionTarget: sessionTarget ?? undefined,
+      sessionSpawnStrategy: sessionSpawnStrategy ?? undefined,
       planExitTargetColumn: planExitTargetColumn === undefined ? undefined : planExitTargetColumn,
     }, ctx, 'Failed to update column')),
   );
@@ -612,37 +834,43 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_create_column',
     {
-      description: 'Add a new swimlane (column) to the Kangentic board. By default it lands just before Done, which is where a new workflow stage almost always belongs. Column names must be unique (case-insensitive). Roles are structural and cannot be set: To Do and Done already exist on every board. Pass `project` to add a column to a different project.',
+      description: 'Add a new swimlane (column) to the Kangentic board. By default it lands just before Done, which is where a new workflow stage almost always belongs. Column names must be unique (case-insensitive). Roles are structural and cannot be set: To Do and Done already exist on every board. A column that reviews, tests, or otherwise checks the work of an earlier column wants sessionTarget: "isolated", or its agent is the same one that did that work. Pass `project` to add a column to a different project.',
       inputSchema: z.object({
         name: z.string().max(100).describe('Column name, unique on this board (case-insensitive).'),
         description: z.string().max(1000).optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json.'),
         color: z.string().optional().describe('Hex color (e.g. "#71717a"). Defaults to blue.'),
         icon: z.string().optional().describe('Lucide icon name.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent. Defaults to true.'),
-        autoCommand: z.string().max(4000).optional().describe('Slash command template injected when an agent spawns in this column (e.g. "/review --strict").'),
+        autoCommand: z.string().max(4000).optional().describe('The message this column sends its agent on entry (e.g. "/review --strict"). Supports template variables such as {{title}}, {{taskNumber}} and {{baseBranch}}. Creates the column\'s first send_message automation in its On enter group. For anything more (scripts, webhooks, notifications, exit automations) use kangentic_set_automations afterwards.'),
+        autoCommandMode: AUTO_COMMAND_MODE_SCHEMA.optional().describe('When the message is sent: "immediate" types it as soon as the agent is ready, "deferred" waits for the agent to finish its current turn. Defaults to "immediate".'),
         agentOverride: z.string().optional().describe('Force a specific agent for this column (e.g. "codex"). Omit to use the project default.'),
         modelOverride: z.string().max(200).optional().describe('Adapter-specific model identifier passed at spawn time (e.g. Claude "opus", "sonnet"). Omit to inherit the agent default.'),
         effortOverride: z.string().max(50).optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "high", "xhigh"). Omit to inherit the agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode for agents spawned in this column. Omit to use the project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
+        sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning.'),
         position: z.number().int().min(0).optional().describe('Zero-based ordinal slot among the board\'s columns (not a raw stored position); later columns shift right. Clamped between the role columns: a value below the lowest legal slot lands immediately after To Do, and a value at or past Done lands immediately before Done, never after it. Omit for the default placement just before Done.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
+    async ({ name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
       name,
       description,
       color,
       icon,
       autoSpawn,
       autoCommand,
+      autoCommandMode,
       agentOverride,
       modelOverride,
       effortOverride,
       permissionMode,
       handoffContext,
+      sessionTarget,
+      sessionSpawnStrategy,
       planExitTargetColumn,
       position,
     }, ctx, 'Failed to create column'), { alwaysAnnotate: true }),

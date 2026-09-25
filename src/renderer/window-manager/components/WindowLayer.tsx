@@ -41,6 +41,7 @@ import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
 import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
 import { useClickOutsideToClose } from '../bridge/useClickOutsideToClose';
+import { shouldParkTaskDetailWindowOnClose, useParkedWindowReaper } from '../bridge/window-parking';
 import type { ContainerSize } from '../store/geometry';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { WindowFrame } from './WindowFrame';
@@ -111,11 +112,13 @@ function WindowManagerSurface({
   backdrop,
 }: Pick<WindowManagerLayerProps, 'portalHostId' | 'overlayTestId' | 'overlayClassName' | 'bridges' | 'backdrop'>) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const hostRef = useRef<HTMLElement | null>(null);
-  if (!hostRef.current) hostRef.current = getPortalHost(portalHostId);
+  // The portal host, resolved once per mount by a lazy initializer. State, not
+  // a lazily filled ref: render reads it (for `createPortal`), which React's
+  // compiler rules forbid for a ref.
+  const [portalHost] = useState(() => getPortalHost(portalHostId));
 
   const { manager } = useWindowManager();
-  const useStore = manager.store;
+  const layerStore = manager.store;
 
   // Publish this layer's mount state. Renderer-global state derived from windows
   // (`dialogSessionIds`) must not count a layer whose surface is gone: the store
@@ -123,9 +126,9 @@ function WindowManagerSurface({
   // the one that actually unmounts (it lives inside MonitorPage).
   useEffect(() => markLayerMounted(manager), [manager]);
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
-  const windows = useStore((state) => state.windows);
-  const tileTree = useStore((state) => state.tileTree);
-  const tileTreeRect = useStore((state) => state.tileTreeRect);
+  const windows = layerStore((state) => state.windows);
+  const tileTree = layerStore((state) => state.tileTree);
+  const tileTreeRect = layerStore((state) => state.tileTreeRect);
 
   // The tile tree lives inside this pixel sub-region of the overlay (the whole
   // overlay for edge-snap pairs; a half-snapped window's footprint for a group
@@ -223,7 +226,7 @@ function WindowManagerSurface({
         <SnapPreview />
       </div>
     </>,
-    hostRef.current,
+    portalHost,
   );
 }
 
@@ -257,6 +260,9 @@ function BoardBridges(): null {
   useWindowFocusReconcile();
   useWorkspacePersistence();
   useClickOutsideToClose('board');
+  // Renderer-lifetime on purpose: the windows it reaps are the ones nobody can
+  // see, so it must outlive any per-window subtree.
+  useParkedWindowReaper();
   return null;
 }
 
@@ -299,6 +305,10 @@ const BOARD_LAYER_OPTIONS: WindowManagerLayerOptions = {
   // This layer CAN reveal a task detail: `useTaskDetailWindowBridge` (mounted in
   // BoardBridges above) turns the signal into a window on this very layer.
   revealTaskDetail: (taskId) => useSessionStore.getState().setDetailTaskId(taskId),
+  // Only the board parks: a task-detail window whose Browser pane an agent is
+  // driving is hidden in place on close rather than removed, so reopening the
+  // task re-attaches the same guest. See `bridge/window-parking.ts`.
+  shouldParkOnClose: shouldParkTaskDetailWindowOnClose,
 };
 
 const BOARD_OVERLAY_BASE_CLASS = 'fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none';

@@ -1,12 +1,13 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
 import { ActivityMark } from '../../ActivityMark';
 import { HeaderActionButton } from '../../HeaderActionButton';
+import { IconSlot } from '../../IconSlot';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandSearchList } from './CommandSearchList';
@@ -17,6 +18,7 @@ import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
 import { useSessionStore } from '../../../stores/session-store';
 import { captureTerminalScrollback } from '../../../utils/terminal-capture-registry';
+import { prStatePresentation } from '../../../lib/pr-state';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 
 /**
@@ -45,6 +47,26 @@ function PauseButtonIcon({
   isIdle: boolean;
   isSessionActive: boolean;
 }): ReactNode {
+  // One IconSlot wraps whatever the branching produces: these branches return different
+  // element types, so a state change mid-press would otherwise destroy the node the press
+  // landed on and Chromium would drop the click (see IconSlot). Clicking here also flips
+  // `toggling`, so this button swaps its own icon by design.
+  return <IconSlot size={20}>{pauseGlyph({ toggling, isThinking, isQueued, isIdle, isSessionActive })}</IconSlot>;
+}
+
+function pauseGlyph({
+  toggling,
+  isThinking,
+  isQueued,
+  isIdle,
+  isSessionActive,
+}: {
+  toggling: boolean;
+  isThinking: boolean;
+  isQueued: boolean;
+  isIdle: boolean;
+  isSessionActive: boolean;
+}): ReactNode {
   if (toggling) return <Loader2 size={18} className="animate-spin" />;
 
   // Active and idle/permission share one packaged mark, differing only by color and motion
@@ -57,13 +79,11 @@ function PauseButtonIcon({
   // should be reintroduced, since ring and bars are now one SVG that scales together.
   if (isThinking || isIdle) {
     return (
-      <span className="grid place-items-center w-5 h-5">
-        <ActivityMark
-          mark={isThinking ? 'control-pause-working' : 'control-pause-idle'}
-          size={20}
-          className={isThinking ? 'text-active' : 'text-attention'}
-        />
-      </span>
+      <ActivityMark
+        mark={isThinking ? 'control-pause-working' : 'control-pause-idle'}
+        size={20}
+        className={isThinking ? 'text-active' : 'text-attention'}
+      />
     );
   }
 
@@ -109,6 +129,12 @@ interface TaskDetailHeaderProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  /** A Browser pane guest is alive for the task (showing, hidden, or parked). */
+  browserAlive: boolean;
+  /** An agent is driving that guest right now. */
+  browserDriving: boolean;
+  /** The user's Close: discard the guest and free its memory (never the pill's hide). */
+  onCloseBrowser: () => void;
   canShowDescription?: boolean;
   descriptionPeekOpen?: boolean;
   onToggleDescription?: () => void;
@@ -192,6 +218,9 @@ export function TaskDetailHeader({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  browserAlive,
+  browserDriving,
+  onCloseBrowser,
   canShowDescription = false,
   descriptionPeekOpen = false,
   onToggleDescription,
@@ -215,20 +244,21 @@ export function TaskDetailHeader({
   // running) means history is already known synchronously; otherwise a
   // session may still exist from a prior run, so check once per task.
   const liveSessionId = useSessionStore((state) => state._sessionByTaskId.get(task.id)?.id ?? null);
-  const [historicalConversationAvailable, setHistoricalConversationAvailable] = useState(false);
+  // The answer is stored with the key it was checked for and derived from it,
+  // so a change of task or host reads as "unknown" (false) at once, with no
+  // effect having to clear the previous answer first.
+  const historyKey = JSON.stringify([task.id, hostProjectId || null]);
+  const [historicalConversation, setHistoricalConversation] = useState<{ key: string; available: boolean } | null>(null);
+  const historicalConversationAvailable = historicalConversation?.key === historyKey && historicalConversation.available;
   useEffect(() => {
-    if (liveSessionId) {
-      setHistoricalConversationAvailable(false);
-      return;
-    }
+    if (liveSessionId) return;
     let cancelled = false;
-    setHistoricalConversationAvailable(false);
     window.electronAPI.transcripts
       .listSessions(task.id, hostProjectId || null)
-      .then((list) => { if (!cancelled) setHistoricalConversationAvailable(list.length > 0); })
-      .catch(() => { if (!cancelled) setHistoricalConversationAvailable(false); });
+      .then((list) => { if (!cancelled) setHistoricalConversation({ key: historyKey, available: list.length > 0 }); })
+      .catch(() => { if (!cancelled) setHistoricalConversation({ key: historyKey, available: false }); });
     return () => { cancelled = true; };
-  }, [task.id, liveSessionId, hostProjectId]);
+  }, [task.id, liveSessionId, hostProjectId, historyKey]);
   const conversationAvailable = Boolean(liveSessionId) || historicalConversationAvailable;
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
@@ -383,15 +413,38 @@ export function TaskDetailHeader({
 
           {/* Browser toggle pill */}
           {showPill('browser') && canShowBrowser && (
-            <div data-pill-id="browser" className="flex-shrink-0">
+            <div data-pill-id="browser" className="relative flex-shrink-0">
               <HeaderActionButton
                 icon={Globe}
                 onClick={onToggleBrowser}
                 active={browserOpen}
-                title={`${browserOpen ? 'Hide' : 'Show'} browser (${browserCombo})`}
+                title={
+                  browserOpen
+                    ? `Hide browser (${browserCombo}). Kept alive until you close it.`
+                    : browserAlive
+                      ? `Show browser (${browserCombo}). Page kept.`
+                      : `Show browser (${browserCombo})`
+                }
                 ariaLabel="Toggle browser"
                 testId="browser-toggle"
               />
+              {/* Running dot: a browser guest is alive for this task, in ANY
+                  state (showing, hidden, or parked), the way the Command
+                  Terminal toggle shows a live PTY. Green and pulsing because
+                  it is a process that is running and costing memory until Stop
+                  browser ends it; the task card's globe carries the same fact
+                  in the same colour, and whether the agent is DRIVING the page
+                  is shown by the pane's accent border and "Agent typing here",
+                  in neither place. Tailwind's stock pulse: an opacity keyframe,
+                  so it composites. */}
+              {browserAlive && (
+                <span
+                  aria-hidden="true"
+                  data-testid="browser-toggle-alive"
+                  data-driving={browserDriving ? 'true' : undefined}
+                  className="pointer-events-none absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface-raised bg-active animate-pulse"
+                />
+              )}
             </div>
           )}
 
@@ -464,6 +517,8 @@ export function TaskDetailHeader({
               canShowBrowser={canShowBrowser}
               browserOpen={browserOpen}
               onToggleBrowser={onToggleBrowser}
+              browserAlive={browserAlive}
+              onCloseBrowser={onCloseBrowser}
               canShowDescription={canShowDescription}
               descriptionPeekOpen={descriptionPeekOpen}
               onToggleDescription={onToggleDescription}
@@ -531,6 +586,8 @@ interface TaskDetailKebabItemsProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  browserAlive: boolean;
+  onCloseBrowser: () => void;
   canShowDescription?: boolean;
   descriptionPeekOpen?: boolean;
   onToggleDescription?: () => void;
@@ -564,6 +621,8 @@ function TaskDetailKebabItems({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  browserAlive,
+  onCloseBrowser,
   canShowDescription = false,
   descriptionPeekOpen = false,
   onToggleDescription,
@@ -571,7 +630,51 @@ function TaskDetailKebabItems({
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
   const [linkingPr, setLinkingPr] = useState(false);
+  const [updatingFromBase, setUpdatingFromBase] = useState(false);
   const { projectId: hostProjectId } = useTaskDetailHost();
+
+  const handleUpdateFromBase = async () => {
+    if (updatingFromBase) return;
+    setUpdatingFromBase(true);
+    try {
+      const result = await window.electronAPI.tasks.updateFromBase({ taskId: task.id }, hostProjectId || null);
+      const toast = useToastStore.getState();
+      switch (result.status) {
+        case 'updated':
+          toast.addToast({
+            message: `Updated from ${result.baseBranch}: fast-forwarded ${result.commitCount} commit${result.commitCount === 1 ? '' : 's'}.`,
+            variant: 'success',
+          });
+          break;
+        case 'already-up-to-date':
+          toast.addToast({ message: `Already up to date with ${result.baseBranch}.`, variant: 'info' });
+          break;
+        case 'cannot-ff':
+          toast.addToast({
+            message: `Cannot fast-forward: this branch has its own commits (${result.ahead} ahead, ${result.behind} behind ${result.baseBranch}). Rebase or merge in the session instead.`,
+            variant: 'warning',
+          });
+          break;
+        case 'dirty-tree':
+          toast.addToast({ message: 'Cannot update: the worktree has uncommitted changes.', variant: 'warning' });
+          break;
+        case 'fetch-failed':
+          toast.addToast({
+            message: `Could not fetch ${result.baseBranch} from origin. ${(result.reason.split('\n')[0] ?? '').trim()}`.trim(),
+            variant: 'warning',
+          });
+          break;
+        case 'no-remote':
+          toast.addToast({ message: `No origin remote to fetch ${result.baseBranch} from.`, variant: 'info' });
+          break;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      useToastStore.getState().addToast({ message: `Update from base failed: ${message}`, variant: 'warning' });
+    } finally {
+      setUpdatingFromBase(false);
+    }
+  };
 
   const handleLinkPr = async () => {
     if (linkingPr) return;
@@ -579,23 +682,39 @@ function TaskDetailKebabItems({
     try {
       const result = await window.electronAPI.tasks.resolvePr(task.id, hostProjectId || null);
       if (result.reason === 'resolver-unavailable') {
+        // Prefer the resolver's own message: it names the actual reason (which
+        // CLI, which host, or that no connector owns this remote at all). The
+        // hardcoded gh wording told an Azure DevOps user to run `gh auth login`
+        // when gh was installed and working. Mirrors task-commands.ts.
         useToastStore.getState().addToast({
-          message: 'GitHub CLI not found - install gh and run gh auth login to link PRs',
+          message: result.message ?? 'No PR resolver available for this repository',
           variant: 'error',
         });
       } else if (result.reason === 'transient-error') {
         useToastStore.getState().addToast({
-          message: 'Could not reach GitHub - try again in a moment',
+          message: result.message ?? 'Could not reach the PR host - try again in a moment',
           variant: 'error',
         });
-      } else if (result.linked && result.task?.pr_number != null) {
+      } else if (result.reason === 'no-anchor') {
+        // Nothing was searched. Distinct from not-found so the user does not
+        // conclude the PR does not exist when the task simply has no anchor.
         useToastStore.getState().addToast({
-          message: `Linked PR #${result.task.pr_number} (${result.task.pr_state ?? 'open'})`,
+          message: 'Nothing to search by: no branch, pushed branch, commit, or PR number is recorded for this task',
+          variant: 'info',
+        });
+      } else if (result.linked && result.task?.pr_number != null) {
+        // The same word the card's chip shows, so a refresh that changed only
+        // the merge verdict still reports a visible result ("blocked", not a
+        // second "open"). A null state falls back to "open" as before.
+        const chipWord = prStatePresentation(result.task.pr_state, result.task.pr_merge_readiness).label || 'open';
+        useToastStore.getState().addToast({
+          message: `Linked PR #${result.task.pr_number} (${chipWord})`,
           variant: 'success',
         });
       } else {
+        const searchedBranch = task.branch_name ?? task.pushed_branch;
         useToastStore.getState().addToast({
-          message: task.branch_name ? `No PR found for branch "${task.branch_name}"` : 'No PR found for this task',
+          message: searchedBranch ? `No PR found for branch "${searchedBranch}"` : 'No PR found for this task',
           variant: 'info',
         });
       }
@@ -642,8 +761,8 @@ function TaskDetailKebabItems({
       {/* Open folder */}
       {(task.worktree_path || projectPath) && (
         <KebabMenuItem
-          icon={<FolderGit2 size={14} />}
-          label="Open folder"
+          icon={task.worktree_path ? <FolderGit2 size={14} /> : <FolderGit size={14} />}
+          label={task.worktree_path ? 'Open worktree' : 'Open project folder'}
           onClick={() => { closeAll(); window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!); }}
         />
       )}
@@ -676,6 +795,22 @@ function TaskDetailKebabItems({
         />
       )}
 
+      {/* Close browser: discard the guest and free its memory. Present whenever
+          a guest exists, which is the only reach while the pane is hidden (the
+          pane's own toolbar control cannot be clicked then). Verb pair with the
+          Hide / Show item above: hide keeps the page for the agent, close ends
+          it. The object is named because the pane has three plausible things to
+          "stop" - the agent, the page load, the browser - and only this one is
+          meant. */}
+      {browserAlive && (
+        <KebabMenuItem
+          icon={<CircleStop size={14} />}
+          label="Close browser"
+          onClick={() => { closeAll(); onCloseBrowser(); }}
+          data-testid="kebab-close-browser"
+        />
+      )}
+
       {/* View PR */}
       {task.pr_url && (
         <KebabMenuItem
@@ -685,13 +820,32 @@ function TaskDetailKebabItems({
         />
       )}
 
-      {/* Link / refresh PR (authoritative branch->PR resolve; works with no live session) */}
-      {(task.branch_name || task.worktree_path) && (
+      {/* Link / refresh PR (authoritative branch->PR resolve; works with no live
+          session). Shown for any anchor the ladder can search by, so a task with
+          no worktree whose push was recorded, or that names its PR by number,
+          gets the control too. For a linked PR it is the one control that
+          re-checks merge readiness between background sweeps. */}
+      {(task.branch_name || task.worktree_path || task.pushed_branch || task.pr_number != null) && (
         <KebabMenuItem
           icon={linkingPr ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           label={task.pr_url ? 'Refresh PR' : 'Link PR'}
           onClick={() => { closeAll(); void handleLinkPr(); }}
           disabled={linkingPr}
+        />
+      )}
+
+      {/* Update from base - fetch the base and fast-forward the worktree.
+          Disabled while a session is active. isSessionActive is a SUPERSET of
+          the handler's running/queued guard (it also covers initializing /
+          preparing), so this conservatively over-disables and the click can
+          never land on the handler's error path. */}
+      {Boolean(task.worktree_path) && !isArchived && (
+        <KebabMenuItem
+          icon={updatingFromBase ? <Loader2 size={14} className="animate-spin" /> : <GitMerge size={14} />}
+          label="Update from base"
+          onClick={() => { closeAll(); void handleUpdateFromBase(); }}
+          disabled={updatingFromBase || isSessionActive}
+          data-testid="update-from-base-btn"
         />
       )}
 

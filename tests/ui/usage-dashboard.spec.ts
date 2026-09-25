@@ -17,7 +17,13 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady } from './helpers';
 
-test.describe.configure({ mode: 'parallel' });
+// Every test here boots a full app instance inside its own body: launchWithState()
+// polls Vite, launches Chromium, loads the page, and waits up to 15000ms for the
+// app, and the board-mount waitFor after it allows another 15000ms. The ui
+// project's default 15000ms test budget cannot hold even one of those, so on a
+// loaded machine it fired on a blank page before the app had painted. See the
+// same reasoning in task-detail-archived-no-resume.spec.ts.
+test.describe.configure({ mode: 'parallel', timeout: 30_000 });
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -246,9 +252,12 @@ test.describe('usage dashboard', () => {
   test('per-project table Files column renders each project\'s summed filesChanged value', async () => {
     // Bug #2 of the usage-dashboard fix: per-project filesChanged was never
     // summed/displayed. The default fixture's cost-sort keeps "Mock Project"
-    // first; its Files cell (column index 7: project, tokensIn, tokensOut,
-    // cost, costShare, blendedRate, lines, files) must show the fixture's
-    // filesChanged value, not a defensive-fallback 0.
+    // first; its Files cell (column index 6: project, tokensIn, tokensOut,
+    // cost, costShare, lines, files) must show the fixture's filesChanged
+    // value, not a defensive-fallback 0. The blended $/Mtok column that used
+    // to sit between costShare and lines is gone: cost reaches back to a
+    // project's first session while per-turn token capture starts later, so
+    // the ratio divided a full-range numerator by a partial-range one.
     const { browser, page } = await launchWithState(twoProjectPreConfig());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -259,7 +268,7 @@ test.describe('usage dashboard', () => {
 
       const firstRow = page.locator('[data-testid="per-project-row"]').first();
       await expect(firstRow).toContainText('Mock Project');
-      await expect(firstRow.locator('td').nth(7)).toHaveText('47');
+      await expect(firstRow.locator('td').nth(6)).toHaveText('47');
     } finally {
       await browser.close();
     }
@@ -296,6 +305,308 @@ test.describe('usage dashboard', () => {
       await openDashboard(page);
 
       await expect(page.locator('[data-testid="kpi-sessions"]')).toContainText('1 active now', { timeout: 10000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the headline Cost equals each breakdown, and both burn-rate lines reproduce their own tile', async () => {
+    // The four numbers the usage audit found disagreeing. The Cost tile used
+    // to float above the breakdowns by the whole cumulative cost of every
+    // session still in the session store, and the burn rate divided
+    // turn-ALLOCATED cost by the range while the Cost tile showed the full
+    // ledger, so tile-divided-by-tile implied two different window lengths.
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+      await expect(page.locator('[data-testid="kpi-tiles"]')).toBeVisible({ timeout: 10000 });
+
+      const checks = await page.evaluate(async () => {
+        const api = (window as unknown as {
+          electronAPI: {
+            projects: { list: () => Promise<Array<{ id: string }>> };
+            usage: { getDashboardStats: (...args: unknown[]) => Promise<Record<string, never>> };
+          };
+        }).electronAPI;
+        const projects = await api.projects.list();
+        const stats = await api.usage.getDashboardStats(
+          { kind: 'project', projectId: projects[0].id }, 'week', null, null,
+        ) as unknown as {
+          kpis: Record<string, number>;
+          byModel: Array<{ costUsd: number }>;
+          byAgent: Array<{ costUsd: number }>;
+          byEffort: Array<{ costUsd: number }>;
+          rangeStartMs: number;
+          rangeEndMs: number;
+        };
+        const sum = (rows: Array<{ costUsd: number }>) =>
+          rows.reduce((runningTotal, row) => runningTotal + row.costUsd, 0);
+        const hours = (stats.rangeEndMs - stats.rangeStartMs) / 3_600_000;
+        return {
+          headline: stats.kpis.totalCostUsd,
+          byModel: sum(stats.byModel),
+          byAgent: sum(stats.byAgent),
+          byEffort: sum(stats.byEffort),
+          usdOverRange: stats.kpis.burnRateUsdPerHour * hours,
+          tokensOverRange: stats.kpis.burnRateTokensPerHour * hours,
+          tileTokens: stats.kpis.turnInputTokens + stats.kpis.turnOutputTokens,
+        };
+      });
+
+      expect(checks.byModel).toBeCloseTo(checks.headline, 6);
+      expect(checks.byAgent).toBeCloseTo(checks.headline, 6);
+      expect(checks.byEffort).toBeCloseTo(checks.headline, 6);
+      // Each rate times the range reproduces the tile it sits beside, which is
+      // only true when both lines share one denominator AND each numerator is
+      // the field its own tile renders.
+      expect(checks.usdOverRange).toBeCloseTo(checks.headline, 6);
+      expect(checks.tokensOverRange).toBeCloseTo(checks.tileTokens, 6);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Avg Active reports agent-working time over the sessions the interval ledger covers', async () => {
+    // Was "Avg Session": the agent's own wall clock (idle included) summed
+    // across every resume leg, divided by a count of ledger rows. On the
+    // dogfooding install that read 4h11m, which works out to 3.7 sessions
+    // running around the clock for six months.
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+
+      const tile = page.locator('[data-testid="kpi-avg-session"]');
+      // 90 minutes of active time over 6 covered sessions = 15m each.
+      await expect(tile).toContainText('15m', { timeout: 10000 });
+      // The denominator is on the tile: it is a different population from the
+      // Sessions tile two cards to the left, and a reader comparing the two
+      // deserves to see why.
+      await expect(tile).toContainText('over 6 sessions');
+      await expect(tile).toHaveAttribute(
+        'title',
+        'Time the agent was working, per session, excluding idle. Covers the 6 session(s) with '
+        + 'activity tracking in this range, which is fewer than the Sessions tile counts.',
+      );
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Tokens tile flags a range that reaches back before per-turn capture started', async () => {
+    // The two ledgers do not start at the same time: usage_history reaches
+    // back to a project's first session, but per-turn capture shipped later
+    // and the CLI prunes the transcripts that would backfill it. A range
+    // whose rangeStartMs sits before earliestTurnMs genuinely has less token
+    // coverage than the Cost tile beside it, and the tile has to say so
+    // rather than let a partial number read as full coverage. The default
+    // fixture's rangeStartMs never reaches back that far (~5h), so this
+    // branch has no coverage without a custom fixture.
+    const dayMs = 24 * 60 * 60 * 1000;
+    const partialCoverageFixture = `
+      (function () {
+        window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+          var now = Date.now();
+          var dayMs = ${dayMs};
+          return {
+            scope: scope, period: period,
+            rangeStartMs: now - 60 * dayMs, rangeEndMs: now,
+            bucketSizeMs: 86400000, costBucketSizeMs: 86400000, generatedAtMs: now,
+            kpis: {
+              totalCostUsd: 40, costKnown: true,
+              totalInputTokens: 5000, totalOutputTokens: 1000, totalTokens: 6000,
+              sessionCount: 4, toolCallCount: 20,
+              linesAdded: 0, linesRemoved: 0, filesChanged: 0,
+              compactionCount: 0, totalDurationMs: 100000,
+              activeMs: 0, activeSessionsCovered: 0,
+              turnInputTokens: 900, turnOutputTokens: 150,
+              cacheCreationTokens: 10, cacheReadTokens: 50,
+              subagentInputTokens: 0, subagentOutputTokens: 0,
+              subagentCacheCreationTokens: 0, subagentCacheReadTokens: 0,
+              subagentTurnCount: 0, subagentCount: 0, subagentNestedCount: 0,
+              burnRateTokensPerHour: 100, burnRateUsdPerHour: 1,
+            },
+            previousKpis: null,
+            tokenSeries: [], costSeries: [],
+            byModel: [], byAgent: [], byEffort: [], bySubagentType: [],
+            subagentBlindAgents: [],
+            liveLedgerBaseline: { costUsd: 0 },
+            earliestTurnMs: now - 10 * dayMs,
+          };
+        };
+      })();
+    `;
+    const { browser, page } = await launchWithState(twoProjectPreConfig() + partialCoverageFixture);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      // Off Live so the Cost tile reads the ledger total rather than an empty
+      // client-side overlay - a sanity check that the note does not corrupt
+      // the neighboring tile.
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+
+      const tokensTile = page.locator('[data-testid="kpi-tokens"]');
+      await expect(tokensTile).toBeVisible({ timeout: 10000 });
+      const title = await tokensTile.getAttribute('title');
+      // Stable substrings only: the title interpolates a locale-formatted
+      // date, which is not portable across Windows and CI Linux.
+      expect(title).toContain('Per-turn capture starts');
+      expect(title).toContain('covers less of the range than Cost does');
+      await expect(page.locator('[data-testid="kpi-cost-value"]')).toContainText('$40.00');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Subagents tile and By-subagent card report fan-out without changing the main-thread totals', async () => {
+    // Task-tool subagent tokens are ADDITIVE: the headline Tokens tile and
+    // both series stay main-thread, so the historical series remains
+    // comparable, and the fan-out shows up in its own tile and card.
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      // Off the default Live period so the comparison below has a
+      // ledger-backed range rather than an empty trailing window.
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+
+      const subagentTile = page.locator('[data-testid="kpi-subagents"]');
+      // 180000 + 45000 fresh + output from the mock's subagent rollup.
+      await expect(subagentTile).toContainText('225k', { timeout: 10000 });
+      await expect(subagentTile).toContainText('8 agent(s), 5.2M cached');
+      // A real period-over-period delta, which only appears when the previous
+      // window is read for the subagent fields too (225k against 186k = +21%).
+      await expect(subagentTile).toContainText('+21%');
+
+      // The tooltip carries the two facts too small for the tile's own body:
+      // how many of the 8 subagents were nested (2, from the mock's
+      // kpis.subagentNestedCount), and that 'codex' (present in byAgent) cannot
+      // report subagent usage at all, so this range's total is a floor, not a
+      // complete count.
+      await expect(subagentTile).toHaveAttribute(
+        'title',
+        'Fresh input and output from 190 subagent turn(s). The Tokens tile is main-thread only, '
+        + 'so these are on top of it; the session\'s reported Cost already covers them. '
+        + '5.2M cache read. 2 of 8 were spawned by another subagent. '
+        + 'Excludes Codex, which does not report subagent usage.',
+      );
+
+      // Unchanged: the mock's main-thread turn tokens (60k fresh input + 20k
+      // output), which never absorb the subagent traffic above. NOT the
+      // mock's totalInputTokens/totalOutputTokens - those are context-window
+      // snapshots, which is exactly what this tile stopped reporting.
+      await expect(page.locator('[data-testid="kpi-tokens-value"]')).toContainText('80k');
+
+      const card = page.locator('[data-testid="breakdown-subagent"]');
+      await expect(card).toBeVisible();
+      await expect(card).toContainText('review-finder');
+      await expect(card).toContainText('test-builder');
+      await expect(card).toContainText('Explore');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('hides the By-subagent card entirely for a range with no fan-out', async () => {
+    // A range that predates subagent capture, and one where nothing fanned out,
+    // look identical and neither should leave an empty card on the page.
+    const emptySubagentFixture = `
+      (function () {
+        window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+          var now = Date.now();
+          return {
+            scope: scope, period: period,
+            rangeStartMs: now - 3600000, rangeEndMs: now,
+            bucketSizeMs: 3600000, costBucketSizeMs: 86400000, generatedAtMs: now,
+            kpis: {
+              totalCostUsd: 5, costKnown: true,
+              totalInputTokens: 1000, totalOutputTokens: 200, totalTokens: 1200,
+              sessionCount: 1, toolCallCount: 3,
+              linesAdded: 0, linesRemoved: 0, filesChanged: 0,
+              compactionCount: 0, totalDurationMs: 1000,
+              turnInputTokens: 900, turnOutputTokens: 150,
+              cacheCreationTokens: 10, cacheReadTokens: 50,
+              subagentInputTokens: 0, subagentOutputTokens: 0,
+              subagentCacheCreationTokens: 0, subagentCacheReadTokens: 0,
+              subagentTurnCount: 0, subagentCount: 0, subagentNestedCount: 0,
+              burnRateTokensPerHour: 100, burnRateUsdPerHour: 1,
+            },
+            previousKpis: null,
+            tokenSeries: [], costSeries: [],
+            byModel: [], byAgent: [], byEffort: [], bySubagentType: [],
+            subagentBlindAgents: [],
+          };
+        };
+      })();
+    `;
+    const { browser, page } = await launchWithState(twoProjectPreConfig() + emptySubagentFixture);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+
+      // The other three breakdown cards still render, so this is "the subagent
+      // card is absent", not "the dashboard failed to load".
+      await expect(page.locator('[data-testid="breakdown-model"]')).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('[data-testid="breakdown-subagent"]')).toHaveCount(0);
+      const tile = page.locator('[data-testid="kpi-subagents"]');
+      await expect(tile).toContainText('-');
+      // Every agent here CAN report subagent usage, so the dash is a real
+      // measurement and the tooltip must not imply a blind spot.
+      await expect(tile).toHaveAttribute('title', 'No subagent turns recorded in this range');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('says which agents cannot report subagent usage, instead of a dash that reads as "nothing fanned out"', async () => {
+    // The two cases render the same `-`: a range where nothing fanned out, and a
+    // range whose agent has no subagent capture at all. Only Claude implements
+    // it, so a Codex range is permanently the second one and has to say so.
+    const blindAgentFixture = `
+      (function () {
+        window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+          var now = Date.now();
+          return {
+            scope: scope, period: period,
+            rangeStartMs: now - 3600000, rangeEndMs: now,
+            bucketSizeMs: 3600000, costBucketSizeMs: 86400000, generatedAtMs: now,
+            kpis: {
+              totalCostUsd: 5, costKnown: true,
+              totalInputTokens: 1000, totalOutputTokens: 200, totalTokens: 1200,
+              sessionCount: 1, toolCallCount: 3,
+              linesAdded: 0, linesRemoved: 0, filesChanged: 0,
+              compactionCount: 0, totalDurationMs: 1000,
+              turnInputTokens: 900, turnOutputTokens: 150,
+              cacheCreationTokens: 10, cacheReadTokens: 50,
+              subagentInputTokens: 0, subagentOutputTokens: 0,
+              subagentCacheCreationTokens: 0, subagentCacheReadTokens: 0,
+              subagentTurnCount: 0, subagentCount: 0, subagentNestedCount: 0,
+              burnRateTokensPerHour: 100, burnRateUsdPerHour: 1,
+            },
+            previousKpis: null,
+            tokenSeries: [], costSeries: [],
+            byModel: [], byAgent: [], byEffort: [], bySubagentType: [],
+            subagentBlindAgents: ['codex'],
+          };
+        };
+      })();
+    `;
+    const { browser, page } = await launchWithState(twoProjectPreConfig() + blindAgentFixture);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+
+      const tile = page.locator('[data-testid="kpi-subagents"]');
+      await expect(tile).toContainText('-', { timeout: 10000 });
+      // Singular agent, singular verb - the list is short enough that agreement
+      // is worth getting right rather than papering over with "do(es) not".
+      await expect(tile).toHaveAttribute(
+        'title',
+        'Codex does not report subagent usage, so fan-outs in this range cannot be counted.',
+      );
     } finally {
       await browser.close();
     }
@@ -508,7 +819,9 @@ test.describe('usage dashboard', () => {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
       await openDashboard(page);
 
-      await expect(page.locator('[data-testid="kpi-tokens-value"]')).toContainText('0', { timeout: 10000 });
+      // "-" rather than "0": a range with no per-turn rows has no token data,
+      // which is not the same claim as measuring zero tokens.
+      await expect(page.locator('[data-testid="kpi-tokens-value"]')).toHaveText('-', { timeout: 10000 });
       await expect(page.locator('[data-testid="kpi-cost-value"]')).toContainText('$0.00');
       await expect(page.locator('[data-testid="chart-burn-rate"]')).toContainText('No agent turns recorded');
       await expect(page.locator('[data-testid="breakdown-model"]')).toContainText('No usage recorded yet');

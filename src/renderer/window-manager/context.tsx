@@ -8,9 +8,10 @@
  * and id space).
  */
 
-import { createContext, useContext, useMemo, useRef } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { WindowManager } from './store/window-store';
+import type { ManagedWindow } from './store/types';
 import { createSnapPreviewController } from './dnd/snap-preview-controller';
 import type { SnapPreviewController } from './dnd/snap-preview-controller';
 
@@ -18,6 +19,17 @@ import type { SnapPreviewController } from './dnd/snap-preview-controller';
 export interface WindowManagerLayerOptions {
   /** Pixel floor for a MANUALLY resized window in this layer. */
   minSize: { width: number; height: number };
+  /**
+   * Whether a USER close of this window must PARK it (hide it in place, guest
+   * and all) rather than remove it. Consulted by `WindowFrame` once the close
+   * animation has played, so every close gesture (the X, Escape, light
+   * dismiss, middle-click) reaches one decision. Omitted by layers that always
+   * drop; the board supplies one so a Browser pane an agent is driving survives
+   * the window closing. A property of the layer, not of the window, for the
+   * same reason `renderTaskDetail` is: the answer depends on stores the generic
+   * engine must not import.
+   */
+  shouldParkOnClose?: (managedWindow: ManagedWindow) => boolean;
   /**
    * How this layer turns a task-detail window into rendered content.
    *
@@ -97,16 +109,32 @@ export function useWindowManager(): WindowManagerContextValue {
 }
 
 /** The bound Zustand store hook for the current layer. Call it with a selector
- *  (`useLayerStore()((state) => state.windows)`) or use `.getState()` imperatively. */
+ *  (`useLayerStore()((state) => state.windows)`) or use `.getState()` imperatively.
+ *
+ *  NAME THE RESULT `layerStore`, NEVER `useStore` (or anything else starting with
+ *  `use`). This reads like a style nit and is not: react-refresh's Babel transform
+ *  treats a call to any `use`-prefixed identifier as a custom hook and tries to put
+ *  it in the component's refresh signature. A LOCAL binding cannot go in that
+ *  signature, so the transform falls back to `forceReset: true` - which makes React
+ *  REMOUNT the component on every Fast Refresh of its module, rather than
+ *  preserving its state.
+ *
+ *  For the window manager that meant every task-detail window was rebuilt whenever
+ *  any module in its chain refreshed, and an Electron `<webview>` guest dies with
+ *  its DOM node, so a save destroyed the browser an agent was driving. There was no
+ *  page reload and no Fast Refresh bailout to point at; the pane simply came back
+ *  as a new element. Measured with `scripts/hmr-guest-probe.mjs`, and guarded by
+ *  `tests/unit/hook-shaped-locals.test.ts`. */
 export function useLayerStore(): WindowManager['store'] {
   return useWindowManager().manager.store;
 }
 
-/** A stable snap-preview controller for one layer mount. Built once via a ref
- *  (NOT `useMemo`, which React is permitted to discard and rebuild) so the
- *  imperatively-registered preview element is never silently dropped mid-mount. */
+/** A stable snap-preview controller for one layer mount. Built once via a lazy
+ *  `useState` initializer (NOT `useMemo`, which React is permitted to discard
+ *  and rebuild) so the imperatively-registered preview element is never
+ *  silently dropped mid-mount. State, not a ref, because the value is read
+ *  during render and React's compiler rules forbid reading a ref there. */
 export function useSnapPreviewController(): SnapPreviewController {
-  const controllerRef = useRef<SnapPreviewController | null>(null);
-  if (!controllerRef.current) controllerRef.current = createSnapPreviewController();
-  return controllerRef.current;
+  const [controller] = useState(() => createSnapPreviewController());
+  return controller;
 }

@@ -3,6 +3,14 @@ import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 export interface SegmentedControlOption<T extends string> {
   value: T;
   label: string;
+  /**
+   * Accessible name, when the visible label is not the whole story. Defaults to
+   * `label`. Needed wherever `trailing` carries meaning the label does not: the
+   * board toolbar's Backlog option has a count badge, and the option's name is
+   * always set from here rather than read off the rendered text, so that count
+   * would otherwise be lost to a screen reader at every width.
+   */
+  ariaLabel?: string;
   /** Optional leading glyph. Render at 14px to sit on the 14px label. */
   icon?: React.ReactNode;
   /** Optional trailing node, e.g. a `CountBadge`. */
@@ -10,6 +18,12 @@ export interface SegmentedControlOption<T extends string> {
   /** Per-option test hook. Not derived from `value`, so adopters keep their existing ids. */
   testId?: string;
   title?: string;
+  /**
+   * Disable this one option: it cannot be selected by click or arrow key and
+   * reads dimmed, while the rest of the group stays live. For a group that is
+   * unavailable as a whole, use the group-level `disabled` instead.
+   */
+  disabled?: boolean;
 }
 
 interface SegmentedControlProps<T extends string> {
@@ -32,6 +46,31 @@ interface SegmentedControlProps<T extends string> {
    *     theme.
    */
   ground?: 'control' | 'raised';
+  /**
+   * Soften the control for a dialog form row where it stands beside muted
+   * inputs (the New Task dialog's Branch row). The default, a bold `fg` label
+   * on the thumb, is right in the board toolbar and the Board Manager's
+   * settings grid, but beside a quiet field shell it reads as a primary
+   * button. Quiet keeps the `control` ground's fills, which are the pairing
+   * `theme-contrast.test.ts` guarantees separates in every theme (a `surface`
+   * recess under a `surface-control` thumb, the same fill as the field beside
+   * it, so the selected option sits at the field's own level), and drops the
+   * labels to the field's text scale and weight, which was the part that read
+   * as a button. A translucent `surface-hover` lift on the field fill was
+   * tried first and vanished in the default theme, where hover and control
+   * are six units apart. Height stays 34px: `py-1.5` makes up for `text-xs`,
+   * and the track takes the field shell's `rounded` so the row shares one
+   * corner radius. Overrides `ground`.
+   */
+  quiet?: boolean;
+  /**
+   * Extra classes on every option's label span. Opt-in, for a group that has to
+   * shed its text in a tight row: the board toolbar passes a container-query
+   * class that hides the label and shows an icon in its place. Omitted, nothing
+   * changes. The option button always carries `aria-label`, so a hidden label
+   * never leaves the option unnamed.
+   */
+  labelClassName?: string;
   /** Stretch to fill the container, options sharing the width equally. */
   fullWidth?: boolean;
   /** Group-level test hook. */
@@ -47,6 +86,26 @@ const GROUND_CLASSES = {
   // control reads as the same species as the fields it sits among.
   control: { track: 'bg-surface border-edge-input', thumb: 'bg-surface-control' },
   raised: { track: 'bg-surface/50 border-edge/30', thumb: 'bg-surface-raised shadow-sm' },
+  // Same fills as `control`: that pairing is the one the theme-contrast test
+  // holds apart in every theme. Quiet differs in its text, not its fills.
+  quiet: { track: 'bg-surface border-edge-input', thumb: 'bg-surface-control' },
+} as const;
+
+const OPTION_TEXT = {
+  default: {
+    size: 'px-3 py-1 text-sm font-medium',
+    selected: 'text-fg',
+    idle: 'text-fg-muted',
+    idleHover: 'hover:text-fg',
+    optionDisabled: 'text-fg-disabled',
+  },
+  quiet: {
+    size: 'px-3 py-1.5 text-xs',
+    selected: 'text-fg-secondary',
+    idle: 'text-fg-muted',
+    idleHover: 'hover:text-fg-secondary',
+    optionDisabled: 'text-fg-disabled',
+  },
 } as const;
 
 /**
@@ -77,6 +136,8 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   ground = 'control',
+  quiet = false,
+  labelClassName = '',
   fullWidth = false,
   testId,
   ariaLabel,
@@ -86,6 +147,8 @@ export function SegmentedControl<T extends string>({
   const trackRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  /** Pending re-measure while an ancestor transform is still running. */
+  const retryRef = useRef<number | null>(null);
   const [thumb, setThumb] = useState<{ left: number; width: number } | null>(null);
 
   const activeIndex = Math.max(0, options.findIndex((option) => option.value === value));
@@ -101,17 +164,63 @@ export function SegmentedControl<T extends string>({
    * The row is the positioning context and carries no border or padding, so its
    * border box, padding box, and content box coincide: the thumb's containing
    * block origin is exactly `rowRect.left`, with no correction term.
+   *
+   * The catch, and the bug this exists to stop: `getBoundingClientRect` reports
+   * TRANSFORMED geometry, and every dialog in the app enters at `scale(0.96)`
+   * (`dialog-content-in`). A measurement taken during that animation sizes the
+   * thumb 4% small, and NOTHING ever corrects it, because the only correction
+   * here is a ResizeObserver and ResizeObserver reports the LAYOUT box, which a
+   * transform does not change - so no callback fires when the animation ends.
+   * The wrong thumb is permanent for the life of the dialog.
+   *
+   * Measured in a preview: a When control sampled 67.89 against an
+   * `offsetWidth` of 71, a ratio of 0.9562, and stayed 2.84px narrow. It looked
+   * intermittent because what varies is whether the layout effect lands before
+   * or during the animation's first frame.
+   *
+   * The untransformed width comes from `getComputedStyle`, so the ratio between
+   * it and the rect IS the ancestor scale, and dividing it out makes the
+   * measurement scale-invariant. `offsetWidth` was tried for this and is not
+   * good enough: it rounds to an integer, so on a 142px row it cannot see a
+   * scale closer to 1 than about 0.35%, which left the thumb 0.31px narrow when
+   * the retry below stopped a frame early. The computed width is fractional and
+   * exact, so the loop can run until the transform is genuinely gone.
    */
   const measure = useCallback(() => {
-    const active = optionRefs.current[activeIndex];
-    const row = rowRef.current;
-    if (!active || !row) return;
-    const rowRect = row.getBoundingClientRect();
-    const activeRect = active.getBoundingClientRect();
-    const next = { left: activeRect.left - rowRect.left, width: activeRect.width };
-    setThumb((current) =>
-      current && current.left === next.left && current.width === next.width ? current : next,
-    );
+    // A hoisted inner function rather than the callback scheduling itself: a
+    // `useCallback` initializer that names its own binding reads, to the
+    // compiler rules, as a use before declaration.
+    function measureOnce(): void {
+      const active = optionRefs.current[activeIndex];
+      const row = rowRef.current;
+      if (!active || !row) return;
+      const rowRect = row.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
+
+      // `width` resolves against `box-sizing`, and the row sets no border or
+      // padding, so this is its border-box width with no transform applied. It is
+      // `auto` (NaN here) only when the row is not being rendered, which is the
+      // one case with nothing to measure anyway.
+      const layoutWidth = Number.parseFloat(getComputedStyle(row).width);
+      const transformed = layoutWidth > 0 && Math.abs(rowRect.width - layoutWidth) > 0.05;
+      const divisor = transformed ? rowRect.width / layoutWidth : 1;
+      const next = {
+        left: (activeRect.left - rowRect.left) / divisor,
+        width: activeRect.width / divisor,
+      };
+      setThumb((current) =>
+        current && current.left === next.left && current.width === next.width ? current : next,
+      );
+
+      // The correction is exact at every frame, but the LAYOUT it corrects is not
+      // final until the animation is: a mid-animation reflow would leave the thumb
+      // on a stale option width. So keep re-measuring until the transform is gone.
+      // Self-terminating, the entrance is ~150ms, and at rest the branch is dead.
+      if (transformed) {
+        retryRef.current = requestAnimationFrame(measureOnce);
+      }
+    }
+    measureOnce();
   }, [activeIndex]);
 
   useLayoutEffect(() => {
@@ -125,7 +234,12 @@ export function SegmentedControl<T extends string>({
     for (const option of optionRefs.current) {
       if (option) observer.observe(option);
     }
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      // The pending frame closes over the activeIndex that scheduled it, so it
+      // must not outlive this effect.
+      if (retryRef.current !== null) cancelAnimationFrame(retryRef.current);
+    };
   }, [measure, options]);
 
   const focusOption = (index: number) => {
@@ -135,22 +249,44 @@ export function SegmentedControl<T extends string>({
     onChange(option.value);
   };
 
+  const isOptionDisabled = (index: number) => options[index]?.disabled === true;
+
+  /** The nearest enabled option `step` away from `from`, wrapping; null when none. */
+  const nextEnabled = (from: number, step: 1 | -1): number | null => {
+    for (let hop = 1; hop < options.length; hop += 1) {
+      const candidate = (from + step * hop + options.length * hop) % options.length;
+      if (!isOptionDisabled(candidate)) return candidate;
+    }
+    return null;
+  };
+
+  const endEnabled = (from: 'first' | 'last'): number | null => {
+    const order = options.map((_option, index) => index);
+    if (from === 'last') order.reverse();
+    const found = order.find((index) => !isOptionDisabled(index));
+    return found === undefined ? null : found;
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (disabled) return;
-    let next: number | null = null;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (activeIndex + 1) % options.length;
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (activeIndex - 1 + options.length) % options.length;
-    else if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = options.length - 1;
-    if (next === null) return;
+    let next: number | null | undefined;
+    // Arrows and Home/End skip a disabled option, so a per-option `disabled`
+    // holds for the keyboard exactly as it does for the mouse.
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = nextEnabled(activeIndex, 1);
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = nextEnabled(activeIndex, -1);
+    else if (event.key === 'Home') next = endEnabled('first');
+    else if (event.key === 'End') next = endEnabled('last');
+    if (next === undefined) return;
     // Only swallow the keys actually handled, so nothing the surrounding toolbar
     // or dialog binds is eaten by having focus inside the control.
     event.preventDefault();
     event.stopPropagation();
+    if (next === null || next === activeIndex) return;
     focusOption(next);
   };
 
-  const tone = GROUND_CLASSES[ground];
+  const tone = GROUND_CLASSES[quiet ? 'quiet' : ground];
+  const text = OPTION_TEXT[quiet ? 'quiet' : 'default'];
 
   return (
     <div
@@ -159,7 +295,10 @@ export function SegmentedControl<T extends string>({
       aria-label={ariaLabel}
       onKeyDown={handleKeyDown}
       data-testid={testId}
-      className={`inline-flex rounded-md border p-0.5 ${tone.track} ${fullWidth ? 'flex w-full' : ''} ${
+      data-quiet={quiet || undefined}
+      // Quiet takes the field shell's `rounded` (4px) rather than `rounded-md`,
+      // so the two boxes in a form row share one corner radius.
+      className={`inline-flex ${quiet ? 'rounded' : 'rounded-md'} border p-0.5 ${tone.track} ${fullWidth ? 'flex w-full' : ''} ${
         disabled ? 'opacity-50' : ''
       } ${className}`}
     >
@@ -179,32 +318,43 @@ export function SegmentedControl<T extends string>({
         )}
         {options.map((option, index) => {
           const selected = index === activeIndex;
+          const optionDisabled = disabled || option.disabled === true;
           return (
             <button
               key={option.value}
               // Not optional: several dialogs wrap their body in a <form>, where
-              // a bare button submits it (see WorktreeChip).
+              // a bare button submits it (the New Task dialog's Branch row is
+              // one such adopter).
               type="button"
               ref={(element) => { optionRefs.current[index] = element; }}
               role="radio"
               aria-checked={selected}
               // Roving tabindex: the group is one tab stop, arrows move within it.
               tabIndex={selected ? 0 : -1}
-              disabled={disabled}
+              disabled={optionDisabled}
+              // Unconditional, not only when `labelClassName` hides the label:
+              // `hidden` takes the span out of the accessibility tree, so without
+              // this a collapsed option has no accessible name at all. When the
+              // label IS showing it repeats the visible text, which is harmless -
+              // but it also REPLACES whatever `trailing` contributed, which is why
+              // an option with a meaningful badge passes its own `ariaLabel`.
+              aria-label={option.ariaLabel ?? option.label}
               title={option.title}
               onClick={() => onChange(option.value)}
               data-testid={option.testId}
               data-selected={selected}
-              className={`relative z-[1] flex items-center justify-center gap-1.5 rounded px-3 py-1 text-sm font-medium whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+              className={`relative z-[1] flex items-center justify-center gap-1.5 rounded ${text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
                 fullWidth ? 'flex-1' : ''
               } ${
                 selected
-                  ? 'text-fg'
-                  : `text-fg-muted ${disabled ? '' : 'hover:text-fg'}`
-              } ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                  ? text.selected
+                  : option.disabled && !disabled
+                    ? text.optionDisabled
+                    : `${text.idle} ${disabled ? '' : text.idleHover}`
+              } ${optionDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
             >
               {option.icon}
-              <span>{option.label}</span>
+              <span className={labelClassName}>{option.label}</span>
               {option.trailing}
             </button>
           );

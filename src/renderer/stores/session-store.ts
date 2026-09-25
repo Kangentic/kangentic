@@ -1,12 +1,15 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import { ACTIVITY_TAB, type Session, type SessionUsage, type SessionEvent } from '../../shared/types';
 import { requiresUserInteraction, isActive } from '../../shared/activity-state';
 import { useProjectStore } from './project-store';
 import { useConfigStore } from './config-store';
 import type { SessionStore, PendingTuiAnchor } from './session-store/types';
-import { buildSessionByTaskId } from './session-store/session-index';
+import { buildSessionByTaskId, hasSessionState, withSessionUpserted, withoutSessionsIndexed } from './session-store/session-index';
+import { isLiveSessionStatus } from '../../shared/session-liveness';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
-import { createTransientSessionSlice, transientKey, type TransientSessionEntry } from './session-store/transient-session-slice';
+import { createTransientSessionSlice, type TransientSessionEntry } from './session-store/transient-session-slice';
+import { planTransientRecovery } from './session-store/transient-recovery';
+import { registerSessionLifecycleHooks } from './session-lifecycle-hooks';
 import { mergeRateLimitSnapshot } from '../utils/rate-limit-window';
 import { claimArrivalFocus } from '../utils/terminal-arrival-focus';
 
@@ -72,6 +75,34 @@ function reconcileLiveCache<T>(
     if (!(sessionId in result) && liveSessionIds.has(sessionId)) {
       result[sessionId] = currentValue;
     }
+  }
+  return result;
+}
+
+/**
+ * Apply what a sync learned about its own async gap to a reconciled
+ * per-session map. The cache fetches are answered at the START of the sync,
+ * alongside the list, so a session REMOVED during the gap is still in every
+ * cache and `reconcileCache` would import its entry for a row the merge just
+ * dropped (a dead session's usage back under an id nothing references, the
+ * #661 context bar by another route); and a session that ARRIVED during the
+ * gap is in no cache, so the value its push delivered would be dropped for a
+ * row the merge kept. Both are the row-level gap rules mirrored onto the maps.
+ * Found by the replica-convergence property test, not by a report.
+ */
+function settleSyncGap<T>(
+  reconciled: Record<string, T>,
+  current: Record<string, T>,
+  removedDuringGap: ReadonlySet<string>,
+  arrivedDuringGap: ReadonlySet<string>,
+): Record<string, T> {
+  if (removedDuringGap.size === 0 && arrivedDuringGap.size === 0) return reconciled;
+  const result: Record<string, T> = {};
+  for (const [sessionId, value] of Object.entries(reconciled)) {
+    if (!removedDuringGap.has(sessionId)) result[sessionId] = value;
+  }
+  for (const sessionId of arrivedDuringGap) {
+    if (sessionId in current && !(sessionId in result)) result[sessionId] = current[sessionId];
   }
   return result;
 }
@@ -205,20 +236,35 @@ export function cancelSync(): void {
  * UI hints, derived helpers) stays inline here because it's tightly
  * coupled and hard to split cleanly.
  *
- * HMR preservation: syncController (AbortController), the three
- * transient-session pointers, spawnProgress, pendingCommandLabel, and the
- * conversation-viewer nav signals (conversationSessionId, scrollToTurnUuid)
- * survive module replacement via `import.meta.hot.dispose`. Without
- * this, hot reload orphans live PTY processes, breaks in-flight
- * project switches, strands "Initializing..." indicators on
- * task cards whose in-flight spawn-progress pushes arrived pre-reload, and
- * silently closes an open Conversation window mid-edit.
+ * HMR, in two layers. The PRIMARY one is the Pattern E instance pin at the
+ * bottom of this file: the whole store survives a re-eval, so none of the state
+ * below resets. That is load-bearing beyond convenience. A slice edit used to
+ * hand the mounted tree a second, empty store, and `browserOpenTasks` /
+ * `browserHeldTasks` reading empty unmounted every live Browser pane - an
+ * Electron `<webview>` guest dies with its DOM node, so the agent lost the
+ * browser it was driving. Measured with `scripts/hmr-guest-probe.mjs`.
+ *
+ * The FALLBACK layer is the `import.meta.hot.dispose` stash above. Under the pin
+ * its one LIVE consumer is `syncController` (an AbortController): that is module
+ * state, not store state, so it is re-declared on every module evaluation and
+ * read back at eval time - the stash is its only carrier, on every path. Without
+ * it a re-eval breaks an in-flight project switch.
+ *
+ * The stash's other values (the transient-session pointers, spawnProgress,
+ * pendingCommandLabel, the conversation-viewer nav signals) are read back only
+ * INSIDE the initializer, and the pin means the initializer no longer re-runs
+ * while `hot.data` survives: `hot.data.sessionStore` is written during the same
+ * evaluation that runs the initializer, so any path that runs it again is one
+ * where `hot.data` is itself fresh and the stash is empty too. They are the
+ * pre-pin protection, kept rather than ripped out in the same change that
+ * introduced the pin, but nothing reads them now - do not add a new value here
+ * expecting it to survive a re-eval. Pin it instead.
  *
  * HMR re-sync: the `vite:afterUpdate` handler in App.tsx calls
  * `syncSessions()` after hot reload. Renaming syncSessions would
  * require updating that handler + the hmr-resync.test.ts unit test.
  */
-export const useSessionStore = create<SessionStore>((set, get, api) => ({
+const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => ({
   sessions: [],
   _sessionByTaskId: new Map(),
   activeSessionId: null,
@@ -242,6 +288,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   sessionFirstOutput: {},
   sessionActivity: {},
   sessionActivityReason: {},
+  sessionMessageTrails: {},
   sessionEvents: {},
   seenIdleSessions: {},
   pendingCommandLabel: preservedPendingCommandLabel,
@@ -290,6 +337,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
       cachedEvents,
       cachedFirstOutput,
       cachedSpawnProgress,
+      cachedMessageTrails,
     ] = await Promise.all([
       safeFetch('list', () => sessionsApi.list()),
       safeFetch('getUsage', () => sessionsApi.getUsage(currentProjectId)),
@@ -298,6 +346,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
       safeFetch('getEventsCache', () => sessionsApi.getEventsCache(currentProjectId)),
       safeFetch('getFirstOutput', () => sessionsApi.getFirstOutput?.()),
       safeFetch('getSpawnProgress', () => tasksApi.getSpawnProgress?.()),
+      safeFetch('getMessageTrails', () => sessionsApi.getMessageTrails?.()),
     ]);
     if (signal.aborted) return false;
 
@@ -314,27 +363,53 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
 
     // Merge: use server data as base, but preserve IPC-delivered updates
     // that arrived during the async gap (detected by reference change).
-    const mergedSessions = freshSessions.map((freshSession) => {
+    const mergedSessions: Session[] = [];
+    for (const freshSession of freshSessions) {
       const preAsync = preAsyncSessions.get(freshSession.id);
       const postAsync = postAsyncSessions.get(freshSession.id);
+      // Held when this sync started, gone now: the row was REMOVED during the
+      // async gap (a removal push, a To Do eviction, a reset or resume that
+      // replaced it under a new id), and main's list was issued before that
+      // removal. Taking the stale copy would resurrect a session main has
+      // already dropped. A session id is minted once per spawn, so "present
+      // before, absent after" is only ever a removal, never a legitimate
+      // return.
+      if (preAsync && !postAsync) continue;
       // If the store's reference changed during the async gap,
       // an IPC listener updated this session -- keep the fresher version.
       if (postAsync && preAsync && postAsync !== preAsync) {
-        return postAsync;
+        mergedSessions.push(postAsync);
+        continue;
       }
-      return freshSession;
-    });
+      mergedSessions.push(freshSession);
+    }
+    // The mirror case: a row NOT held when this sync started, held now, and
+    // absent from main's list ARRIVED during the gap (a spawn's status push
+    // landed after the list was issued). It is main's truth as of after the
+    // snapshot, and a running session gets no further status push for as long
+    // as it stays running, so dropping it here left a live agent invisible
+    // until the next sync.
+    const freshIds = new Set(freshSessions.map((session) => session.id));
+    for (const [sessionId, postAsync] of postAsyncSessions) {
+      if (!preAsyncSessions.has(sessionId) && !freshIds.has(sessionId)) mergedSessions.push(postAsync);
+    }
+    // The same two gap facts, applied to every per-session map below: the
+    // cache snapshots were taken alongside the list and are exactly as stale.
+    const removedDuringGap = new Set([...preAsyncSessions.keys()].filter((sessionId) => !postAsyncSessions.has(sessionId)));
+    const arrivedDuringGap = new Set([...postAsyncSessions.keys()].filter((sessionId) => !preAsyncSessions.has(sessionId)));
+    const settle = <T,>(reconciled: Record<string, T>, current: Record<string, T>): Record<string, T> =>
+      settleSyncGap(reconciled, current, removedDuringGap, arrivedDuringGap);
 
     const stillExists = currentState.activeSessionId
       && mergedSessions.some((s) => s.id === currentState.activeSessionId);
 
-    // Live sets: a session the engine still actively tracks. Using the
-    // established running||queued predicate (cf. task-move.ts) so exited /
-    // suspended rows in the list stay evictable. These - not the
-    // project-scoped fetch - are the keyset authority for the per-session
-    // maps, so a live session never loses its last-known derived state just
-    // because the project filter scoped its usage out.
-    const isLive = (s: Session) => s.status === 'running' || s.status === 'queued';
+    // Live sets: a session the engine still actively tracks. Using the shared
+    // running||queued predicate so exited / suspended rows in the list stay
+    // evictable. These - not the project-scoped fetch - are the keyset
+    // authority for the per-session maps, so a live session never loses its
+    // last-known derived state just because the project filter scoped its
+    // usage out.
+    const isLive = (session: Session) => isLiveSessionStatus(session.status);
     const liveSessionIds = new Set(mergedSessions.filter(isLive).map((s) => s.id));
     const liveTaskIds = new Set(mergedSessions.filter(isLive).map((s) => s.taskId));
 
@@ -407,57 +482,52 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
       _sessionByTaskId: buildSessionByTaskId(mergedSessions),
       activeSessionId: stillExists ? currentState.activeSessionId : null,
       sessionUsage: cachedUsage
-        ? reconcileLiveCache(cachedUsage, currentState.sessionUsage, liveSessionIds)
+        ? settle(reconcileLiveCache(cachedUsage, currentState.sessionUsage, liveSessionIds), currentState.sessionUsage)
         : currentState.sessionUsage,
       latestRateLimits: nextLatestRateLimits,
       sessionActivity: cachedActivity
-        ? reconcileCache(cachedActivity, currentState.sessionActivity)
+        ? settle(reconcileCache(cachedActivity, currentState.sessionActivity), currentState.sessionActivity)
         : currentState.sessionActivity,
       sessionActivityReason: cachedReasons
-        ? reconcileCache(cachedReasons, currentState.sessionActivityReason)
+        ? settle(reconcileCache(cachedReasons, currentState.sessionActivityReason), currentState.sessionActivityReason)
         : currentState.sessionActivityReason,
+      // Message trails: unscoped and main-authoritative (main retains a trail
+      // past exit and prunes on registry removal), so plain reconcileCache like
+      // activity - the snapshot is the keyset, a push that landed during the
+      // async gap keeps its fresher value.
+      sessionMessageTrails: cachedMessageTrails
+        ? settle(reconcileCache(cachedMessageTrails, currentState.sessionMessageTrails), currentState.sessionMessageTrails)
+        : currentState.sessionMessageTrails,
       sessionEvents: cachedEvents
-        ? reconcileLiveCache(cachedEvents, currentState.sessionEvents, liveSessionIds)
+        ? settle(reconcileLiveCache(cachedEvents, currentState.sessionEvents, liveSessionIds), currentState.sessionEvents)
         : currentState.sessionEvents,
       sessionFirstOutput: cachedFirstOutput
-        ? reconcileCache(cachedFirstOutput, currentState.sessionFirstOutput)
+        ? settle(reconcileCache(cachedFirstOutput, currentState.sessionFirstOutput), currentState.sessionFirstOutput)
         : currentState.sessionFirstOutput,
       spawnProgress: nextSpawnProgress,
       pendingCommandLabel: nextPendingCommandLabel,
     });
 
-    // Recover transient session entries after a full page reload. The main
-    // process keeps transient PTYs alive, but the renderer's in-memory map is
-    // lost on a hard reload (HMR preserves it via import.meta.hot.data, so this
-    // only fires on a true reload, not Fast Refresh). Rebuild best-effort: pair
-    // the project's surviving transient PTYs to slot ids in a stable order. The
-    // command windows reattach by (project, slot) on next open. Skip if the
-    // project already has tracked entries (the HMR-preserved path).
-    if (currentProjectId) {
-      const alreadyTracked = Object.values(get().transientSessions).some(
-        (entry) => entry.projectId === currentProjectId,
-      );
-      if (!alreadyTracked) {
-        const survivors = mergedSessions
-          .filter((session) => session.transient && session.projectId === currentProjectId && session.status === 'running')
-          .sort((sessionA, sessionB) => sessionA.id.localeCompare(sessionB.id));
-        if (survivors.length > 0) {
-          set((state) => {
-            const transientSessions: Record<string, TransientSessionEntry> = { ...state.transientSessions };
-            survivors.forEach((session, index) => {
-              const slot = `slot-${index + 1}`;
-              transientSessions[transientKey(currentProjectId, slot)] = {
-                projectId: currentProjectId,
-                slot,
-                sessionId: session.id,
-                branch: null,
-              };
-            });
-            return { transientSessions };
-          });
-        }
-      }
-    }
+    // Re-pair surviving Command Terminal PTYs to their windows. Main keeps
+    // transient PTYs alive across a renderer reload, but the (project, slot) map
+    // is renderer-only memory - HMR preserves it via import.meta.hot.data, a full
+    // reload does not - so without this a live conversation is left with nothing
+    // pointing at it, and the project's terminal count exceeds its window count.
+    //
+    // Unconditional, per-slot, and cross-project by design. It used to be gated on
+    // "this project has no tracked entries", so one freshly spawned terminal
+    // permanently blocked re-pairing of that project's other survivors, and
+    // wrapped in `if (currentProjectId)`, so a background project's terminals were
+    // never recovered at all. It also dealt out `slot-1, slot-2, ...` over a
+    // uuid-sorted list, which could put someone else's conversation under
+    // "Command Terminal 1". The slot now arrives on the session row, so pairing is
+    // exact; the planner keeps already-paired entries verbatim, which is what
+    // makes running on every sync (Fast Refresh included) safe for their labels.
+    const recoveredTransientSessions = planTransientRecovery({
+      sessions: mergedSessions,
+      transientSessions: get().transientSessions,
+    });
+    if (recoveredTransientSessions) set({ transientSessions: recoveredTransientSessions });
 
     return true;
   },
@@ -533,26 +603,19 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
       return null;
     }
     set((state) => {
-      // Live session exists on main: replace any stale row for this task.
-      // Keyed by id first (covers in-place status fix on the same id);
-      // falls back to taskId eviction (covers respawn where the session
-      // id changed) so we never end up with two rows for the same task.
-      const existingIndex = state.sessions.findIndex((sess) => sess.id === liveSession.id);
-      let sessions: Session[];
-      if (existingIndex >= 0) {
-        sessions = [...state.sessions];
-        sessions[existingIndex] = liveSession;
-      } else {
-        sessions = [...state.sessions.filter((sess) => sess.taskId !== taskId), liveSession];
-      }
+      // Live session exists on main: make it the task's only row, in place if
+      // its id is already listed (an in-place status fix) or appended if not
+      // (a respawn under a new id). The in-place case used to leave a stale
+      // suspended sibling in front of the live row, which is exactly the
+      // shape this probe exists to heal; see `withSessionUpserted`.
+      //
       // Clear any in-flight spawn progress label for this task: a real
       // session has arrived, so the "Initializing..." indicator is done.
       // Mirrors upsertSession's behavior so a healed session doesn't leave
       // a stale spawnProgress entry stranded on the task card.
       const { [liveSession.taskId]: _removed, ...remainingProgress } = state.spawnProgress;
       return {
-        sessions,
-        _sessionByTaskId: buildSessionByTaskId(sessions),
+        ...withSessionUpserted(state.sessions, liveSession),
         spawnProgress: remainingProgress,
       };
     });
@@ -618,19 +681,41 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
 
   upsertSession: (session) => {
     set((state) => {
-      const existingIndex = state.sessions.findIndex((s) => s.id === session.id);
-      let sessions: Session[];
-      if (existingIndex >= 0) {
-        sessions = [...state.sessions];
-        sessions[existingIndex] = session;
-      } else {
-        // New session - also remove any stale session for the same task
-        // (handles respawns where the session ID changes but taskId stays)
-        sessions = [...state.sessions.filter((s) => s.taskId !== session.taskId), session];
+      // The pushed row becomes its task's only row: replaced in place when its
+      // id is already listed, appended on a respawn under a new id. See
+      // `withSessionUpserted` for why the in-place case must evict too.
+      //
+      // Clear spawn progress when a real session arrives (progress is done) -
+      // EXCEPT when the arriving row is itself 'suspended'. A suspended row is
+      // not "a real session arrived", it is the opposite: main suspends a
+      // session as the FIRST step of a respawn (model change, agent handoff,
+      // effort respawn, session switch) and keeps the label in flight for the
+      // whole unlocked Phase 2 gap that follows (see
+      // suspendLiveSessionForRespawn in task-move.ts). Clearing here made the
+      // renderer disagree with main's own queryable map
+      // (TASK_GET_SPAWN_PROGRESS still held the label) and flashed the
+      // "Resume session" Play button / "Paused" chip for that whole window.
+      // Mirrors the carve-out getTaskProgress documents at
+      // task-progress.ts:152-167. clearSpawnProgress is the sole authority for
+      // retiring a label.
+      //
+      // KNOWN GAP, not a claim of completeness: only task-move.ts's two park
+      // lanes (Done, auto_spawn=false) clear explicitly. The other genuine
+      // parks suspend through applySuspendDbWrites (session-reconcile.ts) or
+      // executeKillSession and never clear - SESSION_SUSPEND (a manual pause),
+      // the idle-timeout suspend, the kill_session action, project-relocate,
+      // and auto-spawn-reconcile. Before this carve-out the unconditional
+      // clear below masked that; now a label still in flight when one of those
+      // fires survives here and getTaskProgress renders it instead of the
+      // Resume button, until the 120s TTL sweeps it. Fixing those call sites
+      // is follow-up work in their own subsystems, not here. Note
+      // restartSessionForSettingsChange shares applySuspendDbWrites and is a
+      // RESPAWN, so a blanket clear inside that helper would be wrong.
+      if (session.status === 'suspended') {
+        return withSessionUpserted(state.sessions, session);
       }
-      // Clear spawn progress when a real session arrives (progress is done)
       const { [session.taskId]: _removed, ...remainingProgress } = state.spawnProgress;
-      return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions), spawnProgress: remainingProgress };
+      return { ...withSessionUpserted(state.sessions, session), spawnProgress: remainingProgress };
     });
   },
 
@@ -641,6 +726,15 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
       );
       return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions) };
     });
+  },
+
+  removeSession: (sessionId) => {
+    set((state) => (
+      // Same reference when nothing is held: Zustand skips the notify, so a
+      // removal for a session this window never saw (another project's, or a
+      // teardown that raced ahead of the row ever arriving) costs no render.
+      hasSessionState(state, sessionId) ? withoutSessionsIndexed(state, [sessionId]) : state
+    ));
   },
 
   updateUsage: (sessionId, data) => {
@@ -687,6 +781,10 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
       }
       return updates;
     });
+  },
+
+  updateMessageTrail: (sessionId, entries) => {
+    set((state) => ({ sessionMessageTrails: { ...state.sessionMessageTrails, [sessionId]: entries } }));
   },
 
   addEvent: (sessionId, event) => {
@@ -803,4 +901,53 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
 
   ...createTaskChangesPanelSlice(set, get, api),
   ...createTransientSessionSlice(preservedTransientState)(set, get, api),
-}));
+});
+
+const createSessionStore = () => create<SessionStore>(sessionStoreInitializer);
+
+// HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
+// module's only runtime exports are the non-component `useSessionStore` and
+// `cancelSync`, so it is not a React Fast Refresh boundary. A re-eval - most
+// often an edit to one of the ./session-store/ slices, not to this file - would
+// otherwise construct a SECOND store while the mounted tree re-binds to it,
+// serving every consumer empty state for a commit. That is not a cosmetic
+// flicker here: `browserOpenTasks` / `browserHeldTasks` reading empty makes
+// TaskDetailBody drop its `browserSlot`, and an Electron `<webview>` guest dies
+// with its DOM node, so the agent's live browser is destroyed and main stands up
+// a hand-off lane.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const preservedSessionStore: ReturnType<typeof createSessionStore> | undefined = import.meta.hot?.data?.sessionStore;
+
+export const useSessionStore = preservedSessionStore ?? createSessionStore();
+
+// Hand project-store the two session actions it needs, rather than letting it
+// import this module. That import used to close the renderer store graph's only
+// cycle, and Vite answers a circular-import invalidate with a full page reload -
+// which destroys every live Browser pane guest. See ./session-lifecycle-hooks.ts.
+registerSessionLifecycleHooks({
+  killTransientSessionForProject: (projectId) =>
+    useSessionStore.getState().killTransientSessionForProject(projectId),
+  markIdleSessionsSeen: (projectId) =>
+    useSessionStore.getState().markIdleSessionsSeen(projectId),
+});
+
+// Must stay BELOW the declaration above, in its own block: the dispose block
+// near the top of this file runs its callback later (so its forward reference to
+// useSessionStore is safe), but this assignment executes immediately and would
+// hit the temporal dead zone if it were folded in there.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.sessionStore = useSessionStore;
+  // Deliberately NO `accept(() => invalidate())` here, unlike the other Pattern E
+  // stores. This module sits in an import CYCLE that cannot be designed away:
+  // session-store needs the arrival-focus arbiter (`claimArrivalFocus`), the
+  // arbiter needs `resolveFocusedWindowTerminal`, and resolving which terminal
+  // the user is looking at needs session state - so utils/dictation-target.ts
+  // imports back. Vite answers an `invalidate()` from inside a cycle with
+  //     page reload src/renderer/stores/session-store.ts (circular import invalidate)
+  // and a full page reload destroys every live Browser pane <webview> guest, which
+  // is the exact bug the pin above exists to prevent. Stale closures after editing
+  // THIS file (recoverable with a manual reload) are the cheaper failure.
+  // Measured both ways with `scripts/hmr-guest-probe.mjs`.
+}

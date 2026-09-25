@@ -1,5 +1,4 @@
 import * as sherpa from 'sherpa-onnx-node';
-import type { DictationEngineInfo } from '../../../shared/types';
 import type {
   CreateSessionOptions,
   ResolvedModel,
@@ -7,15 +6,7 @@ import type {
   TranscriptionEngineSession,
 } from './transcription-engine';
 import { int16ToFloat32 } from '../audio/pcm';
-
-export const SHERPA_ONLINE_INFO: DictationEngineInfo = {
-  id: 'sherpa-onnx',
-  displayName: 'sherpa-onnx (streaming)',
-  streaming: true,
-  punctuation: false,
-  license: 'Apache-2.0',
-  requiresModelDownload: true,
-};
+import { SHERPA_ONLINE_INFO } from './engine-infos';
 
 /** 0.5 s of trailing silence flushes the transducer's last words on finalize. */
 const TAIL_PADDING = new Float32Array(8000);
@@ -74,10 +65,15 @@ export class SherpaOnlineEngine implements TranscriptionEngine {
         return recognizer.getResult(stream).text.trim();
       },
       cancel(): void {
-        // Nothing to release; the recognizer is disposed with the engine.
+        // Nothing to release: this engine decodes synchronously inside push(),
+        // so a session never ends with work outstanding. That is why it needs no
+        // drain() either, unlike the chunked-offline live engine.
       },
       dispose(): void {
-        // Stream handles are reclaimed natively when the recognizer is freed.
+        // The stream's native handle is freed by the addon's napi finalizer once
+        // V8 collects this closure, not by anything callable from here: the JS
+        // wrapper exposes no free/dispose, and freeing the recognizer does not
+        // reach it. Nothing to do, but not for the reason it looks like.
       },
     };
   }

@@ -168,9 +168,13 @@ export class KimiCommandBuilder {
           fs.mkdirSync(sessionDir, { recursive: true });
         } catch (err) {
           console.error(`[kimi command-builder] Failed to create session directory: ${sessionDir}`, err);
-          throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`);
+          throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
         }
         const mcpConfigPath = path.join(sessionDir, 'mcp.json');
+        // sync-write-ok: this must throw, not degrade - the path below is
+        // passed straight to --mcp-config-file, so a swallowed failure would
+        // spawn Kimi pointed at a config file that does not exist. The spawn
+        // preamble already reports and notifies (notifySpawnBlocked) on throw.
         fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
         parts.push('--mcp-config-file', quoteArg(toForwardSlash(mcpConfigPath), shell));
       }

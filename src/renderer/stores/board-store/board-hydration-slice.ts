@@ -42,6 +42,10 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
       // from the new project's kangentic.json. Fire-and-forget: profiles are
       // optional and a slow/missing config file must not delay the board paint.
       void get().loadBoardProfiles();
+      // Automations ride it for the same reason and with the same urgency: the
+      // column header glyph is derived from them, so a project switch must
+      // re-read them, but a slow read must not hold the board's first paint.
+      void get().loadAutomations();
       // Reuse object references for unchanged tasks/swimlanes so React.memo can
       // short-circuit. Every IPC roundtrip returns fresh JSON objects - if we
       // set them directly, every card and column re-renders on every agent event

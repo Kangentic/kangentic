@@ -319,7 +319,9 @@ export const handlePromoteBacklog: CommandHandler = (
   const backlogRepo = new BacklogRepository(db);
   const taskRepo = new TaskRepository(db);
 
-  const resolution = resolveColumn(db, columnName);
+  const resolution = resolveColumn(db, columnName, 'todo', {
+    refuseDone: 'a backlog item cannot be promoted straight there',
+  });
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }

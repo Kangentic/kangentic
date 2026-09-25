@@ -1,3 +1,4 @@
+import { deepEqual } from '../../../shared/object-utils';
 import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -37,6 +38,14 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     });
     signal.addEventListener('abort', unsubscribeActivity);
 
+    // The card slot's agent message trail, same route as activity: declared in
+    // this surface's `channels`, seeded by the `syncSessions` above, patched
+    // into this window's session store on push.
+    const unsubscribeMessageTrail = window.electronAPI.sessions.onMessageTrail?.((sessionId, entries) => {
+      useSessionStore.getState().updateMessageTrail(sessionId, entries);
+    });
+    if (unsubscribeMessageTrail) signal.addEventListener('abort', unsubscribeMessageTrail);
+
     // Snapshot pushes for the DB-resident half (session spawned/exited, task
     // retitled or moved).
     const unsubscribeChanged = window.electronAPI.monitor.onChanged((snapshot) => {
@@ -55,8 +64,28 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     // IPC subscriber would read config.monitor while that reload is still in
     // flight and hydrate the PRE-change value. Waiting for the store to actually
     // update is the race-free version.
+    // Compare the monitor slice by VALUE, not reference: loadConfig() sets a
+    // fresh structured-clone config on every config:changed broadcast, so the
+    // references differ on EVERY config write anywhere in the app, monitor or
+    // not. Re-hydrating on those clobbered a view edit still inside setView's
+    // 400ms persist debounce - the just-toggled Projects checkbox visibly
+    // reverted, and a further edit made in that reverted state persisted the
+    // stale base. Value equality re-hydrates only when the monitor view truly
+    // changed on disk (i.e. the main window wrote it).
+    // Which tasks hold their one browser surface OFFSCREEN. A task detail hosted
+    // in this window renders the Browser pill, whose alive dot reads that set,
+    // and this renderer never mounts App.tsx - so without seeding and
+    // subscribing here the pill reads dark for a browser that exists. Read once
+    // (the set can predate this window by hours), then live on the push, which
+    // this surface declares in its `channels`.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
+    const unsubscribeOffscreen = window.electronAPI.browser?.onOffscreenSurfaces?.((taskIds) => {
+      useSessionStore.getState().setBrowserOffscreenTasks(taskIds);
+    });
+    if (unsubscribeOffscreen) signal.addEventListener('abort', unsubscribeOffscreen);
+
     const unsubscribeConfig = useConfigStore.subscribe((state, previous) => {
-      if (state.config.monitor === previous.config.monitor) return;
+      if (deepEqual(state.config.monitor, previous.config.monitor)) return;
       useMonitorStore.getState().hydrateView(state.config.monitor);
     });
     signal.addEventListener('abort', unsubscribeConfig);
@@ -64,6 +93,10 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
 
   hmrResync: () => {
     void useMonitorStore.getState().loadSnapshot();
+    // Pattern B for this window: main is the only authority for the offscreen
+    // set, and a surface can sit unchanged across the whole session, so the
+    // push alone leaves a hosted pill dark after a Fast Refresh.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
   },
 
   inAppSurface: 'monitor-overlay',

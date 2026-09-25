@@ -66,7 +66,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
 
 import { deleteTaskWorktree, cleanupTaskResources } from '../../src/main/ipc/helpers/task-cleanup';
 
-type MockTaskRepo = { update: ReturnType<typeof vi.fn>; getById: ReturnType<typeof vi.fn> };
+type MockTaskRepo = { update: ReturnType<typeof vi.fn>; getById: ReturnType<typeof vi.fn>; setWorktreeSkipReason: ReturnType<typeof vi.fn> };
 type MockContext = {
   currentProjectPath: string | null;
   sessionManager: Record<string, unknown>;
@@ -76,7 +76,7 @@ type MockContext = {
 function createMockTaskRepo(): MockTaskRepo {
   // getById defaults to truthy so the branch write-back's concurrent-delete
   // guard passes; tests that exercise the guard override it.
-  return { update: vi.fn(), getById: vi.fn(() => ({ id: 'task' })) };
+  return { update: vi.fn(), getById: vi.fn(() => ({ id: 'task' })), setWorktreeSkipReason: vi.fn() };
 }
 
 function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
@@ -322,6 +322,9 @@ describe('cleanupTaskResources', () => {
     mockPruneWorktrees.mockImplementation(async () => { callOrder.push('pruneWorktrees'); });
     mockRemoveBranch.mockReset();
     mockRemoveBranch.mockImplementation(async () => { callOrder.push('removeBranch'); });
+    // Default: unreadable HEAD, so the patch carries no head_sha key.
+    mockReadWorktreeHead.mockReset();
+    mockReadWorktreeHead.mockResolvedValue({ branch: null, sha: null });
   });
 
   it('prepares before the git lock and removes at cleanup-worktree:<id8> BACKGROUND priority; session cleanup no-ops', async () => {
@@ -347,7 +350,9 @@ describe('cleanupTaskResources', () => {
     // waiting at USER on the project's git queue.
     expect(withLockOptions[0]).toEqual({ label: 'cleanup-worktree:task-10', priority: 10 });
     expect(mockRemoveWorktree).toHaveBeenCalledWith(task.worktree_path, { removalProfile: 'moderate' });
-    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-10', worktree_path: null, branch_name: null });
+    // `pushed_branch` is absent from the patch on purpose: a remote fact and a
+    // PR anchor, it outlives the checkout (see pushed-branch-cleanup-parity).
+    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-10', worktree_path: null, branch_name: null, resolved_base_branch: null });
 
     // autoCleanup is false: prune/removeBranch must NOT run even though the
     // task has a branch_name and the removal succeeded.
@@ -380,7 +385,35 @@ describe('cleanupTaskResources', () => {
     // - they are gated on `removed` inside that same callback).
     expect(callOrder).toEqual(['prepare', 'withLock', 'pruneWorktrees', 'removeBranch']);
     expect(mockRemoveBranch).toHaveBeenCalledWith('feature-11');
-    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-11', worktree_path: null, branch_name: null });
+    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-11', worktree_path: null, branch_name: null, resolved_base_branch: null });
+  });
+
+  it('captures the worktree HEAD sha into head_sha BEFORE removal, so the commit anchor survives the reset', async () => {
+    // The shape that stranded tasks: a reset (or delete) ran while the PR was
+    // not linked yet, and every anchor went with the checkout. The tip commit
+    // is read before the directory is touched, and rides in the same patch.
+    const tasks = createMockTaskRepo();
+    const context = createCleanupContext(false);
+    const task = {
+      id: 'task-13',
+      session_id: null,
+      worktree_path: '/mock/project/.kangentic/worktrees/task-13-abcd',
+      branch_name: 'feature-13',
+    };
+    mockReadWorktreeHead.mockResolvedValue({ branch: 'feature-13', sha: 'abc123def456' });
+    mockRemoveWorktree.mockResolvedValue(true);
+
+    await cleanupTaskResources(context as never, task, tasks as never, undefined, context.currentProjectPath);
+
+    expect(mockReadWorktreeHead).toHaveBeenCalledWith(task.worktree_path);
+    expect(mockReadWorktreeHead.mock.invocationCallOrder[0]).toBeLessThan(mockPrepareWorktreeForRemoval.mock.invocationCallOrder[0]);
+    expect(tasks.update).toHaveBeenCalledWith({
+      id: 'task-13',
+      worktree_path: null,
+      branch_name: null,
+      resolved_base_branch: null,
+      head_sha: 'abc123def456',
+    });
   });
 
   it('does not prune or remove the branch when removeWorktree fails, even with autoCleanup enabled', async () => {
@@ -401,5 +434,46 @@ describe('cleanupTaskResources', () => {
     expect(mockRemoveBranch).not.toHaveBeenCalled();
     // worktree_path/branch_name preserved so a retry pass can pick it back up.
     expect(tasks.update).not.toHaveBeenCalled();
+  });
+
+  // A full reset (TASK_DELETE, or a move-to-To-Do reset) ends the spawn
+  // decision `worktree_skip_reason` describes; the task's next spawn
+  // re-decides. This must clear unconditionally on the WORKTREE-LESS branch
+  // too - it sits outside the `if (task.worktree_path && ...)` block on
+  // purpose, since the task carrying a reason is exactly the one WITHOUT a
+  // worktree. A task with no worktree_path isolates the guard: it skips the
+  // whole removal block below, so `tasks.getById` is called exactly once
+  // here (the guard itself), with no second call from the removal block's
+  // own getById re-check to conflate with.
+  it('clears the worktree skip reason to null when the task row still exists (no worktree to remove)', async () => {
+    const tasks = createMockTaskRepo();
+    const context = createCleanupContext(false);
+    const task = {
+      id: 'task-13',
+      session_id: null,
+      worktree_path: null,
+      branch_name: null,
+    };
+
+    await cleanupTaskResources(context as never, task, tasks as never, undefined, context.currentProjectPath);
+
+    expect(tasks.setWorktreeSkipReason).toHaveBeenCalledWith('task-13', null);
+    expect(mockRemoveWorktree).not.toHaveBeenCalled();
+  });
+
+  it('does not clear the skip reason when the task row is already gone (concurrent delete)', async () => {
+    const tasks = createMockTaskRepo();
+    tasks.getById.mockReturnValue(undefined);
+    const context = createCleanupContext(false);
+    const task = {
+      id: 'task-14',
+      session_id: null,
+      worktree_path: null,
+      branch_name: null,
+    };
+
+    await cleanupTaskResources(context as never, task, tasks as never, undefined, context.currentProjectPath);
+
+    expect(tasks.setWorktreeSkipReason).not.toHaveBeenCalled();
   });
 });

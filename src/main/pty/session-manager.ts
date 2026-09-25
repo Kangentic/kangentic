@@ -18,7 +18,9 @@ import { TranscriptWriter } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
 import { gracefulPtyShutdown } from './shutdown/session-suspend';
-import { suspendAllSessions, killAllSessions } from './shutdown/session-shutdown';
+import { suspendAllSessions, killAllSessions, writeExitSequence } from './shutdown/session-shutdown';
+import type { PtyKillReport } from './shutdown/session-shutdown';
+import { DeferredKillRegistry, isYoungSession } from './lifecycle/deferred-kill';
 import { ResizeManager } from './lifecycle/resize-manager';
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
@@ -40,8 +42,10 @@ import type {
   SpawnSessionInput,
   PerToolStat,
   PtyResizeOrigin,
+  SessionResizeResult,
 } from '../../shared/types';
 import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
+import type { CapturedSessionTree } from '../activity-engine/background-shell/process-tree';
 
 export interface SessionManagerOptions {
   /**
@@ -129,6 +133,14 @@ const AGENT_SPAWN_GRACE_MS = 30_000;
 
 export class SessionManager extends EventEmitter {
   private registry = new SessionRegistry();
+  /**
+   * PTYs whose force-kill is waiting out the exit-sequence grace. Parked OUTSIDE
+   * the registry row: `kill()` nulls `session.pty` at once as it always did, so
+   * nothing that walks the registry (a respawn's sibling drain, `awaitExit`'s
+   * status checks) can see or cut short a deferred PTY. See
+   * lifecycle/deferred-kill.ts for why the grace exists.
+   */
+  private deferredKills = new DeferredKillRegistry({ killPty: safeKillPty });
   private shellResolver = new ShellResolver();
   private configuredShell: string | null = null;
   private firstOutputTracker = new FirstOutputTracker();
@@ -296,11 +308,29 @@ export class SessionManager extends EventEmitter {
         // terminal mounting onto a just-spawned session samples exactly
         // across that chunk - the replay hold window keeps those bytes out
         // of onFlush, so skipping them here would strand the shimmer
-        // overlay and the resuming label until the marker happens to recur.
+        // overlay until the marker happens to recur.
         // consume() is a one-shot latch, so feeding both the flushed and
         // the drained stream can never double-fire 'first-output'.
         this.consumeFirstOutput(sessionId, data);
         this.emit('data-tap', sessionId, data);
+      },
+      onAltScreenEnter: (sessionId) => {
+        // The TUI's first composed frame: the one boot signal a shell
+        // preamble cannot fake (see the arming comment in resize()). This
+        // trigger always disarms - a child that just switched buffers is
+        // demonstrably parsing output, so the re-delivered geometry lands.
+        //
+        // Stamp the FIRST entry only: it is the upper bound on when Claude
+        // armed its fullscreen boot canary, which is what kill() reads to
+        // decide whether the force-kill must wait for the exit sequence. A
+        // later re-entry (a TUI that dropped to the normal buffer and came
+        // back) is not a boot and must not re-open the window.
+        const session = this.registry.get(sessionId);
+        if (session) session.altScreenEnteredAt ??= Date.now();
+        this.reassertGeometryForBootingChild(sessionId, {
+          trigger: 'alt-screen-enter',
+          disarm: true,
+        });
       },
     });
 
@@ -313,6 +343,17 @@ export class SessionManager extends EventEmitter {
     this.telemetry = new SessionTelemetry({
       onUsageChange: (sessionId, usage) => this.emit('usage', sessionId, usage),
       onActivityChange: (sessionId, activity, reason) => this.emit('activity', sessionId, activity, reason),
+      // A separate event, not 'activity', and that separation is load-bearing
+      // rather than tidy. Ten listeners read 'activity' as "the state changed",
+      // and several of them ACT on it: the mobile push notifier wakes a phone,
+      // the desktop notifier raises a toast, turn-completion drives auto-move,
+      // the terminal submit scheduler releases queued keystrokes, and the
+      // interval recorder opens and closes `session_activity_intervals` rows.
+      // A long turn reports a reason ~180 times against ~3 real transitions, so
+      // routing these onto 'activity' would fire all of that on a refresh whose
+      // only new information is which reason to draw.
+      onReasonChange: (sessionId, activity, reason) =>
+        this.emit('activity-reason', sessionId, activity, reason),
       onEvent: (sessionId, event) => this.emit('event', sessionId, event),
       onIdleTimeout: (sessionId) => {
         const session = this.registry.get(sessionId);
@@ -326,6 +367,12 @@ export class SessionManager extends EventEmitter {
         // scraping if gh is unavailable.
         const scrollback = this.bufferManager.getRawScrollback(sessionId);
         this.emit('pr-candidate', sessionId, scrollback);
+      },
+      onBranchPushed: (sessionId, branch) => {
+        // The agent's own `git push` named this branch as its destination. The
+        // IPC listener records it on the task as the per-task PR anchor; no
+        // resolve fires here, the PR does not exist yet.
+        this.emit('branch-pushed', sessionId, branch);
       },
       onAgentSessionId: (sessionId, agentReportedId) => {
         // Agent session ID capture covers three cases:
@@ -407,6 +454,12 @@ export class SessionManager extends EventEmitter {
         return session.agentParser?.runtime?.backgroundShells
           ?.reportTerminatedShells?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, shellIds }) ?? [];
       },
+      reportRejectedPermissionTools: (sessionId, toolIds, sinceMs) => {
+        const session = this.registry.get(sessionId);
+        if (!session?.agentSessionId) return [];
+        return session.agentParser?.runtime?.permissionPrompts
+          ?.reportRejectedPromptTools?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, toolIds, sinceMs }) ?? [];
+      },
       isAgentAbsenceCandidate: (sessionId) => this.isAgentAbsenceCandidate(sessionId),
       retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
     }, {
@@ -481,12 +534,17 @@ export class SessionManager extends EventEmitter {
       this.backpressure.release(sessionId);
       // Nothing left to reshape either: a respawn spawns at the desktop grid.
       this.cancelRestingGridRestore(sessionId);
+      // A deferred force-kill whose PTY exited on its own inside the grace has
+      // nothing left to kill. The spawn flow's onExit stays attached through a
+      // kill() (only the quit path detaches it), so this event is the cancel
+      // signal - the registry deliberately attaches no PTY listener of its own.
+      this.deferredKills.cancel(sessionId);
     });
   }
 
   /**
    * Feed a chunk to the first-output latch; on the first qualifying chunk,
-   * emit 'first-output' and clear the resuming flag. Fed from BOTH buffer
+   * emit 'first-output'. Fed from BOTH buffer
    * streams - the 16ms flush (onFlush) and the replay-drain report
    * (onDrain) - because a replay can consume the chunk carrying the
    * adapter's one-time marker before it ever flushes. The tracker is a
@@ -499,13 +557,90 @@ export class SessionManager extends EventEmitter {
       : undefined;
     if (this.firstOutputTracker.consume(sessionId, data, detector)) {
       this.emit('first-output', sessionId);
-      // Clear the resuming flag once the resumed CLI has actually
-      // produced output. This unblocks card / overlay labels for
-      // adapters (Codex, Gemini) that don't emit a usage statusline.
-      if (session && session.resuming) {
-        session.resuming = false;
-        this.emit('session-changed', sessionId, toSession(session));
-      }
+      // First-output can be tripped by a SHELL preamble, not the agent (see
+      // the arming comment in resize()), so this trigger DISARMS only when
+      // the stream is already in the alt buffer - the output provably came
+      // from the TUI. Otherwise the jiggle still fires (for an inline-mode
+      // agent this is the only trigger, and one extra repaint is harmless)
+      // but the flag stays armed for the alt-screen-entry trigger, which is
+      // what actually reaches a fullscreen agent that boots after the shell.
+      const tuiComposedThisOutput =
+        this.bufferManager.getDimensionState(sessionId)?.inAltScreen === true;
+      this.reassertGeometryForBootingChild(sessionId, {
+        trigger: 'first-output',
+        disarm: tuiComposedThisOutput,
+      });
+      // `resuming` is NOT cleared here. It means "spawned as a resume of a
+      // previous session" (the Session type's own doc), and the card and the
+      // context bar read it for their spinner label until the model name
+      // lands. Clearing it at first output flipped a resumed card from
+      // "Resuming agent..." to "Starting agent..." for that gap, which reads
+      // as the resume having failed and a fresh agent starting. The overlay
+      // this latch lifts is gone by then, so nothing else consumed the flip.
+    }
+  }
+
+  /**
+   * Re-deliver the PTY's geometry to a child that was still booting when a
+   * resize was applied (see `ManagedSession.resizeAppliedBeforeTuiReady`).
+   * A resize applied to a RUNNING child reliably reaches it (verified live:
+   * a hand-resize healed a stuck frame mid-turn), so the whole question is
+   * WHEN the child is demonstrably up. Two triggers fire this, at most one
+   * jiggle each: the adapter's first-output latch (which a shell preamble
+   * can trip early - it disarms only when the output provably came from the
+   * TUI) and the stream's first alt-screen entry (which nothing but the TUI
+   * can produce, and which always disarms). Task #573's live recurrence
+   * (2026-08-30) is the case the second trigger exists for: pwsh's preamble
+   * tripped first-output ~80ms after spawn, the fit resize then read as
+   * post-first-output and never armed under the old criterion, and the
+   * agent booting seconds later composed at the spawn width all turn.
+   *
+   * The re-assert is a jiggle - cols-1, then cols back - because a same-dims
+   * delivery can be deduplicated anywhere in the chain (our own resize() would
+   * noop it, and ConPTY/terminals may too); two genuine changes cannot. It
+   * calls `session.pty.resize()` directly, NOT this.resize(): the ladder's
+   * same-dims short-circuit would eat the restore leg, and its side effects
+   * (pty-resize broadcasts burning the renderer's echo re-assert budget and
+   * re-seeding phone frames, bufferManager.onResize stacking a repaint-settle
+   * upgrade) are churn for a net-unchanged geometry that was already clamped
+   * and policy-approved when it was first applied. cols-1 rather than cols+1
+   * so the transient never exceeds the mounted xterm's grid. Back-to-back legs
+   * are safe even if the chain coalesces them: the coalesced final size still
+   * differs from the child's stale belief.
+   *
+   * Unconditional across platforms on purpose: the lost-resize window is
+   * ConPTY-specific (a POSIX pty's winsize is kernel state the child reads at
+   * TUI init), but on POSIX the jiggle costs only one extra SIGWINCH repaint
+   * at first output, and one ungated code path means CI's Linux unit tests
+   * exercise exactly what Windows ships.
+   */
+  private reassertGeometryForBootingChild(
+    sessionId: string,
+    { trigger, disarm }: { trigger: 'first-output' | 'alt-screen-enter'; disarm: boolean },
+  ): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.pty || !session.resizeAppliedBeforeTuiReady) return;
+    if (disarm) session.resizeAppliedBeforeTuiReady = false;
+    const { cols, rows } = session.pty;
+    const jiggleCols = Math.max(2, cols - 1);
+    if (jiggleCols === cols) return;
+    try {
+      session.pty.resize(jiggleCols, rows);
+    } catch (error) {
+      // node-pty can throw on a just-died ConPTY; the exit path owns cleanup.
+      // Nothing landed, so the child still holds `cols`.
+      traceTerminal(sessionId, 'resize-reassert-failed', { trigger, leg: 'jiggle', message: String(error) });
+      return;
+    }
+    try {
+      session.pty.resize(cols, rows);
+      traceTerminal(sessionId, 'resize-reassert', { trigger, cols, rows, jiggleCols });
+    } catch (error) {
+      // The narrow leg landed but the restore did not: node-pty caches dims
+      // only on a successful resize, so the child sits at cols-1 until the
+      // next real resize. The leg field lets forensics tell this stranded
+      // case from the harmless jiggle-leg failure above.
+      traceTerminal(sessionId, 'resize-reassert-failed', { trigger, leg: 'restore', message: String(error) });
     }
   }
 
@@ -925,6 +1060,7 @@ export class SessionManager extends EventEmitter {
       statusFileReader: this.statusFileReader,
       sessionHistoryReader: this.sessionHistoryReader,
       sessionQueue: this.sessionQueue,
+      firstOutputTracker: this.firstOutputTracker,
       getTranscriptWriter: () => this.transcriptWriter,
       getShell: () => this.getShell(),
       takePendingResize: (sessionId) => {
@@ -1028,7 +1164,7 @@ export class SessionManager extends EventEmitter {
     // pty-resize emit, never passed through resize(). Deriving from the shared
     // type keeps the two unions linked when PtyResizeOrigin grows.
     origin: Exclude<PtyResizeOrigin, 'spawn'> = 'desktop',
-  ): { colsChanged: boolean; refused?: true } {
+  ): SessionResizeResult {
     const session = this.registry.get(sessionId);
 
     // Guard against NaN/Infinity from layout edge cases (e.g. getComputedStyle
@@ -1147,8 +1283,11 @@ export class SessionManager extends EventEmitter {
       });
       // `refused` tells the echo re-assert (the width-drift self-heal) that
       // main is deliberately holding this grid, so it stops immediately
-      // instead of burning its retry budget against the floor.
-      return { colsChanged: false, refused: true };
+      // instead of burning its retry budget against the floor. `held` names
+      // the grid kept, so the refused terminal can conform to it (resize its
+      // own grid to the PTY's and scale its font to fit) instead of showing
+      // the taller frame clipped.
+      return { colsChanged: false, refused: true, held: { cols: session.pty.cols, rows: session.pty.rows } };
     }
 
     const colsChanged = this.bufferManager.onResize(sessionId, clampedCols, clampedRows);
@@ -1165,8 +1304,58 @@ export class SessionManager extends EventEmitter {
       traceTerminal(sessionId, 'resize-noop', { origin, cols: clampedCols, rows: clampedRows });
       return { colsChanged };
     }
-    session.pty.resize(clampedCols, clampedRows);
-    traceTerminal(sessionId, 'resize-applied', { origin, cols: clampedCols, rows: clampedRows });
+    try {
+      session.pty.resize(clampedCols, clampedRows);
+    } catch (error) {
+      // node-pty throws a plain Error once the child has exited but before
+      // onExit has nulled session.pty (up to ~1s on Windows, where the exit
+      // event waits on the conout flush). Same hazard the jiggle ladder in
+      // reassertGeometryForBootingChild guards; the exit path owns the
+      // cleanup, so record it and return instead of rejecting the renderer's
+      // resize invoke.
+      traceTerminal(sessionId, 'resize-failed', {
+        origin,
+        cols: clampedCols,
+        rows: clampedRows,
+        message: String(error),
+      });
+      return { colsChanged };
+    }
+    // A resize applied while the agent is still booting can be lost: ConPTY
+    // only delivers a resize to a connected client, and in the spawn window
+    // the child is still starting behind the shell (and, under WSL, two
+    // interop hops). Arm the post-boot re-assert so the geometry is
+    // re-delivered once the child demonstrably exists. The criterion is
+    // "the stream has not entered the alt buffer yet", NOT the first-output
+    // latch: pwsh 7.6's startup preamble carries the cursor-hide escape that
+    // adapter first-output detectors match (src/shared/paths.ts,
+    // buildSpawnClearPrelude), so on that shell the latch reads "agent up"
+    // within tens of ms of spawn while the agent is seconds away - exactly
+    // the window whose resize is lost (task #573's live recurrence,
+    // 2026-08-30). No shell enters the alt buffer, so a pre-alt-screen
+    // resize always arms.
+    //
+    // This reads the CURRENT alt-screen state, not a once-ever latch, so a
+    // booted TUI that drops to the normal buffer (`\x1b[?1049l`, or an RIS
+    // `\x1bc`) and is resized during that excursion re-arms too, and its
+    // next re-entry jiggles a child that was never booting. Deliberate: the
+    // cost is one redundant re-delivery of geometry the child already has,
+    // and a running child absorbs it, so it is not worth a second piece of
+    // sticky per-session state to suppress.
+    //
+    // An inline-mode session's mid-turn resize arms a flag no remaining
+    // trigger consumes - a dormant boolean that dies with the session, not a
+    // jiggle. Any origin arms - the loss is about timing, not who asked.
+    const preTuiReady = this.bufferManager.getDimensionState(sessionId)?.inAltScreen !== true;
+    if (preTuiReady) {
+      session.resizeAppliedBeforeTuiReady = true;
+    }
+    traceTerminal(sessionId, 'resize-applied', {
+      origin,
+      cols: clampedCols,
+      rows: clampedRows,
+      preTuiReady,
+    });
     // Mark resize time so the dispatch can suppress idle->thinking
     // transitions during the redraw burst that follows.
     this.resizeManager.notifyResize(sessionId);
@@ -1219,7 +1408,44 @@ export class SessionManager extends EventEmitter {
     this.kill(sessionId);
     // Full cleanup including file deletion - the session is not coming back.
     this.sessionFiles.detachAndDelete(sessionId);
+    // Announce the removal as its OWN fact, before the row disappears, so the
+    // payload still carries taskId / projectId.
+    //
+    // kill() nulls session.pty synchronously but never touches status for a
+    // PTY-backed session (a young session's real exit can still be up to
+    // KILL_GRACE_MS away), and the renderer's SESSION_EXIT handler
+    // deliberately ignores an intentional exit (App.tsx) so it never
+    // self-corrects. Without a push a caller that reaches remove() before the
+    // natural 'exit' - or a syncSessions() that lands mid-grace - leaves the
+    // renderer holding a 'running' row for a session that no longer exists
+    // anywhere in main: the board keeps painting a spinner and the bottom
+    // panel keeps a tab for an agent that is gone.
+    //
+    // This used to be a 'session-changed' emit carrying a forced 'exited'
+    // status. That channel's only renderer handler is an UPSERT, so for a task
+    // moved to To Do (whose rows the renderer evicts optimistically the moment
+    // the move starts) the removal announcement re-inserted an exited row for
+    // a PTY, worktree, and session directory that no longer existed, and its
+    // usage entry filled a context bar under a black terminal (#661). A
+    // removal and a status change cannot share one channel: the renderer
+    // drops this id, and every per-session map entry keyed on it, on
+    // 'session-removed' (SESSION_REMOVED). Covers the awaited-exit case and
+    // the direct-remove case (project deletion, SESSION_RESET) alike.
+    if (session) {
+      this.emit('session-removed', sessionId, toSession(session));
+    }
     this.registry.delete(sessionId);
+    this.clearSessionCaches(sessionId);
+  }
+
+  /**
+   * Drop what the auxiliary modules hold for a session id once its registry
+   * row is gone: buffer, transcript, telemetry, first-output latch, and resize
+   * bookkeeping. The tail shared by `remove()` and the exited-row eviction in
+   * `registerSuspendedPlaceholder`, which differ only in what happens to the
+   * PTY and the on-disk session files before this runs.
+   */
+  private clearSessionCaches(sessionId: string): void {
     this.bufferManager.removeSession(sessionId);
     this.transcriptWriter?.remove(sessionId);
     this.telemetry.removeSession(sessionId);
@@ -1228,23 +1454,68 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Kill any PTY session belonging to a task, regardless of whether the
+   * Kill every PTY session belonging to a task, regardless of whether the
    * task's session_id field has been written to the DB yet. This handles
    * the race where a concurrent handleTaskMove spawned a session but
    * hasn't updated the task record.
+   *
+   * Every row, not the first match: while a respawn is queued the task
+   * transiently holds `[suspended, queued]`, and a first-match kill left the
+   * queued row to be promoted into a task the caller had just torn down.
    */
   killByTaskId(taskId: string): void {
-    const session = this.registry.findByTaskId(taskId);
-    if (session) this.kill(session.id);
+    for (const session of this.registry.listByTaskId(taskId)) this.kill(session.id);
   }
 
   /**
-   * Fully remove any PTY session belonging to a task from all internal
+   * Fully remove every PTY session belonging to a task from all internal
    * maps. Like killByTaskId but also cleans up caches and session files.
    */
   removeByTaskId(taskId: string): void {
-    const session = this.registry.findByTaskId(taskId);
-    if (session) this.remove(session.id);
+    for (const session of this.registry.listByTaskId(taskId)) this.remove(session.id);
+  }
+
+  /**
+   * Announce a session a caller ended with `kill()` + `awaitExit()` and is
+   * KEEPING in the registry (no `remove()`, no `suspend()`): re-emit the row
+   * on 'session-changed' with its resolved status. The PTY's natural exit
+   * emits only 'exit', which the renderer ignores for an intentional end (it
+   * cannot tell a suspend from a hard end without racing the suspended status
+   * push), so without this the renderer's replica stays at 'running' for a
+   * session main knows is finished: the card keeps its spinner and the bottom
+   * panel its tab. `remove()` and `suspend()` announce themselves, and
+   * `retireAgentlessSession` does the same inline; the cleanup_worktree
+   * transition action is the caller here. Every kill site is classified by
+   * `tests/unit/session-kill-followup.test.ts`. See
+   * .claude/rules/session-replica-contract.md.
+   */
+  announceSessionEnded(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    if (session.status === 'running' || session.status === 'queued') {
+      // awaitExit resolved without onExit stamping the row (its safety
+      // timeout, or a PTY-less row): the session is ended either way.
+      session.status = 'exited';
+      if (session.exitCode === null) session.exitCode = -1;
+    }
+    this.emit('session-changed', sessionId, toSession(session));
+  }
+
+  /**
+   * The session's descendant PIDs as of the bg-shell watcher's last healthy
+   * cycle, for a teardown that wants to take the rest of the tree with the PTY.
+   *
+   * Read it BEFORE killing or suspending: the watcher stops publishing the
+   * moment the session is gone, and on POSIX the children are reparented to
+   * init immediately, so there is no tree left to walk afterwards.
+   *
+   * Null means there is no trustworthy snapshot (watcher off, never enumerated
+   * for this session, or the snapshot has aged out). Treat that as "nothing to
+   * reap", never as a reason to enumerate here - see
+   * `BgShellWatcher.getCapturedDescendants` for why.
+   */
+  getCapturedSessionTree(sessionId: string): CapturedSessionTree | null {
+    return this.telemetry.getCapturedSessionTree(sessionId);
   }
 
   /**
@@ -1304,7 +1575,10 @@ export class SessionManager extends EventEmitter {
    * (record marked exited, panel tab dropped, phantom count corrected, queue
    * slot freed, hooks stripped, transcript flushed) and its `intentionalExit`
    * flag suppresses the renderer's "Session crashed" toast - the agent's own
-   * exit was the event, and Kangentic is only noticing it late.
+   * exit was the event, and Kangentic is only noticing it late. Because that
+   * flag also silences the exit listener's startup-failure read, the
+   * retirement first emits `agent-absent` so the IPC layer can read the CLI's
+   * last words and raise a notice when they name a failure.
    *
    * The reported exit code is forced to 0 because this WAS a normal end. A
    * force-kill reports an abnormal code on every platform, and
@@ -1319,8 +1593,21 @@ export class SessionManager extends EventEmitter {
     if (!this.isAgentAbsenceCandidate(sessionId)) return;
     const session = this.registry.get(sessionId);
     if (!session) return;
+    // Say WHY the agent is gone while its last words are still readable. The
+    // kill below arrives at the exit listener as INTENTIONAL (the CLI's own
+    // end was the event; the sweep only noticed it late), and that listener
+    // rightly treats an intentional exit as carrying no failure, so an agent
+    // that ended at boot with its own account of why (a `--resume` whose
+    // conversation the CLI could not find) reached the user as a card that
+    // went quiet. The IPC layer asks the adapter to read the raw ring and
+    // raises the notice; the ring survives the kill, so ordering here is for
+    // clarity rather than correctness.
+    this.emit('agent-absent', sessionId, toSession(session));
     session.overrideExitCode = 0;
-    this.kill(sessionId);
+    // Immediate: the agent is already gone, so the exit-sequence grace would
+    // only type `/exit` into a bare shell, and the `exited` stamp below would
+    // let a later awaitExit resolve while that shell still held the cwd.
+    this.kill(sessionId, { immediate: true });
     // Announce the retirement as a STATUS change, not just an exit.
     //
     // Measured in a live preview: without this, main and the DB were correct
@@ -1342,7 +1629,23 @@ export class SessionManager extends EventEmitter {
     this.emit('session-changed', sessionId, toSession(session));
   }
 
-  kill(sessionId: string): void {
+  /**
+   * End a session deliberately. Synchronous and never resumable (that is
+   * `suspend()`); the registry row survives until the PTY's onExit or a
+   * `remove()`, which is what lets `kill` -> `awaitExit` -> `remove` wait for
+   * the process before touching its cwd.
+   *
+   * A YOUNG session (inside Claude Code's fullscreen boot-canary window, see
+   * lifecycle/deferred-kill.ts) gets the adapter's exit sequence and a 1500 ms
+   * grace before the force-kill, exactly as `suspend()` gives every session; a
+   * mature one is killed at once as before. Either way `session.pty` is nulled
+   * synchronously, so `write()` / `resize()` no-op and a respawn cannot find the
+   * old PTY. `options.immediate` skips the grace for a caller that KNOWS the
+   * agent is already gone (the agent-absence sweep), where the exit sequence
+   * would only be typed into a bare shell and the caller stamps `exited` at
+   * once, which would let `awaitExit` resolve before the shell dies.
+   */
+  kill(sessionId: string, options?: { immediate?: boolean }): void {
     const session = this.registry.get(sessionId);
     // Every kill() is a deliberate Kangentic-initiated teardown (user kill,
     // session reset, task delete, worktree cleanup, move-to-To-Do/Backlog,
@@ -1368,8 +1671,23 @@ export class SessionManager extends EventEmitter {
     this.backpressure.release(sessionId);
     if (session?.pty) {
       const ptyRef = session.pty;
+      // Read before nulling: the quit drain probes the child pid, not the wrapper.
+      const childPid = ptyRef.pid;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-      safeKillPty(ptyRef);
+      if (options?.immediate !== true && isYoungSession(session)) {
+        // Written straight to the PTY, not through the write queue: the queue
+        // is disposed below and drains through `session.pty`, which is already
+        // null. The onData / onExit disposables move to the parked entry so the
+        // quit path can still detach them after remove() has deleted this row;
+        // they stay attached until then, because the onExit they carry is what
+        // emits 'exit' (awaitExit) and cancels the timer on a natural exit.
+        writeExitSequence(ptyRef, session.exitSequence);
+        const ptyDisposables = session.ptyDisposables;
+        session.ptyDisposables = undefined;
+        this.deferredKills.schedule({ sessionId, ptyRef, pid: childPid, ptyDisposables });
+      } else {
+        safeKillPty(ptyRef);
+      }
     }
     // Drop pending bytes; a stale drain loop scheduled via setImmediate will
     // observe the disposed flag on its next tick and exit cleanly.
@@ -1538,9 +1856,11 @@ export class SessionManager extends EventEmitter {
     if (this.registry.get(sessionId)?.pty) {
       await this.bufferManager.waitForResizeRepaint(sessionId);
     }
-    // Alt-screen sessions get the parsed-grid frame, everything else the raw
-    // byte replay - see PtyBufferManager.getReplaySnapshot for why a capped
-    // byte ring cannot reconstruct a fullscreen TUI's write-once cells.
+    // Alt-screen sessions and sessions whose byte ring spans a geometry
+    // change get the parsed-grid frame, everything else the raw byte replay -
+    // see PtyBufferManager.getReplaySnapshot for why a capped byte ring
+    // cannot reconstruct a fullscreen TUI's write-once cells, and why a
+    // multi-geometry ring replays with stale-geometry rows interleaved.
     return this.bufferManager.getReplaySnapshot(sessionId);
   }
 
@@ -1576,7 +1896,10 @@ export class SessionManager extends EventEmitter {
    * separates the two.
    *
    * No settle and no slicing: a diagnostic wants the bytes as they are, not a
-   * replay-shaped view of them.
+   * replay-shaped view of them. The exit listener reads it for the same reason
+   * when it asks an adapter whether the CLI's last words name a startup
+   * failure: at exit there is no process left to repaint, and what matters is
+   * what the CLI wrote.
    */
   getRawScrollback(sessionId: string): string {
     return this.bufferManager.getRawScrollback(sessionId);
@@ -1673,6 +1996,7 @@ export class SessionManager extends EventEmitter {
     pendingRepaintAt: number | null;
     pendingRepaintStacked: boolean;
     inAltScreen: boolean;
+    geometryChangedAtRingIndex: number | null;
   }> {
     const rows = [];
     for (const session of this.registry.values()) {
@@ -1694,6 +2018,7 @@ export class SessionManager extends EventEmitter {
         pendingRepaintAt: buffer?.pendingRepaintAt ?? null,
         pendingRepaintStacked: buffer?.pendingRepaintStacked ?? false,
         inAltScreen: buffer?.inAltScreen ?? false,
+        geometryChangedAtRingIndex: buffer?.geometryChangedAtRingIndex ?? null,
       });
     }
     return rows;
@@ -1724,6 +2049,44 @@ export class SessionManager extends EventEmitter {
    */
   setSessionUsage(sessionId: string, partial: Partial<SessionUsage>): void {
     this.telemetry.setSessionUsage(sessionId, partial);
+  }
+
+  /**
+   * Record a Command Terminal's auto-derived name so it outlives the renderer.
+   *
+   * Main is a passive holder here: the renderer derives the name and has already
+   * applied it locally, and nothing in main reads it back except `toSession`,
+   * which hands it to the next renderer that has to rebuild the pairing map.
+   * First write wins, matching the renderer's own first-prompt-wins rule, so a
+   * later re-derivation cannot silently rename a terminal the user already knows
+   * by name. Unknown or non-transient sessions are ignored.
+   */
+  setCommandTerminalLabel(sessionId: string, label: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.transient || session.commandTerminalLabel) return;
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    session.commandTerminalLabel = trimmed;
+  }
+
+  /**
+   * Record where a Command Terminal's checkout actually sits now.
+   *
+   * The spawn stamps the branch it checked out, but the main checkout's HEAD is
+   * shared with the user's own git usage, non-worktree task spawns, and every
+   * other terminal, so that stamp goes stale the moment any of them moves it.
+   * The renderer re-derives the branch from live HEAD (on reattach and on every
+   * watcher fire) and mirrors it here, so the Monitor row and a post-reload
+   * adopt name the branch the repo is on. LAST write wins, the opposite of the
+   * label: HEAD moves, and the newest reading is the true one. Blank values and
+   * unknown or non-transient sessions are ignored.
+   */
+  setCommandTerminalBranch(sessionId: string, branch: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.transient) return;
+    const trimmed = branch.trim();
+    if (!trimmed) return;
+    session.commandTerminalBranch = trimmed;
   }
 
   /** Return cached activity state for all sessions (survives renderer reloads). */
@@ -1873,8 +2236,12 @@ export class SessionManager extends EventEmitter {
    * before app restart. The placeholder has no PTY but makes the renderer
    * show "Paused" state and the "Resume session" button.
    *
-   * Safe to call even if a session already exists for the task - doSpawn
-   * handles existing sessions by taskId (cleans up and replaces).
+   * Idempotent per task: returns null, inserting and emitting nothing, when
+   * the task already holds a live or suspended row (see
+   * `SessionRegistry.registerSuspendedPlaceholder` for the contract). An
+   * exited row is replaced, and its per-session caches are cleared here the
+   * way `remove()` clears them, minus the kill and the on-disk file deletion
+   * the row no longer needs.
    *
    * Emits `session-changed` so the renderer's onStatus listener evicts any
    * stale prior session entry for the same taskId immediately. Without this
@@ -1882,8 +2249,23 @@ export class SessionManager extends EventEmitter {
    * syncSessions(), leaving a window where stale sessions[] entries from
    * before a project switch can mask the real placeholder state.
    */
-  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session {
+  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session | null {
+    const exitedRows = this.registry.listByTaskId(input.taskId).filter((row) => row.status === 'exited');
     const session = this.registry.registerSuspendedPlaceholder(input);
+    if (!session) return null;
+    // The registry inserted, so every pre-existing row was exited and is gone
+    // from the map; drop what the other modules still hold for those ids.
+    for (const exitedRow of exitedRows) {
+      this.sessionIdManager.removeSession(exitedRow.id);
+      disposeAdapterAttachment(exitedRow);
+      this.sessionFiles.removeSession(exitedRow.id);
+      this.clearSessionCaches(exitedRow.id);
+      // A row that leaves the registry announces it, here as in remove(): the
+      // placeholder's own status push below makes it the task's only row in the
+      // renderer, but only a removal push drops the evicted id's per-session
+      // map entries (usage, activity, events) with it.
+      this.emit('session-removed', exitedRow.id, toSession(exitedRow));
+    }
     this.emit('session-changed', session.id, session);
     return session;
   }
@@ -1904,6 +2286,23 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Whether the task has an agent worth preserving state for: a live session
+   * that is NOT already being killed. See `SessionRegistry.hasLiveSessionForTask`.
+   */
+  hasLiveSessionForTask(taskId: string): boolean {
+    return this.registry.hasLiveSessionForTask(taskId);
+  }
+
+  /**
+   * Whether this session's teardown is already under way (suspend()'s or
+   * kill()'s exit-sequence write, possibly followed by a force-kill). See
+   * `SessionRegistry.isSessionTeardownInFlight`.
+   */
+  isSessionTeardownInFlight(sessionId: string): boolean {
+    return this.registry.isSessionTeardownInFlight(sessionId);
+  }
+
+  /**
    * Gracefully suspend all running PTY sessions.
    *
    * Sends Ctrl+C then /exit to each Claude Code process so it saves its
@@ -1920,10 +2319,21 @@ export class SessionManager extends EventEmitter {
    * Synchronously kill every PTY and clean up. Runs from Electron's
    * `before-quit` handler. Must NOT become async - see
    * session-shutdown.killAllSessions and
-   * .claude/rules/synchronous-shutdown.md.
+   * .claude/rules/synchronous-shutdown.md. Returns the PtyKillReport the
+   * before-quit exit-callback drain waits on.
+   *
+   * `allowGrace` lets a young session's force-kill ride the drain's own timer
+   * instead of landing now; pass it only on a route where the drain WILL run.
+   * Default false, so a caller that does not say so gets the instant kill and
+   * every previously deferred PTY flushed. `dispose()` deliberately leaves the
+   * deferred registry alone: it runs one statement after this, and a flush
+   * there would undo the deferral the drain is about to wait on.
    */
-  killAll(): void {
-    killAllSessions(this.shutdownContext());
+  killAll(options?: { allowGrace?: boolean }): PtyKillReport {
+    return killAllSessions(this.shutdownContext(), {
+      allowGrace: options?.allowGrace === true,
+      deferredKills: this.deferredKills,
+    });
   }
 
   private shutdownContext() {

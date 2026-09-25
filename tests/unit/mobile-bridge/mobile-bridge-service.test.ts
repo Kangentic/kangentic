@@ -514,7 +514,7 @@ describe('MobileBridgeService.attachContext() migrates pre-existing devices to t
     service.dispose();
   });
 
-  it('does not re-sign a device that already holds the full ten-verb capability grant', async () => {
+  it('does not re-sign a device that already holds the full every-verb capability grant', async () => {
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
     await seedServiceWithOnePairedDevice(service, {
       deviceId: 'already-full-grant-device',

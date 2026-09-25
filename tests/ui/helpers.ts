@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, expect, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
@@ -30,6 +30,33 @@ export function collectPageErrors(page: Page): () => string[] {
 }
 
 /**
+ * Count the toasts on screen RIGHT NOW, with no assertion retry.
+ *
+ * This is the only correct way to assert "no toast appeared", and the reason is
+ * not obvious: `expect(locator).toHaveCount(0)` AUTO-RETRIES for up to the expect
+ * timeout (~5s by default), while a toast auto-dismisses after
+ * `notifications.toasts.durationSeconds` (4s in the mock config). So a wrongly
+ * raised toast disappears on its own INSIDE the retry window and the assertion
+ * reports a false pass. The test goes green against the bug it exists to catch.
+ *
+ * That has been rediscovered three times in this suite (add-project-flow,
+ * agent-driven-invalidation, idle-toast), each time as a local helper. It lives
+ * here now, and `tests/unit/toast-negative-assertion.test.ts` fails any new
+ * `toHaveCount(0)` against a toast locator.
+ *
+ * A fake clock (`page.clock.install()`) also masks the problem, because page
+ * timers freeze while Playwright retries in real time. Do not rely on that: the
+ * protection is invisible at the call site and vanishes if the clock is dropped.
+ *
+ * Pair it with a POSITIVE assertion that the path under test actually ran, or
+ * "no toast" is indistinguishable from "nothing happened yet".
+ */
+export async function toastCountRightNow(page: Page, hasText?: string | RegExp): Promise<number> {
+  const toasts = page.getByTestId('toast');
+  return hasText === undefined ? toasts.count() : toasts.filter({ hasText }).count();
+}
+
+/**
  * Poll the Vite dev server until it responds with HTTP 200.
  * Prevents thundering-herd timeouts when multiple workers launch simultaneously
  * before Vite finishes its initial compilation.
@@ -44,6 +71,231 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   throw new Error(`Vite dev server at ${url} not ready after ${timeoutMs}ms`);
+}
+
+const VITE_GOTO_ATTEMPTS = 3;
+
+/**
+ * `page.goto` against the Vite dev server, retrying only a refused TCP connect.
+ *
+ * Seen in a full 3-worker UI run: waitForViteReady's fetch probe got its 200, then Chromium's
+ * navigation a moment later failed with `net::ERR_CONNECTION_REFUSED`, while the same server went
+ * on serving every other test with no restart or reload in its log. A refused connect is what
+ * waitForViteReady already exists to absorb, so it gets the same treatment here. No assertion is
+ * ever retried: any other navigation error, and a refusal on the last attempt, is rethrown.
+ */
+export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await page.goto(url);
+      return;
+    } catch (error) {
+      const refused = error instanceof Error && error.message.includes('net::ERR_CONNECTION_REFUSED');
+      if (!refused || attempt >= VITE_GOTO_ATTEMPTS) throw error;
+      await waitForViteReady(url);
+    }
+  }
+}
+
+/**
+ * Chromium flags for a spec that asserts on terminal CONTENT as text. Under
+ * WebGL, xterm draws rows to a canvas and `.xterm` innerText is empty; with
+ * WebGL disabled xterm falls back to its DOM renderer and the rows are real
+ * text nodes. Pass as `chromium.launch({ args: TERMINAL_TEXT_LAUNCH_ARGS })`.
+ * Costs a "WebGL unavailable" console warning per terminal, nothing else.
+ */
+export const TERMINAL_TEXT_LAUNCH_ARGS = ['--disable-webgl', '--disable-webgl2'];
+
+/**
+ * Put a mounted xterm into bracketed-paste mode the way an agent TUI does, and
+ * return once it is provably there. The mock never sends `\x1b[?2004h` and its
+ * scrollback is empty, so every UI-tier terminal starts with the mode OFF; a
+ * spec asserting a `\x1b[200~ ... \x1b[201~` packet must enable it first.
+ *
+ * Fires the DECSET as live PTY bytes with a sentinel in the same chunk and
+ * waits for the sentinel to render (xterm parses in order, so a visible
+ * sentinel means the mode landed, with no fixed wait). Fired INSIDE the poll: a
+ * chunk that lands while the mount replay is still in flight is held and then
+ * superseded by the replay's frame, so it is simply re-fired until one lands
+ * live; the DECSET is idempotent. Needs `TERMINAL_TEXT_LAUNCH_ARGS`, since the
+ * sentinel is read from `.xterm` innerText. `scope` is the container the
+ * terminal lives in (a task-detail dialog, the command-terminal window).
+ */
+export async function enableBracketedPaste(page: Page, scope: Locator, sessionId: string): Promise<void> {
+  const sentinel = 'MODE2004READY';
+  await expect
+    .poll(async () => {
+      await page.evaluate(
+        ({ targetSessionId, text }) => {
+          (window as unknown as { __mockFireSessionData: (id: string, data: string) => void })
+            .__mockFireSessionData(targetSessionId, `\x1b[?2004h${text}\r\n`);
+        },
+        { targetSessionId: sessionId, text: sentinel },
+      );
+      return scope.locator('.xterm').first().innerText();
+    }, { timeout: 10000, intervals: [250] })
+    .toContain(sentinel);
+}
+
+/**
+ * Press one of the Changes panel's resize handles (`data-testid` selector) and
+ * return its box once the drag is genuinely in flight, meaning the handle
+ * publishes `data-resizing="true"`. Dispatch the moves only after this
+ * resolves, so they cannot land before the handler installs its document
+ * listeners.
+ *
+ * `hover()` waits for the handle's box to stop moving (expanding History runs a
+ * height transition, which was the first CI flake on this shape). The press
+ * itself then still lost once on UI shard 4: the hover had verifiably hit the
+ * handle, the box never moved again, and `data-resizing` stayed `false` for
+ * the full 5 s, which is the shape of an input event starved under
+ * parallel-worker load rather than a moving target. A press that has not armed
+ * within a short window is therefore released and re-issued from a freshly
+ * read box, bounded, the same treatment `dragTaskToColumn` gives a missed
+ * dnd-kit activation. The hard cap keeps a handle that never arms a failure
+ * rather than a hang.
+ */
+export async function pressResizeHandle(
+  page: Page,
+  selector: string,
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  const handle = page.locator(selector);
+  const armed = page.locator(`${selector}[data-resizing="true"]`);
+  const PRESS_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= PRESS_ATTEMPTS; attempt += 1) {
+    await handle.hover();
+    const box = await handle.boundingBox();
+    if (!box) throw new Error(`${selector} has no bounding box`);
+    await page.mouse.down();
+    const inFlight = await armed.waitFor({ state: 'attached', timeout: 1500 })
+      .then(() => true)
+      .catch(() => false);
+    if (inFlight) return box;
+    await page.mouse.up();
+  }
+  throw new Error(`${selector} did not enter its drag after ${PRESS_ATTEMPTS} presses`);
+}
+
+/**
+ * Expand the task-detail Changes panel's History section and return only once
+ * it is provably open: the section's resize handle
+ * (`changes-history-resize`) renders ONLY while the section is open, so its
+ * presence is the signal, and a click that has not produced it within a short
+ * window is re-issued from a fresh `aria-expanded` read, bounded.
+ *
+ * Do not read the open state off `commit-graph-panel` being visible. The graph
+ * stays mounted while collapsed, clipped inside a `height: 0; overflow: hidden`
+ * body, and Playwright's visibility check reads the element's OWN box (which is
+ * not empty) rather than its ancestors' clipping, so that wait passes on a
+ * collapsed section too. That is how the History resize test in
+ * commit-graph-panel.spec.ts lost its expand click on UI shard 4 (the same
+ * starved-input shape `pressResizeHandle` re-presses for), sailed past the
+ * panel wait, and then spent the rest of its budget hovering a handle that was
+ * never going to render. The hard cap keeps a section that never opens a
+ * failure rather than a hang.
+ */
+export async function expandHistorySection(page: Page): Promise<void> {
+  const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
+  const resizeHandle = page.locator('[data-testid="changes-history-resize"]');
+  await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
+  const EXPAND_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= EXPAND_ATTEMPTS; attempt += 1) {
+    if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
+      await historyToggle.click();
+    }
+    const opened = await resizeHandle.waitFor({ state: 'attached', timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (opened) return;
+  }
+  throw new Error(`changes-history-toggle did not expand the History section after ${EXPAND_ATTEMPTS} clicks`);
+}
+
+/**
+ * Click a control right after a dnd-kit drop, retrying past a swallowed click.
+ *
+ * `@dnd-kit/core`'s `AbstractPointerSensor` arms a document-level, capture-phase
+ * `click` -> `stopPropagation` listener on drag start and removes it in
+ * `detach()` with `setTimeout(this.documentListeners.removeAll, 50)`. That timer
+ * is a browser main-thread task, so under parallel workers it lands late and the
+ * first click ANYWHERE on the page after a drop goes nowhere.
+ *
+ * The symptom is maximally misleading. The button is enabled, `pointer-events`
+ * is `auto`, `elementFromPoint` returns the button itself, and there is no
+ * toast, console error, or React error. It stays that way for as long as you
+ * wait, so raising a timeout cannot help: the listener is removed on a timer the
+ * test cannot observe or wait for. Only a second click does.
+ *
+ * `settles` is the caller's proof the click took effect, usually the dialog
+ * going `hidden` or `detached`. The helper returns on the first settle, so a
+ * click that lands the first time costs nothing beyond the wait the caller
+ * needed anyway.
+ *
+ * The budget is sized against the `ui` project's 15s per-test timeout, not
+ * against the race. Three attempts is already far past what the mechanism
+ * needs. The first retry waits a full settle, 30 times the 50 ms removal timer;
+ * if that timer has not fired by then, the main thread was blocked for the
+ * whole window, and a fourth click does not fix that either. What the budget
+ * has to leave room for is the caller, which runs a drag before this and an
+ * assertion after. An exhausted budget CONSUMES the enclosing test's timeout,
+ * so a caller that adds waits of its own must size them against what is left.
+ *
+ * Exhausting the attempts on a click that kept landing returns normally rather
+ * than throwing. The caller keeps its own assertion, and a genuinely broken
+ * handler should fail on that named assertion rather than on a retry. A click
+ * that never landed is a different case. A strict-mode violation, a selector
+ * that never resolves, and a click an overlay is blocking are all test bugs, so
+ * the last attempt rethrows that error to name itself here. The settle check
+ * runs before that rethrow, so a target that detached because an EARLIER click
+ * did take effect still returns cleanly instead of failing on the teardown it
+ * caused.
+ *
+ * Verified in `node_modules/@dnd-kit/core/dist/core.cjs.development.js`
+ * (`handleStart` adds the listener, `detach` removes it on the 50 ms timer).
+ */
+const DRAG_SWALLOW_ATTEMPTS = 3;
+const DRAG_SWALLOW_CLICK_TIMEOUT_MS = 1500;
+const DRAG_SWALLOW_SETTLE_TIMEOUT_MS = 1500;
+
+export async function clickPastDragSwallow(
+  target: Locator,
+  settles: Locator,
+  state: 'hidden' | 'detached' | 'visible' | 'attached' = 'hidden',
+): Promise<void> {
+  for (let attempt = 0; attempt < DRAG_SWALLOW_ATTEMPTS; attempt += 1) {
+    const isLastAttempt = attempt === DRAG_SWALLOW_ATTEMPTS - 1;
+    let clickError: unknown;
+    try {
+      await target.click({ timeout: DRAG_SWALLOW_CLICK_TIMEOUT_MS });
+    } catch (error) {
+      clickError = error;
+    }
+    const settled = await settles
+      .waitFor({ state, timeout: DRAG_SWALLOW_SETTLE_TIMEOUT_MS })
+      .then(() => true)
+      .catch(() => false);
+    if (settled) return;
+    if (isLastAttempt && clickError) throw clickError;
+  }
+}
+
+/**
+ * Wait until a dnd-kit keyboard drag that has just started can take its next key.
+ *
+ * dnd-kit registers the keyboard sensor's own `keydown` listener on a 0ms timer
+ * after pickup (`KeyboardSensor.attach`), so the activating key cannot end the
+ * drag it started. Blink runs an input task ahead of a due timer task, so a key
+ * pressed within a frame of the lifted item appearing can arrive before that
+ * listener exists and do nothing (seen as "the second Space did not drop, the
+ * third did"). A person cannot press two keys inside one frame; an automation
+ * can. A timer queued here lands BEHIND dnd-kit's in the same queue, so once it
+ * fires the listener is attached. This is a deterministic wait, not a fixed one.
+ *
+ * Call it after asserting the pickup happened (the overlay is visible, or the
+ * handle reads `aria-pressed="true"`) and before the next `keyboard.press`.
+ */
+export async function settleDndKitKeyboardSensor(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 }
 
 /**
@@ -62,7 +314,7 @@ export async function launchPage(): Promise<{ browser: Browser; page: Page }> {
   // Inject the mock before any page scripts run
   await page.addInitScript({ path: MOCK_SCRIPT });
 
-  await page.goto(VITE_URL);
+  await gotoVite(page);
   await page.waitForLoadState('load');
   // Wait for React to render the app shell
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });

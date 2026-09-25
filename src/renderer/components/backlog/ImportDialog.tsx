@@ -7,6 +7,7 @@ import { Pill } from '../Pill';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
 import { ButtonGroup } from '../ButtonGroup';
 import { useBacklogStore } from '../../stores/backlog-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { getProviderLabel, getSourceIcon } from './import-providers';
 import type { ExternalIssue, ImportSource } from '../../../shared/types';
@@ -18,10 +19,6 @@ interface ImportDialogProps {
 
 type StateFilter = 'open' | 'closed' | 'all';
 
-// Internal fetch chunk size. The dialog has no "page" concept in the UI - every
-// item is loaded automatically - this is purely how many items are requested
-// per round-trip to the adapter.
-const FETCH_CHUNK_SIZE = 30;
 const ESTIMATED_ROW_HEIGHT = 64;
 
 function sortByCreatedDesc(list: ExternalIssue[]): ExternalIssue[] {
@@ -91,7 +88,10 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const [issues, setIssues] = useState<ExternalIssue[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  // Starts true because a reconcile always runs on a successful open. Keeping it
+  // true through the cache paint stops the all-imported empty state from flashing
+  // in the frame between painting the cache and the reconcile marking itself busy.
+  const [syncing, setSyncing] = useState(true);
   const [importing, setImporting] = useState(false);
   const [stateFilter, setStateFilter] = useState<StateFilter>('open');
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +106,11 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const [hideImported, setHideImported] = useState(true);
 
   const fetchSequenceRef = useRef(0);
+  // Pinned once, at mount. Every cache read and reconcile this dialog issues names
+  // the project it was opened for, so a project switch between the call and the
+  // main process dispatching it cannot point the per-project cache at another
+  // project's database.
+  const projectIdRef = useRef(useProjectStore.getState().currentProject?.id);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const loadBacklog = useBacklogStore((state) => state.loadBacklog);
   const addToast = useToastStore((state) => state.addToast);
@@ -116,106 +121,90 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   useEffect(() => {
     return () => {
       // Bumping the LIVE ref value at unmount is the cancellation signal for any
-      // in-flight loadAllIssues loop, so we intentionally read/write current here
+      // in-flight reconcile, so we intentionally read/write current here
       // rather than a copied-in snapshot (which is what the rule would suggest).
       // eslint-disable-next-line react-hooks/exhaustive-deps
       fetchSequenceRef.current++;
     };
   }, []);
 
-  // Fetches every page for the given state filter, streaming each page into
-  // `issues` as it lands so rows and filter facets fill in progressively.
-  // `fetchSequenceRef` supersedes any older in-flight loop (e.g. a rapid state
-  // filter change) so a stale page can never append to a newer query's list.
-  const loadAllIssues = useCallback(async (state: StateFilter) => {
+  // Reconcile against the remote in the background: fetch items changed since the
+  // cache's high-water mark (or everything, in 'full' mode), merge them into the
+  // cache, prune deleted items, and swap in the merged set. `fetchSequenceRef`
+  // supersedes any older in-flight reconcile (rapid Refresh, unmount) so a stale
+  // result can never overwrite a newer one.
+  const reconcile = useCallback(async (mode: 'incremental' | 'full') => {
     const token = ++fetchSequenceRef.current;
+    setSyncing(true);
     setError(null);
-    setLoading(true);
-    setLoadingMore(false);
-
-    let pageNumber = 1;
-    let isFirstPage = true;
     try {
-      while (true) {
-        let result;
-        try {
-          result = await window.electronAPI.backlog.importFetch({
-            source: source.source,
-            repository: source.repository,
-            page: pageNumber,
-            perPage: FETCH_CHUNK_SIZE,
-            state,
-          });
-        } catch (fetchError: unknown) {
-          if (fetchSequenceRef.current !== token) return;
-          setError(fetchError instanceof Error ? fetchError.message : 'Failed to fetch issues');
-          return;
-        }
-        if (fetchSequenceRef.current !== token) return;
-
-        // Capture into a per-iteration const before mutating `isFirstPage` below:
-        // the updater closure is invoked by React at flush time, not at call
-        // time, so referencing the outer mutable `isFirstPage` directly would
-        // have it read as already-`false` for every page, including the first -
-        // silently turning the intended "replace" into an "append" and leaking
-        // the previous state filter's stale data into the new one.
-        const wasFirstPage = isFirstPage;
-        const sorted = sortByCreatedDesc(result.issues);
-        setIssues((previous) => {
-          const merged = wasFirstPage ? sorted : [...previous, ...sorted];
-          // Dedupe by externalId: a source can return the same item on two pages
-          // when its ordering shifts between sequential fetches, which would
-          // otherwise collide the virtualizer's item key and double-submit the row
-          // on import. Keep the first occurrence.
-          const seenIds = new Set<string>();
-          return merged.filter((issue) => {
-            if (seenIds.has(issue.externalId)) return false;
-            seenIds.add(issue.externalId);
-            return true;
-          });
-        });
-        if (isFirstPage) setLoading(false);
-        isFirstPage = false;
-
-        if (!result.hasNextPage) return;
-        setLoadingMore(true);
-        pageNumber += 1;
-      }
-    } catch (unexpectedError: unknown) {
-      // Guards against a malformed adapter response (e.g. a non-array `issues`)
-      // throwing after a successful fetch, which would otherwise surface only
-      // as a silent unhandled rejection with no error banner shown.
-      if (fetchSequenceRef.current === token) {
-        setError(unexpectedError instanceof Error ? unexpectedError.message : 'Failed to process issues');
-      }
+      const result = await window.electronAPI.backlog.importReconcile({
+        source: source.source,
+        repository: source.repository,
+        projectId: projectIdRef.current,
+        mode,
+      });
+      if (fetchSequenceRef.current !== token) return;
+      setIssues(sortByCreatedDesc(result.issues));
+    } catch (reconcileError: unknown) {
+      if (fetchSequenceRef.current !== token) return;
+      setError(reconcileError instanceof Error ? reconcileError.message : 'Failed to sync issues');
     } finally {
       if (fetchSequenceRef.current === token) {
+        setSyncing(false);
         setLoading(false);
-        setLoadingMore(false);
       }
     }
   }, [source.source, source.repository]);
 
-  // Check CLI on mount
+  // On mount: check the CLI, paint the persistent cache instantly, then reconcile
+  // in the background. First-ever open has an empty cache, so the spinner stays up
+  // until the reconcile lands.
   useEffect(() => {
-    window.electronAPI.backlog.importCheckCli(source.source).then((result) => {
-      if (!result.available || !result.authenticated) {
-        setCliError(result.error ?? 'CLI not available');
+    const token = fetchSequenceRef.current;
+    // Start both round trips together. The cache read needs no CLI, so gating it
+    // behind the availability check would put an `az`/`gh` process launch in front
+    // of the paint this cache exists to make instant.
+    const cachedPromise = window.electronAPI.backlog.importGetCached({
+      source: source.source,
+      repository: source.repository,
+      projectId: projectIdRef.current,
+    }).then((cached) => {
+      if (fetchSequenceRef.current !== token) return;
+      const cachedIssues = sortByCreatedDesc(cached.issues);
+      setIssues(cachedIssues);
+      if (cachedIssues.length > 0) setLoading(false);
+    }).catch(() => {
+      // A cache-read failure is non-fatal; the reconcile below will populate.
+    });
+
+    window.electronAPI.backlog.importCheckCli(source.source).then(async (cli) => {
+      if (fetchSequenceRef.current !== token) return;
+      if (!cli.available || !cli.authenticated) {
+        setCliError(cli.error ?? 'CLI not available');
         setLoading(false);
-      } else {
-        loadAllIssues(stateFilter);
+        setSyncing(false);
+        return;
       }
-    }).catch((fetchError: unknown) => {
-      setCliError(fetchError instanceof Error ? fetchError.message : 'CLI check failed');
+      // Let the cached paint land first so the reconcile's result never races
+      // ahead of it and gets overwritten by a slower cache read.
+      await cachedPromise;
+      if (fetchSequenceRef.current !== token) return;
+      void reconcile('incremental');
+    }).catch((cliError: unknown) => {
+      if (fetchSequenceRef.current !== token) return;
+      setCliError(cliError instanceof Error ? cliError.message : 'CLI check failed');
       setLoading(false);
+      setSyncing(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The open/closed/all toggle is a client-side filter over the single cache
+  // bucket (every item carries a normalized stateCategory), so it never refetches.
   const handleStateFilterChange = (newState: StateFilter) => {
     setStateFilter(newState);
     setSelectedIds(new Set());
-    loadAllIssues(newState);
   };
 
   // Derive unique filter values from the full (unbounded) fetched set. Because
@@ -256,6 +245,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const filteredIssues = useMemo(() => {
     return issues.filter((issue) => {
       if (hideImported && issue.alreadyImported) return false;
+      if (stateFilter !== 'all' && issue.stateCategory !== stateFilter) return false;
       if (searchTermLower && !searchHaystack(issue).includes(searchTermLower)) return false;
       if (filterStatuses.size > 0 && (!issue.state || !filterStatuses.has(issue.state))) return false;
       if (filterAssignees.size > 0 && (!issue.assignee || !filterAssignees.has(issue.assignee))) return false;
@@ -263,7 +253,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       if (filterLabels.size > 0 && !issue.labels.some((label) => filterLabels.has(label))) return false;
       return true;
     });
-  }, [issues, searchTermLower, filterStatuses, filterAssignees, filterTypes, filterLabels, hideImported]);
+  }, [issues, stateFilter, searchTermLower, filterStatuses, filterAssignees, filterTypes, filterLabels, hideImported]);
 
   const selectableIssues = useMemo(
     () => filteredIssues.filter((issue) => !issue.alreadyImported),
@@ -380,6 +370,9 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       }
       if (result.skippedAttachments > 0) {
         parts.push(`${result.skippedAttachments} attachment${result.skippedAttachments !== 1 ? 's' : ''} skipped`);
+      }
+      if (result.detailUnavailable) {
+        parts.push(`comments unavailable for ${result.detailUnavailable} item${result.detailUnavailable !== 1 ? 's' : ''}`);
       }
       addToast({ message: parts.join(', '), variant: 'success' });
       loadBacklog();
@@ -563,8 +556,9 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             <span className="text-xs text-danger">{error}</span>
             <button
               type="button"
-              onClick={() => loadAllIssues(stateFilter)}
-              className="ml-auto text-xs text-accent-fg hover:underline"
+              onClick={() => reconcile('incremental')}
+              disabled={syncing}
+              className="ml-auto text-xs text-accent-fg hover:underline disabled:opacity-50 disabled:no-underline"
             >
               Retry
             </button>
@@ -628,10 +622,10 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           </div>
         )}
 
-        {/* Empty state - suppressed while background pages are still streaming, so
-            a transient empty result never asserts a definitive state (e.g. "All
-            items have been imported") that a later page would contradict. */}
-        {!loading && !loadingMore && !cliError && filteredIssues.length === 0 && !error && (
+        {/* Empty state - suppressed while a background reconcile is still running,
+            so a transient empty cache never asserts a definitive state (e.g. "All
+            items have been imported") that the reconcile would contradict. */}
+        {!loading && !syncing && !cliError && filteredIssues.length === 0 && !error && (
           <div
             data-testid="import-empty-state"
             className="flex flex-col items-center justify-center flex-1 min-h-[200px] text-fg-faint gap-2"
@@ -642,8 +636,9 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
                 <span className="text-sm">All items have been imported</span>
                 <button
                   type="button"
-                  onClick={() => loadAllIssues(stateFilter)}
-                  className="flex items-center gap-1.5 mt-1 text-xs text-accent-fg hover:underline"
+                  onClick={() => reconcile('full')}
+                  disabled={syncing}
+                  className="flex items-center gap-1.5 mt-1 text-xs text-accent-fg hover:underline disabled:opacity-50 disabled:no-underline"
                 >
                   <RefreshCw size={12} />
                   Refresh to check for new items
@@ -668,15 +663,15 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         )}
       </div>
 
-      {/* Streaming indicator - persistent while background pages continue loading,
-          independent of scroll position. */}
-      {loadingMore && (
+      {/* Background reconcile indicator - shown while the silent sync runs, once
+          the cached list is already on screen. */}
+      {syncing && !loading && (
         <div
-          data-testid="import-loading-more"
+          data-testid="import-syncing"
           className="flex items-center justify-center gap-2 py-2 border-t border-edge/30 text-xs text-fg-faint flex-shrink-0"
         >
           <Loader2 size={12} className="animate-spin" />
-          Loading more items...
+          Syncing...
         </div>
       )}
     </BaseDialog>

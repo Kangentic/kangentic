@@ -29,8 +29,9 @@
  * session-isolation.ts are left UNMOCKED so the real profile fold runs.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { BoardProfile, SessionRecord, Task } from '../../src/shared/types';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import type { BoardProfile, SessionRecord, SwimlaneRole, Task } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Module-level mock fns shared across all Fake*Repository instances.
@@ -39,6 +40,7 @@ import type { BoardProfile, SessionRecord, Task } from '../../src/shared/types';
 
 const sessionRepoGetResumable = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoGetOrphaned = vi.fn(() => [] as SessionRecord[]);
+const sessionRepoGetInterruptedExited = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoMarkAllRunningAsOrphaned = vi.fn();
 const sessionRepoMarkRunningAsOrphanedExcluding = vi.fn();
 
@@ -56,6 +58,13 @@ vi.mock('electron', () => ({
 vi.mock('node:fs', () => ({
   default: { existsSync: vi.fn(() => true) },
   existsSync: vi.fn(() => true),
+}));
+
+// The missing-worktree demotion captures the surviving local branch's tip
+// before dropping the name. Mocked so no real git runs against the mock path.
+const readLocalBranchShaMock = vi.fn(async (): Promise<string | null> => null);
+vi.mock('../../src/main/git/worktree-head', () => ({
+  readLocalBranchSha: (...args: unknown[]) => readLocalBranchShaMock(...(args as [])),
 }));
 
 vi.mock('../../src/main/db/database', () => ({
@@ -77,7 +86,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
   class FakeSessionRepository {
     getResumable = () => sessionRepoGetResumable();
     getOrphaned = () => sessionRepoGetOrphaned();
-    getInterruptedExited = () => [] as SessionRecord[];
+    getInterruptedExited = () => sessionRepoGetInterruptedExited();
     markAllRunningAsOrphaned = () => sessionRepoMarkAllRunningAsOrphaned();
     markRunningAsOrphanedExcluding = (...args: unknown[]) =>
       sessionRepoMarkRunningAsOrphanedExcluding(...args);
@@ -90,11 +99,13 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
   return { SessionRepository: FakeSessionRepository };
 });
 
+const taskRepoSetWorktreeSkipReasonMock = vi.fn();
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
     list = () => taskRepoList();
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);
     getById = vi.fn(() => null);
+    setWorktreeSkipReason = (...args: unknown[]) => taskRepoSetWorktreeSkipReasonMock(...args);
   }
   return { TaskRepository: FakeTaskRepository };
 });
@@ -131,13 +142,15 @@ const QUIET_LANE = 'lane-quiet';
 const LOUD_LANE = 'lane-loud';
 
 /** A full LaneStrategyFields-shaped lane, matching auto-spawn-profile-scoped.test.ts's helper. */
-function lane(id: string, autoSpawn: boolean) {
+function lane(id: string, autoSpawn: boolean, role: SwimlaneRole | null = null) {
   return {
     id,
     name: id,
-    // A CUSTOM column. Load-bearing for the placeholder branch, which keys off
-    // the role rather than auto_spawn so it can skip To Do and Done.
-    role: null,
+    // A CUSTOM column by default. Load-bearing for the placeholder branch,
+    // which keys off the role rather than auto_spawn so it can skip To Do
+    // and Done. A caller after the never-auto-spawn-role tests passes a real
+    // role explicitly.
+    role,
     auto_spawn: autoSpawn,
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',
@@ -237,11 +250,13 @@ function makeConfigManager(autoResumeSessionsOnRestart = true) {
   };
 }
 
+/** Returns the session manager it constructed, so a caller can assert on its calls. */
 async function runResume(boardProfiles?: BoardProfile[]) {
+  const sessionManager = makeSessionManager();
   await resumeSuspendedSessions(
     'proj-1',
     '/project',
-    makeSessionManager() as never,
+    sessionManager as never,
     makeConfigManager(true) as never,
     'claude',
     null,
@@ -249,6 +264,7 @@ async function runResume(boardProfiles?: BoardProfile[]) {
     null,
     boardProfiles,
   );
+  return sessionManager;
 }
 
 describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane', () => {
@@ -260,6 +276,8 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
     sessionRepoGetResumable.mockReturnValue([]);
     sessionRepoGetOrphaned.mockClear();
     sessionRepoGetOrphaned.mockReturnValue([]);
+    sessionRepoGetInterruptedExited.mockClear();
+    sessionRepoGetInterruptedExited.mockReturnValue([]);
     sessionRepoMarkAllRunningAsOrphaned.mockClear();
     sessionRepoMarkRunningAsOrphanedExcluding.mockClear();
     taskRepoList.mockClear();
@@ -331,5 +349,142 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
     // Not skipped by the auto_spawn exclusion check (same caveat re: the
     // mock's own 'unknown-agent' retire as the test above).
     expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes a suspended, auto_spawn=true todo-role record into the skip branch (never-auto-spawn invariant)', async () => {
+    const TODO_LANE = 'lane-todo';
+    swimlaneListMock.mockReturnValue([lane(TODO_LANE, true, 'todo')]);
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ isolated_swimlane_id: null, status: 'suspended' })]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: TODO_LANE, profile_id: null })]);
+
+    const sessionManager = await runResume();
+
+    // Diverted before the preparation pass: never reaches prepareAgentSpawn.
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+    // todo is also in RESUME_HIDDEN_ROLES, so the skip branch's own
+    // placeholder registration is itself skipped: the card must open with no
+    // session at all, not a Resume affordance the role explicitly hides.
+    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves an exited done-role record as suspended instead of resuming it (never-auto-spawn invariant)', async () => {
+    const DONE_LANE = 'lane-done';
+    swimlaneListMock.mockReturnValue([lane(DONE_LANE, true, 'done')]);
+    sessionRepoGetInterruptedExited.mockReturnValue([
+      makeRecord({ id: 'record-exited', isolated_swimlane_id: null, status: 'exited' }),
+    ]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: DONE_LANE, profile_id: null })]);
+
+    const sessionManager = await runResume();
+
+    // Diverted before the preparation pass: never reaches prepareAgentSpawn.
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+    // The pre-existing OS-killed-exited carve-out still applies once diverted:
+    // preserved as resumable ('suspended'), not silently retired.
+    expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-exited', 'system');
+    // done is also in RESUME_HIDDEN_ROLES (same as todo above), so the skip
+    // branch's own placeholder registration must be skipped too: a Done card
+    // must not grow a Resume affordance the role explicitly hides just
+    // because a profile flipped auto_spawn on for it.
+    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The stale-`worktree_path` fallback in the preparation pass's CWD-missing
+ * branch (resume-suspended.ts, step 5): a recoverable record's `cwd` (the
+ * worktree directory it was spawned in) is gone, so the record is retired
+ * rather than resumed. If the task's own `worktree_path` matches that same
+ * missing directory, it too is cleared, and the reason is persisted via
+ * `taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing')` so the board
+ * can say the task's next spawn will run in the shared project checkout, and
+ * why. Nothing previously drove this branch at all.
+ */
+describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing branch)', () => {
+  const STALE_WORKTREE_PATH = '/project/worktrees/task-001';
+
+  beforeEach(() => {
+    markRecordSuspendedMock.mockClear();
+    markRecordSuspendedMock.mockReturnValue(true);
+    retireRecordMock.mockClear();
+    sessionRepoGetResumable.mockClear();
+    sessionRepoGetResumable.mockReturnValue([]);
+    sessionRepoGetOrphaned.mockClear();
+    sessionRepoGetOrphaned.mockReturnValue([]);
+    sessionRepoGetInterruptedExited.mockClear();
+    sessionRepoGetInterruptedExited.mockReturnValue([]);
+    sessionRepoMarkAllRunningAsOrphaned.mockClear();
+    sessionRepoMarkRunningAsOrphanedExcluding.mockClear();
+    taskRepoList.mockClear();
+    taskRepoList.mockReturnValue([]);
+    taskRepoUpdateMock.mockClear();
+    taskRepoSetWorktreeSkipReasonMock.mockClear();
+    vi.mocked(prepareAgentSpawn).mockClear();
+    vi.mocked(prepareAgentSpawn).mockResolvedValue({ ok: false, reason: 'unknown-agent' });
+    swimlaneListMock.mockReturnValue([lane(LOUD_LANE, true)]);
+  });
+
+  afterEach(() => {
+    // Restore the file-level default so tests declared earlier in the file
+    // (and any `--repeat-each` rerun) see every path as existing again.
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+  });
+
+  it('detects a stale worktree_path when the record cwd is missing, clears it, and records worktree-missing', async () => {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, cwd: STALE_WORKTREE_PATH }),
+    ]);
+    taskRepoList.mockReturnValue([
+      makeTask({ swimlane_id: LOUD_LANE, profile_id: null, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' }),
+    ]);
+    // Both the record's cwd and the task's worktree_path point at the same
+    // now-deleted directory.
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    await runResume();
+
+    // `pushed_branch` is never in the patch: a remote fact and a PR anchor
+    // that outlives the checkout (see pushed-branch-cleanup-parity).
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null, resolved_base_branch: null });
+    expect(taskRepoSetWorktreeSkipReasonMock).toHaveBeenCalledWith(TASK_ID, 'worktree-missing');
+    // The record itself is still retired (unresumable cwd), regardless of
+    // the task-level fallback.
+    expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'record-1');
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+  });
+
+  it('captures the surviving local branch tip into head_sha before dropping the branch name', async () => {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, cwd: STALE_WORKTREE_PATH }),
+    ]);
+    taskRepoList.mockReturnValue([
+      makeTask({ swimlane_id: LOUD_LANE, profile_id: null, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' }),
+    ]);
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    readLocalBranchShaMock.mockResolvedValueOnce('abc123def456');
+
+    await runResume();
+
+    expect(readLocalBranchShaMock).toHaveBeenCalledWith(expect.any(String), 'stale-branch');
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({
+      id: TASK_ID, worktree_path: null, branch_name: null, resolved_base_branch: null, head_sha: 'abc123def456',
+    });
+  });
+
+  it('leaves worktree_path and the skip reason untouched when only the record cwd is stale (task worktree_path already null)', async () => {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, cwd: STALE_WORKTREE_PATH }),
+    ]);
+    taskRepoList.mockReturnValue([
+      makeTask({ swimlane_id: LOUD_LANE, profile_id: null, worktree_path: null, branch_name: null }),
+    ]);
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    await runResume();
+
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+    expect(taskRepoSetWorktreeSkipReasonMock).not.toHaveBeenCalled();
+    expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'record-1');
   });
 });

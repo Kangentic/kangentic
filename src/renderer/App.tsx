@@ -11,19 +11,25 @@ import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { useUpdaterStore } from './stores/updater-store';
+import { useHostMemoryStore } from './stores/host-memory-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
 import { useMemoryGraphStore } from './stores/memory-graph-store';
 import { usePopOutStore } from './stores/pop-out-store';
+import { receivePopOutOpenSet } from './pop-out/pop-out-changed';
 import { useDictationStore } from './stores/dictation-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
 import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { useWhatsNewOnLaunch } from './hooks/useWhatsNewOnLaunch';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
+import { resolveIdleToast } from './utils/idle-toast';
+import { resolveGpuNotice } from './utils/gpu-notice';
+import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
+import { describeAutomationFailure } from '../shared/automation-describe';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { setRebindCaptureActive } from './utils/rebind-state';
@@ -50,6 +56,7 @@ export function App() {
   const loadAgentList = useConfigStore((s) => s.loadAgentList);
   const detectGit = useConfigStore((s) => s.detectGit);
   const upsertSession = useSessionStore((s) => s.upsertSession);
+  const removeSession = useSessionStore((s) => s.removeSession);
   const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
   const updateActivity = useSessionStore((s) => s.updateActivity);
 
@@ -115,17 +122,87 @@ export function App() {
       useProjectStore.setState({ missingPathProject: project });
     });
 
+    // Main deleted or reconciled project rows this renderer's list did not
+    // know about (a dev-only boot prune, or a global-DB recovery that
+    // reopened onto a different file): refetch rather than leaving stale
+    // rows that reject when clicked with nothing on screen. Sentry DESKTOP-V.
+    const cleanupListChanged = window.electronAPI.projects.onListChanged?.(() => {
+      loadProjects();
+      loadCurrent();
+    });
+
     // Pop-out windows: hydrate which surfaces are currently detached, then stay
     // live via the popOut:changed push. Only meaningful in the main window (a
     // pop-out window never reads this store); see stores/pop-out-store.ts.
     void usePopOutStore.getState().loadOpen();
-    const cleanupPopOutChanged = window.electronAPI.popOut?.onChanged((openInstanceKeys) => {
-      usePopOutStore.getState().setOpen(openInstanceKeys);
-    });
+    const cleanupPopOutChanged = window.electronAPI.popOut?.onChanged(receivePopOutOpenSet);
 
     // Listen for auto-update downloaded notification
     const cleanupUpdateListener = window.electronAPI.updater?.onUpdateDownloaded((info) => {
       useUpdaterStore.getState().receiveUpdate(info);
+    });
+
+    // Host memory pressure (Sentry DESKTOP-16): a rare, edge-triggered push
+    // from main's sampler - see stores/host-memory-store.ts. The recovery
+    // push is the clear-side edge; its payload carries a sample but the
+    // store deliberately discards it (nothing displays a recovery reading).
+    const cleanupHostMemoryPressureListener = window.electronAPI.hostMemory?.onPressure((event) => {
+      useHostMemoryStore.getState().receivePressureEvent(event);
+    });
+    const cleanupHostMemoryRecoveryListener = window.electronAPI.hostMemory?.onRecovery(() => {
+      useHostMemoryStore.getState().receiveRecovery();
+    });
+
+    // Graphics state (Sentry DESKTOP-18/DESKTOP-W). PULLED, not pushed: main
+    // decides both facts during boot, possibly before this renderer could
+    // have registered a listener, and a dropped push would lose the notice
+    // for good because the record behind it is already cleared. Reading
+    // consumes `noticePending`, so this never re-toasts on a reload.
+    void window.electronAPI.gpuHealth?.readStatus().catch((error) => {
+      // Swallowed, not reported: this is the ONE call in the bootstrap that a
+      // user who never has a graphics problem still makes, and an unhandled
+      // rejection here would surface as a renderer error for all of them if
+      // the channel ever went missing (a stale preload, a handler throw).
+      // Nothing downstream needs it - no status means hardware, as today.
+      console.warn('[GPU-HEALTH] Could not read graphics status:', error);
+      return null;
+    }).then((status) => {
+      if (!status) return;
+      // Arrives asynchronously, so a terminal that mounts before this lands
+      // will attempt WebGL once and arm a retry. Harmless (the attach path
+      // already handles a refused context) and not worth a synchronous boot
+      // hop to avoid, but it does mean the skip below is an optimisation for
+      // later mounts rather than a hard guarantee for the first one.
+      setSoftwareRenderingActive(status.softwareRendering);
+      const notice = resolveGpuNotice(status);
+      if (!notice) return;
+      // Main wrote graphicsAccelerationEnabled: false during whenReady, which may
+      // have landed after this renderer read config. Re-read it, or Settings >
+      // Performance shows "On" for the rest of a session that is demonstrably
+      // running without acceleration - the exact lying control this design
+      // dropped the tri-state to avoid.
+      void useConfigStore.getState().loadConfig();
+      useToastStore.getState().addToast({
+        message: notice.message,
+        variant: 'warning',
+        // Never auto-dismisses: the app stays degraded until the user acts,
+        // and a 4-second toast about why their app vanished is worse than
+        // none at all.
+        duration: 0,
+        action: {
+          label: 'Performance settings',
+          onClick: () => {
+            useConfigStore.getState().setLastSettingsTab('performance');
+            useConfigStore.getState().setSettingsOpen(true);
+          },
+        },
+      });
+    }).catch((error) => {
+      // The .catch above guards only the invoke. A throw from anything in the
+      // handler body would land here as an unhandled rejection that `void`
+      // hides from the reader but Electron still reports, so it gets the same
+      // swallow: nothing downstream of this chain needs it to have succeeded.
+      console.warn('[GPU-HEALTH] Could not apply graphics status:', error);
     });
 
     // Announcements: hydrate the active list (the first poll may have landed
@@ -141,13 +218,28 @@ export function App() {
       },
     );
 
+    // Which tasks hold their one browser surface OFFSCREEN. Read once, then
+    // live on the push. Only main can see these: an offscreen `BrowserWindow`
+    // has no renderer to register itself, so without this the card globe and
+    // the Browser pill show nothing for a task that genuinely has a browser.
+    // The initial read is what covers a reload and an HMR update, since a
+    // surface can sit unchanged for a whole session.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
+    const cleanupOffscreenSurfaces = window.electronAPI.browser?.onOffscreenSurfaces?.((taskIds) => {
+      useSessionStore.getState().setBrowserOffscreenTasks(taskIds);
+    });
+
     return () => {
       if (mountTimerRafId !== undefined) cancelAnimationFrame(mountTimerRafId);
       cleanupAutoOpen();
       cleanupPathMissing?.();
+      cleanupListChanged?.();
       cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
+      cleanupHostMemoryPressureListener?.();
+      cleanupHostMemoryRecoveryListener?.();
       cleanupAnnouncementsChanged?.();
+      cleanupOffscreenSurfaces?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
   }, []);
@@ -193,10 +285,10 @@ export function App() {
     // Session changed (queued, running, suspended) - push full Session object
     if (sessions.onStatus) {
       cleanups.push(sessions.onStatus((sessionId, session) => {
-        // Deferred through the coalescer: held during an active board drag so
-        // a spawning session's status flip doesn't re-render a sortable card
-        // mid-drag. Wrapped whole so the (currently side-effect-free) write and
-        // auto-name scheduling stay in arrival order with the other handlers.
+        // Routed through the coalescer, which runs the thunk synchronously today
+        // (the board-drag hold was removed - see enqueueSessionUpdate's docblock).
+        // Wrapped whole so the (currently side-effect-free) write and auto-name
+        // scheduling stay in arrival order with the other handlers.
         enqueueSessionUpdate(() => {
           // Mid-session conversation fork (e.g. Claude /clear): the live
           // session's agent id is null until first capture (that flip stays
@@ -227,7 +319,23 @@ export function App() {
       }));
     }
 
-    // Notification helpers -- shared by idle, exit, and auto-move handlers.
+    // Session removed from main's registry for good (a To Do reset, a task or
+    // project delete, a session reset, an aborted spawn). Its own channel, and
+    // the only push that takes a row OUT: the status handler above can only
+    // upsert, so a removal announced there re-seeded the row the move had
+    // already evicted (#661). Through the same coalescer as the status push so
+    // a removal applies in arrival order with any status for the same id.
+    if (sessions.onRemoved) {
+      cleanups.push(sessions.onRemoved((sessionId) => {
+        enqueueSessionUpdate(() => {
+          removeSession(sessionId);
+        });
+      }));
+    }
+
+    // Desktop-notification helpers, now used only by the spawn-stall and
+    // auto-move handlers: the idle and exit desktop notifications moved to main
+    // (src/main/notifications/desktop-notifier.ts), which owns their cooldown.
     const notificationCooldowns = new Map<string, number>();
 
     async function shouldNotify(key: string, sessionProjectId: string): Promise<boolean> {
@@ -249,6 +357,39 @@ export function App() {
       notificationCooldowns.set(key, Date.now());
       window.electronAPI.notifications.show({ title, body, projectId: notifyProjectId, taskId: notifyTaskId });
       window.electronAPI.window.flashFrame(true);
+    }
+
+    /**
+     * Open a task's detail because the user acted on a notification about it -
+     * an OS notification click, or the Open action on an idle toast. Both mean
+     * the same thing, so they share one path.
+     *
+     * The current project is re-read here rather than captured by the caller: a
+     * toast stays up for `durationSeconds`, and the user can switch projects
+     * before clicking it.
+     */
+    function openTaskFromNotification(notifyProjectId: string, notifyTaskId: string) {
+      // The Command Terminal layer is top-layered over the board, so opening a
+      // task detail underneath it leaves the user looking at a terminal they did
+      // not ask for. A cross-project click closes the layer anyway (close-on-
+      // project-switch); this covers the same-project case. Every PTY stays alive.
+      //
+      // The toast caller can hit this while the user is PRESENT and typing in a
+      // Command Terminal, which the OS-click caller cannot. Hiding it anyway is
+      // deliberate: clicking Open names a task, and a detail window opening
+      // behind the layer is the worse outcome. The layer reopens on Ctrl+Shift+P
+      // with every terminal reattached.
+      useSessionStore.getState().requestHideCommandBar();
+      // agent-focus-ok: acting on a notification is the user asking for this task,
+      // so the detail it opens SHOULD take focus. The OS-click path arrives over an
+      // IPC push like the agent's does, which is why the origin is stated here
+      // rather than inferred. See .claude/rules/agent-driven-focus.md.
+      if (useProjectStore.getState().currentProject?.id === notifyProjectId) {
+        useSessionStore.getState().setDetailTaskId(notifyTaskId);
+      } else {
+        useSessionStore.getState().setPendingOpenTaskId(notifyTaskId);
+        useProjectStore.getState().openProject(notifyProjectId);
+      }
     }
 
     // Spawn-stall watcher: when a task sits in a "preparing" spawn-progress
@@ -281,8 +422,10 @@ export function App() {
       // The 8s timer arms for any preparing label, so describe the actual cause
       // rather than always claiming a git-queue wait. A git-queue wait is either
       // the bare fallback ("Waiting...", "Waiting (2 ahead)") or the running form
-      // that ends in a "(waiting 45s)" qualifier; both collapse to one phrase.
-      const isGitQueueWait = label.startsWith('Waiting') || /\(waiting \d+s\)$/.test(label);
+      // carrying a "(waiting 45s)" qualifier; both collapse to one phrase. Not
+      // anchored to the end: a staleness note may trail the qualifier (e.g.
+      // "Removing worktree (waiting 45s) (base fetch failed)").
+      const isGitQueueWait = label.startsWith('Waiting') || /\(waiting \d+s\)/.test(label);
       const detail = isGitQueueWait
         ? 'waiting on the git queue'
         : label.replace(/\.\.\.$/, '').toLowerCase();
@@ -474,16 +617,34 @@ export function App() {
       }));
     }
 
+    // Agent message trail for the board card. Cross-project like activity (a
+    // small map keyed by session, and a project switch must find the trails
+    // already there), and deferred through the coalescer so a line landing
+    // mid-drag does not re-render a sortable card until the drop.
+    if (sessions.onMessageTrail) {
+      cleanups.push(sessions.onMessageTrail((sessionId, entries) => {
+        enqueueSessionUpdate(() => {
+          useSessionStore.getState().updateMessageTrail(sessionId, entries);
+        });
+      }));
+    }
+
     // Session activity state (thinking/idle)
     // ALWAYS update activity (sidebar badges need cross-project data),
     // but only run auto-focus for current project.
     if (sessions.onActivity) {
       cleanups.push(sessions.onActivity((sessionId, state, reason, projectId) => {
-        // Deferred whole through the coalescer (held during an active board
-        // drag). The auto-focus effect reads getState() AFTER updateActivity,
-        // so the write and its reads must stay atomic - deferring the body as
-        // one thunk preserves that read-after-write.
+        // Routed whole through the coalescer. It runs the thunk synchronously
+        // today (the board-drag hold was removed - see enqueueSessionUpdate's
+        // docblock for why), so this is about ATOMICITY, not deferral: the
+        // auto-focus and toast blocks below read getState() AFTER
+        // updateActivity, and passing the body as one thunk keeps that
+        // read-after-write intact if a hold is ever reintroduced.
         enqueueSessionUpdate(() => {
+          // Read the prior state BEFORE the write: this channel now also carries
+          // a reason-only refresh (same state, moved reason kind), and auto-focus
+          // below must not treat one as a transition. See the gate at its call.
+          const previousState = useSessionStore.getState().sessionActivity[sessionId];
           updateActivity(sessionId, state, reason);
 
           // Patch the monitor's matching row in place. This is why the monitor
@@ -497,29 +658,79 @@ export function App() {
           const config = useConfigStore.getState().config;
           const sessionStore = useSessionStore.getState();
 
+          // Which sessions already have their terminal on another surface. EVERY
+          // owner source, not just this renderer's windows: a detail hosted in the
+          // detached monitor has no tab here either, and making it the active tab is
+          // how the panel ends up selecting a session it renders nothing for. A
+          // phone streaming the terminal is an owner for the same reason, and is the
+          // one source `derivePanelSessions` treats as optional - omit it and the
+          // suppression `resolveIdleToast` documents silently does not happen.
+          //
+          // Hoisted out of the auto-focus branch because the idle toast below reads
+          // it too. One computation, so the two cannot disagree about what the user
+          // can actually see.
+          const ownedSessionIds = derivePanelSessions({
+            sessions: sessionStore.sessions,
+            currentProjectId: activeProjectId ?? null,
+            dialogSessionIds: sessionStore.dialogSessionIds,
+            remoteDetailTaskIds: sessionStore.remoteDetailTaskIds,
+            mobileTerminalStreamedSessionIds: sessionStore.mobileTerminalStreamedSessionIds,
+          }).owned;
+
           // Auto-focus: switch the bottom panel to the most recently idle session
           // (only for current project sessions). Treat 'permission' like 'idle'
           // for focus rules - the agent is paused, the user should see it.
+          //
+          // `previousState` is what makes a reason-only refresh on this channel a
+          // no-op here: the resolver returns null when the state did not move.
           if (isCurrentProject && config.autoFocusIdleSession) {
             const projectSessions = sessionStore.sessions.filter((s) => s.projectId === activeProjectId);
             const target = resolveAutoFocusTarget({
               sessionId,
               newState: state,
+              previousState,
               currentActiveSessionId: sessionStore.activeSessionId,
-              // Both owner sources, not just this renderer's windows: a detail hosted in
-              // the detached monitor has no tab here either, and making it the active tab
-              // is how the panel ends up selecting a session it renders nothing for.
-              ownedSessionIds: derivePanelSessions({
-                sessions: sessionStore.sessions,
-                currentProjectId: activeProjectId ?? null,
-                dialogSessionIds: sessionStore.dialogSessionIds,
-                remoteDetailTaskIds: sessionStore.remoteDetailTaskIds,
-              }).owned,
+              ownedSessionIds,
               sessionActivity: sessionStore.sessionActivity,
               sessions: projectSessions,
             });
             if (target !== null) {
               sessionStore.setActiveSession(target);
+            }
+          }
+
+          // In-app toast for a session that stopped and is waiting on the user.
+          // The desktop half of this same event is owned by main (see below) and
+          // fires on the opposite condition - when the user is AWAY. This covers
+          // the case that one skips: the user is here, on this project, but is not
+          // looking at this particular agent.
+          const toastSession = sessionStore.sessions.find((s) => s.id === sessionId);
+          if (toastSession) {
+            const toastTask = useBoardStore.getState().tasks.find((t) => t.id === toastSession.taskId);
+            const idleToast = resolveIdleToast({
+              state,
+              previousState,
+              enabled: config.notifications.toasts.onAgentIdle,
+              // Strict, unlike `isCurrentProject` above, which is permissive when
+              // either id is missing. Matches the exit and idle-timeout handlers:
+              // a toast has to name a task on the board the user is looking at.
+              isCurrentProject: Boolean(activeProjectId) && toastSession.projectId === activeProjectId,
+              transient: Boolean(toastSession.transient),
+              ownedByDetailSurface: ownedSessionIds.has(sessionId),
+              taskTitle: toastTask?.title,
+              sessionIdShort: sessionId.slice(0, 8),
+            });
+            if (idleToast) {
+              const openProjectId = toastSession.projectId;
+              const openTaskId = toastSession.taskId;
+              useToastStore.getState().addToast({
+                message: idleToast.message,
+                variant: idleToast.variant,
+                // No board row means nothing to open, so the toast stays informational.
+                action: idleToast.hasTask
+                  ? { label: 'Open', onClick: () => { openTaskFromNotification(openProjectId, openTaskId); } }
+                  : undefined,
+              });
             }
           }
 
@@ -587,25 +798,16 @@ export function App() {
             .catch(() => {});
           return;
         }
-        // The Command Terminal layer is top-layered over the board, so opening a
-        // task detail underneath it leaves the user looking at a terminal they did
-        // not ask for. A cross-project click closes the layer anyway (close-on-
-        // project-switch); this covers the same-project case. Every PTY stays alive.
-        // Also the path the DETACHED monitor takes: its row click routes through
-        // main and re-emits here, so pop-out and in-app behave identically.
-        useSessionStore.getState().requestHideCommandBar();
-        // agent-focus-ok: a notification click is the user asking for this task,
-        // so the detail it opens SHOULD take focus. It arrives over an IPC push
-        // like the agent's does, which is why the origin is stated here rather
-        // than inferred. See .claude/rules/agent-driven-focus.md.
-        if (taskId && alreadyActive) {
-          useSessionStore.getState().setDetailTaskId(taskId);
-        } else {
-          if (taskId) {
-            useSessionStore.getState().setPendingOpenTaskId(taskId);
-          }
+        // A click carrying no task can still only mean "go to that project".
+        if (!taskId) {
+          useSessionStore.getState().requestHideCommandBar();
           useProjectStore.getState().openProject(projectId);
+          return;
         }
+        // Shared with the idle toast's Open action. Also the path the DETACHED
+        // monitor takes: its row click routes through main and re-emits here, so
+        // pop-out and in-app behave identically.
+        openTaskFromNotification(projectId, taskId);
       }));
     }
 
@@ -653,6 +855,7 @@ export function App() {
     // with session-lifecycle or notification concerns and remain here.
 
     const tasks = window.electronAPI?.tasks;
+    const automations = window.electronAPI?.automations;
 
     // Spawn progress (worktree creation, branch checkout phases)
     if (tasks?.onSpawnProgress) {
@@ -680,6 +883,55 @@ export function App() {
           message: `"${taskTitle}" did not start its agent. ${message}`,
           variant: 'warning',
           duration: 12000,
+        });
+      }));
+    }
+
+    // The agent started, but from a base that could not be freshened (network
+    // or credential fetch failure). Main composes the whole message and
+    // cooldown-guards it, so this toasts verbatim. Current project only, same
+    // as onSpawnBlocked: the message names a task from that project's board.
+    if (tasks?.onSpawnWarning) {
+      cleanups.push(tasks.onSpawnWarning((_taskId, message, warningProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (warningProjectId && warningProjectId !== activeProjectId) return;
+        useToastStore.getState().addToast({
+          message,
+          variant: 'warning',
+          duration: 12000,
+        });
+      }));
+    }
+
+    // A sync write to the data directory (config or one of the other small
+    // per-machine/per-project state files) failed - DESKTOP-14/DESKTOP-13. Main
+    // composes the whole sentence and latches it per failing source, so this
+    // toasts verbatim, same as onSpawnWarning. Not project-filtered: an
+    // unwritable data directory is a machine-level condition, not one tied to
+    // whichever project happens to be open.
+    if (window.electronAPI?.config?.onWriteFailed) {
+      cleanups.push(window.electronAPI.config.onWriteFailed((message) => {
+        useToastStore.getState().addToast({
+          message,
+          variant: 'error',
+          duration: 12000,
+        });
+      }));
+    }
+
+    // This install cannot update itself until the user moves it - DESKTOP-1A,
+    // the macOS read-only-volume case. Main composes the whole sentence and
+    // latches it for the app's lifetime, so this toasts verbatim, same as
+    // onWriteFailed above. Persistent rather than timed: unlike a failed write,
+    // this does not resolve on its own, and the updater already uses a
+    // persistent toast for the other thing the user has to act on (see
+    // updater-store's no-release-notes branch).
+    if (window.electronAPI?.updater?.onUpdateBlocked) {
+      cleanups.push(window.electronAPI.updater.onUpdateBlocked((message) => {
+        useToastStore.getState().addToast({
+          message,
+          variant: 'warning',
+          duration: 0,
         });
       }));
     }
@@ -720,6 +972,72 @@ export function App() {
       }));
     }
 
+
+    // An automation did not do what the board says it does. Main pushes only
+    // failures, and rations them to one per automation per minute (see
+    // automation-run-outcome.ts), so anything arriving here is worth a toast.
+    // Current project only: the message names a column and a task the user
+    // cannot see from another project.
+    if (automations?.onRunFailed) {
+      cleanups.push(automations.onRunFailed((failure) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (failure.projectId && failure.projectId !== activeProjectId) return;
+
+        // The automation AND the column, because neither alone locates it:
+        // two columns can hold rows with the same name.
+        const detail = failure.detail ? ` ${failure.detail}` : '';
+        useToastStore.getState().addToast({
+          message: `${describeAutomationFailure(failure)}.${detail}`,
+          variant: 'warning',
+          duration: 12000,
+          // Re-runs against the task's CURRENT state, which the label says,
+          // because the task may have moved twice since the failure. An
+          // interrupted run is offered the same action: it is the one status
+          // where the work definitely did not finish.
+          action: {
+            label: 'Run again',
+            onClick: () => {
+              void useBoardStore.getState()
+                .runAutomationAgain(failure.automationId, failure.taskId)
+                .then((result) => {
+                  useToastStore.getState().addToast({
+                    message: result.ok
+                      ? `Ran "${result.automationName}" again against the task's current state. ${result.detail ?? result.status}`
+                      : result.error,
+                    variant: result.ok && result.status === 'succeeded' ? 'success' : 'warning',
+                    duration: 8000,
+                  });
+                })
+                .catch((error: unknown) => {
+                  useToastStore.getState().addToast({
+                    message: error instanceof Error ? error.message : 'The automation could not be run again.',
+                    variant: 'error',
+                    duration: 8000,
+                  });
+                });
+            },
+          },
+        });
+      }));
+    }
+
+    // Runs a quit left mid-flight, swept on project open. One notice for the
+    // whole sweep, never one per row: the shutdown path is synchronous by rule,
+    // so this is expected after any quit during a move and a per-row storm
+    // would make it noise.
+    if (automations?.onRunsInterrupted) {
+      cleanups.push(automations.onRunsInterrupted((summary) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (summary.projectId && summary.projectId !== activeProjectId) return;
+        useToastStore.getState().addToast({
+          message: summary.count === 1
+            ? '1 automation was still running when Kangentic last closed. It did not finish.'
+            : `${summary.count} automations were still running when Kangentic last closed. They did not finish.`,
+          variant: 'info',
+          duration: 10000,
+        });
+      }));
+    }
     // Task auto-moved (plan exit → next column)
     if (tasks?.onAutoMoved) {
       cleanups.push(tasks.onAutoMoved((autoMovedTaskId, _targetSwimlaneId, taskTitle, autoMoveProjectId) => {
@@ -738,7 +1056,13 @@ export function App() {
         }
 
         const notifyConfig = useConfigStore.getState().config.notifications;
-        if (notifyConfig.toasts.onPlanComplete) {
+        // Active project only, like every other toast (exit, idle, idle-timeout,
+        // spawn-stall). An auto-move on a BACKGROUND project used to toast here
+        // unconditionally, naming a task on a board the user is not looking at -
+        // and the desktop notification below fires for exactly that case, so the
+        // one event raised both alerts at once.
+        const isActiveProjectMove = !autoMoveProjectId || autoMoveProjectId === activeProjectId;
+        if (isActiveProjectMove && notifyConfig.toasts.onPlanComplete) {
           useToastStore.getState().addToast({
             message: `Plan complete. Moved "${taskTitle}" to next column`,
             variant: 'success',
@@ -759,7 +1083,7 @@ export function App() {
     return () => {
       cleanups.forEach((fn) => fn());
     };
-  }, [upsertSession, updateSessionStatus, updateActivity]);
+  }, [upsertSession, removeSession, updateSessionStatus, updateActivity]);
 
   return (
     <>
@@ -846,6 +1170,7 @@ if (import.meta.hot) {
     useConfigStore.getState().detectGit();
     useBoardStore.getState().loadBoard();
     useBoardStore.getState().loadBoardProfiles();
+    useBoardStore.getState().loadAutomations();
     useBacklogStore.getState().loadBacklog();
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();
@@ -864,6 +1189,10 @@ if (import.meta.hot) {
     }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();
+    // Offscreen browser surfaces Pattern B: main is the only authority, and a
+    // surface can sit unchanged across the whole session, so the push alone
+    // would leave the card globe dark after a Fast Refresh.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
     // Announcements Pattern B: re-pull the active list and the archive from
     // main-process truth. loadActive also re-runs the open-dialog
     // reconciliation, which a history-opened dialog is exempt from.
@@ -896,6 +1225,7 @@ if (import.meta.env.DEV) {
     project: useProjectStore,
     session: useSessionStore,
     window: useWindowStore,
+    monitor: useMonitorStore,
     commandWindow: commandWindowManager.store,
     memoryWindows: memoryWindowManager.store,
     usageDashboard: useUsageDashboardStore,
@@ -903,5 +1233,10 @@ if (import.meta.env.DEV) {
     popOut: usePopOutStore,
     dictation: useDictationStore,
     announcements: useAnnouncementsStore,
+    // Not IPC-backed like the rest, but exposed for the same reason: without it
+    // a UI test cannot raise an arbitrary toast and has to borrow whichever push
+    // happens to toast verbatim (`config:writeFailed`), which drags unrelated
+    // setup into a test about toasts.
+    toast: useToastStore,
   };
 }

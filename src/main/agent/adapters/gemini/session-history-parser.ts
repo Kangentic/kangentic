@@ -43,9 +43,10 @@ import {
  * ```
  *
  * We walk `messages[]` backwards to find the most recent `"type": "gemini"`
- * entry (respects mid-session `/model` changes). Context window size is
- * not present in the file - we use a small model-name → window-size
- * lookup table based on Google's published model specs.
+ * entry (respects mid-session `/model` changes). Context window size is not
+ * present in the file, and the Gemini CLI has no command that reports one, so
+ * we emit the 0 "unknown size" sentinel and the card hides its progress bar
+ * rather than measuring against a guessed limit.
  */
 export class GeminiSessionHistoryParser {
   /**
@@ -200,13 +201,13 @@ export class GeminiSessionHistoryParser {
     const outputTokens = toNumber(tokens?.output) ?? 0;
     const cachedTokens = toNumber(tokens?.cached) ?? 0;
 
-    // contextWindowSize is null when the model isn't in our lookup table.
-    // The card renderer falls through to a model-name-only pill in that
-    // case rather than showing a progress bar against a guessed limit.
-    const contextWindowSize = resolveGeminiContextWindowSize(modelId);
-    const percentage = contextWindowSize !== null && contextWindowSize > 0
-      ? (inputTokens / contextWindowSize) * 100
-      : 0;
+    // Gemini's session JSON carries no context-window size and the Gemini CLI
+    // has no command that reports one, so there is nothing to discover and we
+    // refuse to guess: 0 is the "unknown size" sentinel below. The bar returns
+    // on its own if Gemini ever starts reporting the window, via the live
+    // telemetry path that feeds `discoveredContextWindowsByAgent`.
+    const contextWindowSize = 0;
+    const percentage = 0;
 
     // Gemini's native session file does not report cost or duration. We
     // emit a sparse usage with `cost` omitted entirely so the shallow
@@ -226,7 +227,7 @@ export class GeminiSessionHistoryParser {
         // treats this as "don't show the progress bar, just the model
         // name" so we never display a bar computed against a guessed
         // context window.
-        contextWindowSize: contextWindowSize ?? 0,
+        contextWindowSize,
       },
       model: {
         id: modelId,
@@ -272,52 +273,6 @@ function toNumber(value: unknown): number | undefined {
 export function computeGeminiProjectDirName(cwd: string): string {
   const basename = path.basename(path.normalize(cwd));
   return basename.toLowerCase();
-}
-
-/**
- * Set of model names we've already warned about, so the WARN log
- * fires at most once per unique unknown model per process lifetime.
- * Prevents log spam when a session continually updates.
- */
-const unknownModelWarningsLogged = new Set<string>();
-
-/**
- * Look up the context window size for a given Gemini model name.
- * Source: Google's published model cards, hardcoded here because
- * Gemini's session JSON doesn't include the window size.
- *
- * Returns `null` for unknown models (not in the table). The caller
- * uses this sentinel to gracefully degrade - hide the progress bar
- * and show only the model name, rather than rendering a misleading
- * percentage computed against a guessed limit.
- *
- * When a new Gemini model is released, add it to the lookup chain
- * below and bump the version range accordingly.
- */
-function resolveGeminiContextWindowSize(modelId: string): number | null {
-  const lower = modelId.toLowerCase();
-  // Gemini 3 generation
-  if (lower.startsWith('gemini-3-flash')) return 1_000_000;
-  if (lower.startsWith('gemini-3-pro')) return 2_000_000;
-  if (lower.startsWith('gemini-3')) return 1_000_000;
-  // Gemini 2.5 generation
-  if (lower.startsWith('gemini-2.5-pro')) return 2_000_000;
-  if (lower.startsWith('gemini-2.5-flash')) return 1_000_000;
-  if (lower.startsWith('gemini-2.5')) return 1_000_000;
-  // Gemini 2.0 generation
-  if (lower.startsWith('gemini-2.0')) return 1_000_000;
-  // Unknown model: warn once and return null so the caller can
-  // gracefully degrade. Do not guess - showing a bar against a
-  // guessed limit would give the user false precision.
-  if (!unknownModelWarningsLogged.has(lower)) {
-    unknownModelWarningsLogged.add(lower);
-    console.warn(
-      `[gemini-session-history] unknown model "${modelId}" - context window size not in lookup table. `
-      + `Card will show model name without progress bar. Update resolveGeminiContextWindowSize() `
-      + `in src/main/agent/adapters/gemini/session-history-parser.ts with the window size from Google's model card.`
-    );
-  }
-  return null;
 }
 
 /**

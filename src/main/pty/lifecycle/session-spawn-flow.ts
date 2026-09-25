@@ -13,13 +13,15 @@ import type { ResizeManager } from './resize-manager';
 import type { StatusFileReader } from '../readers/status-file-reader';
 import type { SessionHistoryReader } from '../readers/session-history-reader';
 import type { SessionQueue } from '../session-queue';
+import type { FirstOutputTracker } from './first-output-tracker';
 import type { TranscriptWriter } from '../buffer/transcript-writer';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
 import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd } from '../spawn/pty-spawn';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
-import { adaptCommandForShell } from '../../../shared/paths';
+import { traceTerminal } from '../terminal-trace';
+import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/paths';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -51,6 +53,7 @@ export interface SpawnFlowContext {
   statusFileReader: StatusFileReader;
   sessionHistoryReader: SessionHistoryReader;
   sessionQueue: SessionQueue;
+  firstOutputTracker: FirstOutputTracker;
   getTranscriptWriter: () => TranscriptWriter | null;
   getShell: () => Promise<string>;
   /**
@@ -63,15 +66,35 @@ export interface SpawnFlowContext {
 }
 
 /**
+ * Which drained sibling's scrollback and geometry the new session inherits.
+ *
+ * The most recently started row that is not the id being reused: a queued
+ * placeholder being promoted reuses its own id and has no scrollback, while
+ * the row it queued behind (a suspended-in-place session) does. Among the
+ * rest, the latest `startedAt` is the session the user last saw. Compared as
+ * ISO strings; a missing value sorts oldest. Falls back to any sibling so a
+ * lone placeholder keeps the (empty) carry-over it always had.
+ */
+function pickCarryoverSource(siblings: ManagedSession[], reusedId: string): ManagedSession | null {
+  let source: ManagedSession | null = null;
+  for (const sibling of siblings) {
+    if (sibling.id === reusedId) continue;
+    if (!source || (sibling.startedAt || '') > (source.startedAt || '')) source = sibling;
+  }
+  return source ?? siblings[0] ?? null;
+}
+
+/**
  * Execute a PTY spawn for a SpawnSessionInput.
  *
  * Orchestrates the full lifecycle of turning a spawn request into a
  * running ManagedSession:
  *
  *   1. Shutdown guard (refuses spawn during `before-quit`).
- *   2. Existing-session cleanup: if a prior session exists for the
+ *   2. Existing-session cleanup: for EVERY prior registry row of the
  *      taskId, kill its PTY, detach watchers while preserving files
- *      (so the new session inherits them), remove from caches.
+ *      (so the new session inherits them), remove from caches. Draining
+ *      all of them is what keeps the registry at one row per task.
  *   3. Scrollback carry-over: the previous session's raw scrollback
  *      is preserved so resumes show unbroken history.
  *   4. Shell resolution + env + cwd fixup resolution (see spawn/pty-spawn.ts).
@@ -96,7 +119,13 @@ export async function performSpawn(
   }
 
   const shell = await context.getShell();
-  const existing = input.taskId ? context.registry.findByTaskId(input.taskId) : null;
+  // EVERY registry row for the task, not the first match. The registry holds
+  // one row per task by contract, but a stale suspended placeholder (a repeat
+  // project open) or a suspended-in-place row (a settings restart) could
+  // accumulate ahead of the spawn, and a spawn that drained only the first of
+  // them left the survivor listed ahead of the live PTY: the renderer's
+  // first-wins consumers painted "Resume session" over a running agent.
+  const siblings = input.taskId ? context.registry.listByTaskId(input.taskId) : [];
 
   // Use the caller-provided ID, or generate a fresh one as fallback.
   // For queue promotions, the ID was set on the input when the placeholder
@@ -105,41 +134,49 @@ export async function performSpawn(
   // remount (TerminalTab is keyed by session ID).
   const id = input.id ?? uuidv4();
 
-  // Kill any existing PTY for this task to prevent orphaned processes
-  // that would emit data with the same session ID (double output).
-  if (existing?.pty) {
-    const ptyRef = existing.pty;
-    existing.pty = null;
-    safeKillPty(ptyRef);
-  }
-
-  if (existing) {
+  for (const sibling of siblings) {
+    // Kill any existing PTY for this task to prevent orphaned processes
+    // that would emit data with the same session ID (double output).
+    if (sibling.pty) {
+      const ptyRef = sibling.pty;
+      sibling.pty = null;
+      safeKillPty(ptyRef);
+    }
     // Detach watchers and readers but preserve files on disk and
     // nullify paths so the old session's onExit handler cannot
     // race-delete files the new spawn is about to reuse. See
     // SessionFileManager.detachPreservingFiles.
-    context.sessionFiles.detachPreservingFiles(existing.id);
+    context.sessionFiles.detachPreservingFiles(sibling.id);
     // Cancel the old session's diagnostic timer and drop its scanner
     // so a spurious "session ID not captured" warning cannot fire
     // 30s after respawn.
-    context.sessionIdManager.removeSession(existing.id);
+    context.sessionIdManager.removeSession(sibling.id);
+    // Drop the old session's first-output latch. A queue promotion reuses
+    // its placeholder's id, and a latched entry under the reused id would
+    // permanently suppress 'first-output' for the new session - and with it
+    // the post-first-output geometry re-assert.
+    context.firstOutputTracker.removeSession(sibling.id);
     // Tear down any adapter-attached work from the previous spawn.
-    disposeAdapterAttachment(existing);
+    disposeAdapterAttachment(sibling);
   }
 
   // Carry over previous scrollback BEFORE removing state so scroll history
   // is preserved across respawns (including resume). Claude CLI's TUI uses
   // full-screen draws that overwrite the active viewport without corrupting
-  // scroll history.
-  const previousScrollback = existing ? context.bufferManager.getRawScrollback(existing.id) : '';
+  // scroll history. The geometry the carried bytes were drawn for rides
+  // along so initSession can keep the replay's geometry gate accurate
+  // instead of conservatively frame-routing every respawn.
+  const carryoverSource = pickCarryoverSource(siblings, id);
+  const previousScrollback = carryoverSource ? context.bufferManager.getRawScrollback(carryoverSource.id) : '';
+  const previousGeometry = carryoverSource ? context.bufferManager.getCarryoverGeometry(carryoverSource.id) : null;
 
-  // Remove old session from map and caches so findByTaskId returns
-  // the new session, and stale usage/activity data doesn't persist.
-  if (existing) {
-    context.registry.delete(existing.id);
-    context.telemetry.removeSession(existing.id);
-    context.bufferManager.removeSession(existing.id);
-    context.sessionFiles.removeSession(existing.id);
+  // Remove the old rows from the map and caches so the task's only registry
+  // row is the new session, and stale usage/activity data doesn't persist.
+  for (const sibling of siblings) {
+    context.registry.delete(sibling.id);
+    context.telemetry.removeSession(sibling.id);
+    context.bufferManager.removeSession(sibling.id);
+    context.sessionFiles.removeSession(sibling.id);
   }
 
   // Shell invocation (exe + args) and spawn env. See pty-spawn.ts.
@@ -218,7 +255,7 @@ export async function performSpawn(
   const session: ManagedSession = {
     id,
     taskId: input.taskId,
-    projectId: existing?.projectId || input.projectId,
+    projectId: carryoverSource?.projectId || input.projectId,
     pty: ptyProcess,
     status: 'running',
     shell,
@@ -242,7 +279,12 @@ export async function performSpawn(
   // truthfully: an unchanged width (PTY spawned at the fitted size) reports
   // false and skips the repaint-settle, while the cold-launch 120-to-fitted
   // change reports true and arms it. See PtyBufferManager.onResize.
-  context.bufferManager.initSession(id, previousScrollback, spawnCols, spawnRows);
+  // previousGeometry lets initSession carry the replay geometry gate through a
+  // same-geometry respawn (the common resume) instead of frame-routing it.
+  // transient mirrors the clear-prelude exemption below: a Command Terminal
+  // has no spawn echo for the pre-TUI strip to hunt, and arming it there
+  // would let a user shell's later \x1b[2J wipe genuine scrollback.
+  context.bufferManager.initSession(id, previousScrollback, spawnCols, spawnRows, previousGeometry, input.transient === true);
   context.sessionFiles.register({
     sessionId: id,
     statusOutputPath: input.statusOutputPath || null,
@@ -387,24 +429,39 @@ export async function performSpawn(
     // silence this watchdog refresh.
     context.telemetry.activityEngine.markPtyOutput(id);
 
+    // A session remove()d while its PTY is still exiting (kill() parks a
+    // young session's PTY for the exit-sequence grace, so its exit screen
+    // arrives after the row and its caches are gone) must not re-create
+    // per-session state under a dead id. None of the consumers below guards
+    // its own existence: the transcript flush would write against a DB record
+    // the cleanup may already have deleted, the session-id scanner would arm
+    // a fresh rolling buffer, and the telemetry paths (setSessionUsage,
+    // ingestEvents, notifyPtyData) would re-create the usage / event caches
+    // remove() just cleared and push updates for a session the renderer no
+    // longer knows. markPtyOutput above is the one documented no-op for an
+    // unknown id, so it stays unguarded.
+    const rowStillRegistered = context.registry.has(id);
+
     // Transient sessions (command terminal) have no DB row - the
     // TranscriptWriter's lazy init will fail silently on first flush
     // (caught by try/catch in flush()), so we skip them entirely.
-    if (!session.transient) {
+    if (!session.transient && rowStillRegistered) {
       context.getTranscriptWriter()?.onData(id, data);
     }
 
     // Per-adapter session ID capture from PTY output. Handles chunk-
     // boundary safety (rolling buffer) and ANSI stripping (Windows
     // ConPTY cursor positioning that defeats raw regexes).
-    context.sessionIdManager.onData(id, data, session.agentParser);
+    if (rowStillRegistered) {
+      context.sessionIdManager.onData(id, data, session.agentParser);
+    }
 
     // Per-adapter stream telemetry (e.g. Cursor stream-json: model from
     // the init event, ToolStart/ToolEnd events for activity tracking).
     // Each adapter owns whatever carry-over state it needs across PTY
     // chunks (the parser is constructed lazily on first chunk).
     const streamFactory = input.agentParser?.runtime?.streamOutput;
-    if (streamFactory) {
+    if (streamFactory && rowStillRegistered) {
       if (!session.streamParser) {
         session.streamParser = streamFactory.createParser();
       }
@@ -421,7 +478,7 @@ export async function performSpawn(
     // strategies. For 'hooks_and_pty', yields to hook-based detection once
     // hooks deliver a thinking event.
     const strategy = input.agentParser?.runtime?.activity;
-    if (strategy && strategy.kind !== 'hooks') {
+    if (strategy && strategy.kind !== 'hooks' && rowStillRegistered) {
       if (strategy.detectIdle?.(data)) {
         context.telemetry.notifyPtyIdle(id);
       } else if (data.length > 0) {
@@ -486,6 +543,22 @@ export async function performSpawn(
     // SessionFileManager.detachOnPtyExit.
     context.sessionFiles.detachOnPtyExit(id);
 
+    // Fallback push capture, ahead of the PR fallback below on purpose: when
+    // it fires, both land on the same per-task queue, so the branch is on the
+    // row before the ladder that reads it runs.
+    //
+    // "When it fires" is the real bound. A caller that reaches
+    // `SessionManager.remove()` without awaiting exit first (the Backlog sweep,
+    // project delete, MCP task delete) wipes the detector's pending entry
+    // synchronously, so this reads null and emits nothing. The everyday paths
+    // are unaffected: a natural `tool_end` reports the push directly, suspend
+    // leaves the detector alone, and `cleanupTaskSession` awaits exit before
+    // removing. `PRCommandDetector` below has the same bound.
+    const pendingPushedBranch = context.telemetry.takePendingPushedBranch(id);
+    if (pendingPushedBranch) {
+      context.emit('branch-pushed', id, pendingPushedBranch);
+    }
+
     // Fallback PR resolution: if a PR command was flagged (ToolStart seen) but
     // ToolEnd was never processed (event lost or never written), fire the
     // candidate now as a last resort before the session is fully closed. The
@@ -528,17 +601,41 @@ export async function performSpawn(
   // would add a spurious `& ` prefix): cmd.exe `pushd "<unc>"` maps the UNC
   // path to a temporary drive letter, PowerShell `Set-Location -LiteralPath`
   // corrects its wildcard-mangled provider location for bracketed paths.
+  //
+  // These timers hold the raw ptyProcess, not session.pty, so they would
+  // outlive the kill / respawn / exit paths that null session.pty (each in
+  // its own tick before the 100ms fires). Every write therefore re-checks
+  // that the session still owns THIS pty and tolerates node-pty throwing on
+  // a just-died child; the exit path owns the cleanup either way.
+  const writeIfStillOwned = (text: string): void => {
+    if (session.pty !== ptyProcess) {
+      traceTerminal(id, 'deferred-write-skipped', { bytes: text.length });
+      return;
+    }
+    try {
+      ptyProcess.write(text);
+    } catch (error) {
+      // PTY died between the timer arming and firing; nothing to deliver to.
+      traceTerminal(id, 'deferred-write-failed', { bytes: text.length, message: String(error) });
+    }
+  };
   if (input.command || cwdFixupCommand) {
     setTimeout(() => {
       if (cwdFixupCommand) {
-        ptyProcess.write(cwdFixupCommand + '\r');
+        writeIfStillOwned(cwdFixupCommand + '\r');
       }
       if (input.command) {
-        const cmd = adaptCommandForShell(input.command, shellName);
+        // Non-transient (agent) spawns get the shell's own clear prefixed
+        // onto the typed line, so the shell erases its startup preamble and
+        // command echo at execution time - see buildSpawnClearPrelude for why
+        // this beats every marker heuristic. Transient Command Terminals stay
+        // a normal shell experience and skip it.
+        const prelude = input.transient ? '' : buildSpawnClearPrelude(shellName);
+        const cmd = prelude + adaptCommandForShell(input.command, shellName);
         if (cwdFixupCommand) {
-          setTimeout(() => ptyProcess.write(cmd + '\r'), 200);
+          setTimeout(() => writeIfStillOwned(cmd + '\r'), 200);
         } else {
-          ptyProcess.write(cmd + '\r');
+          writeIfStillOwned(cmd + '\r');
         }
       }
     }, 100);

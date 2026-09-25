@@ -11,8 +11,12 @@
  * body against a fake `webContents`, the same pattern
  * `browser-pane-opener.test.ts` uses for the opener.
  *
- * Two behaviors pinned here:
+ * Six behaviors pinned here:
  *
+ * 0. `kangentic_browser_set_viewport` validates its dimensions before reaching
+ *    the guest, and routes `reset` to the clear path rather than the set one.
+ *    The three MECHANISMS it dispatches between are not here: those need a
+ *    window and a CDP session, and live in `browser-viewport-override.test.ts`.
  * 1. `kangentic_browser_wait` now polls with ONE lock acquisition per poll
  *    (rather than one 60s-long drive), and a REFUSAL from any single poll ends
  *    the wait immediately instead of being retried until the deadline. Without
@@ -23,6 +27,23 @@
  *    in the SAME drive as the capture, and short-circuits before ever calling
  *    `captureScreenshotWithBudget` when one is present - so an agent is never
  *    handed a picture of a red error overlay to spend a turn interpreting.
+ * 3. `kangentic_browser_click`'s `coordSpace: 'image'` path divides the given
+ *    x/y by the screenshot's own capture density
+ *    (`describeViewportCapture`'s `pixelsPerCssPixel`), falling back to the
+ *    page's `deviceScaleFactor` only when no capture density is available,
+ *    and refusing rather than dividing by nothing when neither is. A capture
+ *    scaled to fit the pane or a byte budget holds fewer pixels than the
+ *    page's own ratio, so dividing by the wrong one lands the click on the
+ *    wrong element. It also asks `describeViewportCapture` for the CORRECT
+ *    pane, not an unbounded one, since a null surface there would silently
+ *    fall back to the page's own unbounded density.
+ * 4. `kangentic_browser_screenshot`'s metadata carries the capture's own
+ *    `pixelsPerCssPixel` (never a hardcoded 1) and the capture's `note` when
+ *    one is present, and omits `note` when there is none to report.
+ * 5. `kangentic_browser_screenshot_element` passes the pane's own surface to
+ *    `captureElementClip`, exactly as the viewport screenshot does, so an
+ *    element capture is planned to fit the pane rather than tiled by
+ *    Chromium.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -48,25 +69,50 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
 // getOuterHtml drives the `wait` poll body; captureScreenshotWithBudget drives
 // the screenshot body's non-blocked path.
 const getOuterHtml = vi.fn();
+const scrollBy = vi.fn();
+const selectOptionOnSelector = vi.fn();
+// dispatchMouseEvent and getLayoutMetrics drive the click body's image-space
+// coordinate mapping tested below.
+const dispatchMouseEvent = vi.fn();
+const getLayoutMetrics = vi.fn();
+// clickAtCenterOfSelector and dispatchKeypress drive the keypress body's
+// click-then-press path tested below. Every other CDP call in this file stays
+// an untracked inline stub.
+const clickAtCenterOfSelector = vi.fn();
+const dispatchKeypress = vi.fn();
 vi.mock('../../src/main/browser/cdp/cdp', () => ({
-  clickAtCenterOfSelector: vi.fn(),
-  dispatchMouseEvent: vi.fn(),
+  clickAtCenterOfSelector: (...args: unknown[]) => clickAtCenterOfSelector(...args),
+  dispatchMouseEvent: (...args: unknown[]) => dispatchMouseEvent(...args),
   dispatchKeyEvent: vi.fn(),
-  dispatchKeypress: vi.fn(),
+  dispatchKeypress: (...args: unknown[]) => dispatchKeypress(...args),
   dragFromTo: vi.fn(),
+  dropFilesOnSelector: vi.fn(),
+  getDialogEntries: vi.fn(() => []),
+  getNetworkEntries: vi.fn(() => []),
   getOuterHtml: (...args: unknown[]) => getOuterHtml(...args),
   getBoundingBox: vi.fn(),
   getConsoleEntries: vi.fn(),
-  getLayoutMetrics: vi.fn(),
+  getLayoutMetrics: (...args: unknown[]) => getLayoutMetrics(...args),
+  hoverSelector: vi.fn(),
   queryAllElements: vi.fn(),
   runtimeEvaluate: vi.fn(),
+  scrollBy: (...args: unknown[]) => scrollBy(...args),
+  selectOptionOnSelector: (...args: unknown[]) => selectOptionOnSelector(...args),
+  setDialogResponse: vi.fn(),
   typeText: vi.fn(),
 }));
 
 const captureScreenshotWithBudget = vi.fn();
+// describeViewportCapture drives the click body's image-space density lookup
+// tested below; captureElementClip drives the screenshot_element surface
+// passthrough tested below; the plain screenshot tests stay on
+// captureScreenshotWithBudget alone.
+const describeViewportCapture = vi.fn();
+const captureElementClip = vi.fn();
 vi.mock('../../src/main/browser/cdp/screenshot', () => ({
   captureScreenshotWithBudget: (...args: unknown[]) => captureScreenshotWithBudget(...args),
-  captureElementClip: vi.fn(),
+  captureElementClip: (...args: unknown[]) => captureElementClip(...args),
+  describeViewportCapture: (...args: unknown[]) => describeViewportCapture(...args),
 }));
 
 // detectDevServerError is stubbed per test; describeDevServerError stays REAL
@@ -82,14 +128,66 @@ vi.mock('../../src/main/browser/dev-server-error', async (importOriginal) => {
 // stubbed-refusal mock every other browser-tools test uses. A test overrides
 // it per-case (mockResolvedValueOnce) to simulate a mid-poll refusal.
 const fakeGuest = {} as never;
+// The body takes (webContents, entry): `set_viewport` picks its mechanism from
+// the entry, so a mock that passes only the guest makes that tool crash rather
+// than dispatch.
+const fakeEntry = {
+  sessionId: 'pane_abc12345',
+  ownerSessionId: 'agent-1',
+  taskId: 'task-1',
+  // Literal rather than CALLER_PROJECT: this initializer runs above that
+  // declaration, so referencing it would be a temporal dead zone error.
+  projectId: 'p1',
+  webContentsId: 7,
+  url: null,
+  kind: 'pane',
+  // What a mounted pane reports; the screenshot body bounds its capture by it.
+  widgetSize: { width: 740, height: 749 },
+} as never;
 vi.mock('../../src/main/browser/browser-pane-driver', () => ({
-  withGuest: vi.fn(async (_options: unknown, fn: (webContents: unknown) => Promise<unknown>) => ({
+  withGuest: vi.fn(async (
+    _options: unknown,
+    fn: (webContents: unknown, entry: unknown) => Promise<unknown>,
+  ) => ({
     ok: true,
-    data: await fn(fakeGuest),
+    data: await fn(fakeGuest, fakeEntry),
   })),
   validateNavigationUrl: vi.fn((url: string) => ({ ok: true, url })),
   navigateGuest: vi.fn(),
 }));
+
+// The viewport mechanisms have their own file
+// (`browser-viewport-override.test.ts`, which drives the real dispatch). Here
+// they are stubbed so the TOOL's own job - validating, and routing set vs
+// reset - can be asserted without a window or a CDP session.
+const applyViewport = vi.fn(async () => ({
+  mechanism: 'device-emulation' as const,
+  requested: { width: 1920, height: 1080 },
+  viewport: { width: 1920, height: 1080 },
+  deviceScaleFactor: 0,
+  zoom: 1,
+  exact: true,
+  visibleFraction: 1,
+  note: null,
+}));
+const clearViewport = vi.fn(async () => ({
+  mechanism: 'device-emulation' as const,
+  requested: { width: 740, height: 749 },
+  viewport: { width: 740, height: 749 },
+  deviceScaleFactor: 0,
+  zoom: 1,
+  exact: true,
+  visibleFraction: 1,
+  note: null,
+}));
+vi.mock('../../src/main/browser/viewport-override', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/browser/viewport-override')>();
+  return {
+    ...actual,
+    applyViewport: (...args: unknown[]) => applyViewport(...(args as [])),
+    clearViewport: (...args: unknown[]) => clearViewport(...(args as [])),
+  };
+});
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -129,7 +227,9 @@ async function connect() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(withGuest).mockImplementation(async (_options, fn) => ({ ok: true, data: await fn(fakeGuest) }));
+  clickAtCenterOfSelector.mockReset();
+  dispatchKeypress.mockReset();
+  vi.mocked(withGuest).mockImplementation(async (_options, fn) => ({ ok: true, data: await fn(fakeGuest, fakeEntry) }));
 });
 
 describe('kangentic_browser_wait: per-poll lock, break-on-refusal', () => {
@@ -208,20 +308,361 @@ describe('kangentic_browser_screenshot: dev-server-error short-circuit', () => {
       viewportWidth: 100,
       viewportHeight: 100,
       deviceScaleFactor: 1,
+      pixelsPerCssPixel: 1,
       scale: 1,
       fullPage: false,
       elementClip: null,
       retries: 0,
+      note: null,
     });
     const { client, close } = await connect();
 
     const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: {} });
 
     expect(captureScreenshotWithBudget).toHaveBeenCalledTimes(1);
+    // The pane's widget reaches the capture, so it is planned to fit the pane
+    // instead of being tiled by Chromium.
+    const [, options] = captureScreenshotWithBudget.mock.calls[0] as [unknown, { surface: unknown }];
+    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1 });
     expect(result.isError).toBeUndefined();
     expect(result.content).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'image', mimeType: 'image/jpeg' })]),
     );
+    // The density an image-space kangentic_browser_click divides by, carried
+    // through even when it happens to equal 1, and no note key when the
+    // capture reported none.
+    expect(result.structuredContent).toMatchObject({ pixelsPerCssPixel: 1 });
+    expect(result.structuredContent).not.toHaveProperty('note');
+    await close();
+  });
+
+  it('carries a non-1 pixelsPerCssPixel and the downscale note when the capture reports them', async () => {
+    // Regression guard for screenshotToolResult: the case above pins that a
+    // note-less, 1:1 capture stays that way, and this one pins that a
+    // downscaled capture's real density and reason both reach the metadata
+    // rather than being dropped or hardcoded.
+    detectDevServerError.mockResolvedValue(null);
+    captureScreenshotWithBudget.mockResolvedValue({
+      mode: 'inline',
+      format: 'jpeg',
+      base64: 'ZmFrZQ==',
+      byteLength: 4,
+      width: 342,
+      height: 346,
+      viewportWidth: 740,
+      viewportHeight: 749,
+      deviceScaleFactor: 2,
+      metricsAvailable: true,
+      pixelsPerCssPixel: 0.4625,
+      scale: 1,
+      fullPage: false,
+      elementClip: null,
+      retries: 0,
+      note: 'Scaled down to fit the pane; resize the pane to capture at full resolution.',
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: {} });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      pixelsPerCssPixel: 0.4625,
+      note: 'Scaled down to fit the pane; resize the pane to capture at full resolution.',
+    });
+    await close();
+  });
+});
+
+describe('kangentic_browser_screenshot_element: pane surface passthrough', () => {
+  it('passes the pane widget to captureElementClip, so an element capture is planned to fit the pane', async () => {
+    // Mirrors the equivalent kangentic_browser_screenshot assertion above: an
+    // element capture aims for up to 1:1, which is the case most likely to
+    // exceed the pane, so a dropped surface here tiles exactly like a dropped
+    // one on the viewport capture does.
+    captureElementClip.mockResolvedValue({
+      mode: 'inline',
+      format: 'png',
+      base64: 'ZmFrZQ==',
+      byteLength: 4,
+      width: 80,
+      height: 40,
+      viewportWidth: 740,
+      viewportHeight: 749,
+      deviceScaleFactor: 1,
+      metricsAvailable: true,
+      pixelsPerCssPixel: 1,
+      scale: 1,
+      fullPage: false,
+      elementClip: { selector: '.thing', box: { x: 10, y: 20, width: 80, height: 40 } },
+      retries: 0,
+      note: null,
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_screenshot_element',
+      arguments: { selector: '.thing' },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(captureElementClip).toHaveBeenCalledTimes(1);
+    const [webContentsArg, selectorArg, options] = captureElementClip.mock.calls[0] as [
+      unknown,
+      string,
+      { surface: unknown },
+    ];
+    expect(webContentsArg).toBe(fakeGuest);
+    expect(selectorArg).toBe('.thing');
+    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1 });
+    // The real captureElementClip response reaches the tool's metadata too.
+    expect(result.structuredContent).toMatchObject({
+      pixelsPerCssPixel: 1,
+      elementClip: { selector: '.thing', box: { x: 10, y: 20, width: 80, height: 40 } },
+    });
+    await close();
+  });
+});
+
+describe('kangentic_browser_click: image-space coordinate mapping', () => {
+  // coordSpace: 'image' maps a point off a full-viewport screenshot back to
+  // the page. A screenshot scaled to fit the pane or a byte budget holds
+  // fewer pixels than the page's own deviceScaleFactor implies, so the
+  // mapping must divide by the CAPTURE's density when one is known, and only
+  // fall back to the page's deviceScaleFactor when it is not.
+
+  it('divides by the capture density rather than the page deviceScaleFactor when both are available', async () => {
+    describeViewportCapture.mockResolvedValue({
+      image: { width: 370, height: 375 },
+      pixelsPerCssPixel: 0.5,
+    });
+    getLayoutMetrics.mockResolvedValue({
+      viewportWidth: 740,
+      viewportHeight: 749,
+      deviceScaleFactor: 2,
+      contentWidth: 740,
+      contentHeight: 749,
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_click',
+      arguments: { x: 100, y: 200, coordSpace: 'image' },
+    });
+
+    expect(result.isError).toBeUndefined();
+    // 100 / 0.5 and 200 / 0.5, never 100 / 2 and 200 / 2: dividing by the
+    // page's deviceScaleFactor here would land the click on the wrong element.
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(1, fakeGuest, { type: 'mousePressed', x: 200, y: 400 });
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(2, fakeGuest, { type: 'mouseReleased', x: 200, y: 400 });
+    // The density lookup itself is asked about THIS pane, never an unbounded
+    // one - a null surface here would silently widen to the page's own
+    // density instead of the capture's, which is exactly the bug this test
+    // guards against one layer up.
+    expect(describeViewportCapture).toHaveBeenCalledWith(fakeGuest, {
+      widget: { width: 740, height: 749 },
+      displayScale: 1,
+    });
+    // The page's deviceScaleFactor is a fallback, not a second source to
+    // average or prefer, so it is never even read once a capture density
+    // answers the question.
+    expect(getLayoutMetrics).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('falls back to the page deviceScaleFactor when the capture reports no density', async () => {
+    describeViewportCapture.mockResolvedValue(null);
+    getLayoutMetrics.mockResolvedValue({
+      viewportWidth: 740,
+      viewportHeight: 749,
+      deviceScaleFactor: 2,
+      contentWidth: 740,
+      contentHeight: 749,
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_click',
+      arguments: { x: 100, y: 200, coordSpace: 'image' },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(1, fakeGuest, { type: 'mousePressed', x: 50, y: 100 });
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(2, fakeGuest, { type: 'mouseReleased', x: 50, y: 100 });
+    await close();
+  });
+
+  it('returns coord-mapping-failed and dispatches nothing when neither density is available', async () => {
+    describeViewportCapture.mockResolvedValue(null);
+    getLayoutMetrics.mockResolvedValue(null);
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_click',
+      arguments: { x: 100, y: 200, coordSpace: 'image' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ error: { kind: 'coord-mapping-failed' } });
+    expect(dispatchMouseEvent).not.toHaveBeenCalled();
+    await close();
+  });
+});
+
+describe('kangentic_browser_keypress: an optional selector clicks first, in the same call', () => {
+  // A key goes to whatever holds keyboard focus, and between an agent's calls
+  // that is usually the user's terminal (task #720). The only configuration
+  // that measured clean is the click and the key inside ONE call, which is what
+  // the selector buys. The refusal of an unfocused key lives in `cdp.ts` and is
+  // pinned in `browser-keyboard-focus.test.ts`.
+
+  it('clicks the selector, THEN presses the key', async () => {
+    clickAtCenterOfSelector.mockResolvedValue(true);
+    dispatchKeypress.mockResolvedValue(true);
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_keypress',
+      arguments: { keys: 'Escape', selector: '#demo-frame' },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(clickAtCenterOfSelector).toHaveBeenCalledWith(fakeGuest, '#demo-frame');
+    expect(dispatchKeypress).toHaveBeenCalledWith(fakeGuest, 'Escape');
+    expect(clickAtCenterOfSelector.mock.invocationCallOrder[0])
+      .toBeLessThan(dispatchKeypress.mock.invocationCallOrder[0]);
+    await close();
+  });
+
+  it('presses nothing when the selector matches nothing', async () => {
+    clickAtCenterOfSelector.mockResolvedValue(false);
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_keypress',
+      arguments: { keys: 'Escape', selector: '#missing' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('selector-not-found');
+    expect(dispatchKeypress).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('refuses an unparseable combo BEFORE clicking, so a typo in keys costs the page nothing', async () => {
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_keypress',
+      arguments: { keys: 'Hyper+Enter', selector: '#demo-frame' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('unknown-key');
+    expect(clickAtCenterOfSelector).not.toHaveBeenCalled();
+    expect(withGuest).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('clicks nothing without a selector', async () => {
+    dispatchKeypress.mockResolvedValue(true);
+    const { client, close } = await connect();
+
+    const result = await client.callTool({ name: 'kangentic_browser_keypress', arguments: { keys: 'Enter' } });
+
+    expect(result.isError).toBeFalsy();
+    expect(clickAtCenterOfSelector).not.toHaveBeenCalled();
+    expect(dispatchKeypress).toHaveBeenCalledWith(fakeGuest, 'Enter');
+    await close();
+  });
+});
+
+describe('argument guards that live only in the tool body', () => {
+  // These two refusals are pure argument validation between zod and the
+  // driver, so nothing else in the tree covers them: zod accepts the shape and
+  // the primitive is never reached. Both were verified live once; without a
+  // test a refactor silently turns them into a no-op drive.
+
+  it('scroll refuses a zero delta instead of dispatching a wheel that does nothing', async () => {
+    const { client, close } = await connect();
+
+    const result = await client.callTool({ name: 'kangentic_browser_scroll', arguments: {} });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('invalid-scroll');
+    expect(scrollBy).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('select_option refuses when no option is named, rather than picking one', async () => {
+    // value / label / index are each optional, so zod accepts a call that
+    // identifies nothing. Guessing (the first option, say) would silently
+    // change a form the agent never chose to change.
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_select_option',
+      arguments: { selector: '#country' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('missing-target');
+    expect(selectOptionOnSelector).not.toHaveBeenCalled();
+    await close();
+  });
+});
+
+describe('kangentic_browser_set_viewport: validation and set-vs-reset routing', () => {
+  it('routes a sized call to applyViewport, carrying the caller session as the owner', async () => {
+    const { client, close } = await connect();
+
+    await client.callTool({
+      name: 'kangentic_browser_set_viewport',
+      arguments: { width: 1920, height: 1080, zoom: 0.4 },
+    });
+
+    expect(clearViewport).not.toHaveBeenCalled();
+    expect(applyViewport).toHaveBeenCalledTimes(1);
+    const [, , request] = applyViewport.mock.calls[0] as unknown as [unknown, unknown, Record<string, unknown>];
+    expect(request).toMatchObject({ width: 1920, height: 1080, zoom: 0.4 });
+    await close();
+  });
+
+  it('routes reset to clearViewport and never to the set path', async () => {
+    const { client, close } = await connect();
+
+    await client.callTool({ name: 'kangentic_browser_set_viewport', arguments: { reset: true } });
+
+    expect(clearViewport).toHaveBeenCalledTimes(1);
+    expect(applyViewport).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('reset wins over a width in the same call, rather than doing both', async () => {
+    const { client, close } = await connect();
+
+    await client.callTool({
+      name: 'kangentic_browser_set_viewport',
+      arguments: { reset: true, width: 1920 },
+    });
+
+    expect(clearViewport).toHaveBeenCalledTimes(1);
+    expect(applyViewport).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('refuses an out-of-range dimension without reaching the guest', async () => {
+    // The handler validates as well as zod, because a value that arrives as a
+    // fraction or NaN becomes a compositor surface rather than an error, and
+    // the failure then looks like a broken page rather than a bad argument.
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_set_viewport',
+      arguments: { width: 99999 },
+    });
+
+    expect(applyViewport).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
     await close();
   });
 });

@@ -12,6 +12,7 @@ import os from 'node:os';
 import {
   quoteArg,
   isCmdShell,
+  isPowerShellShell,
   adaptCommandForShell,
   convertWindowsExePath,
   sanitizeForPty,
@@ -218,6 +219,55 @@ describe('Command Builder Logic', () => {
     expect(result).toBe('"use ``code`` here`nline2"');
   });
 
+  it('quoteArg doubles a trailing backslash run for cmd, so the CRT keeps the closing quote', () => {
+    // Measured by round-tripping through node's process.argv: cmd hands the raw
+    // line to the target's C runtime, which reads the `\"` of `"C:\dir\"` as an
+    // escaped quote and delivers `C:\dir"`. Doubling the run fixes it.
+    expect(quoteArg('C:\\dir\\', 'cmd')).toBe('"C:\\dir\\\\"');
+    expect(quoteArg('finish the path C:\\dir\\', 'cmd.exe')).toBe('"finish the path C:\\dir\\\\"');
+  });
+
+  it('quoteArg leaves a trailing backslash alone for PowerShell, where it is not an escape', () => {
+    // The opposite rule to cmd, and the reason the two branches cannot share a
+    // chain: `"C:\dir\"` already reaches a native command as `C:\dir\` on both
+    // pwsh 7.6 and Windows PowerShell 5.1. Escaping the backslash here would
+    // deliver `C:\dir\\` and break every Windows path a spawn carries.
+    expect(quoteArg('C:\\dir\\', 'pwsh')).toBe('"C:\\dir\\"');
+    expect(quoteArg('C:\\Program Files\\bin\\claude.exe', 'powershell'))
+      .toBe('"C:\\Program Files\\bin\\claude.exe"');
+  });
+
+  it('quoteArg leaves backticks and $ literal under cmd, which does not collapse them', () => {
+    // cmd shared PowerShell's backtick doubling until this was measured: the
+    // agent received `use ``code`` here`, two backticks per one written.
+    expect(quoteArg('use `code` here', 'cmd')).toBe('"use `code` here"');
+    expect(quoteArg('cost $5 total', 'cmd')).toBe('"cost $5 total"');
+  });
+
+  it('quoteArg escapes a quote for cmd by the C-runtime rule', () => {
+    // `\"` is an escaped quote to the target's CRT, and a backslash run before
+    // one has to be doubled or it eats the escape. Round-tripped through cmd:
+    // both inputs below arrive at the agent byte-identical.
+    expect(quoteArg('say "hi"', 'cmd')).toBe('"say \\"hi\\""');
+    expect(quoteArg('path\\"x', 'cmd')).toBe('"path\\\\\\"x"');
+  });
+
+  it('quoteArg emits a quote PowerShell cannot parse, which is unreachable and stays', () => {
+    // Named for what it is rather than pinned as correct. `"say \"hi\""` is a
+    // parse error on BOTH pwsh 7.6 and Windows PowerShell 5.1 (the string ends
+    // at the backslash-quote), and there is no form that works on both: pwsh
+    // 7.3+ native argument passing wants a backtick-quote, while 5.1's legacy
+    // passing drops that quote and wants backslash-backtick-quote. It is also
+    // unreachable - every prompt-carrying builder pre-replaces `"` with `'`
+    // for double-quote shells (claude/command-builder.ts and siblings), and no
+    // other quoteArg input can hold a quote on Windows, where `"` is illegal in
+    // a filename. Changing it would pick a losing host silently.
+    expect(quoteArg('say "hi"', 'pwsh')).toBe('"say \\"hi\\""');
+    // The backslash is NOT doubled here, unlike the cmd case above. That is the
+    // whole difference between the two branches, on the one input that shows it.
+    expect(quoteArg('path\\"x', 'powershell')).toBe('"path\\\\"x"');
+  });
+
   it('quoteArg with multiline: true falls back to sanitisation under cmd', () => {
     // cmd.exe terminates the command on a literal newline mid-quote, so we
     // accept readability loss to keep the command parseable.
@@ -252,6 +302,67 @@ describe('Command Builder Logic', () => {
     expect(isCmdShell('bash')).toBe(false);
     expect(isCmdShell('powershell')).toBe(false);
     expect(isCmdShell('pwsh')).toBe(false);
+  });
+
+  it('isPowerShellShell matches the PowerShell family as a bare name, an .exe, or a full path', () => {
+    expect(isPowerShellShell('powershell')).toBe(true);
+    expect(isPowerShellShell('pwsh')).toBe(true);
+    expect(isPowerShellShell('PowerShell')).toBe(true);
+    expect(isPowerShellShell('PWSH')).toBe(true);
+    expect(isPowerShellShell('powershell.exe')).toBe(true);
+    expect(isPowerShellShell('pwsh.exe')).toBe(true);
+    expect(isPowerShellShell('C:\\Program Files\\PowerShell\\7\\pwsh.exe')).toBe(true);
+    expect(isPowerShellShell('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')).toBe(true);
+    expect(isPowerShellShell('C:/Program Files/PowerShell/7/pwsh.exe')).toBe(true);
+
+    expect(isPowerShellShell('cmd.exe')).toBe(false);
+    expect(isPowerShellShell('C:\\Windows\\System32\\cmd.exe')).toBe(false);
+    expect(isPowerShellShell('bash')).toBe(false);
+    expect(isPowerShellShell('C:\\Program Files\\Git\\bin\\bash.exe')).toBe(false);
+    expect(isPowerShellShell('zsh')).toBe(false);
+    expect(isPowerShellShell('fish')).toBe(false);
+    expect(isPowerShellShell('nu')).toBe(false);
+    expect(isPowerShellShell('/bin/sh')).toBe(false);
+    expect(isPowerShellShell('wsl -d Ubuntu')).toBe(false);
+  });
+
+  it('isPowerShellShell agrees with the inline substring test it replaced for every real shell form', () => {
+    // buildSpawnClearPrelude, adaptCommandForShell, resolveShellArgs, and
+    // resolveSpawnCwd each carried their own copy of this test. The predicate
+    // must stay behavior-identical for what the Windows picker stores, and it
+    // must be the exact negation isUnixLikeShell applies, so a spec can never
+    // be neither unix-like nor PowerShell.
+    const pickerForms = [
+      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+      'C:\\Windows\\System32\\cmd.exe',
+      'wsl -d Ubuntu',
+      'powershell',
+      'pwsh',
+      '/bin/zsh',
+    ];
+    for (const form of pickerForms) {
+      const lower = form.toLowerCase();
+      expect(isPowerShellShell(form)).toBe(lower.includes('powershell') || lower.includes('pwsh'));
+    }
+  });
+
+  it('quoteArg quotes a bare -- for PowerShell hosts only', () => {
+    // PowerShell's parameter binder consumes an unquoted -- before a .ps1
+    // script (the npm shim resolveShimLaunch prefers) sees $args, so the
+    // end-of-options guard the Claude/Grok/Ollama/Warp builders emit would
+    // vanish on that route. The quoted form reaches every launcher as `--`.
+    expect(quoteArg('--', 'pwsh')).toBe('"--"');
+    expect(quoteArg('--', 'powershell')).toBe('"--"');
+    expect(quoteArg('--', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe')).toBe('"--"');
+
+    expect(quoteArg('--', 'bash')).toBe('--');
+    expect(quoteArg('--', 'cmd')).toBe('--');
+    expect(quoteArg('--', 'wsl -d Ubuntu')).toBe('--');
+    expect(quoteArg('--')).toBe('--');
+    // Only the exact marker: a flag that starts with -- is an ordinary token.
+    expect(quoteArg('--prompt', 'pwsh')).toBe('--prompt');
   });
 
   it('PowerShell call operator prefix', () => {
@@ -889,6 +1000,29 @@ describe('adapter command composed through adaptCommandForShell', () => {
     } finally {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     }
+  });
+});
+
+// The real CommandBuilder.buildClaudeCommand's "--" end-of-options guard
+// (as opposed to the deliberately simplified inline buildClaudeCommand()
+// helper above, which never went through quoteArg for the marker) was never
+// exercised under a PowerShell-family shell, so a revert of the
+// `quoteArg('--', shell)` call back to a bare '--' literal passed every test
+// in this file until this one was added.
+describe('CommandBuilder buildClaudeCommand: quoted "--" end-of-options guard under PowerShell', () => {
+  it('quotes the -- marker before the prompt when the shell is PowerShell', () => {
+    const cmd = new CommandBuilder().buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'task-1',
+      cwd: '/project',
+      permissionMode: 'default',
+      sessionId: 'sess-123',
+      shell: 'powershell',
+      prompt: 'Simple task description',
+    });
+
+    expect(cmd).toContain('"--"');
+    expect(cmd).toContain('Simple task description');
   });
 });
 

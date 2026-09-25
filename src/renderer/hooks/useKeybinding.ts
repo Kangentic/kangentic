@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useConfigStore } from '../stores/config-store';
 import { effectiveCombo, getKeybinding, isMouseCombo } from '../../shared/keybindings';
 import { matchesCombo, formatCombo } from '../utils/keybindings';
@@ -67,11 +67,16 @@ export function useKeybinding(
     when,
   } = options;
 
-  // Keep the latest handler/predicate without re-arming the listener every render.
+  // Keep the latest handler/predicate without re-arming the listener every
+  // render. Written on commit (a layout effect), never during render: the
+  // compiler rules forbid a render-time ref write, and a listener must never
+  // see a handler from a render that was discarded.
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
   const whenRef = useRef(when);
-  whenRef.current = when;
+  useLayoutEffect(() => {
+    handlerRef.current = handler;
+    whenRef.current = when;
+  });
 
   useEffect(() => {
     if (!enabled || !combo) return;

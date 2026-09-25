@@ -19,11 +19,21 @@ import type { AgentParser } from '../../src/shared/types';
 
 // ---- Module-level mocks (hoisted before the import under test) ----
 
+// Holder so the node-pty mock can hand the captured onExit callback back to
+// the "onExit fallback ordering" describe block below (mirrors the harness in
+// session-exit-intentional.test.ts). Every other describe block in this file
+// never fires it, so capturing it here is purely additive.
+const ptyExitHarness = vi.hoisted(() => ({
+  onExitCallback: null as ((event: { exitCode: number }) => void) | null,
+}));
+
 // Prevent real PTY process from spawning.
 vi.mock('node-pty', () => ({
   spawn: vi.fn(() => ({
     onData: vi.fn(),
-    onExit: vi.fn(),
+    onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+      ptyExitHarness.onExitCallback = callback;
+    }),
     write: vi.fn(),
     kill: vi.fn(),
     resize: vi.fn(),
@@ -79,15 +89,20 @@ vi.mock('../../src/main/pr/pr-registry', () => ({
 // identity) so the cwd-fixup-order tests can override it per-call via
 // mockImplementationOnce to prove the fixup command bypasses it (see
 // "writes the fixup command RAW" below).
-vi.mock('../../src/shared/paths', () => ({
+vi.mock('../../src/shared/paths', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/shared/paths')>()),
   adaptCommandForShell: vi.fn((cmd: string) => cmd),
+  // Default to no prelude so the write-order assertions below stay
+  // byte-exact; the dedicated prelude test overrides this with a marker.
+  buildSpawnClearPrelude: vi.fn(() => ''),
 }));
 
 // ---- Import under test (after all vi.mock hoisting) ----
 import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
-import { adaptCommandForShell } from '../../src/shared/paths';
+import { handleSpawnFailure } from '../../src/main/pty/spawn/spawn-failure-handler';
+import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 
 // ---- Helpers ----
@@ -132,6 +147,7 @@ function makeContext(): SpawnFlowContext {
     registry,
     bufferManager: {
       getRawScrollback: vi.fn(() => ''),
+      getCarryoverGeometry: vi.fn(() => null),
       removeSession: vi.fn(),
       initSession: vi.fn(),
       onData: vi.fn(),
@@ -146,6 +162,7 @@ function makeContext(): SpawnFlowContext {
       emitSessionEnd: vi.fn(),
       hasPendingPRCommand: vi.fn(() => false),
       clearPendingPRCommand: vi.fn(),
+      takePendingPushedBranch: vi.fn(() => null),
       getSessionActivity: vi.fn(() => null),
     },
     sessionIdManager: {
@@ -173,6 +190,9 @@ function makeContext(): SpawnFlowContext {
     },
     sessionQueue: {
       notifySlotFreed: vi.fn(),
+    },
+    firstOutputTracker: {
+      removeSession: vi.fn(),
     },
     getTranscriptWriter: vi.fn(() => null),
     getShell: vi.fn().mockResolvedValue('/bin/bash'),
@@ -328,6 +348,271 @@ describe('performSpawn - resume path does not adopt bg shells', () => {
   });
 });
 
+describe('performSpawn - scrollback carry-over geometry', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('captures the carried ring geometry BEFORE removal and hands it to bufferManager.initSession', async () => {
+    const context = makeContext();
+    const carryoverGeometry = { cols: 210, rows: 48, geometryChangedAtRingIndex: 7 };
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>).mockReturnValue('carried bytes');
+    (context.bufferManager.getCarryoverGeometry as ReturnType<typeof vi.fn>).mockReturnValue(carryoverGeometry);
+    // An existing session for the task makes this a respawn; pty: null skips
+    // the orphan-kill path so no fake PTY shape is needed.
+    context.registry.set('old-session-id', {
+      id: 'old-session-id',
+      taskId: 'task-001',
+      projectId: 'project-001',
+      pty: null,
+      status: 'running',
+    } as never);
+
+    await performSpawn(makeInput(), context);
+
+    // Read off the OLD session's buffer state while it still exists ...
+    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledWith('old-session-id');
+    const geometryOrder = (context.bufferManager.getCarryoverGeometry as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const removeOrder = (context.bufferManager.removeSession as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    expect(geometryOrder).toBeLessThan(removeOrder);
+    // ... and handed to the new session's initSession with the carried
+    // scrollback, so the replay geometry gate stays accurate across respawn.
+    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initCall?.[1]).toBe('carried bytes');
+    expect(initCall?.[4]).toBe(carryoverGeometry);
+  });
+});
+
+describe('performSpawn - first-output latch cleanup', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('drops the OLD session\'s first-output latch on respawn over an existing session', async () => {
+    // A latched entry surviving under a reused id would permanently suppress
+    // 'first-output' for the new session - and with it the post-first-output
+    // geometry re-assert (the spawn-race fix).
+    const context = makeContext();
+    context.registry.set('old-session-id', {
+      id: 'old-session-id',
+      taskId: 'task-001',
+      projectId: 'project-001',
+      pty: null,
+      status: 'running',
+    } as never);
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.firstOutputTracker.removeSession).toHaveBeenCalledExactlyOnceWith('old-session-id');
+  });
+
+  it('never touches the tracker on a fresh spawn (no existing session)', async () => {
+    const context = makeContext();
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.firstOutputTracker.removeSession).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One row per task: a spawn drains EVERY stale registry row for its task.
+//
+// The observed leak: a paused task collected a placeholder per recovery pass,
+// then a settings restart suspended its live row in place and respawned. The
+// spawn evicted only `findByTaskId`'s first match (the placeholder), so the
+// registry ended as [suspended, running] and the renderer's first-wins
+// consumers painted "Resume session" over the running agent.
+// ---------------------------------------------------------------------------
+
+/** Seed a registry row directly; only the fields the drain reads are set. */
+function seedRow(
+  context: SpawnFlowContext,
+  row: {
+    id: string;
+    status: 'running' | 'queued' | 'suspended' | 'exited';
+    startedAt?: string;
+    isolatedSwimlaneId?: string | null;
+  },
+): void {
+  context.registry.set(row.id, {
+    id: row.id,
+    taskId: 'task-001',
+    projectId: 'project-001',
+    pty: null,
+    status: row.status,
+    startedAt: row.startedAt,
+    isolatedSwimlaneId: row.isolatedSwimlaneId ?? null,
+  } as never);
+}
+
+const PLACEHOLDER_STARTED_AT = '2026-09-04T14:18:31.000Z';
+const SUSPENDED_STARTED_AT = '2026-09-04T14:25:26.000Z';
+
+describe('performSpawn - one row per task', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('drains a leaked placeholder AND the suspended-in-place row behind it', async () => {
+    const context = makeContext();
+    seedRow(context, { id: 'sess-placeholder', status: 'suspended', startedAt: PLACEHOLDER_STARTED_AT });
+    seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+
+    await performSpawn(makeInput({ id: 'sess-respawn' }), context);
+
+    const rows = context.registry.listByTaskId('task-001');
+    expect(rows.map((row) => row.id)).toEqual(['sess-respawn']);
+    expect(rows[0].status).toBe('running');
+    for (const staleId of ['sess-placeholder', 'sess-suspended']) {
+      expect(context.sessionFiles.detachPreservingFiles).toHaveBeenCalledWith(staleId);
+      expect(context.sessionIdManager.removeSession).toHaveBeenCalledWith(staleId);
+      expect(context.firstOutputTracker.removeSession).toHaveBeenCalledWith(staleId);
+      expect(context.telemetry.removeSession).toHaveBeenCalledWith(staleId);
+      expect(context.bufferManager.removeSession).toHaveBeenCalledWith(staleId);
+      expect(context.sessionFiles.removeSession).toHaveBeenCalledWith(staleId);
+    }
+  });
+
+  it.each([
+    ['older row first', ['sess-older', 'sess-newer']],
+    ['newer row first', ['sess-newer', 'sess-older']],
+  ])('carries scrollback over from the most recently started sibling (%s)', async (_label, insertionOrder) => {
+    const context = makeContext();
+    for (const id of insertionOrder) {
+      seedRow(context, {
+        id,
+        status: 'suspended',
+        startedAt: id === 'sess-newer' ? SUSPENDED_STARTED_AT : PLACEHOLDER_STARTED_AT,
+      });
+    }
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
+      .mockImplementation((sessionId: string) => (sessionId === 'sess-newer' ? 'newer bytes' : ''));
+
+    await performSpawn(makeInput({ id: 'sess-respawn' }), context);
+
+    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-newer');
+    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith('sess-newer');
+    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initCall?.[1]).toBe('newer bytes');
+  });
+
+  it('settings restart: the row suspended in place is drained by its own respawn', async () => {
+    // restartSessionForSettingsChange suspends in place (status flips, the PTY
+    // is released, the row keeps its Map position) and then respawns. Nothing
+    // else evicts that row; the respawn must.
+    const context = makeContext();
+    seedRow(context, { id: 'sess-live', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+
+    await performSpawn(makeInput({ id: 'sess-restarted' }), context);
+
+    expect(context.registry.listByTaskId('task-001').map((row) => row.id)).toEqual(['sess-restarted']);
+  });
+
+  it('an isolated-column spawn replaces the suspended main row: one row per task, whatever the track', async () => {
+    // The DB keeps a record per (task, isolation) so each track resumes its
+    // own conversation; the registry holds only the task's CURRENT session.
+    const context = makeContext();
+    seedRow(context, { id: 'sess-main', status: 'suspended', isolatedSwimlaneId: null });
+
+    await performSpawn(makeInput({ id: 'sess-review', isolatedSwimlaneId: 'lane-review' }), context);
+
+    const rows = context.registry.listByTaskId('task-001');
+    expect(rows.map((row) => row.id)).toEqual(['sess-review']);
+    expect(rows[0].isolatedSwimlaneId).toBe('lane-review');
+    // The main session's files stay on disk for its own later resume.
+    expect(context.sessionFiles.detachPreservingFiles).toHaveBeenCalledWith('sess-main');
+  });
+
+  it('queue promotion: carries over from the suspended predecessor, not the placeholder whose id it reuses', async () => {
+    // While a respawn waits for a slot the task holds [suspended, queued]. The
+    // promotion spawns under the placeholder's own id, which has no scrollback;
+    // the bytes to inherit are the predecessor's, even though the placeholder
+    // started later.
+    const context = makeContext();
+    const queuedId = makeInput().id!;
+    seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+    seedRow(context, { id: queuedId, status: 'queued', startedAt: '2026-09-04T14:25:33.000Z' });
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
+      .mockImplementation((sessionId: string) => (sessionId === 'sess-suspended' ? 'predecessor bytes' : ''));
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-suspended');
+    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initCall?.[1]).toBe('predecessor bytes');
+    const rows = context.registry.listByTaskId('task-001');
+    expect(rows.map((row) => row.id)).toEqual([queuedId]);
+    expect(rows[0].status).toBe('running');
+  });
+
+  it('pickCarryoverSource fallback: a lone queued placeholder keeps its own (empty) carry-over as the only sibling', async () => {
+    // Promoting a lone queued placeholder with no predecessor: the sibling
+    // loop skips the row matching the reused id (it has no scrollback worth
+    // reading yet), so `source` stays null - but that same row is
+    // `siblings[0]`, and the `?? siblings[0]` fallback is what keeps it as the
+    // carry-over source instead of falling through to no source at all.
+    const context = makeContext();
+    const queuedId = makeInput().id!;
+    seedRow(context, { id: queuedId, status: 'queued', startedAt: SUSPENDED_STARTED_AT });
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith(queuedId);
+    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith(queuedId);
+  });
+
+  it.each([
+    ['undefined startedAt sibling first', ['sess-no-started-at', 'sess-timestamped']],
+    ['timestamped sibling first', ['sess-timestamped', 'sess-no-started-at']],
+  ])('prefers the sibling with a real startedAt over one with a missing value (%s)', async (_label, insertionOrder) => {
+    // ISO-string comparison treats a missing startedAt as sorting oldest
+    // ((startedAt || '') > (source.startedAt || '')), so a sibling with a real
+    // timestamp must win regardless of which one the Map iterates first.
+    const context = makeContext();
+    for (const id of insertionOrder) {
+      seedRow(context, {
+        id,
+        status: 'suspended',
+        startedAt: id === 'sess-timestamped' ? SUSPENDED_STARTED_AT : undefined,
+      });
+    }
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
+      .mockImplementation((sessionId: string) => (sessionId === 'sess-timestamped' ? 'timestamped bytes' : ''));
+
+    await performSpawn(makeInput({ id: 'sess-respawn' }), context);
+
+    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-timestamped');
+    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith('sess-timestamped');
+    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initCall?.[1]).toBe('timestamped bytes');
+  });
+
+  it('a failed spawn has already drained the stale rows and hands the carried scrollback to the failure placeholder', async () => {
+    const context = makeContext();
+    seedRow(context, { id: 'sess-placeholder', status: 'suspended', startedAt: PLACEHOLDER_STARTED_AT });
+    seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
+      .mockImplementation((sessionId: string) => (sessionId === 'sess-suspended' ? 'carried bytes' : ''));
+    vi.mocked(ptyModule.spawn).mockImplementationOnce(() => {
+      throw new Error('spawn boom');
+    });
+    let rowsAtFailure: string[] | null = null;
+    let scrollbackAtFailure: string | null = null;
+    vi.mocked(handleSpawnFailure).mockImplementationOnce((_error, attempt, failureContext) => {
+      rowsAtFailure = failureContext.registry.listByTaskId(attempt.input.taskId).map((row) => row.id);
+      scrollbackAtFailure = attempt.previousScrollback;
+      return { id: attempt.id, taskId: attempt.input.taskId, status: 'exited' } as never;
+    });
+
+    await performSpawn(makeInput({ id: 'sess-failed' }), context);
+
+    // The real handler registers exactly one exited row, so the task ends at one.
+    expect(rowsAtFailure).toEqual([]);
+    expect(scrollbackAtFailure).toBe('carried bytes');
+  });
+});
+
 describe('performSpawn - caller-owned session ID wiring', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
@@ -464,6 +749,11 @@ describe('performSpawn - Windows cwd fixup write order', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    // clearAllMocks resets call history but NOT a mockReturnValue implementation,
+    // so restore the suite's no-prelude default here - a failing assertion in
+    // the prelude test must not leak 'CLEARPRE; ' into byte-exact write
+    // assertions elsewhere in this file.
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('');
   });
 
   it('writes the fixup command first, then the initial command', async () => {
@@ -562,6 +852,105 @@ describe('performSpawn - Windows cwd fixup write order', () => {
     expect(writeMock.mock.calls[0][0]).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'\r");
     // The initial command DOES go through adaptCommandForShell.
     expect(writeMock.mock.calls[1][0]).toBe('ADAPTED:claude --resume abc\r');
+  });
+
+  it('prefixes the shell clear prelude on agent spawns and skips it for transient shells', async () => {
+    // The prelude makes the SHELL erase its startup preamble and command
+    // echo at execution time (see buildSpawnClearPrelude) - the source-level
+    // guard that stays valid across pwsh/ConPTY updates. Transient Command
+    // Terminals are a normal shell experience and must not be auto-cleared.
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+
+    const agentContext = makeContext();
+    await performSpawn(makeInput({ command: 'claude --resume abc' }), agentContext);
+    vi.advanceTimersByTime(100);
+    const agentWrite = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    expect(agentWrite.mock.calls[0][0]).toBe('CLEARPRE; claude --resume abc\r');
+
+    vi.clearAllMocks();
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+    const transientContext = makeContext();
+    await performSpawn(
+      makeInput({ id: 'transient-session-id-000000000', taskId: 'task-002', command: 'echo hi', transient: true }),
+      transientContext,
+    );
+    vi.advanceTimersByTime(100);
+    const transientWrite = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    expect(transientWrite.mock.calls[0][0]).toBe('echo hi\r');
+    // The suite-default '' prelude is restored by this block's afterEach, so a
+    // failing assertion above cannot leak 'CLEARPRE; ' into later tests.
+  });
+
+  it('the prelude rides the cwd-fixup deferred write', async () => {
+    // Both write-order mechanisms active at once: a Windows cwd fixup (100ms
+    // write, then the command 200ms later) AND a non-empty clear prelude. The
+    // fixup is written RAW - no prelude, since it is not the typed agent
+    // command - while the prelude rides along on the DEFERRED command write
+    // that follows it. A regression that prefixed the prelude onto the fixup
+    // write instead of the command write would pass the other tests in this
+    // describe block (which never combine both mocks at once) but fail here.
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({
+      effectiveCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      cwdFixupCommand: "Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'",
+    });
+    vi.mocked(buildSpawnClearPrelude).mockReturnValue('CLEARPRE; ');
+
+    const context = makeContext();
+    const input = makeInput({ command: 'claude --resume abc' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+
+    vi.advanceTimersByTime(100);
+    // The fixup write at 100ms carries no prelude - it is not the typed
+    // command, and prefixing it would corrupt the Set-Location syntax.
+    expect(writeMock).toHaveBeenCalledTimes(1);
+    expect(writeMock.mock.calls[0][0]).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'\r");
+
+    vi.advanceTimersByTime(200);
+    // The deferred command write at +200ms carries the prelude.
+    expect(writeMock).toHaveBeenCalledTimes(2);
+    expect(writeMock.mock.calls[1][0]).toBe('CLEARPRE; claude --resume abc\r');
+  });
+
+  it('skips the deferred writes once the session no longer owns the PTY', async () => {
+    // The timers hold the raw ptyProcess, not session.pty. Every kill /
+    // respawn / exit path nulls session.pty in its own tick, before the 100ms
+    // write fires; the write must notice rather than type into a dead ConPTY
+    // handle (node-pty throws) or into a successor session's shell.
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({
+      effectiveCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      cwdFixupCommand: "Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'",
+    });
+
+    const context = makeContext();
+    const input = makeInput({ command: 'claude --resume abc' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    const session = context.registry.get(input.id!);
+    expect(session?.pty).not.toBeNull();
+    session!.pty = null;
+
+    vi.advanceTimersByTime(300);
+    expect(writeMock).not.toHaveBeenCalled();
+  });
+
+  it('tolerates node-pty throwing on a write to a PTY that died between the timer arming and firing', async () => {
+    const context = makeContext();
+    const input = makeInput({ command: 'echo hi' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+    writeMock.mockImplementationOnce(() => {
+      throw new Error('EPIPE');
+    });
+
+    expect(() => vi.advanceTimersByTime(100)).not.toThrow();
+    expect(writeMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -740,5 +1129,63 @@ describe('performSpawn - cols/rows precedence', () => {
     const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
     expect(spawnOptions.cols).toBe(100);
     expect(spawnOptions.rows).toBe(40);
+  });
+});
+
+describe('performSpawn - onExit fallback ordering: branch-pushed before pr-candidate', () => {
+  // The onExit handler emits the pushed-branch fallback immediately BEFORE the
+  // PR-candidate fallback, with a comment claiming this is deliberate: both
+  // land on the same per-task queue (recordPushedBranchForSession runs
+  // synchronously up to its `await withTaskLock`), so the branch-pushed
+  // listener enqueues before the pr-candidate listener's resolve can run.
+  //
+  // Every other test in this file (and in session-exit-intentional.test.ts)
+  // stubs takePendingPushedBranch to null and/or hasPendingPRCommand to
+  // false, so neither fallback branch executes and swapping the two blocks
+  // in session-spawn-flow.ts would pass every one of them. This test makes
+  // BOTH preconditions true and asserts the OBSERVED emit order, not merely
+  // that each mock was called.
+  //
+  // Red-green: swapped the two emit blocks in session-spawn-flow.ts (emitting
+  // 'pr-candidate' before consuming/emitting the pending pushed branch) -
+  // this test went red (branchPushedIndex > prCandidateIndex); restored the
+  // source order - green again.
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  beforeEach(() => {
+    ptyExitHarness.onExitCallback = null;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('emits branch-pushed before pr-candidate when both are pending at PTY exit', async () => {
+    const context = makeContext();
+    (context.telemetry.takePendingPushedBranch as ReturnType<typeof vi.fn>).mockReturnValue('feature/pending-branch');
+    (context.telemetry.hasPendingPRCommand as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>).mockReturnValue('scrollback bytes');
+
+    const input = makeInput();
+    await performSpawn(input, context);
+
+    expect(ptyExitHarness.onExitCallback).toBeTypeOf('function');
+    ptyExitHarness.onExitCallback!({ exitCode: 0 });
+
+    const emitMock = context.emit as unknown as ReturnType<typeof vi.fn>;
+    const eventOrder = emitMock.mock.calls.map((call) => call[0] as string);
+    const branchPushedIndex = eventOrder.indexOf('branch-pushed');
+    const prCandidateIndex = eventOrder.indexOf('pr-candidate');
+
+    // Both fallbacks must actually have fired (the preconditions were set up
+    // to make both true) ...
+    expect(branchPushedIndex).toBeGreaterThanOrEqual(0);
+    expect(prCandidateIndex).toBeGreaterThanOrEqual(0);
+    // ... and branch-pushed must land on the queue first.
+    expect(branchPushedIndex).toBeLessThan(prCandidateIndex);
+
+    expect(emitMock.mock.calls[branchPushedIndex]).toEqual(['branch-pushed', input.id, 'feature/pending-branch']);
+    expect(emitMock.mock.calls[prCandidateIndex]).toEqual(['pr-candidate', input.id, 'scrollback bytes']);
   });
 });

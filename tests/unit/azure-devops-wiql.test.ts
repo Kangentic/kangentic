@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { buildWiqlQuery, escapeWiqlString } from '../../src/main/boards/adapters/azure-devops/wiql';
+import { buildWiqlQuery, buildWorkItemIdsWiql, escapeWiqlString } from '../../src/main/boards/adapters/azure-devops/wiql';
 
 describe('WIQL query building', () => {
   describe('escapeWiqlString', () => {
@@ -56,6 +56,37 @@ describe('WIQL query building', () => {
     it('ignores empty or whitespace-only search queries', () => {
       const query = buildWiqlQuery('MyProject', undefined, '   ');
       expect(query).not.toContain('[System.Title] CONTAINS');
+    });
+
+    it('adds a changed-since filter when given', () => {
+      const query = buildWiqlQuery('MyProject', 'all', undefined, undefined, '2026-01-02T03:04:05.000Z');
+      expect(query).toContain(`[System.ChangedDate] >= '2026-01-02T03:04:05.000Z'`);
+    });
+
+    it('omits the changed-since filter when not given', () => {
+      const query = buildWiqlQuery('MyProject', 'open');
+      // The SELECT/ORDER BY always mention ChangedDate; the FILTER (>=) must not appear.
+      expect(query).not.toContain('[System.ChangedDate] >=');
+    });
+
+    it('ignores an empty changed-since watermark', () => {
+      const query = buildWiqlQuery('MyProject', undefined, undefined, undefined, '   ');
+      expect(query).not.toContain('[System.ChangedDate] >=');
+    });
+  });
+
+  describe('buildWorkItemIdsWiql', () => {
+    it('selects only the id, filtered by project', () => {
+      const query = buildWorkItemIdsWiql('MyProject');
+      expect(query).toContain('SELECT [System.Id]');
+      expect(query).toContain(`[System.TeamProject] = 'MyProject'`);
+      expect(query).not.toContain('[System.State]');
+      expect(query).not.toContain('[System.Title]');
+    });
+
+    it('adds an iteration-path filter when given', () => {
+      const query = buildWorkItemIdsWiql('MyProject', 'MyProject\\Sprint 1');
+      expect(query).toContain(`[System.IterationPath] UNDER 'MyProject\\Sprint 1'`);
     });
   });
 });

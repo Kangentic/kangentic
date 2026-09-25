@@ -1,5 +1,4 @@
 import * as sherpa from 'sherpa-onnx-node';
-import type { DictationEngineInfo } from '../../../shared/types';
 import type {
   CreateSessionOptions,
   ResolvedModel,
@@ -7,15 +6,7 @@ import type {
   TranscriptionEngineSession,
 } from './transcription-engine';
 import { concatInt16ToFloat32 } from '../audio/pcm';
-
-export const SHERPA_WHISPER_INFO: DictationEngineInfo = {
-  id: 'whisper-cpp',
-  displayName: 'Accurate (offline)',
-  streaming: false,
-  punctuation: true,
-  license: 'CC-BY-4.0 / MIT',
-  requiresModelDownload: true,
-};
+import { SHERPA_WHISPER_INFO } from './engine-infos';
 
 /**
  * The accurate offline path, model-driven via sherpa-onnx `OfflineRecognizer`.
@@ -54,6 +45,18 @@ export class SherpaWhisperEngine implements TranscriptionEngine {
     const recognizer = this.recognizer;
     if (!recognizer) throw new Error('Offline engine not loaded');
     let frames: Int16Array[] = [];
+    /** The final decode while it is on the threadpool, or null. This engine only
+     *  ever decodes once per session, but that one pass is the longest of the
+     *  utterance and a cancel can land on top of it, so `drain()` has something
+     *  real to wait out. */
+    let decodeInFlight: Promise<string> | null = null;
+
+    const decode = async (samples: Float32Array): Promise<string> => {
+      const stream = recognizer.createStream();
+      stream.acceptWaveform({ sampleRate: 16000, samples });
+      const result = await recognizer.decodeAsync(stream);
+      return result.text.trim();
+    };
 
     return {
       push(pcm: Int16Array): void {
@@ -64,16 +67,26 @@ export class SherpaWhisperEngine implements TranscriptionEngine {
         const samples = concatInt16ToFloat32(frames);
         frames = [];
         if (samples.length === 0) return '';
-        const stream = recognizer.createStream();
-        stream.acceptWaveform({ sampleRate: 16000, samples });
-        const result = await recognizer.decodeAsync(stream);
-        return result.text.trim();
+        decodeInFlight = decode(samples);
+        try {
+          return await decodeInFlight;
+        } finally {
+          decodeInFlight = null;
+        }
       },
       cancel(): void {
         frames = [];
       },
       dispose(): void {
         frames = [];
+      },
+      async drain(): Promise<void> {
+        // cancel()/dispose() are void by contract, so the final decode outlives
+        // them whenever a cancel lands mid-finalize - which TranscriptionService
+        // sends on every finalize timeout, precisely when a decode is slow enough
+        // to still be running. The worker waits on this before releasing the
+        // engine.
+        await decodeInFlight?.catch(() => undefined);
       },
     };
   }

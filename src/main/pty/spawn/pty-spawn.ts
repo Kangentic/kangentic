@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
-import { isUncPath, isCmdShell } from '../../../shared/paths';
+import { isUncPath, isCmdShell, isPowerShellShell } from '../../../shared/paths';
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
+import { reportHandledError } from '../../analytics/error-reporting';
 
 /** Shell executable + args, split from a user-facing shell spec. */
 export interface ShellInvocation {
@@ -32,7 +33,7 @@ export function resolveShellArgs(shell: string): ShellInvocation {
     return { exe: executable, args: parts.slice(1) };
   }
   if (shellName.includes('cmd')) return { exe: shell, args: [] };
-  if (shellName.includes('powershell') || shellName.includes('pwsh')) {
+  if (isPowerShellShell(shellName)) {
     return { exe: shell, args: ['-NoLogo'] };
   }
   if (shellName.includes('fish') || shellName.includes('nu')) {
@@ -91,13 +92,29 @@ export function resolveShellArgs(shell: string): ShellInvocation {
  * measured shut while TERM was unset - see `scrollRegionSuffix()` in
  * `src/main/pty/buffer/headless-frame.ts` for the guard and the measurement.
  *
+ * Two host-advertising keys are deliberately NOT defaulted, unlike VS Code's
+ * integrated terminal (which exports `COLORTERM=truecolor` and
+ * `TERM_PROGRAM=vscode` unconditionally):
+ * - `COLORTERM`: Claude Code already selects truecolor from
+ *   `TERM=xterm-256color` alone. Measured 2026-08-28 (claude 2.1.250,
+ *   `claude --debug` under an env mirroring this function, COLORTERM absent):
+ *   222 truecolor `38;2` / `48;2` SGR sequences, zero indexed `38;5`. A
+ *   default would change nothing; re-measure only if a CLI upgrade visibly
+ *   drops to indexed color.
+ * - `TERM_PROGRAM`: host identity, so a fake host name would misreport, and
+ *   the same debug log enumerates it among the inputs of the DECSTBM
+ *   capability gate (`TERM_PROGRAM=unset` in the gate line quoted in
+ *   headless-frame.ts). Setting it risks reopening that gate, not just
+ *   cosmetics.
+ *
  * `platform` is injectable for tests (cross-platform parity); production
  * callers omit it.
  */
 
 /**
- * The one `CLAUDE_CODE_*` key that survives the strip, and its Windows
- * default. Unlike the identity markers above, this is a renderer tuning flag:
+ * The first of the two `CLAUDE_CODE_*` keys that survive the strip (the
+ * keeplist is KEEPLISTED_CLAUDE_CODE_KEYS below), and its Windows default.
+ * Unlike the identity markers above, this is a renderer tuning flag:
  * it cannot re-parent a child session. Claude Code's fullscreen TUI
  * intermittently omits history entries from its incremental scrolled-view
  * updates (deep scroll up, ride back down: entries vanish with the layout
@@ -109,10 +126,34 @@ export function resolveShellArgs(shell: string): ShellInvocation {
  * user's opt-out) always wins, and non-Claude agents ignore the var, the
  * same argument the strip itself relies on. PARTIAL mitigation: it removes
  * the dominant closed-up flavor, while the rarer blank-band flavor (a
- * window-assembly defect upstream) persists. Unwind this default once the
- * upstream issue is fixed.
+ * window-assembly defect upstream) persists.
+ * UNWIND(claude-code#83714): drop this default once the upstream issue is
+ * fixed.
  */
 export const FULL_REPAINT_ENV_KEY = 'CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT';
+
+/**
+ * The second keeplisted renderer tuning flag - keeplisted so a user's
+ * exported value survives the strip, but deliberately NOT defaulted. A
+ * default of 3 (vim's, per the fullscreen docs) was shipped and reverted the
+ * same day: the fullscreen TUI's differential renderer intermittently
+ * mis-assembles frames on large scrolled jumps, pipe reads coalesce rapid
+ * wheel reports into one jump, and a 3x multiplier tripled every such jump
+ * past the corruption threshold (dogfooded; single 3-line jumps rendered
+ * clean under controlled injection, coalesced multiples spliced rows). The
+ * CLI default of 1 matches the native terminals verified clean. Non-Claude
+ * agents ignore the var, the same argument the strip itself relies on.
+ * UNWIND(claude-code#83714): the keeplist entry itself stays (a user's
+ * exported value must always survive the strip), but the no-default stance
+ * exists because of the same upstream mis-assembly - re-evaluate a default
+ * alongside the rest of the unwind when upstream fixes the renderer.
+ */
+export const SCROLL_SPEED_ENV_KEY = 'CLAUDE_CODE_SCROLL_SPEED';
+
+const KEEPLISTED_CLAUDE_CODE_KEYS: ReadonlySet<string> = new Set([
+  FULL_REPAINT_ENV_KEY,
+  SCROLL_SPEED_ENV_KEY,
+]);
 
 export function buildSpawnEnv(
   inputEnv: Record<string, string> | undefined,
@@ -126,7 +167,7 @@ export function buildSpawnEnv(
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value === undefined) continue;
-    if (key === 'CLAUDECODE' || (key.startsWith('CLAUDE_CODE_') && key !== FULL_REPAINT_ENV_KEY)) continue;
+    if (key === 'CLAUDECODE' || (key.startsWith('CLAUDE_CODE_') && !KEEPLISTED_CLAUDE_CODE_KEYS.has(key))) continue;
     if (key === 'NO_COLOR' && stripNoColor) continue;
     result[key] = value;
   }
@@ -197,16 +238,12 @@ export function resolveSpawnCwd(input: {
     });
   }
 
-  const lowerShellName = input.shellName.toLowerCase();
   let cwdFixupCommand: string | null = null;
   if (input.platform === 'win32') {
     if (isUncPath(effectiveCwd) && isCmdShell(input.shellName)) {
       cwdFixupCommand = `pushd "${effectiveCwd}"`;
       effectiveCwd = os.homedir();
-    } else if (
-      (lowerShellName.includes('powershell') || lowerShellName.includes('pwsh'))
-      && /[[\]]/.test(effectiveCwd)
-    ) {
+    } else if (isPowerShellShell(input.shellName) && /[[\]]/.test(effectiveCwd)) {
       const escapedCwd = effectiveCwd.replace(/'/g, "''");
       cwdFixupCommand = `Set-Location -LiteralPath '${escapedCwd}'`;
     }
@@ -299,5 +336,15 @@ export function recordSpawnFailure(params: {
     errno: params.diagnostic.errno,
     platform: process.platform,
     arch: process.arch,
+  });
+  // Handled failure: forward to Sentry with the diagnostic as tags so spawn
+  // failures group by errno/shell and are diagnosable beyond a count. The
+  // message is the sanitized form (paths already stripped upstream of Sentry's
+  // own normalization, since this string is hand-assembled, not a stack).
+  reportHandledError(new Error(sanitizeErrorMessage(params.diagnostic.errorMessage)), {
+    source: 'pty_spawn',
+    errno: params.diagnostic.errno ?? 'none',
+    shellExists: String(params.diagnostic.shellExists),
+    cwdExists: String(params.diagnostic.cwdExists),
   });
 }

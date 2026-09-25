@@ -99,9 +99,18 @@ export class SessionFileManager {
    * too - callers must be sure the session is never coming back.
    */
   detachAndDelete(sessionId: string): void {
-    this.cleanupAndRemoveFiles(sessionId);
+    // Close the watchers BEFORE removing the directory they watch. Both halves
+    // are synchronous today, so no watcher event is delivered in between and
+    // the old order was harmless - but an fs.watch left armed over its own
+    // target's deletion is precisely the shape that pins a CPU core on Windows
+    // (see the storm guard in readers/file-watcher.ts). Ordering it correctly
+    // keeps that true if either half ever grows an await.
+    //
+    // End state is unchanged: statusFileReader.detach unlinks status.json and
+    // events.jsonl, then the recursive+force rm removes the directory.
     this.sessionHistoryReader.detach(sessionId);
     this.statusFileReader.detach(sessionId);
+    this.cleanupAndRemoveFiles(sessionId);
   }
 
   /**

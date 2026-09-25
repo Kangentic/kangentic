@@ -3,6 +3,7 @@ import { Search, Filter, X } from 'lucide-react';
 import { CountBadge } from './CountBadge';
 import { FilterPopover } from './FilterPopover';
 import { OverlayPopover } from './OverlayPopover';
+import type { ToolbarControlCollapse } from './board/toolbar-collapse';
 
 interface ToolbarSearchFilterProps {
   searchValue: string;
@@ -21,6 +22,8 @@ interface ToolbarSearchFilterProps {
   labelFilters: Set<string>;
   onToggleLabel: (label: string) => void;
   onClearFilters: () => void;
+  /** The container-query pair that sheds the Filter button's text. See toolbar-collapse.ts. */
+  filterCollapse?: ToolbarControlCollapse;
 }
 
 /**
@@ -47,6 +50,7 @@ export function ToolbarSearchFilter({
   labelFilters,
   onToggleLabel,
   onClearFilters,
+  filterCollapse,
 }: ToolbarSearchFilterProps) {
   const [showFilterPopover, setShowFilterPopover] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
@@ -70,8 +74,10 @@ export function ToolbarSearchFilter({
   }, [showFilterPopover]);
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="relative">
+    // `flex-1 min-w-0` makes the search the child that gives when the toolbar row
+    // narrows, so the action button never has to. See toolbar-collapse.ts.
+    <div className="flex items-center gap-2 flex-1 min-w-0">
+      <div className="relative flex-1 min-w-0 max-w-[21rem]">
         <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled" />
         <input
           ref={searchInputRef}
@@ -79,7 +85,12 @@ export function ToolbarSearchFilter({
           value={searchValue}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder={searchPlaceholder}
-          className="w-[21rem] bg-surface/50 border border-edge/50 rounded-md text-sm text-fg placeholder-fg-muted pl-8 pr-8 py-1.5 outline-none focus:border-edge-input"
+          // The right inset exists only to clear the X button, which renders only
+          // when there is a value, so an empty field gets 22px of its own text
+          // area back at every width.
+          className={`w-full min-w-0 bg-surface/50 border border-edge/50 rounded-md text-sm text-fg placeholder-fg-muted pl-8 py-1.5 outline-none focus:border-edge-input ${
+            searchValue ? 'pr-8' : 'pr-2.5'
+          }`}
           data-testid={searchTestId}
           aria-label={searchPlaceholder}
         />
@@ -96,20 +107,22 @@ export function ToolbarSearchFilter({
         )}
       </div>
 
-      <div className="relative">
+      <div className="relative shrink-0">
         <button
           ref={filterButtonRef}
           type="button"
           onClick={() => setShowFilterPopover(!showFilterPopover)}
-          className={`relative flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded transition-colors ${
+          title="Filter"
+          aria-label="Filter"
+          className={`relative flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${filterCollapse ? filterCollapse.button : 'px-3'} ${
             hasActiveFilters
               ? 'text-accent-fg border-accent/50 bg-accent-bg/10'
               : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
           }`}
           data-testid={filterTestId}
         >
-          <Filter size={14} />
-          Filter
+          <Filter size={14} className="shrink-0" />
+          <span className={filterCollapse?.label}>Filter</span>
           {hasActiveFilters && (
             <CountBadge
               count={priorityFilters.size + labelFilters.size}
@@ -123,10 +136,18 @@ export function ToolbarSearchFilter({
           open={showFilterPopover}
           popoverRef={filterPopoverRef}
           transformOrigin="top right"
+          data-testid={`${filterTestId}-popover`}
           // popover-inflow-ok: this renders only in the ViewToggle toolbar row,
           // which sits ABOVE the board/backlog content wells (AppLayout's
           // `flex-1 min-h-0 overflow-hidden`), so there is no clipping ancestor.
           // Portal + fixed if this ever moves inside a scroller.
+          //
+          // The row is now an `@container`, which makes it a containing block for
+          // positioned descendants and gives it its own stacking context. That
+          // does NOT clip (containment here is layout and size, never paint), and
+          // this menu opens DOWNWARD over the board well below, so the change is
+          // invisible - but it is the kind of thing that stops being true quietly,
+          // so `toolbar-narrow-window.spec.ts` asserts nothing paints over it.
           className="absolute right-0 top-full mt-1 z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-2 w-[260px] max-h-[380px] overflow-y-auto"
         >
           <FilterPopover

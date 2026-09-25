@@ -24,11 +24,14 @@
  * resolves task context by taskId and cools down per (device, taskId,
  * category) instead of per session.
  *
- * Per registered device: presence suppression (an established bridge
- * session means the user is already watching from that device), then the
- * device's own category preferences (registered via register-push;
+ * Per registered device: presence suppression (a bridge session reporting
+ * 'connected' means the user is already watching from that device), then
+ * the device's own category preferences (registered via register-push;
  * absent means every category), then a 30s per (device, session,
- * category) cooldown. Only data.blob carries real content.
+ * category) cooldown - stamped before the send so a synchronous burst of
+ * the same category cannot double up, but released again if the send
+ * itself fails, so a genuine delivery failure never spends a real
+ * notification's retry window. Only data.blob carries real content.
  *
  * THE VISIBLE TITLE/BODY ARE iOS-ONLY, and that is load-bearing rather
  * than an optimisation. On Android, expo-notifications presents the
@@ -57,7 +60,7 @@
  * A DeviceNotRegistered ticket drops the registration.
  */
 import { hexToBytes, sealPushEnvelope, type PushCategory, type PushEnvelopePlaintext } from '@kangentic/protocol';
-import type { ActivityReason, ActivityState } from '../../../shared/types';
+import type { ActivityReason, ActivityState, MobileDeviceConnectionState } from '../../../shared/types';
 import type { SessionManager } from '../../pty/session-manager';
 import type { PushRegistration, PushRegistrationStore } from './push-registration-store';
 import { createExpoWakeChannel, type FetchLike } from './expo-push-client';
@@ -102,11 +105,58 @@ export interface PushTaskContext {
   taskTitle: string;
 }
 
+/**
+ * Devices whose phone is genuinely attached right now, so a push would
+ * land on a screen the user is already looking at.
+ *
+ * Keys off connectionState, NOT the raw isEstablished. On a silent death
+ * (a phone that dies with no clean close) nothing nulls the bridge
+ * session's streams, so isEstablished stays true for the whole relay
+ * keepalive sweep - 30 to 60s - while the presence probe has already
+ * concluded 'offline'. Suppressing on that window is permanent for the
+ * turn: the idle settle timer is one-shot and lastActivityState already
+ * holds 'idle' by the time presence clears, so nothing re-arms.
+ *
+ * The 2s reconnect grace reports 'connected' with the streams already
+ * dropped (bridge-session.ts's connectionState getter). Suppressing there
+ * is correct, not a leak of the same bug: the phone was demonstrably
+ * present a moment ago and the socket is coming back.
+ */
+export function collectConnectedDeviceIds(
+  sessions: Iterable<[string, { connectionState: MobileDeviceConnectionState }]>,
+): Set<string> {
+  const connectedDeviceIds = new Set<string>();
+  for (const [deviceId, session] of sessions) {
+    if (session.connectionState === 'connected') connectedDeviceIds.add(deviceId);
+  }
+  return connectedDeviceIds;
+}
+
+/**
+ * Strips any Expo push token out of text before it reaches a log line.
+ *
+ * The failure detail a send reports is Expo's own ticket `message` - text
+ * this codebase neither authors nor constrains - and Expo does quote the
+ * device's token back inside it: its documented not-registered message is
+ * literally `"ExponentPushToken[...]" is not a registered push
+ * notification recipient`. That particular ticket is intercepted earlier
+ * by `details.error`, but only when the response carries the shape
+ * `extractTicket` expects, and nothing stops another ticket from quoting
+ * the token the same way. Logging the detail verbatim would put a live
+ * push capability in the desktop log, which is the one thing the
+ * notifier's header promises it never does. What survives the
+ * substitution is the diagnostic half: the reason, the status code, and
+ * Expo's description of the problem.
+ */
+export function redactPushTokens(text: string): string {
+  return text.replace(/Expo(?:nent)?PushToken\[[^\]]*\]/g, 'ExponentPushToken[redacted]');
+}
+
 export interface PushNotifierOptions {
   sessionManager: Pick<SessionManager, 'on' | 'off' | 'getActivityStatsSnapshot'>;
   registrationStore: Pick<PushRegistrationStore, 'list' | 'remove'>;
-  /** Devices with a live established bridge session - already watching, never pinged. */
-  getEstablishedDeviceIds: () => Set<string>;
+  /** Devices whose bridge session reports 'connected' - already watching, never pinged. */
+  getConnectedDeviceIds: () => Set<string>;
   resolveTaskContext: (sessionId: string) => PushTaskContext | null;
   /** For triggers with no session yet (spawn-stalled). Scans by taskId instead. */
   resolveTaskContextByTaskId: (taskId: string) => PushTaskContext | null;
@@ -269,11 +319,11 @@ export class PushNotifier {
   }
 
   private notifyWithContext(taskContext: PushTaskContext, cooldownSubject: string, envelopeSessionId: string, category: PushCategory, detail: string): void {
-    const establishedDeviceIds = this.options.getEstablishedDeviceIds();
+    const connectedDeviceIds = this.options.getConnectedDeviceIds();
     const now = Date.now();
 
     for (const registration of this.options.registrationStore.list()) {
-      if (establishedDeviceIds.has(registration.deviceId)) continue;
+      if (connectedDeviceIds.has(registration.deviceId)) continue;
       // undefined categories means every category (the device's default / an older registration).
       if (registration.categories && !registration.categories.includes(category)) continue;
 
@@ -300,17 +350,25 @@ export class PushNotifier {
         continue; // a malformed stored key must not take down the other devices' sends
       }
       this.cooldowns.set(cooldownKey, now);
-      void this.deliver(registration.deviceId, registration.expoPushToken, registration.platform, category, sealedBlob);
+      void this.deliver(cooldownKey, now, registration.deviceId, registration.expoPushToken, registration.platform, category, sealedBlob);
     }
   }
 
   private async deliver(
+    cooldownKey: string,
+    stampedAt: number,
     deviceId: string,
     expoPushToken: string,
     platform: PushRegistration['platform'],
     category: PushCategory,
     sealedBlob: string,
   ): Promise<void> {
+    // Best-effort: a failed send never propagates into the session
+    // pipeline. It is not silent, though - every non-delivery is logged
+    // below, with the short device id only and never the sealed blob.
+    // The failure detail is Expo's own ticket text rather than ours, and
+    // it names the push token in some cases, so it goes through
+    // redactPushTokens on the way out.
     try {
       // See the file header for why: Android gets a data-only message,
       // iOS gets the placeholder, and neither gets a channelId.
@@ -321,12 +379,36 @@ export class PushNotifier {
         ...placeholder,
         blob: sealedBlob,
       });
-      if (!result.delivered && result.reason === 'device-not-registered') {
+      if (result.delivered) return;
+      if (result.reason === 'device-not-registered') {
+        console.warn(`[mobile-bridge/push-notifier] ${deviceId.slice(0, 8)} is no longer registered with Expo; dropping its push registration`);
         this.options.registrationStore.remove(deviceId);
+        return;
       }
-    } catch {
-      // Best-effort: a failed send never propagates into the session pipeline.
+      // A genuine send failure (network, Expo outage) should not spend
+      // the 30s cooldown window - the phone was never actually notified,
+      // so a later recurrence of the same (device, session, category)
+      // deserves a real retry rather than a silently swallowed one.
+      // Compare-and-clear: only release the stamp this call itself made,
+      // never a fresher one a later notifyWithContext call already set
+      // for the same key while this send was in flight.
+      this.releaseCooldownIfUnclaimed(cooldownKey, stampedAt);
+      console.warn(`[mobile-bridge/push-notifier] ${category} push to ${deviceId.slice(0, 8)} failed:`, result.reason, redactPushTokens(result.detail));
+    } catch (error) {
+      this.releaseCooldownIfUnclaimed(cooldownKey, stampedAt);
+      // The stack is kept, not reduced to the message: sendExpoPush never
+      // throws, so this branch only ever fires for a replacement
+      // WakeChannel, where the stack is the whole diagnostic. It is
+      // redacted for the same reason the detail above is - a thrown
+      // client may well have put the token it was posting to into its
+      // own error text.
+      const thrownText = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      console.warn(`[mobile-bridge/push-notifier] ${category} push to ${deviceId.slice(0, 8)} threw:`, redactPushTokens(thrownText));
     }
+  }
+
+  private releaseCooldownIfUnclaimed(cooldownKey: string, stampedAt: number): void {
+    if (this.cooldowns.get(cooldownKey) === stampedAt) this.cooldowns.delete(cooldownKey);
   }
 
   /** Synchronous, per synchronous-shutdown.md: detaches listeners and clears every pending debounce timer. */

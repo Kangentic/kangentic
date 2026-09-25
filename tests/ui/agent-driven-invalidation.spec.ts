@@ -35,7 +35,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, toastCountRightNow } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -638,19 +638,6 @@ test.describe('useAgentDrivenInvalidation - current project create renders the c
 // ---------------------------------------------------------------------------
 
 test.describe('useAgentDrivenInvalidation - task:sessionResync is a quiet reconcile', () => {
-  /**
-   * Snapshot the current toast count without Playwright's own assertion
-   * retry. `expect(locator).toHaveCount(0)` auto-retries for up to the
-   * expect timeout (default ~5s), and the mock config's toast
-   * `durationSeconds` is 4, so a wrongly-raised toast would auto-dismiss
-   * itself WITHIN that retry window and the assertion would report a false
-   * pass once it disappeared. A single un-retried `.count()` read is the
-   * only way to correctly assert "no toast right now".
-   */
-  async function toastCountRightNow(page: Page): Promise<number> {
-    return page.getByTestId('toast').count();
-  }
-
   test('same-project resync reloads the board and raises no toast', async () => {
     const { browser, page } = await launch();
 
@@ -748,11 +735,6 @@ test.describe('useAgentDrivenInvalidation - task:sessionResync is a quiet reconc
 // ---------------------------------------------------------------------------
 
 test.describe('useAgentDrivenInvalidation - task:prLinkChanged is a quiet reconcile', () => {
-  /** See the identical helper above: a retrying assertion false-passes here. */
-  async function toastCountRightNow(page: Page): Promise<number> {
-    return page.getByTestId('toast').count();
-  }
-
   test('same-project PR-link change reloads the board and raises no toast', async () => {
     const { browser, page } = await launch();
 
@@ -854,6 +836,101 @@ test.describe('useAgentDrivenInvalidation - task:prLinkChanged is a quiet reconc
       // The sweep runs per project, so a background project's PR refresh must
       // still drop that project's warm-switch snapshot, or switching back shows
       // pre-refresh PR chips.
+      await page.evaluate(() => {
+        (window as unknown as { __resetIpcCallCounts: () => void }).__resetIpcCallCounts();
+      });
+      await page.locator('[role="button"]:has-text("Inv Beta")').click();
+      await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
+
+      await expect
+        .poll(async () => {
+          const counts = await page.evaluate(() =>
+            (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+          );
+          return (counts['tasks.list'] ?? 0) + (counts['swimlanes.list'] ?? 0);
+        }, { timeout: 3000 })
+        .toBeGreaterThan(0);
+
+      expect(await toastCountRightNow(page)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test: task:movedByMobile push is a quiet invalidation (regression guard)
+//
+// The third toast-free channel, and the one that fixed a board that stayed
+// wrong for hours. A task moved to Done from the phone left the desktop still
+// rendering its card in the old column: the mobile bridge called handleTaskMove
+// directly and handleTaskMove announced nothing, so no reload ever ran. The
+// stale card was not merely cosmetic - opening it and pressing Resume failed
+// with "This task is complete", because the DB had long since archived it.
+//
+// It must reload the board while raising no toast. Reusing the agent channel
+// would have been the easy fix and is exactly what this guards against: its
+// listener says "Task updated by agent", and no agent was involved in a card
+// the user dragged on their own phone.
+// ---------------------------------------------------------------------------
+
+test.describe('useAgentDrivenInvalidation - task:movedByMobile is a quiet invalidation', () => {
+  test('same-project mobile move reloads the board and raises no toast', async () => {
+    const { browser, page } = await launch();
+
+    try {
+      await warmBothProjectsAndResetCounter(page);
+
+      // Alpha is current. Fire a mobile-move push targeting Alpha.
+      await page.evaluate((currentProjectId) => {
+        (window as unknown as { __mockFireTaskMovedByMobile: (projectId?: string) => void })
+          .__mockFireTaskMovedByMobile(currentProjectId);
+      }, PROJECT_A_ID);
+
+      // The debounced loadBoard (250ms) refetches tasks/swimlanes. This reload
+      // is the entire fix: without it the card sits in the column it just left.
+      await expect
+        .poll(async () => {
+          const counts = await page.evaluate(() =>
+            (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+          );
+          return (counts['tasks.list'] ?? 0) + (counts['swimlanes.list'] ?? 0);
+        }, { timeout: 3000 })
+        .toBeGreaterThan(0);
+
+      expect(await toastCountRightNow(page)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('background-project mobile move invalidates that project cache, does not reload the active board, and raises no toast', async () => {
+    const { browser, page } = await launch();
+
+    try {
+      await warmBothProjectsAndResetCounter(page);
+
+      // Alpha is current. Fire a mobile-move push targeting Beta (background).
+      await page.evaluate((backgroundProjectId) => {
+        (window as unknown as { __mockFireTaskMovedByMobile: (projectId?: string) => void })
+          .__mockFireTaskMovedByMobile(backgroundProjectId);
+      }, PROJECT_B_ID);
+
+      // Give any (incorrect) same-project reload a budget to fire, then assert
+      // Alpha's own board did NOT refetch. (Intentional fixed wait - negative
+      // assertion; cannot poll for non-occurrence.)
+      await page.waitForTimeout(500);
+      const countsAfterPush = await page.evaluate(() =>
+        (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+      );
+      expect(countsAfterPush['tasks.list'] ?? 0).toBe(0);
+      expect(countsAfterPush['swimlanes.list'] ?? 0).toBe(0);
+      expect(await toastCountRightNow(page)).toBe(0);
+
+      // Reset the counter, then switch to Beta. Because the push invalidated
+      // Beta's warm-switch cache, the switch must trigger a cold IPC fan-out -
+      // otherwise a phone move to a background project would still be stale
+      // when the user got back to it.
       await page.evaluate(() => {
         (window as unknown as { __resetIpcCallCounts: () => void }).__resetIpcCallCounts();
       });

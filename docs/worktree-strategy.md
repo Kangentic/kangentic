@@ -47,14 +47,19 @@ bonus rather than a fix.
 - Non-null: used verbatim. This covers every worktree created before the numeric scheme, which
   keeps its legacy `{slug}-{taskId8}` name. Nothing on disk is ever renamed or relocated.
 - Null: the folder is `String(display_id)`, and the caller persists it via
-  `TaskRepository.recordWorktree`, which writes path, branch and folder in one transaction.
+  `TaskRepository.recordWorktree`, which writes path, branch, folder, and the base the worktree
+  was observed to be cut from, in one transaction. That last one is omitted rather than nulled
+  when the caller cannot observe it, so a reattach to an existing branch cannot erase a base an
+  earlier real creation recorded.
 - Invariant: whenever `worktree_path` is non-null,
   `path.basename(worktree_path) === worktree_folder`.
 
 This is load-bearing rather than cosmetic. Moving a task to Done nulls `worktree_path`, so moving it
 back out is a **fresh creation**. If it landed at a different path, the agent's transcript would be
-orphaned (Claude keys it by a slug of the cwd, so `--resume` reports "No conversation found") and
-the worktree's browser cookie jar would be dropped (`browserPartitionForWorktree` hashes the path).
+orphaned (Claude keys it by a slug of the cwd, so `--resume` reports "No conversation found"). The
+browser cookie jar is no longer a reason here: it is keyed by task identity
+(`browserPartitionForTask`), so a path change cannot drop it - only the transcript keeps this
+invariant.
 
 For a task that predates the column and has already been through Done, both `worktree_path` and
 `worktree_folder` are null. `TaskRepository.recoverLegacyWorktreeFolder` recovers the original name
@@ -78,9 +83,12 @@ The configured base branch is checked in priority order:
 
 1. Task's `base_branch` field (per-task override). An empty string is treated as not set (falls
    through to source 2), not as an explicit, guaranteed-unresolvable candidate.
-2. Action config's `baseBranch` (per-transition override)
-3. `kangentic.json` `defaultBaseBranch` (team-shared, overridable via `kangentic.local.json`)
-4. `config.git.defaultBaseBranch` (per-user fallback, defaults to `main`)
+2. `kangentic.json` `defaultBaseBranch` (team-shared, overridable via `kangentic.local.json`)
+3. `config.git.defaultBaseBranch` (per-user fallback, defaults to `main`)
+
+There is no per-automation override. The retired `create_worktree` action carried a `baseBranch`
+in its config; automations do not create worktrees at all, because the move path's
+`ensureTaskWorktree` already does.
 
 That configured value is then **verified against the repo's actual refs** by
 `resolveWorktreeBase` (`src/main/git/base-branch.ts`), called from
@@ -104,42 +112,77 @@ When a fallback candidate wins (e.g. `master` for an unconfigured `main`), it is
 new default too, so the branch name stays unprefixed instead of being namespaced under the
 substitute (see Branch Naming above). An explicit per-task base is never substituted.
 
-**Known gap:** only source 1 (the task's `base_branch`) counts as "explicit". Sources 2 through 4,
-including a per-transition `create_worktree` action's `baseBranch`, are folded into
-`defaultBaseBranch` by `executeCreateWorktree` (`transition-engine.ts`) and therefore DO fall
-through to `main` / `master`. So an action configured with a base branch the repo does not have
-silently creates the worktree from `main` instead of failing, which is the substitution the
-per-task rule exists to prevent. Promoting it to an explicit base would also flip its branch
-naming from unprefixed to namespaced, so the fix is not mechanical.
+**Known gap:** only source 1 (the task's `base_branch`) counts as "explicit". Sources 2 and 3 are
+both `defaultBaseBranch` and therefore DO fall through to `main` / `master`. So a project
+configured with a base branch the repo does not have silently creates the worktree from `main`
+instead of failing, which is the substitution the per-task rule exists to prevent. Promoting a
+configured default to an explicit base would also flip its branch naming from unprefixed to
+namespaced, so the fix is not mechanical.
 
 The chosen base branch is stored in the worktree's git config as `kangentic.baseBranch` so agents can read it without filesystem access.
 
 ### Concurrency
 
-All git-mutating operations (create, remove, branch delete, prune, checkout, rename) are serialized per project via a priority-aware queue (`WorktreeManager.withGitLock` / instance `withLock`). Exactly one operation runs at a time per project (preserving the `.git` lock-contention guarantee), but waiting operations are ordered by `GitQueuePriority` - `USER` (0, the default) runs ahead of `BACKGROUND` (10, e.g. retry cleanups and background prune), with FIFO order within a priority band. This keeps a user-initiated spawn from head-of-line-blocking behind a slow or failing background cleanup. Different projects run independently. `removeWorktree`'s `{ timeoutMs, removalProfile }` options bound how hard a removal retries so one stuck delete cannot hold the queue: `removalProfile` is one of `thorough` (full backoff; the default, used where a failure surfaces an error to the user such as worktree create or project delete), `moderate` (a pinned path fails in a few seconds; used on the user-facing Done-move and cleanup paths so a held handle never holds the queue for minutes), or `fast` (a single attempt; used by the background startup retry pass). `clearQueue` (on project close) rejects any still-waiting jobs so their callers do not hang.
+All git-mutating operations (create, remove, branch delete, prune, checkout, rename) are serialized per project via a priority-aware queue (`WorktreeManager.withGitLock` / instance `withLock`). Exactly one operation runs at a time per project (preserving the `.git` lock-contention guarantee), but waiting operations are ordered by `GitQueuePriority` - `USER` (0, the default) runs ahead of `BACKGROUND` (10, e.g. retry cleanups and background prune), with FIFO order within a priority band. This keeps a user-initiated spawn from head-of-line-blocking behind a slow or failing background cleanup. Different projects run independently. `removeWorktree`'s `{ timeoutMs, removalProfile }` options bound how hard a removal retries so one stuck delete cannot hold the queue: `removalProfile` is one of `thorough` (full backoff under a 30s wall clock; the default, used where a failure surfaces an error to the user such as worktree create or project delete), `moderate` (a pinned path fails in a few seconds; used on the user-facing Done-move and cleanup paths so a held handle never holds the queue for minutes), or `fast` (a single attempt; used by the background startup retry pass). `clearQueue` (on project close) rejects any still-waiting jobs so their callers do not hang.
 
-When a removal fails because a process still pins the worktree, `removeWorktree` reaps orphaned processes whose command line points inside that worktree path (a zombie Electron/node left by an agent's E2E run or `/preview`) and retries once. This reap is lazy by design: a clean Done-move never runs the OS process scan, so dragging a task to Done pays no added cost; the scan fires only on the rare delete a held handle actually blocks. It is skipped under `NODE_ENV=test`, where the E2E leak janitor owns process sweeps instead.
+`thorough` is the only profile with a clock, because it was the only one whose budget was otherwise unbounded. Its retry ladder looks bounded but is not: Node applies `{ maxRetries, retryDelay }` per locked path and the ladder compounds through the recursion, so the ceiling scales with the tree rather than with time. One observed create-worktree ground for 402716ms on a directory pinned by a live process, holding the queue the whole time. Measured directly against a two-directory tree pinned by a live process's cwd on Windows, the unbudgeted call took 668215ms against the budgeted call's 29832ms, so the incident's number was not an outlier. Under a budget, `removeWithRetry` turns Node's per-path retry off and drives every retry itself until the deadline, which caps the worst case at one fast tree walk past it. The budget covers a whole removal attempt (node_modules, `git worktree remove`, manual rm), and the retry that follows a successful reap gets a shorter 10s one, since a removal that is still stuck after the holder is dead will not be fixed by grinding. The node_modules step is capped again at the smaller of 10s and half the remaining budget: it runs first and `removeNodeModulesPath` swallows its own errors, so a locked node_modules would otherwise grind to the deadline, return normally, and leave the two steps that matter running on the 1s floor with git's real verdict replaced by a timeout abort. A job past 60s logs its `[GIT_QUEUE] ... still running` heartbeat at `warn` rather than `log`, so it survives into a production log tail.
+
+The bound matters beyond the wait: it is what makes the reap below reachable at all. The reap runs only on `tryGitRemoval`'s failure, and without a clock attempt 1 never returned, so the recovery code sat behind a call that never came back.
+
+### Reaping processes that pin a worktree
+
+A process still running inside a worktree blocks its removal on Windows, which will not delete a directory that is a live process's current directory. That leaves a husk with no git admin entry, and the next worktree creation on that path hangs. Two mechanisms clear it, and they cover different failure modes.
+
+**At session end (`src/main/pty/session-tree-reap.ts`).** This is the one that catches the common case: an agent backgrounds a dev server, the session ends, and the server keeps running. It reads the descendant PIDs the bg-shell watcher already published (`BgShellWatcher.getCapturedDescendants`) and kills them. It runs on terminal transitions only - move to Done, move to To Do or Backlog, and task delete - so pressing Stop or parking a task in an auto-spawn-off column leaves a dev server up for manual testing.
+
+The snapshot has to be taken BEFORE the PTY is killed: the watcher stops publishing once the session ends, and on POSIX the children are reparented to init immediately. It costs nothing, because the watcher walks that subtree every enumerating cycle anyway and previously discarded it. Nothing on this path enumerates processes: a cold `powershell` spawn measures ~670ms even for a pid-only projection, and the drag-to-Done path cannot absorb that. When no fresh snapshot exists the reap is a no-op rather than falling back to a scan.
+
+**At removal failure (`reapProcessesForWorktree`).** The backstop for a tree link that is already gone, typically because Kangentic quit or crashed with the session live. It scans every process image for the worktree path in the command line or the executable path, and retries the removal once. Lazy by design: a clean Done-move never runs the OS process scan, so the ~900ms cost lands only on a delete a held handle actually blocked. Skipped under `NODE_ENV=test`, where the E2E leak janitor owns process sweeps instead.
+
+This path keeps the orphan gate: it can reach processes Kangentic never spawned (a terminal the user left `cd`'d into the worktree, an editor), and killing a supervised process would be wrong. It can afford that caution only because the session-end reap above already ends what a session started. A supervised holder is named rather than killed: `describeWorktreeHolders` puts it in the error `createWorktree` surfaces, so the user gets `Held by node.exe (pid 12345)` instead of generic advice to close anything using the path. The holder scan reuses the reap's cached process list, so it costs nothing, and it applies the same needles as the reap so it can never see less than the reap would kill.
+
+`Win32_Process` exposes no current-directory property at all, so neither the removal-time scan nor the holder scan can see a process that references the worktree only through its cwd. Matching cwd on POSIX alone was tried and dropped: it bought little once the session-end reap covered session-spawned processes, and it made behavior diverge by platform in a subsystem whose whole problem is a Windows limitation. That is exactly the shape of the incident this was built for, and it is why the session-end reap (which finds the process by its parent chain, while the chain still exists) is the primary mechanism rather than the hardening. An empty holder list therefore means "no holder we can see", not "no holder".
+
+Four gaps are left that neither mechanism closes, so the pair narrows the problem rather than covering it. Three are false negatives, cases where something that should be killed or named is not. A WSL-hosted session runs its processes inside the VM's own pid namespace, which the watcher's `Win32_Process` walk and the removal-time scan both read as empty, so a dev server leaked from a WSL agent is invisible to both. A session whose SHELL exits while a descendant survives (a user typing `exit`, a shell crash, an OS kill) makes the watcher unregister the session and discard its snapshot, so a later move to Done captures nothing and reaps nothing. And path matching compares normalized strings, so a holder Windows reports under an 8.3 short name or a `\\?\` long-path prefix does not match the needle and is neither killed nor named.
+
+The fourth runs the other way, and is the one worth watching. The session-end reap acts on a snapshot of pids, and a pid that exits can be reassigned by the OS before the watcher's next cycle observes it dead. Skip cycles prune the set by liveness on every poll precisely to shrink that window, but they do not eliminate it: within one cycle gap (2s at base cadence, up to 6s under the adaptive backoff) a recycled pid can still be killed as though it were the leaked process. `session-tree-reap.ts` and `skipCycleSession` both name this in place. It is a residual risk, not a solved problem, and it is the reason the staleness ceiling exists rather than trusting an arbitrarily old snapshot.
+
+The move-failure stale cleanup in `handleTaskMove` runs at `moderate`, not the default `thorough`. Creation just failed on that same path, so a second full-budget grind re-proves what is already known while the user waits on a failure toast and the git queue stays held: measured in a preview, the two thorough passes put the toast about 62s out against about 34s with this profile.
 
 ### When a worktree is NOT created
 
-`ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) returns without creating anything in
-most of these cases, leaving `task.worktree_path` null so the agent's `cwd` falls back to the
-project path and the task runs unisolated in the main checkout. The two `WorktreeManager`-internal
-guards at the top of the table are a partial exception - see the note in each row.
+`ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) creates nothing in these cases, leaving
+`task.worktree_path` null so the agent's `cwd` falls back to the project path and the task runs
+unisolated in the main checkout. Every case is NAMED: `WorktreeManager.ensureWorktree` returns
+`{ skipped: true, reason }` (`WorktreeSkipped`) instead of a bare null, and the caller persists the
+reason to `task.worktree_skip_reason` (the `WorktreeSkipReason` union) via
+`TaskRepository.setWorktreeSkipReason`. That column is the ground truth for any surface that
+wants to say "running in the checkout the app runs from"; today it is recorded and exposed but
+has no renderer reader, since the 12px card glyph that drew it was reviewed out as too small to
+tell apart. It is cleared inside `recordWorktree` (the task has a worktree
+again), on a To Do reset, and on a Done move. The one return-only value, `'reused'`, is never
+persisted: the task keeps its worktree.
 
-| Condition | Why |
-|-----------|-----|
-| A worktree already exists at `task.worktree_path` and is genuinely present on disk | Idempotent short-circuit inside `WorktreeManager.ensureWorktree` - `worktree_path` stays exactly what it already was, not null. Recreating a live worktree would be wasted work. |
-| The project path itself is inside a worktree (`isInsideWorktree(this.projectPath)`) | Prevents nesting a worktree inside a worktree - a worktree checkout is never itself a valid parent for another `git worktree add`. |
-| `worktreesEnabled` is `false` (per-task `use_worktree` can override either direction) | Worktrees are turned off for this project by default. `task.use_worktree` is checked first when set (`worktree-manager.ts`'s `shouldUseWorktree`): a task can force worktree mode on in a project where it's off, or opt out where it's on. |
-| The project is not a git repository | Nothing to branch from. |
-| The resolved agent's execution mode is `remote` | The agent runs against a server-side directory instead, so a local worktree would be unused. Resolution mirrors `resolveTargetAgent` exactly (task override, column profile, column override, project default, global fallback) - if the two disagree, a local agent spawns into the main checkout. |
-| The repository has **no commits** (`hasCommits` in `src/main/git/git-checks.ts`) | A freshly `git init`-ed repo has an unborn HEAD: the branch exists in name only, so `git worktree add` fails with `fatal: invalid reference: <branch>`. This is the state Kangentic produces itself when it initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's next action is usually a task move. Worktrees start working on their own once there is a first commit. |
+| Reason | Condition | Why |
+|--------|-----------|-----|
+| `reused` (return only) | A worktree already exists at `task.worktree_path` and is genuinely present on disk | Idempotent short-circuit inside `WorktreeManager.ensureWorktree` - `worktree_path` stays exactly what it already was. Recreating a live worktree would be wasted work; `ensureTaskWorktree` runs the base-drift probe on this path instead. |
+| `disabled` | `worktreesEnabled` is `false` for the project, or the task's `use_worktree` is `0` | `task.use_worktree` is checked first when set (`worktree-manager.ts`'s `shouldUseWorktree`): a task can force worktree mode on in a project where it's off, or opt out where it's on. Checked BEFORE the three structural reasons below, so forcing it on can never override them. |
+| `not-a-repo` | The project is not a git repository | Nothing to branch from. |
+| `nested-worktree` | The project path itself is inside a worktree (`isInsideWorktree(this.projectPath)`) | Prevents nesting a worktree inside a worktree - a worktree checkout is never itself a valid parent for another `git worktree add`. |
+| `no-commits` | The repository has **no commits** (`hasCommits` in `src/main/git/git-checks.ts`) | A freshly `git init`-ed repo has an unborn HEAD: the branch exists in name only, so `git worktree add` fails with `fatal: invalid reference: <branch>`. This is the state Kangentic produces itself when it initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's next action is usually a task move. Worktrees start working on their own once there is a first commit. |
+| `remote-agent` | The resolved agent's execution mode is `remote` (checked in `ensureTaskWorktree`, before `ensureWorktree` runs) | The agent runs against a server-side directory instead, so a local worktree would be unused. Resolution mirrors `resolveTargetAgent` exactly (task override, column profile, column override, project default, global fallback) - if the two disagree, a local agent spawns into the main checkout. The agent is NOT in the project folder in this case. |
+| `worktree-missing` | Startup recovery found `task.worktree_path` no longer on disk (`session-startup/auto-spawn.ts`, `resume-suspended.ts`, both through `demoteMissingWorktree` in `session-startup/missing-worktree.ts`) | The checkout facts are dropped (`worktree_path`, `branch_name`, `resolved_base_branch`) and the agent falls back to the project path; the reason records that the fallback happened. The PR anchors that describe the WORK survive: `pushed_branch` is kept, and the surviving local branch ref's tip is captured into `head_sha` first (`readLocalBranchSha`), so the task can still link its PR. |
 
-This guard lives inside `WorktreeManager.ensureWorktree` (via `resolveWorktreeBase`), not in
-`ensureTaskWorktree` itself, so the `create_worktree` transition action (which also calls
-`ensureWorktree`) gets the identical no-commits fallback. `ensureTaskBranchCheckout` keeps its own
-separate no-commits guard, since it does not go through `WorktreeManager.ensureWorktree`.
+The renderer decides the three structural reasons and the remote case up front as well, from the
+project path probe (`isGitRepo`, `isInsideWorktree`, `hasCommits`) and the agent execution map, so
+the Branch row's hint and its disabled Worktree option state the outcome before the spawn
+(`src/renderer/utils/worktree-placement.tsx`). The persisted reason is still the ground truth.
+
+The no-commits guard lives inside `WorktreeManager.ensureWorktree` (via `resolveWorktreeBase`), not
+in `ensureTaskWorktree` itself, so every `ensureWorktree` caller gets the identical fallback and
+records the same reason. `ensureTaskBranchCheckout`
+keeps its own separate no-commits guard, since it does not go through
+`WorktreeManager.ensureWorktree`.
 
 #### Sharing one checkout is guarded, not prevented
 
@@ -153,7 +196,12 @@ The check lives in that function rather than in a caller, deliberately. It previ
 `usesCustomBranch || base_branch`, so a task with a custom branch and no base branch checked out with
 the guard never running. Co-locating the guard with the checkout makes that class of drift
 impossible, and running it inside the per-project git queue (which already wraps the checkout) makes
-the probe atomic against every other checkout on the project without adding a third lock.
+the probe atomic against every other checkout on the project without adding a third lock. The queue
+covers only other checkouts, though, so each checkout arm re-asserts the guard immediately after its
+fetch await: the entry assert is point-in-time, and a session that never enters the git queue (a
+resume, a base-less task's spawn, a Command Terminal) can start during the fetch's timeout budget.
+The scan is synchronous and in-memory, so re-running it right before the mutation closes that window
+for free.
 
 Where the error goes depends on the entry point, exactly as worktree failures do. A task **move**
 surfaces it as a toast. Create, promote, unarchive and MCP auto-spawn deliberately keep the task and
@@ -178,13 +226,70 @@ that error goes depends on the entry point:
 - **Task create, unarchive, backlog promote, and MCP auto-spawn** catch it and skip worktree
   creation, keeping the task. They also emit `task:spawnBlocked`, so the failure reaches the user
   as a toast rather than only a console line (`notifySpawnBlocked` in `ipc/helpers/task-git.ts`,
-  which covers the worktree step as well as the checkout step).
-- **The `create_worktree` transition action** catches it and logs to console only, so it is the one
-  path with no toast today.
+  which covers the worktree and checkout steps plus the `agent` step - the spawn itself, whose
+  most common failure is an agent CLI that is not installed or not on PATH).
 - **`TASK_SWITCH_BRANCH`** (`src/main/ipc/handlers/task-branch.ts`) calls `ensureTaskWorktree`
   uncaught, so the error propagates as a rejected `ipcMain.handle` promise - Electron forwards it
   to the renderer's `invoke()` call, not a toast from this list, but however the branch-switch UI
   surfaces a rejected mutation.
+
+Those are all the entry points, and every one of them now surfaces the failure. The list used to
+carry a fourth, the `create_worktree` transition action, which caught the error and logged to
+console only. It was the one path with no toast; it is gone with the action type, and automations
+never create worktrees (the move path's `ensureTaskWorktree` already has).
+
+A related but distinct signal: a spawn that REUSES a pre-existing worktree (created eagerly from
+the branch picker, or by an earlier move of a long-lived task) never re-fetches or moves that
+tree. `ensureTaskWorktree` instead runs a fire-and-forget drift probe (throttled base fetch plus
+one `rev-list` against `origin/<base>`) and, when the tree's base is behind, decorates the card's
+spawn-progress labels with `(base N behind)`. The remedy is explicit, never automatic: the
+task-detail kebab's "Update from base" (`TASK_UPDATE_FROM_BASE`, same file) fetches the effective
+base and fast-forwards the worktree, refusing cleanly when the branch carries its own commits or
+the tree is dirty. A base fetch that genuinely fails (network, credentials) during any spawn path
+decorates the labels with `(base fetch failed)` and pushes one cooldown-guarded `task:spawnWarning`
+toast per project per reason class, so "started from a stale base" is never silent.
+
+### Background remote refresh
+
+Every "behind" number the app shows (the Changes panel header, the spawn-time drift note above,
+`kangentic_list_worktrees`) is measured against remote-tracking refs, and until this scheduler
+those refs were only refreshed when someone opened a Changes panel or dropped a task on Done, so a
+project nobody had touched in a week reported week-old counts. `src/main/git/git-fetch-scheduler.ts`
+sweeps the FOCUSED project's remotes on every `PROJECT_OPEN` and then on a timer set by
+`git.autoFetchIntervalMinutes` (default 5, `null` = off; the on-open sweep still runs). It mirrors
+`prRefreshScheduler` ([pr-integration.md](pr-integration.md#the-scheduler)) line for line: one active
+timer, an immediate deferred sweep, re-armed after a config change, torn down on project switch,
+project delete, and shutdown, `.unref()`'d, created outside `runWithProjectLogContext` with each tick
+wrapped inside it.
+
+A sweep is one `fetchAllRemotesIfStale(projectPath, { nonInteractive: true })`, the same throttled,
+5s-bounded, never-rejecting `git fetch --all --prune` the Changes panel mount and the Done probe
+run, queued through `WorktreeManager.withGitLock` at BACKGROUND priority so it never delays a
+waiting user-initiated git op and never contends with a `worktree add` on the `.git` lock. The 30s
+throttle is a floor under the schedule, not the schedule. `--prune` therefore runs periodically
+now, not only on the Done probe: a remote-deleted branch loses its `origin/<branch>` ref within one
+interval.
+
+There is a third caller, and it is a head start rather than a trigger of its own: the board fires
+`git:prefetchRemotes` when a drag of a worktree-backed card begins, so the Done probe that may
+follow finds the fetch already cached or still in flight instead of starting one after the card has
+landed. It shares this scheduler's throttle cache AND its `git.autoFetchIntervalMinutes` setting,
+so a user who turned background fetching off gets no fetch from dragging. See
+[board-drag-perf-audit.md](board-drag-perf-audit.md).
+
+Two things are deliberate. The scheduler's fetches run with `GIT_TERMINAL_PROMPT=0` and
+`GCM_INTERACTIVE=never` (`nonInteractiveGitEnv` in `fetch-throttle.ts`): a fetch on a timer has no
+user gesture behind it, so git's own terminal prompt and Git Credential Manager's dialog are
+disabled rather than merely unlikely. An expired credential classifies as `auth`, leaves the
+throttle cache unset, and degrades to "no refresh". An inherited `GIT_ASKPASS` / `SSH_ASKPASS`
+helper or an ssh passphrase prompt is not suppressed; the fetch's 5s timeout bounds those. And the
+sweep only fetches. It never pulls, merges, or rebases:
+keeping a tree current under a running agent is out of scope (#558), so this keeps the signal
+current while the action stays explicit ("Update from base").
+
+Only the focused project is swept. Sweeping every registered repo multiplies network cost by the
+project count and risks prompting on repos the user is not looking at; it is deferred, not
+forgotten.
 
 The two failure modes:
 
@@ -336,10 +441,13 @@ Task moved to active column (e.g., Planning)
   → File watchers emit usage/activity/events to UI
 
 Task moved between active columns (e.g., Planning → Code Review)
-  → Session stays alive; an auto_command on the target is injected as keystrokes
-    (timing per the column's auto_command_mode: immediate or deferred)
+  → The source column's exit automations run first, while its session is still
+    attached, capped at 60s in aggregate
+  → Session stays alive; a send_message automation on the target is injected as
+    keystrokes (timing per that automation's own mode: immediate or deferred)
+  → The target's remaining enter automations run after the move lands
   → Only a permission-mode change, or a model/effort change the agent cannot
-    swap live, forces suspend + respawn - and then the auto_command rides along
+    swap live, forces suspend + respawn - and then the message rides along
     as the resume prompt instead of being typed
 
 Task moved to Done
@@ -372,7 +480,9 @@ Task deleted
 
 App closed
   → All sessions marked suspended in DB (synchronous)
-  → PTYs force-killed immediately (no graceful shutdown window)
+  → PTYs force-killed at once for a mature session; a young session (still inside Claude's
+    boot window) gets its exit sequence and a 1500 ms grace first, inside the quit's own
+    PTY drain (see Session Lifecycle > Shutdown)
   → Session files persist
 
 App reopened
@@ -382,13 +492,28 @@ App reopened
 
 ## Cleanup
 
-### Adapter notification on removal
+### Notification on removal
 
-Some agent CLIs record per-directory state in a GLOBAL config file, keyed by absolute path. That state outlives the worktree: Kangentic creates one worktree per task, so an adapter keyed this way accumulates a dead entry per task with nothing to clean it up. Codex is the case that forced this (its directory trust in `~/.codex/config.toml` reached 473 dead entries on one machine); Gemini's `trustedFolders.json` and Grok's `~/.grok/trusted_folders.toml` have the same shape (Grok accumulates entries only for worktrees under an undecided project root, since its trust cascades from a decided ancestor).
+Two listeners bracket a removal, and they are deliberately NOT symmetric in placement.
+
+Some agent CLIs record per-directory state in a GLOBAL config file, keyed by absolute path. That state outlives the worktree: Kangentic creates one worktree per task, so an adapter keyed this way accumulates a dead entry per task with nothing to clean it up. Codex is the case that forced this (its directory trust in `~/.codex/config.toml` reached 473 dead entries on one machine); Gemini's `trustedFolders.json`, Qwen's `~/.qwen/trustedFolders.json`, Grok's `~/.grok/trusted_folders.toml`, and Antigravity's `trustedWorkspaces` array have the same shape (Grok accumulates entries only for worktrees under an undecided project root, since its trust cascades from a decided ancestor; Qwen has no ancestor check at all, so it records one entry per worktree whenever `security.folderTrust.enabled` is set).
 
 `WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Agent Integration](agent-integration.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
 
-Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT notify is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
+Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT fire the REMOVED listener is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
+
+**Before** a removal is attempted, `removeWorktreeInternal` fires a second listener,
+`setWorktreeRemovingListener` (also wired in `src/main/index.ts`). Its contract is "drop any OS
+handle you hold under this path, I am about to delete it", and it releases both `DiffWatcher`
+instances for that prefix (`IpcContext`'s and the bridge-owned one, see
+[Mobile Bridge](mobile-bridge.md)).
+
+It hangs off the *internal* method rather than the public one precisely because the husk-clear
+above must also fire it: that path's failure mode is a directory that could not be deleted because
+something still held it open, and our own recursive `fs.watch` is one of those holders. It also
+runs ahead of the `existsSync` bail, since an already-gone path is exactly the case where a watcher
+left armed on it is spinning. On Windows a directory `fs.watch` whose target is deleted emits
+`rename` at roughly 150k events/sec forever, with no `error` event, until `close()`.
 
 ### On Project Open
 
@@ -410,7 +535,7 @@ Notifying from the chokepoint is deliberate. Worktree removal is hand-copied acr
 - **Backup on strip** -- `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** -- on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
 - **Trust pre-population** -- `ensureWorktreeTrust()` adds worktree paths to `~/.claude.json` so Claude Code doesn't prompt for trust on first run.
-- **Synchronous shutdown** -- DB records marked suspended, PTYs force-killed immediately. No async graceful window. Files persist for recovery on next launch.
+- **Synchronous shutdown** -- DB records marked suspended, mature PTYs force-killed immediately. A young session's force-kill waits out a 1500 ms exit-sequence grace on a timer inside the bounded PTY drain the quit already holds for, never as an added async phase. Files persist for recovery on next launch.
 
 ## Test Coverage
 
@@ -471,14 +596,41 @@ Uses real temp files with mocked `os.homedir()`.
 - `withLock` instance method uses the project path
 
 **Fail-fast removal:**
-- `removeWorktree({ removalProfile: 'fast' })` forwards single-attempt opts to `removeWithRetry`; the default `'thorough'` profile keeps the full backoff
+- All three profiles are pinned: `fast` forwards single-attempt opts to `removeWithRetry`, `moderate` forwards its bounded budget to both removal steps, and `thorough` (the default) forwards a wall-clock `budgetMs` to both. The thorough case exists because its absence is why the budget shipped unbounded in the first place
 - Background retry cleanup runs at `BACKGROUND` priority with `{ timeoutMs: 3000, removalProfile: 'fast' }`
+- The post-reap retry gets a shorter budget than the first attempt
+- The node_modules step is capped again so it cannot spend the whole budget
+- The move-failure stale cleanup passes `removalProfile: 'moderate'`
+- A budget expiry logs `remove step=manual-rm timed out` and `removed=false timedOut=true` at `warn`
+- A hanging `worktree-removing` listener cannot stall the removal (2s cap)
+- `createWorktree` still reuses an EMPTY husk after a timed-out removal; only a non-empty or unlistable directory is fatal, and that error names the holders when the scan found any
 
 **listWorktrees:**
 - Parses `git worktree list --porcelain` output correctly
 - Returns empty array for bare output
 
 Uses vi.mock for `simple-git` and `node:fs`.
+
+### Process reaping (`zombie-reaper.test.ts`, `session-tree-reap.test.ts`, `session-reap-real-processes.test.ts`)
+
+`zombie-reaper.test.ts` drives the pure predicates through the `_internals` spy seam, so no test
+spawns PowerShell or `ps`: the self-skip and orphan gates, the trailing-separator boundary against a
+prefix-sibling worktree, the two needles (command line, executable path), the bare-worktree-root
+match (`commandLineReferencesPath`), the separation of the filtered and unfiltered scan caches, and
+the holder-reporting half (`findWorktreePathHolders`, `processImageName`, `describeHolder`). The
+Windows output shapes are parsed from fixtures so they are covered on the Linux CI runner.
+
+`session-tree-reap.test.ts` covers `reapCapturedTree` with `killProcess` and `isProcessAlive`
+mocked: dead pids cost no kill, own pid and the init/System floor are never killed, and kills are
+issued in parallel rather than serially behind a 2000ms cap each.
+
+`session-reap-real-processes.test.ts` is the discriminating one and uses REAL processes. It builds
+the incident's shape (a grandchild whose argv and executable path both fall outside the worktree and
+whose cwd is inside it), then asserts the path scan finds nothing and that after the reap the
+directory removes. Relax either and the test starts passing on the path scan alone, which would
+green-light a fix that does not fix the bug. It also asserts that `rmSync` fails while the process
+lives, but only on Windows: POSIX unlinks a busy directory happily, so on the Linux CI runner that
+third assertion does not execute and the test proves the first two.
 
 ### Base Branch Resolution (`worktree-base-branch.test.ts`)
 
@@ -495,8 +647,8 @@ resolved ref.
 - Throws and lists the repo's real branches when the default chain is fully exhausted
 - Resolves a base that exists only on origin and was never fetched (fetch retry)
 - Falls back to a verified `origin/<base>` start point when worktree creation's own fetch fails (the `verifiedStartPoint` seam)
-- Returns null (no-commits fallback) for an unborn HEAD, now enforced inside `ensureWorktree`
-- Regression pins for states that are already no-ops: detached HEAD, a bare repo, a broken `.git` file pointer
+- Reports `{ skipped: true, reason: 'no-commits' }` for an unborn HEAD, now enforced inside `ensureWorktree`
+- Regression pins for states that are already no-ops: detached HEAD (creates normally), a bare repo (`not-a-repo`), a broken `.git` file pointer (`nested-worktree`)
 
 **`resolveWorktreeBase` candidate order:**
 - Tries only the per-task base branch when set, never substituting main/master
@@ -516,6 +668,22 @@ resolved ref.
 - Names the branch and offers the fix for an explicit per-task base
 - Lists every attempted default-chain candidate and points at the settings fix
 - Formats a two-item attempted list without an Oxford comma before "or"
+
+### Background remote refresh (`git-fetch-scheduler.test.ts`, `fetch-throttle.test.ts`)
+
+`git-fetch-scheduler.test.ts` mocks `WorktreeManager.withGitLock` and `fetchAllRemotesIfStale`
+and drives the timers with fake time:
+- Runs an immediate sweep and arms a periodic timer at the configured interval
+- Sweeps through the git lock at `BACKGROUND` priority with `nonInteractive: true`
+- A rejected lock never escapes the tick as an unhandled rejection
+- Off (`null` interval) runs the on-load sweep but arms no timer
+- `stop()` clears the periodic timer; `stop(projectId)` only stops when that project owns it
+- Switching projects tears down the prior timer and arms the new one
+- Skips a tick when the project is no longer the current one
+
+`fetch-throttle.test.ts` pins the env the fetch runs under: the default inherits `process.env` so a
+user-driven fetch can still prompt, and `nonInteractive` hands BOTH git calls (the common-dir probe
+and the fetch) an env with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`.
 
 ### Hook Manager (`hook-manager.test.ts`)
 

@@ -24,6 +24,13 @@ function runningSession(id: string): CommandWindowSessionRef {
   return { id, status: 'running' };
 }
 
+/** A running Command Terminal PTY as main reports it, carrying the slot it was
+ *  spawned under. This is what lets the planner see a live terminal the renderer's
+ *  pairing map has lost track of. */
+function runningTerminal(id: string, slot: string, projectId = PROJECT_A): CommandWindowSessionRef {
+  return { id, status: 'running', transient: true, projectId, commandTerminalSlot: slot };
+}
+
 describe('planCommandWindowReconciliation', () => {
   it('keeps only the lowest-slot window when the project has no live sessions', () => {
     const plan = planCommandWindowReconciliation({
@@ -156,6 +163,52 @@ describe('planCommandWindowReconciliation', () => {
       maxWindows: MAX_WINDOWS,
     });
     expect(plan.closeWindowIds).toEqual([]);
+    expect(plan.openSlots).toEqual([]);
+  });
+
+  it('counts a live PTY the pairing map has lost as a live slot', () => {
+    // A renderer reload destroys the map while every transient PTY survives. Read
+    // from the map alone this looks like "no live sessions", which takes the
+    // keep-one-window branch and lets that window fresh-spawn over a live
+    // terminal. Main's own session rows are what close that hole.
+    const plan = planCommandWindowReconciliation({
+      windows: [windowRef('slot-1'), windowRef('slot-2')],
+      transientSessions: {},
+      sessions: [runningTerminal('sess-1', 'slot-1'), runningTerminal('sess-2', 'slot-2')],
+      projectId: PROJECT_A,
+      maxWindows: MAX_WINDOWS,
+    });
+    expect(plan.closeWindowIds).toEqual([]);
+    expect(plan.openSlots).toEqual([]);
+  });
+
+  it('opens a window for an unpaired live PTY that has none', () => {
+    const plan = planCommandWindowReconciliation({
+      windows: [windowRef('slot-1')],
+      transientSessions: transientMap([{ projectId: PROJECT_A, slot: 'slot-1', sessionId: 'sess-1' }]),
+      sessions: [runningSession('sess-1'), runningTerminal('sess-2', 'slot-2')],
+      projectId: PROJECT_A,
+      maxWindows: MAX_WINDOWS,
+    });
+    expect(plan.closeWindowIds).toEqual([]);
+    expect(plan.openSlots).toEqual(['slot-2']);
+  });
+
+  it('ignores session rows from another project, task agents, and dead PTYs', () => {
+    const plan = planCommandWindowReconciliation({
+      windows: [windowRef('slot-1'), windowRef('slot-2')],
+      transientSessions: {},
+      sessions: [
+        runningTerminal('other-project', 'slot-1', PROJECT_B),
+        // A task agent: running, but not a Command Terminal and carries no slot.
+        { id: 'task-agent', status: 'running', projectId: PROJECT_A },
+        { ...runningTerminal('dead', 'slot-2'), status: 'exited' },
+      ],
+      projectId: PROJECT_A,
+      maxWindows: MAX_WINDOWS,
+    });
+    // Nothing live for project A, so the keep-one-window branch still applies.
+    expect(plan.closeWindowIds).toEqual(['win-slot-2']);
     expect(plan.openSlots).toEqual([]);
   });
 

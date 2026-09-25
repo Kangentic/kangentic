@@ -1,10 +1,39 @@
+import type Database from 'better-sqlite3';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { setColumnMessage, setColumnMessageMode } from '../../automations/column-message';
+import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
+import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
+import {
+  VALID_PERMISSION_MODES,
+  VALID_SESSION_TARGETS,
+  VALID_SESSION_SPAWN_STRATEGIES,
+  VALID_AUTO_COMMAND_MODES,
+  parseEnumParam,
+} from './column-enums';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import type { SwimlaneCreateInput, SwimlaneUpdateInput, PermissionMode } from '../../../shared/types';
+import type {
+  AutoCommandMode,
+  SwimlaneCreateInput,
+  SwimlaneUpdateInput,
+  SessionTarget,
+  SessionSpawnStrategy,
+} from '../../../shared/types';
 
-const VALID_PERMISSION_MODES: PermissionMode[] = ['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto'];
+/** The defaults a brand-new column starts at, matching the two NOT NULL column DEFAULTs. */
+const DEFAULT_SESSION_TARGET: SessionTarget = 'main';
+const DEFAULT_SESSION_SPAWN_STRATEGY: SessionSpawnStrategy = 'create_or_resume';
+
+/**
+ * The message this column actually sends, for the `autoCommand` field these
+ * tools echo back. Goes through the same resolver the engine uses, so what a
+ * caller reads is what the column will deliver.
+ */
+function readColumnMessage(db: Database.Database, swimlaneId: string): string | null {
+  return resolveColumnMessage(new AutomationRepository(db).listForColumn(swimlaneId))?.message ?? null;
+}
 
 export const handleUpdateColumn: CommandHandler = (
   params: Record<string, unknown>,
@@ -16,7 +45,14 @@ export const handleUpdateColumn: CommandHandler = (
   }
 
   const db = context.getProjectDb();
-  const resolution = resolveColumn(db, columnName);
+  // includeArchivedDone: Done is a real, editable column - the Board Manager
+  // lets a user rename and recolor it - and kangentic_list_columns now prints
+  // it, so resolving it as "not found" was both a lie and a capability the UI
+  // had and MCP did not. Nothing here can dislodge it from its structural role:
+  // this handler never writes `role` or `is_archived`, and `auto_spawn` is inert
+  // on a done lane (NEVER_AUTO_SPAWN_ROLES gates the transition engine). Renames
+  // go unchecked for name collisions here, as they do for every other column.
+  const resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }
@@ -45,9 +81,28 @@ export const handleUpdateColumn: CommandHandler = (
     updates.auto_spawn = Boolean(params.autoSpawn);
     changedFields.push('autoSpawn');
   }
-  if (params.autoCommand !== undefined) {
-    updates.auto_command = params.autoCommand === null ? null : String(params.autoCommand).slice(0, 4000);
+  // `autoCommand` is NOT a lane field any more. It writes the column's first
+  // `send_message` enter automation, which is the row the engine delivers.
+  // Deferred until after the lane write below, so a call that also renames the
+  // column does not half-apply if the rename throws.
+  const messageWrite = params.autoCommand === undefined
+    ? null
+    : { text: params.autoCommand === null ? null : String(params.autoCommand).slice(0, 4000) };
+  if (messageWrite) {
     changedFields.push('autoCommand');
+  }
+  let messageMode: AutoCommandMode | undefined;
+  if (params.autoCommandMode !== undefined && params.autoCommandMode !== null) {
+    const parsed = parseEnumParam(params.autoCommandMode, VALID_AUTO_COMMAND_MODES, 'autoCommandMode');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    // The lane field is still written because the Column Manager round-trips
+    // it, but it is NOT what the engine honours. The delivered mode lives on
+    // the `send_message` row's config, so `messageMode` carries it down to the
+    // automation write below. Writing only this line reported success and
+    // changed nothing the delivery path reads.
+    updates.auto_command_mode = parsed.value;
+    messageMode = parsed.value;
+    changedFields.push('autoCommandMode');
   }
   if (params.agentOverride !== undefined) {
     updates.agent_override = params.agentOverride === null ? null : String(params.agentOverride);
@@ -65,20 +120,43 @@ export const handleUpdateColumn: CommandHandler = (
     if (params.permissionMode === null) {
       updates.permission_mode = null;
     } else {
-      const mode = String(params.permissionMode);
-      if (!VALID_PERMISSION_MODES.includes(mode as PermissionMode)) {
-        return {
-          success: false,
-          error: `Invalid permissionMode "${mode}". Valid values: ${VALID_PERMISSION_MODES.join(', ')}.`,
-        };
-      }
-      updates.permission_mode = mode as PermissionMode;
+      const parsed = parseEnumParam(params.permissionMode, VALID_PERMISSION_MODES, 'permissionMode');
+      if ('error' in parsed) return { success: false, error: parsed.error };
+      updates.permission_mode = parsed.value;
     }
     changedFields.push('permissionMode');
   }
   if (params.handoffContext !== undefined && params.handoffContext !== null) {
     updates.handoff_context = Boolean(params.handoffContext);
     changedFields.push('handoffContext');
+  }
+  if (params.sessionTarget !== undefined && params.sessionTarget !== null) {
+    const parsed = parseEnumParam(params.sessionTarget, VALID_SESSION_TARGETS, 'sessionTarget');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    updates.session_target = parsed.value;
+    changedFields.push('sessionTarget');
+  }
+  if (params.sessionSpawnStrategy !== undefined && params.sessionSpawnStrategy !== null) {
+    const parsed = parseEnumParam(params.sessionSpawnStrategy, VALID_SESSION_SPAWN_STRATEGIES, 'sessionSpawnStrategy');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    updates.session_spawn_strategy = parsed.value;
+    changedFields.push('sessionSpawnStrategy');
+  } else if (updates.session_target !== undefined) {
+    // Target moved without an explicit strategy, so carry the track's default
+    // across, exactly as the Column Manager's Session select does. This has to
+    // WRITE the derived value rather than leave the field out: the repository's
+    // update is read-modify-write off the existing row, not a sparse UPDATE, so
+    // an omitted strategy re-persists the old one - which is how an isolated
+    // review column ends up resuming its own previous review.
+    const snapped = snapSpawnStrategyToTarget(
+      swimlane.session_target,
+      updates.session_target,
+      swimlane.session_spawn_strategy,
+    );
+    if (snapped !== swimlane.session_spawn_strategy) {
+      updates.session_spawn_strategy = snapped;
+      changedFields.push('sessionSpawnStrategy');
+    }
   }
   if (params.planExitTargetColumn !== undefined) {
     if (params.planExitTargetColumn === null) {
@@ -100,12 +178,27 @@ export const handleUpdateColumn: CommandHandler = (
   if (changedFields.length === 0) {
     return {
       success: false,
-      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn.',
+      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn.',
     };
   }
 
   const swimlaneRepo = new SwimlaneRepository(db);
   const updated = swimlaneRepo.update(updates);
+
+  let messageNote = '';
+  if (messageWrite) {
+    const result = setColumnMessage(new AutomationRepository(db), updated.id, messageWrite.text, messageMode);
+    messageNote = result.action === 'unchanged'
+      ? ' This column had no message to clear.'
+      : ` The message is the "${result.name}" automation on this column's On enter group (${result.action}).`;
+  } else if (messageMode !== undefined) {
+    // Mode with no message of its own to attach to. Says so rather than
+    // reporting a success that moved nothing.
+    const result = setColumnMessageMode(new AutomationRepository(db), updated.id, messageMode);
+    messageNote = result.name === null
+      ? ' It has no message for that delivery mode to apply to, so nothing is scheduled yet.'
+      : ` The delivery mode is on the "${result.name}" automation on this column's On enter group.`;
+  }
 
   // `swimlane` is the pre-update row resolved above. Handing it over lets the
   // host propagate the change into live sessions the same way the UI's
@@ -114,7 +207,7 @@ export const handleUpdateColumn: CommandHandler = (
 
   return {
     success: true,
-    message: `Updated ${changedFields.join(', ')} for column "${updated.name}".`,
+    message: `Updated ${changedFields.join(', ')} for column "${updated.name}".${messageNote}`,
     data: {
       id: updated.id,
       name: updated.name,
@@ -123,12 +216,17 @@ export const handleUpdateColumn: CommandHandler = (
       icon: updated.icon,
       role: updated.role,
       autoSpawn: updated.auto_spawn,
-      autoCommand: updated.auto_command,
+      // The column's live message, read back off the automation. Echoing
+      // `updated.auto_command` reported the retired field, which is null on
+      // every board the migration has touched.
+      autoCommand: readColumnMessage(db, updated.id),
       agentOverride: updated.agent_override,
       modelOverride: updated.model_override,
       effortOverride: updated.effort_override,
       permissionMode: updated.permission_mode,
       handoffContext: updated.handoff_context,
+      sessionTarget: updated.session_target,
+      sessionSpawnStrategy: updated.session_spawn_strategy,
       planExitTargetId: updated.plan_exit_target_id,
     },
   };
@@ -171,8 +269,21 @@ export const handleCreateColumn: CommandHandler = (
   if (params.autoSpawn !== undefined && params.autoSpawn !== null) {
     input.auto_spawn = Boolean(params.autoSpawn);
   }
-  if (params.autoCommand !== undefined && params.autoCommand !== null) {
-    input.auto_command = String(params.autoCommand).slice(0, 4000);
+  // Not a lane field. Written as the new column's message automation once the
+  // row exists, since an automation needs its column's id.
+  const initialMessage = params.autoCommand === undefined || params.autoCommand === null
+    ? null
+    : String(params.autoCommand).slice(0, 4000);
+  // Validated here, the same way `handleUpdateColumn` validates it, rather than
+  // coerced at the write below. Coercing turned every unrecognized value into
+  // 'immediate' and still reported success, so a typo silently changed the
+  // delivery mode instead of being refused. The MCP tool's zod schema catches
+  // this for the released tool only; a direct handler call had nothing.
+  let initialMessageMode: AutoCommandMode | undefined;
+  if (params.autoCommandMode !== undefined && params.autoCommandMode !== null) {
+    const parsed = parseEnumParam(params.autoCommandMode, VALID_AUTO_COMMAND_MODES, 'autoCommandMode');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    initialMessageMode = parsed.value;
   }
   if (params.agentOverride !== undefined && params.agentOverride !== null) {
     input.agent_override = String(params.agentOverride);
@@ -184,17 +295,33 @@ export const handleCreateColumn: CommandHandler = (
     input.effort_override = String(params.effortOverride).slice(0, 50);
   }
   if (params.permissionMode !== undefined && params.permissionMode !== null) {
-    const mode = String(params.permissionMode);
-    if (!VALID_PERMISSION_MODES.includes(mode as PermissionMode)) {
-      return {
-        success: false,
-        error: `Invalid permissionMode "${mode}". Valid values: ${VALID_PERMISSION_MODES.join(', ')}.`,
-      };
-    }
-    input.permission_mode = mode as PermissionMode;
+    const parsed = parseEnumParam(params.permissionMode, VALID_PERMISSION_MODES, 'permissionMode');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    input.permission_mode = parsed.value;
   }
   if (params.handoffContext !== undefined && params.handoffContext !== null) {
     input.handoff_context = Boolean(params.handoffContext);
+  }
+  if (params.sessionTarget !== undefined && params.sessionTarget !== null) {
+    const parsed = parseEnumParam(params.sessionTarget, VALID_SESSION_TARGETS, 'sessionTarget');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    input.session_target = parsed.value;
+  }
+  if (params.sessionSpawnStrategy !== undefined && params.sessionSpawnStrategy !== null) {
+    const parsed = parseEnumParam(params.sessionSpawnStrategy, VALID_SESSION_SPAWN_STRATEGIES, 'sessionSpawnStrategy');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    input.session_spawn_strategy = parsed.value;
+  } else if (input.session_target !== undefined) {
+    // Same carry-the-default rule the Column Manager applies, measured from the
+    // defaults a new column would otherwise take. Without it, asking for an
+    // isolated column and nothing else persists 'create_or_resume', so the
+    // column resumes one long conversation instead of running an independent
+    // pass per entry - which is the whole point of isolating it.
+    input.session_spawn_strategy = snapSpawnStrategyToTarget(
+      DEFAULT_SESSION_TARGET,
+      input.session_target,
+      DEFAULT_SESSION_SPAWN_STRATEGY,
+    );
   }
   if (params.planExitTargetColumn !== undefined && params.planExitTargetColumn !== null) {
     const targetResolution = resolveColumn(db, String(params.planExitTargetColumn), 'todo', { includeArchivedDone: true });
@@ -251,11 +378,17 @@ export const handleCreateColumn: CommandHandler = (
     return swimlaneRepo.create(input);
   })();
 
+  let messageNote = '';
+  if (initialMessage) {
+    const result = setColumnMessage(new AutomationRepository(db), created.id, initialMessage, initialMessageMode);
+    messageNote = ` Its message is the "${result.name}" automation on its On enter group.`;
+  }
+
   context.onSwimlaneUpdated(created);
 
   return {
     success: true,
-    message: `Created column "${created.name}" at position ${created.position}.`,
+    message: `Created column "${created.name}" at position ${created.position}.${messageNote}`,
     data: {
       id: created.id,
       name: created.name,
@@ -265,12 +398,14 @@ export const handleCreateColumn: CommandHandler = (
       role: created.role,
       position: created.position,
       autoSpawn: created.auto_spawn,
-      autoCommand: created.auto_command,
+      autoCommand: readColumnMessage(db, created.id),
       agentOverride: created.agent_override,
       modelOverride: created.model_override,
       effortOverride: created.effort_override,
       permissionMode: created.permission_mode,
       handoffContext: created.handoff_context,
+      sessionTarget: created.session_target,
+      sessionSpawnStrategy: created.session_spawn_strategy,
       planExitTargetId: created.plan_exit_target_id,
     },
   };
@@ -317,6 +452,13 @@ export const handleDeleteColumn: CommandHandler = (
   const transitionCount = (db
     .prepare('SELECT COUNT(*) as count FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?')
     .get(swimlane.id, swimlane.id) as { count: number } | undefined)?.count ?? 0;
+  // The column's automations go with it (`deleteSwimlaneRowWithReferences`
+  // drops them, and the foreign key cascades anyway). Counted and reported
+  // because this is the part a caller actually loses: the transition count
+  // above is zero on every board the automations migration has touched, so
+  // reporting only that told an agent nothing had been cleaned up while its
+  // column's whole enter and exit groups went with the delete.
+  const automationCount = new AutomationRepository(db).listForColumn(swimlane.id).length;
   const planExitCount = (db
     .prepare('SELECT COUNT(*) as count FROM swimlanes WHERE plan_exit_target_id = ?')
     .get(swimlane.id) as { count: number } | undefined)?.count ?? 0;
@@ -337,6 +479,7 @@ export const handleDeleteColumn: CommandHandler = (
   context.onSwimlaneDeleted(swimlane);
 
   const alsoCleaned: string[] = [];
+  if (automationCount > 0) alsoCleaned.push(`${automationCount} automation(s)`);
   if (transitionCount > 0) alsoCleaned.push(`${transitionCount} transition(s)`);
   if (planExitCount > 0) alsoCleaned.push(`${planExitCount} plan-exit reference(s)`);
   if (removedEntries > 0) alsoCleaned.push(`${removedEntries} board-profile entr${removedEntries === 1 ? 'y' : 'ies'}`);
@@ -350,6 +493,7 @@ export const handleDeleteColumn: CommandHandler = (
     data: {
       id: swimlane.id,
       name: swimlane.name,
+      automationsRemoved: automationCount,
       transitionsRemoved: transitionCount,
       planExitReferencesCleared: planExitCount,
       profileEntriesRemoved: removedEntries,

@@ -103,6 +103,26 @@ describe('buildTaskDetailBundle', () => {
     expect(bundle!.config.browserEnabled).toBe(false);
   });
 
+  // The branch hint needs to tell a local agent from a remote one, and a
+  // task-detail host that is not the board cannot read the config itself, so
+  // the map rides in the bundle. An absent `agent` key resolves to {} rather
+  // than throwing: that is the common case, and it reads as "all local".
+  it('forwards the per-agent execution map, defaulting to empty when unconfigured', () => {
+    const withRemote = makeContext();
+    (withRemote.configManager as unknown as {
+      getEffectiveConfig: () => Record<string, unknown>;
+    }).getEffectiveConfig = () => ({
+      git: { defaultBaseBranch: 'develop', worktreesEnabled: true },
+      agent: { execution: { opencode: { mode: 'remote' } } },
+    });
+    const bundle = buildTaskDetailBundle(withRemote, TARGET_PROJECT.id, TASK.id);
+    expect(bundle!.config.agentExecution).toEqual({ opencode: { mode: 'remote' } });
+
+    // The stub in makeContext() declares no `agent` key at all.
+    const bare = buildTaskDetailBundle(makeContext(), TARGET_PROJECT.id, TASK.id);
+    expect(bare!.config.agentExecution).toEqual({});
+  });
+
   it('returns null for an unknown project or task rather than a half-built bundle', () => {
     // The caller closes the window on null; a husk with an undefined task would
     // crash the surface instead.

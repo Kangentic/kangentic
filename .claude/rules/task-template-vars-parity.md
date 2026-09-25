@@ -23,7 +23,7 @@ project's configured default. Every automated Code Review auto-command silently 
 ref for over a week before anyone noticed.
 
 The fix is one source of truth: `src/shared/task-template-vars.ts` (`TASK_TEMPLATE_VAR_NAMES` /
-`TASK_TEMPLATE_VARS`) declares the 10 keywords once; `src/main/agent/shared/task-template-resolvers.ts`
+`TASK_TEMPLATE_VARS`) declares the keywords once; `src/main/agent/shared/task-template-resolvers.ts`
 (`TASK_TEMPLATE_RESOLVERS`, a `Record<TaskTemplateVarName, ...>`) resolves each one exactly once;
 the UI chips render from the shared catalog; and both docs tables are checked against it.
 

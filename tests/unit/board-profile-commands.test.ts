@@ -138,6 +138,51 @@ describe('handleCreateBoardProfile', () => {
     expect(Object.prototype.hasOwnProperty.call(entry, 'effortOverride')).toBe(false);
   });
 
+  it('rejects an invalid enum value and saves nothing', () => {
+    // A profile entry is written to kangentic.json, so an unchecked value
+    // reaches the whole team. The mobile bridge routes the *_board_profile
+    // commands straight into these handlers with no zod schema in the path, so
+    // this is the only narrowing there.
+    const { context, setBoardProfiles } = createContext([]);
+
+    const response = handleCreateBoardProfile(
+      { name: 'Heavy', columns: { Planning: { sessionTarget: 'seperate' } } },
+      context,
+    );
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Invalid sessionTarget');
+    expect(response.error).toContain('Nothing was saved.');
+    expect(setBoardProfiles).not.toHaveBeenCalled();
+  });
+
+  it('accepts a valid enum value and still lets null clear it', () => {
+    const { context, stored } = createContext([]);
+
+    handleCreateBoardProfile(
+      {
+        name: 'Heavy',
+        columns: {
+          // `autoCommandMode` used to ride along here. It is not a profile field
+          // any more: a column's message is an automation row, and automations
+          // are shared by every profile, so there is nothing for a per-profile
+          // delivery mode to apply to. See the matching pin in
+          // `mcp-profile-tools-schema.test.ts`.
+          Planning: { sessionTarget: 'isolated' },
+          Executing: { permissionMode: null },
+        },
+      },
+      context,
+    );
+
+    expect(stored.profiles[0].columns[PLANNING_ID]).toEqual({
+      sessionTarget: 'isolated',
+    });
+    const executing = stored.profiles[0].columns[EXECUTING_ID];
+    expect(Object.prototype.hasOwnProperty.call(executing, 'permissionMode')).toBe(true);
+    expect(executing.permissionMode).toBeNull();
+  });
+
   it('rejects an unknown column name and saves nothing', () => {
     const { context, setBoardProfiles } = createContext([]);
 
