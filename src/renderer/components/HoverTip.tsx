@@ -67,10 +67,9 @@ export function HoverTip({
   const [style, setStyle] = useState<CSSProperties>({ visibility: 'hidden' });
 
   useLayoutEffect(() => {
-    if (!open) {
-      setStyle({ visibility: 'hidden' });
-      return;
-    }
+    // Closing resets the style in the handler that closes, so the next open
+    // starts hidden again; this effect only measures an open tip.
+    if (!open) return;
     const trigger = triggerRef.current;
     const tip = tipRef.current;
     if (!trigger || !tip) return;
@@ -97,7 +96,10 @@ export function HoverTip({
       ref={triggerRef}
       className={className}
       onPointerEnter={() => setOpen(true)}
-      onPointerLeave={() => setOpen(false)}
+      onPointerLeave={() => {
+        setOpen(false);
+        setStyle({ visibility: 'hidden' });
+      }}
     >
       {children}
       <span className="sr-only">{label}</span>

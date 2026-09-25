@@ -321,7 +321,12 @@ export function MemoryGraphCanvas({
   /** Region pill under the cursor, when no node or title is. */
   const [hoveredRegion, setHoveredRegion] = useState<number | null>(null);
   /** Cursor position, in container coordinates, for the hover card. */
-  const [pointer, setPointer] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  // The container's size rides with the pointer, measured by the same handler,
+  // so a hover card decides which way to flip from a size read at the moment it
+  // was placed rather than from a ref read during render.
+  const [pointer, setPointer] = useState<{ x: number; y: number; containerWidth: number; containerHeight: number }>(
+    { x: 0, y: 0, containerWidth: 0, containerHeight: 0 },
+  );
   const [isDragging, setIsDragging] = useState(false);
   const didDragRef = useRef(false);
   /** What the press landed on, resolved at press time. Null between gestures. */
@@ -347,7 +352,6 @@ export function MemoryGraphCanvas({
    */
   const labelWorldPositionsRef = useRef<Map<number, Vector3>>(new Map());
   const showLabelsRef = useRef(showLabels);
-  showLabelsRef.current = showLabels;
 
   /**
    * Clusters with enough nodes still on screen to name an AREA.
@@ -382,7 +386,12 @@ export function MemoryGraphCanvas({
   /** Node indices still drawn (alpha above zero), for title eligibility. */
   const visibleNodesRef = useRef<Set<number>>(new Set());
   const showTitlesRef = useRef(showTitles);
-  showTitlesRef.current = showTitles;
+  // The two toggles, mirrored for the frame loop, which runs on requestAnimation
+  // Frame and therefore always after this layout effect has written them.
+  useLayoutEffect(() => {
+    showLabelsRef.current = showLabels;
+    showTitlesRef.current = showTitles;
+  });
   const titleRefs = useRef<Array<HTMLDivElement | null>>([]);
   /** Which node each pooled label currently shows, so its text is rewritten
    *  only when the assignment actually changes rather than every frame. */
@@ -689,10 +698,15 @@ export function MemoryGraphCanvas({
    * values off the surface colour, so at link alpha it is invisible.
    */
   const [edgeColor, setEdgeColor] = useState('#8b949e');
+  // The highlight accent, read the same way and for the same reason: the node
+  // styles need it, and a memo that reached for the container during render
+  // could only ever see the fallback on the first pass.
+  const [accentColor, setAccentColor] = useState('#4ade80');
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     setEdgeColor(normalizeCssColor(readCssColor(container, '--color-fg-muted', '#8b949e')));
+    setAccentColor(readCssColor(container, '--kng-active', '#4ade80'));
   }, []);
 
   const framingInsets = useMemo(
@@ -818,10 +832,7 @@ export function MemoryGraphCanvas({
 
   const styles = useMemo<SceneNodeStyle[]>(() => {
     const hasHighlight = highlighted !== undefined && highlighted.size > 0;
-    const accent = containerRef.current
-      ? readCssColor(containerRef.current, '--kng-active', '#4ade80')
-      : '#4ade80';
-    const accentTriplet = toLinearTriplet(accent);
+    const accentTriplet = toLinearTriplet(accentColor);
 
     return projection.nodes.map((node, index) => {
       const isSelected = index === selectedIndex;
@@ -900,6 +911,7 @@ export function MemoryGraphCanvas({
   }, [
     projection.nodes, highlighted, selectedIndex, hoveredIndex, colorMode,
     recencyRank, lengthRank, durationRank, costRank, degrees, maxDegree, regionOf,
+    accentColor,
   ]);
 
   useEffect(() => {
@@ -1073,8 +1085,16 @@ export function MemoryGraphCanvas({
             ? null
             : pickIncludingTitle(event.clientX, event.clientY, pickAt(event.clientX, event.clientY));
           if (hit !== null || region !== null) {
-            const rect = containerRef.current?.getBoundingClientRect();
-            if (rect) setPointer({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+            const container = containerRef.current;
+            const rect = container?.getBoundingClientRect();
+            if (container && rect) {
+              setPointer({
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top,
+                containerWidth: container.clientWidth,
+                containerHeight: container.clientHeight,
+              });
+            }
           }
           if (hit !== hoveredIndex) setHoveredIndex(hit);
           if (region !== hoveredRegion) setHoveredRegion(region);
@@ -1147,8 +1167,8 @@ export function MemoryGraphCanvas({
           nodes={projection.nodes}
           x={pointer.x}
           y={pointer.y}
-          containerWidth={containerRef.current?.clientWidth ?? 0}
-          containerHeight={containerRef.current?.clientHeight ?? 0}
+          containerWidth={pointer.containerWidth}
+          containerHeight={pointer.containerHeight}
         />
       ) : null}
 
@@ -1160,8 +1180,8 @@ export function MemoryGraphCanvas({
           ) ?? null}
           x={pointer.x}
           y={pointer.y}
-          containerWidth={containerRef.current?.clientWidth ?? 0}
-          containerHeight={containerRef.current?.clientHeight ?? 0}
+          containerWidth={pointer.containerWidth}
+          containerHeight={pointer.containerHeight}
         />
       ) : null}
 

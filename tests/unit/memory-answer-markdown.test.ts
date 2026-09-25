@@ -4,9 +4,9 @@
  *
  * The answer is markdown - agents write headings, bold and fenced code unasked,
  * and rendering it preformatted put `**Mobile Bridge phases**` on screen
- * literally. But it also carries `[3]` (an excerpt) and `T12` (a task), both of
- * which must stay clickable. Rewriting them to links lets the markdown parser
- * do the parsing while the renderer decides what each one becomes.
+ * literally. But it also carries `T12` (a task), which must stay clickable.
+ * Rewriting it to a link lets the markdown parser do the parsing while the
+ * renderer decides what it becomes.
  *
  * These pin the rewrite, which is the part that can silently corrupt an answer.
  */
@@ -15,9 +15,13 @@ import { describe, it, expect } from 'vitest';
 import { linkifyReferences } from '../../src/renderer/components/memory/MemoryAnswer';
 
 describe('linkifying an answer', () => {
-  it('rewrites both reference forms', () => {
+  it('rewrites a task ref, and leaves a bracketed number as text', () => {
+    // `[3]` used to cite an excerpt Ask had pre-retrieved. There are no
+    // excerpts any more - the agent searches the transcripts itself and quotes
+    // what it used in its grounds - so a bracketed number is just text, and a
+    // link to a citation that does not exist would click through to nothing.
     expect(linkifyReferences('See T12 and [3].'))
-      .toBe('See [T12](#kng-task-12) and [3](#kng-cite-3).');
+      .toBe('See [T12](#kng-task-12) and [3].');
   });
 
   it('leaves markdown structure untouched', () => {

@@ -28,26 +28,30 @@ export interface TaskPriorWorkProps {
 const DEFAULT_EXPANDED = false;
 
 export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
-  const [hits, setHits] = useState<MemoryGraphQueryHit[]>([]);
+  // Each result is stored WITH the task it was fetched for, so a task change
+  // shows nothing until its own result lands, with no reset to schedule. A
+  // result for a task the user has since left is simply never read.
+  const requestKey = `${projectId ?? ''}:${taskId}`;
+  const [result, setResult] = useState<{ key: string; hits: MemoryGraphQueryHit[] } | null>(null);
+  const hits = result?.key === requestKey ? result.hits : [];
   const [expanded, setExpanded] = useState(DEFAULT_EXPANDED);
 
   useEffect(() => {
     let cancelled = false;
-    setHits([]);
     window.electronAPI.memory
       .relatedToTask(taskId, projectId)
-      .then((result) => {
-        if (!cancelled) setHits(result);
+      .then((found) => {
+        if (!cancelled) setResult({ key: requestKey, hits: found });
       })
       .catch(() => {
         // Recall is an enhancement, never a blocker: a failure here leaves the
         // task detail exactly as it was.
-        if (!cancelled) setHits([]);
+        if (!cancelled) setResult({ key: requestKey, hits: [] });
       });
     return () => {
       cancelled = true;
     };
-  }, [taskId, projectId]);
+  }, [taskId, projectId, requestKey]);
 
   if (hits.length === 0) return null;
 

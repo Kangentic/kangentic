@@ -17,7 +17,7 @@
  * writes into existing buffers and asks for one frame.
  */
 
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Box3,
   Matrix4,
@@ -87,8 +87,9 @@ export interface MemoryGraphSceneHandle {
    * rather than lurching somewhere arbitrary.
    */
   frameNodes: (indices: ReadonlyArray<number>) => void;
+  /** The live scene once its WebGL context exists, for the consumer's style
+   *  and label effects to write into. Null before, and when WebGL failed. */
   scene: MemoryGraphScene | null;
-  controls: CameraControls | null;
   /**
    * Set when WebGL could not be initialized at all - a blocklisted driver, a
    * software-rendering environment that refuses a context, or a headless run.
@@ -141,12 +142,9 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
   // Read inside effects that must not re-run when a panel opens: the scene is
   // never rebuilt for chrome, only re-aimed.
   const insetsRef = useRef(insets);
-  insetsRef.current = insets;
-
   // Same reason: a facet change must not rebuild the scene. It is read at FIT
   // time, which is the only moment the framing is recomputed.
   const framingIndicesRef = useRef(framingIndices);
-  framingIndicesRef.current = framingIndices;
 
   const sceneRef = useRef<MemoryGraphScene | null>(null);
   const controlsRef = useRef<CameraControls | null>(null);
@@ -155,17 +153,18 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
   // inside the frame loop and must never cause a re-render.
   const heldKeysRef = useRef<Set<string>>(new Set());
   const onFrameRef = useRef(onFrame);
-  onFrameRef.current = onFrame;
 
-  /**
-   * Nothing reads this value - the POINT is the re-render.
-   *
-   * The scene is created inside an effect, but the handle returned from this hook
-   * reads `sceneRef.current` during RENDER. Without a state update once the scene
-   * exists, React never re-renders, `handle.scene` stays null forever, and the
-   * consumer's style/edge effects never get a scene to write into. This is what
-   * turns "the scene now exists" into something the React tree can observe.
-   */
+  // The latest inputs, mirrored for the effects and the frame loop that read
+  // them without re-running on them. Written in a LAYOUT effect rather than in
+  // render: every layout effect of a commit runs before any passive one, and
+  // every reader here is a passive effect, a callback, or the frame loop, so
+  // none of them can see a stale value.
+  useLayoutEffect(() => {
+    insetsRef.current = insets;
+    framingIndicesRef.current = framingIndices;
+    onFrameRef.current = onFrame;
+  });
+
   /**
    * Whether the camera is still sitting at the framing we computed for it.
    *
@@ -201,8 +200,17 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
   // still has to call the one canonical framing. A ref is the seam.
   const applyDefaultViewRef = useRef<((animate: boolean) => void) | null>(null);
 
-  const [, markSceneBuilt] = useReducer((count: number) => count + 1, 0);
-  const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
+  /**
+   * What the last scene build produced: the live scene, or why there is none.
+   *
+   * State rather than a read of `sceneRef` in render, because the consumer's
+   * style and label effects have to re-run once the scene exists, and a ref
+   * change schedules nothing. One object so a build reports both halves in a
+   * single update.
+   */
+  const [build, setBuild] = useState<{ scene: MemoryGraphScene | null; unavailableReason: string | null }>(
+    { scene: null, unavailableReason: null },
+  );
 
   const requestRender = useCallback(() => {
     if (frameRef.current !== null) return;
@@ -253,19 +261,24 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     // racing us to Chromium's cap.
     const releaseContext = reserveWebglContext('memory-graph');
 
-    let scene: MemoryGraphScene;
+    let created: MemoryGraphScene | null = null;
+    let unavailableReason: string | null = null;
     try {
-      scene = createMemoryGraphScene({ canvas, nodes, edges, edgeColor, regionOf });
+      created = createMemoryGraphScene({ canvas, nodes, edges, edgeColor, regionOf });
     } catch (error) {
       // `new WebGLRenderer` throws when a context cannot be acquired. Release
       // the slot immediately: holding a reservation for a context we never got
       // would shrink the terminals' budget for nothing.
       releaseContext();
-      setUnavailableReason(error instanceof Error ? error.message : 'WebGL is unavailable');
+      unavailableReason = error instanceof Error ? error.message : 'WebGL is unavailable';
       console.warn('[memory-graph] WebGL unavailable; the map cannot be drawn here:', error);
-      return;
     }
-    setUnavailableReason(null);
+    // A WebGL context can only be created against the committed canvas, so
+    // this effect is where the scene comes into existence, and whether it did
+    // is exactly what the surface renders: the map, or the reason it cannot be.
+    setBuild({ scene: created, unavailableReason });
+    if (!created) return;
+    const scene = created;
     sceneRef.current = scene;
 
     const controls = new CameraControls(scene.camera, canvas);
@@ -329,7 +342,6 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     });
     observer.observe(container);
 
-    markSceneBuilt();
     requestRender();
 
     return () => {
@@ -530,7 +542,12 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     if (!animate && orbitAnchorRef.current) applyOrbitPoint();
     requestRender();
   }, [containerRef, requestRender, applyOrbitPoint]);
-  applyDefaultViewRef.current = applyDefaultView;
+  // Mirrored in a layout effect for the reason the inputs above are: the scene
+  // effect and the resize observer that call it are passive, so they always
+  // run after this has been written.
+  useLayoutEffect(() => {
+    applyDefaultViewRef.current = applyDefaultView;
+  }, [applyDefaultView]);
 
   const resetView = useCallback(() => {
     // A reset means the map as a whole - the whole of whatever the facets have
@@ -632,9 +649,8 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     resetView,
     setOrbitAnchor,
     frameNodes,
-    scene: sceneRef.current,
-    controls: controlsRef.current,
-    unavailableReason,
+    scene: build.scene,
+    unavailableReason: build.unavailableReason,
   };
 }
 

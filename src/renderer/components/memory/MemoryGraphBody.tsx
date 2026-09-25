@@ -160,6 +160,14 @@ export function MemoryGraphBody() {
    * unrelated branch is worse than no back at all.
    */
   const [detailTrail, setDetailTrail] = useState<number[]>([]);
+  /**
+   * "Now" for the time facets, fixed when the surface mounts.
+   *
+   * The windows are days wide, so a clock read once per open is exact enough,
+   * and a ticking one would hand every facet memo a new identity on each tick
+   * for nothing. Read in a lazy initializer because render must stay pure.
+   */
+  const [nowMs] = useState(() => Date.now());
 
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -194,11 +202,16 @@ export function MemoryGraphBody() {
   }, [queryText, clearAnswer]);
 
   // A new answer is a new question, so it replaces any neighbourhood being
-  // explored rather than compounding with it.
-  useEffect(() => {
+  // explored and any task drilled into, rather than compounding with them.
+  // Adjusted during render on the transition, React's documented pattern for
+  // state that resets when an input changes: the render restarts at once, so
+  // nothing ever commits a stale scope beside a fresh answer.
+  const [answerSeen, setAnswerSeen] = useState(answer);
+  if (answer !== answerSeen) {
+    setAnswerSeen(answer);
     setExploreFromIndex(null);
     setTaskScope(null);
-  }, [answer]);
+  }
 
   const nodes = snapshot?.projection?.nodes;
 
@@ -254,7 +267,7 @@ export function MemoryGraphBody() {
    */
   const facetAvailability = useMemo<FacetAvailability>(() => {
     if (!nodes || nodes.length === 0) return NO_FACETS_AVAILABLE;
-    const narrowestCutoff = Date.now() - TIME_WINDOW_DAYS['7d'] * DAY_MS;
+    const narrowestCutoff = nowMs - TIME_WINDOW_DAYS['7d'] * DAY_MS;
     const outcomes = new Set<string>();
     let hasOlderThanNarrowest = false;
     for (const node of nodes) {
@@ -268,27 +281,28 @@ export function MemoryGraphBody() {
       // Only outcomes this corpus actually contains, in a fixed display order.
       outcomes: OUTCOME_ORDER.filter((outcome) => outcomes.has(outcome)),
     };
-  }, [nodes]);
+  }, [nodes, nowMs]);
 
   // A selection can outlive the option that offered it - switch to a project
   // where nothing was abandoned and the scope would silently hold at zero with
-  // no control left on screen to explain why.
-  useEffect(() => {
-    if (facets.outcome === 'any') return;
-    if (facetAvailability.outcomes.includes(facets.outcome)) return;
+  // no control left on screen to explain why. Healed during render, so no
+  // frame ever commits the dead scope.
+  if (facets.outcome !== 'any' && !facetAvailability.outcomes.includes(facets.outcome)) {
     setFacets((current) => ({ ...current, outcome: 'any' }));
-  }, [facetAvailability, facets.outcome]);
+  }
 
   // A rebuild re-clusters from scratch, so region 4 in the old projection is not
   // region 4 in the new one. Carrying the old exclusions across would hide an
   // arbitrary area the user never chose, with a panel that agrees it is hidden
   // and no way to tell it is wrong. Cleared on a signature change instead.
   const projectionSignature = snapshot?.projection?.signature ?? null;
-  useEffect(() => {
+  const [signatureSeen, setSignatureSeen] = useState(projectionSignature);
+  if (projectionSignature !== signatureSeen) {
+    setSignatureSeen(projectionSignature);
     setFacets((current) =>
       current.hiddenRegions.size === 0 ? current : { ...current, hiddenRegions: new Set() },
     );
-  }, [projectionSignature]);
+  }
 
   /** Which detail settings this corpus can actually express - often only one,
    *  in which case the control does not render. */
@@ -303,10 +317,9 @@ export function MemoryGraphBody() {
    * no control left on screen to explain it. Heal back to the default, the same
    * way a stale outcome filter does.
    */
-  useEffect(() => {
-    if (grainOptions.length === 0 || grainOptions.includes(granularity)) return;
+  if (grainOptions.length > 0 && !grainOptions.includes(granularity)) {
     setGranularity(DEFAULT_GRANULARITY);
-  }, [grainOptions, granularity]);
+  }
 
   const clustering = useMemo(
     () => resolveClustering(snapshot?.projection ?? { clusterings: [] }, granularity),
@@ -337,7 +350,7 @@ export function MemoryGraphBody() {
   const facetIndices = useMemo(() => {
     if (!nodes || facetsAreEmpty(facets)) return null;
     const cutoff =
-      facets.since === 'any' ? null : Date.now() - TIME_WINDOW_DAYS[facets.since] * DAY_MS;
+      facets.since === 'any' ? null : nowMs - TIME_WINDOW_DAYS[facets.since] * DAY_MS;
     const surviving = new Set<number>();
     nodes.forEach((node, index) => {
       if (facets.hiddenRegions.has(clustering.regionOf(node))) return;
@@ -349,7 +362,7 @@ export function MemoryGraphBody() {
       surviving.add(index);
     });
     return surviving;
-  }, [nodes, facets, clustering]);
+  }, [nodes, facets, clustering, nowMs]);
 
   /**
    * The facet scope as an array, for the camera's default framing.
@@ -370,20 +383,8 @@ export function MemoryGraphBody() {
    * the Detail chips already follow.
    */
   const colorModes = useMemo(() => availableColorModes(nodes ?? []), [nodes]);
-  useEffect(() => {
-    if (!colorModes.includes(colorMode)) setColorMode('cluster');
-  }, [colorMode, colorModes]);
-
-  /**
-   * The tasks an answer SELECTED, when the question asked which rather than why.
-   *
-   * This is what makes "show me the terminal bug fixes" a filter instead of a
-   * paragraph about a filter: the agent read every task, decided which qualify,
-   * and the map scopes to exactly those. Nothing here re-derives that judgement.
-   */
-  useEffect(() => {
-    setTaskScope(null);
-  }, [answer]);
+  // Topic is always offered, so this converges in one extra render.
+  if (!colorModes.includes(colorMode)) setColorMode('cluster');
 
   /**
    * The tasks an answer is ABOUT, whether or not it used the protocol line.
