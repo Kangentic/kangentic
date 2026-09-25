@@ -21,13 +21,13 @@
  * wants it).
  */
 
-import { ArrowLeft, ChevronRight, Compass, MessageSquareText, Search } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Compass, MessageSquareText } from 'lucide-react';
 import { PanelRow } from './PanelRow';
 import { humanizeModelId } from '../../../shared/model-id';
 import { useToastStore } from '../../stores/toast-store';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
 import { openMemoryConversation } from './open-memory-conversation';
-import type { MemoryGraphCluster, MemoryGraphNode, MemoryGraphQueryHit } from '../../../shared/types';
+import type { MemoryGraphCluster, MemoryGraphNode } from '../../../shared/types';
 
 export interface MemoryNodeDetailProps {
   node: MemoryGraphNode;
@@ -36,10 +36,6 @@ export interface MemoryNodeDetailProps {
    *  this ordering is exact even though the node's position is approximate. */
   neighbors: ReadonlyArray<{ index: number; node: MemoryGraphNode; similarity: number }>;
   onSelectNeighbor: (index: number) => void;
-  /** This node's own search hit, when a query is active and it matched. */
-  queryHit?: { hit: MemoryGraphQueryHit; rank: number; total: number } | null;
-  /** Doc keys in the current result set, so a neighbour can be marked as one. */
-  resultDocKeys?: ReadonlySet<string>;
   /** Re-scope the map to this conversation and everything it links to. */
   onExploreFrom?: () => void;
   /** Step back to wherever this panel was reached from, if anywhere. */
@@ -80,8 +76,6 @@ export function MemoryNodeDetail({
   cluster,
   neighbors,
   onSelectNeighbor,
-  queryHit = null,
-  resultDocKeys,
   onExploreFrom,
   onBack,
   backLabel,
@@ -190,32 +184,6 @@ export function MemoryNodeDetail({
         </div>
       </div>
 
-      {/* WHY this one is on screen. Only while a query is active, because
-          otherwise there is no search to answer to. */}
-      {queryHit ? (
-        <div className="border-b border-edge p-4" data-testid="memory-graph-why-matched">
-          <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-            <Search size={11} aria-hidden />
-            Why this matched
-          </h3>
-          <p className="mt-1 text-[11px] text-fg-muted">
-            Result {queryHit.rank} of {queryHit.total}
-            {' - '}
-            {/* The match KIND is the honest answer to "is this really semantic
-                search?": a `semantic` hit shares no literal term with the query. */}
-            {queryHit.hit.matchKind === 'semantic'
-              ? 'matched on meaning, not wording'
-              : queryHit.hit.matchKind === 'lexical'
-                ? 'matched the words you typed'
-                : 'matched on both wording and meaning'}
-            {queryHit.hit.matchCount > 1 ? ` in ${queryHit.hit.matchCount} places` : ''}
-          </p>
-          <p className="mt-2 line-clamp-6 text-xs leading-relaxed text-fg-secondary">
-            {queryHit.hit.snippet}
-          </p>
-        </div>
-      ) : null}
-
       {neighbors.length > 0 ? (
         <div className="p-4">
           {/* No subtitle. It read "Strongest first. Exact, not read off the
@@ -230,7 +198,6 @@ export function MemoryNodeDetail({
           </h3>
           <ul className="mt-2 space-y-1.5">
             {neighbors.map((neighbor) => {
-              const alsoAResult = resultDocKeys?.has(neighbor.node.docKey) ?? false;
               return (
                 <li key={neighbor.node.docKey}>
                   {/* A resting affordance, not hover-only: these are the panel's
@@ -259,14 +226,6 @@ export function MemoryNodeDetail({
                         {neighbor.node.lastActivityMs ? (
                           <span className="tabular-nums">
                             {new Date(neighbor.node.lastActivityMs).toLocaleDateString()}
-                          </span>
-                        ) : null}
-                        {alsoAResult ? (
-                          // Ties the neighbourhood back to the search: which of
-                          // these are ALSO answers to what you asked, and which
-                          // are only near this one conversation.
-                          <span className="text-active" data-testid="memory-graph-neighbor-in-results">
-                            also a search result
                           </span>
                         ) : null}
                       </span>

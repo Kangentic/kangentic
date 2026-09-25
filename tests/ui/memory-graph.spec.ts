@@ -108,6 +108,11 @@ function projectionLiteral(nodeCount: number, options: { collapsed?: boolean } =
         title: 'Conversation ' + i,
         sessionId: 'session-' + i,
         taskId: 'task-' + i,
+        // The board ticket a card prints. Carried because a node field the
+        // fixture omits is invisible in every test that reads it, which is how
+        // four rounds of "the row did not render" turned out to be an
+        // incomplete fixture rather than a broken feature.
+        displayId: 100 + i,
         agent: 'Claude Code',
         model: 'Opus 5',
         effort: 'high',
@@ -211,8 +216,8 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 }
 
 /**
- * A graph plus one search hit resolving to node 0, plus a real transcript for
- * that node's session.
+ * A graph plus an answer naming the task whose conversation is node 0, plus a
+ * real transcript for that node's session.
  *
  * Seeding the transcript with a `taskId` is what keeps the "Open task" assertion
  * honest: with the mock's default (`taskId: null`) the button is absent because
@@ -223,9 +228,18 @@ function conversationFixture(): string {
   return `${snapshotScript({ projection: projectionLiteral(30) })}
     window.__mockPreConfigure(function () {
       return {
-        memoryGraphQueryResult: {
-          query: 'conversation', semantic: true,
-          hits: [{ docKey: 'conversation::doc-0', sessionId: 'session-0', taskId: 'task-0', taskTitle: 'Conversation 0', agentName: 'claude', snippet: 'a snippet', score: 1, matchKind: 'hybrid', matchCount: 2, turnTs: null }],
+        memoryGraphAnswerResult: {
+          ok: true,
+          agentName: 'Claude Code',
+          answer: 'That was T1.',
+          selectedDocKeys: ['conversation::doc-0'],
+          taskRefs: [
+            { ref: 1, displayId: 100, title: 'Conversation 0', docKeys: ['conversation::doc-0'], costUsd: null, durationMs: null, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
+          ],
+          view: null,
+          grounds: null,
+          promptTokens: 1,
+          taskCount: 30,
         },
         transcriptSeeds: {
           'session-0': {
@@ -248,11 +262,14 @@ function conversationFixture(): string {
     });`;
 }
 
-/** Select node 0 through the search rail. Deterministic, unlike clicking canvas
- *  pixels - which this tier deliberately never does. */
+/** Select node 0 through an answer: ask, click the task row it named, click the
+ *  conversation. Deterministic, unlike clicking canvas pixels - which this tier
+ *  deliberately never does. */
 async function selectFirstResult(page: Page): Promise<void> {
-  await page.locator('[data-testid="memory-graph-search-input"]').fill('conversation');
-  await page.locator('[data-testid="memory-graph-result-card"]').first().click();
+  await page.locator('[data-testid="memory-graph-search-input"]').fill('what was conversation 0?');
+  await page.keyboard.press('Enter');
+  await page.locator('[data-testid="memory-graph-answer-task-row"]').first().click();
+  await page.locator('[data-testid="memory-graph-task-conversation-row"]').first().click();
 }
 
 async function openMemoryGraph(page: Page): Promise<void> {
@@ -422,127 +439,49 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('a query lights matching nodes and lists them as cards', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+  /**
+   * An answer naming ONE task, whose conversation is node 3.
+   *
+   * The way a reader reaches a conversation now: ask, click the task row the
+   * answer named, click the conversation. There is no search rail to click a
+   * card in - that rail showed our retrieval's raw passages before the agent
+   * saw the question, and the user's verdict on it was "confusing".
+   */
+  const answerNamingTask3 = `
       window.__mockPreConfigure(function () {
         return {
-          memoryGraphQueryResult: {
-            query: 'terminal resize',
-            semantic: true,
-            hits: [
-              { docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', taskTitle: 'Fix PTY resize', agentName: 'claude', snippet: 'the terminal resize debounce', score: 0.9, matchKind: 'hybrid', matchCount: 4, turnTs: null },
-              { docKey: 'conversation::doc-7', sessionId: 's-7', taskId: null, taskTitle: null, agentName: 'claude', snippet: 'conpty width drift', score: 0.7, matchKind: 'semantic', matchCount: 1, turnTs: null }
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'That was T1.',
+            selectedDocKeys: ['conversation::doc-3'],
+            taskRefs: [
+              { ref: 1, displayId: 103, title: 'Fix PTY resize', docKeys: ['conversation::doc-3'], costUsd: 4.5, durationMs: 60000, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
             ],
+            view: null,
+            grounds: null,
+            promptTokens: 100,
+            taskCount: 12,
           },
         };
       });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('terminal resize');
-      await page.keyboard.press('Enter');
 
-      const cards = page.locator('[data-testid="memory-graph-result-card"]');
-      await expect(cards).toHaveCount(2);
-      await expect(cards.first()).toContainText('Fix PTY resize');
-      // A hit with no task still renders rather than being dropped.
-      await expect(cards.nth(1)).toContainText('Untitled conversation');
-      // The hit count is stated against the corpus size.
-      await expect(page.locator('[data-testid="memory-graph-body"]')).toContainText('2 of 30');
-    } finally {
-      await browser.close();
-    }
-  });
+  /** Ask, then drill from the answer's task row into its one conversation. */
+  async function askAndDrillIntoTask(page: Page): Promise<void> {
+    await page.locator('[data-testid="memory-graph-search-input"]').fill('what fixed the resize?');
+    await page.keyboard.press('Enter');
+    await page.locator('[data-testid="memory-graph-answer-task-row"]').click();
+    await page.locator('[data-testid="memory-graph-task-conversation-row"]').click();
+  }
 
-  test('searches as you type, without pressing Enter', async () => {
-    // The surface's premise is watching matches light up on the map, which a
-    // submit-to-search box cannot do. Retrieval is local and free, so there is
-    // no cost reason to gate it behind Enter.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(10) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphQueryResult: {
-            query: 'x', semantic: true,
-            hits: [{ docKey: 'conversation::doc-2', sessionId: 's-2', taskId: null, taskTitle: 'Typed match', agentName: null, snippet: 'y', score: 1, matchKind: 'hybrid', matchCount: 1, turnTs: null }],
-          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').pressSequentially('pty', { delay: 20 });
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(1);
-      await expect(page.locator('[data-testid="memory-graph-results"]')).toContainText('Typed match');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('says when a search was lexical-only', async () => {
-    // Silently returning worse results would be the wrong failure mode.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(10) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphQueryResult: {
-            query: 'x', semantic: false,
-            hits: [{ docKey: 'conversation::doc-1', sessionId: 's-1', taskId: null, taskTitle: 'A', agentName: null, snippet: 'x', score: 1, matchKind: 'lexical', matchCount: 1, turnTs: null }],
-          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('x');
-      await page.keyboard.press('Enter');
-      // Attached to the SEARCH box rather than to the results list: it explains
-      // the search that ran, not the hits it returned, and it must still show
-      // when a lexical search returns nothing.
-      await expect(page.locator('[data-testid="memory-graph-body"]')).toContainText('Searched text only');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('clearing the search removes the cards', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(10) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphQueryResult: {
-            query: 'x', semantic: true,
-            hits: [{ docKey: 'conversation::doc-1', sessionId: 's-1', taskId: null, taskTitle: 'A', agentName: null, snippet: 'x', score: 1, matchKind: 'hybrid', matchCount: 1, turnTs: null }],
-          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('x');
-      await page.keyboard.press('Enter');
-      await expect(page.locator('[data-testid="memory-graph-results"]')).toBeVisible();
-      await page.locator('[data-testid="memory-graph-clear-search"]').click();
-      await expect(page.locator('[data-testid="memory-graph-results"]')).toBeHidden();
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a result card selects the node and offers to open the conversation', async () => {
+  test('a conversation row selects the node and offers to open the conversation', async () => {
     // The point of the whole surface: a node has to lead somewhere. The first
     // version showed a raw hash and offered nothing to do with it.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphQueryResult: {
-            query: 'x', semantic: true,
-            hits: [{ docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', taskTitle: 'Fix PTY resize', agentName: 'claude', snippet: 'resize debounce', score: 0.9, matchKind: 'hybrid', matchCount: 2, turnTs: null }],
-          },
-        };
-      });`;
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}${answerNamingTask3}`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('x');
-      await page.locator('[data-testid="memory-graph-result-card"]').click();
+      await askAndDrillIntoTask(page);
 
       const detail = page.locator('[data-testid="memory-graph-detail"]');
       await expect(detail).toBeVisible();
@@ -562,20 +501,11 @@ test.describe('memory graph', () => {
   });
 
   test('clicking Open conversation hands the session to the viewer', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphQueryResult: {
-            query: 'x', semantic: true,
-            hits: [{ docKey: 'conversation::doc-5', sessionId: 's-5', taskId: null, taskTitle: 'A', agentName: null, snippet: 'y', score: 1, matchKind: 'hybrid', matchCount: 1, turnTs: null }],
-          },
-        };
-      });`;
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}${answerNamingTask3}`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('x');
-      await page.locator('[data-testid="memory-graph-result-card"]').click();
+      await askAndDrillIntoTask(page);
       await page.locator('[data-testid="memory-graph-open-conversation"]').click();
 
       // The graph passes the NODE's session id (it knows it directly) rather
@@ -592,7 +522,7 @@ test.describe('memory graph', () => {
             __zustandStores?: { memoryWindows?: { getState: () => { windows: Record<string, { kind: string; anchor: string }> } } };
           }).__zustandStores?.memoryWindows?.getState().windows ?? {},
         ).then((windows) => Object.values(windows).map((entry) => `${entry.kind}:${entry.anchor}`)))
-        .toEqual(['conversation:session-5']);
+        .toEqual(['conversation:session-3']);
     } finally {
       await browser.close();
     }
@@ -649,108 +579,78 @@ test.describe('memory graph', () => {
   });
 
   /**
-   * Ask, which is the half search cannot do.
+   * Ask, which is the whole of what the box does.
    *
-   * Search answers "which conversations"; asked a real question it correctly
-   * returns everything about the subject and leaves the reading to you. These
-   * tests are about the three things that make Ask trustworthy rather than
-   * merely present: it is a SECOND, explicit act with a stated cost, its
-   * citations go back to the map, and it is not offered at all when the agent
-   * cannot do it.
+   * These tests are about the things that make it trustworthy rather than
+   * merely present: it runs on Enter and on nothing else, it names who answers
+   * and what that costs before it runs, the tasks it names go back to the map,
+   * the answer is visible as it arrives, and it is not offered at all when no
+   * agent can do it.
    */
-  const askQuery = `
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphQueryResult: {
-            query: 'sphere fit',
-            semantic: true,
-            hits: [
-              { docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', taskTitle: 'Frame the map', agentName: 'claude', snippet: 'the sphere circumscribes', score: 0.9, matchKind: 'hybrid', matchCount: 4, turnTs: null },
-              { docKey: 'conversation::doc-7', sessionId: 's-7', taskId: 't-7', taskTitle: 'Reset view', agentName: 'claude', snippet: 'framing regressed', score: 0.7, matchKind: 'semantic', matchCount: 1, turnTs: null }
-            ],
-          },
-        };
-      });`;
-
-  test('groups a task\'s conversations into one row, and badges how it matched', async () => {
-    // Retrieval collapses to one hit per CONVERSATION, which is correct - but a
-    // task runs several sessions, so one task returned three rows sharing a
-    // title and differing only in snippet. Measured on the real corpus: 29
-    // hits, 29 distinct conversations, 24 distinct titles. Nothing was
-    // duplicated; the unit was wrong for reading.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphQueryResult: {
-            query: 'mobile',
-            semantic: true,
-            hits: [
-              { docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-mobile', taskTitle: 'Mobile Bridge Phase 1', agentName: 'claude', snippet: 'semantic passage', score: 0.9, matchKind: 'semantic', matchCount: 3, turnTs: null },
-              { docKey: 'conversation::doc-7', sessionId: 's-7', taskId: 't-mobile', taskTitle: 'Mobile Bridge Phase 1', agentName: 'claude', snippet: 'lexical passage', score: 0.7, matchKind: 'lexical', matchCount: 4, turnTs: null },
-              { docKey: 'conversation::doc-9', sessionId: 's-9', taskId: 't-relay', taskTitle: 'Relay config', agentName: 'claude', snippet: 'other work', score: 0.5, matchKind: 'lexical', matchCount: 1, turnTs: null }
-            ],
-          },
-        };
-      });`;
+  test('typing runs nothing, and Enter asks', async () => {
+    // ONE box, ONE path. It used to search live on every keystroke and
+    // separately ask on Enter when a regex judged the text to be a question;
+    // two systems answered the same input and the second overwrote the first,
+    // so the user watched a hairball of raw passages appear and then vanish
+    // under the actual answer. Nothing on screen explained why "mobile
+    // pairing" and "what did we do about mobile pairing?" behaved differently,
+    // because the reason was a regex they could not see.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('mobile');
+      const input = page.locator('[data-testid="memory-graph-search-input"]');
 
-      // Three conversations, TWO rows: the two Phase 1 sessions are one task.
-      const cards = page.locator('[data-testid="memory-graph-result-card"]');
-      await expect(cards).toHaveCount(2);
-      await expect(cards.first()).toContainText('Mobile Bridge Phase 1');
-      await expect(cards.first()).toContainText('2 conversations');
+      // Keywords, a question, an empty box: none of it does anything.
+      await input.fill('sphere fit');
+      await input.fill('What was the most expensive task?');
+      await page.waitForTimeout(400);
+      await expect(page.locator('[data-testid="memory-graph-results"]')).toHaveCount(0);
+      expect(await page.evaluate(() => (window as unknown as {
+        __mockGraphAnswerCalls?: unknown[];
+      }).__mockGraphAnswerCalls ?? [])).toHaveLength(0);
 
-      // Both kinds are badged, because a task that matched on wording AND
-      // meaning is a stronger result than one that matched on either.
-      const kinds = cards.first().locator('[data-testid="memory-graph-match-kind"]');
-      await expect(kinds).toHaveCount(2);
-      await expect(kinds.nth(0)).toHaveText('semantic');
-      await expect(kinds.nth(1)).toHaveText('lexical');
-
-      // Matches are summed across the task, not reported per session.
-      await expect(cards.first()).toContainText('7 matches');
-
-      // A single-session task says nothing about session count.
-      await expect(cards.nth(1)).toContainText('Relay config');
-      await expect(cards.nth(1)).not.toContainText('conversations');
-
-      // The COUNT still reports conversations, which is what the map draws.
-      await expect(page.getByText('3 of 30', { exact: false }).first()).toBeVisible();
+      // Enter asks. Exactly once, with the text as typed and the project the
+      // map is pointed at (`.claude/rules/project-scoped-ipc.md`), the detail
+      // level the user is looking at, and a request id the stream is keyed on.
+      await input.press('Enter');
+      await expect.poll(async () => page.evaluate(() => (window as unknown as {
+        __mockGraphAnswerCalls?: Array<{ question: string; projectId: string; granularity: string; requestId: string | null }>;
+      }).__mockGraphAnswerCalls ?? [])).toHaveLength(1);
+      const [call] = await page.evaluate(() => (window as unknown as {
+        __mockGraphAnswerCalls: Array<{ question: string; projectId: string; granularity: string; requestId: string | null }>;
+      }).__mockGraphAnswerCalls);
+      expect(call.question).toBe('What was the most expensive task?');
+      expect(call.projectId).toBe('project-1');
+      expect(call.granularity).toBe('balanced');
+      expect(call.requestId).toBeTruthy();
     } finally {
       await browser.close();
     }
   });
 
-  test('offers Ask as a second act, and says what it costs before it runs', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}`;
+  test('says who answers and what it costs, before it runs', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
       const ask = page.locator('[data-testid="memory-graph-ask"]');
-      // Nothing to read yet, so nothing to offer.
+      // Nothing typed, nothing to offer.
       await expect(ask).toHaveCount(0);
 
       await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
 
-      // Appears once there is TEXT, names the agent it will run, and states the
-      // cost - the two verbs are separate acts, not one box with a hidden mode.
+      // The submit glyph appears once there is TEXT. Enter is the button; this
+      // is for discoverability and for the mouse, and it carries the agent and
+      // the cost - reachable without a pointer, since HoverTip renders its
+      // label sr-only inside the trigger at all times.
       await expect(ask).toBeVisible();
-      // The AGENT is on the button itself, so the fallback chain is never
-      // silent about who will run.
-      await expect(ask).toContainText('Ask Claude Code');
-      // The COST is one hover away, and reachable without a pointer: HoverTip
-      // renders its label sr-only inside the trigger at all times, so a mapping
-      // that exists only under a cursor does not exist at all to someone not
-      // using one.
+      await expect(ask).toHaveAttribute('aria-label', 'Ask Claude Code');
       await expect(page.getByText('One agent call', { exact: false }).first()).toBeAttached();
       await ask.hover();
       await expect(page.locator('[data-testid="memory-graph-ask-tip"]')).toContainText('One agent call');
 
-      // And it has NOT run. Search is free and automatic; this is not.
+      // And it has NOT run.
       expect(await page.evaluate(() => (window as unknown as {
         __mockGraphAnswerCalls?: unknown[];
       }).__mockGraphAnswerCalls ?? [])).toHaveLength(0);
@@ -759,160 +659,89 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('answers with citations that select the conversation on the map', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+  test('a task the answer named is a control that selects its conversation', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
       window.__mockPreConfigure(function () {
         return {
           memoryGraphAnswerResult: {
             ok: true,
             agentName: 'Claude Code',
-            answer: 'A sphere circumscribes [1], so it framed nothing like the default view [2].',
-            citations: [
-              { index: 1, docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', title: 'Frame the map', ts: 1760000000000 },
-              { index: 2, docKey: 'conversation::doc-7', sessionId: 's-7', taskId: 't-7', title: 'Reset view', ts: 1760000000000 }
+            answer: 'A sphere circumscribes, so T1 framed nothing like the default view.',
+            selectedDocKeys: [],
+            taskRefs: [
+              { ref: 1, displayId: 107, title: 'Reset view', docKeys: ['conversation::doc-7'], costUsd: 12, durationMs: null, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
             ],
-            droppedConversations: 0,
+            view: null,
+            grounds: null,
+            promptTokens: 100,
+            taskCount: 30,
           },
         };
       });`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
-      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('why did we drop the sphere fit?');
+      await page.keyboard.press('Enter');
 
       const answered = page.locator('[data-testid="memory-answer"]');
       await expect(answered).toBeVisible();
       await expect(answered).toContainText('A sphere circumscribes');
       await expect(answered).toContainText('Answered by Claude Code');
 
-      // It asked the QUERY text rather than making the user retype it, and it
-      // named the project the map is pointed at rather than letting main guess
-      // (`.claude/rules/project-scoped-ipc.md`).
-      expect(await page.evaluate(() => (window as unknown as {
-        __mockGraphAnswerCalls?: Array<{ question: string }>;
-        // The granularity travels with the question, so a region the answer
-        // names is a region the user can currently see.
-      }).__mockGraphAnswerCalls ?? [])).toEqual([
-        { question: 'sphere fit', projectId: 'project-1', granularity: 'balanced' },
-      ]);
-
-      // The cards stay. This is one more reading of them, not a replacement, so
-      // a reader who distrusts the answer can drop straight to the source.
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
-
-      // And every claim is traceable: a citation selects its node on the map.
-      const citations = page.locator('[data-testid="memory-answer-citation"]');
-      await expect(citations).toHaveCount(2);
-      await citations.nth(1).click();
+      // The ref in the prose is the board's ticket, and it is a control.
+      const refs = page.locator('[data-testid="memory-answer-task"]');
+      await expect(refs).toHaveCount(1);
+      await expect(refs.first()).toHaveText('#107');
+      await refs.first().click();
+      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Reset view');
+      await page.locator('[data-testid="memory-graph-task-conversation-row"]').click();
       await expect(page.locator('[data-testid="memory-graph-detail"]')).toContainText('Conversation 7');
     } finally {
       await browser.close();
     }
   });
 
-  test('drops the answer when the question changes', async () => {
-    // Reported from the running app: an answer about the most expensive task was
-    // still sitting over a later search for "terminal". An answer is ABOUT a
-    // question, and one left standing over a different search claims to be about
-    // that one instead.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+  test('a new question drops the old answer', async () => {
+    // An answer is ABOUT a question, and one left standing over a different
+    // question claims to be about that one instead.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
       window.__mockPreConfigure(function () {
         return {
           memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'It circumscribes [1].',
-            citations: [
-              { index: 1, docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', title: 'Frame the map', ts: null }
-            ],
-            droppedConversations: 0,
+            ok: true, agentName: 'Claude Code', answer: 'It circumscribes.',
+            selectedDocKeys: [], taskRefs: [], view: null, grounds: null, promptTokens: 1, taskCount: 30,
           },
         };
       });`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      const search = page.locator('[data-testid="memory-graph-search-input"]');
-      await search.fill('sphere fit');
-      await page.locator('[data-testid="memory-graph-ask"]').click();
+      const input = page.locator('[data-testid="memory-graph-search-input"]');
+      await input.fill('sphere fit');
+      await input.press('Enter');
       await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
 
-      await search.fill('something else entirely');
+      // Typing a different question does not by itself drop it - the answer
+      // still applies to what was asked. Asking again does.
+      await input.fill('something else entirely');
+      await input.press('Enter');
+      await expect.poll(async () => page.evaluate(() => (window as unknown as {
+        __mockGraphAnswerCalls?: unknown[];
+      }).__mockGraphAnswerCalls ?? [])).toHaveLength(2);
+
+      // And clearing the box clears the answer with it, or an answer would
+      // stand over an empty box claiming to be about nothing.
+      await input.fill('');
       await expect(page.locator('[data-testid="memory-answer"]')).toHaveCount(0);
-      // And Ask is offered again, for the new question.
-      await expect(page.locator('[data-testid="memory-graph-ask"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('keeps a paid-for answer when the same question is re-run', async () => {
-    // The other half of the rule. Search runs on every keystroke and on
-    // re-renders, so clearing on any `runQuery` rather than on a CHANGE would
-    // throw away an answer that cost a real agent call.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'It circumscribes [1].',
-            citations: [
-              { index: 1, docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', title: 'Frame the map', ts: null }
-            ],
-            droppedConversations: 0,
-          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      const search = page.locator('[data-testid="memory-graph-search-input"]');
-      await search.fill('sphere fit');
-      await page.locator('[data-testid="memory-graph-ask"]').click();
-      await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
-
-      // Re-typed to exactly the same thing: same question, same answer.
-      await search.fill('sphere fi');
-      await search.fill('sphere fit');
-      await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('says how many matches did not fit, rather than implying it read them all', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'It circumscribes [1].',
-            citations: [
-              { index: 1, docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', title: 'Frame the map', ts: null }
-            ],
-            droppedConversations: 36,
-          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-      await page.locator('[data-testid="memory-graph-ask"]').click();
-      // An answer drawn from 1 of 37 matches is a different claim from one drawn
-      // from all of them, and only the reader can judge whether that matters.
-      await expect(page.locator('[data-testid="memory-answer-dropped"]')).toContainText('36 more matched');
+      await expect(page.locator('[data-testid="memory-graph-results"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
   test('shows why an answer failed, verbatim', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
       window.__mockPreConfigure(function () {
         return {
           memoryGraphAnswerResult: { ok: false, reason: 'Claude Code CLI not found' },
@@ -922,7 +751,7 @@ test.describe('memory graph', () => {
     try {
       await openMemoryGraph(page);
       await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await page.keyboard.press('Enter');
       // Every reason is actionable - no CLI, the agent cannot answer, a timeout -
       // so a generic failure line would take that away.
       await expect(page.locator('[data-testid="memory-answer-error"]')).toContainText('CLI not found');
@@ -931,54 +760,71 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('offers Ask even when the search matched nothing', async () => {
-    // The gate used to be "has hits", which hid the agent at exactly the moment
-    // it was most useful: a question phrased as a sentence rarely matches
-    // lexically, and answering it is the one thing search cannot do.
+  test('shows the answer arriving, before it has finished', async () => {
+    // Content at first-token time (measured 1.1 to 1.8s) rather than a spinner
+    // until completion (measured ~6s). The mock's answerFromGraph resolves at
+    // once, so the stream is driven by hand BEFORE Enter resolves it: the
+    // events carry the request id the store minted, read back off the call.
     const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
       window.__mockPreConfigure(function () {
-        return { memoryGraphQueryResult: { query: 'nothing matches this', semantic: true, hits: [] } };
+        return {
+          memoryGraphAnswerResult: {
+            ok: true, agentName: 'Claude Code', answer: 'The settled answer.',
+            selectedDocKeys: [], taskRefs: [], view: null, grounds: null, promptTokens: 1, taskCount: 30,
+          },
+        };
+      });
+      // Hold the answer open until the spec releases it, so the stream has a
+      // window to be observed in. The call is recorded HERE, because the
+      // mock's own recorder only runs when the held call is finally released,
+      // and the spec needs the request id before that.
+      var original = window.electronAPI.memory.answerFromGraph;
+      window.electronAPI = Object.assign({}, window.electronAPI, {
+        memory: Object.assign({}, window.electronAPI.memory, {
+          answerFromGraph: function (question, projectId, granularity, requestId) {
+            var args = arguments;
+            if (!window.__mockGraphAnswerCalls) window.__mockGraphAnswerCalls = [];
+            window.__mockGraphAnswerCalls.push({ question: question, projectId: projectId, granularity: granularity, requestId: requestId });
+            return new Promise(function (resolve) {
+              window.__mockReleaseAnswer = function () { resolve(original.apply(null, args)); };
+            });
+          },
+        }),
       });`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('nothing matches this');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(0);
-      await expect(page.locator('[data-testid="memory-graph-ask"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('why did we do that?');
+      await page.keyboard.press('Enter');
 
-  test('a question waits for Enter rather than re-filtering the map on every keystroke', async () => {
-    // Typing "What was the most expensive task?" fired a retrieval per
-    // keystroke, each one re-scoping the map to whatever those partial words
-    // matched. The user never asked to filter, and Ask then inherited that
-    // accidental scope as its evidence.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      const input = page.locator('[data-testid="memory-graph-search-input"]');
+      const requestId = await page.evaluate(() => (window as unknown as {
+        __mockGraphAnswerCalls: Array<{ requestId: string }>;
+      }).__mockGraphAnswerCalls[0].requestId);
 
-      // A keyword query still searches as you type: that is the mode where
-      // watching the map narrow is the point.
-      await input.fill('sphere fit');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+      // A tool call shows as progress, named for the reader.
+      await page.evaluate((id) => (window as unknown as {
+        __mockFireAnswerStream: (event: unknown) => void;
+      }).__mockFireAnswerStream({ requestId: id, kind: 'tool', name: 'mcp__kangentic__kangentic_search' }), requestId);
+      await expect(page.locator('[data-testid="memory-answer-status"]')).toContainText('Searching your conversations');
 
-      await input.fill('');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(0);
+      // Text arrives and renders while the answer is still open.
+      await page.evaluate((id) => (window as unknown as {
+        __mockFireAnswerStream: (event: unknown) => void;
+      }).__mockFireAnswerStream({ requestId: id, kind: 'text', text: 'We dropped it because ' }), requestId);
+      await expect(page.locator('[data-testid="memory-answer-streaming"]')).toContainText('We dropped it because');
+      // The status line clears once prose is flowing.
+      await expect(page.locator('[data-testid="memory-answer-status"]')).toHaveCount(0);
 
-      // A question does not. Given generously more than the debounce.
-      await input.fill('What was the most expensive task?');
-      await page.waitForTimeout(600);
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(0);
+      // A delta for a DIFFERENT request is dropped, never appended.
+      await page.evaluate(() => (window as unknown as {
+        __mockFireAnswerStream: (event: unknown) => void;
+      }).__mockFireAnswerStream({ requestId: 'stale', kind: 'text', text: 'NOT THIS' }));
+      await expect(page.locator('[data-testid="memory-answer-streaming"]')).not.toContainText('NOT THIS');
 
-      // Enter commits it, and for a question that means ASKING.
-      await input.press('Enter');
-      await expect.poll(async () => (await page.evaluate(() => (window as unknown as {
-        __mockGraphAnswerCalls?: unknown[];
-      }).__mockGraphAnswerCalls ?? [])).length).toBe(1);
+      // The whole answer REPLACES the stream when it lands.
+      await page.evaluate(() => (window as unknown as { __mockReleaseAnswer: () => void }).__mockReleaseAnswer());
+      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('The settled answer.');
+      await expect(page.locator('[data-testid="memory-answer-streaming"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -988,34 +834,32 @@ test.describe('memory graph', () => {
     // "Show me the tasks related to terminal bug fixes" wants the map filtered,
     // not a paragraph describing a filter. The agent read every task and said
     // which qualify; the surface treats that as the scope.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
-      window.__mockPreConfigure(function () {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
         return {
           memoryGraphAnswerResult: {
             ok: true,
             agentName: 'Claude Code',
-            answer: 'Two tasks touch the terminal.',
-            citations: [],
-            selectedDocKeys: ['conversation::doc-3', 'conversation::doc-7'],
-            taskCount: 30,
-            droppedConversations: 0,
-          },
+            answer: 'Two tasks touch the terminal.',            selectedDocKeys: ['conversation::doc-3', 'conversation::doc-7'],
+            taskCount: 30,          },
         };
       });`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
       await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-      // The query alone matches two of thirty.
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
-
-      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await page.keyboard.press('Enter');
       await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Two tasks touch the terminal');
 
-      // The count reflects the SELECTION, and the cards agree with the map -
-      // a scoped map beside an unscoped list reads as a broken filter.
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
-      await expect(page.getByText('2 of 30', { exact: false }).first()).toBeVisible();
+      // The answer named no task, only conversations, so the rail LISTS what
+      // it selected and counts them - a scoped map over an empty rail reads as
+      // a filter that lost its list. Two rows, agreeing with the map.
+      const rows = page.locator('[data-testid="memory-graph-task-conversation-row"]');
+      await expect(rows).toHaveCount(2);
+      await expect(rows.first()).toContainText('Conversation');
+      await expect(page.getByText('2 conversations', { exact: true })).toBeVisible();
+      // And a row is a way in: it selects that conversation.
+      await rows.first().click();
+      await expect(page.locator('[data-testid="memory-graph-detail"]')).toBeVisible();
     } finally {
       await browser.close();
     }
@@ -1025,48 +869,48 @@ test.describe('memory graph', () => {
     // Measured against a real agent: asked about mobile work it wrote an essay
     // naming 22 tasks inline as `T133` and never emitted the protocol line, so
     // every one of them rendered as dead text pointing at nothing.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
-      window.__mockPreConfigure(function () {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
         return {
           memoryGraphAnswerResult: {
             ok: true,
             agentName: 'Claude Code',
-            answer: 'Mobile work spans T4 the bridge and T9 the relay.',
-            citations: [],
-            selectedDocKeys: [],
+            answer: 'Mobile work spans T4 the bridge and T9 the relay.',            selectedDocKeys: [],
             taskRefs: [
               { ref: 4, title: 'Mobile Bridge Phase 1', docKeys: ['conversation::doc-3', 'conversation::doc-7'] }
             ],
-            taskCount: 30,
-            droppedConversations: 0,
-          },
+            taskCount: 30,          },
         };
       });`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
       await page.locator('[data-testid="memory-graph-search-input"]').fill('mobile');
-      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await page.keyboard.press('Enter');
       await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Mobile work spans');
 
       // T4 resolved, so it is a control. T9 did not, so it stays plain text
       // rather than becoming a button that cannot act.
       const chips = page.locator('[data-testid="memory-answer-task"]');
       await expect(chips).toHaveCount(1);
+      // This ref carries no board ticket, which is what a conversation with no
+      // task looks like. It keeps the `T` label rather than inventing a `#`,
+      // since it genuinely is not a ticket.
       await expect(chips.first()).toHaveText('T4');
 
       // Clicking it scopes the map to that task's conversations, and says so.
       await chips.first().click();
       await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Mobile Bridge Phase 1');
       await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('2 conversations');
-      // The rail lists the TASK the answer named, not conversation cards: an
-      // answer about tasks is answered with tasks. The row count follows the
-      // refs, so scoping to one of them leaves that one row.
-      await expect(page.locator('[data-testid="memory-graph-answer-task-row"]')).toHaveCount(1);
+      // The rail DRILLS IN to that task's conversations. Re-listing the task
+      // row would restate a scope the map is already holding, which is what
+      // made clicking a row appear to do nothing at all.
+      await expect(page.locator('[data-testid="memory-graph-task-conversation-row"]')).toHaveCount(2);
+      await expect(page.locator('[data-testid="memory-graph-answer-task-row"]')).toHaveCount(0);
 
       // And the scope is undoable, like every other narrowing on this surface.
       await page.locator('[data-testid="memory-graph-task-clear"]').click();
       await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-graph-answer-task-row"]')).toHaveCount(1);
     } finally {
       await browser.close();
     }
@@ -1081,61 +925,223 @@ test.describe('memory graph', () => {
     const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
       window.__mockPreConfigure(function () {
         return {
-          memoryGraphQueryResult: {
-            query: 'biggest mobile task',
-            semantic: true,
-            hits: [
-              { docKey: 'conversation::doc-3', sessionId: 's-3', taskId: 't-3', taskTitle: 'Some conversation', agentName: 'claude', snippet: 'Tool: ToolSearch {"query":"select:mcp__kangentic"}', score: 0.9, matchKind: 'semantic', matchCount: 1, turnTs: null }
-            ],
-          },
           memoryGraphAnswerResult: {
             ok: true,
             agentName: 'Claude Code',
-            answer: 'Ranking by cost: T1 (Research: Mobile App) at $308.42 is the largest, then T5.',
-            citations: [],
-            // No SELECTED line, exactly as the real agent behaved.
+            answer: 'Ranking by cost: T1 (Research: Mobile App) at $308.42 is the largest, then T5.',            // No SELECTED line, exactly as the real agent behaved.
             selectedDocKeys: [],
             taskRefs: [
-              { ref: 1, title: 'Research: Mobile App', docKeys: ['conversation::doc-3', 'conversation::doc-7'], costUsd: 308.42, durationMs: 7_680_000, outcome: 'done', sessions: 2 },
-              { ref: 5, title: 'Codex Agent-to-Board MCP', docKeys: ['conversation::doc-9'], costUsd: 199.76, durationMs: null, outcome: 'active', sessions: 1 }
+              { ref: 1, displayId: 529, title: 'Research: Mobile App', docKeys: ['conversation::doc-3', 'conversation::doc-7'], costUsd: 308.42, durationMs: 7_680_000, tokens: 12_400_000, outcome: 'done', sessions: 2, lastActivityMs: null, region: null, agent: null, model: null },
+              { ref: 5, displayId: 44, title: 'Codex Agent-to-Board MCP', docKeys: ['conversation::doc-9'], costUsd: 199.76, durationMs: null, tokens: null, outcome: 'active', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
             ],
-            taskCount: 30,
-            droppedConversations: 0,
-          },
+            view: { select: ['cost_usd', 'duration', 'outcome'], order: { key: 'cost_usd', direction: 'desc' } },
+            taskCount: 30,          },
         };
       });`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
       await page.locator('[data-testid="memory-graph-search-input"]').fill('biggest mobile task');
-      await page.locator('[data-testid="memory-graph-ask"]').click();
+      await page.keyboard.press('Enter');
       await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Ranking by cost');
 
-      // TASK rows, not conversation cards - and both tasks, not the one hit.
+      // TASK rows, both tasks the answer named.
       const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
       await expect(rows).toHaveCount(2);
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(0);
 
-      // Each row presents the TASK: its ref, title, and own totals. The raw
-      // tool-call snippet that made the old card useless is gone.
-      await expect(rows.first()).toContainText('T1');
+      // The row is labelled with the BOARD's ticket, which is the number the
+      // reader has seen on a card - not `T1`, which is a position in the
+      // prompt's task table and a different number for the same task.
+      await expect(rows.first()).toContainText('#529');
+      await expect(rows.first()).not.toContainText('T1');
       await expect(rows.first()).toContainText('Research: Mobile App');
-      await expect(rows.first()).toContainText('$308.42');
-      await expect(rows.first()).toContainText('2h 8m');
-      await expect(rows.first()).toContainText('Reached Done');
-      await expect(rows.first()).toContainText('2 conversations');
-      await expect(rows.first()).not.toContainText('ToolSearch');
 
-      // A task with no duration recorded omits it rather than printing a zero.
-      await expect(rows.nth(1)).toContainText('$199.76');
-      await expect(rows.nth(1)).not.toContainText('0m');
+      // The columns are the ones the ANSWER asked for, aligned under a header.
+      const headers = page.locator('[data-testid="memory-graph-answer-task-header"] span');
+      await expect(headers).toHaveText(['Task', 'Cost', 'Duration', 'Status']);
+      await expect(rows.first().locator('[data-field="cost_usd"]')).toHaveText('$308.42');
+      await expect(rows.first().locator('[data-field="duration"]')).toHaveText('2h 8m');
+      // Named after the WORK, not after the board's Done column.
+      await expect(rows.first().locator('[data-field="outcome"]')).toHaveText('Completed');
+      await expect(rows.nth(1).locator('[data-field="outcome"]')).toHaveText('In Progress');
+
+      // A task with no duration recorded leaves the cell EMPTY rather than
+      // printing a zero it has not earned.
+      await expect(rows.nth(1).locator('[data-field="cost_usd"]')).toHaveText('$199.76');
+      await expect(rows.nth(1).locator('[data-field="duration"]')).toHaveText('');
+
+      // Tokens were not selected, so no token figure appears anywhere.
+      await expect(rows.first()).not.toContainText('12.4M');
 
       // And the count names the unit the rail is actually showing.
       await expect(page.getByText('2 tasks', { exact: false }).first()).toBeVisible();
 
-      // Clicking a row scopes the map to that task's work.
+      // Clicking a row DRILLS IN to that task's conversations. It used to set a
+      // scope the map was already holding, so the click moved nothing at all.
       await rows.first().click();
       await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Research: Mobile App');
+      await expect(page.locator('[data-testid="memory-graph-task-conversation-row"]')).toHaveCount(2);
+      await expect(page.locator('[data-testid="memory-graph-answer-task-row"]')).toHaveCount(0);
+      await expect(page.getByText('2 conversations', { exact: false }).first()).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('keeps the working behind a disclosure instead of in the answer', async () => {
+    // Quoting the sources before answering is the documented way to keep a
+    // long-context answer on its material, and the measured failure it targets
+    // is an answer reaching past 22k tokens of task history to answer from
+    // general knowledge. But this rail is narrow and its answers run to a line
+    // or two, so the quotes cannot sit above every one of them.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: '#286 at $308.42 is the largest.',
+            grounds: 'T1 | 308.42 | cost_usd\\n[3] "we dropped the sphere fit"',            selectedDocKeys: [],
+            taskRefs: [],
+            view: null,
+            taskCount: 349,          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('most expensive task');
+      await page.keyboard.press('Enter');
+
+      const answer = page.locator('[data-testid="memory-answer"]');
+      await expect(answer).toContainText('#286 at $308.42 is the largest.');
+
+      // COLLAPSED by default: the answer is what the reader came for.
+      const grounds = page.locator('[data-testid="memory-answer-grounds"]');
+      await expect(grounds).toBeVisible();
+      await expect(grounds).not.toHaveAttribute('open', '');
+      // The working is not in the answer body, which is the whole point of
+      // separating it - otherwise the rail reads as a wall of quotes.
+      await expect(page.locator('.memory-answer-body')).not.toContainText('cost_usd');
+
+      // And it is one click away, verbatim.
+      await grounds.locator('summary').click();
+      await expect(grounds).toContainText('T1 | 308.42 | cost_usd');
+      await expect(grounds).toContainText('we dropped the sphere fit');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('shows no disclosure when the answer carried no working', async () => {
+    // An answer without grounds is an ordinary answer, not a degraded one. An
+    // empty "Show what this is based on" that opens onto nothing would read as
+    // a broken control.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'Nothing in the index covers that.',
+            grounds: null,            selectedDocKeys: [],
+            taskRefs: [],
+            view: null,
+            taskCount: 349,          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('kubernetes');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Nothing in the index');
+      await expect(page.locator('[data-testid="memory-answer-grounds"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('shows an answer to a question that never ran a search', async () => {
+    // Found by driving the real product, not by reasoning: typing a QUESTION
+    // deliberately does NOT run a search (questions wait for Ask, because
+    // filtering the map on every keystroke was the reported annoyance). So a
+    // question leaves `query` null - and the rail was gated on `query`, which
+    // meant the answer, its citations and its task rows had nowhere to render.
+    // The map still scoped to the answer, so it looked like the surface had
+    // simply swallowed a reply that had already been paid for.
+    //
+    // No `askQuery` here on purpose: the absence of a search result is the
+    // whole condition under test.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'The most expensive task is T1 at $308.42.',            selectedDocKeys: ['conversation::doc-3'],
+            taskRefs: [
+              { ref: 1, displayId: 286, title: 'Searchable conversation memory', docKeys: ['conversation::doc-3'], costUsd: 308.42, durationMs: 7_680_000, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
+            ],
+            view: { select: ['cost_usd'], order: { key: 'cost_usd', direction: 'desc' } },
+            taskCount: 349,          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('What is the most expensive task?');
+      // No search ran, so there is no result rail yet.
+      await expect(page.locator('[data-testid="memory-graph-results"]')).toHaveCount(0);
+
+      await page.keyboard.press('Enter');
+
+      // The answer has a home even though nothing was searched.
+      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('most expensive task');
+      const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
+      await expect(rows).toHaveCount(1);
+      await expect(rows.first()).toContainText('#286');
+      await expect(rows.first().locator('[data-field="cost_usd"]')).toHaveText('$308.42');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('follows the answer to a column that is not cost', async () => {
+    // The defect this whole shape exists for: the rows printed a fixed four
+    // facts, so an answer ranking tasks by TOKENS sat above rows showing dollar
+    // amounts, and an answer about recency showed no date at all.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true,
+            agentName: 'Claude Code',
+            answer: 'By tokens, T1 leads at 12.4M.',            selectedDocKeys: [],
+            taskRefs: [
+              { ref: 1, displayId: 529, title: 'Research: Mobile App', docKeys: ['conversation::doc-3'], costUsd: 308.42, durationMs: 7_680_000, tokens: 12_400_000, outcome: 'done', sessions: 1, lastActivityMs: 1756000000000, region: null, agent: null, model: null },
+              { ref: 5, displayId: 44, title: 'Codex Agent-to-Board MCP', docKeys: ['conversation::doc-9'], costUsd: 199.76, durationMs: 3_600_000, tokens: 900_000, outcome: 'done', sessions: 1, lastActivityMs: 1755000000000, region: null, agent: null, model: null }
+            ],
+            view: { select: ['tokens', 'last_active'], order: { key: 'tokens', direction: 'desc' } },
+            taskCount: 30,          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('most tokens');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('By tokens');
+
+      const headers = page.locator('[data-testid="memory-graph-answer-task-header"] span');
+      await expect(headers).toHaveText(['Task', 'Tokens', 'Last active']);
+
+      const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
+      await expect(rows.first().locator('[data-field="tokens"]')).toHaveText('12.4M');
+      // The number the prose names is the number on the row. Cost is not shown
+      // at all, because nothing asked about it.
+      await expect(rows.first()).not.toContainText('$308.42');
+
+      // Outcome is identical on both rows, so it carries no signal and is not
+      // rendered even though the catalog has it.
+      await expect(rows.first()).not.toContainText('Completed');
     } finally {
       await browser.close();
     }
@@ -1145,13 +1151,15 @@ test.describe('memory graph', () => {
     // The gate is the CAPABILITY, never the agent's name
     // (`.claude/rules/agent-adapters-boundary.md`). An agent without it gets no
     // affordance rather than one that fails when pressed.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}${askQuery}
-      window.__mockAgentListOverrides = { claude: { supportsAnswerFromContext: false } };`;
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockAgentListOverrides = { claude: { supportsAnswerFromContext: false } };`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+      // The box says so in place of doing nothing: a plain notice where the
+      // prompt would be, and no way to type into a control that cannot act.
+      const input = page.locator('[data-testid="memory-graph-search-input"]');
+      await expect(input).toBeDisabled();
+      await expect(input).toHaveAttribute('placeholder', 'No agent can answer here');
       await expect(page.locator('[data-testid="memory-graph-ask"]')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -1226,17 +1234,15 @@ test.describe('memory graph', () => {
     // whose own title was already there - and a search returning 42 across 39
     // regions therefore drew a wall of them, churning as the camera moved.
     //
-    // Region 0 keeps three hits (docs 0-2) and region 1 gets exactly one (doc
-    // 15), because the fixture splits balanced at the halfway node.
-    const hit = (index: number) =>
-      `{ docKey: 'conversation::doc-${index}', sessionId: 's-${index}', taskId: null, taskTitle: 'Hit ${index}', agentName: null, snippet: 'x', score: 0.9, matchKind: 'hybrid', matchCount: 1, turnTs: null }`;
+    // Region 0 keeps three conversations (docs 0-2) and region 1 exactly one
+    // (doc 15), because the fixture splits balanced at the halfway node.
     const preConfig = `${snapshotScript({ projection: projectionLiteral(20) })}
       window.__mockPreConfigure(function () {
         return {
-          memoryGraphQueryResult: {
-            query: 'terminal',
-            semantic: true,
-            hits: [${hit(0)}, ${hit(1)}, ${hit(2)}, ${hit(15)}],
+          memoryGraphAnswerResult: {
+            ok: true, agentName: 'Claude Code', answer: 'Four conversations.',
+            selectedDocKeys: ['conversation::doc-0', 'conversation::doc-1', 'conversation::doc-2', 'conversation::doc-15'],
+            taskRefs: [], view: null, grounds: null, promptTokens: 1, taskCount: 20,
           },
         };
       });`;
@@ -1249,7 +1255,8 @@ test.describe('memory graph', () => {
       await expect(thinned).not.toHaveCSS('opacity', '0');
 
       await page.locator('[data-testid="memory-graph-search-input"]').fill('terminal');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(4);
+      await page.keyboard.press('Enter');
+      await expect(page.locator('[data-testid="memory-graph-task-conversation-row"]')).toHaveCount(4);
 
       // Opacity, not element count: the labels stay mounted and the frame loop
       // fades them, so a count assertion passes against a merely invisible pill.
@@ -1260,22 +1267,19 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('a filter narrows a search rather than replacing it', async () => {
-    // Search asks "which conversations", a facet asks "which part of the index".
-    // They have to compose, and the CARD LIST has to agree with the map - a
+  test('a filter narrows an answer rather than replacing it', async () => {
+    // An answer asks "which conversations", a facet asks "which part of the
+    // index". They have to compose, and the LIST has to agree with the map - a
     // scoped map under an unfiltered list reads as a broken filter.
-    // doc-3 is `active` in the fixture (3 % 3 === 0 is done, so 3 is done...);
-    // the two hits below deliberately straddle the outcome split.
+    // doc-3 reached Done (3 % 3 === 0) and doc-4 is still active, so the two
+    // selected conversations deliberately straddle the outcome split.
     const preConfig = `${snapshotScript({ projection: projectionLiteral(20) })}
       window.__mockPreConfigure(function () {
         return {
-          memoryGraphQueryResult: {
-            query: 'terminal',
-            semantic: true,
-            hits: [
-              { docKey: 'conversation::doc-3', sessionId: 's-3', taskId: null, taskTitle: 'Done one', agentName: null, snippet: 'x', score: 0.9, matchKind: 'hybrid', matchCount: 1, turnTs: null },
-              { docKey: 'conversation::doc-4', sessionId: 's-4', taskId: null, taskTitle: 'Active one', agentName: null, snippet: 'y', score: 0.8, matchKind: 'hybrid', matchCount: 1, turnTs: null }
-            ],
+          memoryGraphAnswerResult: {
+            ok: true, agentName: 'Claude Code', answer: 'Two conversations.',
+            selectedDocKeys: ['conversation::doc-3', 'conversation::doc-4'],
+            taskRefs: [], view: null, grounds: null, promptTokens: 1, taskCount: 20,
           },
         };
       });`;
@@ -1283,16 +1287,55 @@ test.describe('memory graph', () => {
     try {
       await openMemoryGraph(page);
       await page.locator('[data-testid="memory-graph-search-input"]').fill('terminal');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+      await page.keyboard.press('Enter');
+      const rows = page.locator('[data-testid="memory-graph-task-conversation-row"]');
+      await expect(rows).toHaveCount(2);
 
-      // doc-3 reached Done (3 % 3 === 0), doc-4 is still active, so scoping to
-      // Done must drop exactly one card AND the header count with it.
+      // Scoping to Done must drop exactly one row AND the count with it.
       await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('done');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(1);
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toContainText('Done one');
+      await expect(rows).toHaveCount(1);
+      await expect(rows).toContainText('Conversation 3');
+      await expect(page.getByText('1 conversation', { exact: true })).toBeVisible();
 
       await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('any');
-      await expect(page.locator('[data-testid="memory-graph-result-card"]')).toHaveCount(2);
+      await expect(rows).toHaveCount(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a filter narrows the tasks an answer named', async () => {
+    // Same rule one level up. A task row whose every conversation the facet
+    // hid would sit beside a map showing none of them.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(20) })}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphAnswerResult: {
+            ok: true, agentName: 'Claude Code', answer: 'T1 finished and T2 is still going.',
+            selectedDocKeys: [],
+            taskRefs: [
+              { ref: 1, displayId: 101, title: 'Finished task', docKeys: ['conversation::doc-3'], costUsd: 1, durationMs: null, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null },
+              { ref: 2, displayId: 102, title: 'Running task', docKeys: ['conversation::doc-4'], costUsd: 2, durationMs: null, tokens: null, outcome: 'active', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
+            ],
+            view: null, grounds: null, promptTokens: 1, taskCount: 20,
+          },
+        };
+      });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('which tasks?');
+      await page.keyboard.press('Enter');
+      const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
+      await expect(rows).toHaveCount(2);
+
+      await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('done');
+      await expect(rows).toHaveCount(1);
+      await expect(rows).toContainText('#101');
+      await expect(page.getByText('1 task', { exact: true })).toBeVisible();
+
+      await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('any');
+      await expect(rows).toHaveCount(2);
     } finally {
       await browser.close();
     }
@@ -2003,39 +2046,6 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('says WHY the selected conversation matched the search', async () => {
-    // The gap this closes: after filtering, selecting a node dropped the query
-    // entirely - global neighbours, no mention of the search that got you here -
-    // so the thread of "I am exploring X" broke on the first click.
-    const { browser, page } = await launchWithState(conversationFixture());
-    try {
-      await openMemoryGraph(page);
-      await selectFirstResult(page);
-
-      const why = page.locator('[data-testid="memory-graph-why-matched"]');
-      await expect(why).toBeVisible();
-      await expect(why).toContainText('Result 1 of 1');
-      // The match KIND in plain language, which is the honest answer to "is this
-      // really semantic search or just a text scan?"
-      await expect(why).toContainText('wording and meaning');
-      await expect(why).toContainText('a snippet');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('shows no "why" section when nothing was searched', async () => {
-    // It answers a question the user did not ask if there is no query.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-canvas"]').waitFor({ state: 'visible' });
-      await expect(page.locator('[data-testid="memory-graph-why-matched"]')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
   test('lists closest conversations without a similarity percentage', async () => {
     // Every row used to read "99% similar", which is the corpus rather than a
     // rounding accident: anisotropy puts >98% of top-10 pairs above 0.8 cosine,
@@ -2064,32 +2074,6 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('marks neighbours that are also search results', async () => {
-    // Ties the neighbourhood back to the query: which of these are ALSO answers
-    // to what you asked, and which are merely near this one conversation.
-    const bothHits = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphQueryResult: {
-            query: 'conversation', semantic: true,
-            hits: [
-              { docKey: 'conversation::doc-0', sessionId: 'session-0', taskId: 't0', taskTitle: 'Conversation 0', agentName: 'claude', snippet: 's', score: 1, matchKind: 'semantic', matchCount: 1, turnTs: null },
-              { docKey: 'conversation::doc-1', sessionId: 'session-1', taskId: 't1', taskTitle: 'Conversation 1', agentName: 'claude', snippet: 's', score: 0.9, matchKind: 'semantic', matchCount: 1, turnTs: null }
-            ],
-          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(bothHits);
-    try {
-      await openMemoryGraph(page);
-      await selectFirstResult(page);
-      // doc-0's only neighbour is doc-1, which is also hit 2.
-      await expect(page.locator('[data-testid="memory-graph-neighbor-in-results"]')).toHaveCount(1);
-    } finally {
-      await browser.close();
-    }
-  });
-
   test('explores a neighbourhood and offers a way back', async () => {
     const { browser, page } = await launchWithState(conversationFixture());
     try {
@@ -2113,9 +2097,9 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('goes back to the results after selecting one', async () => {
-    // Selecting a card replaced the results list with the detail panel and left
-    // no way back to the search you had just run.
+  test('goes back to the answer after selecting a conversation', async () => {
+    // Selecting a conversation replaced the answer with the detail panel and
+    // left no way back to what you had just asked.
     const { browser, page } = await launchWithState(conversationFixture());
     try {
       await openMemoryGraph(page);
@@ -2123,11 +2107,11 @@ test.describe('memory graph', () => {
       await expect(page.locator('[data-testid="memory-graph-detail"]')).toBeVisible();
 
       const back = page.locator('[data-testid="memory-graph-detail-back"]');
-      await expect(back).toContainText('results');
+      await expect(back).toContainText('the answer');
       await back.click();
 
-      // The results list is showing again and the detail is gone.
-      await expect(page.locator('[data-testid="memory-graph-results"]')).toBeVisible();
+      // The answer is showing again and the detail is gone.
+      await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
       await expect(page.locator('[data-testid="memory-graph-detail"]')).toHaveCount(0);
     } finally {
       await browser.close();

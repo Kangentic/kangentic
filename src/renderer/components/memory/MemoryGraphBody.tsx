@@ -21,7 +21,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Loader2, Network, Search, Sparkles, X } from 'lucide-react';
+import { Compass, CornerDownLeft, Loader2, Network, Sparkles, X } from 'lucide-react';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -43,53 +43,28 @@ import { availableGranularities, DEFAULT_GRANULARITY, resolveClustering } from '
 import { availableColorModes } from './color-mode-availability';
 import { resolveAnswerAgent } from '../../../shared/answer-agent';
 import { HoverTip } from '../HoverTip';
-import type { MemoryGraphGranularity } from '../../../shared/types';
+import type { MemoryGraphGranularity, MemoryGraphNode } from '../../../shared/types';
+import {
+  DEFAULT_TASK_VIEW,
+  formatTaskCost,
+  formatTaskDuration,
+  visibleTaskColumns,
+} from '../../../shared/memory-task-fields';
 import { useChromeInsets } from './useChromeInsets';
 import { MemoryNodeDetail, openConversationForNode } from './MemoryNodeDetail';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Search-as-you-type delay. Retrieval is local and fast, so this only needs to
- *  coalesce a burst of keystrokes. */
-const QUERY_DEBOUNCE_MS = 220;
 /** Neighbours listed in the detail panel. Enough to be useful, short enough to
  *  read without scrolling. */
 const DETAIL_NEIGHBOR_COUNT = 6;
 
-/**
- * Is this text a question rather than a set of keywords?
- *
- * Decides only ONE thing: whether typing keeps re-filtering the map live. It is
- * deliberately loose at the edges because both mistakes are cheap - an
- * unrecognised question filters as it always did, and a false positive costs
- * one Enter. What it must not do is treat "mobile relay pairing" as a question,
- * which is why it wants either a question mark or a leading question word plus
- * enough words to be a sentence.
- */
-export function looksLikeQuestion(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return false;
-  if (trimmed.endsWith('?')) return true;
-  const words = trimmed.split(/\s+/);
-  if (words.length < 3) return false;
-  return /^(what|why|which|who|when|where|how|show|list|find|tell|give|compare|summari[sz]e)$/i
-    .test(words[0]);
-}
-
-/** Outcome as the reader sees it elsewhere on this surface. */
-const OUTCOME_LABELS: Record<'done' | 'abandoned' | 'active', string> = {
-  done: 'Reached Done',
-  abandoned: 'Abandoned',
-  active: 'Still on the board',
-};
-
-/** Compact duration for a rail row: minutes under an hour, hours above. */
-function formatDuration(ms: number): string {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+/** A date for a conversation row. Short, and the same shape the catalog uses. */
+function shortDate(epochMs: number | null): string | null {
+  if (epochMs === null) return null;
+  const date = new Date(epochMs);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function CenteredNotice({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
@@ -107,12 +82,10 @@ function CenteredNotice({ icon, title, body }: { icon: React.ReactNode; title: s
 export function MemoryGraphBody() {
   const snapshot = useMemoryGraphStore((state) => state.snapshot);
   const loaded = useMemoryGraphStore((state) => state.loaded);
-  const query = useMemoryGraphStore((state) => state.query);
-  const querying = useMemoryGraphStore((state) => state.querying);
-  const runQuery = useMemoryGraphStore((state) => state.runQuery);
-  const clearQuery = useMemoryGraphStore((state) => state.clearQuery);
   const answer = useMemoryGraphStore((state) => state.answer);
   const answering = useMemoryGraphStore((state) => state.answering);
+  const streamingAnswer = useMemoryGraphStore((state) => state.streamingAnswer);
+  const streamingStatus = useMemoryGraphStore((state) => state.streamingStatus);
   const askQuestion = useMemoryGraphStore((state) => state.askQuestion);
   const clearAnswer = useMemoryGraphStore((state) => state.clearAnswer);
 
@@ -187,7 +160,6 @@ export function MemoryGraphBody() {
    * unrelated branch is worse than no back at all.
    */
   const [detailTrail, setDetailTrail] = useState<number[]>([]);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -199,41 +171,34 @@ export function MemoryGraphBody() {
    */
   const chromeInsets = useChromeInsets(
     surfaceRef,
-    `${selectedIndex !== null}:${query !== null}`,
+    // The rail mounts the moment an answer starts arriving, so the key has to
+    // move on the stream and not only on the settled answer.
+    `${selectedIndex !== null}:${answer !== null || streamingAnswer !== '' || streamingStatus !== null}`,
   );
 
-  // Search as you type, EXCEPT while a question is being typed.
+  // Nothing happens while typing. The box does one thing, on Enter: ask.
   //
-  // Live filtering is right for keywords: you watch the map narrow and stop
-  // when you see what you want, and retrieval is local and free. It is wrong
-  // for a question. "What was the most" is a meaningless intermediate state,
-  // and acting on it churned the map through half a dozen scopings on the way
-  // to a sentence that was never a filter in the first place. Worse, Ask then
-  // inherited that accidental scope as its evidence.
+  // It used to search live on every keystroke, and separately ask on Enter
+  // when a regex judged the text to be a question. Two systems answered the
+  // same input and the second overwrote the first, so the user watched a
+  // hairball of raw passages appear and then vanish under the actual answer.
+  // Nothing on screen explained why "mobile pairing" and "what did we do about
+  // mobile pairing?" behaved differently, because the reason was a regex they
+  // could not see. One path now, and no heuristic deciding which.
   //
-  // So a question waits for Enter or Ask. Detection is conservative and fails
-  // softly in both directions: an unrecognised question just filters live as
-  // before, and a false positive costs one keypress.
-  const isQuestion = looksLikeQuestion(queryText);
+  // A cleared box still clears the answer with it, or an answer would stand
+  // over an empty box claiming to be about nothing.
   useEffect(() => {
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    // A cleared box always takes effect, or clearing a question would leave the
-    // previous result standing with nothing on screen explaining it.
-    if (isQuestion && queryText.trim()) return;
-    debounceTimer.current = setTimeout(() => {
-      void runQuery(queryText);
-    }, QUERY_DEBOUNCE_MS);
-    return () => {
-      if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    };
-  }, [queryText, runQuery, isQuestion]);
+    if (queryText.trim()) return;
+    clearAnswer();
+  }, [queryText, clearAnswer]);
 
-  // A new query is a new question, so it replaces any neighbourhood being
+  // A new answer is a new question, so it replaces any neighbourhood being
   // explored rather than compounding with it.
   useEffect(() => {
     setExploreFromIndex(null);
     setTaskScope(null);
-  }, [query]);
+  }, [answer]);
 
   const nodes = snapshot?.projection?.nodes;
 
@@ -264,17 +229,6 @@ export function MemoryGraphBody() {
     nodes?.forEach((node, index) => map.set(node.docKey, index));
     return map;
   }, [nodes]);
-
-  /** Indices matching the current query, in result order. */
-  const queryIndices = useMemo(() => {
-    if (!query) return null;
-    const set = new Set<number>();
-    for (const hit of query.hits) {
-      const index = indexByDocKey.get(hit.docKey);
-      if (index !== undefined) set.add(index);
-    }
-    return set;
-  }, [query, indexByDocKey]);
 
   /** The explored node plus everything it links to. */
   const exploreIndices = useMemo(() => {
@@ -450,6 +404,24 @@ export function MemoryGraphBody() {
     [answer],
   );
 
+  /**
+   * The columns the rows actually render.
+   *
+   * Chosen by the ANSWER (which knows what it ranked on) and then filtered by
+   * the rows themselves: a column whose every value is identical spends width
+   * to say nothing. `?? DEFAULT_TASK_VIEW` covers both an answer that declined
+   * the protocol and one that predates the field entirely - a good answer
+   * either way, and reading `.select` off undefined would unmount this whole
+   * surface through PanelErrorBoundary.
+   */
+  const answerColumns = useMemo(
+    () => visibleTaskColumns(
+      (answer?.ok ? answer.view : null) ?? DEFAULT_TASK_VIEW,
+      answerTaskRefs,
+    ),
+    [answer, answerTaskRefs],
+  );
+
   const answerIndices = useMemo(() => {
     // Optional-chained deliberately: an answer that predates the selection
     // field (one in flight across a reload, or a detached window's older
@@ -471,137 +443,95 @@ export function MemoryGraphBody() {
     return set.size > 0 ? set : null;
   }, [answer, answerTaskRefs, indexByDocKey]);
 
+  /**
+   * The conversations the rail lists under the answer, or null for task rows.
+   *
+   * Two ways here, one list. Drilling into a task lists that task's
+   * conversations: a task is not its conversations, and the row above says it
+   * ran four, so this is where those four belong. An answer that SELECTED
+   * conversations without naming a task (a `SELECTED:` line and no `T<n>` in
+   * the prose) lists what it selected, because the map is scoped to them and
+   * a scoped map over an empty rail reads as a filter that lost its list.
+   *
+   * Narrowed by the facets, as the map is. A facet asks "which part of the
+   * index", and a list that ignored it would disagree with the map beside it.
+   * Newest first, which is the order someone re-reading their own work wants.
+   */
+  const listedConversations = useMemo(() => {
+    // Read off the snapshot rather than the `projection` local, which is only
+    // bound after this component's early returns - a hook cannot wait for it.
+    const nodes = snapshot?.projection?.nodes;
+    if (!nodes) return null;
+    const source = taskScope
+      ? taskScope.indices
+      : answerTaskRefs.length === 0 ? answerIndices : null;
+    if (!source) return null;
+    return [...source]
+      .filter((index) => !facetIndices || facetIndices.has(index))
+      .map((index) => ({ index, node: nodes[index] }))
+      .filter((entry): entry is { index: number; node: MemoryGraphNode } => Boolean(entry.node))
+      .sort((left, right) => (right.node.lastActivityMs ?? 0) - (left.node.lastActivityMs ?? 0));
+  }, [taskScope, answerTaskRefs, answerIndices, facetIndices, snapshot]);
+
+  /**
+   * The task rows a facet leaves standing.
+   *
+   * A row whose every conversation the facet hid would sit beside a map
+   * showing none of them. A task with no conversation on the map at all is
+   * kept: its row is disabled and names a task the answer gave, and a facet
+   * has nothing of it to hide.
+   */
+  const listedTaskRefs = useMemo(() => {
+    if (!facetIndices) return answerTaskRefs;
+    return answerTaskRefs.filter((entry) => {
+      const indices = entry.docKeys
+        .map((docKey) => indexByDocKey.get(docKey))
+        .filter((index): index is number => index !== undefined);
+      return indices.length === 0 || indices.some((index) => facetIndices.has(index));
+    });
+  }, [answerTaskRefs, facetIndices, indexByDocKey]);
+
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
-    // for, and it is dismissible without losing the query underneath it. An
-    // answer's selection comes next, ahead of the raw query it was asked from -
-    // the agent read the whole board to produce it, where the query text only
-    // ever matched words.
+    // for, and it is dismissible without losing the answer underneath it. A
+    // task the reader clicked comes next, then what the answer itself named.
     let asked: Set<number> | undefined;
     if (exploreIndices) asked = exploreIndices;
     else if (taskScope) asked = taskScope.indices;
     else if (answerIndices) asked = answerIndices;
-    else if (queryIndices) asked = queryIndices;
 
     // Facets INTERSECT rather than replace. They answer a different question
-    // from search - "which part of the index" versus "which conversations" - so
-    // "pairing" scoped to Abandoned has to mean abandoned pairing work, not one
-    // of the two arbitrarily winning.
+    // from an answer - "which part of the index" versus "which conversations" -
+    // so an answer scoped to Abandoned has to mean the abandoned ones among
+    // what it named, not one of the two arbitrarily winning.
     if (!facetIndices) return asked;
     if (!asked) return facetIndices;
     const both = new Set<number>();
     for (const index of asked) if (facetIndices.has(index)) both.add(index);
     return both;
-  }, [exploreIndices, taskScope, answerIndices, queryIndices, facetIndices]);
-
-  /**
-   * The search hits that survive the facet rows.
-   *
-   * The list has to agree with the map. Rendering `query.hits` directly meant a
-   * scoped map could show four nodes under a header reading "23 of 150" beside
-   * 23 cards, which reads as a broken filter rather than a narrowed one.
-   */
-  const visibleHits = useMemo(() => {
-    if (!query) return [];
-    // An answer's selection narrows the list the same way it narrows the map -
-    // the two must never disagree about what is on screen. Hits are kept in
-    // result order rather than the agent's, since the cards are still ranked
-    // retrieval output.
-    const scopes = [facetIndices, answerIndices, taskScope?.indices ?? null]
-      .filter((scope): scope is Set<number> => scope !== null && scope !== undefined);
-    if (scopes.length === 0) return query.hits;
-    return query.hits.filter((hit) => {
-      const index = indexByDocKey.get(hit.docKey);
-      return index !== undefined && scopes.every((scope) => scope.has(index));
-    });
-  }, [query, facetIndices, answerIndices, taskScope, indexByDocKey]);
-
-  /**
-   * The visible hits, one row per TASK.
-   *
-   * Retrieval already collapses to one hit per CONVERSATION, and that is
-   * correct - but a task runs several sessions, so "Mobile Bridge Phase 1"
-   * legitimately returned three rows with the same title and different
-   * snippets. Measured on the real corpus: 29 hits, 29 distinct conversations,
-   * 24 distinct titles. Nothing was duplicated; the unit was just wrong for
-   * reading, because the reader thinks in tasks.
-   *
-   * So the rows are tasks, and a task carries its conversations. Ordered by the
-   * best-ranked conversation in each, since that is what retrieval decided.
-   * A conversation with NO task stays its own row rather than merging into a
-   * bucket of unrelated work.
-   */
-  const groupedHits = useMemo(() => {
-    const groups: Array<{
-      key: string;
-      title: string;
-      hits: typeof visibleHits;
-      /** Every kind that matched anywhere in the task, deduped. */
-      kinds: string[];
-      /** Passages that matched across the whole task. */
-      matchCount: number;
-    }> = [];
-    const byKey = new Map<string, number>();
-    for (const hit of visibleHits) {
-      const key = hit.taskId ?? `conversation:${hit.docKey}`;
-      const existing = byKey.get(key);
-      if (existing === undefined) {
-        byKey.set(key, groups.length);
-        groups.push({
-          key,
-          title: hit.taskTitle ?? 'Untitled conversation',
-          hits: [hit],
-          kinds: [hit.matchKind],
-          matchCount: hit.matchCount,
-        });
-        continue;
-      }
-      const group = groups[existing];
-      group.hits.push(hit);
-      // A task matched "on wording AND meaning" when its conversations did,
-      // which is a stronger statement than either alone.
-      if (!group.kinds.includes(hit.matchKind)) group.kinds.push(hit.matchKind);
-      group.matchCount += hit.matchCount;
-    }
-    return groups;
-  }, [visibleHits]);
-
-  const selectedNode = selectedIndex !== null ? nodes?.[selectedIndex] ?? null : null;
-
-  /** The selected node's OWN search hit, so the panel can say why it is here. */
-  const selectedQueryHit = useMemo(() => {
-    if (!query || !selectedNode) return null;
-    const rank = visibleHits.findIndex((hit) => hit.docKey === selectedNode.docKey);
-    if (rank < 0) return null;
-    // Ranked among what is SHOWING, so "result 2 of 4" cannot appear over a
-    // list of four while claiming a position from an unfiltered twenty-three.
-    return { hit: visibleHits[rank], rank: rank + 1, total: visibleHits.length };
-  }, [query, selectedNode, visibleHits]);
-
-  const exploredNode = exploreFromIndex !== null ? nodes?.[exploreFromIndex] ?? null : null;
+  }, [exploreIndices, taskScope, answerIndices, facetIndices]);
 
   /**
    * Where "Back" goes, if anywhere. Two dead ends, one control:
    *
    *  - mid-trail, it returns to the conversation you hopped from;
-   *  - at the start of a trail with a search running, it returns to the RESULTS,
-   *    which selecting a card had otherwise replaced with no way back.
+   *  - at the start of a trail with an answer on screen, it returns to the
+   *    ANSWER, which selecting a task's conversation had otherwise replaced
+   *    with no way back.
    */
+  const selectedNode = selectedIndex !== null ? nodes?.[selectedIndex] ?? null : null;
+  const exploredNode = exploreFromIndex !== null ? nodes?.[exploreFromIndex] ?? null : null;
+
   const detailBack = useMemo(() => {
     if (detailTrail.length > 0) {
       const previous = nodes?.[detailTrail[detailTrail.length - 1]];
       return { run: goBack, label: previous?.title ?? 'the previous conversation' };
     }
-    if (query) {
-      return { run: () => selectNode(null), label: `results (${visibleHits.length})` };
+    if (answer?.ok) {
+      return { run: () => selectNode(null), label: 'the answer' };
     }
     return null;
-  }, [detailTrail, nodes, goBack, query, selectNode, visibleHits.length]);
-
-  const resultDocKeys = useMemo(
-    () => new Set((query?.hits ?? []).map((hit) => hit.docKey)),
-    [query],
-  );
+  }, [detailTrail, nodes, goBack, answer, selectNode]);
 
   /** The selected node's strongest links, read off the exact similarity edges
    *  rather than off screen distance. */
@@ -692,114 +622,79 @@ export function MemoryGraphBody() {
         colorMode={colorMode}
       />
 
-      {/* Search floats top-center: it is the surface's primary verb, and centring
-          it keeps it off the controls and off the detail rail. */}
+      {/* The box floats top-center: it is the surface's one verb, and centring
+          it keeps it off the controls and off the rail.
+
+          ONE box, ONE path. Type, press Enter, the agent answers. There used to
+          be a live search underneath that re-filtered the map on every
+          keystroke and a separate Ask that fired on Enter when a regex judged
+          the text to be a question; the two answered the same input and the
+          second overwrote the first. What the user saw was a hairball of raw
+          passages appear and then vanish under the actual answer, for a reason
+          nothing on screen explained. */}
       <form
         data-graph-chrome="top"
         className="absolute left-1/2 top-3 z-10 w-[26rem] max-w-[calc(100%-30rem)] -translate-x-1/2"
         onSubmit={(event) => {
           event.preventDefault();
-          // Enter commits whatever was typed. For a question that means ASKING,
-          // since a question was never a filter and running it as one is what
-          // produced a scoped map nobody asked for. Falls back to searching when
-          // no agent can answer, so Enter always does something.
-          if (isQuestion && canAsk) {
-            void runQuery(queryText);
-            void askQuestion(queryText, granularity);
-            return;
-          }
-          void runQuery(queryText);
+          if (!canAsk || answering) return;
+          void askQuestion(queryText, granularity);
         }}
       >
         <div className="flex items-center gap-2 rounded-lg border border-edge bg-surface-raised/80 px-3 py-2 shadow-xl backdrop-blur-md">
-          <Search size={14} className="flex-shrink-0 text-fg-muted" aria-hidden />
+          {answering
+            ? <Loader2 size={14} className="flex-shrink-0 animate-spin text-accent-fg" aria-hidden />
+            : <Sparkles size={14} className="flex-shrink-0 text-accent-fg" aria-hidden />}
           <input
             value={queryText}
             onChange={(event) => setQueryText(event.target.value)}
-            placeholder={canAsk ? 'Search, or ask a question' : 'Search these conversations'}
-            aria-label="Search indexed conversations, or ask a question"
+            placeholder={canAsk ? 'Ask about your tasks and conversations' : 'No agent can answer here'}
+            aria-label="Ask a question about your tasks and conversations"
+            disabled={!canAsk}
             data-testid="memory-graph-search-input"
-            className="min-w-0 flex-1 bg-transparent text-sm text-fg placeholder:text-fg-muted outline-none"
+            className="min-w-0 flex-1 bg-transparent text-sm text-fg placeholder:text-fg-muted outline-none disabled:cursor-not-allowed"
           />
-          {querying ? <Loader2 size={13} className="animate-spin text-fg-muted" aria-hidden /> : null}
-          {query ? (
-            <>
-              <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-muted">
-                {/* Conversations, which is what the MAP draws and what the
-                    denominator counts. The rail groups those into tasks and
-                    says so on each row, so the two never claim to be the same
-                    unit. */}
-                {/* The count names the UNIT the rail is showing. An answer that
-                    ranked six tasks under a line reading "1 of 673" was the
-                    reported confusion: the number was counting conversations
-                    while the list had become something else. */}
-                {answerTaskRefs.length > 0
-                  ? `${answerTaskRefs.length} ${answerTaskRefs.length === 1 ? 'task' : 'tasks'}`
-                  : `${visibleHits.length} of ${projection.nodes.length}`}
-              </span>
+          {/* Who answers, and that it costs a call, stays STATED - as a tip on
+              the submit glyph rather than a second control. Enter is the button;
+              the glyph is for discoverability and for the mouse. */}
+          {canAsk && queryText.trim() && !answer && !answering ? (
+            <HoverTip
+              label={`${askAgentLabel} reads every task and searches your conversations. One agent call.`}
+              testId="memory-graph-ask-tip"
+            >
               <button
-                type="button"
-                onClick={() => { setQueryText(''); clearQuery(); }}
-                className="rounded p-1 text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
-                aria-label="Clear search"
-                data-testid="memory-graph-clear-search"
+                type="submit"
+                aria-label={`Ask ${askAgentLabel}`}
+                data-testid="memory-graph-ask"
+                className="rounded p-1 text-accent-fg hover:bg-surface-hover cursor-pointer"
               >
-                <X size={13} />
+                <CornerDownLeft size={14} />
               </button>
-            </>
+            </HoverTip>
           ) : null}
-        </div>
-        {/* Ask sits BESIDE the box, as the agent counterpart to the search that
-            already ran. It was a full-width row underneath, which read as a
-            banner about the search rather than a second thing you can do to it.
-
-            Absolutely positioned rather than a flex sibling, so mounting and
-            unmounting it never moves the search box: this row is centred, and
-            anything that changes its width shifts the input the user is typing
-            into.
-
-            Still a SECOND, explicit act - typing has already searched, free and
-            instantly - and it names the AGENT up front so the fallback chain is
-            never silent. The cost is one hover away rather than a permanent
-            second line, because the button is the control and the tooltip is
-            the detail.
-
-            Offered whenever there is TEXT, not whenever the search found
-            something. Gating on hits hid the agent at exactly the moment it was
-            most useful: "show me the terminal bug fixes" returns nothing
-            lexically, and that is the question only an agent can answer. */}
-        {canAsk && queryText.trim() && !answer ? (
-          <HoverTip
-            label={`${askAgentLabel} reads all ${projection.nodes.length} conversations and every task, and answers with citations. One agent call.`}
-            className="absolute left-full top-0 ml-2"
-            testId="memory-graph-ask-tip"
-          >
+          {/* The count names the UNIT the rail is showing, and only when there
+              is one: tasks the answer named, or the conversations it selected
+              or the reader drilled into. Counted AFTER the facets, so the
+              number is the number of rows beneath it. */}
+          {listedConversations || listedTaskRefs.length > 0 ? (
+            <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-muted">
+              {listedConversations
+                ? `${listedConversations.length} ${listedConversations.length === 1 ? 'conversation' : 'conversations'}`
+                : `${listedTaskRefs.length} ${listedTaskRefs.length === 1 ? 'task' : 'tasks'}`}
+            </span>
+          ) : null}
+          {answer || streamingAnswer ? (
             <button
               type="button"
-              onClick={() => void askQuestion(queryText, granularity)}
-              disabled={answering}
-              data-testid="memory-graph-ask"
-              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-edge bg-surface-raised/85 px-3 py-2 shadow-xl backdrop-blur-md transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-surface-raised/85 cursor-pointer"
+              onClick={() => { setQueryText(''); clearAnswer(); }}
+              className="rounded p-1 text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
+              aria-label="Clear"
+              data-testid="memory-graph-clear-search"
             >
-              {answering
-                ? <Loader2 size={13} className="flex-shrink-0 animate-spin text-fg-muted" aria-hidden />
-                : <Sparkles size={13} className="flex-shrink-0 text-accent-fg" aria-hidden />}
-              {/* `text-sm` to match the search input beside it, and that is
-                  alignment rather than taste: both sit in `py-2` boxes, so the
-                  label's line height IS the control's height. At `text-xs` the
-                  button came out 34px against the box's 39px and read as
-                  misaligned even though both were top-anchored. */}
-              <span className="text-sm text-fg">
-                {answering ? `Asking ${askAgentLabel}` : `Ask ${askAgentLabel}`}
-              </span>
+              <X size={13} />
             </button>
-          </HoverTip>
-        ) : null}
-        {query && !query.semantic ? (
-          <p className="mt-1.5 rounded bg-surface-raised/80 px-2 py-1 text-[11px] text-fg-muted backdrop-blur">
-            Searched text only. Turn on semantic search for meaning-based matches.
-          </p>
-        ) : null}
+          ) : null}
+        </div>
         {/* A task the reader clicked in an answer. Same shape as the explore
             chip, because it is the same promise: the map is narrowed, here is
             what to, and here is how to undo it. */}
@@ -894,35 +789,32 @@ export function MemoryGraphBody() {
               ) ?? null}
               neighbors={selectedNeighbors}
               onSelectNeighbor={followNeighbor}
-              queryHit={selectedQueryHit}
-              resultDocKeys={resultDocKeys}
               onExploreFrom={selectedIndex === null ? undefined : () => setExploreFromIndex(selectedIndex)}
               onBack={detailBack?.run}
               backLabel={detailBack?.label}
             />
           </div>
         </div>
-      ) : query ? (
+      ) : answer || streamingAnswer || streamingStatus ? (
+        /* The rail opens the moment an answer starts ARRIVING, not when it has
+           finished. That is the whole point of streaming: content at first-token
+           time rather than a spinner until completion. */
         <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-[26rem]">
           <aside
             className="h-full overflow-y-auto rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md"
             data-testid="memory-graph-results"
           >
-            {/* The ANSWER stays here even though the button moved: the box is
-                the input surface and the rail is the output one, so an answer
-                belongs with the results it was drawn from rather than floating
-                over the map. */}
+            {/* The box is the input surface and the rail is the output one, so
+                the answer lives here rather than floating over the map. */}
             <MemoryAnswer
               answer={answer}
+              streamingAnswer={streamingAnswer}
+              streamingStatus={streamingStatus}
+              agentName={askAgentLabel}
               onDismiss={clearAnswer}
-              onSelectCitation={(citation) => {
-                const index = indexByDocKey.get(citation.docKey);
-                if (index !== undefined) selectNode(index);
-              }}
-              // A task ref is a different unit from a citation: it names a whole
-              // task, which is usually several conversations. So it EXPLORES
-              // rather than selects - the map scopes to that task's work and the
-              // rail lists it - where a citation opens one specific excerpt.
+              // A task ref names a whole task, which is usually several
+              // conversations. So it EXPLORES rather than selects - the map
+              // scopes to that task's work and the rail lists it.
               onSelectTask={(entry) => {
                 const indices = entry.docKeys
                   .map((docKey) => indexByDocKey.get(docKey))
@@ -943,9 +835,70 @@ export function MemoryGraphBody() {
                 task is biggest" - the reported case rendered
                 `Tool: ToolSearch {"query":...}` under an answer ranking tasks
                 by cost. These rows show what the answer was reasoning over. */}
-            {answerTaskRefs.length > 0 ? (
+            {listedConversations ? (
+              /* CONVERSATION rows: one task's, drilled into, or the ones an
+                 answer selected outright.
+                 Clicking a task row used to set a scope the map was already
+                 holding - `answerIndices` falls back to the refs' docKeys, so
+                 an answer naming one task had already scoped to it - and the
+                 click moved nothing at all. A task is not its conversations,
+                 so this is the level where they belong: the row above says a
+                 task ran four of them, and this says which four. */
+              <ul data-testid="memory-graph-task-conversations">
+                {listedConversations.map(({ index, node }) => (
+                  <li key={node.docKey}>
+                    <button
+                      type="button"
+                      onClick={() => selectNode(index)}
+                      onDoubleClick={() => openConversationForNode(node)}
+                      className="w-full border-b border-edge px-4 py-3 text-left hover:bg-surface-hover cursor-pointer"
+                      data-testid="memory-graph-task-conversation-row"
+                    >
+                      <div className="truncate text-xs font-medium text-fg">
+                        {node.title ?? 'Untitled conversation'}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-fg-muted">
+                        {shortDate(node.lastActivityMs) ? (
+                          <span>{shortDate(node.lastActivityMs)}</span>
+                        ) : null}
+                        {node.agent ? <span>{node.agent}</span> : null}
+                        {formatTaskCost(node.costUsd) ? (
+                          <span className="tabular-nums">{formatTaskCost(node.costUsd)}</span>
+                        ) : null}
+                        {formatTaskDuration(node.durationMs) ? (
+                          <span className="tabular-nums">{formatTaskDuration(node.durationMs)}</span>
+                        ) : null}
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : listedTaskRefs.length > 0 ? (
+              /* TASK rows, aligned into columns.
+                 A conversation card shows the best-matching PASSAGE, which is
+                 right for "find conversations about X" and useless for "which
+                 task is biggest" - the reported case rendered
+                 `Tool: ToolSearch {"query":...}` under an answer ranking tasks
+                 by cost.
+
+                 The COLUMNS come from the answer, not from this file. They used
+                 to be four hardcoded chips, which is right for a cost question
+                 and wrong for every other one: asked which tasks used the most
+                 tokens, the prose named a token figure and every row printed a
+                 dollar amount. */
               <ul data-testid="memory-graph-answer-tasks">
-                {answerTaskRefs.map((entry) => {
+                <li
+                  className="sticky top-0 z-10 flex items-center gap-3 border-b border-edge bg-surface-raised px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-fg-faint"
+                  data-testid="memory-graph-answer-task-header"
+                >
+                  <span className="min-w-0 flex-1">Task</span>
+                  {answerColumns.map((field) => (
+                    <span key={field.key} className="w-24 flex-shrink-0 text-right">
+                      {field.label}
+                    </span>
+                  ))}
+                </li>
+                {listedTaskRefs.map((entry) => {
                   const indices = entry.docKeys
                     .map((docKey) => indexByDocKey.get(docKey))
                     .filter((index): index is number => index !== undefined);
@@ -963,114 +916,42 @@ export function MemoryGraphBody() {
                           selectNode(null);
                         }}
                         disabled={indices.length === 0}
-                        className="w-full border-b border-edge px-4 py-3 text-left hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent cursor-pointer"
+                        className="flex w-full items-center gap-3 border-b border-edge px-4 py-2.5 text-left hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent cursor-pointer"
                         data-testid="memory-graph-answer-task-row"
                         data-task-ref={entry.ref}
                       >
-                        <div className="flex items-start gap-2">
-                          {/* The ref the answer used, so a claim above maps to a
-                              row below without the reader counting. */}
-                          <span className="mt-0.5 flex-shrink-0 rounded bg-surface-control px-1 text-[10px] font-medium text-fg-muted">
-                            T{entry.ref}
+                        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                          {/* The board's own `#N`, which is the number the
+                              reader has seen on a card. `T14` is the agent's
+                              vocabulary and a different number for the same
+                              task, so it stays on the wire and off the screen -
+                              except where there is no ticket at all, which is a
+                              conversation with no board task. */}
+                          <span className="flex-shrink-0 font-mono text-[11px] text-fg-muted">
+                            {entry.displayId != null ? `#${entry.displayId}` : `T${entry.ref}`}
                           </span>
-                          <span className="min-w-0 flex-1 text-xs font-medium text-fg">
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">
                             {entry.title}
                           </span>
-                        </div>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-7 text-[11px] text-fg-muted">
-                          {/* Each fact is omitted when the sessions never
-                              recorded it, rather than printed as a zero the
-                              task has not earned. */}
-                          {/* `== null` catches BOTH null and undefined. An
-                              answer whose refs predate these fields - one in
-                              flight across a reload, or a detached window's
-                              older payload - is still a good answer, and
-                              `.toFixed()` on undefined unmounts the entire
-                              surface through PanelErrorBoundary. The type says
-                              the fields are always there; the wire does not
-                              have to agree. */}
-                          {entry.costUsd != null ? (
-                            <span className="tabular-nums text-fg-secondary">
-                              ${entry.costUsd.toFixed(2)}
-                            </span>
-                          ) : null}
-                          {entry.durationMs != null ? (
-                            <span className="tabular-nums">{formatDuration(entry.durationMs)}</span>
-                          ) : null}
-                          {entry.outcome ? <span>{OUTCOME_LABELS[entry.outcome]}</span> : null}
-                          {(entry.sessions ?? 0) > 1 ? <span>{entry.sessions} conversations</span> : null}
-                          {indices.length === 0 ? <span>not on the map yet</span> : null}
-                        </div>
+                        </span>
+                        {answerColumns.map((field) => (
+                          <span
+                            key={field.key}
+                            className="w-24 flex-shrink-0 truncate text-right text-[11px] tabular-nums text-fg-secondary"
+                            data-field={field.key}
+                          >
+                            {/* An empty cell means the fact was never recorded.
+                                Never a zero, which would make an unmeasured
+                                task look like a free one. */}
+                            {field.display(entry) ?? ''}
+                          </span>
+                        ))}
                       </button>
                     </li>
                   );
                 })}
               </ul>
-            ) : visibleHits.length === 0 ? (
-              <p className="p-4 text-sm text-fg-muted">
-                Nothing in this project&apos;s indexed conversations matched.
-              </p>
-            ) : (
-              <ul>
-                {groupedHits.map((group) => {
-                  // The best-ranked conversation of the task is what a click
-                  // opens: retrieval ordered them, so the first is the one most
-                  // likely to hold the answer.
-                  const lead = group.hits[0];
-                  const index = indexByDocKey.get(lead.docKey);
-                  return (
-                    <li key={group.key}>
-                      <button
-                        type="button"
-                        onClick={() => selectNode(index ?? null)}
-                        onDoubleClick={() => {
-                          const node = index !== undefined ? projection.nodes[index] : null;
-                          if (node) openConversationForNode(node);
-                        }}
-                        className="w-full border-b border-edge px-4 py-3 text-left hover:bg-surface-hover cursor-pointer"
-                        data-testid="memory-graph-result-card"
-                      >
-                        <div className="truncate text-xs font-medium text-fg">{group.title}</div>
-                        <p className="mt-1 line-clamp-3 text-xs text-fg-muted">{lead.snippet}</p>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-fg-muted">
-                          {/* HOW it matched, as a badge rather than a bare word.
-                              It is the visible proof that this is semantic
-                              retrieval and not a text scan, so it should read as
-                              a property of the result, not as leftover text. */}
-                          {group.kinds.map((kind) => (
-                            <span
-                              key={kind}
-                              data-testid="memory-graph-match-kind"
-                              data-kind={kind}
-                              className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
-                                kind === 'semantic'
-                                  ? 'bg-accent/15 text-accent-fg'
-                                  : kind === 'hybrid'
-                                    ? 'bg-active/15 text-active'
-                                    : 'bg-surface-control text-fg-muted'
-                              }`}
-                            >
-                              {kind}
-                            </span>
-                          ))}
-                          {/* A task with several sessions says so, rather than
-                              appearing as repeated rows with one title. */}
-                          {group.hits.length > 1 ? (
-                            <span data-testid="memory-graph-result-sessions">
-                              {group.hits.length} conversations
-                            </span>
-                          ) : null}
-                          {group.matchCount > 1 ? <span>{group.matchCount} matches</span> : null}
-                          {/* A node the map does not hold: the projection is
-                              older than this conversation. Said, not hidden. */}
-                          {index === undefined ? <span>not on the map yet</span> : null}
-                        </div>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            ) : null}
           </aside>
         </div>
       ) : null}

@@ -18,6 +18,20 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const ANSWER_OUTPUT_BUDGET = 32_768;
 const ANSWER_TIMEOUT_MS = 120_000;
 
+/**
+ * The stdout budget for a STREAMED answer, which is a different quantity.
+ *
+ * `ANSWER_OUTPUT_BUDGET` bounds the answer text. A stream-json transcript with
+ * partial messages carries ~250 bytes of envelope per text delta, a complete
+ * copy of every turn, and every tool result in full - a hybrid search returns
+ * twenty passages - so a three-turn answer runs to hundreds of kilobytes of
+ * stdout for a two-paragraph answer. Measured: at 32KB the CLI was killed
+ * after its second tool call, and the "answer" was the agent's own narration
+ * joined together. Still a bound, against a genuine runaway; just sized for
+ * what a stream is.
+ */
+export const ANSWER_STREAM_OUTPUT_BUDGET = 8 * 1024 * 1024;
+
 const SYSTEM_PROMPT_PREFIX =
   'Summarize the following task description as a concise imperative title (4-8 words). '
   + 'Use Title Case. No quotes, no trailing period, no markdown formatting. '
@@ -177,6 +191,172 @@ export interface RunCliPrintOptions {
    * one spawn, two output shapes, rather than a second copy of the spawn.
    */
   shape?: (candidate: string) => string;
+  /**
+   * Called for each stdout chunk as it arrives, BEFORE the buffered result is
+   * assembled. The streaming answer path uses this to forward text deltas to
+   * the renderer while the CLI is still writing; the buffered result is still
+   * returned whole at the end so nothing structural is parsed off a partial.
+   */
+  onChunk?: (chunk: string) => void;
+}
+
+/**
+ * One event from a `--output-format stream-json` line, reduced to what the
+ * answer path renders.
+ *
+ * Only two things reach the screen while an answer is in flight: text the
+ * assistant has written so far, and the fact that it is calling a tool. Every
+ * other line (init, result, usage) is machinery and yields null.
+ */
+export type AnswerStreamEvent =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; name: string };
+
+/**
+ * Reduce one stream-json line to an `AnswerStreamEvent`, or null.
+ *
+ * Degrades to null on anything it does not recognise: a malformed line, a
+ * partial line at a chunk boundary, a schema the CLI has not shipped yet. A
+ * stream that drops an event shows the user slightly less progress; a stream
+ * that throws on one costs the whole answer.
+ *
+ * The line shapes handled, from the CLI's stream-json output:
+ *   {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
+ *   {"type":"assistant","message":{"content":[{"type":"tool_use","name":"..."}]}}
+ * A content array can carry several blocks; each becomes its own event.
+ */
+export function parseAnswerStreamLine(rawLine: string): AnswerStreamEvent[] {
+  const record = parseJsonLine(rawLine);
+  if (!record) return [];
+  if (record.type === 'assistant') return eventsFromAssistantMessage(record);
+  if (record.type === 'stream_event') return eventsFromStreamEvent(record);
+  return [];
+}
+
+/** One complete assistant turn: every text and tool_use block, in order. */
+function eventsFromAssistantMessage(record: Record<string, unknown>): AnswerStreamEvent[] {
+  const message = record.message;
+  if (typeof message !== 'object' || message === null) return [];
+  const content = (message as Record<string, unknown>).content;
+  if (!Array.isArray(content)) return [];
+
+  const events: AnswerStreamEvent[] = [];
+  for (const block of content) {
+    if (typeof block !== 'object' || block === null) continue;
+    const entry = block as Record<string, unknown>;
+    if (entry.type === 'text' && typeof entry.text === 'string' && entry.text.length > 0) {
+      events.push({ kind: 'text', text: entry.text });
+    } else if (entry.type === 'tool_use' && typeof entry.name === 'string') {
+      events.push({ kind: 'tool', name: entry.name });
+    }
+  }
+  return events;
+}
+
+/**
+ * One partial-message event, from `--include-partial-messages`.
+ *
+ * This is what makes the stream a stream: without it the CLI emits one
+ * `assistant` line per TURN, complete, so a one-turn answer arrives all at
+ * once at the end (measured: first text at 4.8s of a 5.5s call). With it the
+ * model's own deltas come through as they are written (measured: 1.3s), and
+ * a tool call is visible the moment its block opens.
+ *
+ *   {"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}}
+ *   {"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"tool_use","name":"..."}}}
+ *
+ * Everything else under `stream_event` (message_start, block stop, usage) is
+ * machinery and yields nothing.
+ */
+function eventsFromStreamEvent(record: Record<string, unknown>): AnswerStreamEvent[] {
+  const event = record.event;
+  if (typeof event !== 'object' || event === null) return [];
+  const entry = event as Record<string, unknown>;
+  if (entry.type === 'content_block_delta') {
+    const delta = entry.delta;
+    if (typeof delta !== 'object' || delta === null) return [];
+    const change = delta as Record<string, unknown>;
+    if (change.type === 'text_delta' && typeof change.text === 'string' && change.text.length > 0) {
+      return [{ kind: 'text', text: change.text }];
+    }
+    return [];
+  }
+  if (entry.type === 'content_block_start') {
+    const block = entry.content_block;
+    if (typeof block !== 'object' || block === null) return [];
+    const opened = block as Record<string, unknown>;
+    if (opened.type === 'tool_use' && typeof opened.name === 'string') {
+      return [{ kind: 'tool', name: opened.name }];
+    }
+  }
+  return [];
+}
+
+/**
+ * A line-by-line reducer with one piece of state: whether partial messages
+ * are flowing.
+ *
+ * With `--include-partial-messages` the CLI emits each turn TWICE - as deltas
+ * while it is written, then as one complete `assistant` line - so once a
+ * partial event has been seen, the complete line is the settled copy of text
+ * already shown and is dropped. Without partials (an older CLI, a caller that
+ * did not ask for them) the `assistant` lines are all there is, and they pass
+ * through. `message_start` counts as a partial event, so the switch is thrown
+ * before the first delta rather than by it.
+ */
+export function createAnswerStreamReducer(): (rawLine: string) => AnswerStreamEvent[] {
+  let sawPartial = false;
+  return (rawLine) => {
+    const record = parseJsonLine(rawLine);
+    if (!record) return [];
+    if (record.type === 'stream_event') {
+      sawPartial = true;
+      return eventsFromStreamEvent(record);
+    }
+    if (record.type === 'assistant') return sawPartial ? [] : eventsFromAssistantMessage(record);
+    return [];
+  };
+}
+
+/**
+ * The final answer text out of a complete stream-json transcript.
+ *
+ * In stream mode the CLI emits an `assistant` line per turn. A tool-calling
+ * answer has several: the turn that decided to search, and the turn that wrote
+ * the answer from what it found. The user's answer is the assistant text of the
+ * LAST turn; earlier turns' text is the agent narrating its own search, which
+ * the live stream showed as progress and the settled answer must not repeat.
+ *
+ * Falls back to every assistant text joined when no `result` line is present -
+ * an output-budget cut lands mid-stream, and the partial answer is still worth
+ * more than nothing.
+ */
+export function extractStreamedAnswer(stdout: string): string {
+  const lines = stdout.split(/\r?\n/);
+  let lastTurnText = '';
+  let allText = '';
+  let sawResult = false;
+  for (const line of lines) {
+    const record = parseJsonLine(line);
+    if (!record) continue;
+    if (record.type === 'result') {
+      sawResult = true;
+      const result = pickStringField(record, 'result');
+      if (result) return result;
+      continue;
+    }
+    // Complete turns only. The partial-message deltas carry the same text a
+    // fragment at a time, and counting both would double every turn.
+    if (record.type !== 'assistant') continue;
+    const events = eventsFromAssistantMessage(record);
+    const text = events.filter((event) => event.kind === 'text').map((event) => event.text).join('');
+    if (!text) continue;
+    lastTurnText = text;
+    // Turns on their own lines: a cut stream is the agent's narration, and
+    // run together it read as one sentence that made no sense.
+    allText += allText ? `\n${text}` : text;
+  }
+  return sawResult ? lastTurnText : allText;
 }
 
 /**
@@ -209,6 +389,7 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
     env,
     outputBudget = OUTPUT_BUDGET,
     shape = cleanSummarizeOutput,
+    onChunk,
   } = options;
 
   return new Promise<string>((resolve, reject) => {
@@ -256,6 +437,10 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
         child.kill('SIGTERM');
       } else {
         stdoutChunks.push(chunk);
+        // Forwarded as it lands, so a streaming consumer sees the text while
+        // the CLI is still writing. The buffered copy above is still what the
+        // returned value is assembled from.
+        onChunk?.(chunk.toString('utf-8'));
       }
     });
 

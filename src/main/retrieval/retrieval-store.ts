@@ -659,6 +659,9 @@ export class RetrievalStore {
     sessionId: string | null;
     taskId: string | null;
     title: string | null;
+    /** The board's `#N` for the owning task. Null for a conversation with no
+     *  task, and for a task predating the display_id backfill. */
+    displayId: number | null;
     agent: string | null;
     model: string | null;
     effort: string | null;
@@ -675,6 +678,10 @@ export class RetrievalStore {
                 MAX(c.session_id) AS sessionId,
                 MAX(c.task_id) AS taskId,
                 MAX(t.title) AS title,
+                -- The ticket the board prints on the card. Carried so the
+                -- memory surface can label a task with the number the user
+                -- already knows it by, rather than an index into a prompt.
+                MAX(t.display_id) AS displayId,
                 MAX(s.session_type) AS agent,
                 -- What the session actually RAN at, not what was configured:
                 -- applied_model / applied_effort are written when the agent
@@ -720,6 +727,7 @@ export class RetrievalStore {
         sessionId: string | null;
         taskId: string | null;
         title: string | null;
+        displayId: number | null;
         agent: string | null;
         model: string | null;
         effort: string | null;

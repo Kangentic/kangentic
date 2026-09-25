@@ -25,6 +25,10 @@ function node(overrides: Partial<MemoryGraphNode> & { docKey: string }): MemoryG
     title: 'A task',
     sessionId: `session-${overrides.docKey}`,
     taskId: null,
+    // The fixture has to carry this or it expresses nothing about the ticket
+    // the rows are labelled with - the same fixture-cannot-express-the-field
+    // gap that has bitten the mirror four times on this surface.
+    displayId: null,
     agent: 'Claude Code',
     model: 'claude-opus-5',
     effort: null,
@@ -76,8 +80,15 @@ describe('rolling conversations up into tasks', () => {
     ]), 'balanced');
     expect(table.rows[0].costUsd).toBeNull();
     expect(table.rows[0].durationMs).toBeNull();
-    // And the formatted row leaves the cell empty rather than printing 0.00.
-    expect(formatTaskTable(table)).toContain('T1|A task|1|||');
+    // And the formatted row leaves the cells empty rather than printing 0.00.
+    // Asserted against the header rather than a fixed column offset, so adding
+    // a field to the catalog cannot silently move what this is checking.
+    const [header, row] = formatTaskTable(table).split('\n');
+    const columns = header.split('|');
+    const cells = row.split('|');
+    for (const key of ['cost_usd', 'duration', 'tokens']) {
+      expect(cells[columns.indexOf(key)]).toBe('');
+    }
   });
 
   it('adds a recorded metric to a sibling that has none', () => {
@@ -137,9 +148,12 @@ describe('rolling conversations up into tasks', () => {
     const table = buildAnswerTaskTable(projection([
       node({ docKey: 'a', taskId: 't1', title: 'Fix a|b parsing', costUsd: 1 }),
     ]), 'balanced');
-    const row = formatTaskTable(table).split('\n')[1];
-    // The header declares 11 columns; the row must still have exactly 11.
-    expect(row.split('|')).toHaveLength(11);
+    const [header, row] = formatTaskTable(table).split('\n');
+    // Against the header's own width rather than a literal count, so the
+    // assertion survives a field being added to the catalog and still catches
+    // the thing it is for: a title's pipe shifting every later column.
+    expect(row.split('|')).toHaveLength(header.split('|').length);
+    expect(row).toContain('Fix a/b parsing');
   });
 
   it('falls back to a clustering that exists when the asked-for one does not', () => {
@@ -181,8 +195,15 @@ describe('selection questions', () => {
     const { refs, mentioned } = parseSelectedRefs(answer);
     // No SELECTED line, so nothing is claimed as a selection...
     expect(refs).toEqual([]);
-    // ...but every named task is still resolvable.
-    expect(mentioned).toEqual([84, 133, 323]);
+    // ...but every named task is still resolvable, in FIRST-MENTION order.
+    //
+    // The order is the assertion, not incidental. It is what the rail falls
+    // back to when the answer names no ranking column, and it is the one order
+    // that can never look wrong, because it is the order the reader has already
+    // seen in the prose. Sorting numerically - as this did - sorted by the
+    // prompt table's row order, which is COST order, so every question that was
+    // not about cost got a cost ranking it never asked for.
+    expect(mentioned).toEqual([133, 84, 323]);
   });
 
   it('does not mistake a T inside an identifier for a task ref', () => {

@@ -19,7 +19,6 @@
 import { create } from 'zustand';
 import type {
   MemoryGraphAnswerResult,
-  MemoryGraphQueryResult,
   MemoryGraphSnapshot,
 } from '../../shared/types';
 
@@ -51,20 +50,12 @@ interface MemoryGraphState {
   attach: () => void;
   detach: () => void;
 
-  /** The last retrieval result, or null when the box is empty. */
-  query: MemoryGraphQueryResult | null;
-  querying: boolean;
-  runQuery: (query: string) => Promise<void>;
-  clearQuery: () => void;
-
   /**
-   * The agent's answer to the current question, its citations, or why there is
-   * none.
+   * The agent's answer to the current question, or why there is none.
    *
-   * Kept separate from `query` because they are separate acts: a search runs on
-   * every keystroke and is free, an answer runs once and costs a CLI call. A
-   * single field would have made a stale answer look like it belonged to the
-   * query on screen.
+   * There used to be a `query` beside this - the local search's own result,
+   * re-run on every keystroke - and two systems answering the same box was the
+   * whole confusion. One field now, because there is one act.
    */
   answer: MemoryGraphAnswerResult | null;
   answering: boolean;
@@ -77,7 +68,23 @@ interface MemoryGraphState {
    * task sitting on top of a search for "terminal".
    */
   answeredQuestion: string | null;
-  /** Asks the CURRENT query text. Never fires on its own. */
+  /**
+   * The answer as it is being written, before the whole thing has arrived.
+   *
+   * Rendered live so the reader sees content at first-token time (measured
+   * 1.1 to 1.8s) rather than a spinner until completion (measured ~6s). Only
+   * prose is shown from this: refs, view, grounds and task rows are parsed off
+   * the COMPLETE answer, which still replaces this when it lands.
+   */
+  streamingAnswer: string;
+  /**
+   * What the agent is doing between text, when it is not writing.
+   *
+   * A transcript question is several turns - search, read, answer - and
+   * without this the extra turns read as a longer spinner. Null while text is
+   * flowing or nothing is in flight.
+   */
+  streamingStatus: string | null;
   /** Asks the CURRENT query text. `granularity` is the detail level the user is
    *  looking at, so a region the answer names is one they can see. */
   askQuestion: (question: string, granularity?: string) => Promise<void>;
@@ -101,7 +108,11 @@ let unsubscribeConfig: (() => void) | null = import.meta.hot?.data?.memoryGraphU
 // @ts-expect-error -- Vite handles import.meta.hot
 let fetchOrdinal: number = import.meta.hot?.data?.memoryGraphFetchOrdinal ?? 0;
 // @ts-expect-error -- Vite handles import.meta.hot
-let queryOrdinal: number = import.meta.hot?.data?.memoryGraphQueryOrdinal ?? 0;
+let unsubscribeStream: (() => void) | null = import.meta.hot?.data?.memoryGraphUnsubscribeStream ?? null;
+// The question whose deltas are wanted. A delta carrying any other id is from a
+// question the user has already moved past and is dropped, never appended.
+// @ts-expect-error -- Vite handles import.meta.hot
+let activeRequestId: string | null = import.meta.hot?.data?.memoryGraphActiveRequestId ?? null;
 
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
@@ -111,7 +122,8 @@ if (import.meta.hot) {
     data.memoryGraphUnsubscribe = unsubscribeChanged;
     data.memoryGraphUnsubscribeConfig = unsubscribeConfig;
     data.memoryGraphFetchOrdinal = fetchOrdinal;
-    data.memoryGraphQueryOrdinal = queryOrdinal;
+    data.memoryGraphUnsubscribeStream = unsubscribeStream;
+    data.memoryGraphActiveRequestId = activeRequestId;
   });
 }
 
@@ -123,67 +135,61 @@ function createMemoryGraphStore() {
     followsCurrentProject: true,
     loading: false,
     loaded: false,
-    query: null,
-    querying: false,
-
-    runQuery: async (text) => {
-      const trimmed = text.trim();
-      if (!trimmed) {
-        get().clearQuery();
-        return;
-      }
-      queryOrdinal += 1;
-      const ordinal = queryOrdinal;
-      // A different question drops the answer to the previous one. Without this
-      // the answer survives every later search and reads as the answer to
-      // whatever is on screen now. Only on a CHANGE, so a re-run of the same
-      // text (a refocus, a re-render) does not throw away a paid-for answer.
-      const stale = get().answeredQuestion !== null && get().answeredQuestion !== trimmed;
-      set({ querying: true, ...(stale ? { answer: null, answeredQuestion: null } : {}) });
-      try {
-        const result = await window.electronAPI.memory.queryGraph(trimmed, get().projectId);
-        // Drop a slow reply that a newer keystroke already superseded.
-        if (ordinal !== queryOrdinal) return;
-        set({ query: result, querying: false });
-      } catch {
-        if (ordinal === queryOrdinal) set({ querying: false });
-      }
-    },
-
-    clearQuery: () => {
-      queryOrdinal += 1;
-      // The answer goes with it. An answer is about a question, and leaving one
-      // standing over a cleared search would attach it to whatever came next.
-      set({ query: null, querying: false, answer: null, answering: false, answeredQuestion: null });
-    },
 
     answer: null,
     answering: false,
     answeredQuestion: null,
+    streamingAnswer: '',
+    streamingStatus: null,
 
     askQuestion: async (question, granularity) => {
       const trimmed = question.trim();
       if (!trimmed || get().answering) return;
+      // A fresh id per question. Every delta the main process pushes carries
+      // it, and the subscription drops any delta whose id is not this one -
+      // which is what stops a slow answer to the LAST question from writing
+      // into the box for this one.
+      const requestId = crypto.randomUUID();
+      activeRequestId = requestId;
       // Cleared first, so a previous answer cannot sit under a spinner looking
       // like the answer to the question now being asked.
-      set({ answering: true, answer: null, answeredQuestion: null });
+      set({
+        answering: true,
+        answer: null,
+        answeredQuestion: null,
+        streamingAnswer: '',
+        streamingStatus: null,
+      });
       try {
         const result = await window.electronAPI.memory.answerFromGraph(
           trimmed,
           get().projectId,
           granularity,
+          requestId,
         );
-        set({ answer: result, answering: false, answeredQuestion: trimmed });
+        // The whole answer REPLACES the stream. Refs, view, grounds and rows
+        // are all parsed off this complete text; the stream only ever carried
+        // prose to look at while waiting.
+        if (activeRequestId === requestId) {
+          set({ answer: result, answering: false, answeredQuestion: trimmed, streamingAnswer: '', streamingStatus: null });
+        }
       } catch (error) {
-        set({
-          answer: { ok: false, reason: error instanceof Error ? error.message : String(error) },
-          answering: false,
-          answeredQuestion: trimmed,
-        });
+        if (activeRequestId === requestId) {
+          set({
+            answer: { ok: false, reason: error instanceof Error ? error.message : String(error) },
+            answering: false,
+            answeredQuestion: trimmed,
+            streamingAnswer: '',
+            streamingStatus: null,
+          });
+        }
       }
     },
 
-    clearAnswer: () => set({ answer: null, answering: false, answeredQuestion: null }),
+    clearAnswer: () => {
+      activeRequestId = null;
+      set({ answer: null, answering: false, answeredQuestion: null, streamingAnswer: '', streamingStatus: null });
+    },
 
     open: (projectId) => {
       if (get().graphOpen) return;
@@ -223,6 +229,26 @@ function createMemoryGraphStore() {
           void get().loadSnapshot(get().followsCurrentProject ? null : get().projectId);
         });
       }
+      // Progress on an answer in flight. Gated on the request id minted in
+      // `askQuestion`, so a delta from a question the user has already moved
+      // past is dropped rather than appended to the one on screen.
+      if (!unsubscribeStream) {
+        unsubscribeStream = window.electronAPI.memory.onAnswerStream((event) => {
+          if (activeRequestId === null || event.requestId !== activeRequestId) return;
+          if (event.kind === 'text') {
+            set((state) => ({ streamingAnswer: state.streamingAnswer + event.text, streamingStatus: null }));
+          } else if (event.kind === 'tool') {
+            // Named for the reader, not the tool: the one tool the agent
+            // holds is the conversation search, and "searching" is what
+            // they should see it doing.
+            set({ streamingStatus: 'Searching your conversations' });
+          } else {
+            // `done` clears the status line only. The text stays until the
+            // whole answer arrives and replaces it, so nothing flashes empty.
+            set({ streamingStatus: null });
+          }
+        });
+      }
       if (unsubscribeChanged) return;
       unsubscribeChanged = window.electronAPI.memory.onGraphChanged((changedProjectId) => {
         const { projectId, followsCurrentProject } = get();
@@ -245,6 +271,8 @@ function createMemoryGraphStore() {
       unsubscribeChanged = null;
       unsubscribeConfig?.();
       unsubscribeConfig = null;
+      unsubscribeStream?.();
+      unsubscribeStream = null;
     },
 
     loadSnapshot: async (projectId) => {

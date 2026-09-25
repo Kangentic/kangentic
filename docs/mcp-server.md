@@ -635,6 +635,8 @@ Pass `taskId` to restrict conversation hits to one task's history - e.g. "what w
 
 This tool consolidates what were previously two tools (`kangentic_search_everything` + a separate `kangentic_recall`) into one, per Anthropic's tool-design guidance that related retrieval operations belong in a single tool with a parameter rather than several overlapping tools.
 
+It is also the ONE tool the Memory Graph's Ask hands its answering agent. That headless call runs with the built-in tools off and a per-call MCP config naming only this server (`--strict-mcp-config`, `--allowedTools mcp__kangentic__kangentic_search`), so a question about what was said in past conversations is answered by the agent searching them itself, in `mode: "hybrid"`, and searching again if the first query missed - never by loading the user's other servers or the project's own instructions. See the Memory Graph section of the user guide.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Search keyword or phrase, or (in `mode:"hybrid"`) a natural-language description of what you are looking for. Case-insensitive; empty queries return no results. A `#<number>` query (e.g. `#42`) is a ticket lookup: only board tasks by display-ID prefix. |

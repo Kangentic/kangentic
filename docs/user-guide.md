@@ -823,37 +823,43 @@ Position and links are not equally precise, and the surface says so rather than 
 approximate** - reducing 1024 dimensions to three loses information, so "nearby" is a strong hint
 rather than a guarantee. Follow the links when you want certainty.
 
-**Searching.** Type in the box and the map SCOPES to the matches: everything else is hidden, the
-links between hidden conversations go with it, and the camera flies to frame what is left. The hits
-are listed as cards beside it, each tagged `semantic`, `lexical` or `hybrid` so you can see how it
-matched.
+**Asking.** Type a question in the box and press Enter: "what was the most expensive task?", "why
+did we drop the sphere fit?", "which tasks touched the relay?". The answer arrives as it is
+written, and the map and the rail beside it show what the answer is about: the tasks it named as
+rows, or the conversations it selected, with the map scoped to the same set. That is the whole
+surface - one box, one path. There is no separate search. An earlier version searched on every
+keystroke and listed the raw matching passages, which explained the retrieval machinery rather
+than answering anything, and then replaced all of it with the answer a moment later.
 
-This is the same retrieval agents get from `kangentic_search` - meaning-based, not a text scan over
-transcripts - running locally, instantly, and never leaving your machine. If semantic search is off
-it still works, matching text only, and tells you so. Clear the search to bring the whole map back;
-the camera stays where you left it, and **Reset view** is the way home.
+**How it answers.** The agent is handed two things. A complete table of every task in the project
+- what each cost, how long it ran, how many conversations it took, when it was last active, which
+region it sits in, what agent and model ran it, and its board ticket - which settles every factual
+question exactly, with the totals computed before the agent sees them, and without reading a
+transcript. And ONE tool: the same `kangentic_search` every agent gets, scoped to this project,
+which it calls itself when a question is about what was said, decided or tried. It chooses the
+query, reads what comes back, and searches again with different words if the first try missed,
+which a fixed set of pre-chosen passages could never do. Nothing else loads: no other tool, none
+of your other MCP servers, and not the project's own instructions.
 
-**Asking.** Search answers "which conversations". For an actual question - "why did we drop the
-sphere fit?", "what did we try for the resize race?" - the results are correct and still leave you
-the reading. **Ask** sits beside the search box and lights up once a search has matches: it hands
-the best two dozen matching passages to an agent along with the question, and shows the answer above
-the cards with a number on every claim. Clicking a number selects that conversation on the map, so
-nothing has to be taken on faith.
-
-Three things worth knowing. It is a **second, explicit act** - typing searches, free and instantly;
-Ask costs one agent call, and the button names the agent before you press it. The **cards stay**, so
-you can drop to the source whenever you distrust the answer. And when more conversations matched
-than fit in one question, it **says how many it left out** rather than implying it read everything.
+Ask costs one agent call, and the glyph at the end of the box names the agent before you press
+Enter. A question about the transcripts takes a few more turns than one about the board, and the
+rail says so as it goes ("Searching your conversations") rather than spinning. Clear the box and
+the answer goes with it; the camera stays where you left it, and **Reset view** is the way home.
 
 **Which agent answers** is its own setting, because the agent that runs your tasks and the agent
 that reads their history are different choices. Settings > Memory > **Answering agent** defaults to
 the project's agent and can be pointed at any installed one, with **Answering model** beside it -
 reading the index is lighter work than writing code, so a cheaper model is usually enough.
 
-Ask answers only from the excerpts it was given. Asked something the index does not cover, it says
-so rather than guessing - and it cannot answer questions about the board itself ("what is the
-largest task?"), because those are facts about tasks rather than anything written in a
-conversation.
+**The rows follow the question.** An answer about tasks lists those tasks beneath it, one row each,
+labelled with the **board ticket** you already know them by. The columns are whichever facts the
+answer was actually reasoning about: ask about cost and you get cost, ask which used the most
+tokens and you get tokens. A column where every row says the same thing is dropped, since it
+distinguishes nothing. Clicking a row opens that task's conversations.
+
+Asked something neither the table nor the conversations cover, Ask says so rather than guessing.
+Every answer keeps its working one click away, behind **Show what this is based on**: the table
+rows it used and the passages it quoted, so a claim can be checked rather than taken on faith.
 
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:

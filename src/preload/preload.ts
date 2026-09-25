@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext, MemoryAnswerStreamPush } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -680,14 +680,19 @@ const api: ElectronAPI = {
     refreshGraph: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_REFRESH, projectId),
     queryGraph: (query: string, projectId?: string | null) =>
       ipcRenderer.invoke(IPC.MEMORY_GRAPH_QUERY, query, projectId),
-    answerFromGraph: (question: string, projectId?: string | null, granularity?: string) =>
-      ipcRenderer.invoke(IPC.MEMORY_GRAPH_ANSWER, question, projectId, granularity),
+    answerFromGraph: (question: string, projectId?: string | null, granularity?: string, requestId?: string) =>
+      ipcRenderer.invoke(IPC.MEMORY_GRAPH_ANSWER, question, projectId, granularity, requestId),
     relatedToTask: (taskId: string, projectId?: string | null) =>
       ipcRenderer.invoke(IPC.MEMORY_RELATED_TO_TASK, taskId, projectId),
     onGraphChanged: (callback: (projectId: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
       ipcRenderer.on(IPC.MEMORY_GRAPH_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.MEMORY_GRAPH_CHANGED, handler);
+    },
+    onAnswerStream: (callback: (event: MemoryAnswerStreamPush) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, push: MemoryAnswerStreamPush) => callback(push);
+      ipcRenderer.on(IPC.MEMORY_GRAPH_ANSWER_STREAM, handler);
+      return () => ipcRenderer.removeListener(IPC.MEMORY_GRAPH_ANSWER_STREAM, handler);
     },
   },
 

@@ -74,7 +74,7 @@ import {
  *  The SUMS key deliberately stays at v1. It carries the per-document vector sums
  *  and `lastScannedChunkId`, which the new layout does not change, so keeping it
  *  makes the rebuild the ~330ms kNN + embed rather than the ~62s full vector scan. */
-export const PROJECTION_CACHE_KEY = 'graph_projection_v10';
+export const PROJECTION_CACHE_KEY = 'graph_projection_v11';
 export const PROJECTION_SUMS_KEY = 'graph_projection_sums_v1';
 
 /**
@@ -302,6 +302,7 @@ export async function runProjectionPass(
       title: metadata?.title ?? null,
       sessionId: metadata?.sessionId ?? null,
       taskId: metadata?.taskId ?? null,
+      displayId: metadata?.displayId ?? null,
       // The adapter's DISPLAY name, never the raw `session_type`: the panel was
       // printing "claude_agent" at the user. Resolved through the registry
       // rather than mapped here, per `agent-adapters-boundary`.

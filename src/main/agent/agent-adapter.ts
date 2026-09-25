@@ -1,3 +1,4 @@
+import type { AnswerStreamEvent } from './shared/auto-name';
 import type {
   SessionRecord,
   AgentPermissionEntry,
@@ -113,6 +114,32 @@ export interface CommandOptions {
 
 /** Agent-agnostic spawn options - renames `cliPath` to `agentPath`. */
 export type SpawnCommandOptions = Omit<CommandOptions, 'cliPath'> & { agentPath: string };
+
+/**
+ * What an answering agent may reach beyond its prompt, and how to watch it work.
+ *
+ * `retrieval` hands the agent ONE tool - the conversation search Kangentic's MCP
+ * server already exposes to every spawned agent - so a question the board facts
+ * cannot answer is settled by the agent searching the transcripts itself, with
+ * whatever query it judges right, and searching again if the first miss. The
+ * alternative, retrieving passages for it before it sees the question, gave it
+ * no way to recover from a bad retrieval. Absent means no tool: the agent
+ * answers from the prompt alone.
+ *
+ * `onEvent` is how the renderer shows progress while a multi-turn answer runs.
+ * Text arrives as it is written; a tool call is announced as it starts. The
+ * final answer is still returned whole, so nothing structural is parsed off a
+ * partial stream.
+ */
+export interface AnswerFromContextOptions {
+  retrieval?: {
+    /** The MCP server's project-scoped URL, from `mcpServerHandle.urlForProject`. */
+    url: string;
+    /** The per-launch token the server requires as `X-Kangentic-Token`. */
+    token: string;
+  };
+  onEvent?: (event: AnswerStreamEvent) => void;
+}
 
 /** Interface that every agent adapter must implement. */
 export interface AgentAdapter {
@@ -622,6 +649,7 @@ export interface AgentAdapter {
     /** Adapter-specific model id, or undefined for the agent's own default.
      *  Each adapter owns the flag; nothing upstream knows the syntax. */
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string>;
 
   /**

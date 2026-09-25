@@ -1,4 +1,5 @@
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from './pop-out';
+import type { MemoryTaskFacts, MemoryTaskView } from './memory-task-fields';
 import type {
   Announcement,
   AnnouncementArchiveEntry,
@@ -5321,7 +5322,22 @@ export interface ElectronAPI {
      * failure comes back as `{ ok: false, reason }` rather than throwing, so the
      * surface can say what went wrong instead of showing an empty answer.
      */
-    answerFromGraph: (question: string, projectId?: string | null, granularity?: string) => Promise<MemoryGraphAnswerResult>;
+    answerFromGraph: (
+      question: string,
+      projectId?: string | null,
+      granularity?: string,
+      /** Minted by the caller and echoed on every stream event, so deltas from
+       *  a question the user has moved past are dropped, never appended. */
+      requestId?: string,
+    ) => Promise<MemoryGraphAnswerResult>;
+    /**
+     * Push subscription: progress on an answer in flight. Text as the agent
+     * writes it, a tool call as it starts, and a terminal `done`. The final
+     * `MemoryGraphAnswerResult` still arrives whole from `answerFromGraph`, so
+     * nothing structural is ever parsed off a partial stream. Returns an
+     * unsubscribe closure.
+     */
+    onAnswerStream: (callback: (event: MemoryAnswerStreamPush) => void) => () => void;
     /**
      * Earlier conversations semantically near a task, excluding the task's own.
      * Proactive recall: what have I already figured out about this?
@@ -5454,6 +5470,15 @@ export interface MemoryGraphNode {
   /** The Kangentic session, so a click can open the real transcript. */
   sessionId: string | null;
   taskId: string | null;
+  /**
+   * The owning task's board ticket, the `#N` a card prints.
+   *
+   * The surface labels a task with this rather than with its position in the
+   * answer prompt's table: that position is an index into a cost-sorted list,
+   * so rendering it as `#14` would hand the reader a board-shaped number
+   * pointing at a different ticket. Null for a conversation with no task.
+   */
+  displayId: number | null;
   /** Agent that produced it, as a DISPLAY name resolved from the adapter
    *  registry ("Claude Code"), never the raw `session_type` ("claude_agent"). */
   agent: string | null;
@@ -5617,55 +5642,30 @@ export interface MemoryGraphQueryResult {
 }
 
 /**
- * One conversation an answer drew on, and the number it is cited by.
+ * One `T<n>` an answer named, resolved to the conversations behind that task.
  *
- * Carries `docKey` so a citation can select the node it came from: an answer the
- * reader cannot trace back to the map is a claim they have to take on faith,
- * which is the thing this surface exists not to ask of them.
+ * Extends `MemoryTaskFacts`, which is the same declaration the prompt table is
+ * generated from - so a fact the agent was shown is a fact the rail can render,
+ * by construction. That parity used to be maintained by hand and was not
+ * maintained: eleven columns went into the prompt and four came out here, which
+ * is why an answer ranking tasks by tokens sat above rows printing dollars.
+ *
+ * Every metric is null when the sessions never recorded it, never zero, which
+ * would make an unmeasured task look like a free one.
  */
-export interface MemoryAnswerCitation {
-  /** 1-based, matching the [n] markers in the answer text. */
-  index: number;
-  docKey: string;
-  sessionId: string;
-  taskId: string | null;
-  title: string;
-  /** Epoch ms of the cited passage. */
-  ts: number | null;
-}
-
-/** One `T<n>` an answer named, resolved to the conversations behind that task. */
-export interface MemoryAnswerTaskRef {
+export interface MemoryAnswerTaskRef extends MemoryTaskFacts {
   /** The number as written in the answer, so the renderer can match `T12`. */
   ref: number;
   title: string;
   /** Every conversation belonging to the task. A task runs several sessions,
    *  so selecting it lights all of them rather than an arbitrary one. */
   docKeys: string[];
-  /**
-   * The task's own facts, already totalled across its sessions.
-   *
-   * Carried so a rail row can present the TASK rather than a passage from one
-   * of its conversations. Asked "which is the biggest", a row reading
-   * `Tool: ToolSearch {"query":...}` answers nothing: the snippet is the best
-   * matching passage, which is right for "find conversations about X" and
-   * wrong for a question about the work itself.
-   *
-   * Null on any metric the sessions never recorded - never zero, which would
-   * make an unmeasured task look like a free one.
-   */
-  costUsd: number | null;
-  durationMs: number | null;
-  outcome: 'done' | 'abandoned' | 'active' | null;
-  /** Sessions the task ran, which is part of why its totals are what they are. */
-  sessions: number;
 }
 
 export type MemoryGraphAnswerResult =
   | {
     ok: true;
     answer: string;
-    citations: MemoryAnswerCitation[];
     /**
      * Nodes the answer SELECTED, when the question asked which tasks rather than
      * for an explanation ("show me the terminal bug fixes").
@@ -5686,20 +5686,67 @@ export type MemoryGraphAnswerResult =
      * is not the same as saying the map should scope to it.
      */
     taskRefs: MemoryAnswerTaskRef[];
+    /**
+     * Which facts the answer asked to be shown beside each task, and in what
+     * order the rows should sit.
+     *
+     * The agent decided, because it is the only party that knows: "the biggest
+     * mobile task" could be ranked on cost, duration or tokens, and a fixed
+     * four-chip row is right for exactly one of them. Null when the answer said
+     * nothing, which falls back to the default columns and to the order the
+     * answer named the tasks in.
+     */
+    view: MemoryTaskView | null;
+    /**
+     * The working the answer rests on: the rows it used and the passages it
+     * quoted, as the agent wrote them.
+     *
+     * Quoting the source before answering is the documented technique for long
+     * prompts, where it keeps the model on the relevant material - and the
+     * measured failure it targets is an answer reaching past 22k tokens of task
+     * history to answer a general-knowledge question from memory.
+     *
+     * Carried separately from `answer` rather than left in it: the rail is
+     * narrow and its answers run to a line or two, so a paragraph of quotes
+     * above each one would cost more than it buys. The renderer puts this
+     * behind a disclosure. Null when the agent wrote none, which is not an
+     * error and must not read as one.
+     */
+    grounds: string | null;
+    /**
+     * What this question cost to ask, in prompt tokens.
+     *
+     * Ask spends most of its budget BEFORE the agent does anything - a complete
+     * task table plus a passage allowance - and none of it was observable from
+     * outside, so there was no number to move when making it cheaper. Estimated
+     * with the same function the chunker sizes text with, so this and the
+     * index's own token accounting cannot disagree.
+     */
+    promptTokens: number;
     /** Tasks the agent was given. The answer's coverage, stated so a reader can
      *  tell "none matched" from "it only saw a sample". */
     taskCount: number;
     /** Which agent produced it, so the surface can say whose answer this is. */
     agentName: string;
-    /**
-     * Conversations retrieval found that the prompt could not carry.
-     *
-     * Surfaced rather than swallowed: an answer drawn from 24 of 60 matches is a
-     * different claim from one drawn from all of them.
-     */
-    droppedConversations: number;
   }
   | { ok: false; reason: string };
+
+/**
+ * One step of an answer in flight.
+ *
+ * `text` is the agent writing; `tool` is the agent reaching for its search,
+ * which the rail shows as a progress line so the extra turns of a transcript
+ * question read as work happening rather than a longer spinner; `done` closes
+ * the stream whether the answer succeeded or threw. Structural parsing (refs,
+ * view, grounds) waits for the whole answer and never runs on these.
+ */
+export type MemoryAnswerStreamEvent =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; name: string }
+  | { kind: 'done' };
+
+/** A stream event as pushed, tagged with the question it belongs to. */
+export type MemoryAnswerStreamPush = MemoryAnswerStreamEvent & { requestId: string };
 
 export interface MemoryGraphSnapshot {
   projectId: string;

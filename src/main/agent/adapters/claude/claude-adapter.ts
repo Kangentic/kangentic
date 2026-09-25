@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ClaudeDetector } from './detector';
 import { CommandBuilder } from './command-builder';
 import { ClaudeStatusParser } from './status-parser';
@@ -14,7 +16,15 @@ import { reportTerminatedBackgroundShells } from './background-shell-transcript'
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
-import { runCliPrintSummarize, runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
+import {
+  runCliPrintSummarize,
+  runCliPrintAnswer,
+  buildSummarizePrompt,
+  extractStreamedAnswer,
+  createAnswerStreamReducer,
+  ANSWER_STREAM_OUTPUT_BUDGET,
+  type AnswerStreamEvent,
+} from '../../shared/auto-name';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { configuredModelFromClaudeCommand, buildModelDisplayNames } from './model-display-name';
@@ -26,7 +36,67 @@ import type {
   SettingsChangeSpec,
   ParsedTranscript,
   ParsedTranscriptWindow,
+  AnswerFromContextOptions,
 } from '../../agent-adapter';
+
+/**
+ * The one tool an answering agent is allowed, by its full MCP name.
+ *
+ * `kangentic_search` in hybrid mode is the conversation retrieval Kangentic's
+ * MCP server already serves to every spawned agent. Handing the answering agent
+ * that same tool, and only that, is what lets a question the board facts cannot
+ * settle be settled by the agent searching the transcripts itself.
+ */
+const ANSWER_RETRIEVAL_TOOL = 'mcp__kangentic__kangentic_search';
+
+/**
+ * Write a one-server MCP config for a single answer call and return its path.
+ *
+ * Under the OS temp dir with a unique name, never in the project: this file
+ * carries a live token, the answer call runs from a neutral cwd on purpose, and
+ * two answers in flight must not share a file. Deleted by the caller when the
+ * call ends.
+ */
+export function writeScopedMcpConfig(retrieval: { url: string; token: string }): string {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
+  const configPath = path.join(directory, 'mcp.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    mcpServers: {
+      kangentic: {
+        type: 'http',
+        url: retrieval.url,
+        headers: { 'X-Kangentic-Token': retrieval.token },
+      },
+    },
+  }, null, 2));
+  return configPath;
+}
+
+/**
+ * Turn a stream of stdout chunks into a stream of answer events.
+ *
+ * Chunk boundaries fall anywhere, including mid-line, so lines are reassembled
+ * before parsing: a partial JSON line is held until its newline arrives. The
+ * tail left after the final chunk is not flushed on purpose - it is either
+ * empty or an unterminated line the CLI never finished, and neither is an
+ * event.
+ */
+export function makeStreamForwarder(onEvent: (event: AnswerStreamEvent) => void): (chunk: string) => void {
+  let pending = '';
+  // Stateful, so a turn that arrived as deltas is not shown a second time when
+  // its complete `assistant` line follows.
+  const reduce = createAnswerStreamReducer();
+  return (chunk) => {
+    pending += chunk;
+    let newline = pending.indexOf('\n');
+    while (newline !== -1) {
+      const line = pending.slice(0, newline);
+      pending = pending.slice(newline + 1);
+      for (const event of reduce(line)) onEvent(event);
+      newline = pending.indexOf('\n');
+    }
+  };
+}
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -271,25 +341,113 @@ export class ClaudeAdapter implements AgentAdapter {
 
   /**
    * The prompt arrives fully built - question, excerpts and rules - so this only
-   * chooses the flags. `plan` mode for the same reason `summarize` uses it and a
-   * stronger one: the prompt is pure reading, and an agent handed a repository
-   * and a question about it will otherwise start editing to answer it.
+   * chooses the flags. The read-only guarantee is the EMPTY tool list plus the
+   * one allowlisted search tool, with prompts switched off so nothing can be
+   * granted at runtime. Not plan mode - see the note on the args.
    */
   async answerFromContext(
     prompt: string,
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
-    return runCliPrintAnswer({
-      cliPath,
-      // The flag is OMITTED when no model is chosen, rather than passed empty:
-      // `--model ''` is an error, and the absence of the flag is exactly what
-      // "use the agent's own default" means to the CLI.
-      args: ['--print', '--permission-mode', 'plan', ...(model ? ['--model', model] : [])],
-      prompt,
-      cwd,
-    });
+    // The ONE tool the agent may reach, when the caller offers it.
+    //
+    // Written to a temp file and named by `--mcp-config`, exactly as the
+    // interactive spawn does in `command-builder.ts`. `--strict-mcp-config`
+    // stays: it means this file is the WHOLE server list, so the user's own
+    // servers still never load into a question about their task history. And
+    // `--allowedTools` pre-approves the single search tool by name, so a
+    // headless run never blocks on a permission prompt it has no way to answer.
+    const retrieval = options?.retrieval;
+    const mcpConfigPath = retrieval ? writeScopedMcpConfig(retrieval) : null;
+    const streaming = options?.onEvent !== undefined;
+
+    try {
+      return await runCliPrintAnswer({
+        cliPath,
+        // The flag is OMITTED when no model is chosen, rather than passed empty:
+        // `--model ''` is an error, and the absence of the flag is exactly what
+        // "use the agent's own default" means to the CLI.
+        // MINIMAL BY MEASUREMENT. A trivial ten-token prompt through this call
+        // carried ~52,000 tokens of context: built-in tool definitions, every MCP
+        // server the user has configured, and the project's CLAUDE.md. Ask needs
+        // none of it - the prompt is self-contained and the rules tell the agent
+        // to answer only from what is in it.
+        //
+        //   as it was                       ~52,000 tokens
+        //   + --tools '' --strict-mcp-config ~26,800
+        //   + a neutral cwd (the caller)      ~8,000
+        //
+        // `--tools ''` drops the built-in tools; `--strict-mcp-config` makes
+        // the scoped `--mcp-config` below the WHOLE server list, so a user's
+        // own servers do not leak into a question about their task history.
+        //
+        // NOT `--permission-mode plan`, which this call carried as a "second
+        // lock" until it was measured. On CLI 2.1.260, plan mode with
+        // `--model haiku` answered from claude-sonnet-5 (message_start.model)
+        // at ~3x the notional cost and with ~10k more tokens of system prompt;
+        // the identical call without plan mode answered from haiku. The lock
+        // was redundant and it was the most expensive line in the command.
+        // What keeps this read-only is the empty tool list plus the allowlist,
+        // and `--permission-prompts none` denies anything that would ever
+        // prompt rather than letting a headless run block or be granted.
+        args: [
+          '--print',
+          '--permission-prompts', 'none',
+          '--tools', '',
+          '--strict-mcp-config',
+          ...(mcpConfigPath
+            ? ['--mcp-config', mcpConfigPath, '--allowedTools', ANSWER_RETRIEVAL_TOOL]
+            : []),
+          // stream-json is what makes progress visible, and partial messages
+          // are what make it a STREAM: without them the CLI emits one line per
+          // completed turn, so a one-turn answer arrives all at once at the
+          // end (measured: first text at 4.8s of a 5.5s call); with them the
+          // model's deltas come through as written (measured: 1.3s to the
+          // first). `--verbose` is required alongside stream-json in print
+          // mode.
+          ...(streaming
+            ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages']
+            : []),
+          ...(model ? ['--model', model] : []),
+        ],
+        // In stream mode stdout is a transcript of JSON lines, not the answer.
+        // The final answer is the last assistant turn's text; the runner's
+        // `extractRaw` seam is exactly where that reduction belongs.
+        ...(streaming ? { extractRaw: extractStreamedAnswer } : {}),
+        // And stdout is a transcript, not an answer: tool results and per-delta
+        // envelopes for a two-paragraph answer run to hundreds of kilobytes.
+        // The answer-sized budget killed the CLI mid-search.
+        ...(streaming ? { outputBudget: ANSWER_STREAM_OUTPUT_BUDGET } : {}),
+        // Forward each line's events as they land. A chunk can end mid-line,
+        // so lines are reassembled across chunks before parsing.
+        ...(streaming ? { onChunk: makeStreamForwarder(options.onEvent!) } : {}),
+      // NO EXTENDED THINKING, and this is the latency of the feature.
+      //
+      // Measured on a realistic 350-row prompt: thinking on took 4,038ms of API
+      // time and generated 253 output tokens of which 231 - 91% - were thinking.
+      // Off took 2,041ms and 19 tokens, and returned the IDENTICAL answer.
+      //
+      // Which is what you would expect from the shape of the work. The prompt
+      // already contains the whole table, the arithmetic is computed before the
+      // agent sees it, and the task is to read and report. There is nothing here
+      // to reason toward, so the reasoning was latency the user pays for and no
+      // answer they would not have got anyway.
+      //
+      // `MAX_THINKING_TOKENS` is Claude Code's own control, which is why this
+      // lives in the Claude adapter rather than in the shared runner.
+        env: { MAX_THINKING_TOKENS: '0' },
+        prompt,
+        cwd,
+      });
+    } finally {
+      // The config carries a live token. It exists only for the duration of
+      // one call, and `force` because Windows may still hold the handle for a
+      // beat after the child exits.
+      if (mcpConfigPath) fs.rmSync(mcpConfigPath, { force: true });
+    }
   }
 
   /**

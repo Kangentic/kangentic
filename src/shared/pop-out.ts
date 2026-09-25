@@ -177,6 +177,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // background, so a detached window must be told rather than poll. Omitting
       // this leaves the pop-out permanently showing "building".
       IPC.MEMORY_GRAPH_CHANGED,
+      // Progress on an answer in flight. Declared here or a detached window
+      // sits on a spinner while the main window watches the answer arrive.
+      IPC.MEMORY_GRAPH_ANSWER_STREAM,
       IPC.CONFIG_CHANGED,
     ],
   },

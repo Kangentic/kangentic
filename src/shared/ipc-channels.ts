@@ -451,6 +451,12 @@ export const IPC = {
   /** Run the existing fusion search and map its hits onto graph nodes. */
   MEMORY_GRAPH_QUERY: 'memory:graphQuery',
   MEMORY_GRAPH_ANSWER: 'memory:graphAnswer',
+  /** Push: progress on an answer in flight - text as the agent writes it, a
+   *  tool call as it starts, and a terminal `done`. Keyed by the renderer's
+   *  `requestId` so a late delta from an abandoned question is dropped.
+   *  Declared in the surface's POP_OUT_SURFACES `channels` too, or a detached
+   *  window never sees a word. */
+  MEMORY_GRAPH_ANSWER_STREAM: 'memory:graphAnswerStream',
   /** Earlier conversations semantically near a task, for proactive recall in
    *  task detail. The index finding you, rather than waiting to be searched. */
   MEMORY_RELATED_TO_TASK: 'memory:relatedToTask',

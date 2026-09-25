@@ -32,6 +32,8 @@
  */
 
 import type { MemoryGraphNode, MemoryGraphProjection } from '../../shared/types';
+import type { MemoryTaskFacts, MemoryTaskField } from '../../shared/memory-task-fields';
+import { constantFields, MEMORY_TASK_FIELDS } from '../../shared/memory-task-fields';
 
 /**
  * Tasks the table may carry.
@@ -45,22 +47,17 @@ import type { MemoryGraphNode, MemoryGraphProjection } from '../../shared/types'
  */
 export const MAX_TASK_ROWS = 1_200;
 
-/** A task's rolled-up facts, as the prompt will state them. */
-export interface AnswerTaskRow {
+/**
+ * A task's rolled-up facts, as the prompt will state them.
+ *
+ * The facts themselves come from `MemoryTaskFacts`, which the wire payload
+ * extends too - so a field cannot reach the prompt without also reaching the
+ * renderer. Only the two things the CATALOG has no business knowing are
+ * declared here: which task this is, and what it is called.
+ */
+export interface AnswerTaskRow extends MemoryTaskFacts {
   taskId: string | null;
   title: string;
-  /** Sessions this task ran. Part of why its cost is what it is. */
-  sessions: number;
-  costUsd: number | null;
-  durationMs: number | null;
-  tokens: number | null;
-  outcome: 'done' | 'abandoned' | 'active' | null;
-  /** Most recent activity across the task's sessions, epoch ms. */
-  lastActivityMs: number | null;
-  /** Region label at the granularity the user is looking at. */
-  region: string | null;
-  agent: string | null;
-  model: string | null;
 }
 
 export interface AnswerTaskTable {
@@ -85,9 +82,15 @@ function addMetric(current: number | null, next: number | null): number | null {
  *
  * Conversations with no task each stay their own row rather than being merged
  * into one bucket: they are real work, and a `no-task` row holding forty
- * unrelated conversations would be a row about nothing. Ranked by cost so a
- * truncation drops the cheapest rather than an arbitrary slice, since the
- * expensive tail is what superlative questions are about.
+ * unrelated conversations would be a row about nothing.
+ *
+ * The cost sort is a TRUNCATION POLICY and nothing else: when a corpus exceeds
+ * `MAX_TASK_ROWS` the cheapest tasks are the right ones to drop, because the
+ * expensive tail is what superlative questions are about. It is emphatically
+ * not a display order. It used to double as one by accident - rows are numbered
+ * AFTER this sort, so `T14` means "the 14th most expensive task" and ordering
+ * the rail by ref was ordering it by cost. That looked correct for exactly one
+ * question. Display order now comes from the answer's own view spec.
  */
 export function buildAnswerTaskTable(
   projection: MemoryGraphProjection,
@@ -117,6 +120,7 @@ export function buildAnswerTaskTable(
     if (!existing) {
       byTask.set(key, {
         taskId: node.taskId,
+        displayId: node.displayId,
         title: node.title ?? 'Untitled',
         sessions: 1,
         costUsd: node.costUsd,
@@ -146,9 +150,13 @@ export function buildAnswerTaskTable(
     // An outcome is a property of the TASK, so any session that knows it is
     // authoritative over a sibling that does not.
     if (existing.outcome === null) existing.outcome = node.outcome;
+    if (existing.displayId === null) existing.displayId = node.displayId;
     if (existing.region === null) existing.region = regionLabel(node);
   }
 
+  // Truncation order only - see the note above. `?? 0` is correct HERE, unlike
+  // everywhere else in this file: a task with no recorded cost is exactly the
+  // one to drop first when the board does not fit.
   const all = [...byTask.values()].sort((left, right) => (right.costUsd ?? 0) - (left.costUsd ?? 0));
   return {
     rows: all.slice(0, MAX_TASK_ROWS),
@@ -159,52 +167,150 @@ export function buildAnswerTaskTable(
   };
 }
 
-function formatDuration(ms: number | null): string {
-  if (ms === null) return '';
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`;
-}
-
-function formatDate(ms: number | null): string {
-  if (ms === null) return '';
-  const date = new Date(ms);
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
-}
-
-function formatTokens(tokens: number | null): string {
-  if (tokens === null) return '';
-  if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}M`;
-  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`;
-  return String(tokens);
-}
-
 /**
  * The table as the prompt carries it.
  *
  * Pipe-delimited with a header rather than JSON: same information, roughly half
- * the tokens, and a model reads a column layout at least as well. Cost is to the
- * cent because these are real amounts someone may reconcile against a bill.
+ * the tokens, and a model reads a column layout at least as well.
+ *
+ * GENERATED from the field catalog rather than hand-written. The header used to
+ * be a string literal beside eleven hand-written cell expressions, which is
+ * three places to keep in step with the wire payload and the rows - and they
+ * did not stay in step, which is why an answer could rank tasks by tokens above
+ * rows printing dollars. Adding a column is now one catalog entry.
  *
  * Every row is numbered `T<n>` so an answer can name a task the same way it
  * cites an excerpt, and the renderer can map a mentioned task back onto the map.
+ * That ref, not the ticket, stays the agent's vocabulary for REFERRING to a
+ * task: it is a position in this list, which is what makes it resolvable.
  */
 export function formatTaskTable(table: AnswerTaskTable): string {
-  const header = 'ref|task|sessions|cost_usd|duration|tokens|outcome|last_active|region|agent|model';
+  // A field that never varies is stated once in the summary instead of on every
+  // row. Measured: `agent` is one distinct value across 350 tasks, so this
+  // column alone was 4,200 characters of "Claude Code".
+  const collapsed = new Set(constantFields(table.rows).map((field) => field.key));
+  const columns = MEMORY_TASK_FIELDS.filter((field) => !collapsed.has(field.key));
+
+  const header = ['ref', 'task', ...columns.map((field) => field.key)].join('|');
   const rows = table.rows.map((row, index) => [
     `T${index + 1}`,
     // The pipe is the delimiter, so a title carrying one would shift a column.
     row.title.replace(/\|/g, '/'),
-    String(row.sessions),
-    row.costUsd === null ? '' : row.costUsd.toFixed(2),
-    formatDuration(row.durationMs),
-    formatTokens(row.tokens),
-    row.outcome ?? '',
-    formatDate(row.lastActivityMs),
-    row.region ?? '',
-    row.agent ?? '',
-    row.model ?? '',
+    ...columns.map((field) => field.cell(row)),
   ].join('|'));
   return [header, ...rows].join('\n');
+}
+
+/** Sums a nullable metric, keeping "never recorded" out of the total. */
+function sumOf(rows: ReadonlyArray<AnswerTaskRow>, field: MemoryTaskField): number | null {
+  let total: number | null = null;
+  for (const row of rows) {
+    const value = field.sortValue(row);
+    if (value === null) continue;
+    total = (total ?? 0) + value;
+  }
+  return total;
+}
+
+/** Rows tied at the top of a measure, as refs. Ties are the norm on counts. */
+function topRefs(
+  rows: ReadonlyArray<AnswerTaskRow>,
+  field: MemoryTaskField,
+  limit: number,
+): string {
+  const ranked = rows
+    .map((row, index) => ({ ref: index + 1, value: field.sortValue(row) }))
+    .filter((entry) => entry.value !== null)
+    .sort((left, right) => (right.value ?? 0) - (left.value ?? 0))
+    .slice(0, limit);
+  return ranked.map((entry) => `T${entry.ref}`).join(' ');
+}
+
+/**
+ * The arithmetic, done here so the agent never has to do it.
+ *
+ * Measured failure this exists for: asked what every task had cost, the agent
+ * summed 350 rows and answered **$14,860.99** against a true $17,117.60 - a 13%
+ * error, stated with complete confidence and indistinguishable from a right
+ * answer. The totals were already computed in this file and thrown away; the
+ * prompt handed over the rows and asked for them back.
+ *
+ * It also carries the ranking heads, so a superlative is a lookup rather than a
+ * scan of every row, and the values of any field that never varies, which is
+ * what lets those columns leave the table entirely.
+ *
+ * Roughly 500 characters. It replaces several thousand and one wrong number.
+ */
+export function summarizeTaskTable(table: AnswerTaskTable): string {
+  const rows = table.rows;
+  if (rows.length === 0) return 'No tasks are indexed for this project.';
+
+  const lines: string[] = [`tasks: ${rows.length}`];
+  const collapsed = new Set(constantFields(rows).map((field) => field.key));
+
+  for (const field of MEMORY_TASK_FIELDS) {
+    if (field.key === 'ticket') continue;
+
+    // A field that never varies: one line, and the column is gone from below.
+    if (collapsed.has(field.key)) {
+      lines.push(`${field.key}: ${field.cell(rows[0]) || '(none)'} for all ${rows.length}`);
+      continue;
+    }
+
+    if (field.kind === 'measure' || field.kind === 'time') {
+      const parts: string[] = [];
+      // A total is meaningless for a date and for an id-like measure, so only
+      // things that genuinely add up report one.
+      if (field.kind === 'measure') {
+        const total = sumOf(rows, field);
+        if (total !== null) parts.push(`total ${field.cell({ ...rows[0], ...totalAs(field, total) })}`);
+      }
+      const head = topRefs(rows, field, 5);
+      if (head) parts.push(`highest first ${head}`);
+      if (parts.length > 0) lines.push(`${field.key}: ${parts.join(', ')}`);
+      continue;
+    }
+
+    // A dimension: how the corpus is distributed, most common first, and the
+    // rare values named by ref so a selection question can find them without
+    // reading 350 rows.
+    const counts = new Map<string, number[]>();
+    rows.forEach((row, index) => {
+      const value = field.cell(row) || '(none)';
+      const refs = counts.get(value) ?? [];
+      refs.push(index + 1);
+      counts.set(value, refs);
+    });
+    const ordered = [...counts.entries()].sort((left, right) => right[1].length - left[1].length);
+    const rendered = ordered.slice(0, 6).map(([value, refs]) => (
+      // Fewer than five rows carry it, so naming them costs less than leaving
+      // the reader to scan - and it is exactly the "which tasks are X" case.
+      refs.length <= 4 ? `${value} (${refs.map((ref) => `T${ref}`).join(' ')})` : `${value} ${refs.length}`
+    ));
+    if (ordered.length > 6) rendered.push(`+${ordered.length - 6} more`);
+    lines.push(`${field.key}: ${rendered.join(', ')}`);
+  }
+  return lines.join('\n');
+}
+
+/** Renders a computed total through the field's own formatter. */
+function totalAs(field: MemoryTaskField, total: number): Partial<MemoryTaskFacts> {
+  switch (field.key) {
+    case 'cost_usd': return { costUsd: total };
+    case 'duration': return { durationMs: total };
+    case 'tokens': return { tokens: total };
+    case 'sessions': return { sessions: total };
+    default: return {};
+  }
+}
+
+/**
+ * The glossary that goes above the table.
+ *
+ * Each column explains itself in one line, which Cube calls `ai_context` and
+ * its docs name as the thing that decides answer quality. Generated, so a new
+ * column cannot arrive undocumented.
+ */
+export function formatTaskFieldGlossary(): string {
+  return MEMORY_TASK_FIELDS.map((field) => `${field.key} - ${field.describe}`).join('\n');
 }

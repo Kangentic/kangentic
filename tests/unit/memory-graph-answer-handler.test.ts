@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MemoryGraphAnswerResult } from '../../src/shared/types';
 import type { StoredChunk } from '../../src/main/retrieval/types';
 import type { TranscriptSearchHit } from '../../src/main/retrieval/memory-search';
+import type { AnswerFromContextOptions } from '../../src/main/agent/agent-adapter';
 
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -31,8 +32,17 @@ type MockAdapter = {
   name: string;
   displayName: string;
   detect: (override?: string | null) => Promise<{ found: boolean; path: string | null; version: string | null }>;
-  answerFromContext?: (prompt: string, cliPath: string, cwd: string) => Promise<string>;
+  answerFromContext?: (
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+    options?: AnswerFromContextOptions,
+  ) => Promise<string>;
 };
+
+/** One agent call's arguments, as the handler made them. */
+type AnswerCall = [string, string, string, string | null, AnswerFromContextOptions | undefined];
 
 let mockAdapters: MockAdapter[] = [];
 
@@ -74,6 +84,15 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 
 import { registerSearchHandlers } from '../../src/main/ipc/handlers/search';
 import { graphService } from '../../src/main/retrieval/graph/graph-service';
+import { broadcast } from '../../src/main/pop-out/window-broadcast';
+import { IPC } from '../../src/shared/ipc-channels';
+
+/** Every stream push the handler broadcast, in order, payload only. */
+function streamPushes(): unknown[] {
+  return vi.mocked(broadcast).mock.calls
+    .filter(([, channel]) => channel === IPC.MEMORY_GRAPH_ANSWER_STREAM)
+    .map(([, , payload]) => payload);
+}
 
 function chunk(id: number, text = `Passage ${id}`): StoredChunk {
   return {
@@ -126,26 +145,40 @@ const MOCK_PROJECTION = {
 /** Global memory settings for the context double, per test. */
 let memoryConfig: Record<string, unknown> = {};
 
-function makeContext(defaultAgent: string | null = 'claude') {
+/**
+ * The IPC context double. `mcpServerUp` models whether Kangentic's own MCP
+ * server is listening, which is what decides whether the agent is handed the
+ * search tool or answers from the board alone.
+ */
+function makeContext(defaultAgent: string | null = 'claude', mcpServerUp = true) {
   return {
     configManager: { load: vi.fn(() => ({ agent: { cliPaths: {} }, memory: memoryConfig })) },
     projectRepo: { list: vi.fn(() => [{ id: 'project-1', default_agent: defaultAgent, path: '/repo' }]) },
     currentProjectId: 'project-1',
     currentProjectPath: '/repo',
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
+    ...(mcpServerUp
+      ? {
+        mcpServerHandle: {
+          urlForProject: vi.fn((projectId: string) => `http://127.0.0.1:4321/mcp/${projectId}`),
+          token: 'secret-token',
+        },
+      }
+      : {}),
   };
 }
 
-async function ask(question: string): Promise<MemoryGraphAnswerResult> {
+async function ask(question: string, requestId = ''): Promise<MemoryGraphAnswerResult> {
   const handler = capturedHandlers.get('memory:graphAnswer');
   if (!handler) throw new Error('memory:graphAnswer handler not registered');
-  return handler(undefined, question, 'project-1') as Promise<MemoryGraphAnswerResult>;
+  return handler(undefined, question, 'project-1', 'balanced', requestId) as Promise<MemoryGraphAnswerResult>;
 }
 
 describe('the Ask handler', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     searchSpy.mockClear();
+    vi.mocked(broadcast).mockClear();
     memoryConfig = {};
     vi.mocked(graphService.getSnapshot).mockReturnValue({
       projectId: 'project-1',
@@ -160,8 +193,8 @@ describe('the Ask handler', () => {
     mockHits = [hit(1), hit(2)];
   });
 
-  it('answers from the retrieved passages and cites every one it was given', async () => {
-    const answerSpy = vi.fn(async () => 'The sphere fit circumscribes [1].');
+  it('hands the agent the board and the search tool, and retrieves nothing itself', async () => {
+    const answerSpy = vi.fn(async () => 'The sphere fit circumscribes.');
     mockAdapters = [{
       name: 'claude',
       displayName: 'Claude Code',
@@ -174,27 +207,64 @@ describe('the Ask handler', () => {
     const result = await ask('why did we drop the sphere fit?');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.answer).toContain('[1]');
+    expect(result.answer).toBe('The sphere fit circumscribes.');
     expect(result.agentName).toBe('Claude Code');
-    // BOTH sources, not only the one the answer cited. An uncited source is
-    // still what the answer was allowed to see, and a reader checking whether it
-    // missed something needs that list.
-    expect(result.citations.map((citation) => citation.index)).toEqual([1, 2]);
-    expect(result.citations[0].docKey).toBe('conversation::doc-1');
 
     // The prompt is built HERE and handed over whole, so the adapter cannot
-    // change what the answer may draw on.
-    const [prompt] = answerSpy.mock.calls[0];
+    // change what the answer may draw on. It carries the board and NO
+    // passages: our search used to choose two dozen before the agent saw the
+    // question, with no way back when it had misjudged. The agent pulls them
+    // itself now, through the one tool below, so nothing is retrieved here.
+    const [prompt, , , , options] = answerSpy.mock.calls[0] as unknown as AnswerCall;
     expect(prompt).toContain('why did we drop the sphere fit?');
-    expect(prompt).toContain('Passage 1');
+    expect(prompt).toContain('Sphere fit framing');
+    expect(prompt).not.toContain('<excerpts>');
+    expect(searchSpy).not.toHaveBeenCalled();
+
+    // ONE tool, scoped to THIS project by its URL, carrying the live token.
+    expect(options?.retrieval).toEqual({
+      url: 'http://127.0.0.1:4321/mcp/project-1',
+      token: 'secret-token',
+    });
   });
 
-  it('still answers when NO passage matched, because the board is also a source', async () => {
-    // This was a refusal before the task table existed, and the refusal was the
-    // bug: "how many tasks were abandoned?" matches no passage and is perfectly
-    // answerable. Retrieval finding nothing is not the same as knowing nothing.
-    mockHits = [];
+  it('answers from the board alone when the MCP server is not up', async () => {
+    // A degraded answer rather than a failed one: the table still settles
+    // every factual question, and the agent is told what it cannot reach.
     const answerSpy = vi.fn(async () => 'Two tasks, T1 and T2.');
+    mockAdapters = [{
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+      answerFromContext: answerSpy,
+    }];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext('claude', false) as any);
+
+    const result = await ask('how many tasks are there?');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, , , , options] = answerSpy.mock.calls[0] as unknown as AnswerCall;
+    expect(options?.retrieval).toBeUndefined();
+  });
+
+  it('streams the answer as it is written, keyed on the request, and always ends', async () => {
+    // The renderer shows text at first-token time rather than a spinner to
+    // the end, and a tool call as it starts so a multi-turn answer reads as
+    // work in progress. Every push carries the request id, so a delta from a
+    // question the user has moved past can be dropped rather than appended.
+    const answerSpy = vi.fn(async (
+      _prompt: string,
+      _cliPath: string,
+      _cwd: string,
+      _model?: string | null,
+      options?: AnswerFromContextOptions,
+    ) => {
+      options?.onEvent?.({ kind: 'tool', name: 'mcp__kangentic__kangentic_search' });
+      options?.onEvent?.({ kind: 'text', text: 'The sphere ' });
+      options?.onEvent?.({ kind: 'text', text: 'circumscribes.' });
+      return 'The sphere circumscribes.';
+    });
     mockAdapters = [{
       name: 'claude',
       displayName: 'Claude Code',
@@ -204,12 +274,30 @@ describe('the Ask handler', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
     registerSearchHandlers(makeContext() as any);
 
-    const result = await ask('how many tasks are there?');
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(answerSpy).toHaveBeenCalled();
-    // And the prompt says so plainly rather than shipping an empty section.
-    expect(answerSpy.mock.calls[0][0]).toMatch(/EXCERPTS: none matched/);
+    await ask('why?', 'req-7');
+    expect(streamPushes()).toEqual([
+      { requestId: 'req-7', kind: 'tool', name: 'mcp__kangentic__kangentic_search' },
+      { requestId: 'req-7', kind: 'text', text: 'The sphere ' },
+      { requestId: 'req-7', kind: 'text', text: 'circumscribes.' },
+      { requestId: 'req-7', kind: 'done' },
+    ]);
+  });
+
+  it('ends the stream even when the agent throws', async () => {
+    // Or the renderer is left holding a partial answer it believes is still
+    // growing, with the spinner never stopping.
+    mockAdapters = [{
+      name: 'claude',
+      displayName: 'Claude Code',
+      detect: async () => ({ found: true, path: '/usr/bin/claude', version: '1' }),
+      answerFromContext: async () => { throw new Error('the CLI fell over'); },
+    }];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+
+    const result = await ask('why?', 'req-8');
+    expect(result.ok).toBe(false);
+    expect(streamPushes()).toEqual([{ requestId: 'req-8', kind: 'done' }]);
   });
 
   it('refuses without spawning when there is nothing on EITHER side', async () => {
@@ -237,7 +325,7 @@ describe('the Ask handler', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.answer).toMatch(/nothing to answer from/i);
-    expect(result.citations).toEqual([]);
+    expect(result.taskRefs).toEqual([]);
     expect(answerSpy).not.toHaveBeenCalled();
   });
 
@@ -262,7 +350,23 @@ describe('the Ask handler', () => {
 
     const prompt = answerSpy.mock.calls[0][0] as string;
     // Rolled up per TASK: task-1's two conversations sum to 25, not 10 and 15.
-    expect(prompt).toContain('T1|Sphere fit framing|2|25.00');
+    // Read off the generated header rather than a fixed column offset, so
+    // adding a field to the catalog cannot silently move what this checks.
+    const tableLines = prompt.split('\n');
+    const header = tableLines.find((line) => line.startsWith('ref|task|')) ?? '';
+    const columns = header.split('|');
+    const firstRow = tableLines.find((line) => line.startsWith('T1|')) ?? '';
+    expect(firstRow.split('|')[columns.indexOf('cost_usd')]).toBe('25.00');
+    expect(firstRow.split('|')[columns.indexOf('sessions')]).toBe('2');
+    expect(firstRow).toContain('Sphere fit framing');
+    // Each column explains itself to the agent, generated from the catalog.
+    expect(prompt).toContain('cost_usd - total USD the task spent');
+
+    // What the question COST is reported, and it describes the prompt that was
+    // actually sent. Without this the token budget is unobservable from
+    // outside, and "we made Ask cheaper" has no number behind it.
+    expect(result.promptTokens).toBeGreaterThan(0);
+    expect(result.promptTokens).toBeLessThanOrEqual(prompt.length);
     // Present despite never being retrieved.
     expect(prompt).toContain('Terminal scrollback repaint');
     // A "which tasks" question gets the completeness rules.

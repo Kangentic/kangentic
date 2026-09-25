@@ -13,27 +13,37 @@
  * a restatement of the question.
  */
 
-import type { AnswerSource } from './answer-context';
 import type { AnswerTaskTable } from './answer-tasks';
-import { formatTaskTable } from './answer-tasks';
-
-/**
- * Characters of any one passage the prompt will carry.
- *
- * A backstop, not the budget: `selectAnswerSources` has already spent a token
- * allowance, and chunks cap near 2,150 characters at index time. This only
- * matters for a corpus chunked under different settings, where one enormous
- * passage could otherwise crowd out every other source's share of attention.
- */
-const MAX_SOURCE_CHARACTERS = 4_000;
+import { formatTaskFieldGlossary, formatTaskTable, summarizeTaskTable } from './answer-tasks';
+import type {
+  MemoryTaskFieldKey,
+  MemoryTaskOrder,
+  MemoryTaskView,
+} from '../../shared/memory-task-fields';
+import {
+  MAX_TASK_COLUMNS,
+  resolveTaskField,
+  taskFieldByKey,
+} from '../../shared/memory-task-fields';
 
 const RULES = [
-  'Answer only from the TASKS table and the EXCERPTS below. Together they are the whole of what you know here.',
-  'The TASKS table is complete and its numbers are exact: every task in this project is listed, and the costs, durations and totals are already computed. Use it for anything factual - which tasks exist, what they cost, how long they ran, how they ended, when they were last active.',
-  'The EXCERPTS are what was actually said. Use them for reasoning, decisions and detail. They are a sample, not the whole index, so never conclude a task does not exist because it has no excerpt - check the table.',
-  'If neither answers the question, say so in one line and stop. Do not guess, and do not fall back on what you know about this codebase from anywhere else.',
-  'Cite an excerpt by its number, like [3] or [1][4]. Name a task by its ref, like T12.',
-  'Answer directly. No preamble, no restating the question, no summary of what you are about to say.',
+  'Answer only from <task_table> above and from what kangentic_search returns. Together they are the whole of what you know here.',
+  '<task_table> is complete and its numbers are exact: every task in this project is listed, and the costs, durations and totals are already computed. Use it for anything factual - which tasks exist, what they cost, how long they ran, how they ended, when they were last active. A question the table answers needs no search.',
+  'For anything about what was said, decided, tried or explained, search the recorded conversations with the kangentic_search tool. It is listed to you as mcp__kangentic__kangentic_search, and it is the only tool you may use. Call it with mode "hybrid" and a query describing what you are looking for; it searches by meaning and returns the matching passages, which are what you read. There is no tool for opening a transcript, so do not reach for one. If the first search does not find it, search again with different words before concluding it is not there.',
+  'Never say that the conversations do not mention something unless you searched for it and the search came back empty. Guessing that a search would find nothing is not the same as searching.',
+  'Before the answer, write a <grounds> block naming what it rests on: the table rows you used with their figures, and a short quote from each conversation passage you relied on. Then write the answer below it.',
+  'If the grounds are empty, the sources do not cover the question. Say that in one line as the whole answer.',
+  // Measured leak this wording fixes: scoped to "this codebase", the rule did
+  // not cover general knowledge, and asked for the capital of France the agent
+  // correctly called the question out of scope and then answered it anyway -
+  // which is a literal reading of what it was told. The prohibition has to be
+  // about the SOURCES, not about a subject.
+  'If neither answers the question, say so in one line and stop there. Do not guess, and do not answer it anyway from anything you know outside these two sources - not about this codebase, and not about the world.',
+  'Name a task by its ref, like T12. When a search result settled something, quote the passage in <grounds> so the reader can see what it said.',
+  'The answer itself is direct: no preamble, no restating the question, no summary of what you are about to say. The <grounds> block carries the working, so the answer does not have to.',
+  'End your reply with a line naming the TASKS columns worth showing beside each task, most important first, using the column names from the glossary:',
+  'VIEW: cost_usd desc, duration, outcome',
+  'Put asc or desc on the column you ranked by, and name at most three columns. Omit the line entirely if the question has no ranking and no particular column matters.',
 ].join('\n');
 
 /**
@@ -91,13 +101,21 @@ export function parseSelectedRefs(answer: string): {
   //
   // Bounded to 1-4 digits with word boundaries, so a `T1` inside an identifier
   // is not mistaken for a reference.
+  //
+  // FIRST-MENTION ORDER, which a Set gives for free by preserving insertion
+  // order. Load-bearing rather than incidental: it is what the rail orders by
+  // when the answer names no ranking column, and it is the one order that can
+  // never look wrong, because it is the order the reader has already seen in
+  // the prose above. Sorting numerically here - as this did - sorted by the
+  // table's row order, which is COST order, which is a ranking nobody asked
+  // for on any question that was not about cost.
   const mentioned = new Set(
     [...answer.matchAll(/\bT(\d{1,4})\b/g)].map((entry) => Number.parseInt(entry[1], 10)),
   );
 
   const match = answer.match(/^[ \t]*SELECTED:[ \t]*(.*)$/im);
   if (!match) {
-    return { refs: [], mentioned: [...mentioned].sort((a, b) => a - b), text: answer };
+    return { refs: [], mentioned: [...mentioned], text: answer };
   }
   const refs = [...new Set(
     [...match[1].matchAll(/T(\d+)/gi)]
@@ -109,30 +127,108 @@ export function parseSelectedRefs(answer: string): {
   for (const ref of refs) mentioned.add(ref);
   return {
     refs,
-    mentioned: [...mentioned].sort((a, b) => a - b),
+    mentioned: [...mentioned],
     text: answer.replace(match[0], '').trimEnd(),
   };
 }
 
-/** ISO date, which is unambiguous and needs no locale. */
-function formatSourceDate(ts: number | null): string {
-  if (ts === null) return 'date unknown';
-  const date = new Date(ts);
-  return Number.isNaN(date.getTime()) ? 'date unknown' : date.toISOString().slice(0, 10);
+/**
+ * How the answer asked for its tasks to be shown.
+ *
+ * A second trailing line beside `SELECTED:`, and two lines rather than one
+ * envelope on purpose: each degrades alone, so a mangled view can never cost
+ * the refs. Cube's equivalent is JSON because its producer is a machine; ours
+ * is a CLI agent writing prose, where a malformed envelope costs everything and
+ * a comma-separated line costs one token.
+ *
+ * Reliability is not assumed. Asked for the largest mobile task the agent
+ * volunteered "ranked by cost_usd" with no rule asking for it, in the table's
+ * own vocabulary - far better evidence than `SELECTED:` ever had, and that one
+ * it has ignored twice. Even so, EVERY failure falls back rather than throwing:
+ * no line, an unknown column, a direction on something that cannot carry one.
+ * The rows still render, in the order the answer named them.
+ */
+export function parseAnswerView(answer: string): {
+  view: MemoryTaskView | null;
+  text: string;
+} {
+  const match = answer.match(/^[ \t]*VIEW:[ \t]*(.*)$/im);
+  if (!match) return { view: null, text: answer };
+
+  const select: MemoryTaskFieldKey[] = [];
+  let order: MemoryTaskOrder | null = null;
+  for (const token of match[1].split(',')) {
+    const parts = token.trim().split(/[ \t]+/).filter(Boolean);
+    if (parts.length === 0) continue;
+    const field = resolveTaskField(parts[0]);
+    // An invented column is dropped rather than fatal: the rest of the line is
+    // still a usable instruction.
+    if (!field || !field.selectable) continue;
+    if (!select.includes(field.key)) select.push(field.key);
+
+    // A direction only means something on a field that can be ordered. A
+    // dimension carries none - "agent desc" would impose a ranking nobody asked
+    // for and quietly claim the first row is the most something - so the word
+    // is ignored rather than obeyed.
+    const written = parts[1]?.toLowerCase();
+    const orderable = field.kind === 'measure' || field.kind === 'time';
+    if (!order && orderable && (written === 'asc' || written === 'desc')) {
+      order = { key: field.key, direction: written };
+    }
+  }
+
+  const text = answer.replace(match[0], '').trimEnd();
+  if (select.length === 0) return { view: null, text };
+
+  // No direction written anywhere: rank by the first column that CAN carry
+  // one, which is what "most important first" means. Not simply `select[0]` -
+  // a categorical lead ("VIEW: agent, cost_usd") would then leave the rows
+  // unordered while a perfectly good ranking column sat right behind it. A
+  // measure defaults to largest-first and a date to newest-first, which are
+  // both `desc`, so this needs no branch.
+  if (!order) {
+    const lead = select
+      .map((key) => taskFieldByKey(key))
+      .find((field) => field?.kind === 'measure' || field?.kind === 'time');
+    if (lead) order = { key: lead.key, direction: 'desc' };
+  }
+  return { view: { select: select.slice(0, MAX_TASK_COLUMNS), order }, text };
 }
 
 /**
- * How many passages of this conversation matched, stated only when it is more
- * than one.
+ * The working the answer rests on, lifted out of the reply.
  *
- * The single real relevance signal the fused score does not carry: RRF is purely
- * ordinal, so a hit at rank 1 and a hit at rank 1 look identical whether one
- * matched twelve passages and the other matched one. Given to the model rather
- * than used to re-rank, because weighing corroboration against what a passage
- * actually says is exactly the judgement a ranking rule cannot make.
+ * Quoting the relevant source material before answering is the documented
+ * remedy for long-context prompts, where it "helps the model focus on the most
+ * pertinent information and reduces the impact of irrelevant content" - which
+ * is exactly the measured failure here, an answer reaching past 22k tokens of
+ * task history to answer the capital of France from general knowledge.
+ *
+ * The grounds are STRIPPED from the answer rather than shown with it. The rail
+ * is narrow and its answers are one or two lines; a paragraph of quotes above
+ * every one of them would cost more than it buys. The renderer puts them behind
+ * a disclosure instead, so the reader can check without having to read.
+ *
+ * Degrades like its siblings: no block, an unterminated block, or an empty one
+ * all yield null grounds and an untouched answer. The working is worth having
+ * and never worth losing the answer over.
  */
-function formatCorroboration(matchCount: number): string {
-  return matchCount > 1 ? `, matched in ${matchCount} passages` : '';
+export function parseGrounds(answer: string): { grounds: string | null; text: string } {
+  const match = answer.match(/<grounds>([\s\S]*?)<\/grounds>/i);
+  if (!match) {
+    // An unterminated opener would otherwise leave `<grounds>` and everything
+    // after it rendering as the answer, which is worse than showing no working.
+    const opener = answer.match(/<grounds>/i);
+    if (!opener) return { grounds: null, text: answer };
+    return { grounds: null, text: answer.slice(0, opener.index).trim() };
+  }
+  const grounds = match[1].trim();
+  const text = (answer.slice(0, match.index) + answer.slice((match.index ?? 0) + match[0].length))
+    .trim();
+  // A model that emitted grounds and nothing else has answered with its working.
+  // Showing an empty rail would be worse than showing that.
+  if (!text) return { grounds: null, text: grounds || answer.trim() };
+  return { grounds: grounds || null, text };
 }
 
 /** Today, so a relative window ("the last 3 months") has an anchor the model
@@ -156,44 +252,46 @@ function formatSpan(table: AnswerTaskTable, nowMs: number): string {
     + ` active from ${iso(table.earliestMs)} to ${iso(table.latestMs)}.${dropped}`;
 }
 
+/**
+ * The prompt an answering agent receives: the whole board as facts, the rules,
+ * and the question. No transcript passages.
+ *
+ * Passages used to be retrieved HERE, before the agent saw the question - our
+ * search chose 24 of them and the agent answered from whatever it was handed,
+ * with no way to recover when the retrieval had misjudged. Now the agent holds
+ * the search tool itself (see `AnswerFromContextOptions.retrieval`) and pulls
+ * transcripts only when the table cannot answer, with a query it chose, and
+ * again with different words if the first miss. One mechanism instead of two.
+ *
+ * The prompt is therefore STABLE across questions except for its last line,
+ * which is exactly the shape the cache rewards: the measured prefix reuse
+ * (13,302 tokens read, nothing written, on a second call sharing a prefix)
+ * now covers everything above the question.
+ *
+ * ORDER IS LOAD-BEARING. The guidance for prompts over 20k tokens is to put
+ * longform data at the top and the query last - reported as worth up to 30% of
+ * response quality - and this prompt measures over 20k.
+ */
 export function buildAnswerPrompt(
   question: string,
-  sources: ReadonlyArray<AnswerSource>,
   context: AnswerPromptContext,
 ): string {
-  const excerpts = sources.map((source) => {
-    const text = source.text.length > MAX_SOURCE_CHARACTERS
-      ? `${source.text.slice(0, MAX_SOURCE_CHARACTERS)}…`
-      : source.text;
-    const header = `[${source.index}] ${source.title || 'Untitled conversation'}`
-      + ` (${formatSourceDate(source.ts)}${formatCorroboration(source.matchCount)})`;
-    return `${header}\n${text}`;
-  }).join('\n\n');
-
   const trimmed = question.trim();
   const selecting = wantsTaskSelection(trimmed);
 
   return [
     'You are answering a question about a developer\'s own past work, from a complete table of'
-      + ' their tasks and excerpts of their recorded agent conversations.',
+      + ' their tasks and a search tool over their recorded agent conversations.',
+    '',
+    `<task_summary>\n${formatSpan(context.tasks, context.nowMs)}\n\n`
+      + `${summarizeTaskTable(context.tasks)}\n</task_summary>`,
+    '',
+    `<column_glossary>\n${formatTaskFieldGlossary()}\n</column_glossary>`,
+    '',
+    `<task_table>\n${formatTaskTable(context.tasks)}\n</task_table>`,
     '',
     RULES,
     ...(selecting ? ['', SELECTION_RULES] : []),
-    '',
-    formatSpan(context.tasks, context.nowMs),
-    '',
-    'TASKS (complete, one row per task, costs and durations already totalled):',
-    '',
-    formatTaskTable(context.tasks),
-    '',
-    // Stated even when empty: "no excerpt matched" is information, where a
-    // missing section reads as a malformed prompt and invites the model to
-    // assume it was meant to have one.
-    excerpts
-      ? 'EXCERPTS (a sample of what was said, not the whole index):'
-      : 'EXCERPTS: none matched this question. Answer from the table alone.',
-    '',
-    excerpts,
     '',
     `Question: ${trimmed}`,
   ].join('\n');

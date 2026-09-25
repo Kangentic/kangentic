@@ -3715,10 +3715,10 @@
             : { query: query, hits: [], semantic: true },
         );
       },
-      answerFromGraph: function (question, projectId, granularity) {
+      answerFromGraph: function (question, projectId, granularity, requestId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockGraphAnswerCalls) window.__mockGraphAnswerCalls = [];
-          window.__mockGraphAnswerCalls.push({ question: question, projectId: projectId === undefined ? null : projectId, granularity: granularity === undefined ? null : granularity });
+          window.__mockGraphAnswerCalls.push({ question: question, projectId: projectId === undefined ? null : projectId, granularity: granularity === undefined ? null : granularity, requestId: requestId === undefined ? null : requestId });
         }
         // Defaults to a FAILURE, deliberately. Ask spawns a real CLI, so a spec
         // that has not said what the agent returns has not set up the case it is
@@ -3748,6 +3748,26 @@
         }
         return function () {
           var listeners = window.__mockGraphChangedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+      onAnswerStream: function (callback) {
+        if (!window.__mockAnswerStreamListeners) window.__mockAnswerStreamListeners = [];
+        window.__mockAnswerStreamListeners.push(callback);
+        if (!window.__mockFireAnswerStream) {
+          // Drives the streaming path from a spec. A spec that wants to see text
+          // arrive before the answer settles fires text events, then resolves
+          // the answer: window.__mockFireAnswerStream({ requestId, kind, text }).
+          // The requestId is what the store minted; read it back off the last
+          // answerFromGraph call.
+          window.__mockFireAnswerStream = function (event) {
+            var listeners = (window.__mockAnswerStreamListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) listeners[i](event);
+          };
+        }
+        return function () {
+          var listeners = window.__mockAnswerStreamListeners || [];
           var index = listeners.indexOf(callback);
           if (index >= 0) listeners.splice(index, 1);
         };

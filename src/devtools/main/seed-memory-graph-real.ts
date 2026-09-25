@@ -170,17 +170,29 @@ export function seedMemoryGraphFromRealIndex(
     // Carry the source task's OUTCOME, not just its title. Without it every
     // mirrored task lands in To Do and the graph's Outcome colouring is
     // uniformly "active", which makes that mode impossible to judge.
-    const sourceTaskById = new Map<string, { title: string; archived: boolean; laneRole: string | null }>();
+    //
+    // `display_id` rides along for the same reason: it is the `#N` the board
+    // prints on a card, and the memory surface labels a task with it. A preview
+    // that allocated its own 1..N would show numbers that look like tickets and
+    // point at nothing, which is worse than showing none.
+    const sourceTaskById = new Map<
+      string,
+      { title: string; archived: boolean; laneRole: string | null; displayId: number | null }
+    >();
     for (const row of sourceDb
       .prepare(
-        `SELECT t.id, t.title, t.archived_at AS archivedAt, w.role AS laneRole
+        `SELECT t.id, t.title, t.archived_at AS archivedAt, t.display_id AS displayId, w.role AS laneRole
          FROM tasks t LEFT JOIN swimlanes w ON w.id = t.swimlane_id`,
       )
-      .all() as Array<{ id: string; title: string; archivedAt: string | null; laneRole: string | null }>) {
+      .all() as Array<{
+        id: string; title: string; archivedAt: string | null;
+        displayId: number | null; laneRole: string | null;
+      }>) {
       sourceTaskById.set(row.id, {
         title: row.title,
         archived: row.archivedAt !== null,
         laneRole: row.laneRole,
+        displayId: row.displayId,
       });
     }
     // Model and effort ride along with the session type, for the same reason
@@ -382,6 +394,41 @@ export function seedMemoryGraphFromRealIndex(
         indexedAt: now,
       });
     }
+
+    // Re-stamp the mirrored tasks with the SOURCE board's ticket numbers.
+    //
+    // Done after every task exists, and in two passes, because `display_id`
+    // carries a unique index: preview allocation hands out 1..N in creation
+    // order, so writing a source id straight over one would collide with
+    // whichever mirrored task currently holds that number and has not been
+    // rewritten yet. Parking the whole set negative is a bijection, so the
+    // index holds throughout, and it leaves the real ids free to land in any
+    // order. Tasks with no source ticket (the orphaned-conversations holder)
+    // come back on the high side rather than staying negative.
+    const restampTickets = targetDb.transaction(() => {
+      targetDb.exec('UPDATE tasks SET display_id = -display_id WHERE display_id > 0');
+      const setTicket = targetDb.prepare('UPDATE tasks SET display_id = ? WHERE id = ?');
+      let highest = 0;
+      for (const [sourceTaskId, previewTaskId] of previewTaskIdBySourceTaskId) {
+        const displayId = sourceTaskById.get(sourceTaskId)?.displayId ?? null;
+        if (displayId === null) continue;
+        setTicket.run(displayId, previewTaskId);
+        if (displayId > highest) highest = displayId;
+      }
+      for (const row of targetDb
+        .prepare('SELECT id FROM tasks WHERE display_id < 0 ORDER BY display_id DESC')
+        .all() as Array<{ id: string }>) {
+        highest += 1;
+        setTicket.run(highest, row.id);
+      }
+      // The allocator self-heals off MAX(display_id), but the high-water mark
+      // is what it reads first, so leave it above everything just stamped.
+      targetDb
+        .prepare(`INSERT INTO project_meta (key, value) VALUES ('display_id_high_water', ?)
+                  ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+        .run(String(highest));
+    });
+    restampTickets();
 
     return {
       sourceProject: source.name,

@@ -1,0 +1,163 @@
+/**
+ * The Ask harness computes its own ground truth, so it carries its own copy of
+ * the conversations-to-tasks rollup. This pins that the copy agrees with the
+ * shipped one.
+ *
+ * Without it the harness measures its own arithmetic rather than the product's,
+ * and the failure is silent in the worst possible way: every question keeps
+ * passing while both sides are wrong together. The clustering rig used exactly
+ * this self-check and it earned its keep immediately, catching a divergence
+ * that had already changed a shipped answer.
+ *
+ * A drifting copy fails HERE, in the unit tier, at no quota cost - rather than
+ * during a harness run that spends a real agent call per question to reach the
+ * same conclusion.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { buildAnswerTaskTable } from '../../src/main/retrieval/answer-tasks';
+import type { MemoryGraphNode, MemoryGraphProjection } from '../../src/shared/types';
+// The harness is plain ESM on purpose (it runs under bare node against a live
+// preview), so it is imported here exactly as it ships.
+import { __testing } from '../../scripts/eval-ask.mjs';
+
+function node(overrides: Partial<MemoryGraphNode> & { docKey: string }): MemoryGraphNode {
+  return {
+    x: 0, y: 0, z: 0,
+    chunkCount: 10,
+    title: 'A task',
+    sessionId: `session-${overrides.docKey}`,
+    taskId: null,
+    displayId: null,
+    agent: null,
+    model: null,
+    effort: null,
+    durationMs: null,
+    costUsd: null,
+    tokens: null,
+    lastActivityMs: null,
+    outcome: null,
+    clusters: { coarse: 0, balanced: 0, fine: 0 },
+    ...overrides,
+  };
+}
+
+function projection(nodes: MemoryGraphNode[]): MemoryGraphProjection {
+  return {
+    nodes,
+    edges: [],
+    clusterings: [{
+      granularity: 'balanced',
+      regions: [{ label: 'terminal / pty', size: nodes.length, x: 0, y: 0, z: 0 }],
+    }],
+  } as unknown as MemoryGraphProjection;
+}
+
+/** Comparable shape: the fields both sides claim to compute. */
+function comparable(rows: ReadonlyArray<{
+  displayId: number | null;
+  sessions: number;
+  costUsd: number | null;
+  durationMs: number | null;
+  tokens: number | null;
+  outcome: string | null;
+  lastActivityMs: number | null;
+}>) {
+  return [...rows]
+    .map((row) => ({
+      displayId: row.displayId,
+      sessions: row.sessions,
+      costUsd: row.costUsd,
+      durationMs: row.durationMs,
+      tokens: row.tokens,
+      outcome: row.outcome,
+      lastActivityMs: row.lastActivityMs,
+    }))
+    // Row ORDER is not part of the contract - the shipped builder sorts by cost
+    // as a truncation policy, the harness does not sort at all - so both sides
+    // are keyed before comparison.
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+}
+
+describe('the Ask harness rollup matches the shipped one', () => {
+  it('agrees on a corpus that exercises every merge rule', () => {
+    // Built to hit each rule the shipped builder states: summing across a
+    // task's sessions, a null metric that must not become zero, an outcome
+    // carried by only one session, a task-less conversation staying its own
+    // row, and a display id present on only one of a task's nodes.
+    const nodes = [
+      node({ docKey: 'a', taskId: 't1', displayId: 529, costUsd: 10, durationMs: 60_000, tokens: 1_000, outcome: 'done', lastActivityMs: 1_000 }),
+      node({ docKey: 'b', taskId: 't1', displayId: null, costUsd: 15, durationMs: null, tokens: null, outcome: null, lastActivityMs: 2_000 }),
+      node({ docKey: 'c', taskId: 't2', displayId: 44, costUsd: null, durationMs: 30_000, tokens: 500, outcome: 'active', lastActivityMs: 3_000 }),
+      node({ docKey: 'd', taskId: null, displayId: null, costUsd: 7, durationMs: 1_000, tokens: 90, outcome: null, lastActivityMs: 4_000 }),
+      node({ docKey: 'e', taskId: 't3', displayId: 100, costUsd: 0, durationMs: 0, tokens: 0, outcome: 'abandoned', lastActivityMs: 5_000 }),
+    ];
+
+    const shipped = buildAnswerTaskTable(projection(nodes), 'balanced').rows;
+    const harness = __testing.rollUpConversations(nodes);
+
+    expect(harness).toHaveLength(shipped.length);
+    expect(comparable(harness)).toEqual(comparable(shipped));
+  });
+
+  it('keeps an unrecorded metric null on BOTH sides', () => {
+    // The single rule most likely to drift, and the one whose drift is most
+    // damaging: a zero here makes an unmeasured task the cheapest on the board
+    // and silently inverts every "cheapest" answer the harness grades.
+    const nodes = [node({ docKey: 'a', taskId: 't1', costUsd: null, durationMs: null, tokens: null })];
+    const shipped = buildAnswerTaskTable(projection(nodes), 'balanced').rows[0];
+    const harness = __testing.rollUpConversations(nodes)[0];
+
+    expect(shipped.costUsd).toBeNull();
+    expect(harness.costUsd).toBeNull();
+    expect(harness.durationMs).toBeNull();
+    expect(harness.tokens).toBeNull();
+  });
+
+  it('grades on containment, tolerating how a number was punctuated', () => {
+    // The agent writes prose. `1,234` and `1234` are the same fact, and a
+    // grader that fails one of them measures formatting rather than accuracy.
+    const { pass } = __testing.grade('The total is $1,234.00 across the board.', {
+      all: ['1234.00'],
+      none: [],
+    });
+    expect(pass).toBe(true);
+  });
+
+  it('finds a fact in the working or the selection, but a forbidden claim only in the prose', () => {
+    // The phrase question: the prose said "Selected the task whose conversation
+    // contains the exact phrase", the grounds quoted the passage under T155,
+    // and the SELECTED line had scoped the map to it. Right by any reading a
+    // person would give it, and the prose-only grader failed it.
+    const located = __testing.grade(
+      'Selected the task whose conversation contains that phrase.',
+      { all: [], none: [], any: ['#218', 'T155'] },
+      { grounds: '**T155**: "use the helper and scope the comment"', namedTasks: [] },
+    );
+    expect(located.pass).toBe(true);
+    const scoped = __testing.grade(
+      'Selected the task.',
+      { all: [], none: [], any: ['#218', 'T155'] },
+      { grounds: null, namedTasks: ['#218', 'T155'] },
+    );
+    expect(scoped.pass).toBe(true);
+
+    // A decline's working legitimately names the thing it declines.
+    const declined = __testing.grade(
+      'The sources do not cover this question.',
+      { all: [], none: ['Paris'] },
+      { grounds: 'The question asks for the capital of France, Paris. Nothing here covers geography.' },
+    );
+    expect(declined.pass).toBe(true);
+  });
+
+  it('fails an answer that says something it was told not to', () => {
+    // The control questions depend entirely on this direction working.
+    const { pass, forbidden } = __testing.grade('The capital of France is Paris.', {
+      all: [],
+      none: ['Paris'],
+    });
+    expect(pass).toBe(false);
+    expect(forbidden).toEqual(['Paris']);
+  });
+});

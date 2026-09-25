@@ -449,7 +449,7 @@ Read-only structured-transcript access for the conversation viewer. Prefer the e
 | `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
-### Memory (7 channels)
+### Memory (9 channels)
 Conversation-memory semantic layer (Smart-mode search) and the Memory Graph surface built on it.
 See the Memory settings tab.
 | Channel | Pattern | Purpose |
@@ -460,7 +460,8 @@ See the Memory settings tab.
 | `memory:graphRefresh` | invoke | Ask for a background refresh of one project's projection. Returns immediately; completion arrives via `memory:graphChanged`. |
 | `memory:graphChanged` | on | Push: a projection pass finished for a project. Declared in the `memory` pop-out surface's `channels`, or a detached window never updates. |
 | `memory:graphQuery` | invoke | Run the existing fusion search and map its hits onto graph nodes. Returns `MemoryGraphQueryResult`. |
-| `memory:graphAnswer` | invoke | Ask: the SAME retrieval, budgeted into one prompt and read by the project's agent. Spawns the agent's non-interactive CLI (no PTY, no `sessions` row), so it costs a real call and is never automatic. Returns `MemoryGraphAnswerResult`, whose citations carry a `docKey` each so the surface can select the node behind a claim. |
+| `memory:graphAnswer` | invoke | Ask: the complete task table in the prompt, plus ONE tool the answering agent calls itself - `kangentic_search`, scoped to the project through a per-call temp MCP config and an allowlist. Spawns the agent's non-interactive CLI (no PTY, no `sessions` row), so it costs a real call and is never automatic. Takes a renderer-minted `requestId` that the stream below is keyed on. Returns `MemoryGraphAnswerResult`, whose `taskRefs` and `selectedDocKeys` carry `docKey`s so the surface can scope the map to what the answer is about. |
+| `memory:graphAnswerStream` | on | Push: the answer arriving. `{ requestId, kind: 'text' \| 'tool' \| 'done', ... }` - text as the agent writes it, a tool call as it starts, and `done` whether the call succeeded or threw, so a renderer is never left holding a partial answer it believes is still growing. Sent with `broadcast` and declared in the `memory` pop-out surface's `channels`, or a detached window never sees a word. |
 | `memory:relatedToTask` | invoke | Proactive recall: earlier conversations semantically near a task, using its title + description as the query and excluding its own conversations. Powers the "N earlier conversations about this" line in task detail. Returns `MemoryGraphQueryHit[]`. |
 
 ### Diagnostics (2 channels)
