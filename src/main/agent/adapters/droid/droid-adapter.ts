@@ -236,12 +236,18 @@ export class DroidAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
-   * `droid exec` is already non-interactive and makes no edits
-    // without an explicit auto level, so there is no separate read-only flag
-    // to pass.
+   * `droid exec` is already non-interactive and makes no edits without an
+   * explicit auto level, so there is no separate read-only flag to pass (the
+   * probe's file write and shell command both ended "insufficient permission").
+   *
+   * The prompt is PIPED, which `droid exec` documents. An answer prompt runs to
+   * about 50k characters, past the Windows command-line limit, so the
+   * positional form `summarize` uses cannot carry one.
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -255,12 +261,10 @@ export class DroidAdapter implements AgentAdapter {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error, and the absence of the flag is what
-      // "the agent's own default" means to the CLI.
+      // empty value is an error.
       args: ['exec', '-o', 'text', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
-      promptVia: 'arg',
     });
   }
 

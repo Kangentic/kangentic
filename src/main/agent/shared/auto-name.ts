@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const PROMPT_BUDGET = 4000; // characters of input we forward to the CLI
 const OUTPUT_BUDGET = 2048; // bytes of stdout we accept before terminating
@@ -163,10 +165,16 @@ export interface RunCliPrintOptions {
    * How the prompt is delivered to the CLI:
    *   - 'stdin' (default): piped via the child's stdin, args are unchanged.
    *   - 'arg': appended to args as the final positional argument; stdin is closed empty.
-   * Use 'arg' for CLIs whose non-interactive mode requires the prompt directly on the
-   * command line (Cursor `agent -p "<prompt>"`, Copilot `copilot -p "<prompt>"`).
+   *   - 'file': written to a file in `cwd` whose path follows `promptFileFlag`, for a
+   *     CLI that reads its prompt from a file and not from stdin.
+   * Use 'arg' only for a short prompt (a title): Windows caps a command line at
+   * 32,767 characters, and 8,191 through cmd.exe, so an answer-sized prompt must
+   * use 'stdin' or 'file'.
    */
-  promptVia?: 'stdin' | 'arg';
+  promptVia?: 'stdin' | 'arg' | 'file';
+  /** The flag that names the prompt file, when `promptVia` is 'file'
+   *  (`--prompt-file`, `--message-file`). */
+  promptFileFlag?: string;
   /**
    * Optional pre-cleanup transform: receives raw stdout, returns the candidate title text
    * to feed into `cleanSummarizeOutput`. Useful when the CLI emits NDJSON / stream-json:
@@ -360,6 +368,39 @@ export function extractStreamedAnswer(stdout: string): string {
 }
 
 /**
+ * The final answer out of a Claude-compatible stream-json transcript, taken
+ * from the LAST assistant turn even when a `result` line is present.
+ *
+ * For a CLI whose `result` joins every turn's text rather than carrying only
+ * the last one. Grok's `streaming-messages-json` is the case: a prompt read from
+ * a file costs it a tool turn ("I'll look up row 377..."), and its result line
+ * fuses that narration onto the answer with no separator. The last turn is the
+ * answer; falls back to the result, then to every turn joined.
+ */
+export function extractLastTurnAnswer(stdout: string): string {
+  let lastTurnText = '';
+  let resultText = '';
+  let allText = '';
+  for (const line of stdout.split(/\r?\n/)) {
+    const record = parseJsonLine(line);
+    if (!record) continue;
+    if (record.type === 'result') {
+      resultText = pickStringField(record, 'result') ?? resultText;
+      continue;
+    }
+    if (record.type !== 'assistant') continue;
+    const text = eventsFromAssistantMessage(record)
+      .filter((event) => event.kind === 'text')
+      .map((event) => (event.kind === 'text' ? event.text : ''))
+      .join('');
+    if (!text) continue;
+    lastTurnText = text;
+    allText += allText ? `\n${text}` : text;
+  }
+  return lastTurnText || resultText || allText;
+}
+
+/**
  * Answer cleanup: trim, and nothing else.
  *
  * Deliberately not `cleanSummarizeOutput`, which strips code fences and keeps the
@@ -385,6 +426,7 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
     cwd,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     promptVia = 'stdin',
+    promptFileFlag,
     extractRaw,
     env,
     outputBudget = OUTPUT_BUDGET,
@@ -392,8 +434,71 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
     onChunk,
   } = options;
 
+  // Written before the spawn and removed when the call ends, whatever the
+  // outcome. The caller owns `cwd`; this owns only the one file it wrote there.
+  let promptFilePath: string | null = null;
+  if (promptVia === 'file') {
+    if (!promptFileFlag) throw new Error('promptVia "file" needs a promptFileFlag');
+    promptFilePath = path.join(cwd, PROMPT_FILE_NAME);
+    // sync-write-ok: the CLI cannot run without its prompt file, so a failed
+    // write rejects this call, and the answer handler reports it to the user.
+    fs.writeFileSync(promptFilePath, prompt, 'utf-8');
+  }
+
+  try {
+    return await runCliPrint({
+      cliPath, args, prompt, cwd, timeoutMs, promptVia, promptFilePath, promptFileFlag,
+      extractRaw, env, outputBudget, shape, onChunk,
+    });
+  } finally {
+    // `force` because Windows may still hold the handle for a beat after exit.
+    if (promptFilePath) fs.rmSync(promptFilePath, { force: true });
+  }
+}
+
+/** The file a `promptVia: 'file'` run writes into its `cwd`. */
+const PROMPT_FILE_NAME = 'kangentic-prompt.md';
+
+/** `RunCliPrintOptions` with every default applied and the prompt file resolved. */
+interface ResolvedPrintOptions {
+  cliPath: string;
+  args: string[];
+  prompt: string;
+  cwd: string;
+  timeoutMs: number;
+  promptVia: 'stdin' | 'arg' | 'file';
+  promptFilePath: string | null;
+  promptFileFlag: string | undefined;
+  extractRaw: ((stdout: string) => string) | undefined;
+  env: Record<string, string> | undefined;
+  outputBudget: number;
+  shape: (candidate: string) => string;
+  onChunk: ((chunk: string) => void) | undefined;
+}
+
+function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
+  const {
+    cliPath,
+    args,
+    prompt,
+    cwd,
+    timeoutMs,
+    promptVia,
+    promptFilePath,
+    promptFileFlag,
+    extractRaw,
+    env,
+    outputBudget,
+    shape,
+    onChunk,
+  } = resolved;
+
   return new Promise<string>((resolve, reject) => {
-    const finalArgs = promptVia === 'arg' ? [...args, prompt] : args;
+    const finalArgs = promptVia === 'arg'
+      ? [...args, prompt]
+      : promptVia === 'file' && promptFilePath && promptFileFlag
+        ? [...args, promptFileFlag, promptFilePath]
+        : args;
     const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath);
     // When useShell is true, args are interpolated into a single command string and
     // parsed by cmd.exe. We single-quote-wrap the prompt as a defensive measure: any
@@ -530,10 +635,30 @@ export function quoteForCmdShell(value: string): string {
 export async function runCliPrintAnswer(
   options: Omit<RunCliPrintOptions, 'shape'>,
 ): Promise<string> {
-  return runCliPrintSummarize({
-    timeoutMs: ANSWER_TIMEOUT_MS,
-    outputBudget: ANSWER_OUTPUT_BUDGET,
-    ...options,
-    shape: cleanAnswerOutput,
-  });
+  try {
+    return await runCliPrintSummarize({
+      timeoutMs: ANSWER_TIMEOUT_MS,
+      outputBudget: ANSWER_OUTPUT_BUDGET,
+      ...options,
+      shape: cleanAnswerOutput,
+    });
+  } catch (error) {
+    throw new Error(describeAnswerFailure(error), { cause: error });
+  }
+}
+
+/**
+ * The runner's failure text, worded for an answer.
+ *
+ * The Memory Graph shows why an answer failed verbatim, and the shared runner
+ * names every failure after the feature it was written for: "summarize CLI
+ * exited 1: Error: Model ... is not available" sat under a question the user had
+ * asked, about nothing they had summarized. The CLI's own text after the colon
+ * is kept as it is, because it is usually the part that says what to fix.
+ */
+function describeAnswerFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace(/^summarize CLI exited/, 'the agent exited')
+    .replace(/^summarize /, 'the agent ');
 }

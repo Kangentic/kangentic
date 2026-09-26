@@ -1,5 +1,4 @@
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from './pop-out';
-import type { MemoryTaskFacts, MemoryTaskView } from './memory-task-fields';
 import type {
   Announcement,
   AnnouncementArchiveEntry,
@@ -103,6 +102,24 @@ export interface AgentCapabilities {
   modelDisplayNames?: Record<string, string>;
 }
 
+/**
+ * What an agent's Memory Graph answer run can do beyond the base: a headless,
+ * read-only run with the prompt in and the reply out, which every answering
+ * agent meets.
+ *
+ * Declared by each adapter and read generically, never by agent name. A false
+ * flag is a plainer experience, never a failure: without `streaming` the reply
+ * lands whole, without `search` it comes from the related work alone.
+ */
+export interface AnswerCapabilities {
+  /** Text reaches `onEvent` as the agent writes it. */
+  streaming: boolean;
+  /** The run honours `retrieval`: the agent can call Kangentic's search itself. */
+  search: boolean;
+  /** The run takes a model id, so the Answering model setting is required. */
+  model: boolean;
+}
+
 export interface AgentDetectionInfo {
   name: string;
   displayName: string;
@@ -133,6 +150,9 @@ export interface AgentDetectionInfo {
    *  Memory Graph's Ask). Read instead of the agent's name, per
    *  `.claude/rules/agent-adapters-boundary.md`. */
   supportsAnswerFromContext?: boolean;
+  /** What that answer run can do beyond the base, as the adapter declares it.
+   *  Absent when the agent cannot answer at all. */
+  answerCapabilities?: AnswerCapabilities;
   /** Discovered at detection time; absent for adapters that do not implement discovery. */
   capabilities?: AgentCapabilities;
   /** Present when the adapter can attach to a user-run server instead of spawning locally.
@@ -3355,10 +3375,12 @@ export interface AppConfig {
      *
      * GLOBAL, and deliberately separate from the project's default agent: which
      * agent RUNS YOUR TASKS and which agent READS YOUR HISTORY are different
-     * choices, and only some agents can do the second at all. Leaving this unset
-     * follows the project's default and falls back to any agent that declares
-     * the capability, which is what shipped first and is right until someone
-     * has a preference.
+     * choices, and only some agents can do the second at all.
+     *
+     * Explicit, with no fallback. It used to follow the project's default agent
+     * and then any capable agent, which meant a question could spend tokens on
+     * an agent and model nobody chose. Unset now means Ask, task digests and the
+     * prewarmed process all wait, and asking opens Settings > Memory at this row.
      *
      * An adapter NAME (`claude`, `codex`), never a display name - the name is
      * the registry key and the display name is copy that can change.
@@ -3375,8 +3397,9 @@ export interface AppConfig {
      *
      * An ADAPTER-SPECIFIC model id (Claude `haiku`, `opus`), so it is cleared
      * whenever `answerAgent` changes - an id from one CLI means nothing to
-     * another. Unset leaves the agent's own default in place, which is what
-     * shipped before this field.
+     * another. Required when the agent's answer run takes a model
+     * (`AnswerCapabilities.model`); there is no "agent default" to fall back on,
+     * for the same reason the agent has none.
      */
     answerModel?: string | null;
   };
@@ -6583,6 +6606,8 @@ export interface ElectronAPI {
       /** Minted by the caller and echoed on every stream event, so deltas from
        *  a question the user has moved past are dropped, never appended. */
       requestId?: string,
+      /** The chat so far and the map's filters. */
+      context?: MemoryAnswerContext,
     ) => Promise<MemoryGraphAnswerResult>;
     /**
      * Push subscription: progress on an answer in flight. Text as the agent
@@ -6937,105 +6962,110 @@ export interface MemoryGraphQueryResult {
 }
 
 /**
- * One `T<n>` an answer named, resolved to the conversations behind that task.
+ * One task a Memory Graph question is about, as the map and the chat see it.
  *
- * Extends `MemoryTaskFacts`, which is the same declaration the prompt table is
- * generated from - so a fact the agent was shown is a fact the rail can render,
- * by construction. That parity used to be maintained by hand and was not
- * maintained: eleven columns went into the prompt and four came out here, which
- * is why an answer ranking tasks by tokens sat above rows printing dollars.
- *
- * Every metric is null when the sessions never recorded it, never zero, which
- * would make an unmeasured task look like a free one.
+ * The same shape serves the related set (what the local search found before the
+ * agent ran) and the source rows under an answer (what the agent selected), so
+ * a row and a lit node can never disagree about which task they are.
  */
-export interface MemoryAnswerTaskRef extends MemoryTaskFacts {
-  /** The number as written in the answer, so the renderer can match `T12`. */
-  ref: number;
+export interface MemoryRelatedTask {
+  /** The task id, or `conversation:<docKey>` for a conversation with no task. */
+  key: string;
+  taskId: string | null;
+  /** The board ticket, `#561`. Null only for a conversation with no task. */
+  displayId: number | null;
   title: string;
-  /** Every conversation belonging to the task. A task runs several sessions,
-   *  so selecting it lights all of them rather than an arbitrary one. */
+  /** 0 to 1: this task's match relative to the question's best. Drives how
+   *  brightly the map lights it. A task the answer selected without the search
+   *  finding it (a board question) carries 1. */
+  strength: number;
+  /** The task's conversations inside the map's filters, so the map can light
+   *  them and a row can open one. */
   docKeys: string[];
+  /** Where a source row opens: the conversation and turn of the passage that
+   *  matched best, or null when no passage did (then the newest conversation). */
+  passage: { sessionId: string; turnUuid: string | null } | null;
+}
+
+/** One earlier turn of a Memory Graph chat, as a follow-up carries it. */
+export interface MemoryAnswerHistoryTurn {
+  question: string;
+  answer: string;
+  /** Keys of the tasks that turn was about, so "of those" has a referent. */
+  taskKeys: string[];
+}
+
+/** What a question carries besides its text. */
+export interface MemoryAnswerContext {
+  /** The chat this question belongs to. Keys the agent's MCP URL, so its
+   *  searches reach the right chat's trace. */
+  chatId?: string;
+  /** Earlier turns of the chat, oldest first. */
+  history?: MemoryAnswerHistoryTurn[];
+  /**
+   * The conversations inside the map's filters, or null when nothing is
+   * filtered. The filters are the scope of a question: retrieval and the task
+   * table see only these.
+   */
+  scopeDocKeys?: string[] | null;
 }
 
 export type MemoryGraphAnswerResult =
   | {
     ok: true;
+    /** The agent's prose, with its protocol line removed. Tasks are named in it
+     *  by ticket (`#561`), which the chat renders as marks. */
     answer: string;
     /**
-     * Nodes the answer SELECTED, when the question asked which tasks rather than
-     * for an explanation ("show me the terminal bug fixes").
-     *
-     * Empty for an ordinary answer. Non-empty means the surface should scope the
-     * map to these, which is what makes a semantic query a first-class filter
-     * rather than a paragraph describing one.
+     * The tasks the answer is about, in the order to show them: the ones its
+     * prose names first, in the order named, then the rest of its selection.
+     * Empty when the answer is not about particular tasks.
      */
-    selectedDocKeys: string[];
+    rows: MemoryRelatedTask[];
+    /** What the local search found, strongest first: the set the map lights. */
+    related: MemoryRelatedTask[];
+    /** How many of `related` the agent was handed ("Reading 14 related tasks"). */
+    handedCount: number;
     /**
-     * Every task the answer NAMED, resolved back to the map.
-     *
-     * The agent is handed a `T<n>` vocabulary and uses it naturally in prose
-     * ("T133 Mobile Bridge Phase 1..."), which rendered as dead text. Each of
-     * these makes one `T<n>` a control that selects that task's conversations.
-     *
-     * Distinct from `selectedDocKeys`: naming a task while explaining something
-     * is not the same as saying the map should scope to it.
-     */
-    taskRefs: MemoryAnswerTaskRef[];
-    /**
-     * Which facts the answer asked to be shown beside each task, and in what
-     * order the rows should sit.
-     *
-     * The agent decided, because it is the only party that knows: "the biggest
-     * mobile task" could be ranked on cost, duration or tokens, and a fixed
-     * four-chip row is right for exactly one of them. Null when the answer said
-     * nothing, which falls back to the default columns and to the order the
-     * answer named the tasks in.
-     */
-    view: MemoryTaskView | null;
-    /**
-     * The working the answer rests on: the rows it used and the passages it
-     * quoted, as the agent wrote them.
-     *
-     * Quoting the source before answering is the documented technique for long
-     * prompts, where it keeps the model on the relevant material - and the
-     * measured failure it targets is an answer reaching past 22k tokens of task
-     * history to answer a general-knowledge question from memory.
-     *
-     * Carried separately from `answer` rather than left in it: the rail is
-     * narrow and its answers run to a line or two, so a paragraph of quotes
-     * above each one would cost more than it buys. The renderer puts this
-     * behind a disclosure. Null when the agent wrote none, which is not an
-     * error and must not read as one.
-     */
-    grounds: string | null;
-    /**
-     * What this question cost to ask, in prompt tokens.
-     *
-     * Ask spends most of its budget BEFORE the agent does anything - a complete
-     * task table plus a passage allowance - and none of it was observable from
-     * outside, so there was no number to move when making it cheaper. Estimated
-     * with the same function the chunker sizes text with, so this and the
-     * index's own token accounting cannot disagree.
+     * What this question cost to ask, in prompt tokens, estimated with the same
+     * function the chunker sizes text with.
      */
     promptTokens: number;
-    /** Tasks the agent was given. The answer's coverage, stated so a reader can
-     *  tell "none matched" from "it only saw a sample". */
-    taskCount: number;
     /** Which agent produced it, so the surface can say whose answer this is. */
     agentName: string;
   }
-  | { ok: false; reason: string };
+  | {
+    ok: false;
+    reason: string;
+    /**
+     * Set when the question could not run because the answering agent or its
+     * model has not been chosen yet. The surface takes the user to Settings >
+     * Memory instead of showing an error, since nothing failed.
+     */
+    setup?: AnswerSetupGap;
+  };
+
+/** What is still missing before the Memory Graph can answer. */
+export type AnswerSetupGap = 'agent' | 'model';
 
 /**
  * One step of an answer in flight.
  *
- * `text` is the agent writing; `tool` is the agent reaching for its search,
- * which the rail shows as a progress line so the extra turns of a transcript
- * question read as work happening rather than a longer spinner; `done` closes
- * the stream whether the answer succeeded or threw. Structural parsing (refs,
- * view, grounds) waits for the whole answer and never runs on these.
+ * - `set`: the related work, pushed the moment the local search returns and
+ *   before the agent starts, so the map lights while the agent is still
+ *   booting.
+ * - `search`: the agent searched again; `query` is what it asked, and `docKeys`
+ *   the conversations that came back, which the map rings.
+ * - `text`: the agent writing.
+ * - `tool`: the agent reaching for a tool, for a CLI whose stream says so.
+ * - `done`: the stream is over, whether the answer succeeded or threw.
+ *
+ * Structural parsing (the refs and the selection) waits for the whole answer
+ * and never runs on these.
  */
 export type MemoryAnswerStreamEvent =
+  | { kind: 'set'; related: MemoryRelatedTask[]; handedCount: number }
+  | { kind: 'search'; query: string; docKeys: string[] }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; name: string }
   | { kind: 'done' };

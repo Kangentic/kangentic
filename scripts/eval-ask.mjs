@@ -31,14 +31,14 @@
  * streaming exists to move, and TURNS (one plus the agent's tool calls), which
  * is the "a transcript question takes 2 to 4 turns" claim made measurable. A
  * transcript question can also require that a search HAPPENED and that the
- * answer wrote its grounds, graded from the same record.
+ * answer quoted what it read, graded from the same record.
  */
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as url from 'node:url';
-import { QUESTIONS, nameFor } from './eval-ask-questions.mjs';
+import { QUESTIONS } from './eval-ask-questions.mjs';
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..');
@@ -176,15 +176,17 @@ async function ask(port, question) {
         const requestId = crypto.randomUUID();
         const started = performance.now();
         let firstTextMs = null;
+        let setMs = null;
         let toolCalls = 0;
         const off = window.electronAPI.memory.onAnswerStream((event) => {
           if (event.requestId !== requestId) return;
+          if (event.kind === 'set' && setMs === null) setMs = performance.now() - started;
           if (event.kind === 'text' && firstTextMs === null) firstTextMs = performance.now() - started;
           if (event.kind === 'tool') toolCalls += 1;
         });
         try {
-          const result = await window.electronAPI.memory.answerFromGraph(${JSON.stringify(question)}, null, 'balanced', requestId);
-          return { result, firstTextMs, toolCalls };
+          const result = await window.electronAPI.memory.answerFromGraph(${JSON.stringify(question)}, null, 'balanced', requestId, { chatId: requestId, history: [], scopeDocKeys: null });
+          return { result, firstTextMs, setMs, toolCalls };
         } finally {
           off();
         }
@@ -259,26 +261,16 @@ async function phraseFromTranscript(port, target) {
 /**
  * Every name a result gives a task beyond its prose.
  *
- * An answer names a task in three places the reader can see: the prose, the
- * refs it mentioned (resolved into `taskRefs`), and the SELECTED line that
- * scopes the map, which the handler resolves to docKeys and strips from the
- * text. A grader reading the prose alone failed an answer whose grounds quoted
- * the right passage under the right ref and whose selection had scoped the map
- * to exactly the right task. That is a correct answer by any reading a person
+ * An answer names a task in two places the reader can see: the prose, and the
+ * source rows under it, which are the tasks the prose named plus the rest of
+ * its SELECTED line. A grader reading the prose alone failed answers whose rows
+ * held exactly the right task. That is a correct answer by any reading a person
  * would give it.
  */
-function namedTasks(result, rollup) {
-  const names = [];
-  for (const entry of result.taskRefs ?? []) {
-    if (entry.displayId != null) names.push(`#${entry.displayId}`);
-    names.push(`T${entry.ref}`);
-  }
-  const selected = new Set(result.selectedDocKeys ?? []);
-  if (selected.size > 0) {
-    for (const row of rollup) {
-      if ((row.docKeys ?? []).some((docKey) => selected.has(docKey))) names.push(...nameFor(rollup, row));
-    }
-  }
+function namedTasks(result) {
+  const names = (result.rows ?? [])
+    .filter((row) => row.displayId != null)
+    .map((row) => `#${row.displayId}`);
   return [...new Set(names)];
 }
 
@@ -291,13 +283,10 @@ const QUOTE_MARK = new RegExp(`["${String.fromCharCode(0x201c)}]`);
 function grade(answerText, expectation, evidence = {}) {
   const normalize = (text) => String(text).toLowerCase().replace(/,/g, '');
   const prose = normalize(answerText);
-  // A FACT may sit in the working or in the selection as well as in the prose:
-  // all three reach the reader (the grounds behind a disclosure, the selection
-  // as the scoped map). A FORBIDDEN claim is judged on the prose alone, since
-  // a decline's working legitimately restates the thing it is declining.
+  // A FACT may sit in the rows as well as in the prose, since both reach the
+  // reader. A FORBIDDEN claim is judged on the prose alone.
   const supporting = normalize([
     answerText,
-    evidence.grounds ?? '',
     ...(evidence.namedTasks ?? []),
   ].join('\n'));
   const carries = (fact) => supporting.includes(normalize(fact));
@@ -313,20 +302,22 @@ function grade(answerText, expectation, evidence = {}) {
   if (alternatives.length > 0 && !alternatives.some(carries)) {
     missing.push(`any of ${JSON.stringify(alternatives)}`);
   }
+  // `allOf` is several `any` groups at once: every group must be carried under
+  // one of its spellings. A relatedness question's recall floor is this shape -
+  // each of the busiest title-named tasks must appear, in the prose or the rows.
+  for (const group of expectation.allOf ?? []) {
+    if (!group.some(carries)) missing.push(`any of ${JSON.stringify(group)}`);
+  }
   // Evidence beyond the prose. A transcript question that the agent answered
   // WITHOUT searching answered from the table or from thin air, and either is
-  // the failure this round exists to catch; and an answer that wrote no
-  // grounds cannot be checked against what it read.
+  // the failure this round exists to catch.
   if (expectation.searched && !(evidence.toolCalls > 0)) {
     missing.push('a kangentic_search call');
   }
-  // A QUOTED passage, not merely a grounds block. The first version accepted
-  // any non-empty grounds and passed an answer whose grounds restated the task
-  // table row and whose "answer" was the agent narrating a search that never
-  // finished. The rules ask for a quote from each passage relied on, and a
-  // quote is what proves something was read.
-  if (expectation.grounded && !QUOTE_MARK.test(String(evidence.grounds ?? ''))) {
-    missing.push('a quoted passage in <grounds>');
+  // A QUOTED passage in the answer: a quote is what proves something was read,
+  // where a summary could have come from the table row alone.
+  if (expectation.grounded && !QUOTE_MARK.test(String(answerText))) {
+    missing.push('a quoted passage');
   }
 
   return {
@@ -428,16 +419,17 @@ async function main() {
       const clauses = [
         expectation.all.length ? `needs ${JSON.stringify(expectation.all)}` : '',
         expectation.any.length ? `needs one of ${JSON.stringify(expectation.any)}` : '',
+        expectation.allOf?.length ? `needs each of ${JSON.stringify(expectation.allOf)}` : '',
         expectation.none.length ? `forbids ${JSON.stringify(expectation.none)}` : '',
         expectation.searched ? 'must search' : '',
-        expectation.grounded ? 'must quote a passage in grounds' : '',
+        expectation.grounded ? 'must quote a passage' : '',
       ].filter(Boolean);
       const asked = expectation.question ? ` asks ${JSON.stringify(question)} /` : '';
       rows.push({ id: entry.id, verdict: 'DRY', note: `${asked} ${clauses.join(' / ') || 'NO ASSERTION'}`.trim() });
       continue;
     }
 
-    const { result, elapsedMs, timedOut, firstTextMs, toolCalls } = await ask(port, question);
+    const { result, elapsedMs, timedOut, firstTextMs, setMs, toolCalls } = await ask(port, question);
     if (timedOut) {
       rows.push({ id: entry.id, verdict: 'HUNG', elapsedMs, note: 'no answer within the deadline' });
       continue;
@@ -447,9 +439,8 @@ async function main() {
       continue;
     }
     const evidence = {
-      grounds: result.grounds ?? null,
       toolCalls: toolCalls ?? 0,
-      namedTasks: namedTasks(result, rollupCache.get(entry.corpus)),
+      namedTasks: namedTasks(result),
     };
     const verdict = grade(result.answer, expectation, evidence);
     // Recorded BEFORE grading enters into it, so a later re-score judges the
@@ -458,17 +449,16 @@ async function main() {
       id: entry.id,
       question,
       answer: result.answer,
-      // Saved so it is observable whether the agent actually wrote its working.
-      // Without this the record cannot distinguish "grounds were emitted and
-      // correctly stripped from the answer" from "no grounds were ever written"
-      // - the answer text looks identical either way.
-      grounds: evidence.grounds,
-      // And what the answer scoped the map to, as task names, so a re-score
-      // can see a selection the prose never spelled out.
+      // The rows, as task names, so a re-score can see a task the prose never
+      // spelled out.
       namedTasks: evidence.namedTasks,
-      selectedDocKeys: result.selectedDocKeys ?? [],
+      // How many related tasks the agent was handed, which is what its
+      // "Reading N related tasks" line said.
+      handedCount: result.handedCount ?? null,
       promptTokens: result.promptTokens ?? null,
       elapsedMs,
+      // When the related set reached the map, before the agent started.
+      setMs: setMs ?? null,
       firstTextMs: firstTextMs ?? null,
       toolCalls: evidence.toolCalls,
     });
@@ -481,6 +471,7 @@ async function main() {
       id: entry.id,
       verdict: verdict.pass ? 'PASS' : 'FAIL',
       elapsedMs,
+      setMs: setMs ?? null,
       firstTextMs: firstTextMs ?? null,
       turns: evidence.toolCalls + 1,
       tokens,
@@ -496,7 +487,8 @@ async function main() {
 
   for (const row of rows) {
     const timing = row.elapsedMs ? ` ${(row.elapsedMs / 1000).toFixed(1)}s` : '';
-    const first = row.firstTextMs != null ? ` first ${(row.firstTextMs / 1000).toFixed(1)}s` : '';
+    const set = row.setMs != null ? ` set ${(row.setMs / 1000).toFixed(1)}s` : '';
+    const first = `${set}${row.firstTextMs != null ? ` first ${(row.firstTextMs / 1000).toFixed(1)}s` : ''}`;
     const turns = row.turns ? ` ${row.turns} turn${row.turns === 1 ? '' : 's'}` : '';
     const tokens = row.tokens ? ` ${row.tokens}tok` : '';
     console.log(`${row.verdict.padEnd(5)} ${row.id.padEnd(26)}${timing}${first}${turns}${tokens} ${row.note}`);
@@ -515,6 +507,10 @@ async function main() {
   const median = (values) => values[Math.floor(values.length / 2)];
   if (timed.length) {
     console.log(`total: median ${(median(timed) / 1000).toFixed(1)}s, slowest ${(timed[timed.length - 1] / 1000).toFixed(1)}s`);
+  }
+  const sets = runs.filter((run) => run.setMs != null).map((run) => run.setMs).sort((a, b) => a - b);
+  if (sets.length) {
+    console.log(`related set: median ${(median(sets) / 1000).toFixed(1)}s, slowest ${(sets[sets.length - 1] / 1000).toFixed(1)}s`);
   }
   if (firsts.length) {
     console.log(`first token: median ${(median(firsts) / 1000).toFixed(1)}s, slowest ${(firsts[firsts.length - 1] / 1000).toFixed(1)}s`);
@@ -566,7 +562,6 @@ async function regradeSavedRun(file, only) {
     }
     graded += 1;
     const verdict = grade(run.answer, expectation, {
-      grounds: run.grounds,
       toolCalls: run.toolCalls ?? 0,
       namedTasks: run.namedTasks ?? [],
     });

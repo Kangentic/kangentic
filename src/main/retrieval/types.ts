@@ -64,6 +64,17 @@ export interface LexicalHit {
   snippet: string;
 }
 
+/** Where a chunk sits: its document, session, task and turn. No text. */
+export interface ChunkPlacement {
+  id: number;
+  corpus: string;
+  docId: string;
+  sessionId: string | null;
+  taskId: string | null;
+  tsStart: number | null;
+  turnUuidStart: string | null;
+}
+
 export interface SemanticHit {
   chunkId: number;
   /** 1-based rank within the semantic result list (best = 1). */

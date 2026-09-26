@@ -1,5 +1,6 @@
 import { GooseDetector } from './detector';
 import { interpolateTemplate } from '../../shared/template-utils';
+import { runCliPrintAnswer } from '../../shared/auto-name';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
@@ -227,5 +228,41 @@ export class GooseAdapter implements AgentAdapter {
     // --name, and the resume-conversation guard degrades safely to "cannot prove
     // empty" when this returns null.
     return null;
+  }
+
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
+  /**
+   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   *
+   * `goose run -i -` reads its instructions from STDIN (Goose's documented
+   * form for piped input), so a prompt of any size stays off the command line.
+   * `--no-session` keeps a question from leaving a session file behind, and
+   * `-q` prints only the model's response.
+   *
+   * Read-only is `GOOSE_MODE=chat`: no tools and no extensions at all. That is
+   * exactly what a base answer needs, since the prompt carries the context.
+   *
+   * From Goose's published docs; not yet run against an installed Goose on the
+   * machine this was written on.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error.
+      args: ['run', '-i', '-', '--no-session', '-q', ...(model ? ['--model', model] : [])],
+      prompt,
+      cwd,
+      env: { GOOSE_MODE: GOOSE_MODE_BY_PERMISSION.plan },
+    });
   }
 }

@@ -20,7 +20,20 @@ vi.mock('../../src/main/search/search-core', () => ({
   runSearchEverything: mockRunSearchEverything,
 }));
 
+// groupBy:"task" ranks through the related-work rollup, which is tested where
+// it lives; here only the routing and the formatting are.
+const { mockSearchRelatedWork, mockIndexedConversationNodes } = vi.hoisted(() => ({
+  mockSearchRelatedWork: vi.fn(),
+  mockIndexedConversationNodes: vi.fn(() => [] as unknown[]),
+}));
+
+vi.mock('../../src/main/retrieval/related-work', () => ({
+  searchRelatedWork: mockSearchRelatedWork,
+  indexedConversationNodes: mockIndexedConversationNodes,
+}));
+
 import { registerSearchTools } from '../../src/main/agent/mcp-http/search-tools';
+import { watchAnswerSearches } from '../../src/main/agent/mcp-http/answer-search-trace';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 
 function makeProject(overrides: Partial<Project> = {}): Project {
@@ -323,6 +336,95 @@ describe('kangentic_search MCP tool', () => {
     // Not mixed into an unrelated section.
     expect(text).not.toContain('## Tasks');
     expect(result.isError).toBeUndefined();
+  });
+
+  describe('groupBy:"task"', () => {
+    const NODES = [
+      { docKey: 'conversation::a', taskId: 'task-561', displayId: 561, title: 'Relay config', sessionId: 'session-a' },
+      { docKey: 'conversation::b', taskId: 'task-561', displayId: 561, title: 'Relay config', sessionId: 'session-b' },
+      { docKey: 'conversation::c', taskId: null, displayId: null, title: null, sessionId: 'session-c' },
+    ];
+
+    function relatedWork() {
+      const handed = [
+        {
+          key: 'task-561', taskId: 'task-561', displayId: 561, title: 'Relay config', score: 0.9, strength: 1,
+          matches: 6, firstMs: Date.UTC(2026, 7, 1), lastMs: Date.UTC(2026, 8, 20),
+          docKeys: ['conversation::a', 'conversation::b'], bestChunkId: 42, sessionId: 'session-b', turnUuid: 'turn-7',
+        },
+        {
+          key: 'conversation:conversation::c', taskId: null, displayId: null, title: 'Untitled', score: 0.5, strength: 0.56,
+          matches: 1, firstMs: null, lastMs: null,
+          docKeys: ['conversation::c'], bestChunkId: null, sessionId: null, turnUuid: null,
+        },
+      ];
+      return { ranked: handed, handed, passages: new Map([[42, 'the relay URL parser']]), semantic: true, elapsedMs: 3 };
+    }
+
+    beforeEach(() => {
+      mockIndexedConversationNodes.mockReturnValue(NODES);
+      mockSearchRelatedWork.mockResolvedValue(relatedWork());
+    });
+
+    it('leaves the default output alone: no groupBy never touches the rollup', async () => {
+      await server.getHandler('kangentic_search')({ query: 'relay' });
+      expect(mockRunSearchEverything).toHaveBeenCalledOnce();
+      expect(mockSearchRelatedWork).not.toHaveBeenCalled();
+    });
+
+    it('ranks the project\'s tasks through the same rollup Ask uses', async () => {
+      const result = await server.getHandler('kangentic_search')({ query: 'relay', groupBy: 'task' });
+
+      expect(mockRunSearchEverything).not.toHaveBeenCalled();
+      expect(mockIndexedConversationNodes).toHaveBeenCalledWith(DEFAULT_PROJECT_ID);
+      const input = mockSearchRelatedWork.mock.calls[0][0] as { question: string; projectId: string; nodes: unknown[]; embedder: unknown };
+      expect(input).toMatchObject({ question: 'relay', projectId: DEFAULT_PROJECT_ID, embedder: SENTINEL_EMBEDDER });
+      expect(input.nodes).toBe(NODES);
+
+      const text = result.content[0].text;
+      expect(text).toContain('2 of 2 related task(s) for "relay", strongest first.');
+      expect(text).toContain('- #561 Relay config (strength 1.00, 6 matches, 2026-08-01 to 2026-09-20, taskId: task-561, sessionId: session-b, turnUuid: turn-7) - "the relay URL parser"');
+      expect(text).toContain('- Untitled (a conversation with no task) (strength 0.56, 1 match, ? to ?)');
+      expect(text).toContain('kangentic_get_transcript');
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('matches by keyword alone in keyword mode, and says so', async () => {
+      mockSearchRelatedWork.mockResolvedValueOnce({ ...relatedWork(), semantic: false });
+      const result = await server.getHandler('kangentic_search')({ query: 'relay', groupBy: 'task', mode: 'keyword' });
+      expect((mockSearchRelatedWork.mock.calls[0][0] as { embedder: unknown }).embedder).toBeNull();
+      expect(result.content[0].text).toContain('Matched by keyword only');
+    });
+
+    it('refuses scope:"all" and taskId with a way to fix the call', async () => {
+      const wide = await server.getHandler('kangentic_search')({ query: 'relay', groupBy: 'task', scope: 'all' });
+      expect(wide.isError).toBe(true);
+      expect(wide.content[0].text).toContain('Drop scope:"all"');
+
+      const narrow = await server.getHandler('kangentic_search')({ query: 'relay', groupBy: 'task', taskId: 'task-1' });
+      expect(narrow.isError).toBe(true);
+      expect(narrow.content[0].text).toContain('Drop taskId');
+      expect(mockSearchRelatedWork).not.toHaveBeenCalled();
+    });
+
+    it('says so when nothing matches', async () => {
+      mockSearchRelatedWork.mockResolvedValueOnce({ ranked: [], handed: [], passages: new Map(), semantic: true, elapsedMs: 1 });
+      const result = await server.getHandler('kangentic_search')({ query: 'zebra kettle', groupBy: 'task' });
+      expect(result.content[0].text).toBe('No tasks have conversations matching "zebra kettle".');
+    });
+
+    it('reports an answer run\'s search to the Memory Graph, as every conversation of every task found', async () => {
+      const answerServer = makeFakeServer();
+      registerSearchTools(answerServer as never, resolver, 'answer-chat-1');
+      const seen: Array<{ query: string; sessionIds: string[] }> = [];
+      const stop = watchAnswerSearches('answer-chat-1', (search) => seen.push(search));
+      try {
+        await answerServer.getHandler('kangentic_search')({ query: 'relay', groupBy: 'task' });
+      } finally {
+        stop();
+      }
+      expect(seen).toEqual([{ query: 'relay', sessionIds: ['session-a', 'session-b', 'session-c'] }]);
+    });
   });
 
   it('renders turnUuid as n/a when a conversation hit lost its anchor', async () => {

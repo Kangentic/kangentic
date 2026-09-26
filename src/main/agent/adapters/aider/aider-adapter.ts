@@ -3,6 +3,7 @@ import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { runCliPrintAnswer } from '../../shared/auto-name';
 import { AiderSessionHistoryParser } from './session-history-parser';
 import { createAiderCommandInjectionVerifier } from './command-injection-verifier';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
@@ -194,4 +195,70 @@ export class AiderAdapter implements AgentAdapter {
   requiresAgentSessionIdForVerification(): boolean {
     return false;
   }
+
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
+  /**
+   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   *
+   * `--message-file` sends one message from a file and exits, so a prompt of
+   * any size stays off the command line. `--chat-mode ask` is Aider's own
+   * read-only mode: it answers without editing.
+   *
+   * The rest keeps a headless run from stopping to ask something it cannot
+   * answer, or touching anything: `--no-git` (the scratch directory is not a
+   * repository, and Aider would otherwise offer to create one), `--yes` for any
+   * other confirmation, `--no-auto-commits`, no update check, no model
+   * warnings, and plain unstreamed output.
+   *
+   * From Aider's published options; not yet run against an installed Aider on
+   * the machine this was written on, which is why `extractAiderAnswer` strips
+   * the status lines Aider is documented to print rather than parsing a format.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error.
+      args: [
+        '--chat-mode', 'ask',
+        '--no-git',
+        '--no-auto-commits',
+        '--yes',
+        '--no-pretty',
+        '--no-stream',
+        '--no-check-update',
+        '--no-show-model-warnings',
+        '--no-suggest-shell-commands',
+        ...(model ? ['--model', model] : []),
+      ],
+      prompt,
+      cwd,
+      promptVia: 'file',
+      promptFileFlag: '--message-file',
+      extractRaw: extractAiderAnswer,
+    });
+  }
+}
+
+/**
+ * Lines Aider prints around an answer: its version banner, the model and repo
+ * summary, and the token and cost line. Dropped so only the answer remains.
+ */
+const AIDER_STATUS_LINE = /^(?:Aider v\d|Main model:|Model:|Weak model:|Editor model:|Git repo:|Repo-map:|Added .* to the chat|Tokens: |Cost: |Warning:|Use \/help|https:\/\/aider\.chat)/;
+
+export function extractAiderAnswer(stdout: string): string {
+  return stdout
+    .split(/\r?\n/)
+    .filter((line) => !AIDER_STATUS_LINE.test(line.trim()))
+    .join('\n')
+    .trim();
 }

@@ -124,31 +124,31 @@ describe('the Ask harness rollup matches the shipped one', () => {
     expect(pass).toBe(true);
   });
 
-  it('finds a fact in the working or the selection, but a forbidden claim only in the prose', () => {
+  it('finds a fact in the rows as well as the prose', () => {
     // The phrase question: the prose said "Selected the task whose conversation
-    // contains the exact phrase", the grounds quoted the passage under T155,
-    // and the SELECTED line had scoped the map to it. Right by any reading a
-    // person would give it, and the prose-only grader failed it.
-    const located = __testing.grade(
-      'Selected the task whose conversation contains that phrase.',
-      { all: [], none: [], any: ['#218', 'T155'] },
-      { grounds: '**T155**: "use the helper and scope the comment"', namedTasks: [] },
-    );
-    expect(located.pass).toBe(true);
+    // contains the exact phrase" and the row under it was #218. Right by any
+    // reading a person would give it, and a prose-only grader failed it.
     const scoped = __testing.grade(
       'Selected the task.',
-      { all: [], none: [], any: ['#218', 'T155'] },
-      { grounds: null, namedTasks: ['#218', 'T155'] },
+      { all: [], none: [], any: ['#218'] },
+      { namedTasks: ['#218'] },
     );
     expect(scoped.pass).toBe(true);
+  });
 
-    // A decline's working legitimately names the thing it declines.
+  it('judges a forbidden claim on the prose alone', () => {
     const declined = __testing.grade(
       'The sources do not cover this question.',
-      { all: [], none: ['Paris'] },
-      { grounds: 'The question asks for the capital of France, Paris. Nothing here covers geography.' },
+      { all: [], none: ['#218'] },
+      { namedTasks: ['#218'] },
     );
     expect(declined.pass).toBe(true);
+  });
+
+  it('asks a grounded answer to quote what it read', () => {
+    const expectation = { all: [], none: [], grounded: true };
+    expect(__testing.grade('It fixed the scroll.', expectation).pass).toBe(false);
+    expect(__testing.grade('It said "scroll to the latest turn".', expectation).pass).toBe(true);
   });
 
   it('fails an answer that says something it was told not to', () => {

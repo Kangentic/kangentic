@@ -256,10 +256,16 @@ export class GeminiAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
    * Gemini's `plan` approval mode is its read-only research mode.
+   *
+   * `--skip-trust`, because the answer runs in a fresh directory Gemini has
+   * never seen, and without it the headless run stops at the folder-trust check
+   * instead of answering (measured: it answered once the flag was added).
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -273,9 +279,8 @@ export class GeminiAdapter implements AgentAdapter {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error, and the absence of the flag is what
-      // "the agent's own default" means to the CLI.
-      args: ['--output-format', 'text', '--approval-mode', 'plan', ...(model ? ['--model', model] : [])],
+      // empty value is an error.
+      args: ['--skip-trust', '--output-format', 'text', '--approval-mode', 'plan', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
     });

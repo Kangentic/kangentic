@@ -468,20 +468,27 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
-    // `opencode run` runs non-interactively. The `-q` flag suppresses the spinner so
-    // stdout contains only the assistant's response.
+    // `opencode run` runs non-interactively. No `-q`: with it the call printed
+    // nothing at all, and the spinner it was meant to hide goes to stderr anyway.
     return runCliPrintSummarize({
       cliPath,
-      args: ['run', '-q'],
+      args: ['run'],
       prompt: buildSummarizePrompt(prompt),
       cwd,
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
-   * OpenCode's built-in `plan` agent is read-only: no edits, no bash.
+   * OpenCode's built-in `plan` agent is read-only: no edits, no bash (the
+   * probe's file write and shell command were both refused). The prompt is
+   * piped, and a 61,584-character prompt answered from its middle row.
+   *
+   * No `-q`: with it the shipped call returned nothing at all. The spinner it
+   * was meant to hide goes to stderr, so stdout is the answer either way.
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -495,9 +502,8 @@ export class OpenCodeAdapter implements AgentAdapter {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error, and the absence of the flag is what
-      // "the agent's own default" means to the CLI.
-      args: ['run', '-q', '--agent', 'plan', ...(model ? ['--model', model] : [])],
+      // empty value is an error.
+      args: ['run', '--agent', 'plan', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
     });

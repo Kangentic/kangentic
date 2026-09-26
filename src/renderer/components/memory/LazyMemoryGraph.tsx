@@ -51,11 +51,26 @@ function MemoryGraphSkeleton() {
   );
 }
 
-export function LazyMemoryGraph() {
+interface LazyMemoryGraphProps {
+  /**
+   * Where a question goes when no answering agent or model is chosen yet. The
+   * in-app host opens Settings > Memory; the detached window has no settings
+   * panel, so it passes nothing and the box names the place instead.
+   */
+  onChooseAnswerAgent?: () => void;
+  /**
+   * Opens a task on the board, for an answer row whose task has no recorded
+   * conversation to open instead. Absent in the detached window, which has no
+   * board, so such a row shows but cannot be opened there.
+   */
+  onRevealTask?: (taskId: string) => void;
+}
+
+export function LazyMemoryGraph({ onChooseAnswerAgent, onRevealTask }: LazyMemoryGraphProps = {}) {
   return (
     <PanelErrorBoundary label="memory graph">
       <Suspense fallback={<MemoryGraphSkeleton />}>
-        <MemoryGraphBody />
+        <MemoryGraphBody onChooseAnswerAgent={onChooseAnswerAgent} onRevealTask={onRevealTask} />
       </Suspense>
     </PanelErrorBoundary>
   );

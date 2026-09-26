@@ -20,7 +20,7 @@
  * INCLUDED, since the agent searches the transcripts itself: three TRANSCRIPT
  * questions whose truth IS computable. A phrase lifted from a real passage
  * must lead the agent to that passage's task; a question about a task's
- * conversations must be answered by searching and with grounds written; and
+ * conversations must be answered by searching and quoting what was read; and
  * a phrase in no transcript must be declined, after a search. Together they
  * see the one thing the board questions cannot - whether agent-driven
  * retrieval finds the right conversation, and whether it says so when there
@@ -33,11 +33,10 @@
  * rounded total, a refusal in the agent's own words) gets graded on being right
  * rather than on being punctuated the way we guessed.
  *
- * `evidence` asks for things beyond the prose: `searched` requires at least
- * one `kangentic_search` call, `grounded` requires a QUOTED passage in the
- * `<grounds>` block - a quote is what proves something was read, where a
- * block that restates the table row proves nothing. Both are read off the run
- * record rather than the answer text.
+ * `evidence` asks for things beyond the facts: `searched` requires at least
+ * one `kangentic_search` call, read off the run record, and `grounded`
+ * requires a QUOTED passage in the answer - a quote is what proves something
+ * was read, where a summary could have come from the table row alone.
  */
 const expect = (all, none = [], any = [], evidence = {}) => ({ all, none, any, ...evidence });
 
@@ -49,23 +48,27 @@ const expect = (all, none = [], any = [], evidence = {}) => ({ all, none, any, .
 const money = (value) => [value.toFixed(2)];
 
 /**
- * Both names a task legitimately has in an answer.
- *
- * The prompt hands the agent a `T<n>` vocabulary and tells it explicitly to
- * refer back by that ref rather than by the ticket - the ref is a position in
- * the table, which is what makes it resolvable, and the renderer translates it
- * to `#529` on the way to the screen. So an answer saying `T1` is CORRECT and
- * the first version of this grader failed three questions for it. Grading raw
- * agent text against the rendered form measures our translation layer, not the
- * answer.
- *
- * Refs are positions in the cost-sorted table, so the ref is derivable here the
- * same way `buildAnswerTaskTable` assigns it.
+ * The name a task has in an answer: its board ticket, `#529`, which is the ref
+ * the prompt's table uses and the mark the chat draws. The `T<n>` positions the
+ * table used before are retired, so an answer has one spelling to be graded on.
  */
-export function nameFor(rollup, row) {
-  const ordered = [...rollup].sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0));
-  const ref = ordered.indexOf(row) + 1;
-  return [`#${row.displayId}`, `T${ref}`];
+export function nameFor(_rollup, row) {
+  return [`#${row.displayId}`];
+}
+
+/**
+ * Tasks whose title names a topic, busiest first.
+ *
+ * The recall floor for a relatedness question: a task called "Relay config:
+ * resolved default + custom override" is related to the mobile relay whatever
+ * the retrieval thinks, so an answer that omits the busiest of these has missed
+ * something it cannot argue about. Sorted by sessions so `slice(0, n)` takes the
+ * ones with the most conversations, which are the hardest to miss.
+ */
+function titledWith(rollup, words) {
+  return rollup
+    .filter((row) => row.displayId != null && words.some((word) => row.title.toLowerCase().includes(word)))
+    .sort((a, b) => b.sessions - a.sessions);
 }
 
 /**
@@ -190,6 +193,48 @@ export const QUESTIONS = [
         Math.floor(total).toLocaleString('en-US'),
         total.toFixed(2),
       ]);
+    },
+  },
+
+  // ---- Relatedness. The three shapes Round 36 measured failing: a set, a
+  // superlative inside a set, and a count. Ground truth is a RECALL FLOOR: a task
+  // whose title names the topic is related by construction, so the busiest few
+  // of those must appear. A related task the title does not name is allowed and
+  // never penalized, because the floor is a floor and not the whole set.
+  {
+    id: 'related-set',
+    corpus: 'conversation',
+    question: 'Which tasks are related to the mobile relay?',
+    truth: (rollup) => {
+      const named = titledWith(rollup, ['relay', 'mobile bridge', 'pairing']);
+      if (named.length < 3) return null;
+      return expect([], [], [], { allOf: named.slice(0, 3).map((row) => nameFor(rollup, row)) });
+    },
+  },
+  {
+    id: 'related-superlative',
+    corpus: 'conversation',
+    question: 'What was the most expensive task related to the mobile relay?',
+    truth: (rollup) => {
+      const named = titledWith(rollup, ['relay', 'mobile bridge', 'pairing'])
+        .sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0));
+      if (named.length === 0) return null;
+      // Any of the three costliest title-named tasks: a related task the title
+      // does not name may legitimately cost more, so the floor stays a floor.
+      return expect([], [], named.slice(0, 3).flatMap((row) => nameFor(rollup, row)));
+    },
+  },
+  {
+    id: 'related-count',
+    corpus: 'conversation',
+    question: 'How many tasks touched the terminal renderer?',
+    truth: (rollup) => {
+      const named = titledWith(rollup, ['xterm', 'terminal render', 'scrollback', 'conpty']);
+      if (named.length < 3) return null;
+      // The count itself has no computable truth until the change corpus lands;
+      // what can be checked is that the answer names the busiest title-named
+      // tasks rather than reinterpreting the question into one it can answer.
+      return expect([], ['0 times', 'zero times', 'never'], [], { allOf: named.slice(0, 3).map((row) => nameFor(rollup, row)) });
     },
   },
 

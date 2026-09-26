@@ -13,8 +13,13 @@ import { discoverGrokCapabilities } from './capability-discovery';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { migrateGrokProjectData } from './project-relocation';
 import { grokUpdatesJsonlPath } from './session-paths';
-import { runCliPrintSummarize,
-  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
+import {
+  runCliPrintSummarize,
+  runCliPrintAnswer,
+  buildSummarizePrompt,
+  extractLastTurnAnswer,
+  ANSWER_STREAM_OUTPUT_BUDGET,
+} from '../../shared/auto-name';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -339,11 +344,28 @@ export class GrokAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
-   * Grok's print mode has no separate read-only switch; it makes no
-    // edits unless told to.
+   * READ-ONLY IS THE DENY RULES, and nothing else holds. The shipped call made
+   * no edits "unless told to", which was measured wrong: asked to create a
+   * file, it created it. A user whose `~/.grok/config.toml` sets
+   * `permission_mode = "always-approve"` (Grok's own setup offers it) wins over
+   * `--permission-mode plan` and `dontAsk`, and `--tools ''` does not remove the
+   * write tool. `--deny` rules are the one control that beat that setting: deny
+   * wins over allow and over always-approve, and the probe's write and shell
+   * command were both refused. `--no-subagents` keeps a spawned helper from
+   * carrying the question somewhere the rules were never checked.
+   *
+   * The prompt goes in a FILE. An answer prompt runs to about 50k characters,
+   * past the Windows command-line limit, and `-p` has no stdin form (`-p -`
+   * reads a literal dash). With `--prompt-file`, Grok keeps the head of a long
+   * prompt and has its agent read the rest from disk, which costs one tool turn
+   * and its narration ("I'll look up row 377..."). So the answer is the LAST
+   * assistant turn of a stream-json transcript, whose envelope and file read
+   * need the stream-sized stdout budget.
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -357,16 +379,21 @@ export class GrokAdapter implements AgentAdapter {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error, and the absence of the flag is what
-      // "the agent's own default" means to the CLI.
-      //
-      // It goes BEFORE the print flag, because `promptVia: 'arg'` appends the
-      // prompt as the final positional argument - anything after `-p` would be
-      // read as the prompt, and the real prompt as a stray trailing arg.
-      args: ['--output-format', 'plain', ...(model ? ['--model', model] : []), '-p'],
+      // empty value is an error.
+      args: [
+        '--output-format', 'streaming-messages-json',
+        '--deny', 'Write',
+        '--deny', 'Edit',
+        '--deny', 'Bash',
+        '--no-subagents',
+        ...(model ? ['--model', model] : []),
+      ],
       prompt,
       cwd,
-      promptVia: 'arg',
+      promptVia: 'file',
+      promptFileFlag: '--prompt-file',
+      extractRaw: extractLastTurnAnswer,
+      outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
     });
   }
 

@@ -48,23 +48,23 @@ import.meta.hot?.dispose((data: Record<string, unknown>) => {
  * board - and it earns its keep here, since the detail panel's whole point is
  * pointing at closely related conversations worth reading side by side.
  */
-export function openMemoryConversation(sessionId: string, projectId: string | null): void {
+export function openMemoryConversation(
+  sessionId: string,
+  projectId: string | null,
+  /** Open at this turn: the passage a chat answer used. */
+  turnUuid?: string | null,
+): void {
   const store = memoryWindowManager.store.getState();
   windowsProjectId = projectId;
 
-  const existing = Object.values(store.windows).find(
-    (candidate) => candidate.kind === 'conversation' && candidate.anchor === sessionId,
-  );
-  if (existing) {
-    store.focusWindow(existing.id);
-    return;
-  }
-
+  // `openWindow` focuses (and re-aims) an existing window for the anchor rather
+  // than stacking a duplicate.
   store.openWindow({
     kind: 'conversation',
     anchor: sessionId,
     sessionId,
     title: 'Conversation',
+    ...(turnUuid ? { scrollToTurnUuid: turnUuid } : {}),
   });
 }
 

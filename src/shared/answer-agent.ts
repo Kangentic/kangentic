@@ -1,23 +1,22 @@
 /**
- * Which agent answers a question from the conversation index.
+ * Which agent answers a question from the index, and what is still missing
+ * before it can.
  *
  * SHARED, because two places need the same answer and a disagreement between
- * them is invisible: the renderer decides whether to offer Ask at all and whose
- * name to print on the button, and the main process decides who actually runs.
- * If those drifted, the button would name one agent and a different one would
- * reply - or worse, the button would appear for an agent that cannot answer and
- * fail only when pressed.
+ * them is invisible: the renderer decides whether a question can run or must
+ * first go to Settings > Memory, and the main process decides who actually
+ * runs. If those drifted, the box would send the user to settings for an agent
+ * main would have run, or run an agent the settings row does not show.
  *
- * The order is a preference chain, and every step is skipped unless the agent
- * can actually answer:
- *
- *   1. The explicit `memory.answerAgent` setting. Someone said what they want.
- *   2. The project's default agent. Which agent runs your tasks is a reasonable
- *      guess at which agent should read their history.
- *   3. Any agent that declares the capability. Better a named fallback than no
- *      affordance - and the button prints the name, so the fallback is stated
- *      rather than silent.
+ * EXPLICIT, with no fallback. The chain used to fall through to the project's
+ * default agent and then to any capable agent, so a question could run on an
+ * agent and model nobody chose, and spend their tokens doing it. The user's
+ * rule: this is one global choice, made in Settings > Memory, never inferred
+ * from a project. So a configured agent that cannot answer, or is not
+ * installed, resolves to nothing, and the surface asks for a choice.
  */
+
+import type { AnswerCapabilities, AnswerSetupGap } from './types';
 
 export interface AnswerAgentCandidate {
   name: string;
@@ -25,19 +24,18 @@ export interface AnswerAgentCandidate {
   /** Detection result. An installed-but-missing CLI cannot answer. */
   found?: boolean;
   supportsAnswerFromContext?: boolean;
+  answerCapabilities?: AnswerCapabilities;
 }
 
 export interface ResolveAnswerAgentInput<T extends AnswerAgentCandidate> {
   agents: ReadonlyArray<T>;
-  /** `memory.answerAgent`, or null/undefined for "follow the project". */
+  /** `memory.answerAgent`, or null/undefined when none has been chosen. */
   configured?: string | null;
-  /** The project's `default_agent`, or null when it names none. */
-  projectAgent?: string | null;
   /**
    * Whether a candidate must be detected on disk.
    *
    * True in the renderer, which has the agent list with its `found` flag and
-   * must not offer Ask for an agent that is not installed. The main process
+   * must not treat an agent that is not installed as chosen. The main process
    * detects the CLI itself immediately afterwards and reports a precise reason,
    * so it passes false rather than duplicating the check against a stale list.
    */
@@ -47,17 +45,30 @@ export interface ResolveAnswerAgentInput<T extends AnswerAgentCandidate> {
 export function resolveAnswerAgent<T extends AnswerAgentCandidate>(
   input: ResolveAnswerAgentInput<T>,
 ): T | null {
-  const usable = (candidate: T | undefined): T | null => {
-    if (!candidate) return null;
-    if (!candidate.supportsAnswerFromContext) return null;
-    if (input.requireFound && !candidate.found) return null;
-    return candidate;
-  };
-  const byName = (name: string | null | undefined): T | null =>
-    (name ? usable(input.agents.find((entry) => entry.name === name)) : null);
+  if (!input.configured) return null;
+  const candidate = input.agents.find((entry) => entry.name === input.configured);
+  if (!candidate || !candidate.supportsAnswerFromContext) return null;
+  if (input.requireFound && !candidate.found) return null;
+  return candidate;
+}
 
-  return byName(input.configured)
-    ?? byName(input.projectAgent)
-    ?? input.agents.find((entry) => usable(entry) !== null)
-    ?? null;
+export interface AnswerSetupGapInput<T extends AnswerAgentCandidate> extends ResolveAnswerAgentInput<T> {
+  /** `memory.answerModel`, or null/undefined when none has been chosen. */
+  configuredModel?: string | null;
+}
+
+/**
+ * What is still missing before a question can run, or null when nothing is.
+ *
+ * `'agent'` covers every way the agent is not usable: never chosen, not able to
+ * answer, or (for the renderer) not installed. `'model'` means the agent is fine
+ * but its answer run takes a model and none has been chosen.
+ */
+export function answerSetupGap<T extends AnswerAgentCandidate>(
+  input: AnswerSetupGapInput<T>,
+): AnswerSetupGap | null {
+  const agent = resolveAnswerAgent(input);
+  if (!agent) return 'agent';
+  if (agent.answerCapabilities?.model && !input.configuredModel) return 'model';
+  return null;
 }

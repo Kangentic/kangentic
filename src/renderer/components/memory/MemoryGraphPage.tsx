@@ -20,9 +20,11 @@ import { Network, X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
+import { useSessionStore } from '../../stores/session-store';
 import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
 import { LazyMemoryGraph } from './LazyMemoryGraph';
 import { MemoryDetailLayer } from './MemoryDetailLayer';
+import { openAnswerSettings } from './open-answer-settings';
 
 export function MemoryGraphPage() {
   const close = useMemoryGraphStore((state) => state.close);
@@ -77,12 +79,27 @@ export function MemoryGraphPage() {
           <h1 className="text-sm font-semibold text-fg">Memory Graph</h1>
         </DetachableSurfaceHeader>
 
-        <LazyMemoryGraph />
+        <LazyMemoryGraph onChooseAnswerAgent={openAnswerSettings} onRevealTask={revealTaskOnBoard} />
       </div>
 
       {/* Conversation windows the graph opens, over the map. The inset matches
           this overlay's own, so a window can use the full surface. */}
-      <MemoryDetailLayer bottomInsetClass={statusBarVisible ? 'bottom-9' : 'bottom-0'} />
+      <MemoryDetailLayer
+        bottomInsetClass={statusBarVisible ? 'bottom-9' : 'bottom-0'}
+        onRevealTask={revealTaskOnBoard}
+      />
     </div>
   );
+}
+
+/**
+ * "Open task" from a conversation on the graph: close the graph, then open the
+ * task on the board, where task details live. Closing first matters, since a
+ * task detail opened behind the graph's overlay would be invisible. Most of what
+ * the graph shows is finished work; the detail bridge loads an older finished
+ * task before mounting it (`useTaskDetailWindowBridge`).
+ */
+function revealTaskOnBoard(taskId: string): void {
+  useMemoryGraphStore.getState().close();
+  useSessionStore.getState().setDetailTaskId(taskId);
 }

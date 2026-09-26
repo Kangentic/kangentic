@@ -123,6 +123,13 @@ export interface ManagedWindow {
    *  only the mechanism; WHEN to park is the layer's policy
    *  (`WindowManagerLayerOptions.shouldParkOnClose`). */
   parked?: true;
+  /** Transient, never persisted: the turn a `conversation` window should open
+   *  at, consumed once it has scrolled there. Per WINDOW, for a layer that opens
+   *  conversations itself (the Memory Graph's source rows). The board's own
+   *  one-shot lives in the session store and is paired with its bridge's
+   *  `conversationSessionId`; setting that from the graph would open a second
+   *  window on the board layer, under the graph. */
+  scrollToTurnUuid?: string;
 }
 
 /**

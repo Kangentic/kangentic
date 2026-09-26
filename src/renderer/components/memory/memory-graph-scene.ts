@@ -157,6 +157,8 @@ export interface SceneNodeStyle {
    * everything else.
    */
   alpha: number;
+  /** 1 draws a white ring around the node: a hit of the agent's own search. */
+  ring?: number;
 }
 
 /** Below this a node counts as filtered out rather than dim. */
@@ -201,14 +203,17 @@ uniform float fogNear;
 uniform float fogFar;
 uniform float fogFloor;
 attribute float nodeAlpha;
+attribute float nodeRing;
 uniform float pixelRatio;
 uniform float sizeScale;
 varying vec3 vColor;
 varying float vAlpha;
 varying float vFog;
+varying float vRing;
 void main() {
   vColor = nodeColor;
   vAlpha = nodeAlpha;
+  vRing = nodeRing;
   vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
   // Perspective size attenuation: the divide by -z is what makes distance
   // readable, and is the same divide the projection matrix applies to position.
@@ -261,6 +266,7 @@ uniform float haloStrength;
 varying vec3 vColor;
 varying float vAlpha;
 varying float vFog;
+varying float vRing;
 void main() {
   // Soft round sprite straight from the point coord - no texture atlas to
   // allocate, upload, or rebuild after a context loss.
@@ -313,7 +319,14 @@ void main() {
   // readable in the first place - the map went grey before it went deep.
   vec3 faded = mix(vec3(luma), lit, mix(0.82, 1.0, vFog)) * vFog;
   float intensity = core + halo * haloStrength;
-  gl_FragColor = vec4(faded, intensity * vAlpha);
+  // A search hit's ring: a thin white band just outside the core, drawn in the
+  // halo's room so the node keeps its size. White rather than the node's hue,
+  // because the ring says "the agent looked here", which no colour mode means.
+  float ringCenter = coreRadius * 1.55;
+  float ringBand = 1.0 - smoothstep(coreRadius * 0.14, coreRadius * 0.26, abs(d - ringCenter));
+  float ring = ringBand * vRing;
+  vec3 color = mix(faded, vec3(vFog), ring);
+  gl_FragColor = vec4(color, max(intensity, ring * 1.2) * vAlpha);
 }
 `;
 
@@ -834,6 +847,7 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
   const nodeColors = new Float32Array(nodeCount * 3);
   const nodeSizes = new Float32Array(nodeCount);
   const nodeAlphas = new Float32Array(nodeCount);
+  const nodeRings = new Float32Array(nodeCount);
   const worldPositions: Vector3[] = [];
 
   for (let index = 0; index < nodeCount; index += 1) {
@@ -854,6 +868,7 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
   nodeGeometry.setAttribute('nodeColor', new BufferAttribute(nodeColors, 3));
   nodeGeometry.setAttribute('nodeSize', new BufferAttribute(nodeSizes, 1));
   nodeGeometry.setAttribute('nodeAlpha', new BufferAttribute(nodeAlphas, 1));
+  nodeGeometry.setAttribute('nodeRing', new BufferAttribute(nodeRings, 1));
 
   const nodeMaterial = new ShaderMaterial({
     vertexShader: NODE_VERTEX_SHADER,
@@ -1009,6 +1024,7 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
       const colorAttribute = nodeGeometry.getAttribute('nodeColor') as BufferAttribute;
       const sizeAttribute = nodeGeometry.getAttribute('nodeSize') as BufferAttribute;
       const alphaAttribute = nodeGeometry.getAttribute('nodeAlpha') as BufferAttribute;
+      const ringAttribute = nodeGeometry.getAttribute('nodeRing') as BufferAttribute;
       const count = Math.min(styles.length, nodeCount);
       for (let index = 0; index < count; index += 1) {
         const style = styles[index];
@@ -1017,10 +1033,12 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
         nodeColors[index * 3 + 2] = style.color[2];
         nodeSizes[index] = BASE_POINT_SIZE * style.scale;
         nodeAlphas[index] = style.alpha;
+        nodeRings[index] = style.ring ?? 0;
       }
       colorAttribute.needsUpdate = true;
       sizeAttribute.needsUpdate = true;
       alphaAttribute.needsUpdate = true;
+      ringAttribute.needsUpdate = true;
 
       // Link visibility is DERIVED here rather than exposed as a second API: an
       // edge is only meaningful when both of its endpoints are on screen, and

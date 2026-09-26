@@ -71,12 +71,12 @@ describe('Adapter summarize() invocation shapes', () => {
     expect(call.promptVia).toBeUndefined();
   });
 
-  it('OpenCode uses run -q via stdin', async () => {
+  it('OpenCode uses run via stdin, without -q, which printed nothing', async () => {
     const { OpenCodeAdapter } = await import('../../src/main/agent/adapters/opencode/opencode-adapter');
     const adapter = new OpenCodeAdapter();
     await adapter.summarize('rename variable', '/usr/bin/opencode', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['run', '-q']);
+    expect(call.args).toEqual(['run']);
     expect(call.promptVia).toBeUndefined();
   });
 

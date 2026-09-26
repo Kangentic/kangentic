@@ -284,6 +284,8 @@ export class QwenAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *

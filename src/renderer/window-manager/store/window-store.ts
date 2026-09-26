@@ -211,6 +211,9 @@ interface OpenWindowInput {
    *  arrival-focus arbiter refuse to hand ANY terminal the keyboard off the back
    *  of this window's focus. See `.claude/rules/agent-driven-focus.md`. */
   openedByAgent?: boolean;
+  /** Open a `conversation` window at this turn (see `ManagedWindow.scrollToTurnUuid`).
+   *  An already-open window for the anchor is re-aimed at it. */
+  scrollToTurnUuid?: string;
 }
 
 export interface WindowStoreState {
@@ -230,6 +233,8 @@ export interface WindowStoreState {
 
   /** Open a window for an anchor, or focus the existing one for that anchor. */
   openWindow: (input: OpenWindowInput) => string;
+  /** Drop a window's one-shot scroll target once it has scrolled there. */
+  clearWindowScrollTarget: (id: string) => void;
   /** Unconditional removal. A USER close on the board goes through the layer's
    *  policy in `WindowFrame` (`shouldParkOnClose`), which parks a window whose
    *  Browser pane must outlive the close; a direct caller of this is declaring
@@ -381,6 +386,15 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // the user's pointer-down that normally calls it), so stamping first
         // would be undone by the very next line.
         if (input.openedByAgent) get().markAgentOpened(existing.id);
+        // Re-aim an open conversation at the passage now asked for.
+        const turnUuid = input.scrollToTurnUuid;
+        if (turnUuid) {
+          set((current) => {
+            const target = current.windows[existing.id];
+            if (!target) return current;
+            return { windows: { ...current.windows, [existing.id]: { ...target, scrollToTurnUuid: turnUuid } } };
+          });
+        }
         return existing.id;
       }
 
@@ -407,6 +421,7 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // Same shape, same reason: absent means "the user opened this", so a
         // user path can never inherit an agent stamp by forgetting to clear it.
         ...(input.openedByAgent ? { openedByAgent: true as const } : {}),
+        ...(input.scrollToTurnUuid ? { scrollToTurnUuid: input.scrollToTurnUuid } : {}),
       };
 
       set((current) => ({
@@ -416,6 +431,15 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         zCounter,
       }));
       return id;
+    },
+
+    clearWindowScrollTarget: (id) => {
+      set((current) => {
+        const target = current.windows[id];
+        if (!target || target.scrollToTurnUuid === undefined) return current;
+        const { scrollToTurnUuid: _consumed, ...rest } = target;
+        return { windows: { ...current.windows, [id]: rest } };
+      });
     },
 
     closeWindow: (id) => {

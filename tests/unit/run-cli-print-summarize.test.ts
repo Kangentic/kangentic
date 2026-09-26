@@ -12,6 +12,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Hoisted mock for node:child_process
@@ -496,5 +499,67 @@ describe('runCliPrintAnswer - the answer shape', () => {
     expect(child.killed).toBe(true);
     child.emit('close', 0);
     expect(await resultPromise).toHaveLength(80);
+  });
+});
+
+describe('runCliPrintSummarize - a prompt delivered through a file', () => {
+  // For a CLI that reads its prompt from a file and not from stdin (Grok's
+  // `--prompt-file`, Aider's `--message-file`). An answer prompt runs to about
+  // 50k characters, past the Windows command-line limit, so it cannot ride argv.
+  it('writes the prompt into cwd, names it after the flag, closes stdin empty, and removes it', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-prompt-file-test-'));
+    try {
+      const child = makeFakeChild();
+      mockSpawn.mockReturnValue(child);
+
+      const resultPromise = runCliPrintAnswer({
+        cliPath: '/usr/bin/fake',
+        args: ['--flag'],
+        prompt: 'a very long prompt',
+        cwd: directory,
+        promptVia: 'file',
+        promptFileFlag: '--prompt-file',
+      });
+
+      const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+      expect(spawnArgs.slice(0, 2)).toEqual(['--flag', '--prompt-file']);
+      const promptPath = spawnArgs[2];
+      expect(path.dirname(promptPath)).toBe(directory);
+      expect(fs.readFileSync(promptPath, 'utf-8')).toBe('a very long prompt');
+      // Nothing on stdin: the file IS the prompt.
+      expect(child.stdin.end).toHaveBeenCalledWith();
+
+      child.stdout.emit('data', Buffer.from('the answer'));
+      child.emit('close', 0);
+      expect(await resultPromise).toBe('the answer');
+      // Gone once the call ends: it carries the user's history.
+      expect(fs.existsSync(promptPath)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('words an answer failure for the answer, and keeps what the CLI said', async () => {
+    // The Memory Graph prints this verbatim under the question the user asked.
+    // "summarize CLI exited" named a feature they had not used.
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+    const resultPromise = runCliPrintAnswer({ cliPath: '/usr/bin/fake', args: [], prompt: 'q', cwd: '/tmp' });
+    child.stderr.emit('data', Buffer.from('Error: Model "x" from --model flag is not available.'));
+    child.emit('close', 1);
+    await expect(resultPromise).rejects.toThrow(
+      'the agent exited 1: Error: Model "x" from --model flag is not available.',
+    );
+  });
+
+  it('refuses a file delivery with no flag to name the file', async () => {
+    await expect(runCliPrintAnswer({
+      cliPath: '/usr/bin/fake',
+      args: [],
+      prompt: 'x',
+      cwd: os.tmpdir(),
+      promptVia: 'file',
+    })).rejects.toThrow(/promptFileFlag/);
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 });

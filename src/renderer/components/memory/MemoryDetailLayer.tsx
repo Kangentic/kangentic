@@ -25,24 +25,21 @@
  *    `useDetailOwnershipSync`, `useWindowSessionClaims`, and
  *    `useWindowAutoCloseOnDone` all skip non-task-detail windows already, so this
  *    layer adds no coupling to any of them.
- *  - **No `renderTaskDetail` / `revealTaskDetail`.** It hosts no task details, and
- *    omitting the reveal capability is what hides `ConversationWindow`'s "Open
- *    task" button here. Supplying `setDetailTaskId` instead would reintroduce the
- *    very bug above one hop deeper: in-app it would mount the detail at z-40 under
- *    the graph, and in the pop-out it would do nothing at all.
+ *  - **No `renderTaskDetail`, and `revealTaskDetail` only in-app.** It hosts no
+ *    task details. In-app, "Open task" CLOSES the graph and then reveals the task
+ *    on the board, which is where a task detail lives; the host supplies that
+ *    through `onRevealTask`. The detached window supplies nothing, which hides the
+ *    button: there is no board in a pop-out to reveal a task on, and a reveal
+ *    that did nothing would be worse than no button.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { memoryWindowManager, WindowManagerLayer } from '../../window-manager';
 import type { WindowManagerLayerOptions } from '../../window-manager';
 import { DEFAULT_MIN_WIDTH_PX, DEFAULT_MIN_HEIGHT_PX } from '../../window-manager/dnd/useWindowResize';
 import { useClickOutsideToClose } from '../../window-manager/bridge/useClickOutsideToClose';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
 import { closeMemoryConversationsForOtherProject } from './open-memory-conversation';
-
-const MEMORY_LAYER_OPTIONS: WindowManagerLayerOptions = {
-  minSize: { width: DEFAULT_MIN_WIDTH_PX, height: DEFAULT_MIN_HEIGHT_PX },
-};
 
 function MemoryDetailBridge(): null {
   // Light dismiss, matching the board and the monitor: a click on empty space
@@ -77,13 +74,19 @@ interface MemoryDetailLayerProps {
    * status bar, so its layer runs to the frame's bottom edge.
    */
   bottomInsetClass: string;
+  /** How "Open task" reaches the board, or absent where there is no board. */
+  onRevealTask?: (taskId: string) => void;
 }
 
-export function MemoryDetailLayer({ bottomInsetClass }: MemoryDetailLayerProps) {
+export function MemoryDetailLayer({ bottomInsetClass, onRevealTask }: MemoryDetailLayerProps) {
+  const layerOptions = useMemo<WindowManagerLayerOptions>(() => ({
+    minSize: { width: DEFAULT_MIN_WIDTH_PX, height: DEFAULT_MIN_HEIGHT_PX },
+    ...(onRevealTask ? { revealTaskDetail: onRevealTask } : {}),
+  }), [onRevealTask]);
   return (
     <WindowManagerLayer
       manager={memoryWindowManager}
-      layer={MEMORY_LAYER_OPTIONS}
+      layer={layerOptions}
       portalHostId="memory-detail-layer-root"
       overlayTestId="memory-detail-overlay"
       // Sits above the graph (z-42) and below the Command Terminal layer (z-45),

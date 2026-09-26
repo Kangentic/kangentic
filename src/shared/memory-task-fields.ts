@@ -11,8 +11,8 @@
  *
  * Adding a second kind of question meant editing four files that had to agree.
  * This module is the fix: one declaration per field, and the prompt table, the
- * vocabulary handed to the agent, the ordering and the rendered rows are all
- * generated from it. Adding a field is one entry here plus one property on
+ * glossary handed to the agent and the table's summary are all generated
+ * from it. Adding a field is one entry here plus one property on
  * `MemoryTaskFacts`, and the typechecker makes every producer fill it.
  *
  * The shape follows a semantic layer (Cube), which is the settled answer to
@@ -59,10 +59,7 @@ export const TASK_OUTCOME_LABELS: Record<MemoryTaskOutcome, string> = {
 /**
  * Everything known about one task, already totalled across its sessions.
  *
- * Extended by BOTH producers - `AnswerTaskRow` in the main process and
- * `MemoryAnswerTaskRef` on the wire - so a new field cannot reach the prompt
- * without also reaching the renderer, which is the drift this module exists to
- * prevent.
+ * Extended by `AnswerTaskRow` in the main process.
  *
  * Every metric is nullable and null means "never recorded", never zero. A task
  * whose sessions predate metric capture has not earned a `$0.00`.
@@ -217,9 +214,7 @@ export const MEMORY_TASK_FIELDS: ReadonlyArray<MemoryTaskField> = [
     kind: 'dimension',
     // Not selectable: it is the row's badge, and a column would repeat it.
     selectable: false,
-    describe: 'the board ticket number the user sees on a card, written #529. '
-      + 'Use it to recognise a task the question names by number. Always refer '
-      + 'back to a task by its T ref, never by its ticket.',
+    describe: 'the board ticket number the user sees on a card, written #529.',
     cell: (facts) => (facts.displayId == null ? '' : `#${facts.displayId}`),
     display: (facts) => (facts.displayId == null ? null : `#${facts.displayId}`),
     sortValue: (facts) => facts.displayId ?? null,
@@ -320,106 +315,6 @@ export const MEMORY_TASK_FIELDS: ReadonlyArray<MemoryTaskField> = [
   },
 ];
 
-const FIELD_BY_KEY = new Map(MEMORY_TASK_FIELDS.map((field) => [field.key, field]));
-
-/**
- * What an agent might write for a column, beyond the column name itself.
- *
- * The rule names the header and models paraphrase anyway ("cost", "recency",
- * "duration_ms"). Accepting the obvious synonyms is far cheaper than losing the
- * spec, and an unrecognised word still falls through safely to the default.
- */
-const FIELD_KEY_ALIASES: Record<string, MemoryTaskFieldKey> = {
-  ticket: 'ticket', display_id: 'ticket', number: 'ticket', task_number: 'ticket',
-  cost: 'cost_usd', cost_usd: 'cost_usd', spend: 'cost_usd', price: 'cost_usd', usd: 'cost_usd',
-  duration: 'duration', duration_ms: 'duration', time: 'duration', elapsed: 'duration',
-  runtime: 'duration', wall_time: 'duration', hours: 'duration',
-  tokens: 'tokens', token: 'tokens', token_count: 'tokens',
-  sessions: 'sessions', conversations: 'sessions', session_count: 'sessions',
-  last_active: 'last_active', last_activity: 'last_active', recency: 'last_active',
-  activity: 'last_active', date: 'last_active', last_used: 'last_active', updated: 'last_active',
-  outcome: 'outcome', status: 'outcome', state: 'outcome',
-  region: 'region', topic: 'region', area: 'region',
-  agent: 'agent',
-  model: 'model',
-};
-
-/** Resolve a written key to a field, or null when it names none. */
-export function resolveTaskField(written: string | null | undefined): MemoryTaskField | null {
-  if (!written) return null;
-  const normalized = written
-    .trim()
-    .toLowerCase()
-    // Trailing prose ("cost_usd."), and spaces where the header has underscores.
-    .replace(/[^a-z0-9_ ]+/g, '')
-    .trim()
-    .replace(/\s+/g, '_');
-  const key = FIELD_KEY_ALIASES[normalized];
-  return key ? FIELD_BY_KEY.get(key) ?? null : null;
-}
-
-/** Look a field up by its exact key. */
-export function taskFieldByKey(key: MemoryTaskFieldKey): MemoryTaskField | null {
-  return FIELD_BY_KEY.get(key) ?? null;
-}
-
-/**
- * What the rows show when the answer said nothing about how to show them.
- *
- * These are the four the surface shipped with, so an answer that declines the
- * protocol renders exactly what it renders today. `sessions` is deliberately
- * absent: a row is one TASK, and how many conversations it ran is the map's
- * unit, surfaced when the reader drills into the task rather than on the row.
- */
-export const DEFAULT_TASK_FIELD_KEYS: ReadonlyArray<MemoryTaskFieldKey> = [
-  'cost_usd',
-  'duration',
-  'outcome',
-];
-
-/** Columns a task row will ever render at once, before it stops being scannable. */
-export const MAX_TASK_COLUMNS = 4;
-
-/** One field the rows are ordered by, and which way. */
-export interface MemoryTaskOrder {
-  key: MemoryTaskFieldKey;
-  direction: 'asc' | 'desc';
-}
-
-/** How the rows should be presented, as the answer asked for them. */
-export interface MemoryTaskView {
-  /** Columns, in display order. Never longer than `MAX_TASK_COLUMNS`. */
-  select: MemoryTaskFieldKey[];
-  /** Null when the answer named no orderable field, which means the rows keep
-   *  the order the answer named them in. */
-  order: MemoryTaskOrder | null;
-}
-
-export const DEFAULT_TASK_VIEW: MemoryTaskView = {
-  select: [...DEFAULT_TASK_FIELD_KEYS],
-  order: null,
-};
-
-/**
- * Order rows by a field, nulls last in BOTH directions.
- *
- * Nulls last is the whole point: an unmeasured task is not a cheap one, and
- * "cheapest first" must not open with every task that never recorded a cost.
- */
-export function compareByField(
-  field: MemoryTaskField,
-  direction: 'asc' | 'desc',
-): (left: MemoryTaskFacts, right: MemoryTaskFacts) => number {
-  return (left, right) => {
-    const leftValue = field.sortValue(left);
-    const rightValue = field.sortValue(right);
-    if (leftValue === null && rightValue === null) return 0;
-    if (leftValue === null) return 1;
-    if (rightValue === null) return -1;
-    return direction === 'asc' ? leftValue - rightValue : rightValue - leftValue;
-  };
-}
-
 /**
  * Fields whose value is IDENTICAL on every row.
  *
@@ -428,10 +323,6 @@ export function compareByField(
  * hundred and fifty times. A column that never varies carries no per-row
  * information by definition - it is a fact about the corpus, and belongs in one
  * summary line rather than in every row.
- *
- * Same rule `visibleTaskColumns` applies to the rendered columns, one layer
- * earlier. Stating it once here is what keeps the two from drifting into
- * different opinions about what "carries no signal" means.
  */
 export function constantFields(
   rows: ReadonlyArray<MemoryTaskFacts>,
@@ -444,37 +335,4 @@ export function constantFields(
     const first = field.cell(rows[0]);
     return rows.every((row) => field.cell(row) === first);
   });
-}
-
-/**
- * The columns actually worth rendering for a set of rows.
- *
- * A column whose every value is identical carries no signal: eighteen rows all
- * reading "Completed" spend width to say nothing. This is the rule the
- * Unconnected toggle, the dead facet rows and the granularity control already
- * follow, applied one level down.
- *
- * The ORDERED field is exempt, and that exemption is load-bearing: asked which
- * tasks are still in progress, every row is "In Progress" and dropping the
- * column would remove the one that answers the question.
- */
-export function visibleTaskColumns(
-  view: MemoryTaskView,
-  rows: ReadonlyArray<MemoryTaskFacts>,
-): MemoryTaskField[] {
-  const columns: MemoryTaskField[] = [];
-  for (const key of view.select) {
-    const field = FIELD_BY_KEY.get(key);
-    if (!field || !field.selectable) continue;
-    if (key !== view.order?.key) {
-      const values = rows.map((row) => field.display(row));
-      const everyValueAbsent = values.every((value) => value === null);
-      const everyValueEqual = values.length > 1
-        && values.every((value) => value === values[0]);
-      if (everyValueAbsent || everyValueEqual) continue;
-    }
-    columns.push(field);
-    if (columns.length >= MAX_TASK_COLUMNS) break;
-  }
-  return columns;
 }

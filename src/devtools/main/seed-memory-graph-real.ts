@@ -37,19 +37,20 @@ import { buildMemoryGraphNow } from './build-memory-graph-now';
 
 const WORKTREE_MARKER = '/.kangentic/worktrees/';
 /**
- * Documents copied by default.
+ * Documents copied by default: all of them. SQLite reads a negative LIMIT as
+ * no limit.
  *
- * The binding cost is NOT the copy, which is a few seconds - it is the
- * projection built from it, which scans every vector and is roughly linear in
- * CHUNKS. Measured on this corpus: 400 conversations is 37k chunks and ~58s of
- * projection work even unthrottled, so a click sat on a spinner for minutes. 150
- * is about 14k chunks and lands the whole seed-and-build click near 20s, while
- * still being enough conversations for the regions to come out recognisably
- * named (the thing 400 was originally chosen to make judgeable).
+ * The default used to be the newest 150, because the projection built from the
+ * copy scans every vector and 400 conversations once cost ~58s of it. The
+ * projection is faster now: the whole index (995 conversations, 89,205 chunks)
+ * seeds and builds in about 35s (33.5s and 36.6s measured). And a partial mirror is not the index a user asks
+ * against: a topic question in the Memory Graph ranked only the newest 150
+ * conversations, so its answers could not be compared with the real app's.
  *
- * Raise it via `documentLimit` when specifically testing a large corpus.
+ * Pass a smaller `documentLimit` for a quicker seed when the corpus size is not
+ * what is being tested.
  */
-const DEFAULT_DOCUMENT_LIMIT = 150;
+const DEFAULT_DOCUMENT_LIMIT = -1;
 
 function samePath(first: string, second: string): boolean {
   try {
@@ -102,7 +103,8 @@ export interface SeedMemoryGraphRealOptions {
 }
 
 /**
- * Copy the most recent `documentLimit` indexed conversations - chunks, vectors,
+ * Copy the most recent `documentLimit` indexed conversations (all of them by
+ * default) - chunks, vectors,
  * index state, and the tasks/sessions they hang off - from the real parent
  * project into the currently open (preview) project.
  */
@@ -201,15 +203,19 @@ export function seedMemoryGraphFromRealIndex(
     // an applied model, so dropping them left the panel's Model / Effort rows
     // permanently hidden in preview and unjudgeable.
     const sessionFactsById = new Map<string, SourceSessionFacts>();
+    // Also by task, so a board task whose conversations were never indexed still
+    // arrives with what its sessions cost.
+    const sessionFactsByTaskId = new Map<string, SourceSessionFacts[]>();
     for (const row of sourceDb
       .prepare(
-        `SELECT id, session_type, applied_model, model_display_name, applied_effort,
+        `SELECT id, task_id, session_type, applied_model, model_display_name, applied_effort,
                 total_cost_usd, total_duration_ms, total_input_tokens, total_output_tokens,
                 tool_call_count
          FROM sessions`,
       )
       .all() as Array<{
         id: string;
+        task_id: string | null;
         session_type: string;
         applied_model: string | null;
         model_display_name: string | null;
@@ -220,7 +226,7 @@ export function seedMemoryGraphFromRealIndex(
         total_output_tokens: number | null;
         tool_call_count: number | null;
       }>) {
-      sessionFactsById.set(row.id, {
+      const facts: SourceSessionFacts = {
         sessionType: row.session_type,
         // Same preference the graph query uses, so preview and production
         // resolve a session's model identically.
@@ -231,7 +237,13 @@ export function seedMemoryGraphFromRealIndex(
         inputTokens: row.total_input_tokens,
         outputTokens: row.total_output_tokens,
         toolCalls: row.tool_call_count,
-      });
+      };
+      sessionFactsById.set(row.id, facts);
+      if (row.task_id) {
+        const list = sessionFactsByTaskId.get(row.task_id) ?? [];
+        list.push(facts);
+        sessionFactsByTaskId.set(row.task_id, list);
+      }
     }
 
     const targetDb = getProjectDb(projectId);
@@ -280,17 +292,19 @@ export function seedMemoryGraphFromRealIndex(
     );
     const readVector = sourceDb.prepare('SELECT embedding FROM memory_chunks_vec WHERE rowid = ?');
 
-    let copiedChunks = 0;
-    for (const document of documents) {
-      const previewTaskId = ensureTask(document.taskId);
+    /** One exited preview session carrying a source session's facts. */
+    const mirrorSession = (
+      previewTaskId: string,
+      sourceFacts: SourceSessionFacts | undefined,
+      agentSessionId: string | null,
+    ): string => {
       const previewSessionId = crypto.randomUUID();
-      const sourceFacts = document.sessionId ? sessionFactsById.get(document.sessionId) : undefined;
       sessionRepo.insert({
         id: previewSessionId,
         task_id: previewTaskId,
         session_type: sourceFacts?.sessionType ?? 'claude_agent',
         isolated_swimlane_id: null,
-        agent_session_id: document.docId,
+        agent_session_id: agentSessionId,
         command: '',
         cwd: projectPath,
         permission_mode: null,
@@ -321,6 +335,14 @@ export function seedMemoryGraphFromRealIndex(
           compactionCount: 0,
         });
       }
+      return previewSessionId;
+    };
+
+    let copiedChunks = 0;
+    for (const document of documents) {
+      const previewTaskId = ensureTask(document.taskId);
+      const sourceFacts = document.sessionId ? sessionFactsById.get(document.sessionId) : undefined;
+      const previewSessionId = mirrorSession(previewTaskId, sourceFacts, document.docId);
 
       const sourceChunks = readChunks.all(document.docId) as Array<{
         id: number;
@@ -393,6 +415,19 @@ export function seedMemoryGraphFromRealIndex(
         status: 'missing-source',
         indexedAt: now,
       });
+    }
+
+    // Every other board task too, with its sessions' facts and no conversation.
+    // A preview holding only the tasks whose conversations were mirrored is a
+    // board with half its history missing, which misstates exactly the questions
+    // that count or rank work: on this project four of the tasks that added an
+    // agent have no indexed conversation at all.
+    for (const sourceTaskId of sourceTaskById.keys()) {
+      if (previewTaskIdBySourceTaskId.has(sourceTaskId)) continue;
+      const previewTaskId = ensureTask(sourceTaskId);
+      for (const facts of sessionFactsByTaskId.get(sourceTaskId) ?? []) {
+        mirrorSession(previewTaskId, facts, null);
+      }
     }
 
     // Re-stamp the mirrored tasks with the SOURCE board's ticket numbers.

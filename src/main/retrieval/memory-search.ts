@@ -238,7 +238,7 @@ function safeSemantic(store: RetrievalStore, queryVector: Float32Array, limit: n
  * constant (no user knob): these models are meant to be used by relative ranking,
  * not an absolute cosine threshold.
  */
-const SEMANTIC_RELEVANCE_CUTOFF = 0.15;
+export const SEMANTIC_RELEVANCE_CUTOFF = 0.15;
 
 /** Semantic hits whose CALIBRATED relevance clears the cutoff, re-ranked densely
  *  so RRF sees contiguous ranks. Embeddings are normalized and the vec table uses

@@ -19,6 +19,7 @@ import type {
   ResolvedExecutionTarget,
   RemoteServerStatus,
   AgentLaunchOptionInfo,
+  AnswerCapabilities,
 } from '../../shared/types';
 
 /**
@@ -827,6 +828,16 @@ export interface AgentAdapter {
   summarize?(prompt: string, cliPath: string, cwd: string): Promise<string>;
 
   /**
+   * What this adapter's `answerFromContext` run can do beyond the base, declared
+   * beside it. Read generically by the answer handler and the Memory settings,
+   * never by agent name. Every flag is a promise the run keeps: `streaming`
+   * means `onEvent` sees text as it is written, `search` means `retrieval` is
+   * honoured, and `model` means the run takes the Answering model, which makes
+   * that setting required.
+   */
+  readonly answerCapabilities?: AnswerCapabilities;
+
+  /**
    * Optional one-shot question answering over supplied context.
    *
    * The same non-interactive spawn `summarize` uses, shaped for prose instead of
@@ -846,8 +857,14 @@ export interface AgentAdapter {
    *   `runCliPrintSummarize` would flatten the answer to its first line.
    * - Throw on failure rather than returning placeholder text.
    *
+   * - Keep the prompt OFF the command line. An answer prompt runs to about 50k
+   *   characters, and Windows caps a command line at 32,767 (8,191 through
+   *   cmd.exe), so a prompt passed as an argument cannot answer a real question
+   *   there. Use stdin, or `promptVia: 'file'` for a CLI that reads a file.
+   *
    * Absent means this agent cannot answer; the renderer gates on
-   * `supportsAnswerFromContext` rather than on the agent's name.
+   * `supportsAnswerFromContext` rather than on the agent's name. An adapter
+   * that implements it also declares `answerCapabilities`.
    */
   answerFromContext?(
     prompt: string,

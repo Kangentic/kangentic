@@ -52,25 +52,20 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
   const answerCapableAgents = agentList
     .filter((agent) => agent.found && agent.supportsAnswerFromContext);
   const configuredAnswerAgent = globalConfig.memory?.answerAgent ?? null;
-  const projectDefaultAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
   /**
-   * The agent a question would actually run against right now, resolved through
-   * the SAME chain main uses. The model list has to follow the EFFECTIVE agent,
-   * not the configured one: on "Follow the project" the setting is null while a
-   * real agent still answers, and showing no models there would read as an
-   * agent that cannot take one.
+   * The chosen answering agent, resolved through the SAME rule main uses: the
+   * configured one, or nothing. There is no project fallback, so an unset row
+   * reads as unset, and asking before it is set brings the user here.
    */
-  const effectiveAnswerAgent = useMemo(
-    () => resolveAnswerAgent({
-      agents: agentList,
-      configured: configuredAnswerAgent,
-      projectAgent: projectDefaultAgent,
-      requireFound: true,
-    }),
-    [agentList, configuredAnswerAgent, projectDefaultAgent],
+  const chosenAnswerAgent = useMemo(
+    () => resolveAnswerAgent({ agents: agentList, configured: configuredAnswerAgent, requireFound: true }),
+    [agentList, configuredAnswerAgent],
   );
-  const { models: answerModels, supportsModelOverride } =
-    useAgentCapabilityResolution(effectiveAnswerAgent?.name ?? null);
+  const { models: answerModels } = useAgentCapabilityResolution(chosenAnswerAgent?.name ?? null);
+  // Whether this agent's ANSWER run takes a model, as its adapter declares it.
+  // When it does, the model is required: a question never runs on a default
+  // nobody chose.
+  const answerTakesModel = chosenAnswerAgent?.answerCapabilities?.model === true;
 
   // Poll the semantic-layer status while the feature is on so the model-download
   // progress and readiness update live. Cleared on unmount / when turned off.
@@ -235,20 +230,17 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
               picking between zero options is not a decision. */}
           {answerCapableAgents.length > 0 ? (
             <>
-              {/* The RESOLVED agent, never a "Follow the project" sentinel.
-                  Kangentic requires at least one working agent, so there is
-                  always a real answer here, and an option meaning "whatever
-                  that other setting says" is a second name for a value the row
-                  can simply show. It still DEFAULTS to the project's agent -
-                  that is what the chain resolves to while the setting is unset
-                  - so choosing that same agent explicitly is a no-op the user
-                  never has to think about. */}
+              {/* Starts EMPTY. The user's rule: the agent and model are one
+                  explicit global choice, never assumed from a project. So there
+                  is no default here to inherit and no "follow the project"
+                  option; until something is picked, the Memory Graph sends a
+                  question to this row instead of running it. */}
               <SettingRow {...settingProps('memory.answerAgent')}>
                 <Select
-                  value={effectiveAnswerAgent?.name ?? ''}
+                  value={chosenAnswerAgent?.name ?? ''}
                   onChange={(event) => updateGlobal({
                     memory: {
-                      answerAgent: event.target.value,
+                      answerAgent: event.target.value === '' ? null : event.target.value,
                       // A model id belongs to ONE CLI - Claude's `haiku` means
                       // nothing to Codex - so changing the agent clears it
                       // rather than carrying a flag the new agent will reject.
@@ -257,6 +249,7 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
                   })}
                   data-testid="memory-answer-agent-select"
                 >
+                  <option value="" disabled>Choose an agent</option>
                   {answerCapableAgents.map((agent) => (
                     <option key={agent.name} value={agent.name}>{agent.displayName}</option>
                   ))}
@@ -264,10 +257,10 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
               </SettingRow>
 
               {/* Mirrors the Agent tab's Agent + Model pair, scoped to this
-                  feature. Rendered only when the resolved agent actually takes
-                  a model override, on the same rule as every other row here: a
-                  control that cannot do anything is worse than no control. */}
-              {supportsModelOverride ? (
+                  feature. Rendered once the chosen agent's answer run takes a
+                  model, and REQUIRED then: there is no "agent default" to fall
+                  back on, for the same reason there is no default agent. */}
+              {answerTakesModel ? (
                 <SettingRow {...settingProps('memory.answerModel')}>
                   <ModelCombobox
                     value={globalConfig.memory?.answerModel ?? ''}
@@ -275,7 +268,7 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
                       memory: { answerModel: next === '' ? null : next },
                     })}
                     availableModels={answerModels}
-                    placeholder="Agent default"
+                    placeholder="Choose a model"
                     placeholderVariant="muted"
                     testId="memory-answer-model"
                   />

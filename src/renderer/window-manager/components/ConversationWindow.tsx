@@ -249,9 +249,14 @@ export function ConversationWindow({
    *  actually show it. */
   const canOpenTask = taskId !== null && revealTaskDetail !== undefined;
 
+  const clearWindowScrollTarget = layerStore((state) => state.clearWindowScrollTarget);
+  const windowScrollTarget = managedWindow.scrollToTurnUuid;
   const consumeScroll = useCallback(() => {
-    setScrollToTurnUuid(null);
-  }, [setScrollToTurnUuid]);
+    // A per-window target (the Memory Graph's source rows) is this window's
+    // own; the session-store one-shot belongs to the board's bridge.
+    if (windowScrollTarget) clearWindowScrollTarget(managedWindow.id);
+    else setScrollToTurnUuid(null);
+  }, [windowScrollTarget, clearWindowScrollTarget, managedWindow.id, setScrollToTurnUuid]);
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(managedWindow.id), [toggleMaximizeWindow, managedWindow.id]);
   const handleUndock = useCallback(() => untileWindow(managedWindow.id), [untileWindow, managedWindow.id]);
@@ -292,7 +297,8 @@ export function ConversationWindow({
   const agentName = response?.agentName ?? '';
   // Only this window (the one the signal points at) consumes the one-shot scroll,
   // so a second open conversation window never races to clear it.
-  const activeScrollUuid = managedWindow.anchor === conversationSessionId ? scrollToTurnUuid : null;
+  const activeScrollUuid = windowScrollTarget
+    ?? (managedWindow.anchor === conversationSessionId ? scrollToTurnUuid : null);
 
   // Open-at-position: computed ONCE, synchronously, on the render where
   // `response` first becomes available - so it is ready before ConversationView

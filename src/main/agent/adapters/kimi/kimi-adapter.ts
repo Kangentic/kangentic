@@ -258,10 +258,19 @@ export class KimiAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
-   * Kimi mirrors Claude's flag surface, plan mode included.
+   * `--plan` is Kimi's plan mode, which is what stands between a question and
+   * an edit: print mode implicitly adds `--yolo` (the CLI's own help).
+   * `--quiet` is `--print --output-format text --final-message-only`, so stdout
+   * is the last assistant message, and print mode reads the piped prompt.
+   *
+   * The shipped call passed `--permission-mode plan`, which is Claude's flag,
+   * not Kimi's. Not yet run against a configured model on the machine this was
+   * written on ("LLM not set"), so the flags come from `kimi --help`.
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -275,9 +284,8 @@ export class KimiAdapter implements AgentAdapter {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error, and the absence of the flag is what
-      // "the agent's own default" means to the CLI.
-      args: ['--print', '--quiet', '--permission-mode', 'plan', ...(model ? ['--model', model] : [])],
+      // empty value is an error.
+      args: ['--quiet', '--plan', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
     });

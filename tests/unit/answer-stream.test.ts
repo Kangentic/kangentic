@@ -15,7 +15,6 @@ import {
   extractStreamedAnswer,
   createAnswerStreamReducer,
 } from '../../src/main/agent/shared/auto-name';
-import { parseGroundsForDisplay } from '../../src/renderer/components/memory/answer-stream-display';
 
 /** One `assistant` line of stream-json, as the CLI emits it. */
 function assistantLine(content: unknown[]): string {
@@ -177,32 +176,5 @@ describe('extractStreamedAnswer', () => {
       finalTurn,
     ].join('\n');
     expect(extractStreamedAnswer(stdout)).toBe('The sphere fit circumscribes.');
-  });
-});
-
-describe('parseGroundsForDisplay', () => {
-  it('hides an open grounds block until it closes', () => {
-    // The first thing to arrive is the working, and shown raw it reads as the
-    // answer being wrong rather than on its way.
-    expect(parseGroundsForDisplay('<grounds>\nT1 | 308.42 | cost_usd\n')).toEqual({ text: '' });
-  });
-
-  it('shows the prose after a closed block', () => {
-    expect(parseGroundsForDisplay('<grounds>\nT1 | 308.42\n</grounds>\n#286 at $308.42 is the largest.'))
-      .toEqual({ text: '#286 at $308.42 is the largest.' });
-  });
-
-  it('keeps prose written on either side of the block', () => {
-    expect(parseGroundsForDisplay('Prose.\n<grounds>working</grounds>\nMore.'))
-      .toEqual({ text: 'Prose.\n\nMore.' });
-  });
-
-  it('leaves text with no block alone', () => {
-    expect(parseGroundsForDisplay('  Just an answer.  ')).toEqual({ text: 'Just an answer.' });
-    expect(parseGroundsForDisplay('')).toEqual({ text: '' });
-  });
-
-  it('is case-insensitive about the tag, as the settled parser is', () => {
-    expect(parseGroundsForDisplay('<GROUNDS>x</GROUNDS> Answer.')).toEqual({ text: 'Answer.' });
   });
 });

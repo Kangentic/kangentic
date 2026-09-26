@@ -50,6 +50,7 @@ import { registerAutomationTools } from './mcp-http/automation-tools';
 import { registerSessionTools } from './mcp-http/session-tools';
 import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
+import { isAnswerCaller } from './mcp-http/caller-url';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
 import {
@@ -384,6 +385,32 @@ export function buildConfiguredMcpServer(
   return mcpServer;
 }
 
+/**
+ * The McpServer a Memory Graph answer run sees: `kangentic_search` and nothing
+ * else, with instructions sized for one tool.
+ *
+ * Selected by the caller segment (`isAnswerCaller`), so it holds no matter how
+ * the answering CLI handles permissions. The full server carries task, column,
+ * backlog, session and browser tools that create, move and delete things, and
+ * a question about the user's history must never reach any of them. Several
+ * CLIs cannot be limited to one MCP tool from the outside, so this is the
+ * guarantee rather than a flag.
+ *
+ * Exported so the tool list is unit-testable without booting the HTTP server.
+ */
+export function buildAnswerMcpServer(resolver: RequestResolver, callerSessionId?: string): McpServer {
+  const mcpServer = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    {
+      instructions: 'Kangentic search over this project\'s tasks and past agent conversations. '
+        + 'Call kangentic_search when the question needs work the prompt does not already cover.',
+    },
+  );
+  // The caller rides along so the run's searches reach the Memory Graph trace.
+  registerSearchTools(mcpServer, resolver, callerSessionId);
+  return mcpServer;
+}
+
 /** Validates the URL path and token, then dispatches to a per-request McpServer. */
 async function handleHttpRequest(
   req: IncomingMessage,
@@ -448,14 +475,18 @@ async function handleHttpRequest(
   // after that call begins: no tool can observe it empty.
   const toolArgumentNotices = createToolArgumentNotices();
 
-  const mcpServer = buildConfiguredMcpServer(
-    resolver,
-    taskCounter,
-    getBrowserAutomationConfig,
-    resolveSteering(callerSessionId),
-    resolveBrowser(projectId, callerSessionId),
-    toolArgumentNotices,
-  );
+  // A Memory Graph answer run gets one tool and nothing else (see
+  // `buildAnswerMcpServer`); every other caller gets the full server.
+  const mcpServer = isAnswerCaller(callerSessionId)
+    ? buildAnswerMcpServer(resolver, callerSessionId)
+    : buildConfiguredMcpServer(
+      resolver,
+      taskCounter,
+      getBrowserAutomationConfig,
+      resolveSteering(callerSessionId),
+      resolveBrowser(projectId, callerSessionId),
+      toolArgumentNotices,
+    );
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

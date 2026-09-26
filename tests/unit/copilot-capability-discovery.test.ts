@@ -1,13 +1,13 @@
 /**
  * Capability discovery for GitHub Copilot CLI: parses `copilot --help` for
  * `--model` and `--reasoning-effort` support, plus walks
- * `~/.copilot/session-state/<sessionId>/events.jsonl` for observed models.
+ * `~/.copilot/session-state/<sessionId>/events.jsonl` for the models the user
+ * selected.
  *
  * The effort-level parser handles commander.js's `(choices: "low",
  * "medium", ...)` shape (not the bare `(low, medium, ...)` Claude uses);
- * the historical scan harvests model strings from `data.currentModel`,
- * `data.model`, and `data.modelMetrics` (an object keyed by model name).
- * Real-shape fixtures protect both parsers from upstream drift.
+ * the historical scan reads only `session.start`'s `selectedModel`, never the
+ * models a session ran on, which `--model` can refuse.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -20,17 +20,16 @@ vi.mock('node:util', () => ({
   promisify: (fn: unknown) => fn,
 }));
 
-// The session-history walk now goes through the shared async primitives in
-// history-scan. Copilot reads from the tail of a fixed `events.jsonl` per
-// session dir (no listMostRecentFiles), so we mock listMostRecentDirs +
-// readTailBytes only. parseJsonlRecords stays real so the adapter's
-// record-extraction logic is exercised.
+// The session-history walk goes through the shared async primitives in
+// history-scan. Copilot reads the head of a fixed `events.jsonl` per session
+// dir, so we mock listMostRecentDirs + readHeadBytes only. parseJsonlRecords
+// stays real so the adapter's record-extraction logic is exercised.
 vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
   const actual = await importActual<typeof import('../../src/main/agent/shared/history-scan')>();
   return {
     ...actual,
     listMostRecentDirs: vi.fn(),
-    readTailBytes: vi.fn(),
+    readHeadBytes: vi.fn(),
   };
 });
 
@@ -40,13 +39,23 @@ import path from 'node:path';
 import { discoverCopilotCapabilities } from '../../src/main/agent/adapters/copilot/capability-discovery';
 import {
   listMostRecentDirs,
-  readTailBytes,
+  readHeadBytes,
 } from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
 const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
-const readTailMock = readTailBytes as unknown as ReturnType<typeof vi.fn>;
+const readHeadMock = readHeadBytes as unknown as ReturnType<typeof vi.fn>;
+
+/** Copilot's real `session.start` line, with the model the user selected. */
+function startLine(selectedModel: string): string {
+  return JSON.stringify({
+    type: 'session.start',
+    data: { sessionId: '685c7a29', version: 1, producer: 'copilot-agent', selectedModel },
+    id: 'evt-0',
+    timestamp: '2026-04-12T19:02:18.075Z',
+  });
+}
 
 const SESSIONS_ROOT = path.join(os.homedir(), '.copilot', 'session-state');
 
@@ -68,11 +77,11 @@ type SessionTree = Record<string, string>;
 
 function setSessionStore(store: SessionTree | null): void {
   listDirsMock.mockReset();
-  readTailMock.mockReset();
+  readHeadMock.mockReset();
 
   if (store === null) {
     listDirsMock.mockResolvedValue([]);
-    readTailMock.mockResolvedValue('');
+    readHeadMock.mockResolvedValue('');
     return;
   }
 
@@ -87,8 +96,8 @@ function setSessionStore(store: SessionTree | null): void {
     }));
   });
 
-  // Copilot reads the FIXED `events.jsonl` inside each session dir via readTailBytes.
-  readTailMock.mockImplementation(async (filePath: string) => {
+  // Copilot reads the FIXED `events.jsonl` inside each session dir via readHeadBytes.
+  readHeadMock.mockImplementation(async (filePath: string) => {
     for (const [sessionId, contents] of Object.entries(store)) {
       const eventsPath = path.join(SESSIONS_ROOT, sessionId, 'events.jsonl');
       if (filePath === eventsPath) return contents;
@@ -147,76 +156,65 @@ describe('discoverCopilotCapabilities', () => {
 
   it('does not invoke the session history scan when --help lacks --model', async () => {
     // When supportsModelOverride is false the adapter returns early before
-    // calling scanCopilotSessionHistory(), so readTailBytes must never be invoked.
+    // calling scanCopilotSessionHistory(), so readHeadBytes must never be invoked.
     // Seed a non-empty session store so that, absent the early return, the scan
-    // WOULD reach readTailBytes - this is what makes the assertion load-bearing
+    // WOULD reach readHeadBytes - this is what makes the assertion load-bearing
     // (and red if the supportsModelOverride guard is ever removed).
     setSessionStore({
-      'session-uuid-1': '{"type":"session.shutdown","data":{"currentModel":"gpt-5"}}\n',
+      'session-uuid-1': `${startLine('gpt-5')}\n`,
     });
     setHelpOutput('Usage: copilot\n  -h, --help  Show help\n');
     await discoverCopilotCapabilities('/usr/bin/copilot');
-    expect(readTailMock).not.toHaveBeenCalled();
+    expect(readHeadMock).not.toHaveBeenCalled();
   });
 
-  describe('historical model discovery (events.jsonl tail)', () => {
-    /** Real Copilot session.shutdown event shape (verified against 1.0.39) */
-    function shutdownLine(currentModel: string, otherModel?: string): string {
-      const modelMetrics: Record<string, unknown> = {
-        [currentModel]: { requests: { count: 1 }, usage: { inputTokens: 100 } },
-      };
-      if (otherModel) {
-        modelMetrics[otherModel] = { requests: { count: 1 } };
-      }
-      return JSON.stringify({
-        type: 'session.shutdown',
-        data: {
-          shutdownType: 'routine',
-          modelMetrics,
-          currentModel,
-          currentTokens: 25694,
-        },
-        id: 'evt-1',
-        timestamp: '2026-04-12T19:16:07.524Z',
-      });
-    }
+  describe('model discovery', () => {
+    /** Copilot's real `--model` help line. */
+    const MODEL_HELP = `
+      --model <model>
+          Set the AI model to use (use 'auto' to let Copilot pick
+          automatically)
+`;
 
-    function startLine(): string {
-      return JSON.stringify({
-        type: 'session.start',
-        data: {
-          sessionId: '685c7a29',
-          version: 1,
-          producer: 'copilot-agent',
-          copilotVersion: '1.0.39',
-        },
-        id: 'evt-0',
-        timestamp: '2026-04-12T19:02:18.075Z',
-      });
-    }
-
-    it('extracts model from data.currentModel on session.shutdown', async () => {
-      setHelpOutput('  --model <model> Set model\n');
-      setSessionStore({
-        'session-uuid-1': `${startLine()}\n${shutdownLine('gpt-5-mini')}\n`,
-      });
+    it('offers auto first, because the help names it', async () => {
+      setHelpOutput(MODEL_HELP);
       const capabilities = await discoverCopilotCapabilities('/usr/bin/copilot');
-      expect(capabilities.models).toEqual(['gpt-5-mini']);
+      expect(capabilities.models).toEqual(['auto']);
     });
 
-    it('extracts model names from `modelMetrics` object keys', async () => {
-      setHelpOutput('  --model <model> Set model\n');
+    it('adds the models the user selected, from session.start', async () => {
+      setHelpOutput(MODEL_HELP);
       setSessionStore({
-        'session-uuid-1': shutdownLine('gpt-5', 'gpt-5-mini') + '\n',
+        'session-uuid-1': `${startLine('gpt-5')}\n`,
+        'session-uuid-2': `${startLine('auto')}\n`,
       });
       const capabilities = await discoverCopilotCapabilities('/usr/bin/copilot');
-      expect(capabilities.models?.sort()).toEqual(['gpt-5', 'gpt-5-mini']);
+      expect(capabilities.models).toEqual(['auto', 'gpt-5']);
     });
 
-    it('returns models=undefined when no events carry model info', async () => {
+    it('never offers a model a session merely RAN on', async () => {
+      // The reported case: `auto` routed to models the account cannot select,
+      // and background work ran on helper models. `--model` refused all of them.
+      setHelpOutput(MODEL_HELP);
+      setSessionStore({
+        'session-uuid-1': [
+          startLine('auto'),
+          JSON.stringify({ type: 'model.turn_started', data: { model: 'helper-nano-1' } }),
+          JSON.stringify({ type: 'assistant.message', data: { model: 'routed-luna-2' } }),
+          JSON.stringify({
+            type: 'session.shutdown',
+            data: { currentModel: 'routed-luna-2', modelMetrics: { 'routed-luna-2': {}, 'helper-nano-1': {} } },
+          }),
+        ].join('\n') + '\n',
+      });
+      const capabilities = await discoverCopilotCapabilities('/usr/bin/copilot');
+      expect(capabilities.models).toEqual(['auto']);
+    });
+
+    it('returns models=undefined when nothing names a model', async () => {
       setHelpOutput('  --model <model> Set model\n');
       setSessionStore({
-        'session-uuid-1': startLine() + '\n',
+        'session-uuid-1': JSON.stringify({ type: 'session.start', data: { sessionId: 'a' } }) + '\n',
       });
       const capabilities = await discoverCopilotCapabilities('/usr/bin/copilot');
       expect(capabilities.models).toBeUndefined();

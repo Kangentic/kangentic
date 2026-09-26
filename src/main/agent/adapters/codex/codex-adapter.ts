@@ -298,12 +298,16 @@ export class CodexAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
-   * `--sandbox read-only --ask-for-approval never` is Codex's own
-    // read-only non-interactive mode (the `dontAsk` mapping): nothing to
-    // approve, because there is nothing it may change.
+   * `--sandbox read-only` is Codex's read-only mode, and `exec` never asks for
+   * approval, so there is nothing to approve and nothing it may change.
+   *
+   * No `--ask-for-approval`: it is an interactive flag that `codex exec`
+   * rejects, so the shipped call failed before it reached the model.
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -317,9 +321,8 @@ export class CodexAdapter implements AgentAdapter {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error, and the absence of the flag is what
-      // "the agent's own default" means to the CLI.
-      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ask-for-approval', 'never', ...(model ? ['--model', model] : [])],
+      // empty value is an error.
+      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
     });

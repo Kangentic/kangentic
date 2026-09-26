@@ -1,4 +1,3 @@
-import * as os from 'node:os';
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { runSearchEverything } from '../../search/search-core';
@@ -8,15 +7,26 @@ import { RetrievalStore } from '../../retrieval/retrieval-store';
 import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { graphService } from '../../retrieval/graph/graph-service';
+import { buildAnswerPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
 import {
-  buildAnswerPrompt, NO_SOURCES_ANSWER, parseAnswerView, parseGrounds, parseSelectedRefs,
-} from '../../retrieval/answer-prompt';
-import { compareByField, taskFieldByKey } from '../../../shared/memory-task-fields';
-import { buildAnswerTaskTable } from '../../retrieval/answer-tasks';
+  buildAnswerTaskTable,
+  taskRef,
+  type AnswerTaskRow,
+  type BoardTaskFacts,
+} from '../../retrieval/answer-tasks';
+import {
+  PASSAGES_SHOWN,
+  searchRelatedWork,
+  type RelatedWork,
+  type RelatedWorkTask,
+} from '../../retrieval/related-work';
+import { watchAnswerSearches } from '../../agent/mcp-http/answer-search-trace';
 import { estimateTokens } from '../../retrieval/token-estimate';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
-import { resolveAnswerAgent } from '../../../shared/answer-agent';
+import { answerSetupGap, resolveAnswerAgent } from '../../../shared/answer-agent';
+import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
+import { ANSWER_CALLER_PREFIX, appendAnswerCaller } from '../../agent/mcp-http/caller-url';
 import type {
   SearchHit,
   SearchRequest,
@@ -25,9 +35,17 @@ import type {
   MemoryGraphQueryResult,
   MemoryGraphQueryHit,
   MemoryGraphAnswerResult,
+  MemoryAnswerContext,
   MemoryAnswerStreamEvent,
+  MemoryRelatedTask,
   Project,
 } from '../../../shared/types';
+
+/** Earlier turns a follow-up carries. More than this and the prompt pays for
+ *  history the question almost never needs. */
+const HISTORY_TURNS = 3;
+/** How long a question waits for its embedding before searching by keyword alone. */
+const RELATED_EMBED_WAIT_MS = 5_000;
 
 /** Conversations a graph query may match. See the call site for why it is high. */
 const GRAPH_QUERY_LIMIT = 300;
@@ -40,6 +58,34 @@ const RELATED_OVERFETCH = 24;
 /** Shown. Short enough to read at a glance while reading the task. */
 const RELATED_RESULT_COUNT = 5;
 import type { IpcContext } from '../ipc-context';
+
+/**
+ * Every board task with its facts, for the Memory Graph's task table. Empty
+ * when the project database cannot be read, which leaves the table to the
+ * indexed conversations rather than failing the question.
+ */
+function readBoardTasks(projectId: string): BoardTaskFacts[] {
+  try {
+    return new RetrievalStore(getProjectDb(projectId)).boardTaskFacts().map((task) => {
+      const lastActivityMs = task.lastActivity ? Date.parse(task.lastActivity) : Number.NaN;
+      return {
+        taskId: task.taskId,
+        displayId: task.displayId,
+        title: task.title,
+        outcome: task.outcome,
+        sessions: task.sessions,
+        costUsd: task.costUsd,
+        durationMs: task.durationMs,
+        tokens: task.tokens,
+        lastActivityMs: Number.isNaN(lastActivityMs) ? null : lastActivityMs,
+        agent: task.agent,
+        model: task.model,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
 
 /**
  * IPC handler for the renderer-side global search palette (Ctrl+Shift+F).
@@ -172,20 +218,19 @@ export function registerSearchHandlers(context: IpcContext): void {
   );
 
   /**
-   * Ask: an agent answers a question FROM the retrieved conversations.
+   * Ask: find the work a question is about, show it, and have an agent answer.
    *
-   * The half of this surface search cannot do. Search is a retrieval tool and
-   * answers a retrieval question; asked a real question ("why did we drop the
-   * sphere fit?") it correctly returns every conversation about sphere fits and
-   * leaves the reading to you. There is no relevance floor that would fix that,
-   * because the score the UI could threshold on is RRF, which is purely ordinal
-   * and carries no similarity at all.
-   *
-   * So the retrieval is IDENTICAL to the map's own search - the same
-   * `searchConversationMemory`, the same fusion, the same one-hit-per-
-   * conversation collapse - and the only new thing is that the passages behind
-   * those hits go to an agent with the question and a rule that it may use
-   * nothing else.
+   * The pipeline the user watches:
+   * 1. The answering agent is resolved and checked first, so a question that
+   *    cannot run costs no retrieval.
+   * 2. The related work is found locally (`searchRelatedWork`, well under a
+   *    second) inside the map's filters, and pushed as a `set` event BEFORE the
+   *    agent starts, so the map lights while the CLI is still booting.
+   * 3. The agent reads the whole board, the related work and the chat so far,
+   *    answers in prose, and may search again; each search is pushed as a
+   *    `search` event from the server side of the tool.
+   * 4. The refs it wrote come back as source rows, resolved here because the
+   *    ref-to-task mapping is this table's and nothing else should know it.
    *
    * Deliberately NOT routed through `spawnAgent`: this never touches
    * `executeTransition`, `resumeSuspendedSession` or `sessionManager.spawn`, so
@@ -206,6 +251,7 @@ export function registerSearchHandlers(context: IpcContext): void {
       // moved past are dropped rather than appended to the next one. Defaulted
       // for callers that do not stream (the harness, an older renderer).
       requestId: string = '',
+      answerContext: MemoryAnswerContext = {},
     ): Promise<MemoryGraphAnswerResult> => {
       try {
         const trimmed = (question ?? '').trim();
@@ -219,29 +265,35 @@ export function registerSearchHandlers(context: IpcContext): void {
         const { agentRegistry } = await import('../../agent/agent-registry');
         const config = context.configManager.load();
 
-        // The agent is resolved and CHECKED before any retrieval runs. Doing the
-        // search first would spend real work on a question that cannot be
-        // answered, and then report the CLI failure as if the search had failed.
-        //
-        // Resolved through the SHARED chain the renderer uses to decide whether
-        // to offer Ask and whose name to print, so the button can never name one
-        // agent while a different one replies.
-        const resolved = resolveAnswerAgent({
-          agents: agentRegistry.list().flatMap((name) => {
-            const entry = agentRegistry.get(name);
-            return entry
-              ? [{
-                name,
-                displayName: entry.displayName,
-                supportsAnswerFromContext: typeof entry.answerFromContext === 'function',
-              }]
-              : [];
-          }),
-          configured: config.memory?.answerAgent ?? null,
-          projectAgent: project.default_agent,
+        // Resolved through the SHARED rule the renderer uses to decide whether
+        // a question runs or goes to Settings > Memory first, so the two can
+        // never disagree. The rule is explicit: the configured agent and model,
+        // with no fallback to the project's agent or to any capable one.
+        const agents = agentRegistry.list().flatMap((name) => {
+          const entry = agentRegistry.get(name);
+          return entry
+            ? [{
+              name,
+              displayName: entry.displayName,
+              supportsAnswerFromContext: typeof entry.answerFromContext === 'function',
+              answerCapabilities: entry.answerCapabilities,
+            }]
+            : [];
         });
-        if (!resolved) return { ok: false, reason: 'no installed agent can answer questions' };
-        const agentName = resolved.name;
+        const configuredAgent = config.memory?.answerAgent ?? null;
+        const configuredModel = config.memory?.answerModel ?? null;
+        const setup = answerSetupGap({ agents, configured: configuredAgent, configuredModel });
+        if (setup) {
+          return {
+            ok: false,
+            setup,
+            reason: setup === 'agent'
+              ? 'choose an answering agent in Settings > Memory'
+              : 'choose an answering model in Settings > Memory',
+          };
+        }
+        const resolved = resolveAnswerAgent({ agents, configured: configuredAgent });
+        const agentName = resolved?.name ?? '';
         const adapter = agentRegistry.get(agentName);
         if (!adapter?.answerFromContext) {
           return { ok: false, reason: `unknown agent: ${agentName}` };
@@ -251,169 +303,215 @@ export function registerSearchHandlers(context: IpcContext): void {
           return { ok: false, reason: `${adapter.displayName} CLI not found` };
         }
 
-        // The board half: EVERY task, not a retrieved subset. This is what makes
-        // "which tasks are X" and "what was the most expensive" answerable at
+        // The board: EVERY task inside the map's filters, not a retrieved
+        // subset. This is what makes "what was the most expensive" answerable at
         // all - an agent shown 24 of 347 tasks answers confidently about 24.
         // Read from the cached projection, which is a cheap read by contract.
-        //
-        // The TRANSCRIPT half is no longer retrieved here. It used to be - our
-        // search chose 24 passages before the agent saw the question, and the
-        // agent answered from whatever it was handed with no way to recover
-        // when the retrieval had misjudged. The agent now holds the search tool
-        // itself (`retrieval` below) and pulls passages only when the table
-        // cannot answer, with a query it chose, and again if the first miss.
         const model = resolveEmbeddingModel(config.memory?.embeddingModel);
         const snapshot = graphService.getSnapshot(resolvedProjectId, model.modelTag);
         const projection = snapshot.projection;
-        const taskTable = projection ? buildAnswerTaskTable(projection, granularity) : null;
+        if (!projection) return { ok: false, reason: 'the map is still building' };
+        const scope = answerContext.scopeDocKeys ? new Set(answerContext.scopeDocKeys) : null;
+        const taskTable = buildAnswerTaskTable(projection, granularity, scope, readBoardTasks(resolvedProjectId));
 
         // Answered WITHOUT spawning when there is genuinely nothing to answer
-        // from: no map means no table and no index to search.
-        if (!taskTable || !projection) return { ok: false, reason: 'the map is still building' };
+        // from. Nothing was sent, so zero tokens is the truth, not a gap.
         if (taskTable.rows.length === 0) {
           return {
             ok: true,
             answer: NO_SOURCES_ANSWER,
-            selectedDocKeys: [],
-            taskRefs: [],
-            view: null,
-            grounds: null,
-            // Nothing was sent, so nothing was spent. Zero is the truth here,
-            // not a missing measurement.
+            rows: [],
+            related: [],
+            handedCount: 0,
             promptTokens: 0,
-            taskCount: 0,
             agentName: adapter.displayName,
           };
         }
 
-        // The model is only meaningful for the agent it was chosen against, and
-        // the setting is cleared when the agent changes - but a config written
-        // by an older build, or hand-edited, can still pair them wrongly. Passed
-        // only when the RESOLVED agent is the one the setting names, so a stale
-        // pairing falls back to the agent's default instead of a bad flag.
-        const configuredAnswerModel = config.memory?.answerModel ?? null;
-        const answerModel = config.memory?.answerAgent === agentName ? configuredAnswerModel : null;
+        // Refs as the prompt writes them, both ways.
+        const refByKey = new Map<string, string>();
+        const keyByRef = new Map<string, string>();
+        const rowByKey = new Map<string, AnswerTaskRow>();
+        taskTable.rows.forEach((row, index) => {
+          const ref = taskRef(row, index);
+          refByKey.set(row.key, ref);
+          keyByRef.set(ref, row.key);
+          rowByKey.set(row.key, row);
+        });
 
-        const prompt = buildAnswerPrompt(trimmed, { tasks: taskTable, nowMs: Date.now() });
-        // What this question actually cost to ask, reported rather than
-        // estimated after the fact. Ask spends most of its tokens BEFORE the
-        // agent does anything - a complete task table plus a passage budget -
-        // and none of that was observable from outside, so "make it cheaper"
-        // had no number to move. Same estimator the chunker sizes text with,
-        // so this figure and the index's own token accounting agree.
-        const promptTokens = estimateTokens(prompt);
-
-        // A NEUTRAL directory, not the project.
-        //
-        // Measured: spawning in the project made the CLI load its CLAUDE.md and
-        // every always-on rule - 18,700 tokens on this repo, on every question,
-        // none of which Ask uses. The prompt is self-contained by construction
-        // and the rules say to answer only from what is in it.
-        //
-        // So this is not merely cheaper, it is more correct: project context is
-        // exactly the outside knowledge the prompt forbids drawing on, and
-        // handing it over while forbidding its use is a contradiction the
-        // measured "capital of France" leak was the visible edge of.
-        //
-        // Safe because the answer call has no tools, so there is nothing in a
-        // working directory for it to reach. Verified against the real CLI:
-        // running outside a project needs no trust prompt in print mode.
-        // The ONE tool the agent may reach: Kangentic's own conversation search,
-        // scoped to this project by the URL. Offered only when the MCP server is
-        // up; without it the agent answers from the table alone, which is a
-        // degraded answer rather than a failed one.
-        const retrieval = context.mcpServerHandle
-          ? { url: context.mcpServerHandle.urlForProject(resolvedProjectId), token: context.mcpServerHandle.token }
-          : undefined;
-
-        // Progress goes out as it happens: text as the agent writes it, and a
-        // tool call as it starts, so a multi-turn answer reads as work in
-        // progress rather than a longer spinner. `broadcast` rather than
-        // `webContents.send`, or a detached window never sees a word.
         const emit = (event: MemoryAnswerStreamEvent): void => {
           if (context.mainWindow.isDestroyed()) return;
           broadcast(context.mainWindow, IPC.MEMORY_GRAPH_ANSWER_STREAM, { requestId, ...event });
         };
 
+        // The related work, found before the agent starts. A follow-up searches
+        // the same subject (the earlier questions ride along) and keeps the
+        // tasks the turn before was about, or "of those" has no referent.
+        const history = (answerContext.history ?? []).slice(-HISTORY_TURNS);
+        const previousTurn = history[history.length - 1];
+        const nodesInScope = projection.nodes.filter((node) => !scope || scope.has(node.docKey));
+        // A failed search costs the related work, not the answer: the table
+        // still settles every board question, and the agent can still search.
+        let related: RelatedWork;
+        try {
+          related = await searchRelatedWork({
+            question: trimmed,
+            anchorQuestions: history.map((turn) => turn.question),
+            projectId: resolvedProjectId,
+            nodes: nodesInScope,
+            embedder: retrievalService.getEmbedder(context),
+            pinnedKeys: new Set(previousTurn?.taskKeys ?? []),
+            embedWaitMs: RELATED_EMBED_WAIT_MS,
+          });
+        } catch (error) {
+          console.warn('[memory-graph] related work search failed, answering from the table:', error);
+          related = { ranked: [], handed: [], passages: new Map(), semantic: false, elapsedMs: 0 };
+        }
+        const toWire = (task: RelatedWorkTask): MemoryRelatedTask => ({
+          key: task.key,
+          taskId: task.taskId,
+          displayId: task.displayId,
+          title: task.title,
+          strength: task.strength,
+          docKeys: task.docKeys,
+          passage: task.sessionId ? { sessionId: task.sessionId, turnUuid: task.turnUuid } : null,
+        });
+        const handedWire = related.handed.map(toWire);
+        emit({ kind: 'set', related: handedWire, handedCount: related.handed.length });
+
+        // The ONE tool the agent may reach: Kangentic's own conversation search,
+        // scoped to this project by the URL. Offered only to an agent whose
+        // answer run can use it, and only when the MCP server is up.
+        //
+        // The URL carries an ANSWER caller segment, keyed by the chat: the
+        // server hands such a caller exactly `kangentic_search`
+        // (`buildAnswerMcpServer`) and publishes its searches to the trace.
+        const capabilities = adapter.answerCapabilities;
+        const callerChat = answerContext.chatId || requestId || 'oneshot';
+        const retrieval = context.mcpServerHandle && capabilities?.search
+          ? {
+            url: appendAnswerCaller(context.mcpServerHandle.urlForProject(resolvedProjectId), callerChat),
+            token: context.mcpServerHandle.token,
+          }
+          : undefined;
+
+        const prompt = buildAnswerPrompt(trimmed, {
+          tasks: taskTable,
+          nowMs: Date.now(),
+          related: related.handed.flatMap((task, index) => {
+            const ref = refByKey.get(task.key);
+            if (!ref) return [];
+            return [{
+              ref,
+              title: task.title,
+              strength: task.strength,
+              matches: task.matches,
+              firstMs: task.firstMs,
+              lastMs: task.lastMs,
+              passage: index < PASSAGES_SHOWN && task.bestChunkId !== null
+                ? related.passages.get(task.bestChunkId) ?? null
+                : null,
+              facts: rowByKey.get(task.key) ?? null,
+            }];
+          }),
+          history: history.map((turn) => ({
+            question: turn.question,
+            answer: turn.answer,
+            refs: turn.taskKeys.flatMap((key) => {
+              const ref = refByKey.get(key);
+              return ref ? [ref] : [];
+            }),
+          })),
+          canSearch: retrieval !== undefined,
+        });
+        // What this question cost to ask, reported rather than estimated after
+        // the fact, with the same estimator the chunker sizes text with.
+        const promptTokens = estimateTokens(prompt);
+
+        // The agent's own searches, shown as they happen: a step line in the
+        // chat and rings on the map.
+        const docKeysBySession = new Map<string, string[]>();
+        for (const node of nodesInScope) {
+          if (!node.sessionId) continue;
+          const list = docKeysBySession.get(node.sessionId) ?? [];
+          list.push(node.docKey);
+          docKeysBySession.set(node.sessionId, list);
+        }
+        const stopTrace = retrieval
+          ? watchAnswerSearches(`${ANSWER_CALLER_PREFIX}${callerChat}`, (search) => {
+            emit({
+              kind: 'search',
+              query: search.query,
+              docKeys: search.sessionIds.flatMap((sessionId) => docKeysBySession.get(sessionId) ?? []),
+            });
+          })
+          : () => {};
+
+        // A NEUTRAL directory, not the project, and a fresh one per question.
+        // Measured: spawning in the project made the CLI load its CLAUDE.md and
+        // every always-on rule - 18,700 tokens on this repo per question; Grok
+        // loaded about 100k tokens of instruction files for a one-word reply.
+        // Fresh per question because runs write into it: a prompt file for a CLI
+        // that reads one, a per-run MCP config with the live token.
+        const answerFromContext = adapter.answerFromContext.bind(adapter);
+        const cliPath = info.path;
         let raw: string;
         try {
-          raw = await adapter.answerFromContext(prompt, info.path, os.tmpdir(), answerModel, {
+          raw = await withAnswerRunDirectory((runDirectory) => answerFromContext(prompt, cliPath, runDirectory, configuredModel, {
             retrieval,
             onEvent: (event) => {
               if (event.kind === 'text') emit({ kind: 'text', text: event.text });
               else emit({ kind: 'tool', name: event.name });
             },
-          });
+          }));
         } finally {
+          stopTrace();
           // The stream ends whether the call succeeded or threw, so the renderer
           // is never left holding a partial answer it thinks is still growing.
           emit({ kind: 'done' });
         }
         if (!raw) return { ok: false, reason: 'the agent returned nothing' };
 
-        // A selection answer carries its refs on a trailing line. Resolved back
-        // to docKeys HERE rather than in the renderer, because the ref-to-task
-        // mapping is this table's row order and nothing else should have to know
-        // that. An out-of-range ref is dropped rather than failing the answer:
-        // the prose is still worth showing.
-        //
-        // The view is parsed FIRST so its line is stripped before the ref scan
-        // runs: `VIEW: cost_usd desc` contains no `T<n>`, but a future column
-        // could, and a protocol line is not prose the reader should see either.
-        const { view, text: withoutView } = parseAnswerView(raw);
-        // Grounds come out BEFORE the ref scan, for the same reason the view
-        // does: a quoted table row legitimately contains `T12`, and counting a
-        // ref the answer only quoted would scope the map to a task the prose
-        // never actually named.
-        const { grounds, text: withoutGrounds } = parseGrounds(withoutView);
-        const { refs, mentioned, text: answer } = parseSelectedRefs(withoutGrounds);
-        const docKeysForRefs = (rowRefs: ReadonlyArray<number>): string[] => {
-          const taskIds = new Set(rowRefs
-            .map((ref) => taskTable.rows[ref - 1]?.taskId ?? null)
-            .filter((taskId): taskId is string => taskId !== null));
-          if (taskIds.size === 0) return [];
-          return projection.nodes
-            .filter((node) => node.taskId !== null && taskIds.has(node.taskId))
-            .map((node) => node.docKey);
-        };
-        const selectedDocKeys = docKeysForRefs(refs);
-
-        // Every task the answer NAMED, so `T133` in prose is a control rather
-        // than dead text. Separate from the selection on purpose: naming a task
-        // while explaining something is not the same as saying the map should
-        // scope to it, and conflating them would re-scope the map on every
-        // answer that happens to mention a task.
-        const taskRefs = mentioned.flatMap((ref) => {
-          const row = taskTable.rows[ref - 1];
+        // Rows: the tasks the prose names, in the order named, then the rest of
+        // the selection by strength. A bare `#2` counts only when it resolves to
+        // a task the answer could be about (see `parseAnswerRefs`).
+        const relatedByKey = new Map(related.handed.map((task) => [task.key, task]));
+        const { selected, mentioned, text: answer } = parseAnswerRefs(
+          raw,
+          keyByRef,
+          new Set(relatedByKey.keys()),
+        );
+        const orderedKeys = [
+          ...mentioned,
+          ...selected
+            .filter((key) => !mentioned.includes(key))
+            .sort((left, right) => (relatedByKey.get(right)?.strength ?? 0) - (relatedByKey.get(left)?.strength ?? 0)),
+        ];
+        const rows = orderedKeys.flatMap((key): MemoryRelatedTask[] => {
+          const relatedTask = relatedByKey.get(key);
+          if (relatedTask) return [toWire(relatedTask)];
+          // Selected without the search finding it: a board question ("the
+          // longest task") answered from the table alone.
+          const row = rowByKey.get(key);
           if (!row) return [];
-          const docKeys = docKeysForRefs([ref]);
-          if (docKeys.length === 0) return [];
-          // EVERY fact the prompt showed, not a hand-picked four. `title` and
-          // `taskId` are the row's own; the rest is the same `MemoryTaskFacts`
-          // the table was generated from, spread wholesale so a new column
-          // cannot reach the agent without also reaching the rail.
-          const { taskId: _taskId, title, ...facts } = row;
-          return [{ ref, title, docKeys, ...facts }];
+          return [{
+            key: row.key,
+            taskId: row.taskId,
+            displayId: row.displayId,
+            title: row.title,
+            strength: 1,
+            docKeys: row.docKeys,
+            passage: null,
+          }];
         });
-
-        // Ordered as the answer asked. Falls back to the order the tasks were
-        // NAMED IN, which `parseSelectedRefs` preserves - the one order that
-        // can never look wrong, because it is the order the reader has already
-        // seen in the prose above the rail.
-        const orderField = view?.order ? taskFieldByKey(view.order.key) : null;
-        if (orderField && view?.order) {
-          taskRefs.sort(compareByField(orderField, view.order.direction));
-        }
 
         return {
           ok: true,
           answer,
-          selectedDocKeys,
-          taskRefs,
-          view,
-          grounds,
+          rows,
+          related: handedWire,
+          handedCount: related.handed.length,
           promptTokens,
-          taskCount: taskTable.rows.length,
           agentName: adapter.displayName,
         };
       } catch (error) {

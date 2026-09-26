@@ -14,8 +14,9 @@ import {
   buildAnswerTaskTable,
   formatTaskTable,
   MAX_TASK_ROWS,
+  taskRef,
 } from '../../src/main/retrieval/answer-tasks';
-import { wantsTaskSelection, parseSelectedRefs } from '../../src/main/retrieval/answer-prompt';
+import { parseAnswerRefs } from '../../src/main/retrieval/answer-prompt';
 import type { MemoryGraphNode, MemoryGraphProjection } from '../../src/shared/types';
 
 function node(overrides: Partial<MemoryGraphNode> & { docKey: string }): MemoryGraphNode {
@@ -164,72 +165,112 @@ describe('rolling conversations up into tasks', () => {
   });
 });
 
-describe('selection questions', () => {
-  it('recognises a question asking WHICH tasks', () => {
-    expect(wantsTaskSelection('Show me the tasks related to terminal bug fixes')).toBe(true);
-    expect(wantsTaskSelection('which tasks were abandoned?')).toBe(true);
-    expect(wantsTaskSelection('list the work on mobile relay')).toBe(true);
+describe('board tasks with no indexed conversation', () => {
+  function boardTask(taskId: string, displayId: number, title: string, costUsd: number | null = null) {
+    return {
+      taskId, displayId, title, costUsd,
+      sessions: 2, durationMs: null, tokens: null, outcome: 'done' as const,
+      lastActivityMs: Date.UTC(2025, 1, 1), agent: 'claude', model: null,
+    };
+  }
+
+  it('still gets a row, so the table the prompt calls complete is complete', () => {
+    // The reported case: "how many adapters did we add?" answered two, because
+    // four of the tasks that added one had no indexed conversation and were
+    // missing from a table the agent was told held every task.
+    const table = buildAnswerTaskTable(projection([
+      node({ docKey: 'a', taskId: 't-indexed', displayId: 509, title: 'Add support for Antigravity' }),
+    ]), 'balanced', null, [
+      boardTask('t-indexed', 509, 'Add support for Antigravity'),
+      boardTask('t-old', 14, 'Add support for OpenCode agent', 3.5),
+    ]);
+
+    expect(table.rows.map((row) => row.displayId).sort()).toEqual([14, 509]);
+    const old = table.rows.find((row) => row.taskId === 't-old');
+    expect(old).toMatchObject({ key: 't-old', docKeys: [], sessions: 2, costUsd: 3.5, region: null });
+    // Its date widens the table's span, which the prompt states.
+    expect(table.earliestMs).toBe(Date.UTC(2025, 1, 1));
+    // The indexed task keeps its conversation-derived row rather than a copy.
+    expect(table.rows.filter((row) => row.displayId === 509)).toHaveLength(1);
+    expect(table.rows.find((row) => row.displayId === 509)?.docKeys).toEqual(['a']);
   });
 
-  it('leaves an explanation question alone', () => {
-    // These want prose. Adding the selection line would ask for a trailing
-    // SELECTED: on an answer that has nothing to select.
-    expect(wantsTaskSelection('Why did we drop the sphere fit?')).toBe(false);
-    expect(wantsTaskSelection('How does the activity engine decide idle?')).toBe(false);
+  it('is left out when the map is filtered, since filters select conversations', () => {
+    const table = buildAnswerTaskTable(projection([
+      node({ docKey: 'a', taskId: 't-indexed', displayId: 509 }),
+    ]), 'balanced', new Set(['a']), [boardTask('t-old', 14, 'Add support for OpenCode agent')]);
+    expect(table.rows.map((row) => row.displayId)).toEqual([509]);
+  });
+});
+
+describe('naming tasks by ticket', () => {
+  it('refs a task by its board ticket, and an orphan conversation as C<n>', () => {
+    const table = buildAnswerTaskTable(projection([
+      node({ docKey: 'a', taskId: 't1', displayId: 529, costUsd: 9 }),
+      node({ docKey: 'b', taskId: null, costUsd: 5 }),
+    ]), 'balanced');
+    expect(table.rows.map((row, index) => taskRef(row, index))).toEqual(['#529', 'C2']);
+    // The table prints the same ref the prose will use, so the agent reads a
+    // ticket and writes back the same one.
+    expect(formatTaskTable(table)).toContain('\n#529|');
+  });
+});
+
+describe('reading the tasks an answer is about', () => {
+  // Refs as the prompt wrote them, mapped to task keys.
+  const resolvable = new Map([
+    ['#378', 'task:378'],
+    ['#377', 'task:377'],
+    ['#2', 'task:2'],
+    ['C4', 'conversation:4'],
+  ]);
+  const related = new Set(['task:378', 'task:377', 'conversation:4']);
+
+  it('parses the SELECTED line and strips it from the prose', () => {
+    const { selected, text } = parseAnswerRefs('#378 cost the most.\nSELECTED: #378, #377, #378', resolvable, related);
+    // Deduped, in the order written: a repeated ref would render a duplicate row.
+    expect(selected).toEqual(['task:378', 'task:377']);
+    expect(text).toBe('#378 cost the most.');
   });
 
-  it('parses the selected refs and strips the machinery from the prose', () => {
-    const { refs, text } = parseSelectedRefs('Terminal and PTY work.\nSELECTED: T3, T17, T3, T9');
-    // Deduped and ordered: a repeated ref would render a duplicate card.
-    expect(refs).toEqual([3, 9, 17]);
-    // The reader never sees the protocol line.
-    expect(text).toBe('Terminal and PTY work.');
+  it('collects tasks named inline, in first-mention order', () => {
+    // First-mention order is the order the reader has already seen in the
+    // prose, so it is the one order the rows can never contradict.
+    const { mentioned } = parseAnswerRefs('Mostly #377, then #378 and C4.', resolvable, related);
+    expect(mentioned).toEqual(['task:377', 'task:378', 'conversation:4']);
   });
 
-  it('collects refs the answer named INLINE, with no protocol line at all', () => {
-    // The case measured against a real agent: asked to describe mobile work it
-    // wrote an essay naming 22 tasks as `T133` and never emitted SELECTED. Those
-    // refs were real and rendered as dead text, so they are parsed out of the
-    // prose rather than only out of a format the model may decline to use.
-    const answer = 'Mobile work spans T133 Phase 1, T84 Phase 2, and T323 the protocol package.';
-    const { refs, mentioned } = parseSelectedRefs(answer);
-    // No SELECTED line, so nothing is claimed as a selection...
-    expect(refs).toEqual([]);
-    // ...but every named task is still resolvable, in FIRST-MENTION order.
-    //
-    // The order is the assertion, not incidental. It is what the rail falls
-    // back to when the answer names no ranking column, and it is the one order
-    // that can never look wrong, because it is the order the reader has already
-    // seen in the prose. Sorting numerically - as this did - sorted by the
-    // prompt table's row order, which is COST order, so every question that was
-    // not about cost got a cost ranking it never asked for.
-    expect(mentioned).toEqual([133, 84, 323]);
+  it('does not trust a bare number that is not a task the answer could be about', () => {
+    // "step #2" resolves to a real ticket, but that task is neither related
+    // work nor selected, so it is prose, not a claim about task 2.
+    const { mentioned } = parseAnswerRefs('Run step #2 before #378.', resolvable, related);
+    expect(mentioned).toEqual(['task:378']);
   });
 
-  it('does not mistake a T inside an identifier for a task ref', () => {
-    // Word-bounded, or `T1` in a token like `WT12` would light a random task.
-    const { mentioned } = parseSelectedRefs('The WT12 branch and PART3 both changed.');
+  it('trusts a task the SELECTED line names, even outside the related work', () => {
+    const { mentioned } = parseAnswerRefs('Only #2 applies.\nSELECTED: #2', resolvable, related);
+    expect(mentioned).toEqual(['task:2']);
+  });
+
+  it('ignores a ref the table never wrote', () => {
+    const { selected, mentioned } = parseAnswerRefs('#999 did it.\nSELECTED: #999', resolvable, related);
+    expect(selected).toEqual([]);
     expect(mentioned).toEqual([]);
   });
 
-  it('counts a task named only in the protocol line as mentioned', () => {
-    // The line is a statement about the answer, not decoration on the prose, so
-    // a ref that appears nowhere else still has to resolve.
-    const { refs, mentioned } = parseSelectedRefs('Two matched.\nSELECTED: T4, T8');
-    expect(refs).toEqual([4, 8]);
-    expect(mentioned).toEqual([4, 8]);
+  it('does not mistake part of a longer token for a ref', () => {
+    const { mentioned } = parseAnswerRefs('The ABC4 flag and ##378 changed.', resolvable, related);
+    expect(mentioned).toEqual([]);
   });
 
-  it('treats "none" as an empty selection rather than a parse failure', () => {
-    const { refs, mentioned, text } = parseSelectedRefs('Nothing matched.\nSELECTED: none');
-    expect(refs).toEqual([]);
-    expect(mentioned).toEqual([]);
+  it('treats "none" as an empty selection', () => {
+    const { selected, text } = parseAnswerRefs('Nothing matched.\nSELECTED: none', resolvable, related);
+    expect(selected).toEqual([]);
     expect(text).toBe('Nothing matched.');
   });
 
   it('returns the answer untouched when there is no selection line', () => {
-    // An ordinary answer must survive the parser completely unchanged.
-    const answer = 'We dropped it because a sphere circumscribes [2].';
-    expect(parseSelectedRefs(answer)).toEqual({ refs: [], mentioned: [], text: answer });
+    const answer = 'We dropped it because a sphere circumscribes.';
+    expect(parseAnswerRefs(answer, resolvable, related)).toEqual({ selected: [], mentioned: [], text: answer });
   });
 });

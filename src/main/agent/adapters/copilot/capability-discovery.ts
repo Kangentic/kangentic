@@ -14,9 +14,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   listMostRecentDirs,
-  readTailBytes,
+  readHeadBytes,
   parseJsonlRecords,
-  SESSION_SCAN_HEAD_BYTES,
 } from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
@@ -50,13 +49,15 @@ async function readHelpText(cliPath: string): Promise<string> {
  * Returns capabilities object with booleans indicating support.
  * Always returns a complete object with all required fields.
  */
-async function detectStaticCapabilities(cliPath: string): Promise<AgentCapabilities> {
+async function detectStaticCapabilities(
+  cliPath: string,
+): Promise<AgentCapabilities & { offersAutoModel: boolean }> {
   let helpText: string;
   try {
     helpText = await readHelpText(cliPath);
   } catch {
     // Help parsing failure - return conservative defaults
-    return { supportsModelOverride: false, effortLevels: [] };
+    return { supportsModelOverride: false, effortLevels: [], offersAutoModel: false };
   }
 
   let supportsModelOverride = false;
@@ -66,6 +67,8 @@ async function detectStaticCapabilities(cliPath: string): Promise<AgentCapabilit
   if (/--model\s+<[^>]+>/.test(helpText)) {
     supportsModelOverride = true;
   }
+  // The help names one model value itself: "use 'auto' to let Copilot pick".
+  const offersAutoModel = supportsModelOverride && /use\s+['"]auto['"]/i.test(helpText);
 
   // Check for --reasoning-effort or --effort flag. Copilot's help uses
   // commander.js's `(choices: "low", "medium", "high", "xhigh")` format
@@ -86,19 +89,25 @@ async function detectStaticCapabilities(cliPath: string): Promise<AgentCapabilit
     }
   }
 
-  return { supportsModelOverride, effortLevels };
+  return { supportsModelOverride, effortLevels, offersAutoModel };
 }
 
+/** `session.start` is the first line of a session's log, so this is plenty. */
+const SESSION_START_HEAD_BYTES = 64 * 1024;
+
 /**
- * Scan Copilot's per-session events.jsonl for observed models. Sessions
- * are stored under `~/.copilot/session-state/<sessionId>/events.jsonl`
- * (verified empirically against copilot 1.0.39). The model surfaces in:
- *   - `session.shutdown` events: `data.currentModel`, `data.modelMetrics`
- *     (object keyed by model name)
- *   - Per-turn events with `data.model` or similar
+ * Scan Copilot's per-session events.jsonl for the models the user CHOSE.
+ * Sessions are stored under `~/.copilot/session-state/<sessionId>/events.jsonl`.
  *
- * Bounded to the most-recent 10 sessions x 256KB head per file so the
- * scan runs quickly even on heavy users.
+ * Only `session.start`'s `selectedModel`, which is what `--model` was given.
+ * The models a session RAN on are a different list and must not be offered:
+ * `auto` routes to models the account cannot select by name, and background
+ * work (titles, compaction) runs on helper models, so `currentModel`,
+ * `modelMetrics` and per-turn `model` all name models that `--model` then
+ * refuses. Measured on one account: every session selected `auto`, and the
+ * logs named six models, none of which that account could pick.
+ *
+ * Bounded to the most-recent 10 sessions, head only.
  */
 async function scanCopilotSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
@@ -107,28 +116,15 @@ async function scanCopilotSessionHistory(): Promise<string[]> {
 
   for (const sessionDir of sessionDirs) {
     const eventsPath = path.join(sessionDir.fullPath, 'events.jsonl');
-    // Read from the END of the file rather than the start: Copilot's
-    // session.shutdown event (which carries currentModel and modelMetrics)
-    // lands at the tail, while the head holds setup chatter that does not name
-    // a model. readTailBytes drops the truncated first line for us.
-    const text = await readTailBytes(eventsPath, SESSION_SCAN_HEAD_BYTES);
+    const text = await readHeadBytes(eventsPath, SESSION_START_HEAD_BYTES);
     if (text.length === 0) continue;
-    for (const record of parseJsonlRecords(text, false)) {
+    for (const record of parseJsonlRecords(text, true)) {
+      if (record.type !== 'session.start') continue;
       const data = record.data;
       if (!data || typeof data !== 'object') continue;
-      const dataRecord = data as Record<string, unknown>;
-      if (typeof dataRecord.currentModel === 'string' && dataRecord.currentModel.length > 0) {
-        modelSet.add(dataRecord.currentModel);
-      }
-      if (typeof dataRecord.model === 'string' && dataRecord.model.length > 0) {
-        modelSet.add(dataRecord.model);
-      }
-      // `modelMetrics` is an object keyed by model name; harvest its keys.
-      if (dataRecord.modelMetrics && typeof dataRecord.modelMetrics === 'object') {
-        for (const key of Object.keys(dataRecord.modelMetrics)) {
-          if (key.length > 0) modelSet.add(key);
-        }
-      }
+      const selected = (data as Record<string, unknown>).selectedModel;
+      if (typeof selected === 'string' && selected.length > 0) modelSet.add(selected);
+      break;
     }
   }
 
@@ -140,21 +136,23 @@ async function scanCopilotSessionHistory(): Promise<string[]> {
  * Returns:
  * - supportsModelOverride: true if --model flag is supported
  * - effortLevels: array of effort level strings (or empty if not supported)
- * - models: list of models seen in `~/.copilot/session-state/*` (best-effort)
+ * - models: `auto` when the help names it, then the models the user has
+ *   selected in `~/.copilot/session-state/*` (best-effort)
  *
  * Best-effort: always returns a capabilities object even if detection partially fails.
  */
 export async function discoverCopilotCapabilities(cliPath: string): Promise<AgentCapabilities> {
-  const staticCapabilities = await detectStaticCapabilities(cliPath);
+  const { offersAutoModel, ...staticCapabilities } = await detectStaticCapabilities(cliPath);
   if (!staticCapabilities.supportsModelOverride) {
     return staticCapabilities;
   }
-  let models: string[] = [];
+  let selected: string[] = [];
   try {
-    models = await scanCopilotSessionHistory();
+    selected = await scanCopilotSessionHistory();
   } catch {
     // Best-effort - leave models empty on any failure.
   }
+  const models = offersAutoModel ? ['auto', ...selected.filter((model) => model !== 'auto')] : selected;
   return {
     ...staticCapabilities,
     models: models.length > 0 ? models : undefined,

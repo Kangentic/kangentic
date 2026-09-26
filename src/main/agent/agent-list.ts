@@ -61,6 +61,7 @@ async function buildAgentList(
         pastedImageReferenceTemplate: adapter.pastedImageReferenceTemplate,
         supportsSummarize: typeof adapter.summarize === 'function',
         supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
+        answerCapabilities: adapter.answerCapabilities,
         capabilities,
         remoteExecution: adapter.remoteExecution?.info,
         launchOptions: adapter.launchOptions,

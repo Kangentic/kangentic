@@ -342,10 +342,20 @@ export class CursorAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
-   * Cursor takes the prompt positionally after `-p`, not on stdin.
+   * Three things the shipped call got wrong, each measured:
+   * - Read-only is `--mode ask`. `-p` alone "has access to all tools, including
+   *   write and shell" (the CLI's own help); ask mode refused both a file write
+   *   and a shell command in the probe.
+   * - `--trust`, or a directory Cursor has not seen blocks on a trust prompt no
+   *   headless run can answer.
+   * - The prompt is PIPED, not positional. An answer prompt runs to about 50k
+   *   characters, past the Windows command-line limit, and `-p` reads a piped
+   *   prompt (measured: a 61,584-character prompt answered from its middle row).
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -359,16 +369,16 @@ export class CursorAdapter implements AgentAdapter {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error, and the absence of the flag is what
-      // "the agent's own default" means to the CLI.
-      //
-      // It goes BEFORE the print flag, because `promptVia: 'arg'` appends the
-      // prompt as the final positional argument - anything after `-p` would be
-      // read as the prompt, and the real prompt as a stray trailing arg.
-      args: ['--output-format', 'text', ...(model ? ['--model', model] : []), '-p'],
+      // empty value is an error.
+      args: [
+        '--trust',
+        '--mode', 'ask',
+        '--output-format', 'text',
+        ...(model ? ['--model', model] : []),
+        '-p',
+      ],
       prompt,
       cwd,
-      promptVia: 'arg',
     });
   }
 

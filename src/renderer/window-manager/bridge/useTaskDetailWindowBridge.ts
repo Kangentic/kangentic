@@ -96,7 +96,10 @@ export function useTaskDetailWindowBridge(): void {
     const board = useBoardStore.getState();
     const task = board.tasks.find((candidate) => candidate.id === taskId)
       ?? board.archivedTasks.find((candidate) => candidate.id === taskId);
-    if (!task) return; // task not loaded yet; a later board load re-fires this effect
+    // Not loaded: `openWhenLoaded` fetches the full archive for a finished task
+    // older than the board's preview before calling this, so what is left is a
+    // task that no longer exists.
+    if (!task) return;
 
     const session = useSessionStore.getState();
     // Baseline for auto-close: a task opened while already Done/archived (e.g. from
@@ -135,6 +138,33 @@ export function useTaskDetailWindowBridge(): void {
     // leaves nothing behind, with no ordering to get right.
   }, []);
 
+  /**
+   * `openWindowFor`, after making sure the board holds the task.
+   *
+   * The board loads only the newest few finished tasks until something asks for
+   * the rest, so a finished task older than that preview was not there, and the
+   * window silently never opened: on a preview mirroring a real board, 657 of 672
+   * finished tasks could not be opened from Quick Find or the Memory Graph.
+   * A task that is loaded opens synchronously, exactly as before.
+   */
+  const openWhenLoaded = useCallback((projectId: string, taskId: string): void => {
+    const board = useBoardStore.getState();
+    const inThisProject = (useProjectStore.getState().currentProject?.id ?? null) === projectId;
+    const loaded = board.tasks.some((candidate) => candidate.id === taskId)
+      || board.archivedTasks.some((candidate) => candidate.id === taskId);
+    if (!inThisProject || loaded || board.archivedFullyLoaded) {
+      openWindowFor(projectId, taskId);
+      return;
+    }
+    void board.loadArchivedTasks()
+      .catch(() => undefined)
+      .then(() => {
+        // A project switch while the archive loaded makes this a stale request.
+        if ((useProjectStore.getState().currentProject?.id ?? null) !== projectId) return;
+        openWindowFor(projectId, taskId);
+      });
+  }, [openWindowFor]);
+
   // Main asking the BOARD to mount a detail. The only path that opens one here.
   // The host filter matters: the monitor's layer lives in this same renderer and
   // listens to the same channel, so an unfiltered handler would have both mount.
@@ -143,9 +173,9 @@ export function useTaskDetailWindowBridge(): void {
     if (!ownership?.onOpenHere) return;
     return ownership.onOpenHere((projectId, taskId, host) => {
       if (host !== 'board') return;
-      openWindowFor(projectId, taskId);
+      openWhenLoaded(projectId, taskId);
     });
-  }, [openWindowFor]);
+  }, [openWhenLoaded]);
 
   // Main asking the board to let go, because the monitor took this task.
   useEffect(() => {
@@ -174,7 +204,7 @@ export function useTaskDetailWindowBridge(): void {
     if (!ownership?.requestOpen) {
       // No arbiter available (an old preload). Mount locally rather than making
       // the board's primary interaction silently dead.
-      openWindowFor(projectId, detailTaskId);
+      openWhenLoaded(projectId, detailTaskId);
       return;
     }
     void ownership.requestOpen(projectId, detailTaskId, 'board').then((destination) => {
@@ -188,7 +218,7 @@ export function useTaskDetailWindowBridge(): void {
     }).catch((error) => {
       console.error('[task-detail] Failed to resolve where to open:', error);
     });
-  }, [detailTaskId, openWindowFor]);
+  }, [detailTaskId, openWhenLoaded]);
 
   // Mirror window closure back to the signal: when the detail window we opened is
   // gone (the user closed it via the title bar / Escape), clear `detailTaskId`.

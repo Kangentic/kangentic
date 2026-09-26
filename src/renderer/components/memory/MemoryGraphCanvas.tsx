@@ -96,7 +96,21 @@ export interface MemoryGraphCanvasProps {
    * is a question the camera flies to and returns from. Reset view frames this.
    */
   framingIndices?: ReadonlyArray<number> | null;
+  /**
+   * How strongly each lit node relates to the question, 0..1. A lit node with
+   * no entry draws at full strength, so a caller that only scopes stays as it was.
+   */
+  strengths?: ReadonlyMap<number, number>;
+  /** Nodes the agent's own searches found, drawn with a white ring. */
+  ringed?: ReadonlySet<number>;
 }
+
+/** The dimmest a lit node draws: a weak relation, still readable as lit. */
+const WEAKEST_LIT_ALPHA = 0.3;
+/** Size multiplier for a ringed node. */
+const RINGED_SCALE = 1.35;
+/** Below this strength a lit node draws as a dot, without a title or a region pill. */
+const LABEL_MIN_STRENGTH = 0.5;
 
 /**
  * Alpha for everything outside an active search or filter.
@@ -306,6 +320,8 @@ export function MemoryGraphCanvas({
   granularity = DEFAULT_GRANULARITY,
   chromeInsets,
   framingIndices = null,
+  strengths,
+  ringed,
 }: MemoryGraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -903,26 +919,45 @@ export function MemoryGraphCanvas({
       // that filter or a search DOES light one, it goes back to full strength,
       // because at that point it is the answer rather than background.
       const isolated = degrees[index] === 0 && !isLit && !isSelected && !isHovered;
-      const alpha = hasHighlight && !isLit && !isSelected
-        ? HIDDEN_ALPHA
-        : isolated ? ISOLATED_ALPHA : 1;
-      return { color, scale, alpha };
+      // A lit node's strength is how closely it relates to the question, so the
+      // related set reads as a gradient toward the tasks the answer is about.
+      const strength = isLit ? strengths?.get(index) : undefined;
+      let alpha: number;
+      if (hasHighlight && !isLit && !isSelected) alpha = HIDDEN_ALPHA;
+      else if (strength !== undefined && !isSelected && !isHovered) {
+        alpha = WEAKEST_LIT_ALPHA + (1 - WEAKEST_LIT_ALPHA) * Math.max(0, Math.min(1, strength));
+      } else alpha = isolated ? ISOLATED_ALPHA : 1;
+      const ring = isLit && ringed?.has(index) ? 1 : 0;
+      // A ringed node is one the reader should find first, so it also draws larger.
+      return { color, scale: ring ? scale * RINGED_SCALE : scale, alpha, ring };
     });
   }, [
     projection.nodes, highlighted, selectedIndex, hoveredIndex, colorMode,
     recencyRank, lengthRank, durationRank, costRank, degrees, maxDegree, regionOf,
-    accentColor,
+    accentColor, strengths, ringed,
   ]);
 
   useEffect(() => {
     // Recomputed alongside the styles, from the same alphas the scene gets, so a
     // label can never disagree with whether its region is drawn.
+    const drawn: number[] = [];
+    for (let index = 0; index < styles.length; index += 1) {
+      if (styles[index].alpha > 0) drawn.push(index);
+    }
+    // A weakly related node is context: a dot, with no title and no say in
+    // which regions get a pill. Every lit node used to label itself and its
+    // region, so tasks the answer never mentioned named half the map. Kept when
+    // nothing stronger is drawn, or the map would lose every label at once.
+    const prominent = drawn.filter(
+      (index) => index === selectedIndex || (strengths?.get(index) ?? 1) >= LABEL_MIN_STRENGTH,
+    );
+    const labelled = prominent.length > 0 ? prominent : drawn;
+
     const visibleNodes = new Set<number>();
     // Running sum per region, so a pill lands on the conversations it still has
     // rather than on the middle of where its region used to be.
     const centroids = new Map<number, { x: number; y: number; z: number; count: number }>();
-    for (let index = 0; index < styles.length; index += 1) {
-      if (styles[index].alpha <= 0) continue;
+    for (const index of labelled) {
       visibleNodes.add(index);
       const node = projection.nodes[index];
       const region = regionOf(node);
@@ -956,7 +991,7 @@ export function MemoryGraphCanvas({
 
     graph.scene?.setNodeStyles(styles);
     requestRender();
-  }, [styles, projection.nodes, graph.scene, requestRender, regionOf]);
+  }, [styles, projection.nodes, graph.scene, requestRender, regionOf, strengths, selectedIndex]);
 
   useEffect(() => {
     graph.scene?.setEdgeOpacity(showEdges ? 0.14 : 0);

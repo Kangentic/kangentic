@@ -58,6 +58,11 @@ export const MAX_TASK_ROWS = 1_200;
 export interface AnswerTaskRow extends MemoryTaskFacts {
   taskId: string | null;
   title: string;
+  /** The task id, or `conversation:<docKey>` for a conversation with no task:
+   *  the same key the related-work rollup uses, so the two join. */
+  key: string;
+  /** The task's conversations in scope, so an answer row can light and open them. */
+  docKeys: string[];
 }
 
 export interface AnswerTaskTable {
@@ -66,9 +71,24 @@ export interface AnswerTaskTable {
   droppedTasks: number;
   /** Conversations behind the rows, which is not the same number. */
   conversationCount: number;
+  /** True when the map's filters narrowed the table, so the prompt can say so. */
+  scoped: boolean;
   /** Oldest and newest activity, so a relative window has an anchor. */
   earliestMs: number | null;
   latestMs: number | null;
+}
+
+/**
+ * A board task as the board records it, conversations or not.
+ *
+ * The table was built from indexed conversations alone, so a task whose
+ * conversations were never indexed (an old task, a pruned transcript) was
+ * missing from a table the prompt calls complete. On this project that hid four
+ * of the tasks that added an agent. These fill it in.
+ */
+export interface BoardTaskFacts extends Omit<MemoryTaskFacts, 'region'> {
+  taskId: string;
+  title: string;
 }
 
 /** Adds a nullable metric without turning "never recorded" into zero. */
@@ -95,6 +115,18 @@ function addMetric(current: number | null, next: number | null): number | null {
 export function buildAnswerTaskTable(
   projection: MemoryGraphProjection,
   granularity: string,
+  /**
+   * The conversations inside the map's filters, or null for all of them. The
+   * filters are the scope of a question, so "the most expensive task" under an
+   * Abandoned filter ranks only the abandoned ones.
+   */
+  scopeDocKeys: ReadonlySet<string> | null = null,
+  /**
+   * Every board task, so one with no indexed conversation still has a row.
+   * Only when unscoped: the filters select conversations, and a task with none
+   * cannot be inside them.
+   */
+  boardTasks: ReadonlyArray<BoardTaskFacts> = [],
 ): AnswerTaskTable {
   const clustering = projection.clusterings.find((entry) => entry.granularity === granularity)
     ?? projection.clusterings[0];
@@ -108,7 +140,10 @@ export function buildAnswerTaskTable(
   let earliestMs: number | null = null;
   let latestMs: number | null = null;
 
+  let conversationCount = 0;
   for (const node of projection.nodes) {
+    if (scopeDocKeys && !scopeDocKeys.has(node.docKey)) continue;
+    conversationCount += 1;
     if (node.lastActivityMs !== null) {
       if (earliestMs === null || node.lastActivityMs < earliestMs) earliestMs = node.lastActivityMs;
       if (latestMs === null || node.lastActivityMs > latestMs) latestMs = node.lastActivityMs;
@@ -120,6 +155,8 @@ export function buildAnswerTaskTable(
     if (!existing) {
       byTask.set(key, {
         taskId: node.taskId,
+        key,
+        docKeys: [node.docKey],
         displayId: node.displayId,
         title: node.title ?? 'Untitled',
         sessions: 1,
@@ -136,6 +173,7 @@ export function buildAnswerTaskTable(
     }
 
     existing.sessions += 1;
+    existing.docKeys.push(node.docKey);
     existing.costUsd = addMetric(existing.costUsd, node.costUsd);
     existing.durationMs = addMetric(existing.durationMs, node.durationMs);
     existing.tokens = addMetric(existing.tokens, node.tokens);
@@ -154,6 +192,17 @@ export function buildAnswerTaskTable(
     if (existing.region === null) existing.region = regionLabel(node);
   }
 
+  if (!scopeDocKeys) {
+    for (const task of boardTasks) {
+      if (byTask.has(task.taskId)) continue;
+      byTask.set(task.taskId, { ...task, key: task.taskId, docKeys: [], region: null });
+      if (task.lastActivityMs !== null) {
+        if (earliestMs === null || task.lastActivityMs < earliestMs) earliestMs = task.lastActivityMs;
+        if (latestMs === null || task.lastActivityMs > latestMs) latestMs = task.lastActivityMs;
+      }
+    }
+  }
+
   // Truncation order only - see the note above. `?? 0` is correct HERE, unlike
   // everywhere else in this file: a task with no recorded cost is exactly the
   // one to drop first when the board does not fit.
@@ -161,10 +210,26 @@ export function buildAnswerTaskTable(
   return {
     rows: all.slice(0, MAX_TASK_ROWS),
     droppedTasks: Math.max(0, all.length - MAX_TASK_ROWS),
-    conversationCount: projection.nodes.length,
+    conversationCount,
+    scoped: scopeDocKeys !== null,
     earliestMs,
     latestMs,
   };
+}
+
+/**
+ * How the prompt names a task: its board ticket, `#561`, which is the mark the
+ * chat renders and the number the user already knows from a card. A
+ * conversation with no board task has no ticket, so it gets `C<n>`, its
+ * position in the table.
+ *
+ * Tickets replaced `T<n>` positions. A position was resolvable but meant
+ * nothing to a reader, so every answer had to be rewritten before it could be
+ * shown, and a `T14` quoted in prose was a different number from the `#561`
+ * on the row beneath it.
+ */
+export function taskRef(row: Pick<AnswerTaskRow, 'displayId'>, index: number): string {
+  return row.displayId != null ? `#${row.displayId}` : `C${index + 1}`;
 }
 
 /**
@@ -179,21 +244,20 @@ export function buildAnswerTaskTable(
  * did not stay in step, which is why an answer could rank tasks by tokens above
  * rows printing dollars. Adding a column is now one catalog entry.
  *
- * Every row is numbered `T<n>` so an answer can name a task the same way it
- * cites an excerpt, and the renderer can map a mentioned task back onto the map.
- * That ref, not the ticket, stays the agent's vocabulary for REFERRING to a
- * task: it is a position in this list, which is what makes it resolvable.
+ * Every row leads with its ref (`taskRef`), so an answer names a task the way
+ * the chat renders it and the renderer can map it back onto the map. The ticket
+ * column is dropped as a separate field, since the ref already is the ticket.
  */
 export function formatTaskTable(table: AnswerTaskTable): string {
   // A field that never varies is stated once in the summary instead of on every
   // row. Measured: `agent` is one distinct value across 350 tasks, so this
   // column alone was 4,200 characters of "Claude Code".
   const collapsed = new Set(constantFields(table.rows).map((field) => field.key));
-  const columns = MEMORY_TASK_FIELDS.filter((field) => !collapsed.has(field.key));
+  const columns = MEMORY_TASK_FIELDS.filter((field) => !collapsed.has(field.key) && field.key !== 'ticket');
 
   const header = ['ref', 'task', ...columns.map((field) => field.key)].join('|');
   const rows = table.rows.map((row, index) => [
-    `T${index + 1}`,
+    taskRef(row, index),
     // The pipe is the delimiter, so a title carrying one would shift a column.
     row.title.replace(/\|/g, '/'),
     ...columns.map((field) => field.cell(row)),
@@ -219,11 +283,11 @@ function topRefs(
   limit: number,
 ): string {
   const ranked = rows
-    .map((row, index) => ({ ref: index + 1, value: field.sortValue(row) }))
+    .map((row, index) => ({ ref: taskRef(row, index), value: field.sortValue(row) }))
     .filter((entry) => entry.value !== null)
     .sort((left, right) => (right.value ?? 0) - (left.value ?? 0))
     .slice(0, limit);
-  return ranked.map((entry) => `T${entry.ref}`).join(' ');
+  return ranked.map((entry) => entry.ref).join(' ');
 }
 
 /**
@@ -274,18 +338,18 @@ export function summarizeTaskTable(table: AnswerTaskTable): string {
     // A dimension: how the corpus is distributed, most common first, and the
     // rare values named by ref so a selection question can find them without
     // reading 350 rows.
-    const counts = new Map<string, number[]>();
+    const counts = new Map<string, string[]>();
     rows.forEach((row, index) => {
       const value = field.cell(row) || '(none)';
       const refs = counts.get(value) ?? [];
-      refs.push(index + 1);
+      refs.push(taskRef(row, index));
       counts.set(value, refs);
     });
     const ordered = [...counts.entries()].sort((left, right) => right[1].length - left[1].length);
     const rendered = ordered.slice(0, 6).map(([value, refs]) => (
       // Fewer than five rows carry it, so naming them costs less than leaving
       // the reader to scan - and it is exactly the "which tasks are X" case.
-      refs.length <= 4 ? `${value} (${refs.map((ref) => `T${ref}`).join(' ')})` : `${value} ${refs.length}`
+      refs.length <= 4 ? `${value} (${refs.join(' ')})` : `${value} ${refs.length}`
     ));
     if (ordered.length > 6) rendered.push(`+${ordered.length - 6} more`);
     lines.push(`${field.key}: ${rendered.join(', ')}`);
@@ -312,5 +376,12 @@ function totalAs(field: MemoryTaskField, total: number): Partial<MemoryTaskFacts
  * column cannot arrive undocumented.
  */
 export function formatTaskFieldGlossary(): string {
-  return MEMORY_TASK_FIELDS.map((field) => `${field.key} - ${field.describe}`).join('\n');
+  // The ticket is the ref column now, so it is described as the ref.
+  return [
+    'ref - the task\'s board ticket, written #529, which is how to name a task in the answer. '
+      + 'C1, C2 and so on are conversations with no board task.',
+    ...MEMORY_TASK_FIELDS
+      .filter((field) => field.key !== 'ticket')
+      .map((field) => `${field.key} - ${field.describe}`),
+  ].join('\n');
 }

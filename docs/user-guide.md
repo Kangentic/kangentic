@@ -920,8 +920,8 @@ right) frames the whole map again, so it is always possible to get un-lost. With
 off it frames what is left rather than the regions you hid, so resetting a scoped map fills the
 view instead of pulling it back out.
 
-**Clicking around.** Hover a point for its title and size; click it for a detail panel. Reached
-from an answer, the panel's **Back** control returns to that answer.
+**Clicking around.** Hover a point for its title and size; click it for a detail panel. With a
+chat open, the panel's **Back** control returns to it.
 
 The panel lists **Closest conversations**, its strongest links, ordered rather than scored: the
 embeddings sit in a narrow similarity band where a percentage reads "99%" on every row and tells
@@ -930,7 +930,7 @@ you nothing, so the ordering is the signal.
 Two actions: **Open conversation** (or a double-click on the point) opens the full transcript in a
 movable window over the map, so it stays where you are reading rather than opening behind the
 graph - the same when the graph is detached into its own window. **Explore from here** re-scopes
-the map to that conversation and everything it links to, with a breadcrumb under the question box to
+the map to that conversation and everything it links to, with a breadcrumb at the top of the map to
 take it back.
 
 The **Display** panel (top left) collapses out of the way and holds the groups below.
@@ -982,42 +982,52 @@ approximate** - reducing 1024 dimensions to three loses information, so "nearby"
 rather than a guarantee. Follow the links when you want certainty.
 
 **Asking.** Type a question in the box and press Enter: "what was the most expensive task?", "why
-did we drop the sphere fit?", "which tasks touched the relay?". The answer arrives as it is
-written, and the map and the rail beside it show what the answer is about: the tasks it named as
-rows, or the conversations it selected, with the map scoped to the same set. That is the whole
-surface - one box, one path. There is no separate search. An earlier version searched on every
-keystroke and listed the raw matching passages, which explained the retrieval machinery rather
-than answering anything, and then replaced all of it with the answer a moment later.
+did we drop the sphere fit?", "which tasks touched the relay?". The question moves into a chat on
+the right and the box goes. Follow-ups go in the chat's own box, and the **X** in its header ends
+the chat and brings the box back. The chat is not saved, and it also ends when you switch projects.
 
-**How it answers.** The agent is handed two things. A complete table of every task in the project
-- what each cost, how long it ran, how many conversations it took, when it was last active, which
-region it sits in, what agent and model ran it, and its board ticket - which settles every factual
-question exactly, with the totals computed before the agent sees them, and without reading a
-transcript. And ONE tool: the same `kangentic_search` every agent gets, scoped to this project,
-which it calls itself when a question is about what was said, decided or tried. It chooses the
-query, reads what comes back, and searches again with different words if the first try missed,
-which a fixed set of pre-chosen passages could never do. Nothing else loads: no other tool, none
-of your other MCP servers, and not the project's own instructions.
+**Set first, answer on top.** Before the agent starts, Kangentic searches every indexed conversation
+for the question, locally and in under a second, and rolls the matches up per task. The map lights
+that related set at once, brighter where a task matches more strongly, and the chat reads "Reading
+14 related tasks" while the agent works. When the answer lands, the tasks it is about stay bright
+and titled, and the rest of the related set dims to unlabelled dots. A line at the top of the map
+says which is which ("Lit: the 3 tasks the answer is about, with 25 more related tasks dimmed").
+The filters in the left panel are the scope of the question: a filtered map means a filtered table
+and a filtered search, so the chat never repeats them.
 
-Ask costs one agent call, and the glyph at the end of the box names the agent before you press
-Enter. A question about the transcripts takes a few more turns than one about the board, and the
-rail says so as it goes ("Searching your conversations") rather than spinning. Clear the box and
-the answer goes with it; the camera stays where you left it, and **Reset view** is the way home.
+**How it answers.** The agent is handed the related tasks with their strongest passages and facts,
+a complete table of every task in scope, and the chat so far. The table holds every task on the
+board, including ones with no indexed conversation, and settles factual questions exactly: what
+each task cost, how long it ran, how many sessions it took, when it was last active, which region
+it sits in, and what agent and model ran it, with the totals computed before the agent sees them.
+A task with no indexed conversation has nothing to open over the map, so its row opens the task on
+the board instead. An agent that can use a tool also gets ONE: the same `kangentic_search` every agent gets,
+scoped to this project, for when the related work misses something. Each search shows as a step in
+the chat, and the conversations it found get a white ring on the map. Nothing else loads: no other
+tool, none of your other MCP servers, and not the project's own instructions.
+
+**The reply** is a few sentences that name tasks by their board ticket, drawn as small **#561**
+marks. Under it are rows of one kind, a ticket and a title for each task the reply is about: five,
+then **Show all**. A row or a mark opens that task's most relevant conversation over the map,
+scrolled to the passage the answer used, and that window's **Open task** closes the graph and opens
+the task on the board. When you ask a follow-up, the earlier reply's rows fold into **Show N
+tasks**. Asked something neither the table nor the conversations cover, it says so rather than
+guessing. If the agent fails, its reason is shown as it came, with **Try again**.
+
+It knows what the board and the conversations recorded, not the code. "Which tasks added an agent?"
+is answerable; "how many agents does the app support?" is a question about the repository, which
+is not indexed yet, and work done outside a board task leaves nothing here to find.
+
+Each question costs one agent call, and the glyph at the end of the box names the agent before you
+press Enter.
 
 **Which agent answers** is its own setting, because the agent that runs your tasks and the agent
-that reads their history are different choices. Settings > Memory > **Answering agent** defaults to
-the project's agent and can be pointed at any installed one, with **Answering model** beside it -
-reading the index is lighter work than writing code, so a cheaper model is usually enough.
-
-**The rows follow the question.** An answer about tasks lists those tasks beneath it, one row each,
-labelled with the **board ticket** you already know them by. The columns are whichever facts the
-answer was actually reasoning about: ask about cost and you get cost, ask which used the most
-tokens and you get tokens. A column where every row says the same thing is dropped, since it
-distinguishes nothing. Clicking a row opens that task's conversations.
-
-Asked something neither the table nor the conversations cover, Ask says so rather than guessing.
-Every answer keeps its working one click away, behind **Show what this is based on**: the table
-rows it used and the passages it quoted, so a claim can be checked rather than taken on faith.
+that reads their history are different choices. Settings > Memory > **Answering agent** and
+**Answering model** are one choice for the whole app, and nothing picks them for you: until both
+are set, pressing Enter in the box opens Settings > Memory at that row and keeps your question
+typed, so you can come back and press Enter again. Reading the index is lighter work than writing
+code, so a cheaper model is usually enough. Every agent that has a headless read-only mode can
+answer; Warp cannot, since it has none.
 
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:

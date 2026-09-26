@@ -247,10 +247,19 @@ export class CopilotAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: false, search: false, model: true };
+
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
-   * Copilot's `-p` print mode with status output silenced.
+   * Non-interactive with status output silenced, the prompt PIPED rather than
+   * passed through `-p`. An answer prompt runs to about 50k characters, past the
+   * Windows command-line limit, and Copilot reads a piped prompt the same way
+   * (measured: a 61,584-character prompt answered from its middle row).
+   *
+   * Read-only without a flag: with no `--allow-tool` or `--allow-all-tools` a
+   * non-interactive run has nothing that may write, and it refused both a file
+   * write and a shell command in the probe.
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -264,16 +273,10 @@ export class CopilotAdapter implements AgentAdapter {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error, and the absence of the flag is what
-      // "the agent's own default" means to the CLI.
-      //
-      // It goes BEFORE the print flag, because `promptVia: 'arg'` appends the
-      // prompt as the final positional argument - anything after `-p` would be
-      // read as the prompt, and the real prompt as a stray trailing arg.
-      args: ['--silent', ...(model ? ['--model', model] : []), '-p'],
+      // empty value is an error.
+      args: ['--silent', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
-      promptVia: 'arg',
     });
   }
 

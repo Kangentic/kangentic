@@ -945,7 +945,9 @@ Pass `taskId` to restrict conversation hits to one task's history - e.g. "what w
 
 This tool consolidates what were previously two tools (`kangentic_search_everything` + a separate `kangentic_recall`) into one, per Anthropic's tool-design guidance that related retrieval operations belong in a single tool with a parameter rather than several overlapping tools.
 
-It is also the ONE tool the Memory Graph's Ask hands its answering agent. That headless call runs with the built-in tools off and a per-call MCP config naming only this server (`--strict-mcp-config`, `--allowedTools mcp__kangentic__kangentic_search`), so a question about what was said in past conversations is answered by the agent searching them itself, in `mode: "hybrid"`, and searching again if the first query missed - never by loading the user's other servers or the project's own instructions. See the Memory Graph section of the user guide.
+Pass `groupBy: "task"` to rank TASKS instead of listing hits. Every conversation passage that matches the query (deep semantic and keyword pools) is rolled up per task, and the tasks come back strongest first, each with its relative strength, how many passages matched, the dates they span, its `taskId`, and its best passage with a `sessionId` and `turnUuid` to open. It is the answer to "which tasks touched X?", "how many times did we change Y?" and "what is most related to Z?", which a capped list of snippets cannot count or rank. It is the same rollup the Memory Graph's Ask runs before its agent starts (`src/main/retrieval/related-work.ts`). It ranks one project at a time, so it refuses `scope: "all"` and `taskId`, and it needs conversation indexing on. Omitting `groupBy` (or passing `"kind"`) leaves the output exactly as above.
+
+It is also the ONE tool the Memory Graph's Ask offers an answering agent that can use a tool. That run's MCP URL carries an `answer-<chatId>` caller segment, and for such a caller the server registers `kangentic_search` and nothing else, so the agent cannot create, move or delete anything whatever its own permission flags. Each search it makes is reported to the Memory Graph, which shows it as a step in the chat and rings the conversations it found. See the Memory Graph section of the user guide.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -953,6 +955,7 @@ It is also the ONE tool the Memory Graph's Ask hands its answering agent. That h
 | `scope` | `'current' \| 'all'` | No | `"current"` (default) searches only the active or `project`-routed project. `"all"` widens to every registered project. Ignored (forced to `"current"`) when `project` is set. |
 | `mode` | `'keyword' \| 'hybrid'` | No | How conversations are matched. `"hybrid"` (default) fuses keyword + semantic embedding; `"keyword"` is lexical-only. Only affects the conversation corpus. |
 | `taskId` | string | No | Restrict conversation hits to this task's internal id (not the display `"#N"`). Other hit kinds are unaffected. |
+| `groupBy` | `'kind' \| 'task'` | No | `"kind"` (default) returns hits grouped by kind. `"task"` ranks the tasks whose conversations are about the query, strongest first. One project only: refused with `scope: "all"` or `taskId`. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. Forces `scope: "current"`. |
 
 ### kangentic_promote_backlog

@@ -943,12 +943,12 @@
   text-decoration: underline;
 }
 
-/* The answer rail is 320px wide, where `markdown-body` is tuned for a document
-   column. Only the things that actually crowd at that width are overridden -
-   the shared type scale and margins already read correctly. */
+/* The Memory Graph chat is about 350px of prose, where `markdown-body` is tuned
+   for a document column. Only the things that actually crowd at that width are
+   overridden - the shared type scale and margins already read correctly. */
 .memory-answer-body ul,
 .memory-answer-body ol {
-  /* 1.5em of indent spends 5% of the rail on nothing. Enough for the marker. */
+  /* 1.5em of indent spends 5% of the chat on nothing. Enough for the marker. */
   padding-left: 1.1em;
 }
 
@@ -966,7 +966,7 @@
 }
 
 .memory-answer-body pre {
-  /* A fenced block cannot widen the rail; it scrolls inside it instead. */
+  /* A fenced block cannot widen the chat; it scrolls inside it instead. */
   max-width: 100%;
   overflow-x: auto;
 }

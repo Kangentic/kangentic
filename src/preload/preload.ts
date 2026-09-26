@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
 import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, MemoryAnswerStreamPush } from '../shared/types';
+import type { MemoryAnswerContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -788,8 +789,13 @@ const api: ElectronAPI = {
     refreshGraph: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_REFRESH, projectId),
     queryGraph: (query: string, projectId?: string | null) =>
       ipcRenderer.invoke(IPC.MEMORY_GRAPH_QUERY, query, projectId),
-    answerFromGraph: (question: string, projectId?: string | null, granularity?: string, requestId?: string) =>
-      ipcRenderer.invoke(IPC.MEMORY_GRAPH_ANSWER, question, projectId, granularity, requestId),
+    answerFromGraph: (
+      question: string,
+      projectId?: string | null,
+      granularity?: string,
+      requestId?: string,
+      context?: MemoryAnswerContext,
+    ) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_ANSWER, question, projectId, granularity, requestId, context),
     relatedToTask: (taskId: string, projectId?: string | null) =>
       ipcRenderer.invoke(IPC.MEMORY_RELATED_TO_TASK, taskId, projectId),
     onGraphChanged: (callback: (projectId: string) => void) => {

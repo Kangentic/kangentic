@@ -2,12 +2,16 @@ import type Database from 'better-sqlite3';
 import { hasVecSupport } from './vec-support';
 import type {
   ChunkInput,
+  ChunkPlacement,
   CorpusDocumentRef,
   IndexStateRow,
   LexicalHit,
   SemanticHit,
   StoredChunk,
 } from './types';
+
+/** Ids per `IN (...)` in `getChunkPlacements`. */
+const PLACEMENT_BATCH = 500;
 
 interface ExistingChunkRow {
   id: number;
@@ -365,6 +369,31 @@ export class RetrievalStore {
       .prepare('SELECT id FROM memory_chunks WHERE task_id = ?')
       .all(taskId) as Array<{ id: number }>;
     return new Set(rows.map((row) => row.id));
+  }
+
+  /**
+   * Where each chunk sits, without its text.
+   *
+   * The related-work rollup reads well over a thousand of these per question,
+   * and needs the text of only the dozen passages it shows, so this leaves the
+   * text column out. Batched so a deep pool stays well under SQLite's
+   * bound-parameter limit, whatever build it is compiled with.
+   */
+  getChunkPlacements(ids: number[]): ChunkPlacement[] {
+    const placements: ChunkPlacement[] = [];
+    for (let start = 0; start < ids.length; start += PLACEMENT_BATCH) {
+      const batch = ids.slice(start, start + PLACEMENT_BATCH);
+      const placeholders = batch.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(
+          `SELECT id, corpus, doc_id AS docId, session_id AS sessionId, task_id AS taskId,
+                  ts_start AS tsStart, turn_uuid_start AS turnUuidStart
+           FROM memory_chunks WHERE id IN (${placeholders})`,
+        )
+        .all(...batch) as ChunkPlacement[];
+      placements.push(...rows);
+    }
+    return placements;
   }
 
   getChunks(ids: number[]): StoredChunk[] {
@@ -736,6 +765,72 @@ export class RetrievalStore {
         tokens: number | null;
         lastActivityMs: number | null;
         outcome: string | null;
+      }>;
+  }
+
+  /**
+   * Every task on the board, active and finished, with its facts rolled up from
+   * its sessions, whether or not any conversation of it was ever indexed.
+   *
+   * The Memory Graph's task table used to be built from indexed conversations
+   * alone, while its prompt told the agent the table was complete. On this
+   * project four of the fourteen tasks that added an agent (#14 to #17) have no
+   * indexed conversation, so "how many adapters did we add?" could not see them
+   * and the agent was told not to look further. The outcome rule is the same
+   * lane-first CASE `documentMetadata` uses.
+   */
+  boardTaskFacts(): Array<{
+    taskId: string;
+    displayId: number | null;
+    title: string;
+    outcome: 'done' | 'abandoned' | 'active';
+    sessions: number;
+    costUsd: number | null;
+    durationMs: number | null;
+    tokens: number | null;
+    /** ISO timestamp of the latest session event or task edit. */
+    lastActivity: string | null;
+    agent: string | null;
+    model: string | null;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT t.id AS taskId,
+                t.display_id AS displayId,
+                t.title AS title,
+                CASE
+                  WHEN w.role = 'done' THEN 'done'
+                  WHEN t.archived_at IS NOT NULL THEN 'abandoned'
+                  ELSE 'active'
+                END AS outcome,
+                COUNT(s.id) AS sessions,
+                SUM(s.total_cost_usd) AS costUsd,
+                SUM(s.total_duration_ms) AS durationMs,
+                -- Null, never zero, when no session recorded tokens.
+                SUM(CASE
+                  WHEN s.total_input_tokens IS NULL AND s.total_output_tokens IS NULL THEN NULL
+                  ELSE COALESCE(s.total_input_tokens, 0) + COALESCE(s.total_output_tokens, 0)
+                END) AS tokens,
+                MAX(COALESCE(s.exited_at, s.suspended_at, s.started_at, t.updated_at)) AS lastActivity,
+                MAX(s.session_type) AS agent,
+                MAX(COALESCE(s.applied_model, s.model_display_name)) AS model
+         FROM tasks t
+         LEFT JOIN swimlanes w ON w.id = t.swimlane_id
+         LEFT JOIN sessions s ON s.task_id = t.id
+         GROUP BY t.id`,
+      )
+      .all() as Array<{
+        taskId: string;
+        displayId: number | null;
+        title: string;
+        outcome: 'done' | 'abandoned' | 'active';
+        sessions: number;
+        costUsd: number | null;
+        durationMs: number | null;
+        tokens: number | null;
+        lastActivity: string | null;
+        agent: string | null;
+        model: string | null;
       }>;
   }
 

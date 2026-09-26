@@ -396,6 +396,8 @@ export class ClaudeAdapter implements AgentAdapter {
     });
   }
 
+  readonly answerCapabilities = { streaming: true, search: true, model: true };
+
   /**
    * The prompt arrives fully built - question, excerpts and rules - so this only
    * chooses the flags. The read-only guarantee is the EMPTY tool list plus the

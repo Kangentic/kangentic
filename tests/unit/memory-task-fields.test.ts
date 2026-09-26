@@ -1,41 +1,25 @@
 /**
- * The field catalog, and the view spec an answer writes against it.
+ * The field catalog, and the prompt generated from it.
  *
  * These pin the properties that make the catalog worth having: that the prompt
  * table is GENERATED from it (so a new field cannot arrive undocumented or
- * unreadable), that a malformed spec degrades instead of failing, and that a
- * column carrying no signal is dropped while the one being ranked on never is.
+ * unreadable), that a column carrying no signal is stated once rather than on
+ * every row, and that the prompt is laid out for its own length.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   MEMORY_TASK_FIELDS,
-  DEFAULT_TASK_VIEW,
-  compareByField,
-  resolveTaskField,
-  taskFieldByKey,
-  visibleTaskColumns,
   type MemoryTaskFacts,
 } from '../../src/shared/memory-task-fields';
-import { buildAnswerPrompt, parseAnswerView, parseGrounds } from '../../src/main/retrieval/answer-prompt';
-import { buildAnswerTaskTable, formatTaskTable, summarizeTaskTable } from '../../src/main/retrieval/answer-tasks';
+import { buildAnswerPrompt, formatRelatedWork } from '../../src/main/retrieval/answer-prompt';
+import {
+  buildAnswerTaskTable,
+  formatTaskFieldGlossary,
+  formatTaskTable,
+  summarizeTaskTable,
+} from '../../src/main/retrieval/answer-tasks';
 import type { MemoryGraphNode, MemoryGraphProjection } from '../../src/shared/types';
-
-function facts(overrides: Partial<MemoryTaskFacts> = {}): MemoryTaskFacts {
-  return {
-    displayId: null,
-    sessions: 1,
-    costUsd: null,
-    durationMs: null,
-    tokens: null,
-    outcome: null,
-    lastActivityMs: null,
-    region: null,
-    agent: null,
-    model: null,
-    ...overrides,
-  };
-}
 
 function node(overrides: Partial<MemoryGraphNode> & { docKey: string }): MemoryGraphNode {
   return {
@@ -74,27 +58,30 @@ describe('the prompt table is generated from the catalog', () => {
     // The property that makes adding a field one edit. The header used to be a
     // string literal beside eleven hand-written cell expressions, and that is
     // exactly how eleven columns went into the prompt while four came out on
-    // the wire.
+    // the wire. The ticket is the ref column, so it is not repeated.
     const header = formatTaskTable(buildAnswerTaskTable(projection([
       node({ docKey: 'a', taskId: 't1' }),
     ]), 'balanced')).split('\n')[0];
     expect(header.split('|')).toEqual([
-      'ref', 'task', ...MEMORY_TASK_FIELDS.map((field) => field.key),
+      'ref', 'task', ...MEMORY_TASK_FIELDS.filter((field) => field.key !== 'ticket').map((field) => field.key),
     ]);
   });
 
-  it('prints the board ticket, and nothing at all when there is none', () => {
+  it('leads each row with its ticket, and never an undefined one', () => {
     const table = buildAnswerTaskTable(projection([
-      node({ docKey: 'a', taskId: 't1', displayId: 529 }),
-      node({ docKey: 'b', taskId: 't2', displayId: null }),
+      node({ docKey: 'a', taskId: 't1', displayId: 529, costUsd: 2 }),
+      node({ docKey: 'b', taskId: 't2', displayId: null, costUsd: 1 }),
     ]), 'balanced');
-    const lines = formatTaskTable(table).split('\n');
-    const ticketColumn = lines[0].split('|').indexOf('ticket');
-    const cells = lines.slice(1).map((line) => line.split('|')[ticketColumn]);
-    expect(cells).toContain('#529');
-    // Never `#undefined`, and never `#null`. An absent ticket is an empty cell.
-    expect(cells).toContain('');
-    expect(cells.join('')).not.toContain('undefined');
+    const refs = formatTaskTable(table).split('\n').slice(1).map((line) => line.split('|')[0]);
+    // A task with no ticket is named by its position instead.
+    expect(refs).toEqual(['#529', 'C2']);
+    expect(refs.join('')).not.toMatch(/undefined|null/);
+  });
+
+  it('glosses the ref as the way to name a task, and never the retired T refs', () => {
+    const glossary = formatTaskFieldGlossary();
+    expect(glossary).toMatch(/^ref - .*#529/m);
+    expect(glossary).not.toMatch(/\bT ref\b|\bT\d/);
   });
 
   it('survives a facts object with holes in it', () => {
@@ -170,11 +157,11 @@ describe('the computed summary', () => {
     expect(formatTaskTable(table).split('\n')[0]).toContain('agent');
   });
 
-  it('never collapses the ticket, however uniform the board looks', () => {
+  it('never loses the ticket, however uniform the board looks', () => {
     // Identity is how a row is NAMED. A one-task project would otherwise lose
     // the number the question asks about.
     const table = tableOf([node({ docKey: 'a', taskId: 't1', displayId: 529 })]);
-    expect(formatTaskTable(table).split('\n')[0]).toContain('ticket');
+    expect(formatTaskTable(table).split('\n')[1].startsWith('#529|')).toBe(true);
   });
 
   it('names the rare values of a dimension by ref', () => {
@@ -187,22 +174,22 @@ describe('the computed summary', () => {
       node({ docKey: 'c', taskId: 't3', outcome: 'done', costUsd: 7 }),
       node({ docKey: 'd', taskId: 't4', outcome: 'done', costUsd: 6 }),
       node({ docKey: 'e', taskId: 't5', outcome: 'done', costUsd: 5 }),
-      node({ docKey: 'f', taskId: 't6', outcome: 'active', costUsd: 4 }),
+      node({ docKey: 'f', taskId: 't6', displayId: 606, outcome: 'active', costUsd: 4 }),
     ];
     const summary = summarizeTaskTable(tableOf(nodes));
     expect(summary).toContain('done 5');
-    expect(summary).toMatch(/active \(T6\)/);
+    expect(summary).toMatch(/active \(#606\)/);
   });
 
   it('ranks a measure so a superlative is a lookup, not a scan', () => {
     const nodes = [
-      node({ docKey: 'a', taskId: 't1', costUsd: 5 }),
-      node({ docKey: 'b', taskId: 't2', costUsd: 500 }),
-      node({ docKey: 'c', taskId: 't3', costUsd: 50 }),
+      node({ docKey: 'a', taskId: 't1', displayId: 11, costUsd: 5 }),
+      node({ docKey: 'b', taskId: 't2', displayId: 22, costUsd: 500 }),
+      node({ docKey: 'c', taskId: 't3', displayId: 33, costUsd: 50 }),
     ];
-    // Rows are numbered after the cost sort, so the priciest is T1 by
-    // construction - and the summary must say so rather than leave it implied.
-    expect(summarizeTaskTable(tableOf(nodes))).toContain('highest first T1 T2 T3');
+    // The summary names the ranking by the same refs the table uses, so the
+    // priciest is stated rather than left to a scan.
+    expect(summarizeTaskTable(tableOf(nodes))).toContain('highest first #22 #33 #11');
   });
 
   it('says so plainly when there is nothing to summarize', () => {
@@ -210,210 +197,80 @@ describe('the computed summary', () => {
   });
 });
 
-describe('reading a view spec back out of an answer', () => {
-  it('takes the columns and the ranking the answer named', () => {
-    const { view, text } = parseAnswerView(
-      'T1 is the largest at 12.4M.\nVIEW: tokens desc, duration, outcome',
-    );
-    expect(view?.select).toEqual(['tokens', 'duration', 'outcome']);
-    expect(view?.order).toEqual({ key: 'tokens', direction: 'desc' });
-    // The protocol line is stripped: it is an instruction, not prose.
-    expect(text).toBe('T1 is the largest at 12.4M.');
-  });
-
-  it('accepts the synonyms a model actually writes', () => {
-    expect(resolveTaskField('cost')?.key).toBe('cost_usd');
-    expect(resolveTaskField('recency')?.key).toBe('last_active');
-    expect(resolveTaskField('Duration_ms')?.key).toBe('duration');
-    // Trailing prose, and a space where the header has an underscore.
-    expect(resolveTaskField('last active.')?.key).toBe('last_active');
-  });
-
-  it('drops an invented column instead of failing the whole line', () => {
-    // Degradation is the safety property. A spec is a display hint, so a bad
-    // token must never cost the answer or the columns around it.
-    const { view } = parseAnswerView('Answer.\nVIEW: importance desc, cost_usd');
-    expect(view?.select).toEqual(['cost_usd']);
-    expect(view?.order).toEqual({ key: 'cost_usd', direction: 'desc' });
-  });
-
-  it('returns no view when the line names nothing usable', () => {
-    const { view } = parseAnswerView('Answer.\nVIEW: importance, vibes');
-    expect(view).toBeNull();
-  });
-
-  it('returns no view when there is no line at all', () => {
-    // The common case, and it has to be free: an ordinary answer must survive
-    // the parser completely unchanged.
-    const answer = 'We dropped the sphere fit because it circumscribes [2].';
-    expect(parseAnswerView(answer)).toEqual({ view: null, text: answer });
-  });
-
-  it('ranks by the lead column when no direction was written', () => {
-    // "Most important first" is the instruction, so the lead measure is the
-    // ranking. Largest-first for a measure and newest-first for a date are both
-    // `desc`, which is why this needs no branch.
-    const { view } = parseAnswerView('Answer.\nVIEW: last_active, agent');
-    expect(view?.order).toEqual({ key: 'last_active', direction: 'desc' });
-  });
-
-  it('refuses to order by a categorical column', () => {
-    // "agent desc" would impose a ranking nobody asked for and quietly claim
-    // the first row is the most something.
-    const { view } = parseAnswerView('Answer.\nVIEW: agent desc, cost_usd');
-    expect(view?.select).toEqual(['agent', 'cost_usd']);
-    expect(view?.order).toEqual({ key: 'cost_usd', direction: 'desc' });
-  });
-});
-
 describe('the prompt is built for its own length', () => {
-  function promptFor(question: string) {
+  const related = [{
+    ref: '#529', title: 'Memory graph', strength: 1, matches: 12,
+    firstMs: Date.UTC(2026, 7, 1), lastMs: Date.UTC(2026, 8, 20), passage: 'we lit the related set',
+    facts: {
+      displayId: 529, sessions: 3, costUsd: 136.74, durationMs: 280_740_000, tokens: null,
+      outcome: 'active' as const, lastActivityMs: null, region: null, agent: null, model: null,
+    },
+  }];
+
+  function promptFor(question: string, canSearch = true, history: Parameters<typeof buildAnswerPrompt>[1]['history'] = []) {
     const table = buildAnswerTaskTable(projection([
       node({ docKey: 'a', taskId: 't1', displayId: 529, costUsd: 10 }),
       node({ docKey: 'b', taskId: 't2', displayId: 44, costUsd: 20 }),
     ]), 'balanced');
-    return buildAnswerPrompt(question, { tasks: table, nowMs: 1_756_100_000_000 });
+    return buildAnswerPrompt(question, { tasks: table, nowMs: Date.UTC(2026, 8, 25), related, canSearch, history });
   }
 
-  it('puts the longform data ABOVE the rules and the question LAST', () => {
-    // The documented shape for prompts over 20k tokens: data at the top,
-    // instructions and query at the end, reported as worth up to 30% of
-    // response quality. This prompt measures ~22.5k and ran rules-first until
-    // it was checked against that guidance.
-    const prompt = promptFor('What is the most expensive task?');
+  it('keeps the stable table and rules ahead of what changes per question, and the question last', () => {
+    // Long data first and the question last is the documented shape for long
+    // prompts. And the table and rules are the same for every question, so
+    // they come before the related work and the chat, keeping that prefix cached.
+    const prompt = promptFor('Which tasks touched the relay?', true, [
+      { question: 'What is the relay?', answer: 'It forwards bytes.', refs: ['#529'] },
+    ]);
     const table = prompt.indexOf('<task_table>');
-    const rules = prompt.indexOf('Answer only from <task_table>');
+    const rules = prompt.indexOf('Answer only from');
+    const relatedWork = prompt.indexOf('<related_work>');
+    const history = prompt.indexOf('<conversation_so_far>');
     const question = prompt.indexOf('Question:');
 
     expect(table).toBeGreaterThan(-1);
     expect(table).toBeLessThan(rules);
-    expect(rules).toBeLessThan(question);
-    // The query is genuinely last, not merely late.
-    expect(prompt.trimEnd().endsWith('What is the most expensive task?')).toBe(true);
+    expect(rules).toBeLessThan(relatedWork);
+    expect(relatedWork).toBeLessThan(history);
+    expect(history).toBeLessThan(question);
+    expect(prompt.trimEnd().endsWith('Which tasks touched the relay?')).toBe(true);
   });
 
-  it('carries no passages of its own, and says where to find them', () => {
-    // The transcripts used to arrive as an <excerpts> section our search chose
-    // before the agent saw the question. They are pulled by the agent now,
-    // through the one tool it is handed, so the prompt names the tool and its
-    // mode rather than shipping a guess at what the question needs.
-    const prompt = promptFor('why did we do that?');
-    expect(prompt).not.toContain('<excerpts>');
-    expect(prompt).toContain('kangentic_search');
-    expect(prompt).toContain('mode "hybrid"');
-    // And the rules say to try again before giving up, which is what a
-    // pre-retrieved passage set could never do.
-    expect(prompt).toMatch(/search again/);
-  });
-});
-
-describe('lifting the working out of an answer', () => {
-  it('separates the grounds from the answer', () => {
-    const { grounds, text } = parseGrounds(
-      '<grounds>\nT1 | 308.42 | cost_usd\n</grounds>\n#286 at $308.42 is the largest.',
-    );
-    expect(grounds).toBe('T1 | 308.42 | cost_usd');
-    expect(text).toBe('#286 at $308.42 is the largest.');
+  it('names the search tool only when the agent can use it', () => {
+    expect(promptFor('why?', true)).toContain('kangentic_search');
+    expect(promptFor('why?', false)).not.toContain('kangentic_search');
   });
 
-  it('leaves an answer with no grounds completely untouched', () => {
-    // The common case, and it must be free.
-    const answer = 'We dropped the sphere fit because it circumscribes [2].';
-    expect(parseGrounds(answer)).toEqual({ grounds: null, text: answer });
+  it('asks for prose and leaves the listing to the rows', () => {
+    // The rows under an answer list every selected task, so a list in the
+    // prose repeats them. Asked "which tasks", an agent listed all fourteen.
+    const prompt = promptFor('Which tasks touched the relay?');
+    expect(prompt).toMatch(/even when the question asks which tasks, do not list them/);
+    // A hard number, because "the few that matter" did not hold: Haiku named
+    // all thirteen inline, grouped and bolded.
+    expect(prompt).toMatch(/Name at most three tasks in the prose/);
   });
 
-  it('does not leave a half-written block rendering as the answer', () => {
-    // An unterminated opener would otherwise put `<grounds>` and everything
-    // after it on screen as though it were the answer, which is worse than
-    // showing no working at all.
-    const { grounds, text } = parseGrounds('The answer is 42.\n<grounds>\nT1 | 42');
-    expect(grounds).toBeNull();
-    expect(text).toBe('The answer is 42.');
+  it('carries the related work with its strength, its facts and its passage', () => {
+    // The facts ride on the related row itself, so "the most expensive task
+    // related to X" is a read down one column rather than a table lookup per
+    // task, which Haiku got wrong when it had to do it.
+    const lines = formatRelatedWork(related).split('\n');
+    expect(lines[1]).toBe('ref|task|strength|matches|first|last|cost_usd|duration|tokens|sessions|outcome|passage');
+    expect(lines[2]).toBe('#529|Memory graph|1.00|12|2026-08-01|2026-09-20|136.74|77h 59m||3|active|"we lit the related set"');
+    expect(formatRelatedWork([])).toMatch(/Nothing/);
   });
 
-  it('shows the working when the model wrote ONLY working', () => {
-    // An empty rail is the one outcome worse than a badly-shaped answer.
-    const { text } = parseGrounds('<grounds>\nT1 | 308.42\n</grounds>');
-    expect(text).toBe('T1 | 308.42');
+  it('tells the agent the reader cannot see the tags', () => {
+    expect(promptFor('Which tasks touched the relay?')).toMatch(/never open with "Based on"/);
   });
 
-  it('treats an empty block as no grounds rather than as empty grounds', () => {
-    const { grounds, text } = parseGrounds('<grounds></grounds>\nThe answer.');
-    expect(grounds).toBeNull();
-    expect(text).toBe('The answer.');
-  });
-});
-
-describe('ordering rows', () => {
-  it('sorts an unmeasured task LAST in both directions', () => {
-    // An unmeasured task is not a cheap one. Floating it to the top of
-    // "cheapest first" would be a lie the reader cannot see.
-    const rows = [facts({ costUsd: null }), facts({ costUsd: 10 }), facts({ costUsd: 90 })];
-    const field = taskFieldByKey('cost_usd');
-    if (!field) throw new Error('cost_usd must exist');
-
-    const descending = [...rows].sort(compareByField(field, 'desc'));
-    expect(descending.map((row) => row.costUsd)).toEqual([90, 10, null]);
-
-    const ascending = [...rows].sort(compareByField(field, 'asc'));
-    expect(ascending.map((row) => row.costUsd)).toEqual([10, 90, null]);
-  });
-});
-
-describe('choosing which columns are worth rendering', () => {
-  it('drops a column whose every value is the same', () => {
-    // Eighteen rows all reading "Completed" spend width to say nothing. Same
-    // rule the dead facet rows and the granularity control already follow.
-    const rows = [
-      facts({ outcome: 'done', costUsd: 10 }),
-      facts({ outcome: 'done', costUsd: 90 }),
-    ];
-    const columns = visibleTaskColumns(
-      { select: ['cost_usd', 'outcome'], order: { key: 'cost_usd', direction: 'desc' } },
-      rows,
-    );
-    expect(columns.map((field) => field.key)).toEqual(['cost_usd']);
-  });
-
-  it('KEEPS a uniform column when it is the one being ranked on', () => {
-    // The load-bearing exception. Asked which tasks are still in progress,
-    // every row is "In Progress" and dropping the column would remove the one
-    // that answers the question.
-    const rows = [facts({ outcome: 'active' }), facts({ outcome: 'active' })];
-    const columns = visibleTaskColumns(
-      { select: ['outcome'], order: { key: 'outcome', direction: 'desc' } },
-      rows,
-    );
-    expect(columns.map((field) => field.key)).toEqual(['outcome']);
-  });
-
-  it('drops a column no row ever recorded', () => {
-    const rows = [facts({ costUsd: 10 }), facts({ costUsd: 90 })];
-    const columns = visibleTaskColumns({ select: ['cost_usd', 'tokens'], order: null }, rows);
-    expect(columns.map((field) => field.key)).toEqual(['cost_usd']);
-  });
-
-  it('never renders the ticket as a column, since it is already the badge', () => {
-    const rows = [facts({ displayId: 1, costUsd: 5 }), facts({ displayId: 2, costUsd: 6 })];
-    const columns = visibleTaskColumns({ select: ['ticket', 'cost_usd'], order: null }, rows);
-    expect(columns.map((field) => field.key)).toEqual(['cost_usd']);
-  });
-
-  it('falls back to the default columns, which are what shipped before', () => {
-    // An answer that declines the protocol must render exactly what the surface
-    // rendered when there was no protocol at all.
-    const rows = [
-      facts({ costUsd: 10, durationMs: 60_000, outcome: 'done' }),
-      facts({ costUsd: 90, durationMs: 120_000, outcome: 'active' }),
-    ];
-    const columns = visibleTaskColumns(DEFAULT_TASK_VIEW, rows);
-    expect(columns.map((field) => field.key)).toEqual(['cost_usd', 'duration', 'outcome']);
-  });
-
-  it('names outcomes after the work rather than after the board', () => {
-    const outcome = taskFieldByKey('outcome');
-    expect(outcome?.display(facts({ outcome: 'done' }))).toBe('Completed');
-    expect(outcome?.display(facts({ outcome: 'active' }))).toBe('In Progress');
-    expect(outcome?.display(facts({ outcome: 'abandoned' }))).toBe('Dropped');
+  it('restates the reply\'s shape right above the question, where it is read last', () => {
+    const prompt = promptFor('Which tasks touched the relay?');
+    const reminder = prompt.indexOf('Reply in two to four plain sentences');
+    expect(reminder).toBeGreaterThan(prompt.indexOf('</related_work>'));
+    expect(reminder).toBeLessThan(prompt.indexOf('Question:'));
+    expect(prompt).toMatch(/never with their titles/);
+    expect(prompt).toMatch(/never correct yourself in the reply/);
   });
 });

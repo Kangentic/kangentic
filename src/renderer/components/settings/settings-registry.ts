@@ -186,8 +186,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // other half of the same speed-versus-accuracy decision, and someone
   // troubleshooting slow semantic search comes to this tab.
   { id: 'memory.acceleration', tabId: 'memory', label: 'Model acceleration', description: 'Where the semantic model runs. Auto prefers the GPU when available, otherwise CPU.', scope: 'global', keywords: ['gpu', 'cpu', 'hardware', 'acceleration', 'directml', 'webgpu', 'device', 'semantic', 'embedding', 'performance', 'offload', 'model'] },
-  { id: 'memory.answerAgent', tabId: 'memory', label: 'Answering agent', description: 'Which agent answers questions in the Memory Graph. Defaults to the project\'s agent.', scope: 'global', keywords: ['answer', 'ask', 'agent', 'memory', 'graph', 'question', 'claude', 'codex', 'recall', 'semantic', 'cite'] },
-  { id: 'memory.answerModel', tabId: 'memory', label: 'Answering model', description: 'Model that agent answers at. A cheaper one usually does this well.', scope: 'global', keywords: ['model', 'answer', 'ask', 'memory', 'graph', 'cost', 'cheap', 'haiku', 'sonnet', 'opus', 'tokens', 'budget'] },
+  { id: 'memory.answerAgent', tabId: 'memory', label: 'Answering agent', description: 'Which agent answers questions and writes task digests in the Memory Graph.', scope: 'global', keywords: ['answer', 'ask', 'agent', 'memory', 'graph', 'question', 'claude', 'codex', 'recall', 'semantic', 'cite', 'digest'] },
+  { id: 'memory.answerModel', tabId: 'memory', label: 'Answering model', description: 'The model that agent uses for answers and digests.', scope: 'global', keywords: ['model', 'answer', 'ask', 'memory', 'graph', 'cost', 'cheap', 'haiku', 'sonnet', 'opus', 'tokens', 'budget', 'digest'] },
   // ── Privacy (synthetic) ──
   { id: 'privacy.info', tabId: 'privacy', label: 'Privacy', description: 'Anonymous analytics and data collection policy', scope: 'global', keywords: ['telemetry', 'analytics', 'aptabase', 'gdpr', 'opt out'] },
 

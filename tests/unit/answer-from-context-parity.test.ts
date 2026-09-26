@@ -55,13 +55,16 @@ function agentsDeclaring(method: string): Set<string> {
  * formality.
  */
 const CANNOT_ANSWER: Record<string, string> = {
-  // `agy -p` hangs on non-TTY stdio (upstream antigravity-cli#318), so its
-  // print runner drives a hidden PTY and passes the prompt as ONE argv entry
-  // with newlines collapsed. An answer prompt carries the task table plus
-  // retrieved passages - measured at ~42,800 characters on the real index -
-  // against Windows' ~32,767 command-line limit. It cannot fit, and the
-  // newline collapse would destroy the prompt's structure even if it did.
-  antigravity: 'prompt exceeds the argv limit its PTY print runner requires',
+  // Antigravity used to sit here: its PTY print runner passes the prompt as
+  // one argv entry. Its answer run now sends the prompt on stdin as one
+  // stream-json message instead, so it answers.
+  //
+  // Warp has no `summarize`, so the parity scan never asks about it. It is
+  // named here anyway so the gap is a decision rather than an absence: its
+  // adapter drives `oz agent run`, which carries out a task rather than
+  // answering read-only, and Warp's docs retire `oz` in favour of the `warp`
+  // binary, which documents no one-shot run at all.
+  warp: 'no documented read-only headless run (oz agent run acts; warp has no one-shot mode)',
 };
 
 describe('answerFromContext parity', () => {
@@ -107,23 +110,32 @@ describe('answerFromContext parity', () => {
     expect(offenders, `answerFromContext must accept \`model?: string | null\``).toEqual([]);
   });
 
-  it('never appends the model flag after a positional-prompt flag', () => {
-    // `promptVia: 'arg'` appends the prompt as the FINAL argument, so anything
-    // spread after `-p` is read as the prompt and the real prompt becomes a
-    // stray trailing arg. Caught in review on three adapters at once.
+  it('never passes the answer prompt on the command line', () => {
+    // An answer prompt runs to about 50k characters. Windows caps a command
+    // line at 32,767, and 8,191 through cmd.exe, so a prompt passed as an
+    // argument cannot answer a real question there. Five adapters shipped that
+    // way; the probe that qualified them used a one-line prompt and missed it.
+    // Stdin, or a prompt file for a CLI that reads one, carries any size.
     const offenders: string[] = [];
     for (const entry of adapterSources()) {
       const method = entry.source.match(/async answerFromContext\([\s\S]*?\n  \}/)?.[0];
-      if (!method || !/promptVia:\s*'arg'/.test(method)) continue;
-      const args = method.match(/args:\s*\[([^\]]*(?:\[[^\]]*\][^\]]*)*)\]/)?.[1] ?? '';
-      const printFlagAt = args.search(/'-p'/);
-      const modelAt = args.search(/\.\.\.\(model/);
-      if (printFlagAt >= 0 && modelAt >= 0 && modelAt > printFlagAt) offenders.push(entry.file);
+      if (method && /promptVia:\s*'arg'/.test(method)) offenders.push(entry.file);
     }
-    expect(
-      offenders,
-      'The model flag must come BEFORE the positional-prompt flag',
-    ).toEqual([]);
+    expect(offenders, 'answerFromContext must deliver the prompt on stdin or through a file').toEqual([]);
+  });
+
+  it('declares answerCapabilities beside every answerFromContext', () => {
+    // What the run can do beyond the base (streaming, search, a model) is read
+    // generically by the handler and by Settings > Memory. An adapter that
+    // answers without declaring it would read as "takes no model", and the
+    // Answering model row would stop being required for it.
+    const answerers = agentsDeclaring('answerFromContext');
+    const declared = new Set<string>();
+    for (const entry of adapterSources()) {
+      if (/readonly answerCapabilities\s*=/.test(entry.source)) declared.add(entry.agent);
+    }
+    const missing = [...answerers].filter((agent) => !declared.has(agent)).sort();
+    expect(missing, 'Declare `readonly answerCapabilities = { streaming, search, model }`').toEqual([]);
   });
 
   it('asks Claude with no built-in tools, one scoped MCP server, and a stream', () => {

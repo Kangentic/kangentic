@@ -2971,6 +2971,9 @@
             // KEEP IN SYNC with ClaudeAdapter.answerFromContext: gates the Memory
             // Graph's Ask on the capability rather than on the agent's name.
             supportsAnswerFromContext: true,
+            // KEEP IN SYNC with ClaudeAdapter.answerCapabilities. `model: true` is
+            // what makes the Answering model setting required for Claude.
+            answerCapabilities: { streaming: true, search: true, model: true },
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
@@ -4574,19 +4577,39 @@
             : { query: query, hits: [], semantic: true },
         );
       },
-      answerFromGraph: function (question, projectId, granularity, requestId) {
+      answerFromGraph: function (question, projectId, granularity, requestId, context) {
         if (typeof window !== 'undefined') {
           if (!window.__mockGraphAnswerCalls) window.__mockGraphAnswerCalls = [];
-          window.__mockGraphAnswerCalls.push({ question: question, projectId: projectId === undefined ? null : projectId, granularity: granularity === undefined ? null : granularity, requestId: requestId === undefined ? null : requestId });
+          window.__mockGraphAnswerCalls.push({
+            question: question,
+            projectId: projectId === undefined ? null : projectId,
+            granularity: granularity === undefined ? null : granularity,
+            requestId: requestId === undefined ? null : requestId,
+            context: context === undefined ? null : JSON.parse(JSON.stringify(context)),
+          });
         }
         // Defaults to a FAILURE, deliberately. Ask spawns a real CLI, so a spec
         // that has not said what the agent returns has not set up the case it is
         // testing, and a plausible default answer would let it pass anyway.
-        return Promise.resolve(
-          memoryGraphAnswerResult
-            ? JSON.parse(JSON.stringify(memoryGraphAnswerResult))
-            : { ok: false, reason: 'no agent configured' },
-        );
+        // A spec may set `window.__mockAnswerResultQueue` to answer successive
+        // questions differently (a failure, then a retry that works).
+        var queued = typeof window !== 'undefined' && Array.isArray(window.__mockAnswerResultQueue)
+          ? window.__mockAnswerResultQueue.shift()
+          : undefined;
+        var settled = queued || memoryGraphAnswerResult;
+        var result = settled
+          ? JSON.parse(JSON.stringify(settled))
+          : { ok: false, reason: 'no agent configured' };
+        // A spec that sets `window.__mockHoldAnswer` gets the answer held open
+        // until it calls `window.__mockReleaseAnswer()`, so it can drive the
+        // stream (the related set, searches, text) through
+        // `__mockFireAnswerStream` in between, as main does.
+        if (typeof window !== 'undefined' && window.__mockHoldAnswer) {
+          return new Promise(function (resolve) {
+            window.__mockReleaseAnswer = function () { resolve(result); };
+          });
+        }
+        return Promise.resolve(result);
       },
       relatedToTask: function (taskId, projectId) {
         if (typeof window !== 'undefined') {

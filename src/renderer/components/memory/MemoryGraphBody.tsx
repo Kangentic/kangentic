@@ -20,12 +20,11 @@
  * really "nothing here".
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Compass, CornerDownLeft, Loader2, Network, Sparkles, X } from 'lucide-react';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
 import { useConfigStore } from '../../stores/config-store';
-import { useProjectStore } from '../../stores/project-store';
-import { MemoryAnswer } from './MemoryAnswer';
+import { MemoryChat } from './MemoryChat';
 import { MemoryCoverageStrip } from './MemoryCoverageStrip';
 import { MemoryGraphCanvas, type MemoryGraphColorMode } from './MemoryGraphCanvas';
 import {
@@ -41,17 +40,12 @@ import {
 
 import { availableGranularities, DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
 import { availableColorModes } from './color-mode-availability';
-import { resolveAnswerAgent } from '../../../shared/answer-agent';
+import { answerSetupGap, resolveAnswerAgent } from '../../../shared/answer-agent';
 import { HoverTip } from '../HoverTip';
-import type { MemoryGraphGranularity, MemoryGraphNode } from '../../../shared/types';
-import {
-  DEFAULT_TASK_VIEW,
-  formatTaskCost,
-  formatTaskDuration,
-  visibleTaskColumns,
-} from '../../../shared/memory-task-fields';
+import type { MemoryGraphGranularity, MemoryRelatedTask } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
 import { MemoryNodeDetail, openConversationForNode } from './MemoryNodeDetail';
+import { openMemoryConversation } from './open-memory-conversation';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -59,13 +53,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *  read without scrolling. */
 const DETAIL_NEIGHBOR_COUNT = 6;
 
-/** A date for a conversation row. Short, and the same shape the catalog uses. */
-function shortDate(epochMs: number | null): string | null {
-  if (epochMs === null) return null;
-  const date = new Date(epochMs);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-}
+/** Below this many lit conversations, an answer's neighbours come back as context. */
+const FEW_LIT = 3;
+/** Neighbours of each lit conversation shown as context. */
+const CONTEXT_NEIGHBORS = 6;
+/** How strongly context draws: visible, and clearly not part of the answer. */
+const CONTEXT_STRENGTH = 0.15;
+/** A related task's strength is scaled by this once the answer names its own tasks. */
+const RELATED_AFTER_ANSWER = 0.3;
 
 function CenteredNotice({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
@@ -79,57 +74,59 @@ function CenteredNotice({ icon, title, body }: { icon: React.ReactNode; title: s
   );
 }
 
-export function MemoryGraphBody() {
+interface MemoryGraphBodyProps {
+  /** See `LazyMemoryGraph`: where a question goes before an agent is chosen. */
+  onChooseAnswerAgent?: () => void;
+  /** See `LazyMemoryGraph`: how a row with no conversation reaches its task. */
+  onRevealTask?: (taskId: string) => void;
+}
+
+export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGraphBodyProps) {
   const snapshot = useMemoryGraphStore((state) => state.snapshot);
   const loaded = useMemoryGraphStore((state) => state.loaded);
-  const answer = useMemoryGraphStore((state) => state.answer);
-  const answering = useMemoryGraphStore((state) => state.answering);
-  const streamingAnswer = useMemoryGraphStore((state) => state.streamingAnswer);
-  const streamingStatus = useMemoryGraphStore((state) => state.streamingStatus);
+  const projectId = useMemoryGraphStore((state) => state.projectId);
+  const thread = useMemoryGraphStore((state) => state.thread);
+  const focusedTurnId = useMemoryGraphStore((state) => state.focusedTurnId);
   const askQuestion = useMemoryGraphStore((state) => state.askQuestion);
-  const clearAnswer = useMemoryGraphStore((state) => state.clearAnswer);
+  const retryTurn = useMemoryGraphStore((state) => state.retryTurn);
+  const focusTurn = useMemoryGraphStore((state) => state.focusTurn);
+  const endChat = useMemoryGraphStore((state) => state.endChat);
 
   /**
-   * Who answers, resolved through the SAME chain the main process uses, so the
-   * button can never name one agent while a different one replies. Gated on the
-   * CAPABILITY rather than on any agent's name
+   * Who answers, and what is still missing before anyone can, through the SAME
+   * rule the main process uses, so the box can never send the user to settings
+   * for a question main would have run, or run one the settings row does not
+   * show. Gated on the CAPABILITY rather than on any agent's name
    * (`.claude/rules/agent-adapters-boundary.md`).
    *
-   * `requireFound` here and not in main: this list carries a detection flag and
-   * must not offer Ask for an agent that is not installed, where main detects
-   * the CLI itself a moment later and reports a precise reason.
-   *
-   * In a pop-out `currentProject` is never populated, so the chain falls through
-   * to any capable agent - which is what the handler resolves to as well.
+   * Explicit: the configured agent and model, with no fallback to the project's
+   * agent or to any capable one. `requireFound` here and not in main: this list
+   * carries a detection flag, and an agent that is not installed is not chosen.
    */
   const agentList = useConfigStore((state) => state.agentList);
   const configuredAnswerAgent = useConfigStore((state) => state.config.memory?.answerAgent ?? null);
-  const projectAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
-  const askAdapter = useMemo(
-    () => resolveAnswerAgent({
+  const configuredAnswerModel = useConfigStore((state) => state.config.memory?.answerModel ?? null);
+  const setupGap = useMemo(
+    () => answerSetupGap({
       agents: agentList,
       configured: configuredAnswerAgent,
-      projectAgent,
+      configuredModel: configuredAnswerModel,
       requireFound: true,
     }),
-    [agentList, configuredAnswerAgent, projectAgent],
+    [agentList, configuredAnswerAgent, configuredAnswerModel],
   );
-  const canAsk = askAdapter !== null;
-  const askAgentLabel = askAdapter?.displayName ?? 'the agent';
+  const askAgentLabel = useMemo(
+    () => resolveAnswerAgent({ agents: agentList, configured: configuredAnswerAgent, requireFound: true })?.displayName
+      ?? 'the agent',
+    [agentList, configuredAnswerAgent],
+  );
+  // Shown only in a host with no settings panel to open (the detached window),
+  // and only once Enter was pressed, so the map is never covered by a notice.
+  const [showSetupHint, setShowSetupHint] = useState(false);
 
-  const [queryText, setQueryText] = useState('');
+  const queryText = useMemoryGraphStore((state) => state.draftQuestion);
+  const setQueryText = useMemoryGraphStore((state) => state.setDraftQuestion);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  /**
-   * A task the reader clicked in an answer.
-   *
-   * Its own scope rather than reusing `exploreFromIndex`: explore follows one
-   * conversation's LINKS, where this is a task's own conversations, and a task
-   * with three sessions is not a neighbourhood. Carries the title so the
-   * breadcrumb can name what it scoped to.
-   */
-  const [taskScope, setTaskScope] = useState<
-    { ref: number; title: string; indices: Set<number> } | null
-  >(null);
   const [showEdges, setShowEdges] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
   const [showTitles, setShowTitles] = useState(true);
@@ -177,40 +174,26 @@ export function MemoryGraphBody() {
    * changes nothing an observer would see, and it is the single largest change
    * to the visible pane this surface can make.
    */
+  const chatOpen = thread.length > 0;
   const chromeInsets = useChromeInsets(
     surfaceRef,
-    // The rail mounts the moment an answer starts arriving, so the key has to
-    // move on the stream and not only on the settled answer.
-    `${selectedIndex !== null}:${answer !== null || streamingAnswer !== '' || streamingStatus !== null}`,
+    // The chat panel mounts with the first question, so the key moves with it.
+    `${selectedIndex !== null}:${chatOpen}`,
   );
 
-  // Nothing happens while typing. The box does one thing, on Enter: ask.
-  //
-  // It used to search live on every keystroke, and separately ask on Enter
-  // when a regex judged the text to be a question. Two systems answered the
-  // same input and the second overwrote the first, so the user watched a
-  // hairball of raw passages appear and then vanish under the actual answer.
-  // Nothing on screen explained why "mobile pairing" and "what did we do about
-  // mobile pairing?" behaved differently, because the reason was a regex they
-  // could not see. One path now, and no heuristic deciding which.
-  //
-  // A cleared box still clears the answer with it, or an answer would stand
-  // over an empty box claiming to be about nothing.
-  useEffect(() => {
-    if (queryText.trim()) return;
-    clearAnswer();
-  }, [queryText, clearAnswer]);
+  /** The turn whose tasks the map shows: the one the reader picked, or the latest. */
+  const activeTurn = useMemo(
+    () => thread.find((turn) => turn.id === focusedTurnId) ?? thread[thread.length - 1] ?? null,
+    [thread, focusedTurnId],
+  );
 
-  // A new answer is a new question, so it replaces any neighbourhood being
-  // explored and any task drilled into, rather than compounding with them.
-  // Adjusted during render on the transition, React's documented pattern for
-  // state that resets when an input changes: the render restarts at once, so
-  // nothing ever commits a stale scope beside a fresh answer.
-  const [answerSeen, setAnswerSeen] = useState(answer);
-  if (answer !== answerSeen) {
-    setAnswerSeen(answer);
+  // A new question replaces any neighbourhood being explored rather than
+  // compounding with it. Adjusted during render on the transition, React's
+  // documented pattern for state that resets when an input changes.
+  const [turnSeen, setTurnSeen] = useState(activeTurn?.id ?? null);
+  if ((activeTurn?.id ?? null) !== turnSeen) {
+    setTurnSeen(activeTurn?.id ?? null);
     setExploreFromIndex(null);
-    setTaskScope(null);
   }
 
   const nodes = snapshot?.projection?.nodes;
@@ -387,138 +370,184 @@ export function MemoryGraphBody() {
   if (!colorModes.includes(colorMode)) setColorMode('cluster');
 
   /**
-   * The tasks an answer is ABOUT, whether or not it used the protocol line.
+   * How strongly each conversation on the map relates to the active turn.
    *
-   * `selectedDocKeys` is the explicit statement and wins when present. But the
-   * agent emits that line inconsistently - asked which mobile task was biggest
-   * it named six tasks in prose and emitted nothing - and the result was an
-   * answer discussing six tasks beside a rail reading "1 of 673". Those refs
-   * are already resolved for the inline chips, so falling back to them costs
-   * nothing and makes the rail agree with the answer above it.
-   *
-   * MENTIONED is a weaker claim than SELECTED, and only the rail consumes the
-   * fallback - clicking a chip still scopes deliberately, which is the user
-   * saying "this one" rather than the surface guessing.
+   * Read off the turn's related work, a task's strength going to every one of
+   * its conversations, and the tasks the answer is ABOUT at full strength on
+   * top. So the map shows the whole related set as a gradient and the rows'
+   * tasks as the brightest part of it.
    */
-  const answerTaskRefs = useMemo(
-    () => (answer?.ok ? answer.taskRefs ?? [] : []),
-    [answer],
-  );
-
-  /**
-   * The columns the rows actually render.
-   *
-   * Chosen by the ANSWER (which knows what it ranked on) and then filtered by
-   * the rows themselves: a column whose every value is identical spends width
-   * to say nothing. `?? DEFAULT_TASK_VIEW` covers both an answer that declined
-   * the protocol and one that predates the field entirely - a good answer
-   * either way, and reading `.select` off undefined would unmount this whole
-   * surface through PanelErrorBoundary.
-   */
-  const answerColumns = useMemo(
-    () => visibleTaskColumns(
-      (answer?.ok ? answer.view : null) ?? DEFAULT_TASK_VIEW,
-      answerTaskRefs,
-    ),
-    [answer, answerTaskRefs],
-  );
-
-  const answerIndices = useMemo(() => {
-    // Optional-chained deliberately: an answer that predates the selection
-    // field (one in flight across a reload, or a detached window's older
-    // payload) is a perfectly good prose answer, and reading `.length` off it
-    // unmounts the whole surface through PanelErrorBoundary. The type says the
-    // field is always there; the wire does not have to agree.
-    if (!answer?.ok) return null;
-    const docKeys = answer.selectedDocKeys?.length
-      ? answer.selectedDocKeys
-      : answerTaskRefs.flatMap((entry) => entry.docKeys);
-    if (docKeys.length === 0) return null;
-    const set = new Set<number>();
-    for (const docKey of docKeys) {
-      const index = indexByDocKey.get(docKey);
-      if (index !== undefined) set.add(index);
+  const turnStrengths = useMemo(() => {
+    if (!activeTurn || (!activeTurn.related && activeTurn.rows.length === 0)) return null;
+    const strengths = new Map<number, number>();
+    const light = (docKeys: ReadonlyArray<string>, strength: number): void => {
+      for (const docKey of docKeys) {
+        const index = indexByDocKey.get(docKey);
+        if (index === undefined) continue;
+        strengths.set(index, Math.max(strengths.get(index) ?? 0, strength));
+      }
+    };
+    // While the agent reads, the related set is the picture, by match strength.
+    // Once the answer lands, the tasks it is ABOUT are the picture and the rest
+    // of the related set recedes to context. Reported: with 28 related tasks at
+    // similar brightness, nothing said why those nodes were lit, and most of
+    // them were not what the answer was about.
+    const answered = activeTurn.status === 'done' && activeTurn.rows.length > 0;
+    for (const task of activeTurn.related ?? []) {
+      light(task.docKeys, answered ? task.strength * RELATED_AFTER_ANSWER : task.strength);
     }
-    // An answer whose every task has since left the map scopes to nothing,
-    // which would read as a broken filter rather than a stale one.
-    return set.size > 0 ? set : null;
-  }, [answer, answerTaskRefs, indexByDocKey]);
+    for (const row of activeTurn.rows) light(row.docKeys, 1);
+    if (strengths.size === 0) return null;
+
+    // An answer about one or two conversations lit only those, and every other
+    // node vanished, so the map was a single dot on a black field. Their
+    // nearest neighbours come back dimly as context, the way the mockup draws
+    // it, which also gives the camera a neighbourhood to frame.
+    if (strengths.size < FEW_LIT) {
+      const lists = snapshot?.projection?.nodeNeighbors ?? [];
+      for (const index of [...strengths.keys()]) {
+        for (const neighbor of (lists[index] ?? []).slice(0, CONTEXT_NEIGHBORS)) {
+          if (!strengths.has(neighbor.index)) strengths.set(neighbor.index, CONTEXT_STRENGTH);
+        }
+      }
+    }
+    return strengths;
+  }, [activeTurn, indexByDocKey, snapshot]);
 
   /**
-   * The conversations the rail lists under the answer, or null for task rows.
+   * What the map is showing for the chat, in words.
    *
-   * Two ways here, one list. Drilling into a task lists that task's
-   * conversations: a task is not its conversations, and the row above says it
-   * ran four, so this is where those four belong. An answer that SELECTED
-   * conversations without naming a task (a `SELECTED:` line and no `T<n>` in
-   * the prose) lists what it selected, because the map is scoped to them and
-   * a scoped map over an empty rail reads as a filter that lost its list.
-   *
-   * Narrowed by the facets, as the map is. A facet asks "which part of the
-   * index", and a list that ignored it would disagree with the map beside it.
-   * Newest first, which is the order someone re-reading their own work wants.
+   * Reported: the map lit 28 tasks across a dozen regions and nothing on screen
+   * said why. The lit set follows a rule, so the rule is stated, counted in
+   * tasks that are actually on the map.
    */
-  const listedConversations = useMemo(() => {
-    // Read off the snapshot rather than the `projection` local, which is only
-    // bound after this component's early returns - a hook cannot wait for it.
-    const nodes = snapshot?.projection?.nodes;
-    if (!nodes) return null;
-    const source = taskScope
-      ? taskScope.indices
-      : answerTaskRefs.length === 0 ? answerIndices : null;
-    if (!source) return null;
-    return [...source]
-      .filter((index) => !facetIndices || facetIndices.has(index))
-      .map((index) => ({ index, node: nodes[index] }))
-      .filter((entry): entry is { index: number; node: MemoryGraphNode } => Boolean(entry.node))
-      .sort((left, right) => (right.node.lastActivityMs ?? 0) - (left.node.lastActivityMs ?? 0));
-  }, [taskScope, answerTaskRefs, answerIndices, facetIndices, snapshot]);
+  const litCaption = useMemo(() => {
+    if (!activeTurn || exploreIndices || !turnStrengths) return null;
+    const onMap = (task: MemoryRelatedTask): boolean => task.docKeys.some((docKey) => indexByDocKey.has(docKey));
+    const answeredKeys = new Set(activeTurn.rows.filter(onMap).map((row) => row.key));
+    const relatedCount = (activeTurn.related ?? []).filter((task) => onMap(task) && !answeredKeys.has(task.key)).length;
+    const tasksWord = (count: number): string => (count === 1 ? 'task' : 'tasks');
+    if (activeTurn.status === 'done' && answeredKeys.size > 0) {
+      // A task with no recorded conversation is a row with nothing to light, so
+      // the count says how many of the answer's tasks the map can show.
+      const unlit = new Set(activeTurn.rows.map((row) => row.key)).size - answeredKeys.size;
+      const lead = unlit > 0
+        ? `Lit: ${answeredKeys.size} of the ${answeredKeys.size + unlit} tasks the answer is about`
+          + ` (${unlit} ${unlit === 1 ? 'has' : 'have'} no recorded conversation)`
+        : `Lit: the ${answeredKeys.size} ${tasksWord(answeredKeys.size)} the answer is about`;
+      if (relatedCount > 0) return `${lead}, with ${relatedCount} more related ${tasksWord(relatedCount)} dimmed`;
+      const withContext = [...turnStrengths.values()].some((strength) => strength === CONTEXT_STRENGTH);
+      return withContext ? `${lead}, with its nearest conversations dimmed around it` : lead;
+    }
+    if (relatedCount > 0) {
+      return `Lit: ${relatedCount} ${tasksWord(relatedCount)} related to the question, brighter where they match more`;
+    }
+    return null;
+  }, [activeTurn, exploreIndices, turnStrengths, indexByDocKey]);
 
   /**
-   * The task rows a facet leaves standing.
-   *
-   * A row whose every conversation the facet hid would sit beside a map
-   * showing none of them. A task with no conversation on the map at all is
-   * kept: its row is disabled and names a task the answer gave, and a facet
-   * has nothing of it to hide.
+   * Nodes drawn with the white ring: what the agent's own searches found, and
+   * the answer itself when it is about so few conversations that they are the
+   * whole point of the picture.
    */
-  const listedTaskRefs = useMemo(() => {
-    if (!facetIndices) return answerTaskRefs;
-    return answerTaskRefs.filter((entry) => {
-      const indices = entry.docKeys
-        .map((docKey) => indexByDocKey.get(docKey))
-        .filter((index): index is number => index !== undefined);
-      return indices.length === 0 || indices.some((index) => facetIndices.has(index));
-    });
-  }, [answerTaskRefs, facetIndices, indexByDocKey]);
+  const ringed = useMemo(() => {
+    if (!activeTurn) return undefined;
+    const set = new Set<number>();
+    for (const search of activeTurn.searches) {
+      for (const docKey of search.docKeys) {
+        const index = indexByDocKey.get(docKey);
+        if (index !== undefined) set.add(index);
+      }
+    }
+    const answered = activeTurn.rows.flatMap((row) => row.docKeys
+      .map((docKey) => indexByDocKey.get(docKey))
+      .filter((index): index is number => index !== undefined));
+    if (answered.length > 0 && answered.length < FEW_LIT) for (const index of answered) set.add(index);
+    return set.size > 0 ? set : undefined;
+  }, [activeTurn, indexByDocKey]);
 
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
-    // for, and it is dismissible without losing the answer underneath it. A
-    // task the reader clicked comes next, then what the answer itself named.
+    // for, and it is dismissible without losing the chat underneath it.
     let asked: Set<number> | undefined;
     if (exploreIndices) asked = exploreIndices;
-    else if (taskScope) asked = taskScope.indices;
-    else if (answerIndices) asked = answerIndices;
+    else if (turnStrengths) {
+      asked = new Set(turnStrengths.keys());
+      for (const index of ringed ?? []) asked.add(index);
+    }
 
-    // Facets INTERSECT rather than replace. They answer a different question
-    // from an answer - "which part of the index" versus "which conversations" -
-    // so an answer scoped to Abandoned has to mean the abandoned ones among
-    // what it named, not one of the two arbitrarily winning.
+    // Filters INTERSECT rather than replace. They are the scope of the
+    // question, so what an answer lights has to stay inside them.
     if (!facetIndices) return asked;
     if (!asked) return facetIndices;
     const both = new Set<number>();
     for (const index of asked) if (facetIndices.has(index)) both.add(index);
     return both;
-  }, [exploreIndices, taskScope, answerIndices, facetIndices]);
+  }, [exploreIndices, turnStrengths, ringed, facetIndices]);
+
+  /** The conversations inside the map's filters: a question's scope. */
+  const scopeDocKeys = useMemo(() => {
+    if (!facetIndices || !nodes) return null;
+    return [...facetIndices].map((index) => nodes[index]?.docKey).filter((docKey): docKey is string => Boolean(docKey));
+  }, [facetIndices, nodes]);
+
+  /** The conversation a task opens at: its best passage's, else its newest. */
+  const conversationFor = useCallback((task: MemoryRelatedTask): string | null => {
+    if (task.passage?.sessionId) return task.passage.sessionId;
+    let newest: { sessionId: string; lastActivityMs: number } | null = null;
+    for (const docKey of task.docKeys) {
+      const index = indexByDocKey.get(docKey);
+      const node = index === undefined ? null : nodes?.[index];
+      if (!node?.sessionId) continue;
+      const lastActivityMs = node.lastActivityMs ?? 0;
+      if (!newest || lastActivityMs > newest.lastActivityMs) newest = { sessionId: node.sessionId, lastActivityMs };
+    }
+    return newest?.sessionId ?? null;
+  }, [indexByDocKey, nodes]);
+
+  /**
+   * Open a task a row or a `#N` mark names: its most relevant conversation,
+   * over the map, at the passage the answer used. A task with no recorded
+   * conversation (it is on the board, but nothing of it was indexed) opens on
+   * the board instead, where the host has one.
+   */
+  const openTask = useCallback((task: MemoryRelatedTask) => {
+    const sessionId = conversationFor(task);
+    if (sessionId) {
+      openMemoryConversation(sessionId, projectId, task.passage?.sessionId === sessionId ? task.passage.turnUuid : null);
+      return;
+    }
+    if (task.taskId && onRevealTask) onRevealTask(task.taskId);
+  }, [conversationFor, projectId, onRevealTask]);
+
+  /** Whether a row or mark can lead anywhere in this host. */
+  const canOpenTask = useCallback(
+    (task: MemoryRelatedTask): boolean => conversationFor(task) !== null || (task.taskId !== null && onRevealTask !== undefined),
+    [conversationFor, onRevealTask],
+  );
+
+  /** Ask, or send the question where the missing setup is made. */
+  const ask = useCallback((question: string): boolean => {
+    if (!question.trim()) return false;
+    // Nothing is inferred: before an agent (and, where it takes one, a model)
+    // is chosen, the question goes to where that choice is made, and stays
+    // typed for when the user comes back.
+    if (setupGap) {
+      if (onChooseAnswerAgent) onChooseAnswerAgent();
+      else setShowSetupHint(true);
+      return false;
+    }
+    void askQuestion(question, { granularity, scopeDocKeys });
+    return true;
+  }, [setupGap, onChooseAnswerAgent, askQuestion, granularity, scopeDocKeys]);
 
   /**
    * Where "Back" goes, if anywhere. Two dead ends, one control:
    *
    *  - mid-trail, it returns to the conversation you hopped from;
-   *  - at the start of a trail with an answer on screen, it returns to the
-   *    ANSWER, which selecting a task's conversation had otherwise replaced
-   *    with no way back.
+   *  - at the start of a trail with a chat open, it returns to the CHAT, which
+   *    selecting a conversation on the map had otherwise replaced with no way
+   *    back.
    */
   const selectedNode = selectedIndex !== null ? nodes?.[selectedIndex] ?? null : null;
   const exploredNode = exploreFromIndex !== null ? nodes?.[exploreFromIndex] ?? null : null;
@@ -528,11 +557,11 @@ export function MemoryGraphBody() {
       const previous = nodes?.[detailTrail[detailTrail.length - 1]];
       return { run: goBack, label: previous?.title ?? 'the previous conversation' };
     }
-    if (answer?.ok) {
-      return { run: () => selectNode(null), label: 'the answer' };
+    if (chatOpen) {
+      return { run: () => selectNode(null), label: 'the chat' };
     }
     return null;
-  }, [detailTrail, nodes, goBack, answer, selectNode]);
+  }, [detailTrail, nodes, goBack, chatOpen, selectNode]);
 
   /** The selected node's strongest links, read off the exact similarity edges
    *  rather than off screen distance. */
@@ -610,6 +639,8 @@ export function MemoryGraphBody() {
         granularity={granularity}
         projection={projection}
         highlighted={highlighted}
+        strengths={exploreIndices ? undefined : turnStrengths ?? undefined}
+        ringed={exploreIndices ? undefined : ringed}
         framingIndices={framingIndices}
         selectedIndex={selectedIndex}
         onSelect={selectNode}
@@ -623,109 +654,82 @@ export function MemoryGraphBody() {
         colorMode={colorMode}
       />
 
-      {/* The box floats top-center: it is the surface's one verb, and centring
-          it keeps it off the controls and off the rail.
+      {/* Top-center: the box while no chat is open, and the explore chip.
 
           ONE box, ONE path. Type, press Enter, the agent answers. There used to
           be a live search underneath that re-filtered the map on every
           keystroke and a separate Ask that fired on Enter when a regex judged
           the text to be a question; the two answered the same input and the
-          second overwrote the first. What the user saw was a hairball of raw
-          passages appear and then vanish under the actual answer, for a reason
-          nothing on screen explained. */}
-      <form
+          second overwrote the first. Once asked, the question moves into the
+          chat on the right and the box goes, so there is one place to type. */}
+      <div
         data-graph-chrome="top"
-        className="absolute left-1/2 top-3 z-10 w-[26rem] max-w-[calc(100%-30rem)] -translate-x-1/2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!canAsk || answering) return;
-          void askQuestion(queryText, granularity);
-        }}
+        className="absolute left-1/2 top-4 z-10 w-[35rem] max-w-[calc(100%-30rem)] -translate-x-1/2"
       >
-        <div className="flex items-center gap-2 rounded-lg border border-edge bg-surface-raised/80 px-3 py-2 shadow-xl backdrop-blur-md">
-          {answering
-            ? <Loader2 size={14} className="flex-shrink-0 animate-spin text-accent-fg" aria-hidden />
-            : <Sparkles size={14} className="flex-shrink-0 text-accent-fg" aria-hidden />}
-          <input
-            value={queryText}
-            onChange={(event) => setQueryText(event.target.value)}
-            placeholder={canAsk ? 'Ask about your tasks and conversations' : 'No agent can answer here'}
-            aria-label="Ask a question about your tasks and conversations"
-            disabled={!canAsk}
-            data-testid="memory-graph-search-input"
-            className="min-w-0 flex-1 bg-transparent text-sm text-fg placeholder:text-fg-muted outline-none disabled:cursor-not-allowed"
-          />
-          {/* Who answers, and that it costs a call, stays STATED - as a tip on
-              the submit glyph rather than a second control. Enter is the button;
-              the glyph is for discoverability and for the mouse. */}
-          {canAsk && queryText.trim() && !answer && !answering ? (
-            <HoverTip
-              label={`${askAgentLabel} reads every task and searches your conversations. One agent call.`}
-              testId="memory-graph-ask-tip"
-            >
-              <button
-                type="submit"
-                aria-label={`Ask ${askAgentLabel}`}
-                data-testid="memory-graph-ask"
-                className="rounded p-1 text-accent-fg hover:bg-surface-hover cursor-pointer"
-              >
-                <CornerDownLeft size={14} />
-              </button>
-            </HoverTip>
-          ) : null}
-          {/* The count names the UNIT the rail is showing, and only when there
-              is one: tasks the answer named, or the conversations it selected
-              or the reader drilled into. Counted AFTER the facets, so the
-              number is the number of rows beneath it. */}
-          {listedConversations || listedTaskRefs.length > 0 ? (
-            <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-muted">
-              {listedConversations
-                ? `${listedConversations.length} ${listedConversations.length === 1 ? 'conversation' : 'conversations'}`
-                : `${listedTaskRefs.length} ${listedTaskRefs.length === 1 ? 'task' : 'tasks'}`}
-            </span>
-          ) : null}
-          {answer || streamingAnswer ? (
-            <button
-              type="button"
-              onClick={() => { setQueryText(''); clearAnswer(); }}
-              className="rounded p-1 text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
-              aria-label="Clear"
-              data-testid="memory-graph-clear-search"
-            >
-              <X size={13} />
-            </button>
-          ) : null}
-        </div>
-        {/* A task the reader clicked in an answer. Same shape as the explore
-            chip, because it is the same promise: the map is narrowed, here is
-            what to, and here is how to undo it. */}
-        {taskScope ? (
-          <div
-            className="mt-1.5 flex items-center gap-2 rounded-md border border-edge bg-surface-raised/85 px-2 py-1 text-[11px] text-fg-muted backdrop-blur"
-            data-testid="memory-graph-task-chip"
+        {chatOpen ? null : (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              ask(queryText);
+            }}
           >
-            <Network size={11} className="flex-shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">
-              {taskScope.title} ({taskScope.indices.size}{' '}
-              {taskScope.indices.size === 1 ? 'conversation' : 'conversations'})
-            </span>
-            <button
-              type="button"
-              onClick={() => setTaskScope(null)}
-              className="rounded p-0.5 hover:bg-surface-hover hover:text-fg cursor-pointer"
-              aria-label="Stop scoping to this task"
-              data-testid="memory-graph-task-clear"
-            >
-              <X size={11} />
-            </button>
+            <div className="flex items-center gap-2.5 rounded-[10px] border border-edge-input bg-surface-raised/95 px-3.5 py-[11px] shadow-xl backdrop-blur-md">
+              <Sparkles size={16} className="flex-shrink-0 text-accent-fg" aria-hidden />
+              <input
+                value={queryText}
+                onChange={(event) => { setQueryText(event.target.value); setShowSetupHint(false); }}
+                placeholder="Ask about your tasks, conversations and code"
+                aria-label="Ask about your tasks, conversations and code"
+                data-testid="memory-graph-search-input"
+                className="min-w-0 flex-1 bg-transparent text-sm text-fg placeholder:text-fg-muted outline-none"
+              />
+              {/* Who answers stays STATED, as a tip on the submit glyph rather
+                  than a second control. Enter is the button; the glyph is for
+                  discoverability and for the mouse. Before an agent is chosen,
+                  the tip says where the choice is made instead. */}
+              {queryText.trim() ? (
+                <HoverTip
+                  label={setupGap
+                    ? 'Choose the answering agent and model in Settings > Memory.'
+                    : `Ask ${askAgentLabel}. It reads the related work and can search your conversations.`}
+                  testId="memory-graph-ask-tip"
+                >
+                  <button
+                    type="submit"
+                    aria-label={`Ask ${askAgentLabel}`}
+                    data-testid="memory-graph-ask"
+                    className="rounded p-1 text-accent-fg hover:bg-surface-hover cursor-pointer"
+                  >
+                    <CornerDownLeft size={14} />
+                  </button>
+                </HoverTip>
+              ) : null}
+            </div>
+          </form>
+        )}
+        {showSetupHint && setupGap ? (
+          <div
+            className="mt-1.5 rounded-md border border-edge bg-surface-raised/85 px-2 py-1 text-xs text-fg-muted backdrop-blur"
+            data-testid="memory-graph-setup-hint"
+          >
+            Choose the answering agent and model in Settings &gt; Memory, in the main window.
+          </div>
+        ) : null}
+        {chatOpen && litCaption ? (
+          <div
+            className="mx-auto flex max-w-[34rem] items-center gap-2 rounded-md border border-edge bg-surface-raised/85 px-2.5 py-1 text-xs text-fg-muted backdrop-blur"
+            data-testid="memory-graph-lit-caption"
+          >
+            <Sparkles size={12} className="flex-shrink-0 text-accent-fg" aria-hidden />
+            <span className="min-w-0 flex-1 truncate" title={litCaption}>{litCaption}</span>
           </div>
         ) : null}
         {/* Says what the map is currently scoped to, and takes it back. Without
             this the explored neighbourhood is an unexplained narrowing the user
-            cannot undo except by clearing the search. */}
+            cannot undo except by ending the chat. */}
         {exploredNode ? (
           <div
-            className="mt-1.5 flex items-center gap-2 rounded-md border border-edge bg-surface-raised/85 px-2 py-1 text-[11px] text-fg-muted backdrop-blur"
+            className="mx-auto mt-1.5 flex max-w-[26rem] items-center gap-2 rounded-md border border-edge bg-surface-raised/85 px-2 py-1 text-[11px] text-fg-muted backdrop-blur"
             data-testid="memory-graph-explore-chip"
           >
             <Compass size={11} className="flex-shrink-0" aria-hidden />
@@ -743,7 +747,7 @@ export function MemoryGraphBody() {
             </button>
           </div>
         ) : null}
-      </form>
+      </div>
 
       <div data-graph-chrome="left" className="absolute left-3 top-3 z-10">
         <MemoryGraphControls
@@ -771,18 +775,18 @@ export function MemoryGraphBody() {
         />
       </div>
 
-      {/* The detail panel wins the rail when a node is selected: it is the more
-          specific answer, and the search results stay one click away on the map.
+      {/* The detail panel wins the right slot when a node is selected: it is the
+          more specific view, and its Back returns to the chat.
 
-          Both rails stop short of the bottom (`bottom-14`) so Reset view keeps
-          its corner. Reset view used to slide left by the rail's width instead,
+          Both panels stop short of the bottom (`bottom-14`) so Reset view keeps
+          its corner. Reset view used to slide left by the panel's width instead,
           which meant the one control that gets you un-lost moved every time a
           panel opened - and when the chrome measurement was wrong it vanished
-          underneath the rail entirely. A control that does not move is easier to
-          find than one that is correctly placed. */}
+          underneath the panel entirely. A control that does not move is easier
+          to find than one that is correctly placed. */}
       {selectedNode ? (
         <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-[26rem]">
-          <div className={`h-full overflow-hidden rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md`}>
+          <div className="h-full overflow-hidden rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md">
             <MemoryNodeDetail
               node={selectedNode}
               cluster={clustering.regions.find(
@@ -796,164 +800,18 @@ export function MemoryGraphBody() {
             />
           </div>
         </div>
-      ) : answer || streamingAnswer || streamingStatus ? (
-        /* The rail opens the moment an answer starts ARRIVING, not when it has
-           finished. That is the whole point of streaming: content at first-token
-           time rather than a spinner until completion. */
-        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-[26rem]">
-          <aside
-            className="h-full overflow-y-auto rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md"
-            data-testid="memory-graph-results"
-          >
-            {/* The box is the input surface and the rail is the output one, so
-                the answer lives here rather than floating over the map. */}
-            <MemoryAnswer
-              answer={answer}
-              streamingAnswer={streamingAnswer}
-              streamingStatus={streamingStatus}
-              agentName={askAgentLabel}
-              onDismiss={clearAnswer}
-              // A task ref names a whole task, which is usually several
-              // conversations. So it EXPLORES rather than selects - the map
-              // scopes to that task's work and the rail lists it.
-              onSelectTask={(entry) => {
-                const indices = entry.docKeys
-                  .map((docKey) => indexByDocKey.get(docKey))
-                  .filter((index): index is number => index !== undefined);
-                if (indices.length === 0) return;
-                setTaskScope({ ref: entry.ref, title: entry.title, indices: new Set(indices) });
-                // Deliberately does NOT select a conversation. Selecting swaps
-                // the rail to the detail panel, so clicking a task would drop
-                // the reader into ONE of its conversations and hide the list of
-                // the others - the opposite of what naming a task asks for.
-                selectNode(null);
-              }}
-            />
-
-            {/* TASK rows, when the answer is about tasks.
-                A conversation card shows the best-matching PASSAGE, which is
-                right for "find conversations about X" and useless for "which
-                task is biggest" - the reported case rendered
-                `Tool: ToolSearch {"query":...}` under an answer ranking tasks
-                by cost. These rows show what the answer was reasoning over. */}
-            {listedConversations ? (
-              /* CONVERSATION rows: one task's, drilled into, or the ones an
-                 answer selected outright.
-                 Clicking a task row used to set a scope the map was already
-                 holding - `answerIndices` falls back to the refs' docKeys, so
-                 an answer naming one task had already scoped to it - and the
-                 click moved nothing at all. A task is not its conversations,
-                 so this is the level where they belong: the row above says a
-                 task ran four of them, and this says which four. */
-              <ul data-testid="memory-graph-task-conversations">
-                {listedConversations.map(({ index, node }) => (
-                  <li key={node.docKey}>
-                    <button
-                      type="button"
-                      onClick={() => selectNode(index)}
-                      onDoubleClick={() => openConversationForNode(node)}
-                      className="w-full border-b border-edge px-4 py-3 text-left hover:bg-surface-hover cursor-pointer"
-                      data-testid="memory-graph-task-conversation-row"
-                    >
-                      <div className="truncate text-xs font-medium text-fg">
-                        {node.title ?? 'Untitled conversation'}
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-fg-muted">
-                        {shortDate(node.lastActivityMs) ? (
-                          <span>{shortDate(node.lastActivityMs)}</span>
-                        ) : null}
-                        {node.agent ? <span>{node.agent}</span> : null}
-                        {formatTaskCost(node.costUsd) ? (
-                          <span className="tabular-nums">{formatTaskCost(node.costUsd)}</span>
-                        ) : null}
-                        {formatTaskDuration(node.durationMs) ? (
-                          <span className="tabular-nums">{formatTaskDuration(node.durationMs)}</span>
-                        ) : null}
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : listedTaskRefs.length > 0 ? (
-              /* TASK rows, aligned into columns.
-                 A conversation card shows the best-matching PASSAGE, which is
-                 right for "find conversations about X" and useless for "which
-                 task is biggest" - the reported case rendered
-                 `Tool: ToolSearch {"query":...}` under an answer ranking tasks
-                 by cost.
-
-                 The COLUMNS come from the answer, not from this file. They used
-                 to be four hardcoded chips, which is right for a cost question
-                 and wrong for every other one: asked which tasks used the most
-                 tokens, the prose named a token figure and every row printed a
-                 dollar amount. */
-              <ul data-testid="memory-graph-answer-tasks">
-                <li
-                  className="sticky top-0 z-10 flex items-center gap-3 border-b border-edge bg-surface-raised px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-fg-faint"
-                  data-testid="memory-graph-answer-task-header"
-                >
-                  <span className="min-w-0 flex-1">Task</span>
-                  {answerColumns.map((field) => (
-                    <span key={field.key} className="w-24 flex-shrink-0 text-right">
-                      {field.label}
-                    </span>
-                  ))}
-                </li>
-                {listedTaskRefs.map((entry) => {
-                  const indices = entry.docKeys
-                    .map((docKey) => indexByDocKey.get(docKey))
-                    .filter((index): index is number => index !== undefined);
-                  return (
-                    <li key={entry.ref}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (indices.length === 0) return;
-                          setTaskScope({
-                            ref: entry.ref,
-                            title: entry.title,
-                            indices: new Set(indices),
-                          });
-                          selectNode(null);
-                        }}
-                        disabled={indices.length === 0}
-                        className="flex w-full items-center gap-3 border-b border-edge px-4 py-2.5 text-left hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent cursor-pointer"
-                        data-testid="memory-graph-answer-task-row"
-                        data-task-ref={entry.ref}
-                      >
-                        <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                          {/* The board's own `#N`, which is the number the
-                              reader has seen on a card. `T14` is the agent's
-                              vocabulary and a different number for the same
-                              task, so it stays on the wire and off the screen -
-                              except where there is no ticket at all, which is a
-                              conversation with no board task. */}
-                          <span className="flex-shrink-0 font-mono text-[11px] text-fg-muted">
-                            {entry.displayId != null ? `#${entry.displayId}` : `T${entry.ref}`}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">
-                            {entry.title}
-                          </span>
-                        </span>
-                        {answerColumns.map((field) => (
-                          <span
-                            key={field.key}
-                            className="w-24 flex-shrink-0 truncate text-right text-[11px] tabular-nums text-fg-secondary"
-                            data-field={field.key}
-                          >
-                            {/* An empty cell means the fact was never recorded.
-                                Never a zero, which would make an unmeasured
-                                task look like a free one. */}
-                            {field.display(entry) ?? ''}
-                          </span>
-                        ))}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-          </aside>
+      ) : chatOpen ? (
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-[25.25rem]">
+          <MemoryChat
+            thread={thread}
+            agentName={askAgentLabel}
+            onAsk={ask}
+            onRetry={(turnId) => { void retryTurn(turnId, { granularity, scopeDocKeys }); }}
+            onEnd={endChat}
+            onOpenTask={openTask}
+            canOpenTask={canOpenTask}
+            onFocusTurn={focusTurn}
+          />
         </div>
       ) : null}
     </div>

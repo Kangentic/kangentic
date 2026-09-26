@@ -34,14 +34,21 @@ function snapshotScript(options: {
   building?: boolean;
   semanticAvailable?: boolean;
   stale?: boolean;
+  /** Whether the answering agent and model are chosen. They have no fallback,
+   *  so a question with neither goes to Settings > Memory instead of running. */
+  answerAgentChosen?: boolean;
 } = {}): string {
   const {
     projection = 'null',
     building = false,
     semanticAvailable = true,
     stale = false,
+    answerAgentChosen = true,
   } = options;
-  return `window.__mockPreConfigure(function () {
+  return `window.__mockPreConfigure(function (state) {
+    ${answerAgentChosen
+      ? "state.config.memory = Object.assign({}, state.config.memory, { answerAgent: 'claude', answerModel: 'haiku' });"
+      : ''}
     return {
       memoryGraphSnapshot: {
         projectId: 'project-1',
@@ -231,15 +238,13 @@ function conversationFixture(): string {
         memoryGraphAnswerResult: {
           ok: true,
           agentName: 'Claude Code',
-          answer: 'That was T1.',
-          selectedDocKeys: ['conversation::doc-0'],
-          taskRefs: [
-            { ref: 1, displayId: 100, title: 'Conversation 0', docKeys: ['conversation::doc-0'], costUsd: null, durationMs: null, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
+          answer: 'That was #100.',
+          rows: [
+            { key: 'task-0', taskId: 'task-0', displayId: 100, title: 'Conversation 0', strength: 1, docKeys: ['conversation::doc-0'], passage: { sessionId: 'session-0', turnUuid: 'u-1' } }
           ],
-          view: null,
-          grounds: null,
+          related: [],
+          handedCount: 1,
           promptTokens: 1,
-          taskCount: 30,
         },
         transcriptSeeds: {
           'session-0': {
@@ -262,14 +267,13 @@ function conversationFixture(): string {
     });`;
 }
 
-/** Select node 0 through an answer: ask, click the task row it named, click the
- *  conversation. Deterministic, unlike clicking canvas pixels - which this tier
- *  deliberately never does. */
-async function selectFirstResult(page: Page): Promise<void> {
+/** Open node 0's conversation through an answer: ask, click the row it
+ *  names. Deterministic, unlike aiming at the canvas. */
+async function openConversationFromChat(page: Page): Promise<void> {
   await page.locator('[data-testid="memory-graph-search-input"]').fill('what was conversation 0?');
   await page.keyboard.press('Enter');
-  await page.locator('[data-testid="memory-graph-answer-task-row"]').first().click();
-  await page.locator('[data-testid="memory-graph-task-conversation-row"]').first().click();
+  await page.locator('[data-testid="memory-chat-row"]').first().click();
+  await page.locator('[data-testid="conversation-window"]').waitFor({ state: 'visible', timeout: 10000 });
 }
 
 async function openMemoryGraph(page: Page): Promise<void> {
@@ -440,139 +444,126 @@ test.describe('memory graph', () => {
   });
 
   /**
-   * An answer naming ONE task, whose conversation is node 3.
+   * Select a conversation on the map the way a reader does: press on it.
    *
-   * The way a reader reaches a conversation now: ask, click the task row the
-   * answer named, click the conversation. There is no search rail to click a
-   * card in - that rail showed our retrieval's raw passages before the agent
-   * saw the question, and the user's verdict on it was "confusing".
+   * Pressed at a drawn TITLE, which sits on its node and is the one place this
+   * tier can aim at without reading canvas pixels, and away from the floating
+   * panels so the press reaches the map. Which conversation it lands on is read
+   * back off the detail panel rather than assumed, since the layout decides
+   * which titles are drawn.
    */
-  const answerNamingTask3 = `
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'That was T1.',
-            selectedDocKeys: ['conversation::doc-3'],
-            taskRefs: [
-              { ref: 1, displayId: 103, title: 'Fix PTY resize', docKeys: ['conversation::doc-3'], costUsd: 4.5, durationMs: 60000, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
-            ],
-            view: null,
-            grounds: null,
-            promptTokens: 100,
-            taskCount: 12,
-          },
-        };
-      });`;
-
-  /** Ask, then drill from the answer's task row into its one conversation. */
-  async function askAndDrillIntoTask(page: Page): Promise<void> {
-    await page.locator('[data-testid="memory-graph-search-input"]').fill('what fixed the resize?');
-    await page.keyboard.press('Enter');
-    await page.locator('[data-testid="memory-graph-answer-task-row"]').click();
-    await page.locator('[data-testid="memory-graph-task-conversation-row"]').click();
+  async function selectVisibleNode(page: Page): Promise<number> {
+    await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
+    const { point, seen } = await page.evaluate(() => {
+      // Aimed near the title's START, which is where its node is drawn.
+      const aimAt = (rect: DOMRect) => ({ x: rect.left + Math.min(12, rect.width / 2), y: rect.top + rect.height / 2 });
+      const clearOfPanels = (rect: DOMRect) => {
+        const aim = aimAt(rect);
+        return aim.x > 280 && aim.x < window.innerWidth - 440 && aim.y > 60;
+      };
+      const titles = Array.from(document.querySelectorAll('[data-testid="memory-graph-node-title"]'))
+        .map((element) => ({ element: element as HTMLElement, rect: element.getBoundingClientRect() }))
+        .filter(({ element }) => Number(element.style.opacity || '0') > 0);
+      const title = titles.find(({ rect }) => clearOfPanels(rect));
+      return {
+        point: title ? aimAt(title.rect) : null,
+        seen: titles.map(({ element, rect }) => `${element.textContent} at ${Math.round(rect.left)},${Math.round(rect.top)}`),
+      };
+    });
+    if (!point) throw new Error(`no conversation title clear of the panels; drawn: ${seen.join('; ')}`);
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.down();
+    await page.mouse.up();
+    const title = page.locator('[data-testid="memory-graph-detail-title"]');
+    await expect(title).toBeVisible();
+    const match = /Conversation (\d+)/.exec(await title.innerText());
+    if (!match) throw new Error('the detail panel names no conversation');
+    return Number(match[1]);
   }
 
-  test('a conversation row selects the node and offers to open the conversation', async () => {
+  /** A source row as main sends it: the task of conversation `index`. */
+  function chatRow(index: number, strength = 1) {
+    return {
+      key: `task-${index}`,
+      taskId: `task-${index}`,
+      displayId: 100 + index,
+      title: `Conversation ${index}`,
+      strength,
+      docKeys: [`conversation::doc-${index}`],
+      passage: { sessionId: `session-${index}`, turnUuid: `u-${index}` },
+    };
+  }
+
+  function answeredScript(answer: string, rows: ReturnType<typeof chatRow>[], extra = ''): string {
+    const result = {
+      ok: true,
+      agentName: 'Claude Code',
+      answer,
+      rows,
+      related: rows,
+      handedCount: rows.length,
+      promptTokens: 100,
+    };
+    return `window.__mockPreConfigure(function () {
+      return { memoryGraphAnswerResult: ${JSON.stringify(result)} };
+    });${extra}`;
+  }
+
+  type AnswerCall = {
+    question: string;
+    projectId: string;
+    granularity: string;
+    requestId: string;
+    context: { chatId?: string; history?: Array<{ question: string; answer: string; taskKeys: string[] }>; scopeDocKeys?: string[] | null } | null;
+  };
+
+  async function answerCalls(page: Page): Promise<AnswerCall[]> {
+    return page.evaluate(() => (window as unknown as { __mockGraphAnswerCalls?: AnswerCall[] }).__mockGraphAnswerCalls ?? []);
+  }
+
+  async function fireStream(page: Page, event: Record<string, unknown>): Promise<void> {
+    await page.evaluate((payload) => (window as unknown as {
+      __mockFireAnswerStream: (event: unknown) => void;
+    }).__mockFireAnswerStream(payload), event);
+  }
+
+  async function askInBox(page: Page, question: string): Promise<void> {
+    const input = page.locator('[data-testid="memory-graph-search-input"]');
+    await input.fill(question);
+    await input.press('Enter');
+  }
+
+  const SIX_ROWS = [0, 1, 2, 3, 4, 5].map((index) => chatRow(index, 1 - index * 0.1));
+
+  test('pressing a conversation selects it and offers to open it', async () => {
     // The point of the whole surface: a node has to lead somewhere. The first
     // version showed a raw hash and offered nothing to do with it.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}${answerNamingTask3}`;
-    const { browser, page } = await launchWithState(preConfig);
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12) }));
     try {
       await openMemoryGraph(page);
-      await askAndDrillIntoTask(page);
+      const index = await selectVisibleNode(page);
 
       const detail = page.locator('[data-testid="memory-graph-detail"]');
-      await expect(detail).toBeVisible();
-      // The node's OWN title and metadata, not the raw doc key.
-      await expect(detail).toContainText('Conversation 3');
       // Labelled rows, not bare values: an unlabelled `#` in front of the
       // region name left the reader guessing what it was.
       await expect(detail).toContainText('Indexed');
-      await expect(detail).toContainText('13 chunks');
+      await expect(detail).toContainText(`${10 + index} chunks`);
       await expect(detail).toContainText('Agent');
       await expect(detail).toContainText('Claude Code');
       await expect(detail).toContainText('Region');
       await expect(page.locator('[data-testid="memory-graph-open-conversation"]')).toBeEnabled();
-    } finally {
-      await browser.close();
-    }
-  });
 
-  test('clicking Open conversation hands the session to the viewer', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}${answerNamingTask3}`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await askAndDrillIntoTask(page);
+      // Open conversation passes the NODE's session id, onto the graph's own
+      // window layer. `session-store.conversationSessionId` is the BOARD's
+      // signal, and routing through it opened the transcript underneath.
       await page.locator('[data-testid="memory-graph-open-conversation"]').click();
-
-      // The graph passes the NODE's session id (it knows it directly) rather
-      // than resolving a task's newest session the way task detail must.
-      //
-      // Asserted on the window's anchor rather than on
-      // `session-store.conversationSessionId`, which this used to check: that
-      // signal is the BOARD's, and routing through it is what opened the
-      // transcript at z-40 underneath this surface. The graph now writes to its
-      // own layer, and the shared signal is deliberately left alone.
       await expect
         .poll(async () => page.evaluate(
           () => (window as unknown as {
             __zustandStores?: { memoryWindows?: { getState: () => { windows: Record<string, { kind: string; anchor: string }> } } };
           }).__zustandStores?.memoryWindows?.getState().windows ?? {},
         ).then((windows) => Object.values(windows).map((entry) => `${entry.kind}:${entry.anchor}`)))
-        .toEqual(['conversation:session-3']);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('offers topic, recency, outcome, length and cost colour modes', async () => {
-    // One word each. "Conversation length" was the odd one out in a list of
-    // single words, and the qualifier stopped being needed once Duration and
-    // Cost sat beside it: three magnitudes in a row disambiguate each other. They
-    // are three DIFFERENT magnitudes, measured on the real corpus - length to
-    // duration 0.507, length to cost 0.560, duration to cost 0.664.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
-    try {
-      await openMemoryGraph(page);
-      // A Select, not a segmented control: four labels never fit the panel's
-      // width, and `ui-conventions` names Select for exactly that case.
-      const select = page.locator('[data-testid="memory-graph-color-mode"]');
-      for (const [value, label] of [['cluster', 'Topic'], ['recency', 'Recency'], ['outcome', 'Outcome'], ['size', 'Length'], ['duration', 'Duration'], ['cost', 'Cost']]) {
-        await select.selectOption(value);
-        await expect(select).toHaveValue(value);
-        // The description under the control tracks the selection, so the user
-        // can tell what the mode MEANS without hovering for a title.
-        await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText(label);
-      }
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('does not offer a metric mode on an index that records no metrics', async () => {
-    // The same rule the outcome facet follows. Cost and duration are absent on
-    // conversations indexed before the metrics were captured, and a mode that
-    // paints every node identically is worse than no mode.
-    const noMetrics = `(function () {
-      var base = ${projectionLiteral(20)};
-      base.nodes.forEach(function (node) { node.costUsd = null; node.durationMs = null; });
-      return base;
-    })()`;
-    const { browser, page } = await launchWithState(snapshotScript({ projection: noMetrics }));
-    try {
-      await openMemoryGraph(page);
-      const select = page.locator('[data-testid="memory-graph-color-mode"]');
-      // Topic, Recency, Outcome, Length - the four that need no captured metric.
-      await expect(select.locator('option')).toHaveCount(4);
-      await expect(select).not.toContainText('Cost');
-      await expect(select).not.toContainText('Duration');
-      // And it is not merely hidden from the list: selecting it is impossible,
-      // so a projection that loses its costs mid-session cannot strand the map
-      // in a mode with no control left on screen to explain it.
-      await expect(select).toHaveValue('cluster');
+        .toEqual([`conversation:session-${index}`]);
     } finally {
       await browser.close();
     }
@@ -583,584 +574,501 @@ test.describe('memory graph', () => {
    *
    * These tests are about the things that make it trustworthy rather than
    * merely present: it runs on Enter and on nothing else, it names who answers
-   * and what that costs before it runs, the tasks it names go back to the map,
-   * the answer is visible as it arrives, and it is not offered at all when no
-   * agent can do it.
+   * before it runs, the related set is on the map before the answer, the answer
+   * is visible as it arrives, its tasks lead to their conversations, and the
+   * chat ends when the reader says so.
    */
   test('typing runs nothing, and Enter asks', async () => {
     // ONE box, ONE path. It used to search live on every keystroke and
     // separately ask on Enter when a regex judged the text to be a question;
-    // two systems answered the same input and the second overwrote the first,
-    // so the user watched a hairball of raw passages appear and then vanish
-    // under the actual answer. Nothing on screen explained why "mobile
-    // pairing" and "what did we do about mobile pairing?" behaved differently,
-    // because the reason was a regex they could not see.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}`;
-    const { browser, page } = await launchWithState(preConfig);
+    // two systems answered the same input and the second overwrote the first.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
     try {
       await openMemoryGraph(page);
       const input = page.locator('[data-testid="memory-graph-search-input"]');
+      await expect(input).toHaveAttribute('placeholder', 'Ask about your tasks, conversations and code');
 
-      // Keywords, a question, an empty box: none of it does anything.
       await input.fill('sphere fit');
       await input.fill('What was the most expensive task?');
       await page.waitForTimeout(400);
-      await expect(page.locator('[data-testid="memory-graph-results"]')).toHaveCount(0);
-      expect(await page.evaluate(() => (window as unknown as {
-        __mockGraphAnswerCalls?: unknown[];
-      }).__mockGraphAnswerCalls ?? [])).toHaveLength(0);
+      await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
+      expect(await answerCalls(page)).toHaveLength(0);
 
-      // Enter asks. Exactly once, with the text as typed and the project the
-      // map is pointed at (`.claude/rules/project-scoped-ipc.md`), the detail
-      // level the user is looking at, and a request id the stream is keyed on.
+      // Enter asks. Exactly once, with the text as typed, the project the map
+      // is pointed at (`.claude/rules/project-scoped-ipc.md`), the detail level
+      // on screen, a request id the stream is keyed on, and a chat id.
       await input.press('Enter');
-      await expect.poll(async () => page.evaluate(() => (window as unknown as {
-        __mockGraphAnswerCalls?: Array<{ question: string; projectId: string; granularity: string; requestId: string | null }>;
-      }).__mockGraphAnswerCalls ?? [])).toHaveLength(1);
-      const [call] = await page.evaluate(() => (window as unknown as {
-        __mockGraphAnswerCalls: Array<{ question: string; projectId: string; granularity: string; requestId: string | null }>;
-      }).__mockGraphAnswerCalls);
+      await expect.poll(async () => (await answerCalls(page)).length).toBe(1);
+      const [call] = await answerCalls(page);
       expect(call.question).toBe('What was the most expensive task?');
       expect(call.projectId).toBe('project-1');
       expect(call.granularity).toBe('balanced');
       expect(call.requestId).toBeTruthy();
+      expect(call.context?.chatId).toBeTruthy();
+      expect(call.context?.history).toEqual([]);
+      // No filter is set, so nothing narrows the question.
+      expect(call.context?.scopeDocKeys).toBeNull();
     } finally {
       await browser.close();
     }
   });
 
-  test('says who answers and what it costs, before it runs', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}`;
-    const { browser, page } = await launchWithState(preConfig);
+  test('says who answers, before it runs', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
     try {
       await openMemoryGraph(page);
       const ask = page.locator('[data-testid="memory-graph-ask"]');
-      // Nothing typed, nothing to offer.
       await expect(ask).toHaveCount(0);
 
       await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-
       // The submit glyph appears once there is TEXT. Enter is the button; this
-      // is for discoverability and for the mouse, and it carries the agent and
-      // the cost - reachable without a pointer, since HoverTip renders its
-      // label sr-only inside the trigger at all times.
+      // is for discoverability and the mouse, and it names the agent.
       await expect(ask).toBeVisible();
       await expect(ask).toHaveAttribute('aria-label', 'Ask Claude Code');
-      await expect(page.getByText('One agent call', { exact: false }).first()).toBeAttached();
       await ask.hover();
-      await expect(page.locator('[data-testid="memory-graph-ask-tip"]')).toContainText('One agent call');
-
-      // And it has NOT run.
-      expect(await page.evaluate(() => (window as unknown as {
-        __mockGraphAnswerCalls?: unknown[];
-      }).__mockGraphAnswerCalls ?? [])).toHaveLength(0);
+      await expect(page.locator('[data-testid="memory-graph-ask-tip"]')).toContainText('related work');
+      expect(await answerCalls(page)).toHaveLength(0);
     } finally {
       await browser.close();
     }
   });
 
-  test('a task the answer named is a control that selects its conversation', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'A sphere circumscribes, so T1 framed nothing like the default view.',
-            selectedDocKeys: [],
-            taskRefs: [
-              { ref: 1, displayId: 107, title: 'Reset view', docKeys: ['conversation::doc-7'], costUsd: 12, durationMs: null, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
-            ],
-            view: null,
-            grounds: null,
-            promptTokens: 100,
-            taskCount: 30,
-          },
-        };
-      });`;
+  test('asking moves the question into a chat, and the related set lands before the answer', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('The settled answer, about #103.', [chatRow(3)], 'window.__mockHoldAnswer = true;')}`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('why did we drop the sphere fit?');
-      await page.keyboard.press('Enter');
+      await askInBox(page, 'what fixed the relay?');
 
-      const answered = page.locator('[data-testid="memory-answer"]');
-      await expect(answered).toBeVisible();
-      await expect(answered).toContainText('A sphere circumscribes');
-      await expect(answered).toContainText('Answered by Claude Code');
+      // The box goes and the question is the first bubble of the chat, headed
+      // by the agent that answers it.
+      const chat = page.locator('[data-testid="memory-chat"]');
+      await expect(chat).toBeVisible();
+      await expect(chat).toContainText('Claude Code');
+      await expect(page.locator('[data-testid="memory-graph-search-input"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-chat-question"]')).toHaveText('what fixed the relay?');
+      await expect(page.locator('[data-testid="memory-chat-pending"]')).toContainText('Finding related work');
 
-      // The ref in the prose is the board's ticket, and it is a control.
-      const refs = page.locator('[data-testid="memory-answer-task"]');
-      await expect(refs).toHaveCount(1);
-      await expect(refs.first()).toHaveText('#107');
-      await refs.first().click();
-      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Reset view');
-      await page.locator('[data-testid="memory-graph-task-conversation-row"]').click();
-      await expect(page.locator('[data-testid="memory-graph-detail"]')).toContainText('Conversation 7');
+      await expect.poll(async () => (await answerCalls(page)).length).toBe(1);
+      const [{ requestId }] = await answerCalls(page);
+
+      // Set first, answer on top: the related work arrives before any prose,
+      // and the turn says how much of it the agent is reading.
+      await fireStream(page, { requestId, kind: 'set', related: [chatRow(3), chatRow(4, 0.5)], handedCount: 2 });
+      await expect(page.locator('[data-testid="memory-chat-reading"]')).toHaveText('Reading 2 related tasks');
+      // And the map says what it is lighting, in words.
+      const caption = page.locator('[data-testid="memory-graph-lit-caption"]');
+      await expect(caption).toHaveText('Lit: 2 tasks related to the question, brighter where they match more');
+      expect(await page.evaluate(() => (window as unknown as {
+        __zustandStores: { memoryGraph: { getState: () => { thread: Array<{ related: unknown[] | null }> } } };
+      }).__zustandStores.memoryGraph.getState().thread[0].related?.length)).toBe(2);
+
+      // A search the agent makes on its own is a step, named by its query.
+      await fireStream(page, { requestId, kind: 'search', query: 'relay pairing', docKeys: ['conversation::doc-3'] });
+      const pending = page.locator('[data-testid="memory-chat-pending"]');
+      await expect(pending).toContainText('Read 2 related tasks');
+      await expect(pending).toContainText('relay pairing');
+
+      // Text renders while the answer is still open, and replaces the steps.
+      await fireStream(page, { requestId, kind: 'text', text: 'We dropped it because ' });
+      await expect(page.locator('[data-testid="memory-chat-answer"]')).toContainText('We dropped it because');
+      await expect(pending).toHaveCount(0);
+
+      // A delta for a DIFFERENT request is dropped, never appended.
+      await fireStream(page, { requestId: 'stale', kind: 'text', text: 'NOT THIS' });
+      await expect(page.locator('[data-testid="memory-chat-answer"]')).not.toContainText('NOT THIS');
+
+      // The settled answer REPLACES the stream, and its rows appear.
+      await page.evaluate(() => (window as unknown as { __mockReleaseAnswer: () => void }).__mockReleaseAnswer());
+      await expect(page.locator('[data-testid="memory-chat-answer"]')).toContainText('The settled answer');
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
+      // Once the answer lands, the map is about its tasks.
+      await expect(caption).toContainText('Lit: the 1 task the answer is about');
     } finally {
       await browser.close();
     }
   });
 
-  test('a new question drops the old answer', async () => {
-    // An answer is ABOUT a question, and one left standing over a different
-    // question claims to be about that one instead.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true, agentName: 'Claude Code', answer: 'It circumscribes.',
-            selectedDocKeys: [], taskRefs: [], view: null, grounds: null, promptTokens: 1, taskCount: 30,
-          },
+  test('an answer is prose with ticket marks, then rows of one kind', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('Mostly #100, then #103. Step #999 is not a task here.', SIX_ROWS)}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'which tasks touched the relay?');
+
+      // A ticket the answer is about is a mark; one it is not stays text.
+      const marks = page.locator('[data-testid="memory-chat-ticket"]');
+      await expect(marks).toHaveText(['#100', '#103']);
+      await expect(page.locator('[data-testid="memory-chat-answer"]')).toContainText('#999');
+
+      // Rows of ONE kind: the ticket and the title. Five, then the rest on ask.
+      const rows = page.locator('[data-testid="memory-chat-row"]');
+      await expect(rows).toHaveCount(5);
+      await expect(rows.first()).toContainText('#100');
+      await expect(rows.first()).toContainText('Conversation 0');
+      const more = page.locator('[data-testid="memory-chat-rows-more"]');
+      await expect(more).toHaveText('Show all 6');
+      await more.click();
+      await expect(rows).toHaveCount(6);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a row opens that task\'s conversation over the map, at the passage the answer used', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('#103 fixed it.', [chatRow(3)])}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'what fixed the relay?');
+
+      // Record what each open ASKED for. The scroll target is consumed the
+      // moment the viewer scrolls, so the store cannot be read for it afterwards.
+      await page.evaluate(() => {
+        type Opened = { kind: string; anchor: string; scrollToTurnUuid?: string };
+        const holder = window as unknown as {
+          __openedWindows: Opened[];
+          __zustandStores: { memoryWindows: { getState: () => { openWindow: (input: Opened) => unknown }; setState: (patch: object) => void } };
         };
-      });`;
+        holder.__openedWindows = [];
+        const store = holder.__zustandStores.memoryWindows;
+        const original = store.getState().openWindow;
+        store.setState({
+          openWindow: (input: Opened) => {
+            holder.__openedWindows.push({ kind: input.kind, anchor: input.anchor, scrollToTurnUuid: input.scrollToTurnUuid });
+            return original(input);
+          },
+        });
+      });
+      const opened = () => page.evaluate(() => (window as unknown as {
+        __openedWindows: Array<{ kind: string; anchor: string; scrollToTurnUuid?: string }>;
+      }).__openedWindows);
+
+      await page.locator('[data-testid="memory-chat-row"]').click();
+      await expect.poll(opened).toEqual([{ kind: 'conversation', anchor: 'session-3', scrollToTurnUuid: 'u-3' }]);
+
+      // The mark in the prose leads to the same place, and focuses rather than
+      // stacking a second window. Dispatched: the window may sit over the chat.
+      await page.locator('[data-testid="memory-chat-ticket"]').dispatchEvent('click');
+      await expect.poll(async () => (await opened()).length).toBe(2);
+      expect((await opened())[1]).toEqual({ kind: 'conversation', anchor: 'session-3', scrollToTurnUuid: 'u-3' });
+      expect(await page.evaluate(() => Object.keys((window as unknown as {
+        __zustandStores: { memoryWindows: { getState: () => { windows: Record<string, unknown> } } };
+      }).__zustandStores.memoryWindows.getState().windows).length)).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('dims the related tasks the answer is not about, and says how many', async () => {
+    const answered = {
+      ok: true, agentName: 'Claude Code', answer: 'It was #103.', rows: [chatRow(3)],
+      related: [chatRow(3), chatRow(4, 0.9), chatRow(5, 0.8)], handedCount: 3, promptTokens: 1,
+    };
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+      window.__mockPreConfigure(function () { return { memoryGraphAnswerResult: ${JSON.stringify(answered)} }; });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'what fixed the relay?');
+      await expect(page.locator('[data-testid="memory-graph-lit-caption"]'))
+        .toHaveText('Lit: the 1 task the answer is about, with 2 more related tasks dimmed');
+      // Only the answer's task is titled; the dimmed related ones stay dots.
+      await expect.poll(async () => visibleNodeTitles(page)).toEqual(['Conversation 3']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('counts an answer task with no recorded conversation as one the map cannot light', async () => {
+    const unlitTask = {
+      key: 'task-old', taskId: 'task-old', displayId: 14, title: 'Add support for OpenCode agent',
+      strength: 1, docKeys: [], passage: null,
+    };
+    const answered = {
+      ok: true, agentName: 'Claude Code', answer: 'Two: #103 and #14.', rows: [chatRow(3), unlitTask],
+      related: [chatRow(3), chatRow(4, 0.9), chatRow(5, 0.8)], handedCount: 3, promptTokens: 1,
+    };
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+      window.__mockPreConfigure(function () { return { memoryGraphAnswerResult: ${JSON.stringify(answered)} }; });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'which tasks added an agent?');
+      await expect(page.locator('[data-testid="memory-graph-lit-caption"]')).toHaveText(
+        'Lit: 1 of the 2 tasks the answer is about (1 has no recorded conversation), with 2 more related tasks dimmed',
+      );
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a task with no recorded conversation opens on the board, or shows as unopenable detached', async () => {
+    // On the real board four of the tasks that added an agent have no indexed
+    // conversation. They are answer rows now, and a row has to lead somewhere.
+    const oldTask = {
+      key: 'task-old', taskId: 'task-old', displayId: 14, title: 'Add support for OpenCode agent',
+      strength: 1, docKeys: [], passage: null,
+    };
+    const answered = `window.__mockPreConfigure(function () {
+      return { memoryGraphAnswerResult: ${JSON.stringify({
+        ok: true, agentName: 'Claude Code', answer: 'That was #14.', rows: [oldTask], related: [], handedCount: 0, promptTokens: 1,
+      })} };
+    });`;
+
+    const inApp = await launchWithState(`${snapshotScript({ projection: projectionLiteral(12) })}${answered}`);
+    try {
+      await openMemoryGraph(inApp.page);
+      await askInBox(inApp.page, 'which task added OpenCode?');
+      const row = inApp.page.locator('[data-testid="memory-chat-row"]');
+      await expect(row).toBeEnabled();
+      // Nothing of it can light, and the caption does not pretend otherwise.
+      await expect(inApp.page.locator('[data-testid="memory-graph-lit-caption"]')).toHaveCount(0);
+      await row.click();
+      // The graph closes and the board is asked to open the task.
+      await expect(inApp.page.locator('[data-testid="memory-graph-page"]')).toHaveCount(0);
+      await expect.poll(async () => inApp.page.evaluate(() => (window as unknown as {
+        __zustandStores: { session: { getState: () => { detailTaskId: string | null } } };
+      }).__zustandStores.session.getState().detailTaskId)).toBe('task-old');
+    } finally {
+      await inApp.browser.close();
+    }
+
+    const detached = await launchDetached(`${snapshotScript({ projection: projectionLiteral(12) })}${answered}`);
+    try {
+      await askInBox(detached.page, 'which task added OpenCode?');
+      // No conversation and no board here: the row names the task but is not a control.
+      await expect(detached.page.locator('[data-testid="memory-chat-row"]')).toBeDisabled();
+      await expect(detached.page.locator('button[data-testid="memory-chat-ticket"]')).toHaveCount(0);
+    } finally {
+      await detached.browser.close();
+    }
+  });
+
+  test('a follow-up carries the chat, and the earlier rows collapse', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('Mostly #100.', SIX_ROWS)}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'which tasks touched the relay?');
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(5);
+
+      const composer = page.locator('[data-testid="memory-chat-input"]');
+      await expect(composer).toHaveAttribute('placeholder', 'Ask a follow-up');
+      await composer.fill('which of those cost the most?');
+      await composer.press('Enter');
+
+      await expect.poll(async () => (await answerCalls(page)).length).toBe(2);
+      const [first, second] = await answerCalls(page);
+      // Same chat, and the earlier turn rides along with the tasks it was about.
+      expect(second.context?.chatId).toBe(first.context?.chatId);
+      expect(second.context?.history).toEqual([{
+        question: 'which tasks touched the relay?',
+        answer: 'Mostly #100.',
+        taskKeys: SIX_ROWS.map((row) => row.key),
+      }]);
+
+      await expect(page.locator('[data-testid="memory-chat-question"]')).toHaveCount(2);
+      await expect(page.locator('[data-testid="memory-chat-rows-collapsed"]')).toHaveText('Show 6 tasks');
+      // The latest turn's rows are the open ones.
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(5);
+      // The box stays gone: the composer is the one place to type.
+      await expect(page.locator('[data-testid="memory-graph-search-input"]')).toHaveCount(0);
+
+      // Opening the earlier turn's rows puts ITS tasks back on the map.
+      const focused = () => page.evaluate(() => {
+        const state = (window as unknown as {
+          __zustandStores: { memoryGraph: { getState: () => { focusedTurnId: string | null; thread: Array<{ id: string }> } } };
+        }).__zustandStores.memoryGraph.getState();
+        return state.focusedTurnId === state.thread[0].id;
+      });
+      expect(await focused()).toBe(false);
+      await page.locator('[data-testid="memory-chat-rows-collapsed"]').click();
+      await expect.poll(focused).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('an answer about one conversation keeps its neighbours on the map', async () => {
+    // It used to light that one conversation and hide everything else, which
+    // left a single dot on an empty field. Its nearest neighbours stay as
+    // dim context, which the fixture makes the next three conversations.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+      ${answeredScript('That was #110, one conversation.', [chatRow(10)])}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'what was the longest conversation?');
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
+
+      // The answer's conversation is titled; the neighbours around it are dim
+      // context dots, and the caption says so.
+      await expect.poll(async () => (await visibleNodeTitles(page)).sort()).toEqual(['Conversation 10']);
+      await expect(page.locator('[data-testid="memory-graph-lit-caption"]'))
+        .toHaveText('Lit: the 1 task the answer is about, with its nearest conversations dimmed around it');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
+   * The detached window: the same body in a renderer of its own, with its own
+   * store and no settings panel. Loaded by handing the renderer the descriptor
+   * main would pass a pop-out.
+   */
+  async function launchDetached(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
+    await waitForViteReady(VITE_URL);
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+    const page = await context.newPage();
+    await page.addInitScript({ path: MOCK_SCRIPT });
+    await page.addInitScript(`${preConfigScript}
+      window.electronAPI.popOut.descriptor = { kind: 'memory', params: {} };`);
+    await page.goto(VITE_URL);
+    // No title bar in a detached window, so wait for the graph itself.
+    await page.locator('[data-testid="memory-graph-search-input"]').waitFor({ state: 'visible', timeout: 15000 });
+    return { browser, page };
+  }
+
+  test('the detached window asks and answers the same way', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('It was #103.', [chatRow(3)])}`;
+    const { browser, page } = await launchDetached(preConfig);
+    try {
+      // No board behind it: this renderer is the graph alone.
+      await expect(page.locator('[data-testid="memory-graph-page"]')).toHaveCount(0);
+      await askInBox(page, 'what fixed the relay?');
+      await expect(page.locator('[data-testid="memory-chat-answer"]')).toContainText('It was');
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
+
+      await page.locator('[data-testid="memory-chat-end"]').click();
+      await expect(page.locator('[data-testid="memory-graph-search-input"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the detached window names where the answering agent is chosen, instead of opening a panel it lacks', async () => {
+    const { browser, page } = await launchDetached(
+      snapshotScript({ projection: projectionLiteral(12), answerAgentChosen: false }),
+    );
+    try {
+      await askInBox(page, 'what fixed the relay?');
+      await expect(page.locator('[data-testid="memory-graph-setup-hint"]')).toContainText('Settings > Memory');
+      await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
+      expect(await answerCalls(page)).toHaveLength(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('X ends the chat and brings the box back', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('Mostly #100.', [chatRow(0)])}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'which tasks touched the relay?');
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
+
+      await page.locator('[data-testid="memory-chat-end"]').click();
+      await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
+      const input = page.locator('[data-testid="memory-graph-search-input"]');
+      await expect(input).toBeVisible();
+      await expect(input).toHaveValue('');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('shows why an answer failed, verbatim, and tries again in place', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('It was #100.', [chatRow(0)], `
+        window.__mockAnswerResultQueue = [{ ok: false, reason: 'Claude Code CLI not found' }];`)}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'what happened?');
+
+      // Every reason is actionable, so a generic failure line would take it away.
+      const failed = page.locator('[data-testid="memory-chat-turn-failed"]');
+      await expect(failed).toContainText('CLI not found');
+      await page.locator('[data-testid="memory-chat-retry"]').click();
+
+      await expect(page.locator('[data-testid="memory-chat-answer"]')).toContainText('It was');
+      await expect(failed).toHaveCount(0);
+      // In place: the question is asked again, not added as a second turn.
+      await expect(page.locator('[data-testid="memory-chat-question"]')).toHaveCount(1);
+      expect((await answerCalls(page)).map((call) => call.question)).toEqual(['what happened?', 'what happened?']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the map\'s filters are the scope of the question', async () => {
+    // Nothing in the chat restates the filters: they go with the question, and
+    // main counts, ranks and searches only inside them.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('Eight finished.', [])}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('done');
+      await askInBox(page, 'how many tasks finished?');
+
+      await expect.poll(async () => (await answerCalls(page)).length).toBe(1);
+      const [call] = await answerCalls(page);
+      // The fixture marks every node whose index is not 1 more than a multiple of 3 as done.
+      const expected = [0, 2, 3, 5, 6, 8, 9, 11].map((index) => `conversation::doc-${index}`);
+      expect([...(call.context?.scopeDocKeys ?? [])].sort()).toEqual(expected.sort());
+      await expect(page.locator('[data-testid="memory-chat"]')).not.toContainText('Finished');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('sends a question to Settings > Memory when no answering agent is chosen, and keeps it', async () => {
+    // The agent and model are one explicit global choice with no fallback, so
+    // a question asked before they are set runs nothing. It goes to the place
+    // the choice is made, and the typed question waits in the box.
+    const preConfig = snapshotScript({ projection: projectionLiteral(30), answerAgentChosen: false });
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
       const input = page.locator('[data-testid="memory-graph-search-input"]');
-      await input.fill('sphere fit');
+      await expect(input).toBeEnabled();
+      await input.fill('what changed the renderer?');
       await input.press('Enter');
-      await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
 
-      // Typing a different question does not by itself drop it - the answer
-      // still applies to what was asked. Asking again does.
-      await input.fill('something else entirely');
-      await input.press('Enter');
-      await expect.poll(async () => page.evaluate(() => (window as unknown as {
-        __mockGraphAnswerCalls?: unknown[];
-      }).__mockGraphAnswerCalls ?? [])).toHaveLength(2);
-
-      // And clearing the box clears the answer with it, or an answer would
-      // stand over an empty box claiming to be about nothing.
-      await input.fill('');
-      await expect(page.locator('[data-testid="memory-answer"]')).toHaveCount(0);
-      await expect(page.locator('[data-testid="memory-graph-results"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+      await expect(page.locator('[data-testid="settings-tab-memory"]')).toHaveClass(/font-medium/);
+      // No answer ran: the chat never started.
+      await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
+      // The question survives the trip to settings.
+      await expect(input).toHaveValue('what changed the renderer?');
     } finally {
       await browser.close();
     }
   });
 
-  test('shows why an answer failed, verbatim', async () => {
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: { ok: false, reason: 'Claude Code CLI not found' },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-      await page.keyboard.press('Enter');
-      // Every reason is actionable - no CLI, the agent cannot answer, a timeout -
-      // so a generic failure line would take that away.
-      await expect(page.locator('[data-testid="memory-answer-error"]')).toContainText('CLI not found');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('shows the answer arriving, before it has finished', async () => {
-    // Content at first-token time (measured 1.1 to 1.8s) rather than a spinner
-    // until completion (measured ~6s). The mock's answerFromGraph resolves at
-    // once, so the stream is driven by hand BEFORE Enter resolves it: the
-    // events carry the request id the store minted, read back off the call.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true, agentName: 'Claude Code', answer: 'The settled answer.',
-            selectedDocKeys: [], taskRefs: [], view: null, grounds: null, promptTokens: 1, taskCount: 30,
-          },
-        };
-      });
-      // Hold the answer open until the spec releases it, so the stream has a
-      // window to be observed in. The call is recorded HERE, because the
-      // mock's own recorder only runs when the held call is finally released,
-      // and the spec needs the request id before that.
-      var original = window.electronAPI.memory.answerFromGraph;
-      window.electronAPI = Object.assign({}, window.electronAPI, {
-        memory: Object.assign({}, window.electronAPI.memory, {
-          answerFromGraph: function (question, projectId, granularity, requestId) {
-            var args = arguments;
-            if (!window.__mockGraphAnswerCalls) window.__mockGraphAnswerCalls = [];
-            window.__mockGraphAnswerCalls.push({ question: question, projectId: projectId, granularity: granularity, requestId: requestId });
-            return new Promise(function (resolve) {
-              window.__mockReleaseAnswer = function () { resolve(original.apply(null, args)); };
-            });
-          },
-        }),
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('why did we do that?');
-      await page.keyboard.press('Enter');
-
-      const requestId = await page.evaluate(() => (window as unknown as {
-        __mockGraphAnswerCalls: Array<{ requestId: string }>;
-      }).__mockGraphAnswerCalls[0].requestId);
-
-      // A tool call shows as progress, named for the reader.
-      await page.evaluate((id) => (window as unknown as {
-        __mockFireAnswerStream: (event: unknown) => void;
-      }).__mockFireAnswerStream({ requestId: id, kind: 'tool', name: 'mcp__kangentic__kangentic_search' }), requestId);
-      await expect(page.locator('[data-testid="memory-answer-status"]')).toContainText('Searching your conversations');
-
-      // Text arrives and renders while the answer is still open.
-      await page.evaluate((id) => (window as unknown as {
-        __mockFireAnswerStream: (event: unknown) => void;
-      }).__mockFireAnswerStream({ requestId: id, kind: 'text', text: 'We dropped it because ' }), requestId);
-      await expect(page.locator('[data-testid="memory-answer-streaming"]')).toContainText('We dropped it because');
-      // The status line clears once prose is flowing.
-      await expect(page.locator('[data-testid="memory-answer-status"]')).toHaveCount(0);
-
-      // A delta for a DIFFERENT request is dropped, never appended.
-      await page.evaluate(() => (window as unknown as {
-        __mockFireAnswerStream: (event: unknown) => void;
-      }).__mockFireAnswerStream({ requestId: 'stale', kind: 'text', text: 'NOT THIS' }));
-      await expect(page.locator('[data-testid="memory-answer-streaming"]')).not.toContainText('NOT THIS');
-
-      // The whole answer REPLACES the stream when it lands.
-      await page.evaluate(() => (window as unknown as { __mockReleaseAnswer: () => void }).__mockReleaseAnswer());
-      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('The settled answer.');
-      await expect(page.locator('[data-testid="memory-answer-streaming"]')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('scopes the map to the tasks an answer selected', async () => {
-    // "Show me the tasks related to terminal bug fixes" wants the map filtered,
-    // not a paragraph describing a filter. The agent read every task and said
-    // which qualify; the surface treats that as the scope.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'Two tasks touch the terminal.',            selectedDocKeys: ['conversation::doc-3', 'conversation::doc-7'],
-            taskCount: 30,          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('sphere fit');
-      await page.keyboard.press('Enter');
-      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Two tasks touch the terminal');
-
-      // The answer named no task, only conversations, so the rail LISTS what
-      // it selected and counts them - a scoped map over an empty rail reads as
-      // a filter that lost its list. Two rows, agreeing with the map.
-      const rows = page.locator('[data-testid="memory-graph-task-conversation-row"]');
-      await expect(rows).toHaveCount(2);
-      await expect(rows.first()).toContainText('Conversation');
-      await expect(page.getByText('2 conversations', { exact: true })).toBeVisible();
-      // And a row is a way in: it selects that conversation.
-      await rows.first().click();
-      await expect(page.locator('[data-testid="memory-graph-detail"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('makes a task the answer named a control, and scopes the map to it', async () => {
-    // Measured against a real agent: asked about mobile work it wrote an essay
-    // naming 22 tasks inline as `T133` and never emitted the protocol line, so
-    // every one of them rendered as dead text pointing at nothing.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'Mobile work spans T4 the bridge and T9 the relay.',            selectedDocKeys: [],
-            taskRefs: [
-              { ref: 4, title: 'Mobile Bridge Phase 1', docKeys: ['conversation::doc-3', 'conversation::doc-7'] }
-            ],
-            taskCount: 30,          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('mobile');
-      await page.keyboard.press('Enter');
-      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Mobile work spans');
-
-      // T4 resolved, so it is a control. T9 did not, so it stays plain text
-      // rather than becoming a button that cannot act.
-      const chips = page.locator('[data-testid="memory-answer-task"]');
-      await expect(chips).toHaveCount(1);
-      // This ref carries no board ticket, which is what a conversation with no
-      // task looks like. It keeps the `T` label rather than inventing a `#`,
-      // since it genuinely is not a ticket.
-      await expect(chips.first()).toHaveText('T4');
-
-      // Clicking it scopes the map to that task's conversations, and says so.
-      await chips.first().click();
-      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Mobile Bridge Phase 1');
-      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('2 conversations');
-      // The rail DRILLS IN to that task's conversations. Re-listing the task
-      // row would restate a scope the map is already holding, which is what
-      // made clicking a row appear to do nothing at all.
-      await expect(page.locator('[data-testid="memory-graph-task-conversation-row"]')).toHaveCount(2);
-      await expect(page.locator('[data-testid="memory-graph-answer-task-row"]')).toHaveCount(0);
-
-      // And the scope is undoable, like every other narrowing on this surface.
-      await page.locator('[data-testid="memory-graph-task-clear"]').click();
-      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toHaveCount(0);
-      await expect(page.locator('[data-testid="memory-graph-answer-task-row"]')).toHaveCount(1);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('lists the tasks an answer named, as tasks, with no protocol line', async () => {
-    // The reported case: "What is the biggest mobile task?" produced a correct
-    // ranking naming six tasks, and the rail beneath it read "1 of 673" over a
-    // single card showing a raw tool-call snippet. The agent emitted no
-    // SELECTED line, so the rail kept the original search while the answer
-    // discussed tasks it had already resolved.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'Ranking by cost: T1 (Research: Mobile App) at $308.42 is the largest, then T5.',            // No SELECTED line, exactly as the real agent behaved.
-            selectedDocKeys: [],
-            taskRefs: [
-              { ref: 1, displayId: 529, title: 'Research: Mobile App', docKeys: ['conversation::doc-3', 'conversation::doc-7'], costUsd: 308.42, durationMs: 7_680_000, tokens: 12_400_000, outcome: 'done', sessions: 2, lastActivityMs: null, region: null, agent: null, model: null },
-              { ref: 5, displayId: 44, title: 'Codex Agent-to-Board MCP', docKeys: ['conversation::doc-9'], costUsd: 199.76, durationMs: null, tokens: null, outcome: 'active', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
-            ],
-            view: { select: ['cost_usd', 'duration', 'outcome'], order: { key: 'cost_usd', direction: 'desc' } },
-            taskCount: 30,          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('biggest mobile task');
-      await page.keyboard.press('Enter');
-      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Ranking by cost');
-
-      // TASK rows, both tasks the answer named.
-      const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
-      await expect(rows).toHaveCount(2);
-
-      // The row is labelled with the BOARD's ticket, which is the number the
-      // reader has seen on a card - not `T1`, which is a position in the
-      // prompt's task table and a different number for the same task.
-      await expect(rows.first()).toContainText('#529');
-      await expect(rows.first()).not.toContainText('T1');
-      await expect(rows.first()).toContainText('Research: Mobile App');
-
-      // The columns are the ones the ANSWER asked for, aligned under a header.
-      const headers = page.locator('[data-testid="memory-graph-answer-task-header"] span');
-      await expect(headers).toHaveText(['Task', 'Cost', 'Duration', 'Status']);
-      await expect(rows.first().locator('[data-field="cost_usd"]')).toHaveText('$308.42');
-      await expect(rows.first().locator('[data-field="duration"]')).toHaveText('2h 8m');
-      // Named after the WORK, not after the board's Done column.
-      await expect(rows.first().locator('[data-field="outcome"]')).toHaveText('Completed');
-      await expect(rows.nth(1).locator('[data-field="outcome"]')).toHaveText('In Progress');
-
-      // A task with no duration recorded leaves the cell EMPTY rather than
-      // printing a zero it has not earned.
-      await expect(rows.nth(1).locator('[data-field="cost_usd"]')).toHaveText('$199.76');
-      await expect(rows.nth(1).locator('[data-field="duration"]')).toHaveText('');
-
-      // Tokens were not selected, so no token figure appears anywhere.
-      await expect(rows.first()).not.toContainText('12.4M');
-
-      // And the count names the unit the rail is actually showing.
-      await expect(page.getByText('2 tasks', { exact: false }).first()).toBeVisible();
-
-      // Clicking a row DRILLS IN to that task's conversations. It used to set a
-      // scope the map was already holding, so the click moved nothing at all.
-      await rows.first().click();
-      await expect(page.locator('[data-testid="memory-graph-task-chip"]')).toContainText('Research: Mobile App');
-      await expect(page.locator('[data-testid="memory-graph-task-conversation-row"]')).toHaveCount(2);
-      await expect(page.locator('[data-testid="memory-graph-answer-task-row"]')).toHaveCount(0);
-      await expect(page.getByText('2 conversations', { exact: false }).first()).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('keeps the working behind a disclosure instead of in the answer', async () => {
-    // Quoting the sources before answering is the documented way to keep a
-    // long-context answer on its material, and the measured failure it targets
-    // is an answer reaching past 22k tokens of task history to answer from
-    // general knowledge. But this rail is narrow and its answers run to a line
-    // or two, so the quotes cannot sit above every one of them.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: '#286 at $308.42 is the largest.',
-            grounds: 'T1 | 308.42 | cost_usd\\n[3] "we dropped the sphere fit"',            selectedDocKeys: [],
-            taskRefs: [],
-            view: null,
-            taskCount: 349,          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('most expensive task');
-      await page.keyboard.press('Enter');
-
-      const answer = page.locator('[data-testid="memory-answer"]');
-      await expect(answer).toContainText('#286 at $308.42 is the largest.');
-
-      // COLLAPSED by default: the answer is what the reader came for.
-      const grounds = page.locator('[data-testid="memory-answer-grounds"]');
-      await expect(grounds).toBeVisible();
-      await expect(grounds).not.toHaveAttribute('open', '');
-      // The working is not in the answer body, which is the whole point of
-      // separating it - otherwise the rail reads as a wall of quotes.
-      await expect(page.locator('.memory-answer-body')).not.toContainText('cost_usd');
-
-      // And it is one click away, verbatim.
-      await grounds.locator('summary').click();
-      await expect(grounds).toContainText('T1 | 308.42 | cost_usd');
-      await expect(grounds).toContainText('we dropped the sphere fit');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('shows no disclosure when the answer carried no working', async () => {
-    // An answer without grounds is an ordinary answer, not a degraded one. An
-    // empty "Show what this is based on" that opens onto nothing would read as
-    // a broken control.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'Nothing in the index covers that.',
-            grounds: null,            selectedDocKeys: [],
-            taskRefs: [],
-            view: null,
-            taskCount: 349,          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('kubernetes');
-      await page.keyboard.press('Enter');
-      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('Nothing in the index');
-      await expect(page.locator('[data-testid="memory-answer-grounds"]')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('shows an answer to a question that never ran a search', async () => {
-    // Found by driving the real product, not by reasoning: typing a QUESTION
-    // deliberately does NOT run a search (questions wait for Ask, because
-    // filtering the map on every keystroke was the reported annoyance). So a
-    // question leaves `query` null - and the rail was gated on `query`, which
-    // meant the answer, its citations and its task rows had nowhere to render.
-    // The map still scoped to the answer, so it looked like the surface had
-    // simply swallowed a reply that had already been paid for.
-    //
-    // No `askQuery` here on purpose: the absence of a search result is the
-    // whole condition under test.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'The most expensive task is T1 at $308.42.',            selectedDocKeys: ['conversation::doc-3'],
-            taskRefs: [
-              { ref: 1, displayId: 286, title: 'Searchable conversation memory', docKeys: ['conversation::doc-3'], costUsd: 308.42, durationMs: 7_680_000, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
-            ],
-            view: { select: ['cost_usd'], order: { key: 'cost_usd', direction: 'desc' } },
-            taskCount: 349,          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('What is the most expensive task?');
-      // No search ran, so there is no result rail yet.
-      await expect(page.locator('[data-testid="memory-graph-results"]')).toHaveCount(0);
-
-      await page.keyboard.press('Enter');
-
-      // The answer has a home even though nothing was searched.
-      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('most expensive task');
-      const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
-      await expect(rows).toHaveCount(1);
-      await expect(rows.first()).toContainText('#286');
-      await expect(rows.first().locator('[data-field="cost_usd"]')).toHaveText('$308.42');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('follows the answer to a column that is not cost', async () => {
-    // The defect this whole shape exists for: the rows printed a fixed four
-    // facts, so an answer ranking tasks by TOKENS sat above rows showing dollar
-    // amounts, and an answer about recency showed no date at all.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true,
-            agentName: 'Claude Code',
-            answer: 'By tokens, T1 leads at 12.4M.',            selectedDocKeys: [],
-            taskRefs: [
-              { ref: 1, displayId: 529, title: 'Research: Mobile App', docKeys: ['conversation::doc-3'], costUsd: 308.42, durationMs: 7_680_000, tokens: 12_400_000, outcome: 'done', sessions: 1, lastActivityMs: 1756000000000, region: null, agent: null, model: null },
-              { ref: 5, displayId: 44, title: 'Codex Agent-to-Board MCP', docKeys: ['conversation::doc-9'], costUsd: 199.76, durationMs: 3_600_000, tokens: 900_000, outcome: 'done', sessions: 1, lastActivityMs: 1755000000000, region: null, agent: null, model: null }
-            ],
-            view: { select: ['tokens', 'last_active'], order: { key: 'tokens', direction: 'desc' } },
-            taskCount: 30,          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('most tokens');
-      await page.keyboard.press('Enter');
-      await expect(page.locator('[data-testid="memory-answer"]')).toContainText('By tokens');
-
-      const headers = page.locator('[data-testid="memory-graph-answer-task-header"] span');
-      await expect(headers).toHaveText(['Task', 'Tokens', 'Last active']);
-
-      const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
-      await expect(rows.first().locator('[data-field="tokens"]')).toHaveText('12.4M');
-      // The number the prose names is the number on the row. Cost is not shown
-      // at all, because nothing asked about it.
-      await expect(rows.first()).not.toContainText('$308.42');
-
-      // Outcome is identical on both rows, so it carries no signal and is not
-      // rendered even though the catalog has it.
-      await expect(rows.first()).not.toContainText('Completed');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('does not offer Ask when the agent cannot answer', async () => {
+  test('treats a chosen agent that cannot answer as not chosen', async () => {
     // The gate is the CAPABILITY, never the agent's name
-    // (`.claude/rules/agent-adapters-boundary.md`). An agent without it gets no
-    // affordance rather than one that fails when pressed.
+    // (`.claude/rules/agent-adapters-boundary.md`), and no other agent is
+    // substituted for it.
     const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}      window.__mockAgentListOverrides = { claude: { supportsAnswerFromContext: false } };`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      // The box says so in place of doing nothing: a plain notice where the
-      // prompt would be, and no way to type into a control that cannot act.
       const input = page.locator('[data-testid="memory-graph-search-input"]');
-      await expect(input).toBeDisabled();
-      await expect(input).toHaveAttribute('placeholder', 'No agent can answer here');
-      await expect(page.locator('[data-testid="memory-graph-ask"]')).toHaveCount(0);
+      await input.fill('anything');
+      await input.press('Enter');
+      await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+      await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -1241,8 +1149,10 @@ test.describe('memory graph', () => {
         return {
           memoryGraphAnswerResult: {
             ok: true, agentName: 'Claude Code', answer: 'Four conversations.',
-            selectedDocKeys: ['conversation::doc-0', 'conversation::doc-1', 'conversation::doc-2', 'conversation::doc-15'],
-            taskRefs: [], view: null, grounds: null, promptTokens: 1, taskCount: 20,
+            rows: [0, 1, 2, 15].map(function (index) {
+              return { key: 'task-' + index, taskId: 'task-' + index, displayId: 100 + index, title: 'Conversation ' + index, strength: 1, docKeys: ['conversation::doc-' + index], passage: null };
+            }),
+            related: [], handedCount: 4, promptTokens: 1,
           },
         };
       });`;
@@ -1256,86 +1166,12 @@ test.describe('memory graph', () => {
 
       await page.locator('[data-testid="memory-graph-search-input"]').fill('terminal');
       await page.keyboard.press('Enter');
-      await expect(page.locator('[data-testid="memory-graph-task-conversation-row"]')).toHaveCount(4);
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(4);
 
       // Opacity, not element count: the labels stay mounted and the frame loop
       // fades them, so a count assertion passes against a merely invisible pill.
       await expect(thinned).toHaveCSS('opacity', '0');
       await expect(kept).not.toHaveCSS('opacity', '0');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a filter narrows an answer rather than replacing it', async () => {
-    // An answer asks "which conversations", a facet asks "which part of the
-    // index". They have to compose, and the LIST has to agree with the map - a
-    // scoped map under an unfiltered list reads as a broken filter.
-    // doc-3 reached Done (3 % 3 === 0) and doc-4 is still active, so the two
-    // selected conversations deliberately straddle the outcome split.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(20) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true, agentName: 'Claude Code', answer: 'Two conversations.',
-            selectedDocKeys: ['conversation::doc-3', 'conversation::doc-4'],
-            taskRefs: [], view: null, grounds: null, promptTokens: 1, taskCount: 20,
-          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('terminal');
-      await page.keyboard.press('Enter');
-      const rows = page.locator('[data-testid="memory-graph-task-conversation-row"]');
-      await expect(rows).toHaveCount(2);
-
-      // Scoping to Done must drop exactly one row AND the count with it.
-      await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('done');
-      await expect(rows).toHaveCount(1);
-      await expect(rows).toContainText('Conversation 3');
-      await expect(page.getByText('1 conversation', { exact: true })).toBeVisible();
-
-      await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('any');
-      await expect(rows).toHaveCount(2);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a filter narrows the tasks an answer named', async () => {
-    // Same rule one level up. A task row whose every conversation the facet
-    // hid would sit beside a map showing none of them.
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(20) })}
-      window.__mockPreConfigure(function () {
-        return {
-          memoryGraphAnswerResult: {
-            ok: true, agentName: 'Claude Code', answer: 'T1 finished and T2 is still going.',
-            selectedDocKeys: [],
-            taskRefs: [
-              { ref: 1, displayId: 101, title: 'Finished task', docKeys: ['conversation::doc-3'], costUsd: 1, durationMs: null, tokens: null, outcome: 'done', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null },
-              { ref: 2, displayId: 102, title: 'Running task', docKeys: ['conversation::doc-4'], costUsd: 2, durationMs: null, tokens: null, outcome: 'active', sessions: 1, lastActivityMs: null, region: null, agent: null, model: null }
-            ],
-            view: null, grounds: null, promptTokens: 1, taskCount: 20,
-          },
-        };
-      });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-search-input"]').fill('which tasks?');
-      await page.keyboard.press('Enter');
-      const rows = page.locator('[data-testid="memory-graph-answer-task-row"]');
-      await expect(rows).toHaveCount(2);
-
-      await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('done');
-      await expect(rows).toHaveCount(1);
-      await expect(rows).toContainText('#101');
-      await expect(page.getByText('1 task', { exact: true })).toBeVisible();
-
-      await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('any');
-      await expect(rows).toHaveCount(2);
     } finally {
       await browser.close();
     }
@@ -1774,11 +1610,7 @@ test.describe('memory graph', () => {
     try {
       await openMemoryGraph(page);
       await page.locator('[data-testid="memory-graph-canvas"]').waitFor({ state: 'visible' });
-      await selectFirstResult(page);
-      await page.locator('[data-testid="memory-graph-open-conversation"]').click();
-
-      await page.locator('[data-testid="conversation-window"]')
-        .waitFor({ state: 'visible', timeout: 10000 });
+      await openConversationFromChat(page);
 
       // ANCESTRY, not visibility, is what catches this regression: a conversation
       // window mounted on the board layer is perfectly "visible" to Playwright
@@ -1792,23 +1624,68 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('hides "Open task" where the layer cannot show one', async () => {
-    // The same bug one hop deeper. On this layer the button would route to the
-    // board (under the graph) in-app, and nowhere at all in the pop-out, so both
-    // affordances hide rather than pretending to work. The fixture seeds a real
-    // taskId, so a missing task cannot be what passes this test.
+  test('"Open task" closes the graph and opens the task on the board', async () => {
+    // A task detail lives on the board, so opening one BEHIND the graph's
+    // overlay would be invisible. The graph closes first, then the board opens
+    // the task. The fixture seeds a real taskId, so the button has a task.
     const { browser, page } = await launchWithState(conversationFixture());
     try {
       await openMemoryGraph(page);
-      await selectFirstResult(page);
-      await page.locator('[data-testid="memory-graph-open-conversation"]').click();
-      await page.locator('[data-testid="conversation-title"]')
-        .waitFor({ state: 'visible', timeout: 10000 });
+      await openConversationFromChat(page);
       await expect(page.locator('[data-testid="conversation-title"]')).toContainText('Conversation 0');
-
-      await expect(page.locator('[data-testid="conversation-open-task-button"]')).toHaveCount(0);
-      // Copy stays: it needs nothing from a layer.
+      // Copy is there too: it needs nothing from a layer.
       await expect(page.locator('[data-testid="conversation-copy-markdown-button"]')).toHaveCount(1);
+
+      await page.locator('[data-testid="conversation-open-task-button"]').click();
+      await expect(page.locator('[data-testid="memory-graph-page"]')).toHaveCount(0);
+      await expect.poll(async () => page.evaluate(() => (window as unknown as {
+        __zustandStores: { session: { getState: () => { detailTaskId: string | null } } };
+      }).__zustandStores.session.getState().detailTaskId)).toBe('task-0');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('"Open task" reaches a finished task the board has not loaded yet', async () => {
+    // Most of the graph is finished work, and the board holds only the newest
+    // few finished tasks. task-0 is seeded as the OLDEST of twenty, outside that
+    // preview, which is where "Open task" used to close the graph and open nothing.
+    const archive = `window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      // An open project with a board, which the graph's snapshot names too.
+      state.projects.push({
+        id: 'project-1', name: 'Memory Project', path: '/mock/memory-project', github_url: null,
+        default_agent: 'claude', last_opened: ts, created_at: ts,
+      });
+      var doneLaneId = null;
+      state.DEFAULT_SWIMLANES.forEach(function (lane, position) {
+        var id = 'lane-memory-' + position;
+        if (lane.role === 'done') doneLaneId = id;
+        state.swimlanes.push(Object.assign({}, lane, { id: id, position: position, created_at: ts }));
+      });
+      for (var i = 0; i < 20; i += 1) {
+        state.archivedTasks.push({
+          id: i === 19 ? 'task-0' : 'finished-' + i,
+          display_id: 900 + i,
+          title: i === 19 ? 'Conversation 0' : 'Finished ' + i,
+          description: '', swimlane_id: doneLaneId, position: 0, agent: 'claude',
+          session_id: null, worktree_path: null, branch_name: null, pr_number: null, pr_url: null,
+          base_branch: 'main', use_worktree: 0, labels: [], priority: 0, attachment_count: 0,
+          archived_at: new Date(Date.now() - i * 60000).toISOString(),
+          created_at: ts, updated_at: ts,
+        });
+      }
+      return { currentProjectId: 'project-1' };
+    });`;
+    const { browser, page } = await launchWithState(`${conversationFixture()}${archive}`);
+    try {
+      await openMemoryGraph(page);
+      await openConversationFromChat(page);
+      await page.locator('[data-testid="conversation-open-task-button"]').click();
+
+      await expect.poll(async () => page.evaluate(() => Object.values((window as unknown as {
+        __zustandStores: { window: { getState: () => { windows: Record<string, { kind: string; anchor: string }> } } };
+      }).__zustandStores.window.getState().windows).map((entry) => `${entry.kind}:${entry.anchor}`))).toContain('task-detail:task-0');
     } finally {
       await browser.close();
     }
@@ -1818,13 +1695,10 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(conversationFixture());
     try {
       await openMemoryGraph(page);
-      await selectFirstResult(page);
-
-      await page.locator('[data-testid="memory-graph-open-conversation"]').click();
-      await page.locator('[data-testid="conversation-window"]')
-        .waitFor({ state: 'visible', timeout: 10000 });
-      await page.locator('[data-testid="memory-graph-open-conversation"]').click();
-
+      await openConversationFromChat(page);
+      // Dispatched rather than clicked: the open window may sit over the row,
+      // and what is under test is the open, not the hit test.
+      await page.locator('[data-testid="memory-chat-row"]').first().dispatchEvent('click');
       await expect(page.locator('[data-testid="conversation-window"]')).toHaveCount(1);
     } finally {
       await browser.close();
@@ -2055,7 +1929,7 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(conversationFixture());
     try {
       await openMemoryGraph(page);
-      await selectFirstResult(page);
+      await selectVisibleNode(page);
 
       const neighbor = page.locator('[data-testid="memory-graph-neighbor"]').first();
       await expect(neighbor).toBeVisible();
@@ -2078,9 +1952,9 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(conversationFixture());
     try {
       await openMemoryGraph(page);
-      await selectFirstResult(page);
+      const index = await selectVisibleNode(page);
 
-      // doc-0 links to doc-1 in the fixture, so the action is enabled.
+      // Every fixture node has neighbours, so the action is enabled.
       const explore = page.locator('[data-testid="memory-graph-explore-from"]');
       await expect(explore).toBeEnabled();
       await explore.click();
@@ -2088,7 +1962,7 @@ test.describe('memory graph', () => {
       // The breadcrumb is what makes the narrowing explainable AND undoable.
       const chip = page.locator('[data-testid="memory-graph-explore-chip"]');
       await expect(chip).toBeVisible();
-      await expect(chip).toContainText('Conversation 0');
+      await expect(chip).toContainText(new RegExp(`Conversation ${index}\\b`));
 
       await page.locator('[data-testid="memory-graph-explore-clear"]').click();
       await expect(chip).toHaveCount(0);
@@ -2097,21 +1971,23 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('goes back to the answer after selecting a conversation', async () => {
-    // Selecting a conversation replaced the answer with the detail panel and
-    // left no way back to what you had just asked.
+  test('goes back to the chat after selecting a conversation', async () => {
+    // Selecting a conversation replaces the chat with the detail panel, so the
+    // panel has to lead back to what you had just asked.
     const { browser, page } = await launchWithState(conversationFixture());
     try {
       await openMemoryGraph(page);
-      await selectFirstResult(page);
-      await expect(page.locator('[data-testid="memory-graph-detail"]')).toBeVisible();
+      await page.locator('[data-testid="memory-graph-search-input"]').fill('what was conversation 0?');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
+      await selectVisibleNode(page);
 
       const back = page.locator('[data-testid="memory-graph-detail-back"]');
-      await expect(back).toContainText('the answer');
+      await expect(back).toContainText('the chat');
       await back.click();
 
-      // The answer is showing again and the detail is gone.
-      await expect(page.locator('[data-testid="memory-answer"]')).toBeVisible();
+      // The chat is showing again, as it was, and the detail is gone.
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
       await expect(page.locator('[data-testid="memory-graph-detail"]')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -2122,18 +1998,18 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(conversationFixture());
     try {
       await openMemoryGraph(page);
-      await selectFirstResult(page);
-      await expect(page.locator('[data-testid="memory-graph-detail"]')).toContainText('Conversation 0');
+      const index = await selectVisibleNode(page);
+      const title = page.locator('[data-testid="memory-graph-detail-title"]');
 
-      // Hop to doc-0's only neighbour, doc-1.
+      // Hop to the node's nearest neighbour, which the fixture makes the next one.
       await page.locator('[data-testid="memory-graph-neighbor"]').first().click();
-      await expect(page.locator('[data-testid="memory-graph-detail"]')).toContainText('Conversation 1');
+      await expect(title).toHaveText(`Conversation ${(index + 1) % 30}`);
 
-      // Back now NAMES where it returns to, rather than being a bare arrow.
+      // Back NAMES where it returns to, rather than being a bare arrow.
       const back = page.locator('[data-testid="memory-graph-detail-back"]');
-      await expect(back).toContainText('Conversation 0');
+      await expect(back).toContainText(new RegExp(`Conversation ${index}\\b`));
       await back.click();
-      await expect(page.locator('[data-testid="memory-graph-detail"]')).toContainText('Conversation 0');
+      await expect(title).toHaveText(`Conversation ${index}`);
     } finally {
       await browser.close();
     }
