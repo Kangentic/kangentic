@@ -36,7 +36,7 @@ async function openBrowserTab() {
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
   await page.getByRole('button', { name: 'Browser', exact: true }).click();
-  await expect(page.getByText('Enable Browser Pane')).toBeVisible();
+  await expect(page.getByTestId('settings-card-browser.enabled')).toBeVisible();
 }
 
 async function closeSettings() {
@@ -54,7 +54,7 @@ async function getBrowserOverrides() {
 test.describe('Browser settings tab', () => {
   test('exposes Clear Browser Data row with destructive button', async () => {
     await openBrowserTab();
-    await expect(page.getByText('Clear Browser Data')).toBeVisible();
+    await expect(page.getByText('Clear browser data', { exact: true })).toBeVisible();
     await expect(page.getByTestId('browser-clear-storage')).toBeVisible();
     await expect(page.getByTestId('browser-clear-storage')).toContainText('Clear data');
     await closeSettings();
@@ -158,23 +158,21 @@ test.describe('Settings -> Browser tab', () => {
     await page.evaluate(() => window.electronAPI.config.setProjectOverrides({}));
   });
 
-  test('Enable Browser Pane and Default URL controls render', async () => {
+  test('Browser pane and Default URL controls render', async () => {
     await openBrowserTab();
 
-    await expect(page.getByText('Enable Browser Pane')).toBeVisible();
+    await expect(page.getByText('Browser pane', { exact: true })).toBeVisible();
     await expect(page.getByText('Default URL', { exact: true })).toBeVisible();
     await expect(page.locator('input[placeholder="http://localhost:5173"]')).toBeVisible();
 
     await closeSettings();
   });
 
-  test('toggling Enable Browser Pane persists browser.enabled override', async () => {
+  test('toggling Browser pane persists browser.enabled override', async () => {
     await openBrowserTab();
 
-    // BrowserTab currently exposes a single ToggleSwitch (browser.enabled).
-    // If a second toggle is added, swap to a row-scoped selector
-    // (e.g. `page.getByText('Enable Browser Pane').locator('xpath=ancestor::div[contains(@class,"space-y")]').getByRole('switch')`).
-    const toggle = page.getByRole('switch').first();
+    // The card header's switch.
+    const toggle = page.getByTestId('setting-row-browser.enabled');
     await expect(toggle).toHaveAttribute('aria-checked', 'true');
 
     await toggle.click();
@@ -189,15 +187,18 @@ test.describe('Settings -> Browser tab', () => {
     await closeSettings();
   });
 
-  test('Default URL input is disabled when browser.enabled === false', async () => {
+  test('Default URL is hidden while browser.enabled === false, and Clear data stays', async () => {
     await page.evaluate(() => window.electronAPI.config.setProjectOverrides({
       browser: { enabled: false },
     }));
 
     await openBrowserTab();
 
-    const urlInput = page.locator('input[placeholder="http://localhost:5173"]');
-    await expect(urlInput).toBeDisabled();
+    // The card's body shows only while its switch is on. Clear data lives in its
+    // own card because it clears storage for every project.
+    await expect(page.getByTestId('setting-row-browser.enabled')).toHaveAttribute('aria-checked', 'false');
+    await expect(page.locator('input[placeholder="http://localhost:5173"]')).toHaveCount(0);
+    await expect(page.getByTestId('browser-clear-storage')).toBeEnabled();
 
     await closeSettings();
   });

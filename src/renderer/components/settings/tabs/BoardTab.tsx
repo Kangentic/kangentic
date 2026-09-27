@@ -1,46 +1,57 @@
+import { LayoutGrid, RefreshCw } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
-import { SectionHeader, SettingRow, SettingToggleRow, Select, useScopedUpdate } from '../shared';
+import { useScopedUpdate } from '../shared';
+import { SettingsCard, CardToggleRow, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   return (
-    <>
-      <SettingRow {...settingProps('columnWidth')}>
-        <Select
-          value={globalConfig.columnWidth}
-          onChange={(event) => updateGlobal({ columnWidth: event.target.value as AppConfig['columnWidth'] })}
-        >
-          <option value="narrow">Narrow</option>
-          <option value="default">Default</option>
-          <option value="wide">Wide</option>
-        </Select>
-      </SettingRow>
-
-      <SectionHeader label="Config Sync" searchIds={['skipBoardConfigConfirm']} />
-      <SettingToggleRow
-        {...settingProps('skipBoardConfigConfirm')}
-        checked={globalConfig.skipBoardConfigConfirm}
-        onChange={(value) => updateGlobal({ skipBoardConfigConfirm: value })}
-      />
-
+    <div className="space-y-4">
       {/* Animations used to sit here. It moved to Performance: it toggles
           `.no-motion` on <html> (config-store.ts), so it was never board
           chrome, and it belongs beside graphics acceleration. */}
-      <SectionHeader
-        label="Window"
-        searchIds={['terminalPanelVisible', 'statusBarVisible']}
-      />
-      <SettingToggleRow
-        {...settingProps('terminalPanelVisible')}
-        checked={globalConfig.terminalPanelVisible !== false}
-        onChange={(value) => updateGlobal({ terminalPanelVisible: value })}
-      />
-      <SettingToggleRow
-        {...settingProps('statusBarVisible')}
-        checked={globalConfig.statusBarVisible !== false}
-        onChange={(value) => updateGlobal({ statusBarVisible: value })}
-      />
-    </>
+      <SettingsCard
+        icon={<LayoutGrid size={16} />}
+        label="Board layout"
+        description="Column width and which panels show around the board."
+        searchIds={['columnWidth', 'terminalPanelVisible', 'statusBarVisible']}
+      >
+        <CardChoiceRow
+          {...settingProps('columnWidth')}
+          options={[
+            { value: 'narrow', label: 'Narrow' },
+            { value: 'default', label: 'Default' },
+            { value: 'wide', label: 'Wide' },
+          ]}
+          value={globalConfig.columnWidth}
+          onChange={(value) => updateGlobal({ columnWidth: value })}
+          testId="column-width-choice"
+        />
+        <CardToggleRow
+          {...settingProps('terminalPanelVisible')}
+          checked={globalConfig.terminalPanelVisible !== false}
+          onChange={(value) => updateGlobal({ terminalPanelVisible: value })}
+        />
+        <CardToggleRow
+          {...settingProps('statusBarVisible')}
+          checked={globalConfig.statusBarVisible !== false}
+          onChange={(value) => updateGlobal({ statusBarVisible: value })}
+        />
+      </SettingsCard>
+
+      <SettingsCard
+        icon={<RefreshCw size={16} />}
+        label="Config sync"
+        description="How changes to the shared board config are applied."
+        searchIds={['skipBoardConfigConfirm']}
+      >
+        <CardToggleRow
+          {...settingProps('skipBoardConfigConfirm')}
+          checked={globalConfig.skipBoardConfigConfirm}
+          onChange={(value) => updateGlobal({ skipBoardConfigConfirm: value })}
+        />
+      </SettingsCard>
+    </div>
   );
 }

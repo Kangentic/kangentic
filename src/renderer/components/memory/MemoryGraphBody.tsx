@@ -20,7 +20,7 @@
  * really "nothing here".
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Compass, CornerDownLeft, Loader2, Network, Sparkles, X } from 'lucide-react';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -541,6 +541,24 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
     return true;
   }, [setupGap, onChooseAnswerAgent, askQuestion, granularity, scopeDocKeys]);
 
+  // A question handed in from Quick Find's Ask row: ask it here, through the
+  // same path as the box, once. A store subscription rather than an effect on
+  // the value, because asking can set this component's own state (the setup
+  // hint), and the ref keeps the subscription on the latest `ask`.
+  const askRef = useRef(ask);
+  useEffect(() => { askRef.current = ask; });
+  useEffect(() => {
+    const askQueued = (): void => {
+      const question = useMemoryGraphStore.getState().takeQueuedQuestion();
+      if (question) askRef.current(question);
+    };
+    // Usually queued before this body mounts: Quick Find queues, then opens.
+    queueMicrotask(askQueued);
+    return useMemoryGraphStore.subscribe((state, previous) => {
+      if (state.queuedQuestion !== null && state.queuedQuestion !== previous.queuedQuestion) askQueued();
+    });
+  }, []);
+
   /**
    * Where "Back" goes, if anywhere. Two dead ends, one control:
    *
@@ -608,7 +626,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
         <CenteredNotice
           icon={<Sparkles size={22} />}
           title="Semantic search is off"
-          body="The map places conversations by meaning, which needs embeddings. Turn on semantic search in Settings > Memory to build it. The coverage above is accurate either way."
+          body="The map places conversations by meaning, which needs embeddings. Turn on semantic search in Settings > Search to build it. The coverage above is accurate either way."
         />
       </div>
     );
@@ -690,7 +708,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
               {queryText.trim() ? (
                 <HoverTip
                   label={setupGap
-                    ? 'Choose the answering agent and model in Settings > Memory.'
+                    ? 'Choose the Knowledge Graph agent and model in Settings > Search.'
                     : `Ask ${askAgentLabel}. It reads the related work and can search your conversations.`}
                   testId="memory-graph-ask-tip"
                 >
@@ -712,7 +730,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
             className="mt-1.5 rounded-md border border-edge bg-surface-raised/85 px-2 py-1 text-xs text-fg-muted backdrop-blur"
             data-testid="memory-graph-setup-hint"
           >
-            Choose the answering agent and model in Settings &gt; Memory, in the main window.
+            Choose the Knowledge Graph agent and model in Settings &gt; Search, in the main window.
           </div>
         ) : null}
         {chatOpen && litCaption ? (

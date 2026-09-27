@@ -1,7 +1,7 @@
 /**
  * Unit tests for the per-project background remote-fetch scheduler
  * (src/main/git/git-fetch-scheduler.ts): an immediate (deferred) sweep on
- * start, a periodic timer at the configured interval, "Off" arming no timer,
+ * start, a sweep 5 minutes after the repo's last full fetch, "Off" arming no timer,
  * teardown via stop(), the projectId-scoped stop() no-op, the per-tick guard
  * that skips a sweep once the project is no longer current, and the sweep's
  * shape: through the git lock at BACKGROUND priority, non-interactive.
@@ -20,6 +20,7 @@ vi.mock('../../src/main/diagnostics/project-log-context', () => ({
 }));
 vi.mock('../../src/main/git/fetch-throttle', () => ({
   fetchAllRemotesIfStale: vi.fn(async () => {}),
+  lastAllRemotesFetchAt: vi.fn(async () => null),
 }));
 // The lock runs the operation inline; the priority it was asked for is recorded.
 vi.mock('../../src/main/git/worktree-manager', () => ({
@@ -29,19 +30,20 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
   GitQueuePriority: { USER: 0, BACKGROUND: 10 },
 }));
 
-import { fetchAllRemotesIfStale } from '../../src/main/git/fetch-throttle';
+import { fetchAllRemotesIfStale, lastAllRemotesFetchAt } from '../../src/main/git/fetch-throttle';
 import { WorktreeManager, GitQueuePriority } from '../../src/main/git/worktree-manager';
 import { gitFetchScheduler } from '../../src/main/git/git-fetch-scheduler';
 
 const FIVE_MIN = 5 * 60_000;
 const mockFetch = vi.mocked(fetchAllRemotesIfStale);
+const mockLastFetchAt = vi.mocked(lastAllRemotesFetchAt);
 const mockWithGitLock = vi.mocked(WorktreeManager.withGitLock);
 
-/** Minimal context: the scheduler only reads currentProjectId + the git interval. */
-function makeContext(currentProjectId: string, minutes: number | null): IpcContext {
+/** Minimal context: the scheduler only reads currentProjectId + the git.autoFetch switch. */
+function makeContext(currentProjectId: string, autoFetch: boolean): IpcContext {
   return {
     currentProjectId,
-    configManager: { getEffectiveConfig: () => ({ git: { autoFetchIntervalMinutes: minutes } }) },
+    configManager: { getEffectiveConfig: () => ({ git: { autoFetch } }) },
   } as unknown as IpcContext;
 }
 
@@ -60,8 +62,8 @@ afterEach(() => {
 });
 
 describe('gitFetchScheduler', () => {
-  it('runs an immediate sweep and arms a periodic timer at the configured interval', async () => {
-    gitFetchScheduler.startForProject(makeContext('p1', 5), makeProject('p1'));
+  it('runs an immediate sweep and sweeps again 5 minutes after the last fetch', async () => {
+    gitFetchScheduler.startForProject(makeContext('p1', true), makeProject('p1'));
 
     await vi.advanceTimersByTimeAsync(FIVE_MIN); // immediate sweep + first tick
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -74,7 +76,7 @@ describe('gitFetchScheduler', () => {
 
   it('sweeps through the git lock at BACKGROUND priority, and the fetch can never prompt', async () => {
     // Off: only the deferred immediate sweep exists, so exactly one lock call.
-    gitFetchScheduler.startForProject(makeContext('p1', null), makeProject('p1'));
+    gitFetchScheduler.startForProject(makeContext('p1', false), makeProject('p1'));
     await vi.runAllTimersAsync();
 
     expect(mockWithGitLock).toHaveBeenCalledTimes(1);
@@ -91,7 +93,7 @@ describe('gitFetchScheduler', () => {
   it('a rejected lock never escapes the tick as an unhandled rejection', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockWithGitLock.mockRejectedValueOnce(new Error('queue cleared'));
-    gitFetchScheduler.startForProject(makeContext('p1', null), makeProject('p1'));
+    gitFetchScheduler.startForProject(makeContext('p1', false), makeProject('p1'));
 
     // Without the tick's own .catch, vitest reports the rejection as unhandled
     // and fails this file; with it, the rejection is logged and swallowed.
@@ -100,8 +102,8 @@ describe('gitFetchScheduler', () => {
     errorSpy.mockRestore();
   });
 
-  it('Off (null interval) runs the on-load sweep but arms no timer', async () => {
-    gitFetchScheduler.startForProject(makeContext('p1', null), makeProject('p1'));
+  it('Off runs the on-load sweep but arms no timer', async () => {
+    gitFetchScheduler.startForProject(makeContext('p1', false), makeProject('p1'));
 
     await vi.runAllTimersAsync(); // safe: no interval, only the deferred immediate sweep
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -111,7 +113,7 @@ describe('gitFetchScheduler', () => {
   });
 
   it('stop() clears the periodic timer', async () => {
-    gitFetchScheduler.startForProject(makeContext('p1', 5), makeProject('p1'));
+    gitFetchScheduler.startForProject(makeContext('p1', true), makeProject('p1'));
     await vi.advanceTimersByTimeAsync(FIVE_MIN);
     expect(mockFetch).toHaveBeenCalledTimes(2);
 
@@ -122,7 +124,7 @@ describe('gitFetchScheduler', () => {
   });
 
   it('stop(projectId) only stops when that project owns the active timer', async () => {
-    gitFetchScheduler.startForProject(makeContext('p1', 5), makeProject('p1'));
+    gitFetchScheduler.startForProject(makeContext('p1', true), makeProject('p1'));
     await vi.advanceTimersByTimeAsync(FIVE_MIN);
 
     gitFetchScheduler.stop('other-project'); // no-op: not the active project
@@ -137,7 +139,7 @@ describe('gitFetchScheduler', () => {
   });
 
   it('switching projects tears down the prior timer and arms the new one', async () => {
-    const context = makeContext('p1', 5);
+    const context = makeContext('p1', true);
     gitFetchScheduler.startForProject(context, makeProject('p1'));
     await vi.advanceTimersByTimeAsync(FIVE_MIN);
 
@@ -153,7 +155,7 @@ describe('gitFetchScheduler', () => {
   });
 
   it('skips a tick when the project is no longer the current one', async () => {
-    const context = makeContext('p1', 5);
+    const context = makeContext('p1', true);
     gitFetchScheduler.startForProject(context, makeProject('p1'));
     await vi.advanceTimersByTimeAsync(FIVE_MIN);
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -163,5 +165,36 @@ describe('gitFetchScheduler', () => {
     mockFetch.mockClear();
     await vi.advanceTimersByTimeAsync(FIVE_MIN);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // The 5 minutes run from the repo's last full fetch, whoever made it: a
+  // Changes panel opened 3 minutes in pushes the next sweep to 8 minutes.
+  it('counts from the last fetch anyone made, not from its own last sweep', async () => {
+    const startedAt = Date.now();
+    gitFetchScheduler.startForProject(makeContext('p1', true), makeProject('p1'));
+    await vi.advanceTimersByTimeAsync(0); // the deferred on-open sweep
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    mockLastFetchAt.mockResolvedValue(startedAt + 3 * 60_000);
+    await vi.advanceTimersByTimeAsync(FIVE_MIN); // the 5-minute wake finds a newer fetch
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000); // 8 minutes: due now
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    mockLastFetchAt.mockResolvedValue(null);
+  });
+
+  // A failed fetch stamps nothing, so the clock also counts from the
+  // scheduler's own attempt; otherwise an offline repo would retry every wake.
+  it('waits a full interval after a sweep even when that fetch left no stamp', async () => {
+    mockLastFetchAt.mockResolvedValue(null);
+    gitFetchScheduler.startForProject(makeContext('p1', true), makeProject('p1'));
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(FIVE_MIN - 1000);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 });

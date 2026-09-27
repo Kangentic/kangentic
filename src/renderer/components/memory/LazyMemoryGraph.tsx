@@ -54,7 +54,7 @@ function MemoryGraphSkeleton() {
 interface LazyMemoryGraphProps {
   /**
    * Where a question goes when no answering agent or model is chosen yet. The
-   * in-app host opens Settings > Memory; the detached window has no settings
+   * in-app host opens Settings > Search; the detached window has no settings
    * panel, so it passes nothing and the box names the place instead.
    */
   onChooseAnswerAgent?: () => void;
@@ -68,7 +68,7 @@ interface LazyMemoryGraphProps {
 
 export function LazyMemoryGraph({ onChooseAnswerAgent, onRevealTask }: LazyMemoryGraphProps = {}) {
   return (
-    <PanelErrorBoundary label="memory graph">
+    <PanelErrorBoundary label="Knowledge Graph">
       <Suspense fallback={<MemoryGraphSkeleton />}>
         <MemoryGraphBody onChooseAnswerAgent={onChooseAnswerAgent} onRevealTask={onRevealTask} />
       </Suspense>

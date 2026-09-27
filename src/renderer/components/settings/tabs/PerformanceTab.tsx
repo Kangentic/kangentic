@@ -1,6 +1,7 @@
-import { TriangleAlert } from 'lucide-react';
+import { Gauge, TriangleAlert } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
-import { SettingToggleRow, useScopedUpdate } from '../shared';
+import { useScopedUpdate } from '../shared';
+import { SettingsCard, CardToggleRow, CardTile } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 /**
@@ -23,46 +24,50 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
     !globalConfig.graphicsAccelerationEnabled && globalConfig.graphicsAccelerationOffBy === 'app';
 
   return (
-    <>
-      {/* A toggle, not a two-option dropdown. The value is genuinely binary,
-          and Animations below it is the same shape of setting - rendering one
-          as a select and the other as a switch is the inconsistency a user
-          notices first. */}
-      <SettingToggleRow
-        {...settingProps('graphicsAccelerationEnabled')}
-        checked={globalConfig.graphicsAccelerationEnabled}
-        onChange={(value) =>
-          updateGlobal({
-            graphicsAccelerationEnabled: value,
-            // Whatever the user picks is now THEIR choice, including turning
-            // it off themselves. That is what stops a later GPU failure
-            // overwriting it, and what hides the callout below.
-            graphicsAccelerationOffBy: value ? null : 'user',
-          })
-        }
-      />
+    <div className="space-y-4">
+      <SettingsCard
+        icon={<Gauge size={16} />}
+        label="Rendering"
+        description="Hardware rendering and motion across the whole app."
+        searchIds={['graphicsAccelerationEnabled', 'animationsEnabled']}
+      >
+        {/* A toggle, not a two-option dropdown. The value is genuinely binary,
+            and Animations below it is the same shape of setting - rendering one
+            as a select and the other as a switch is the inconsistency a user
+            notices first. */}
+        <CardToggleRow
+          {...settingProps('graphicsAccelerationEnabled')}
+          checked={globalConfig.graphicsAccelerationEnabled}
+          onChange={(value) =>
+            updateGlobal({
+              graphicsAccelerationEnabled: value,
+              // Whatever the user picks is now THEIR choice, including turning
+              // it off themselves. That is what stops a later GPU failure
+              // overwriting it, and what hides the callout below.
+              graphicsAccelerationOffBy: value ? null : 'user',
+            })
+          }
+        />
 
-      {/* Shown only when KANGENTIC turned it off, never when the user did.
-          One line, one state: no failure count, no date, no adapter. All
-          three are evidence for us rather than guidance for the reader, and
-          they go to Sentry instead (src/main/diagnostics/gpu-health.ts).
-          "failures" rather than "graphics failures" because the row directly
-          above already says Graphics acceleration. */}
-      {turnedOffByApp && (
-        <div
-          data-testid="graphics-acceleration-notice"
-          className="flex items-start gap-2.5 rounded-lg border border-edge bg-surface-raised px-3 py-2.5"
-        >
-          <TriangleAlert size={16} className="text-warning mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-fg-muted">Kangentic turned this off after repeated failures.</p>
-        </div>
-      )}
+        {/* Shown only when KANGENTIC turned it off, never when the user did.
+            One line, one state: no failure count, no date, no adapter. All
+            three are evidence for us rather than guidance for the reader, and
+            they go to Sentry instead (src/main/diagnostics/gpu-health.ts).
+            "failures" rather than "graphics failures" because the row directly
+            above already says Graphics acceleration. */}
+        {turnedOffByApp && (
+          <CardTile className="flex items-start gap-2.5" testId="graphics-acceleration-notice">
+            <TriangleAlert size={16} className="text-warning mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-fg-muted">Kangentic turned this off after repeated failures.</p>
+          </CardTile>
+        )}
 
-      <SettingToggleRow
-        {...settingProps('animationsEnabled')}
-        checked={globalConfig.animationsEnabled}
-        onChange={(value) => updateGlobal({ animationsEnabled: value })}
-      />
-    </>
+        <CardToggleRow
+          {...settingProps('animationsEnabled')}
+          checked={globalConfig.animationsEnabled}
+          onChange={(value) => updateGlobal({ animationsEnabled: value })}
+        />
+      </SettingsCard>
+    </div>
   );
 }

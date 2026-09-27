@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react';
 import type { ElementType } from 'react';
-import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Zap } from 'lucide-react';
+import { Bell, Bot, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, TextSearch, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
@@ -77,7 +77,7 @@ const TAB_ICONS: Record<string, ElementType> = {
   behavior: SlidersHorizontal,
   performance: Gauge,
   dictation: Mic,
-  memory: Brain,
+  memory: TextSearch,
   hotkeys: Keyboard,
   mcpServer: Plug,
   browserAutomation: MousePointerClick,

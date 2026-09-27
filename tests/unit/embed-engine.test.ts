@@ -499,7 +499,7 @@ describe('createEmbedEngine workerCrashReason', () => {
   // embed-engine module, so it never runs this getter's own body either. A
   // regression here (e.g. forwarding `client.crashed` instead of
   // `client.crashReason`, or dropping the `?? null` fallback) would leave
-  // every existing test green while the Memory tab's worker-error note
+  // every existing test green while the Search tab's worker-error note
   // silently went blank.
   it('is null before any client has been resolved', () => {
     const engine = createEmbedEngine({

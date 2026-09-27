@@ -6,6 +6,7 @@ import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 import { safeWriteJson } from '../safe-write';
 import { reportSyncWriteFailure } from './write-failure-notice';
+import { migrateLegacyGitKeys } from './legacy-git-keys';
 
 /** Dotted paths in AppConfig that must be REPLACED wholesale on a partial update
  *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
@@ -114,9 +115,8 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
     copyFiles: source.git?.copyFiles,
     initScript: source.git?.initScript,
     linkNodeModules: source.git?.linkNodeModules,
-    prRefreshIntervalMinutes: source.git?.prRefreshIntervalMinutes,
-    autoFetchIntervalMinutes: source.git?.autoFetchIntervalMinutes,
-    prEvaluateBranchPolicies: source.git?.prEvaluateBranchPolicies,
+    prAutoRefresh: source.git?.prAutoRefresh,
+    autoFetch: source.git?.autoFetch,
     prBypassCountsAsReady: source.git?.prBypassCountsAsReady,
   });
   if (git) result.git = git;
@@ -223,6 +223,16 @@ export class ConfigManager {
     const parsedTerminal = parsed?.terminal as Record<string, unknown> | undefined;
     if (parsedTerminal && typeof parsedTerminal === 'object' && 'scrollbackLines' in parsedTerminal) {
       delete (this.config.terminal as unknown as Record<string, unknown>).scrollbackLines;
+      this.save(this.config);
+    }
+
+    // One-time migration: the git refresh intervals became switches, and
+    // prEvaluateBranchPolicies went away (see legacy-git-keys.ts). The merged
+    // copy already holds the new keys' defaults, so the parsed file decides
+    // whether one was set explicitly.
+    const parsedGit = parsed?.git as Record<string, unknown> | undefined;
+    if (parsedGit && typeof parsedGit === 'object'
+      && migrateLegacyGitKeys(this.config.git as unknown as Record<string, unknown>, parsedGit)) {
       this.save(this.config);
     }
 
@@ -350,6 +360,13 @@ export class ConfigManager {
 
     // One-time migration: the product pair's retired ids -> clay / rust.
     if (renameRetiredThemeIds(overrides)) {
+      this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
+    }
+
+    // One-time migration: the git refresh intervals became switches, and
+    // prEvaluateBranchPolicies went away (see legacy-git-keys.ts).
+    const overrideGit = overrides.git as Record<string, unknown> | undefined;
+    if (overrideGit && typeof overrideGit === 'object' && migrateLegacyGitKeys(overrideGit)) {
       this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
     }
 

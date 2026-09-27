@@ -234,6 +234,10 @@ export interface AnswerFromContextOptions {
     token: string;
   };
   onEvent?: (event: AnswerStreamEvent) => void;
+  /** Adapter-specific effort level, passed as the CLI's own effort flag. Only
+   *  sent to an adapter declaring `answerCapabilities.effort`; absent leaves the
+   *  CLI's default in place. */
+  effort?: string | null;
 }
 
 /** Interface that every agent adapter must implement. */
@@ -829,11 +833,12 @@ export interface AgentAdapter {
 
   /**
    * What this adapter's `answerFromContext` run can do beyond the base, declared
-   * beside it. Read generically by the answer handler and the Memory settings,
+   * beside it. Read generically by the answer handler and the Search settings tab,
    * never by agent name. Every flag is a promise the run keeps: `streaming`
    * means `onEvent` sees text as it is written, `search` means `retrieval` is
-   * honoured, and `model` means the run takes the Answering model, which makes
-   * that setting required.
+   * honoured, `model` means the run takes the Knowledge Graph Model setting, which makes
+   * that setting required, and `effort` means it passes `options.effort` as the
+   * CLI's own effort flag.
    */
   readonly answerCapabilities?: AnswerCapabilities;
 

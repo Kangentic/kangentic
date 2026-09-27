@@ -1,6 +1,8 @@
 import { AlertTriangle, Lock, RotateCcw } from 'lucide-react';
 import type { KeybindingDefinition } from '../../../../shared/keybindings';
 import { Pill } from '../../Pill';
+import { CardTile, InfoTip } from '../settings-card';
+import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { KeyCombo } from './KeyCombo';
 import { KeyCaptureInput } from './KeyCaptureInput';
 
@@ -21,10 +23,11 @@ interface HotkeyRowProps {
 }
 
 /**
- * One hotkey row: label + description, the current combo, a state pill, and
- * (for rebindable hotkeys) the capture widget plus a reset-to-default button.
- * Non-rebindable hotkeys render read-only with a lock. All controls are always
- * visible (no hover-only affordances).
+ * One hotkey row, in its own settings-card tile: the label (its description
+ * behind an info icon, so the row stays one line beside the combo), the
+ * current combo, a state pill, and (for rebindable hotkeys) the capture widget
+ * plus a reset-to-default button. Non-rebindable hotkeys render read-only with
+ * a lock. All controls are always visible (no hover-only affordances).
  */
 export function HotkeyRow({
   definition,
@@ -39,13 +42,15 @@ export function HotkeyRow({
   const readOnly = !definition.rebindable;
 
   return (
-    <div
-      className="flex items-center gap-3 py-1.5 px-1 rounded hover:bg-surface-hover/30"
-      data-testid={`hotkey-row-${definition.id}`}
-    >
+    <CardTile className="flex items-center gap-3" testId={`hotkey-row-${definition.id}`}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium text-fg-secondary truncate">{definition.label}</span>
+          {/* The label and its info icon never split across lines: the label
+              truncates instead. Only the state pills after them wrap. */}
+          <span className="flex min-w-0 max-w-full items-center gap-1.5">
+            <span className={`${SETTING_LABEL_CLASS} truncate`}>{definition.label}</span>
+            {definition.description ? <InfoTip label={definition.label} text={definition.description} /> : null}
+          </span>
           {conflict && (
             <Pill size="sm" className="bg-red-500/15 text-red-400" data-testid={`hotkey-conflict-${definition.id}`}>
               <AlertTriangle size={11} /> Conflict
@@ -67,9 +72,6 @@ export function HotkeyRow({
             </Pill>
           )}
         </div>
-        {definition.description && (
-          <div className="text-xs text-fg-faint">{definition.description}</div>
-        )}
       </div>
 
       {readOnly ? (
@@ -98,6 +100,6 @@ export function HotkeyRow({
           </button>
         </div>
       )}
-    </div>
+    </CardTile>
   );
 }

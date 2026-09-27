@@ -59,12 +59,10 @@ async function closeSettings() {
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 2000 });
 }
 
-/** Locate a ToggleRow's <button role="switch"> by its exact title text. The
- *  title lives in a sibling div of the switch inside the row container, so
- *  two `..` hops from the title element reach the row, which scopes the
- *  `getByRole('switch')` query to that row alone. */
+/** Locate a row's <button role="switch"> by its label: every card switch is
+ *  named by the label beside it. */
 function toggleForTitle(title: string) {
-  return page.getByText(title, { exact: true }).locator('..').locator('..').getByRole('switch');
+  return page.getByRole('switch', { name: title, exact: true });
 }
 
 test.describe('Developer Tab - persistConsoleLogs / recordIpcTraffic defaults', () => {
@@ -75,8 +73,8 @@ test.describe('Developer Tab - persistConsoleLogs / recordIpcTraffic defaults', 
     // this exercises the "not ephemeral" branch without needing to stub it.
     await openDeveloperTab();
 
-    await expect(toggleForTitle('Persistent Console Logs')).toHaveAttribute('aria-checked', 'true');
-    await expect(toggleForTitle('Record IPC Traffic')).toHaveAttribute('aria-checked', 'false');
+    await expect(toggleForTitle('Persistent console logs')).toHaveAttribute('aria-checked', 'true');
+    await expect(toggleForTitle('Record IPC traffic')).toHaveAttribute('aria-checked', 'false');
 
     await closeSettings();
   });
@@ -95,9 +93,9 @@ test.describe('Developer Tab - persistConsoleLogs / recordIpcTraffic defaults', 
     try {
       await openDeveloperTab();
 
-      await expect(toggleForTitle('Record IPC Traffic')).toHaveAttribute('aria-checked', 'true');
+      await expect(toggleForTitle('Record IPC traffic')).toHaveAttribute('aria-checked', 'true');
       // Persistent Console Logs does not depend on ephemeral state - still ON.
-      await expect(toggleForTitle('Persistent Console Logs')).toHaveAttribute('aria-checked', 'true');
+      await expect(toggleForTitle('Persistent console logs')).toHaveAttribute('aria-checked', 'true');
 
       await closeSettings();
     } finally {
@@ -131,8 +129,8 @@ test.describe('Developer Tab - persistConsoleLogs / recordIpcTraffic defaults', 
 
     await openDeveloperTab();
 
-    await expect(toggleForTitle('Persistent Console Logs')).toHaveAttribute('aria-checked', 'false');
-    await expect(toggleForTitle('Record IPC Traffic')).toHaveAttribute('aria-checked', 'false');
+    await expect(toggleForTitle('Persistent console logs')).toHaveAttribute('aria-checked', 'false');
+    await expect(toggleForTitle('Record IPC traffic')).toHaveAttribute('aria-checked', 'false');
 
     await closeSettings();
   });

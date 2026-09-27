@@ -681,17 +681,16 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
       .spyOn(AzureDevOpsImporter.prototype, 'resolvePolicyEvaluations')
       .mockResolvedValue(evaluations as never);
   }
-  const EVALUATE = { evaluateBranchPolicies: true };
   /** An item the policy gate lets through: active, not draft, clean preview merge, GUID known. */
   const evaluable = (overrides: Record<string, unknown> = {}) =>
     item({ state: 'active', isDraft: false, mergeStatus: 'succeeded', projectId: PROJECT_GUID, ...overrides });
 
   /**
    * The verdict is folded HERE and never leaves the adapter as a raw
-   * `mergeStatus`. With branch-policy evaluation OFF (the default), `succeeded`
-   * is `unknown` on purpose: it only says the preview merge applied cleanly, and
-   * nothing has evaluated branch policies, so `ready` would promise a Merge
-   * click this code cannot vouch for. The policy call is never made.
+   * `mergeStatus`. With no policy answer to fold (here the item carries no
+   * project GUID, so there is nothing to ask about), `succeeded` is `unknown`
+   * on purpose: it only says the preview merge applied cleanly, so `ready`
+   * would promise a Merge click this code cannot vouch for.
    */
   const MERGE_STATUS_TABLE = [
     ['succeeded', 'unknown'],
@@ -704,18 +703,25 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
     ['somethingNew', 'unknown'],
   ] as Array<[string | null, string]>;
 
-  it.each(MERGE_STATUS_TABLE)('resolveByNumber folds mergeStatus=%s into %s with policy evaluation off', async (mergeStatus, expected) => {
-    stubNumber(item({ state: 'active', mergeStatus, projectId: PROJECT_GUID }));
+  it.each(MERGE_STATUS_TABLE)('resolveByNumber folds mergeStatus=%s into %s with no policy answer', async (mergeStatus, expected) => {
+    stubNumber(item({ state: 'active', mergeStatus, projectId: null }));
     const policies = stubPolicies([]);
     expect((await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343))?.mergeReadiness).toBe(expected);
-    expect(
-      (await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343, { evaluateBranchPolicies: false }))?.mergeReadiness,
-    ).toBe(expected);
     expect(policies).not.toHaveBeenCalled();
   });
 
+  // There is no option in front of the policy call any more: a clean, active
+  // PR always gets its policies evaluated, so it reads ready or blocked like a
+  // GitHub PR. It was once `git.prEvaluateBranchPolicies`, off by default.
+  it('evaluates branch policies with no option passed', async () => {
+    stubNumber(evaluable());
+    const policies = stubPolicies([]);
+    expect((await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343))?.mergeReadiness).toBe('ready');
+    expect(policies).toHaveBeenCalledTimes(1);
+  });
+
   /**
-   * With policy evaluation ON, `succeeded` becomes what the blocking policies
+   * With a policy answer, `succeeded` becomes what the blocking policies
    * say. Only blocking, enabled, live policies count. A rejected or broken one
    * is `blocked`; a non-reviewer evaluation in flight is `running` / `queued`
    * EVEN IF a reviewer policy is also waiting (the chip tracks CI while it
@@ -742,10 +748,10 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
     ['a queued NON-blocking build beside approved blocking ones', [evaluation(), evaluation({ status: 'queued', isBlocking: false })], 'ready'],
     ['an unrecognized status', [evaluation({ status: 'somethingNew' })], 'unknown'],
     ['no readable answer', null, 'unknown'],
-  ])('resolveByNumber with policy evaluation on folds %s into %s', async (_label, evaluations, expected) => {
+  ])('resolveByNumber folds %s into %s', async (_label, evaluations, expected) => {
     stubNumber(evaluable());
     const policies = stubPolicies(evaluations);
-    const resolvedPr = await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343, EVALUATE);
+    const resolvedPr = await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343);
     expect(resolvedPr?.mergeReadiness).toBe(expected);
     expect(policies).toHaveBeenCalledTimes(1);
     expect(policies).toHaveBeenCalledWith(ORG, PROJECT_GUID, 1343);
@@ -753,7 +759,7 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
 
   /**
    * The gate: the second `az` call is skipped wherever its answer cannot
-   * change the verdict, and the verdict is then exactly the setting-off one.
+   * change the verdict, and the verdict is then exactly the no-answer one.
    */
   it.each([
     ['a draft', evaluable({ isDraft: true }), 'unknown'],
@@ -767,10 +773,10 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
     ['mergeStatus null', evaluable({ mergeStatus: null }), 'unknown'],
     ['a null project GUID', evaluable({ projectId: null }), 'unknown'],
     ['an absent project GUID', (() => { const value = evaluable(); delete value.projectId; return value; })(), 'unknown'],
-  ])('resolveByNumber with policy evaluation on skips the policy call for %s', async (_label, prItem, expected) => {
+  ])('resolveByNumber skips the policy call for %s', async (_label, prItem, expected) => {
     stubNumber(prItem);
     const policies = stubPolicies([evaluation({ status: 'rejected' })]);
-    const resolvedPr = await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343, EVALUATE);
+    const resolvedPr = await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343);
     expect(resolvedPr?.mergeReadiness).toBe(expected);
     expect(policies).not.toHaveBeenCalled();
   });
@@ -785,7 +791,6 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
       AZURE_CWD,
       'bugfix/7927-dev-database-managed-identity',
       undefined,
-      EVALUATE,
     );
     expect(resolvedPr?.number).toBe(1344);
     expect(resolvedPr?.mergeReadiness).toBe('running');
@@ -797,7 +802,7 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
     stubBranch([]);
     const policies = stubPolicies([]);
     await expect(
-      azureDevOpsPRConnector.resolveForBranch!(AZURE_CWD, 'nope', undefined, EVALUATE),
+      azureDevOpsPRConnector.resolveForBranch!(AZURE_CWD, 'nope', undefined),
     ).resolves.toBeNull();
     expect(policies).not.toHaveBeenCalled();
   });
@@ -832,7 +837,7 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
    * Deadlock guard. `policyVerdictFor` calls
    * `azImporter.resolvePolicyEvaluations` directly, never through its own
    * `viaAz(...)`. `azQueue` admits only AZ_CONCURRENCY (2) concurrent slots,
-   * and a `resolveByNumber(..., { evaluateBranchPolicies: true })` call
+   * and a `resolveByNumber` call on a clean, active PR
    * occupies its slot for the WHOLE resolve (the PR-row fetch AND the policy
    * fetch), because `viaAz` wraps the entire body. If the policy call were
    * ever wrapped in its own `viaAz(...)`, that nested `add()` would be a
@@ -886,14 +891,14 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
     };
 
     const bothSettled = Promise.all([
-      azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343, EVALUATE),
-      azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1344, EVALUATE),
+      azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343),
+      azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1344),
     ]);
 
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => reject(new Error(
-        'two concurrent resolveByNumber(..., evaluateBranchPolicies) calls did not settle within 2000ms - '
+        'two concurrent policy-evaluating resolveByNumber calls did not settle within 2000ms - '
         + 'likely deadlocked on a nested viaAz around the policy evaluation call',
       )), 2000);
     });
@@ -929,14 +934,6 @@ describe('non-Azure remotes are refused without running az', () => {
     ['resolveForBranch', () => azureDevOpsPRConnector.resolveForBranch!('/repo', 'main')],
     ['resolveByNumber', () => azureDevOpsPRConnector.resolveByNumber!('/repo', 42)],
     ['resolveByCommit', () => azureDevOpsPRConnector.resolveByCommit!('/repo', 'abcdef1234567')],
-    [
-      'resolveForBranch with policy evaluation on',
-      () => azureDevOpsPRConnector.resolveForBranch!('/repo', 'main', undefined, { evaluateBranchPolicies: true }),
-    ],
-    [
-      'resolveByNumber with policy evaluation on',
-      () => azureDevOpsPRConnector.resolveByNumber!('/repo', 42, { evaluateBranchPolicies: true }),
-    ],
   ])('%s resolves null and never spawns az', async (_label, call) => {
     // `resolves`, not a falsy check: a throw is the failure mode this guards.
     await expect(call()).resolves.toBeNull();

@@ -12,8 +12,13 @@ interface ExternalLinkButtonProps {
 /**
  * A slim pill button that opens an external URL in the OS browser: truncating
  * label, trailing ExternalLink glyph. Shared by the announcement dialog's
- * link list and the Mobile Devices tab's docs link so the external-link
+ * link list and the Mobile Devices tab's docs links so the external-link
  * affordance reads identically everywhere.
+ *
+ * Without `fullWidth` it is sized to its label wherever it sits. A flex column
+ * stretches a child by default, so the same link used to render full width in
+ * one Mobile Devices card (placed straight in the card body) and label-sized
+ * in the next (wrapped in a block), with its glyph at opposite ends.
  */
 export function ExternalLinkButton({ label, url, fullWidth, testId }: ExternalLinkButtonProps) {
   return (
@@ -21,7 +26,7 @@ export function ExternalLinkButton({ label, url, fullWidth, testId }: ExternalLi
       type="button"
       data-testid={testId}
       onClick={() => void window.electronAPI.shell.openExternal(url)}
-      className={`${fullWidth ? 'w-full ' : ''}flex items-center gap-1 rounded-md border border-edge/50 bg-surface-hover/30 px-2.5 py-1.5 text-xs text-fg-secondary hover:bg-surface-hover hover:text-fg hover:border-edge transition-colors cursor-pointer`}
+      className={`${fullWidth ? 'w-full' : 'w-fit max-w-full self-start'} flex items-center gap-1 rounded-md border border-edge/50 bg-surface-hover/30 px-2.5 py-1.5 text-xs text-fg-secondary hover:bg-surface-hover hover:text-fg hover:border-edge transition-colors cursor-pointer`}
     >
       <span className="truncate">{label}</span>
       <ExternalLink size={11} className="ml-auto shrink-0 opacity-60" />

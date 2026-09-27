@@ -1,6 +1,6 @@
 /**
- * retrievalService.getStatus - the MemoryStatus the Memory tab and the Quick
- * Find palette poll.
+ * retrievalService.getStatus - the MemoryStatus the Search settings tab
+ * polls.
  *
  * Written for the `workerError` field (DESKTOP-H): when the embedding worker
  * has crashed past its restart cap, the status must carry the policy's reason

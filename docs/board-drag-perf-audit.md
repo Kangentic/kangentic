@@ -149,7 +149,7 @@ scope for a sticky drop. Two findings:
   remainder. Today's scheduler fetches ran 183 to 1260ms against a 500ms fly, so both cases are
   real and the second is the common one for a quick drag. It is strictly a head start, never a
   new fetch: the probe fetches unconditionally today. It is skipped entirely when the user has
-  set `git.autoFetchIntervalMinutes` to off, since a drag is not a request to reach the network
+  turned the `git.autoFetch` switch off, since a drag is not a request to reach the network
   and a card moving between working columns never reaches the probe at all. Those users keep
   today's behavior exactly, fetch included, and simply do not get the head start.
 

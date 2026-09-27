@@ -278,8 +278,8 @@ export function TitleBar({
           className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
             memoryGraphOpen || memoryPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
           }`}
-          title={memoryPopOut.isOpen ? 'Focus memory graph window' : `Memory Graph (${memoryCombo})`}
-          aria-label="Memory Graph"
+          title={memoryPopOut.isOpen ? 'Focus Knowledge Graph window' : `Knowledge Graph (${memoryCombo})`}
+          aria-label="Knowledge Graph"
           data-testid="memory-graph-button"
         >
           <Network size={20} />

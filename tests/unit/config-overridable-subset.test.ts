@@ -126,9 +126,8 @@ describe('pickOverridableSubset', () => {
         copyFiles: ['.env'],
         initScript: null,
         linkNodeModules: false,
-        prRefreshIntervalMinutes: 10,
-        autoFetchIntervalMinutes: null,
-        prEvaluateBranchPolicies: true,
+        prAutoRefresh: false,
+        autoFetch: false,
         prBypassCountsAsReady: false,
       },
     } as unknown as Parameters<typeof pickOverridableSubset>[0];
@@ -143,11 +142,10 @@ describe('pickOverridableSubset', () => {
         copyFiles: ['.env'],
         initScript: null,
         linkNodeModules: false,
-        prRefreshIntervalMinutes: 10,
-        // null is a real value ("off"), not an absence: pruneUndefined keeps it.
-        autoFetchIntervalMinutes: null,
-        prEvaluateBranchPolicies: true,
-        // false is a real value too: the project turned the default-on setting off.
+        // false is a real value, not an absence: pruneUndefined keeps it, so a
+        // project that turned a default-on switch off carries that choice.
+        prAutoRefresh: false,
+        autoFetch: false,
         prBypassCountsAsReady: false,
       },
     });

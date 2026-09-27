@@ -98,7 +98,7 @@ describe('answerFromContext parity', () => {
   });
 
   it('takes the model as its fourth parameter everywhere', () => {
-    // The signature is what lets the Memory tab pick a cheaper model. An
+    // The signature is what lets the Search tab pick a cheaper model. An
     // adapter that ignores it silently answers at the CLI default, and the
     // setting appears to do nothing.
     const offenders: string[] = [];
@@ -126,7 +126,7 @@ describe('answerFromContext parity', () => {
 
   it('declares answerCapabilities beside every answerFromContext', () => {
     // What the run can do beyond the base (streaming, search, a model) is read
-    // generically by the handler and by Settings > Memory. An adapter that
+    // generically by the handler and by Settings > Search. An adapter that
     // answers without declaring it would read as "takes no model", and the
     // Answering model row would stop being required for it.
     const answerers = agentsDeclaring('answerFromContext');
@@ -135,7 +135,7 @@ describe('answerFromContext parity', () => {
       if (/readonly answerCapabilities\s*=/.test(entry.source)) declared.add(entry.agent);
     }
     const missing = [...answerers].filter((agent) => !declared.has(agent)).sort();
-    expect(missing, 'Declare `readonly answerCapabilities = { streaming, search, model }`').toEqual([]);
+    expect(missing, 'Declare `readonly answerCapabilities = { streaming, search, model, effort }`').toEqual([]);
   });
 
   it('asks Claude with no built-in tools, one scoped MCP server, and a stream', () => {
@@ -177,10 +177,18 @@ describe('answerFromContext parity', () => {
     expect(method, 'the scoped server config must be named').toContain('--mcp-config');
     expect(method, 'the search tool must be pre-approved').toMatch(/'--allowedTools',\s*ANSWER_RETRIEVAL_TOOL/);
     expect(claude?.source).toMatch(/ANSWER_RETRIEVAL_TOOL = 'mcp__kangentic__kangentic_search'/);
-    // That file carries a live token and must not outlive the call.
-    expect(method, 'the scoped config must be deleted when the call ends').toMatch(
-      /finally[\s\S]*rmSync\(mcpConfigPath/,
+    // That file carries a live token and must not outlive the call. It lives in
+    // the call's own config directory, which goes whole.
+    expect(method, 'the call\'s config directory must be deleted when the call ends').toMatch(
+      /finally[\s\S]*rmSync\(configDirectory,\s*\{\s*recursive:\s*true/,
     );
+
+    // The user's own advisor must not ride along. With `advisorModel: "opus"`
+    // in their settings, every answer consulted Opus: 17 to 21 s and up to
+    // $0.18 a question, against 3 to 5 s without it (CLI 2.1.283). `null` does
+    // not turn it off; the empty string does.
+    expect(method, 'the answer settings overlay must be named').toMatch(/'--settings',\s*settingsPath/);
+    expect(claude?.source).toMatch(/ANSWER_SETTINGS = \{ advisorModel: '' \}/);
 
     // Progress streams: one line per assistant turn as it happens, which is
     // what lets the renderer show text at first-token time (measured 1.1 to

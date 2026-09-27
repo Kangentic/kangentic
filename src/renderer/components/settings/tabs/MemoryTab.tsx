@@ -1,22 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MessageSquare, Sparkles, Check, RotateCcw } from 'lucide-react';
-import { SectionHeader, SettingRow, SettingToggleRow, Select, DownloadProgressBar, useScopedUpdate } from '../shared';
+import { MessageSquare, Sparkles, Check, RotateCcw, Network } from 'lucide-react';
+import { Select, DownloadProgressBar, useScopedUpdate } from '../shared';
+import { SettingsCard, CardRow, CardChoiceRow, CardTile } from '../settings-card';
+import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { useProjectStore } from '../../../stores/project-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityResolution';
+import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
+import { Combobox } from '../../dialogs/Combobox';
 import { resolveAnswerAgent } from '../../../../shared/answer-agent';
 import { EMBEDDING_MODELS } from '../../../../shared/embedding-models';
 import type { AppConfig, MemoryStatus, MemoryAcceleration } from '../../../../shared/types';
 
 /**
- * Conversation Memory settings. GLOBAL/shared scope (below the settings
+ * Settings > Search (tab id `memory`). GLOBAL/shared scope (below the settings
  * separator, next to Dictation - both are on-device, keyless, model-backed AI
  * features). Controls the local index over agent conversation transcripts that
- * powers Quick Find conversation search (humans) and the kangentic_search MCP
- * tool (agents). Keyword search is on by default; the semantic layer is an
- * opt-in enhancement.
+ * powers Quick Find (humans), the Knowledge Graph, and the kangentic_search MCP
+ * tool (agents). Indexing is on by default; semantic search is an opt-in layer
+ * on top, and answers ride on semantic search.
  */
 
 /** A platform-level note for the semantic layer (only when it cannot run
@@ -61,11 +65,20 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
     () => resolveAnswerAgent({ agents: agentList, configured: configuredAnswerAgent, requireFound: true }),
     [agentList, configuredAnswerAgent],
   );
-  const { models: answerModels } = useAgentCapabilityResolution(chosenAnswerAgent?.name ?? null);
+  const chosenAgentName = chosenAnswerAgent?.name ?? null;
+  const { models: answerModels, effortLevels: answerEffortLevels } = useAgentCapabilityResolution(chosenAgentName);
+  const answerModelContextWindows = useModelContextWindows(chosenAgentName);
+  const answerModelDisplayNames = useModelDisplayNames(chosenAgentName);
   // Whether this agent's ANSWER run takes a model, as its adapter declares it.
   // When it does, the model is required: a question never runs on a default
   // nobody chose.
   const answerTakesModel = chosenAnswerAgent?.answerCapabilities?.model === true;
+  // Effort shows wherever the answer run passes it on AND the CLI reports
+  // levels. Unset runs at the adapter's recommended level, shown as the
+  // placeholder, so leaving it alone is a choice the user can see.
+  const answerTakesEffort = chosenAnswerAgent?.answerCapabilities?.effort === true && answerEffortLevels.length > 0;
+  const recommendedEffort = chosenAnswerAgent?.answerCapabilities?.defaultEffort;
+  const answerEffortDefault = recommendedEffort && answerEffortLevels.includes(recommendedEffort) ? recommendedEffort : null;
 
   // Poll the semantic-layer status while the feature is on so the model-download
   // progress and readiness update live. Cleared on unmount / when turned off.
@@ -117,151 +130,144 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
       .finally(() => window.setTimeout(() => setRebuilding(false), 1200));
   }, [currentProjectId]);
 
+  const semanticReady = indexingEnabled && semanticEnabled;
+
   return (
     <div className="space-y-4">
-      <SectionHeader
-        label="Conversation Memory"
-        searchIds={['memory.indexingEnabled', 'memory.semanticEnabled', 'memory.embeddingModel']}
-      />
-      <p className="text-sm text-fg-muted leading-relaxed">
-        Search and recall past agent conversations - in Quick Find for you, and via the recall tool
-        for agents. Only structured conversation turns are indexed (never raw terminal noise),
-        automatically: new sessions as they finish, older history backfilled over time. Keyword
-        search is instant and on by default; semantic adds meaning-based matching with a small
-        on-device model. Everything runs locally with no API key, across one project or all at once.
-      </p>
-
-      <SettingToggleRow
-        {...settingProps('memory.indexingEnabled')}
+      {/* Three cards, one per feature, each holding the settings that depend
+          on it: indexing, then semantic search (which needs indexing), then
+          answers (which need semantic search, since the graph does). */}
+      <SettingsCard
         icon={<MessageSquare size={16} />}
+        {...settingProps('memory.indexingEnabled')}
         checked={indexingEnabled}
         onChange={(value) => updateGlobal({ memory: { indexingEnabled: value } })}
-      />
-      <SettingToggleRow
-        {...settingProps('memory.semanticEnabled')}
+      >
+        {/* Per-project, so it only appears with a project open. It is a
+            non-destructive re-parse; a Search quality change re-embeds on its
+            own, so this is for a conversation search should find and does not. */}
+        {indexingEnabled && currentProjectId ? (
+          <CardTile className="flex items-center justify-between gap-3" testId="memory-rebuild-row">
+            <div className="min-w-0">
+              <div className={SETTING_LABEL_CLASS}>Rebuild this project&apos;s index</div>
+              <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5`}>
+                Only needed if search misses a conversation.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleRebuild}
+              disabled={rebuilding}
+              data-testid="memory-rebuild-index"
+              className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge-input bg-surface-control px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg disabled:opacity-50"
+            >
+              <RotateCcw size={13} className={rebuilding ? 'animate-spin' : undefined} />
+              {rebuilding ? 'Rebuilding...' : 'Rebuild'}
+            </button>
+          </CardTile>
+        ) : null}
+      </SettingsCard>
+
+      <SettingsCard
         icon={<Sparkles size={16} />}
+        {...settingProps('memory.semanticEnabled')}
+        searchIds={['memory.embeddingModel', 'memory.acceleration']}
         checked={semanticEnabled}
-        disabled={!indexingEnabled}
         onChange={(value) => updateGlobal({ memory: { semanticEnabled: value } })}
-      />
+        unavailableReason={indexingEnabled ? undefined : 'Turn on Index conversations first.'}
+      >
+        {/* Gated on indexingEnabled too, so turning indexing off (which
+            disables the semantic switch) hides these rather than leaving them
+            interactive with no way to switch semantic back off. */}
+        {semanticReady ? (
+          <>
+            <CardRow {...settingProps('memory.embeddingModel')}>
+              <Select
+                value={embeddingModelId}
+                onChange={(event) => updateGlobal({ memory: { embeddingModel: event.target.value } })}
+                data-testid="embedding-model-select"
+              >
+                {EMBEDDING_MODELS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.tierLabel}
+                  </option>
+                ))}
+              </Select>
+              {/* One status line under the dropdown that picks the model. */}
+              {model ? <EmbeddingModelStatus model={model} activeBackend={status?.activeBackend ?? null} /> : null}
+            </CardRow>
 
-      {/* Model picker + download card, revealed once semantic search is on.
-          Gated on indexingEnabled too (like the rebuild card below) so turning
-          indexing off - which disables the semantic toggle - also hides this
-          panel instead of leaving it interactive with no way to switch semantic
-          back off. Mirrors the dictation model dropdown + status card. */}
-      {indexingEnabled && semanticEnabled ? (
-        <div className="space-y-3">
-          <SettingRow {...settingProps('memory.embeddingModel')}>
-            <Select
-              value={embeddingModelId}
-              onChange={(event) => updateGlobal({ memory: { embeddingModel: event.target.value } })}
-              data-testid="embedding-model-select"
-            >
-              {EMBEDDING_MODELS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.tierLabel}
-                </option>
-              ))}
-            </Select>
-          </SettingRow>
-
-          {/* The model card follows its own "Search quality" dropdown: that
-              dropdown selects the model, and the card shows its size / download
-              / ready state, so they belong together. */}
-          {model ? (
-            <div
-              className="flex items-center justify-between gap-2 rounded border border-edge bg-surface-hover px-3 py-2 text-xs"
-              data-testid="embedding-model-card"
-            >
-              <div className="min-w-0">
-                <div className="text-fg-secondary">
-                  Model: <span className="text-fg">{model.displayName}</span>
-                  <span className="text-fg-faint"> (~{model.approxSizeMb} MB)</span>
-                </div>
-                {model.state === 'error' ? (
-                  <div className="text-red-400">Download failed</div>
-                ) : model.state === 'ready' ? (
-                  <div className="text-fg-faint">
-                    Cached for offline use.{status?.activeBackend ? ` Running on ${status.activeBackend}.` : ''}
-                  </div>
-                ) : model.state === 'downloading' ? (
-                  <>
-                    <div className="text-fg-faint">Downloading... {Math.min(100, Math.round((model.progress ?? 0) * 100))}%</div>
-                    <DownloadProgressBar percent={(model.progress ?? 0) * 100} />
-                  </>
-                ) : (
-                  <div className="text-fg-faint">Downloads automatically when enabled.</div>
-                )}
-              </div>
-              {model.state === 'ready' ? (
-                <span
-                  className="inline-flex items-center gap-1 whitespace-nowrap text-fg-muted"
-                  data-testid="embedding-model-ready"
-                >
-                  <Check size={13} /> Ready
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-
-          <SettingRow {...settingProps('memory.acceleration')}>
-            <Select
+            <CardChoiceRow
+              {...settingProps('memory.acceleration')}
+              options={[
+                { value: 'auto', label: 'Auto', testId: 'memory-acceleration-auto' },
+                { value: 'gpu', label: 'GPU', testId: 'memory-acceleration-gpu' },
+                { value: 'cpu', label: 'CPU', testId: 'memory-acceleration-cpu' },
+              ]}
               value={acceleration}
-              onChange={(event) => updateGlobal({ memory: { acceleration: event.target.value as MemoryAcceleration } })}
-              data-testid="memory-acceleration-select"
-            >
-              <option value="auto">Auto</option>
-              <option value="gpu">GPU</option>
-              <option value="cpu">CPU</option>
-            </Select>
-          </SettingRow>
+              onChange={(value: MemoryAcceleration) => updateGlobal({ memory: { acceleration: value } })}
+              testId="memory-acceleration-choice"
+            />
 
-          {platformNote ? (
-            <div className="text-xs text-fg-muted px-1" data-testid="semantic-status">
-              {platformNote}
-            </div>
-          ) : null}
+            {platformNote ? (
+              <CardTile className="text-xs text-fg-muted" testId="semantic-status">
+                {platformNote}
+              </CardTile>
+            ) : null}
+          </>
+        ) : null}
+      </SettingsCard>
 
-          {/* Only the agents that can actually answer. An agent with no
-              `answerFromContext` is not a choice, it is a way to turn Ask off by
-              accident - the same rule the dead facet rows and the colour modes
-              follow. The whole row is hidden when nothing can answer, since
-              picking between zero options is not a decision. */}
-          {answerCapableAgents.length > 0 ? (
-            <>
+      {/* Only the agents that can actually answer. An agent with no
+          `answerFromContext` is not a choice, it is a way to turn Ask off by
+          accident - the same rule the dead facet rows and the colour modes
+          follow. The whole card is hidden when nothing can answer, since
+          picking between zero options is not a decision. Named for the
+          feature people know from the title bar and Quick Find, so its rows
+          can be plain Agent, Model and Effort. */}
+      {semanticReady && answerCapableAgents.length > 0 ? (
+        <SettingsCard
+          icon={<Network size={16} />}
+          label="Knowledge Graph"
+          description="The agent that answers the questions you ask in the graph."
+          searchIds={['memory.answerAgent', 'memory.answerModel', 'memory.answerEffort']}
+        >
               {/* Starts EMPTY. The user's rule: the agent and model are one
                   explicit global choice, never assumed from a project. So there
                   is no default here to inherit and no "follow the project"
-                  option; until something is picked, the Memory Graph sends a
+                  option; until something is picked, the Knowledge Graph sends a
                   question to this row instead of running it. */}
-              <SettingRow {...settingProps('memory.answerAgent')}>
-                <Select
+              {/* The same three controls as Settings > Agent's Project Defaults
+                  and the column manager: Combobox, ModelCombobox, Combobox. No
+                  Permissions: an answer run is read-only by construction, so a
+                  permission choice would be one the run must ignore. */}
+              <CardRow {...settingProps('memory.answerAgent')}>
+                <Combobox
                   value={chosenAnswerAgent?.name ?? ''}
-                  onChange={(event) => updateGlobal({
+                  onChange={(next) => updateGlobal({
                     memory: {
-                      answerAgent: event.target.value === '' ? null : event.target.value,
-                      // A model id belongs to ONE CLI - Claude's `haiku` means
-                      // nothing to Codex - so changing the agent clears it
-                      // rather than carrying a flag the new agent will reject.
+                      answerAgent: next === '' ? null : next,
+                      // A model id and an effort level belong to ONE CLI -
+                      // Claude's `haiku` means nothing to Codex - so changing
+                      // the agent clears both rather than carrying a flag the
+                      // new agent will reject.
                       answerModel: null,
+                      answerEffort: null,
                     },
                   })}
-                  data-testid="memory-answer-agent-select"
-                >
-                  <option value="" disabled>Choose an agent</option>
-                  {answerCapableAgents.map((agent) => (
-                    <option key={agent.name} value={agent.name}>{agent.displayName}</option>
-                  ))}
-                </Select>
-              </SettingRow>
+                  options={answerCapableAgents.map((agent) => ({ value: agent.name, label: agent.displayName }))}
+                  placeholder="Choose an agent"
+                  placeholderVariant="muted"
+                  allowClear={false}
+                  testId="memory-answer-agent"
+                />
+              </CardRow>
 
-              {/* Mirrors the Agent tab's Agent + Model pair, scoped to this
-                  feature. Rendered once the chosen agent's answer run takes a
-                  model, and REQUIRED then: there is no "agent default" to fall
-                  back on, for the same reason there is no default agent. */}
+              {/* Rendered once the chosen agent's answer run takes a model, and
+                  REQUIRED then: there is no "agent default" to fall back on, for
+                  the same reason there is no default agent. */}
               {answerTakesModel ? (
-                <SettingRow {...settingProps('memory.answerModel')}>
+                <CardRow {...settingProps('memory.answerModel')}>
                   <ModelCombobox
                     value={globalConfig.memory?.answerModel ?? ''}
                     onChange={(next) => updateGlobal({
@@ -271,38 +277,72 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
                     placeholder="Choose a model"
                     placeholderVariant="muted"
                     testId="memory-answer-model"
+                    onOpen={() => useConfigStore.getState().rescanModels()}
+                    contextWindows={answerModelContextWindows}
+                    modelDisplayNames={answerModelDisplayNames}
                   />
-                </SettingRow>
+                </CardRow>
               ) : null}
-            </>
-          ) : null}
-        </div>
-      ) : null}
 
-      {indexingEnabled && currentProjectId ? (
-        <div
-          className="flex items-center justify-between gap-3 rounded border border-edge bg-surface-hover px-3 py-2"
-          data-testid="memory-rebuild-row"
-        >
-          <div className="min-w-0">
-            <div className="text-xs text-fg-secondary">Rebuild index</div>
-            <div className="text-xs text-fg-faint">
-              Re-indexes this project's conversations for search - your messages aren't deleted. Use
-              if results look stale or incomplete.
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleRebuild}
-            disabled={rebuilding}
-            data-testid="memory-rebuild-index"
-            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge/60 bg-surface-inset/40 px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg disabled:opacity-50"
-          >
-            <RotateCcw size={13} className={rebuilding ? 'animate-spin' : undefined} />
-            {rebuilding ? 'Rebuilding...' : 'Rebuild'}
-          </button>
-        </div>
+              {/* Optional, unlike the model: unset runs at the recommended level,
+                  shown as the placeholder, and clearing a pick returns to it.
+                  Plain "low", not "low (default)": the resolved placeholder
+                  styling already says it is what runs when nothing is picked. */}
+              {answerTakesEffort ? (
+                <CardRow {...settingProps('memory.answerEffort')}>
+                  <Combobox
+                    value={globalConfig.memory?.answerEffort ?? ''}
+                    onChange={(next) => updateGlobal({
+                      memory: { answerEffort: next === '' ? null : next },
+                    })}
+                    options={answerEffortLevels.map((level) => ({ value: level, label: level }))}
+                    placeholder={answerEffortDefault ?? 'Agent default'}
+                    placeholderVariant={answerEffortDefault ? 'resolved' : 'muted'}
+                    testId="memory-answer-effort"
+                  />
+                </CardRow>
+              ) : null}
+        </SettingsCard>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The chosen search model's state, as one line under Search quality: ready
+ * (with its size and where it runs), downloading (with progress), failed, or
+ * waiting to download.
+ */
+function EmbeddingModelStatus({ model, activeBackend }: { model: NonNullable<MemoryStatus['model']>; activeBackend: string | null }) {
+  if (model.state === 'ready') {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-fg-muted" data-testid="embedding-model-card">
+        <Check size={13} className="flex-shrink-0 text-emerald-500" aria-hidden="true" />
+        <span data-testid="embedding-model-ready">
+          Ready: {model.displayName}, {model.approxSizeMb} MB{activeBackend ? `, running on ${activeBackend}` : ''}
+        </span>
+      </div>
+    );
+  }
+  if (model.state === 'downloading') {
+    const percent = Math.min(100, Math.round((model.progress ?? 0) * 100));
+    return (
+      <div className="text-xs text-fg-muted" data-testid="embedding-model-card">
+        Downloading {model.displayName}, {percent}%
+        <DownloadProgressBar percent={(model.progress ?? 0) * 100} />
+      </div>
+    );
+  }
+  if (model.state === 'error') {
+    return (
+      <div className="text-xs text-red-400" data-testid="embedding-model-card">
+        {model.displayName} failed to download.
+      </div>
+    );
+  }
+  return (
+    <div className="text-xs text-fg-muted" data-testid="embedding-model-card">
+      {model.displayName}, {model.approxSizeMb} MB, downloads on its own.
     </div>
   );
 }

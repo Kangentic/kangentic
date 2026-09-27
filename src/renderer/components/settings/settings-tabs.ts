@@ -20,9 +20,7 @@
 export type SettingsTabTier = 'core' | 'advanced' | 'other';
 
 /** Sidebar header text for each tier. 'core' is intentionally absent: it is
- *  the first, unlabeled group directly under the System header, mirroring
- *  the unsectioned-first-group convention used within individual tabs (e.g.
- *  Terminal's shell/font rows before the "Colors" SectionHeader). Privacy and
+ *  the first, unlabeled group directly under the System header. Privacy and
  *  Developer share the 'other' tier rather than each getting a single-tab
  *  tier of their own: a tier header that just repeats its lone tab's name
  *  reads as redundant. 'other' also avoids implying Privacy is a power-user
@@ -83,7 +81,9 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   { id: 'notifications', label: 'Notifications', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   // -- Shared settings: Advanced tier --
   { id: 'dictation', label: 'Dictation', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
-  { id: 'memory', label: 'Memory', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
+  // Labelled Search, id kept as `memory`: the id is what tests, deep links
+  // (`open-answer-settings.ts`) and saved last-tab state address.
+  { id: 'memory', label: 'Search', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'mobile', label: 'Mobile Devices', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },

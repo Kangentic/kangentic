@@ -324,26 +324,20 @@ describe('buildCommandContextForProject - getPrResolveOptions', () => {
     return { ipcContext, getEffectiveConfig };
   }
 
-  it('reads evaluateBranchPolicies from the target project path', () => {
-    const { ipcContext, getEffectiveConfig } = makeOptionsContext({ prEvaluateBranchPolicies: true });
+  it('reads bypassCountsAsReady from the target project path', () => {
+    const { ipcContext, getEffectiveConfig } = makeOptionsContext({ prBypassCountsAsReady: true });
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
     // Exact shape: the same mapper the linker's own sweep uses
     // (`prResolveOptionsFromGitConfig`), so a tool-triggered resolve and the
     // background sweep can never write different verdicts for one PR.
-    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: true, bypassCountsAsReady: false });
+    expect(context!.getPrResolveOptions!()).toEqual({ bypassCountsAsReady: true });
     expect(getEffectiveConfig).toHaveBeenCalledWith(PROJECT_PATH);
-  });
-
-  it('reads bypassCountsAsReady from the target project path', () => {
-    const { ipcContext } = makeOptionsContext({ prBypassCountsAsReady: true });
-    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
-    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: true });
   });
 
   it('reads an explicit false for the default-on bypass setting as off', () => {
     const { ipcContext } = makeOptionsContext({ prBypassCountsAsReady: false });
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
-    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: false });
+    expect(context!.getPrResolveOptions!()).toEqual({ bypassCountsAsReady: false });
   });
 
   it('reads an absent key as off, never as undefined', () => {
@@ -352,7 +346,7 @@ describe('buildCommandContextForProject - getPrResolveOptions', () => {
     // default through `getEffectiveConfig`'s merge.
     const { ipcContext } = makeOptionsContext({ defaultBaseBranch: 'main' });
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
-    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: false });
+    expect(context!.getPrResolveOptions!()).toEqual({ bypassCountsAsReady: false });
   });
 
   it('returns every option off instead of throwing when the config is unreadable', () => {
@@ -366,8 +360,8 @@ describe('buildCommandContextForProject - getPrResolveOptions', () => {
   // write has to start the 30 s re-poll, since during `/pull-request` it waits
   // on CI inside one turn and no idle arrives to start it.
   it.each([
-    [{ prRefreshIntervalMinutes: 5 }, true],
-    [{ prRefreshIntervalMinutes: null }, false],
+    [{ prAutoRefresh: true }, true],
+    [{ prAutoRefresh: false }, false],
     [{}, false],
   ] as Array<[Record<string, unknown>, boolean]>)('getPrRepollInFlight reads %j as %s from the target project path', (gitConfig, expected) => {
     const { ipcContext, getEffectiveConfig } = makeOptionsContext(gitConfig);

@@ -1,5 +1,5 @@
 /**
- * UI tests for the embedding-model picker + status card in the Memory tab
+ * UI tests for the embedding-model picker + status line in the Search tab
  * (the tiered semantic-search model selection). Verifies the dropdown lists the
  * tiers, the model card reflects the download state, and selecting a model
  * persists memory.embeddingModel to config.
@@ -111,7 +111,8 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 async function openMemoryTab(page: Page) {
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
-  await page.getByRole('button', { name: 'Memory', exact: true }).click();
+  // By id: the tab is labelled Search, and that word also names a settings search box.
+  await page.getByTestId('settings-tab-memory').click();
 }
 
 test.describe('Embedding model picker', () => {
@@ -126,11 +127,11 @@ test.describe('Embedding model picker', () => {
       // model name is NOT in the label.
       await expect(select.locator('option')).toHaveText(['Best accuracy', 'Accurate', 'Balanced']);
 
-      // The card carries the concrete model name + size + readiness.
+      // The status line carries the concrete model name + size + readiness.
       const card = page.getByTestId('embedding-model-card');
       await expect(card).toBeVisible();
-      await expect(card).toContainText('Model: bge small');
-      await expect(card).toContainText('~34 MB');
+      await expect(card).toContainText('Ready: bge small');
+      await expect(card).toContainText('34 MB');
       await expect(page.getByTestId('embedding-model-ready')).toBeVisible();
     } finally {
       await browser.close();
@@ -177,12 +178,12 @@ test.describe('Embedding model picker', () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
       await openMemoryTab(page);
-      const select = page.getByTestId('memory-acceleration-select');
-      await expect(select).toBeVisible();
-      await expect(select.locator('option')).toHaveText(['Auto', 'GPU', 'CPU']);
-      await expect(select).toHaveValue('auto');
-      // The status card names the execution provider the worker actually initialized on.
-      await expect(page.getByTestId('embedding-model-card')).toContainText('Running on DirectML (GPU)');
+      const choice = page.getByTestId('memory-acceleration-choice');
+      await expect(choice).toBeVisible();
+      await expect(choice.getByRole('radio')).toHaveText(['Auto', 'GPU', 'CPU']);
+      await expect(page.getByTestId('memory-acceleration-auto')).toHaveAttribute('aria-checked', 'true');
+      // The status line names the execution provider the worker actually initialized on.
+      await expect(page.getByTestId('embedding-model-card')).toContainText('running on DirectML (GPU)');
     } finally {
       await browser.close();
     }
@@ -192,7 +193,7 @@ test.describe('Embedding model picker', () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
       await openMemoryTab(page);
-      await page.getByTestId('memory-acceleration-select').selectOption('cpu');
+      await page.getByTestId('memory-acceleration-cpu').click();
       await expect
         .poll(async () =>
           page.evaluate(() => {

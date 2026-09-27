@@ -327,7 +327,7 @@ export const retrievalService = {
     embedEngine.reconcile(context);
   },
 
-  /** Spawn + init the embed worker ahead of a Smart query (Quick Find open),
+  /** Spawn + init the embed worker ahead of a question (Knowledge Graph open),
    *  embedding nothing. A no-op when semantic is off, the model is absent, or
    *  the worker has crashed past its cap. */
   prewarmEmbedWorker(context: IpcContext): void {
@@ -335,8 +335,8 @@ export const retrievalService = {
     embedEngine.prewarm(context);
   },
 
-  /** Current conversation-memory status for the renderer's Smart-mode UI and
-   *  the settings model card. */
+  /** Current conversation-memory status for the Search settings
+   *  tab's index progress and model status line. */
   getStatus(context: IpcContext): MemoryStatus {
     const indexingEnabled = isIndexingEnabled(context);
     const semanticOn = isSemanticEnabled(context);
@@ -344,8 +344,7 @@ export const retrievalService = {
 
     // Self-heal: when semantic is enabled but the model isn't present, make sure
     // its download is running. This is what actually kicks the download after
-    // the user flips the toggle, since both the Memory tab and the palette poll
-    // getStatus. Skipped while already downloading (guarded inside) and after an
+    // the user flips the toggle, since the Search tab polls getStatus. Skipped while already downloading (guarded inside) and after an
     // error (no retry spam - the user re-toggles to retry).
     if (indexingEnabled && semanticOn && !isEmbeddingModelPresent(model) && modelDownloadState !== 'error') {
       ensureModelDownload(context);
@@ -374,7 +373,7 @@ export const retrievalService = {
       // Enabled, but the model is still downloading / not ready yet.
       semantic = 'downloading';
     } else if (embedEngine.workerCrashed) {
-      // The restart policy gave up. Carry its reason so the Memory tab can say
+      // The restart policy gave up. Carry its reason so the Search tab can say
       // why instead of only that it failed.
       semantic = 'error';
       workerError = embedEngine.workerCrashReason ?? undefined;
@@ -426,8 +425,8 @@ export const retrievalService = {
     }
   },
 
-  /** Non-destructively rebuild a project's index (the Memory settings "Rebuild
-   *  index" recovery action). Clears ONLY the per-session index-state signatures -
+  /** Non-destructively rebuild a project's index (the Search settings "Rebuild
+   *  this project's index" recovery action). Clears ONLY the per-session index-state signatures -
    *  never the chunks - so the fresh sweep re-indexes every session from its
    *  transcript while keeping the existing chunks as a fallback. A session whose
    *  transcript is gone or unparseable keeps its chunks (indexSession replaces a

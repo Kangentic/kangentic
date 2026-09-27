@@ -23,6 +23,7 @@ import {
 import type {
   AgentAdapter,
   AgentInfo,
+  AnswerFromContextOptions,
   ParsedTranscript,
   SpawnCommandOptions,
 } from '../../agent-adapter';
@@ -301,7 +302,7 @@ export class AntigravityAdapter implements AgentAdapter {
     return cleaned;
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true };
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -334,16 +335,18 @@ export class AntigravityAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
-      // The model flag is OMITTED when none is chosen: passing an
+      // The model and effort flags are OMITTED when none is chosen: passing an
       // empty value is an error.
       args: [
         '--mode', 'plan',
         '--input-format', 'stream-json',
         '--output-format', 'stream-json',
         ...(model ? ['--model', model] : []),
+        ...(options?.effort ? ['--effort', options.effort] : []),
         '--print=',
       ],
       prompt: formatAntigravityUserMessage(prompt),

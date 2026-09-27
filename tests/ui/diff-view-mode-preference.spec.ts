@@ -5,8 +5,8 @@
  * Two entry points read and write it:
  *   1. The in-diff toggle buttons (`data-testid="diff-view-split"` /
  *      `data-testid="diff-view-inline"`) inside DiffViewer.
- *   2. The "Git Diff View" select in the Changes settings tab
- *      (`data-testid="setting-row-diffViewMode"`).
+ *   2. The Layout segmented control in the Changes settings tab
+ *      (`data-testid="diff-view-mode-choice"`).
  *
  * Both read from `useConfigStore(state => state.config.diffViewMode)` and write
  * via `updateConfig({ diffViewMode: ... })`. The mock's `config.set(partial)`
@@ -24,8 +24,8 @@
  *
  *   2. Changes settings tab reflects and drives the same global value.
  *      - Set inline via the in-diff toggle, then open Settings > Changes.
- *      - Assert the "Git Diff View" select shows `inline` (the shared key).
- *      - Change it to `split` via selectOption; assert config reflects the write.
+ *      - Assert the Layout control has Inline selected (the shared key).
+ *      - Click Side by side; assert config reflects the write.
  *
  * Setup mirrors task-detail-changes-diffviewer-toolbar.spec.ts: seeds a project
  * + running session + task in "Code Review", sets `window.__mockGitDiff` so
@@ -269,10 +269,10 @@ test.describe('diffViewMode: in-diff toggle persists across panel reopen', () =>
 });
 
 test.describe('diffViewMode: Changes settings tab reflects and drives the same value', () => {
-  test('Changes tab Git Diff View select reflects the toggle and can update config', async () => {
+  test('Changes tab Layout control reflects the toggle and can update config', async () => {
     // Self-contained: establish the value through the in-diff toggle (the OTHER
     // entry point that writes the shared global key) so this test never depends
-    // on a previous test's state. Then confirm the Changes select reflects that
+    // on a previous test's state. Then confirm the Changes control reflects that
     // same value and can drive it back.
     await openChangesPanel();
     await page.locator('[data-testid="diff-view-inline"]').click();
@@ -288,16 +288,17 @@ test.describe('diffViewMode: Changes settings tab reflects and drives the same v
     // Navigate to the Changes tab.
     await page.getByRole('button', { name: 'Changes' }).click();
 
-    // Target the row by its stable data-testid instead of walking the DOM.
-    const diffViewSelect = page.locator('[data-testid="setting-row-diffViewMode"] select');
-    await expect(diffViewSelect).toBeVisible({ timeout: 3000 });
+    // A two-option choice is a segmented control (a radiogroup), not a select.
+    const layoutControl = page.getByTestId('diff-view-mode-choice');
+    await expect(layoutControl).toBeVisible({ timeout: 3000 });
 
-    // The select must reflect the inline value the toggle wrote (shared key).
-    await expect(diffViewSelect).toHaveValue('inline', { timeout: 3000 });
+    // It must reflect the inline value the toggle wrote (shared key).
+    await expect(layoutControl.getByRole('radio', { name: 'Inline' })).toHaveAttribute('aria-checked', 'true', { timeout: 3000 });
 
-    // Drive it back to split via the select; assert the write path.
-    await diffViewSelect.selectOption('split');
+    // Drive it back to split; assert the write path.
+    await layoutControl.getByRole('radio', { name: 'Side by side' }).click();
     await expect.poll(() => getDiffViewMode(), { timeout: 3000 }).toBe('split');
+    await expect(layoutControl.getByRole('radio', { name: 'Side by side' })).toHaveAttribute('aria-checked', 'true');
 
     // Close the settings panel by driving the config store directly, instead
     // of `page.keyboard.press('Escape')`. Escape's dismissal goes through

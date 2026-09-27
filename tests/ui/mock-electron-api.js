@@ -59,8 +59,8 @@
   let nextDisplayId = 1;
   let bulkDeleteProgressCallbacks = [];
   let searchHits = [];
-  // Conversation memory (Phase 2/3). `memoryStatus` feeds the palette's
-  // Smart-mode degraded notice and the Privacy tab status line. Seeded via
+  // Conversation memory (Phase 2/3). `memoryStatus` feeds the Search
+  // settings tab's index and model status. Seeded via
   // __mockPreConfigure (mirrors searchHits).
   let memoryStatus = {
     indexingEnabled: true,
@@ -238,9 +238,8 @@
       copyFiles: [],
       initScript: null,
       linkNodeModules: true,
-      prRefreshIntervalMinutes: 5,
-      autoFetchIntervalMinutes: 5,
-      prEvaluateBranchPolicies: false,
+      prAutoRefresh: true,
+      autoFetch: true,
       prBypassCountsAsReady: true,
     },
     mcpServer: {
@@ -481,9 +480,8 @@
       copyFiles: git.copyFiles ? git.copyFiles.slice() : undefined,
       initScript: git.initScript,
       linkNodeModules: git.linkNodeModules,
-      prRefreshIntervalMinutes: git.prRefreshIntervalMinutes,
-      autoFetchIntervalMinutes: git.autoFetchIntervalMinutes,
-      prEvaluateBranchPolicies: git.prEvaluateBranchPolicies,
+      prAutoRefresh: git.prAutoRefresh,
+      autoFetch: git.autoFetch,
       prBypassCountsAsReady: git.prBypassCountsAsReady,
     });
     if (pickedGit) result.git = pickedGit;
@@ -2972,8 +2970,9 @@
             // Graph's Ask on the capability rather than on the agent's name.
             supportsAnswerFromContext: true,
             // KEEP IN SYNC with ClaudeAdapter.answerCapabilities. `model: true` is
-            // what makes the Answering model setting required for Claude.
-            answerCapabilities: { streaming: true, search: true, model: true },
+            // what makes the Answering model setting required for Claude, and
+            // `defaultEffort` is the level the Answering effort row shows unset.
+            answerCapabilities: { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' },
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
@@ -3149,6 +3148,11 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            // KEEP IN SYNC with GrokAdapter.answerFromContext / answerCapabilities:
+            // a second answering agent with its own effort levels, so a spec can
+            // switch agents by marking it found.
+            supportsAnswerFromContext: true,
+            answerCapabilities: { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' },
           },
           {
             name: 'antigravity', displayName: 'Antigravity CLI', found: false, path: null, version: null,
@@ -4534,10 +4538,9 @@
 
     memory: {
       getStatus: function () { return Promise.resolve(Object.assign({}, memoryStatus)); },
-      // Fire-and-forget worker warm-up on a Smart-mode Quick Find open. Recorded
-      // (one timestamp per call) so a UI test can assert it fires at least once
-      // per open, never in keyword mode, and no further as the user types. Not
-      // an exact count: StrictMode double-invokes the mount effect, and the
+      // Fire-and-forget worker warm-up on a Knowledge Graph open. Recorded (one
+      // timestamp per call) so a UI test can assert Quick Find never sends it.
+      // Not an exact count: StrictMode double-invokes a mount effect, and the
       // second send is a no-op against the worker's memoized init.
       prewarm: function () {
         if (typeof window !== 'undefined') {

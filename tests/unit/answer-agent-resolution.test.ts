@@ -2,11 +2,11 @@
  * Which agent answers a question from the index, and what is still missing.
  *
  * Shared between the renderer (which decides whether a question runs or goes to
- * Settings > Memory first) and main (which decides who runs). A disagreement
+ * Settings > Search first) and main (which decides who runs). A disagreement
  * between those two is invisible until someone presses Enter, so the rule lives
  * in one place and is pinned here.
  *
- * The rule is explicit: one global agent and model, chosen in Settings > Memory,
+ * The rule is explicit: one global agent and model, chosen in Settings > Search,
  * never inferred from the project or from whichever agent happens to be capable.
  */
 

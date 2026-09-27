@@ -165,7 +165,7 @@ export class OllamaAdapter implements AgentAdapter {
     return null;
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true };
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -175,7 +175,7 @@ export class OllamaAdapter implements AgentAdapter {
    * plain model run has no tools to write or execute with.
    *
    * The model is REQUIRED here, unlike the spawn path's `DEFAULT_OLLAMA_MODEL`
-   * fallback: the Answering model setting is mandatory for this agent
+   * fallback: the Knowledge Graph Model setting is mandatory for this agent
    * (`answerCapabilities.model`), and a question never falls back to a model
    * nobody chose, which here would also mean pulling one.
    *
@@ -189,7 +189,7 @@ export class OllamaAdapter implements AgentAdapter {
     model?: string | null,
   ): Promise<string> {
     const chosenModel = model?.trim();
-    if (!chosenModel) throw new Error('choose an answering model for Ollama in Settings > Memory');
+    if (!chosenModel) throw new Error('choose a model for Ollama in the Knowledge Graph card in Settings > Search');
     return runCliPrintAnswer({
       cliPath,
       args: ['run', chosenModel],

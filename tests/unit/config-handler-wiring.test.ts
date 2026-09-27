@@ -560,7 +560,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     });
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 
-    invokeHandler('config:setProjectByPath', projectPath, { git: { prRefreshIntervalMinutes: 10 } });
+    invokeHandler('config:setProjectByPath', projectPath, { git: { prAutoRefresh: false } });
 
     // The call is behind a lazy dynamic import that resolves on a microtask.
     // vi.waitFor polls until the assertion passes (or times out at 1 second).
@@ -571,7 +571,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     expect(projectArg.path).toBe(projectPath);
   });
 
-  it('re-arms the remote-fetch scheduler too, so a changed git.autoFetchIntervalMinutes takes effect at once', () => {
+  it('re-arms the remote-fetch scheduler too, so a flipped git.autoFetch takes effect at once', () => {
     const projectPath = '/repo/active';
     const context = makeContext({
       currentProjectPath: projectPath,
@@ -579,7 +579,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     });
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 
-    invokeHandler('config:setProjectByPath', projectPath, { git: { autoFetchIntervalMinutes: 2 } });
+    invokeHandler('config:setProjectByPath', projectPath, { git: { autoFetch: false } });
 
     // Static import, so the re-arm is synchronous with the handler.
     expect(fetchStartForProjectSpy).toHaveBeenCalledTimes(1);
@@ -596,7 +596,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     });
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 
-    invokeHandler('config:setProjectByPath', backgroundPath, { git: { prRefreshIntervalMinutes: 10 } });
+    invokeHandler('config:setProjectByPath', backgroundPath, { git: { prAutoRefresh: false } });
 
     // Drain the microtask queue. The dynamic import is behind the if-branch that
     // only fires when projectPath === currentProjectPath, so it is never queued.
@@ -609,7 +609,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     // saveProjectOverrides is still called for background projects.
     expect(context.configManager.saveProjectOverrides).toHaveBeenCalledWith(
       backgroundPath,
-      { git: { prRefreshIntervalMinutes: 10 } },
+      { git: { prAutoRefresh: false } },
     );
   });
 

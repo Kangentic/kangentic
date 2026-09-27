@@ -545,13 +545,13 @@ export const IPC = {
   TRANSCRIPT_GET: 'transcript:get',
   TRANSCRIPT_LIST_SESSIONS: 'transcript:listSessions',
 
-  // Conversation-memory semantic-layer status (Smart-mode palette UI).
+  // Conversation-memory semantic-layer status (the Search settings tab).
   MEMORY_STATUS: 'memory:status',
-  // Spawn + init the embedding worker ahead of the first Smart query (Quick
-  // Find open); fire-and-forget, embeds nothing.
+  // Spawn + init the embedding worker ahead of the first question (Knowledge
+  // Graph open); fire-and-forget, embeds nothing.
   MEMORY_PREWARM: 'memory:prewarm',
-  // Purge the current project's conversation index and re-run the backfill sweep
-  // (recovery from a corrupt/stale index; Memory settings "Rebuild index").
+  // Re-parse and re-sweep the current project's conversation index, keeping
+  // its chunks (the Search tab's "Rebuild this project's index").
   MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',
   /** Cheap read of the cached Memory Graph projection plus its coverage strip.
    *  Never runs the projection pass - see graph-service. */

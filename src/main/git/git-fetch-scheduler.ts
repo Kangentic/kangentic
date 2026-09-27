@@ -4,22 +4,31 @@
  * worktree list) is measured against remote-tracking refs, and those refs were
  * only ever refreshed when someone opened a panel or dropped a task on Done.
  * Opening a project nobody had touched in a week left every count a week stale
- * until then. This sweeps the FOCUSED project's remotes on open and on a timer,
- * so the signal is current with nobody opening anything.
+ * until then. This sweeps the FOCUSED project's remotes on open and, with
+ * `git.autoFetch` on, again 5 minutes after the project's last full fetch.
+ *
+ * The clock is the repo's, not the scheduler's: `lastAllRemotesFetchAt` reads
+ * the throttle cache every all-remotes fetch stamps (opening the Changes panel,
+ * the Done check, the drag prefetch, this sweep), keyed by the git common dir
+ * so a worktree's fetch counts for its project. A fetch somebody else just made
+ * pushes the next sweep back instead of repeating it. A base-branch fetch
+ * (`fetchIfStale`, when a worktree is created) refreshes one branch only and
+ * does not count. A fetch that FAILED stamps nothing, so the scheduler also
+ * counts from its own last attempt; otherwise an offline repo would retry on
+ * every tick.
  *
  * It only fetches. It never pulls, merges, or rebases: keeping a tree current
  * under a running agent is out of scope (#558), and the remedy stays explicit
  * ("Update from base").
  *
- * The timer lifecycle (`startForProject` / `stop`, the single active project,
- * the deferred first sweep) mirrors `src/main/pr/pr-refresh-scheduler.ts` line
- * for line, including its timer-leak safety (see
- * src/main/diagnostics/project-log-context.ts and src/main/shutdown.ts). The
- * sweep body differs: it queues through the git lock, described below.
- *  - the `setInterval` is created OUTSIDE `runWithProjectLogContext`; each tick
+ * The lifecycle (`startForProject` / `stop`, the single active project, the
+ * deferred first sweep) mirrors `src/main/pr/pr-refresh-scheduler.ts`,
+ * including its timer-leak safety (see src/main/diagnostics/project-log-context.ts
+ * and src/main/shutdown.ts):
+ *  - each `setTimeout` is created OUTSIDE `runWithProjectLogContext`; the sweep
  *    wraps its work inside it (a timer created inside a run would leak that
  *    project's log context into every future tick),
- *  - the interval is `.unref()`'d so it never keeps the event loop alive past a
+ *  - every timer is `.unref()`'d so it never keeps the event loop alive past a
  *    clean Electron quit, and
  *  - it is explicitly cleared on project switch/delete and on shutdown.
  *
@@ -29,31 +38,36 @@
  * accepted: BACKGROUND orders WAITING jobs only, so a sweep that is already
  * running holds the queue for up to its two 5s caps; and a project switch
  * during the lock wait still fetches the old project once (throttled,
- * read-only, harmless). The 30s throttle inside `fetchAllRemotesIfStale` is a
- * floor under the schedule, not the schedule.
+ * read-only, harmless).
  */
 
 import { runWithProjectLogContext } from '../diagnostics/project-log-context';
-import { fetchAllRemotesIfStale } from './fetch-throttle';
+import { fetchAllRemotesIfStale, lastAllRemotesFetchAt } from './fetch-throttle';
 import { WorktreeManager, GitQueuePriority } from './worktree-manager';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Project } from '../../shared/types';
 
+/** How long after the project's last full fetch the next one runs. */
+export const AUTO_FETCH_INTERVAL_MS = 5 * 60_000;
+
 let activeTimer: NodeJS.Timeout | null = null;
 let activeProjectId: string | null = null;
+/** When this scheduler last started a sweep, for the failed-fetch case above. */
+let lastAttemptAt = 0;
 
-/** Read the per-project fetch interval (minutes); null/<=0 means "off". */
-function readIntervalMinutes(context: IpcContext, projectPath: string): number | null {
+/** Whether the project keeps its remotes current in the background. */
+function autoFetchEnabled(context: IpcContext, projectPath: string): boolean {
   try {
-    return context.configManager.getEffectiveConfig(projectPath).git.autoFetchIntervalMinutes;
+    return context.configManager.getEffectiveConfig(projectPath).git.autoFetch === true;
   } catch {
-    return null;
+    return false;
   }
 }
 
 /** Run one sweep, tagged with the project's log context, guarded against a stale switch. */
 function sweep(context: IpcContext, project: Project): void {
   if (context.currentProjectId !== project.id) return;
+  lastAttemptAt = Date.now();
   runWithProjectLogContext(project.name, () => {
     void WorktreeManager.withGitLock(
       project.path,
@@ -69,12 +83,39 @@ function sweep(context: IpcContext, project: Project): void {
   });
 }
 
+function arm(context: IpcContext, project: Project, delayMs: number): void {
+  activeTimer = setTimeout(() => { void tick(context, project); }, Math.max(0, delayMs));
+  // Never let the timer block a clean quit; it is also explicitly cleared on
+  // switch/delete/shutdown.
+  activeTimer.unref();
+}
+
+/**
+ * Wake at the due time, re-read the clock (another caller may have fetched in
+ * the meantime), and either sweep or sleep until the new due time.
+ */
+async function tick(context: IpcContext, project: Project): Promise<void> {
+  activeTimer = null;
+  if (activeProjectId !== project.id) return;
+  const lastFetchAt = await lastAllRemotesFetchAt(project.path).catch(() => null);
+  // Stopped or switched while the clock was being read.
+  if (activeProjectId !== project.id || activeTimer) return;
+  const dueAt = Math.max(lastFetchAt ?? 0, lastAttemptAt) + AUTO_FETCH_INTERVAL_MS;
+  const waitMs = dueAt - Date.now();
+  if (waitMs > 0) {
+    arm(context, project, waitMs);
+    return;
+  }
+  sweep(context, project);
+  arm(context, project, AUTO_FETCH_INTERVAL_MS);
+}
+
 export const gitFetchScheduler = {
   /**
-   * Run an immediate sweep for `project` and arm its periodic timer. Called on
-   * every PROJECT_OPEN (cold restart AND warm switch-back) and after a config
-   * change so a new interval takes effect without reopening. Synchronous-cheap:
-   * the sweep itself is deferred off the IPC critical path.
+   * Run an immediate sweep for `project` and, with `git.autoFetch` on, arm the
+   * clock. Called on every PROJECT_OPEN (cold restart AND warm switch-back) and
+   * after a config change so a flipped switch takes effect without reopening.
+   * Synchronous-cheap: the sweep itself is deferred off the IPC critical path.
    */
   startForProject(context: IpcContext, project: Project): void {
     // Tear down any prior project's timer first (single active-project model).
@@ -85,13 +126,8 @@ export const gitFetchScheduler = {
     // mirrors the deferred board-config block in handlers/projects.ts.
     setImmediate(() => sweep(context, project));
 
-    const minutes = readIntervalMinutes(context, project.path);
-    if (minutes == null || minutes <= 0) return; // Off: on-load sweep only, no timer.
-
-    activeTimer = setInterval(() => sweep(context, project), minutes * 60_000);
-    // Never let the timer block a clean quit; it is also explicitly cleared on
-    // switch/delete/shutdown.
-    activeTimer.unref();
+    if (!autoFetchEnabled(context, project.path)) return; // Off: on-load sweep only, no timer.
+    arm(context, project, AUTO_FETCH_INTERVAL_MS);
   },
 
   /**
@@ -102,7 +138,7 @@ export const gitFetchScheduler = {
   stop(projectId?: string): void {
     if (projectId != null && projectId !== activeProjectId) return;
     if (activeTimer) {
-      clearInterval(activeTimer);
+      clearTimeout(activeTimer);
       activeTimer = null;
     }
     activeProjectId = null;

@@ -68,8 +68,10 @@ const ANSWER_RETRIEVAL_TOOL = 'mcp__kangentic__kangentic_search';
  * two answers in flight must not share a file. Deleted by the caller when the
  * call ends.
  */
-export function writeScopedMcpConfig(retrieval: { url: string; token: string }): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
+export function writeScopedMcpConfig(
+  retrieval: { url: string; token: string },
+  directory: string = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-')),
+): string {
   const configPath = path.join(directory, 'mcp.json');
   // sync-write-ok: the answer call names this file in --mcp-config and cannot
   // run without it. The throw reaches the MEMORY_GRAPH_ANSWER handler's catch,
@@ -84,6 +86,33 @@ export function writeScopedMcpConfig(retrieval: { url: string; token: string }):
     },
   }, null, 2));
   return configPath;
+}
+
+/**
+ * Settings layered over the user's own for one answer call, named by
+ * `--settings`. The user's settings still load (auth helpers, env); this only
+ * overrides what an answer must not inherit.
+ *
+ * `advisorModel` is the one so far. A user who sets it (Claude Code's advisor
+ * tool) had every answer consult that model, and `--tools ''` does not remove
+ * the advisor. Measured on CLI 2.1.283 with `advisorModel: "opus"`, one table
+ * question at Sonnet: 17 to 21 s and $0.12 to $0.18 with an Opus call, against
+ * 3 to 5 s and no Opus call with `""`. `null` does NOT turn it off (two of three
+ * runs still called Opus), so the empty string is the value. Some answers also
+ * narrated the choice ("rather than consulting the advisor") in the reply.
+ *
+ * A file rather than inline JSON because an npm `.cmd` shim sends the argument
+ * through cmd.exe's quote doubling.
+ */
+const ANSWER_SETTINGS = { advisorModel: '' };
+
+export function writeAnswerSettings(directory: string): string {
+  const settingsPath = path.join(directory, 'settings.json');
+  // sync-write-ok: the answer call names this file in --settings and cannot
+  // run without it. The throw reaches the MEMORY_GRAPH_ANSWER handler's catch,
+  // which turns it into the reason the chat shows.
+  fs.writeFileSync(settingsPath, JSON.stringify(ANSWER_SETTINGS));
+  return settingsPath;
 }
 
 /**
@@ -396,7 +425,22 @@ export class ClaudeAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: true, search: true, model: true };
+  /**
+   * Effort defaults to `low`, which answers without extended thinking (the fast
+   * path, below). A higher level lifts that and lets the level decide how much
+   * the model thinks. Measured on CLI 2.1.283, one table question with a
+   * counting part, two runs each:
+   *
+   *   Sonnet low, thinking off              1.8 to 3.0 s   count right 0 of 2
+   *   Sonnet low to high, level decides     1.5 to 4.2 s   count right 1 of 6
+   *   Sonnet max, level decides             22 to 43 s     count right 2 of 2
+   *   Haiku, thinking off                   1.5 to 1.8 s
+   *   Haiku, level decides (any level)      12 to 19 s     Haiku ignores effort and thinks
+   *
+   * So `low` keeps the pin for every model, and a user who wants more care on a
+   * hard question can buy it with a higher level.
+   */
+  readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
 
   /**
    * The prompt arrives fully built - question, excerpts and rules - so this only
@@ -420,10 +464,17 @@ export class ClaudeAdapter implements AgentAdapter {
     // `--allowedTools` pre-approves the single search tool by name, so a
     // headless run never blocks on a permission prompt it has no way to answer.
     const retrieval = options?.retrieval;
-    const mcpConfigPath = retrieval ? writeScopedMcpConfig(retrieval) : null;
     const streaming = options?.onEvent !== undefined;
+    const effort = options?.effort ?? null;
+    // Low, or no level at all, answers without extended thinking; see
+    // `answerCapabilities` for the measurement behind the split.
+    const thinkingOff = effort === null || effort === 'low';
+    // One directory per call for its config files, removed whole when it ends.
+    const configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
 
     try {
+      const settingsPath = writeAnswerSettings(configDirectory);
+      const mcpConfigPath = retrieval ? writeScopedMcpConfig(retrieval, configDirectory) : null;
       return await runCliPrintAnswer({
         cliPath,
         // The flag is OMITTED when no model is chosen, rather than passed empty:
@@ -457,6 +508,7 @@ export class ClaudeAdapter implements AgentAdapter {
           '--permission-prompts', 'none',
           '--tools', '',
           '--strict-mcp-config',
+          '--settings', settingsPath,
           ...(mcpConfigPath
             ? ['--mcp-config', mcpConfigPath, '--allowedTools', ANSWER_RETRIEVAL_TOOL]
             : []),
@@ -471,6 +523,8 @@ export class ClaudeAdapter implements AgentAdapter {
             ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages']
             : []),
           ...(model ? ['--model', model] : []),
+          // Omitted when unset, like the model.
+          ...(effort ? ['--effort', effort] : []),
         ],
         // In stream mode stdout is a transcript of JSON lines, not the answer.
         // The final answer is the last assistant turn's text; the runner's
@@ -483,29 +537,29 @@ export class ClaudeAdapter implements AgentAdapter {
         // Forward each line's events as they land. A chunk can end mid-line,
         // so lines are reassembled across chunks before parsing.
         ...(streaming ? { onChunk: makeStreamForwarder(options.onEvent!) } : {}),
-      // NO EXTENDED THINKING, and this is the latency of the feature.
+      // NO EXTENDED THINKING at the default level, and this is the latency of
+      // the feature.
       //
       // Measured on a realistic 350-row prompt: thinking on took 4,038ms of API
       // time and generated 253 output tokens of which 231 - 91% - were thinking.
       // Off took 2,041ms and 19 tokens, and returned the IDENTICAL answer.
       //
-      // Which is what you would expect from the shape of the work. The prompt
-      // already contains the whole table, the arithmetic is computed before the
-      // agent sees it, and the task is to read and report. There is nothing here
-      // to reason toward, so the reasoning was latency the user pays for and no
-      // answer they would not have got anyway.
+      // Which is what you would expect from the shape of most of the work: the
+      // prompt already contains the whole table and the task is to read and
+      // report. A user who picks a higher effort gets thinking back, because a
+      // count across hundreds of rows is where it measurably helped.
       //
       // `MAX_THINKING_TOKENS` is Claude Code's own control, which is why this
       // lives in the Claude adapter rather than in the shared runner.
-        env: { MAX_THINKING_TOKENS: '0' },
+        ...(thinkingOff ? { env: { MAX_THINKING_TOKENS: '0' } } : {}),
         prompt,
         cwd,
       });
     } finally {
-      // The config carries a live token. It exists only for the duration of
+      // The MCP config carries a live token. It exists only for the duration of
       // one call, and `force` because Windows may still hold the handle for a
       // beat after the child exits.
-      if (mcpConfigPath) fs.rmSync(mcpConfigPath, { force: true });
+      fs.rmSync(configDirectory, { recursive: true, force: true });
     }
   }
 

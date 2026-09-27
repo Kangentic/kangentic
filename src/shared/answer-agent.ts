@@ -4,14 +4,14 @@
  *
  * SHARED, because two places need the same answer and a disagreement between
  * them is invisible: the renderer decides whether a question can run or must
- * first go to Settings > Memory, and the main process decides who actually
+ * first go to Settings > Search, and the main process decides who actually
  * runs. If those drifted, the box would send the user to settings for an agent
  * main would have run, or run an agent the settings row does not show.
  *
  * EXPLICIT, with no fallback. The chain used to fall through to the project's
  * default agent and then to any capable agent, so a question could run on an
  * agent and model nobody chose, and spend their tokens doing it. The user's
- * rule: this is one global choice, made in Settings > Memory, never inferred
+ * rule: this is one global choice, made in Settings > Search, never inferred
  * from a project. So a configured agent that cannot answer, or is not
  * installed, resolves to nothing, and the surface asks for a choice.
  */

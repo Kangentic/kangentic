@@ -8,8 +8,10 @@ import { IconPickerDialog } from '../../dialogs/IconPickerDialog';
 import { RegistryIcon } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
-import { SectionHeader, Select, INPUT_CLASS } from '../shared';
+import { INPUT_CLASS } from '../shared';
+import { SettingsCard, CardTile, CardTileGutter } from '../settings-card';
 import { Pill } from '../../Pill';
+import { SegmentedControl } from '../../SegmentedControl';
 import { OverlayPopover } from '../../OverlayPopover';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import type { ShortcutConfig, ShortcutDisplay } from '../../../../shared/types';
@@ -113,30 +115,30 @@ function SortableActionItem({
 
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="border border-edge-input rounded-lg bg-surface-hover/30"
-    >
-      {/* Summary row */}
+    <CardTile ref={setNodeRef} style={style} className="flex flex-col">
+      {/* Summary row. The tile draws the fill and insets, so the row adds none.
+          The grip sits in the tile's gutter, under the card's icon, so the
+          shortcut's own icon and name start on the card title's line. */}
       <div
-        className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-surface-hover/50 rounded-lg transition-colors"
+        className="relative flex items-center gap-2 cursor-pointer select-none"
         onClick={onToggleEdit}
       >
-        {/* light-dismiss-ok: the settings panel mounts as a SIBLING of AppLayout's marked shell
-            subtree, so a click anywhere in it resolves to no `data-dismiss-layer` scope and
-            cannot dismiss a task window. That is the fail-safe the marker placement buys; this
-            `cursor-grab` handle needs no marker of its own. */}
-        {/* select-none-ok: the handle draws a grip icon and no text, and it
-            inherits the summary row's `select-none` anyway. */}
-        <div
-          className="flex-shrink-0 cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted"
-          {...attributes}
-          {...listeners}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <GripVertical size={14} />
-        </div>
+        <CardTileGutter>
+          {/* light-dismiss-ok: the settings panel mounts as a SIBLING of AppLayout's marked shell
+              subtree, so a click anywhere in it resolves to no `data-dismiss-layer` scope and
+              cannot dismiss a task window. That is the fail-safe the marker placement buys; this
+              `cursor-grab` handle needs no marker of its own. */}
+          {/* select-none-ok: the handle draws a grip icon and no text, and it
+              inherits the summary row's `select-none` anyway. */}
+          <div
+            className="flex cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted"
+            {...attributes}
+            {...listeners}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <GripVertical size={14} />
+          </div>
+        </CardTileGutter>
         <RegistryIcon name={action.icon ?? 'zap'} fallback={Zap} size={16} className="text-fg-muted flex-shrink-0" />
         <span className="text-sm text-fg font-medium truncate flex-1">{action.label}</span>
         <span
@@ -172,7 +174,7 @@ function SortableActionItem({
 
       {/* Edit form */}
       {isEditing && (
-        <div className="px-3 pb-3 space-y-3 border-t border-edge-input/50 pt-3">
+        <div className="mt-3 space-y-3 border-t border-edge-input/50 pt-3">
           {/* Icon + Label on same row */}
           <div className="flex gap-3">
             <div className="flex-shrink-0">
@@ -235,32 +237,39 @@ function SortableActionItem({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-fg-muted mb-1 block">Display</label>
-              <Select
+              <SegmentedControl<ShortcutDisplay>
+                options={[
+                  { value: 'both', label: 'Both', title: 'In the task window header and its menu' },
+                  { value: 'header', label: 'Header', title: 'In the task window header only' },
+                  { value: 'menu', label: 'Menu', title: 'In the task window menu only' },
+                ]}
                 value={action.display ?? 'both'}
-                onChange={(event) => onUpdateAndSave({ display: event.target.value as ShortcutDisplay })}
-              >
-                <option value="both">Both</option>
-                <option value="header">Header only</option>
-                <option value="menu">Menu only</option>
-              </Select>
+                onChange={(display) => onUpdateAndSave({ display })}
+                ariaLabel="Display"
+                testId="shortcut-display"
+                quiet
+                fullWidth
+              />
             </div>
             <div>
               <label className="text-xs text-fg-muted mb-1 block">Scope</label>
-              <Select
+              <SegmentedControl
+                options={[
+                  { value: 'team', label: 'Team', title: 'Shared with the team in kangentic.json' },
+                  { value: 'local', label: 'Personal', title: 'Only yours, in kangentic.local.json' },
+                ]}
                 value={action.source}
-                onChange={(event) => {
-                  const newSource = event.target.value as 'team' | 'local';
-                  onUpdateAndSave({ source: newSource });
-                }}
-              >
-                <option value="team">Team (kangentic.json)</option>
-                <option value="local">Personal (kangentic.local.json)</option>
-              </Select>
+                onChange={(newSource) => onUpdateAndSave({ source: newSource })}
+                ariaLabel="Scope"
+                testId="shortcut-scope"
+                quiet
+                fullWidth
+              />
             </div>
           </div>
         </div>
       )}
-    </div>
+    </CardTile>
   );
 }
 
@@ -413,15 +422,18 @@ export function ShortcutsTab() {
 
   return (
     <div className="space-y-4">
-      <SectionHeader label="Shortcuts" description="Custom commands that appear in the task detail dialog header and menu." />
-
+      <SettingsCard
+        icon={<Zap size={16} />}
+        label="Shortcuts"
+        description="Custom commands in the task window's header and menu."
+        searchIds={['shortcuts']}
+      >
       {localActions.length === 0 && (
-        <p className="text-sm text-fg-faint">No shortcuts configured. Add one below or choose a preset.</p>
+        <CardTile className="text-sm text-fg-faint">No shortcuts configured. Add one below or choose a preset.</CardTile>
       )}
 
       <DndContext key={hmrGeneration} sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-          <div className="space-y-2">
             {localActions.map((action, index) => {
               const sortableId = getSortableId(action, index);
               return (
@@ -447,12 +459,11 @@ export function ShortcutsTab() {
                 />
               );
             })}
-          </div>
         </SortableContext>
       </DndContext>
 
       {/* Add action button + presets */}
-      <div className="flex items-center gap-2">
+      <CardTile className="flex items-center gap-2">
         <Pill
           size="lg"
           shape="square"
@@ -461,7 +472,7 @@ export function ShortcutsTab() {
           data-testid="add-shortcut"
         >
           <Plus size={14} />
-          Add Shortcut
+          Add shortcut
         </Pill>
 
         <div className="relative" ref={presetsRef}>
@@ -511,7 +522,8 @@ export function ShortcutsTab() {
             })()}
           </OverlayPopover>
         </div>
-      </div>
+      </CardTile>
+      </SettingsCard>
     </div>
   );
 }

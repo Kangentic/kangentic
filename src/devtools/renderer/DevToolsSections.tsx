@@ -1,4 +1,4 @@
-import { Network, Code2, Compass, Megaphone, Sparkles, Rocket } from 'lucide-react';
+import { Network, Compass, Megaphone, Sparkles, Rocket, Wrench } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { AppConfig } from '../../shared/types';
 import type { Announcement, AnnouncementArchiveEntry } from '../../shared/announcements';
@@ -8,12 +8,8 @@ import { useConfigStore } from '../../renderer/stores/config-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useUpdaterStore } from '../../renderer/stores/updater-store';
 import { useAnnouncementsStore } from '../../renderer/stores/announcements-store';
-import {
-  Code,
-  Description,
-  GroupHeading,
-  ToggleRow,
-} from '../../renderer/components/settings/tabs/dev-tab-primitives';
+import { SettingsCard, CardToggleRow, CardTile } from '../../renderer/components/settings/settings-card';
+import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../renderer/components/SettingText';
 
 const FIXTURE_RELEASE_NOTES = `## What's New
 
@@ -92,11 +88,11 @@ function buildAnnouncementFixture(): {
 }
 
 /**
- * A dev-only trigger row: what it opens on the left, the button that opens it
- * on the right. Local to this file rather than `dev-tab-primitives.tsx` so the
- * whole row stays inside the build-excluded `src/devtools/` tree. The title and
- * description classes mirror `ToggleRow`'s so every row on this tab reads as one
- * family.
+ * A dev-only trigger row, in its own settings-card tile: what it opens on the
+ * left, the button that opens it on the right. Local to this file so the whole
+ * row stays inside the build-excluded `src/devtools/` tree. The title and
+ * description use the settings label classes, so it reads as a row like any
+ * other in the panel.
  */
 function ActionRow({
   icon: Icon,
@@ -124,11 +120,10 @@ function ActionRow({
   disabled?: boolean;
 }) {
   return (
-    <section className="space-y-2">
-      <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-hover px-4 py-3">
+    <CardTile className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-fg-primary">{title}</div>
-          <div className="text-xs text-fg-muted">{description}</div>
+          <div className={SETTING_LABEL_CLASS}>{title}</div>
+          <div className={SETTING_DESCRIPTION_CLASS}>{description}</div>
           {note && <div className="mt-1 text-xs text-fg-faint">{note}</div>}
         </div>
         <button
@@ -145,8 +140,7 @@ function ActionRow({
           <Icon size={13} />
           {label}
         </button>
-      </div>
-    </section>
+    </CardTile>
   );
 }
 
@@ -155,12 +149,9 @@ function ActionRow({
  * settings tab. Rendered only when `__KANGENTIC_DEV__` is true at compile
  * time; production builds tree-shake this entire file out.
  *
- * Reuses primitives from `dev-tab-primitives.tsx` so the visual rhythm
- * matches the product-tier sections above. Importing from a third file
- * (rather than from `DeveloperTab.tsx` directly) avoids a circular module
- * graph - DeveloperTab also renders `<DevToolsSections />`. The boundary
- * between product and dev surfaces is the `Dev Inspection Bridge` heading
- * + thin top border.
+ * Built from the settings card pieces, like every other settings tab, so the
+ * dev-only cards read as the same panel. The boundary between product and dev
+ * surfaces is the card titles, which say "Dev".
  */
 export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
@@ -179,45 +170,42 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
   const evalEnabled = developerConfig.previewEvalEnabled ?? __KANGENTIC_DEV__;
 
   return (
-    <div className="space-y-3 pt-4 mt-2 border-t border-edge">
-      <GroupHeading>Dev Inspection Bridge</GroupHeading>
-
-      <section className="space-y-2">
-        <ToggleRow
-          icon={Network}
-          title="Inspection Bridge"
-          subtitle="Localhost HTTP bridge that powers the kangentic_devtools_* MCP tools"
+    <>
+      <SettingsCard
+        icon={<Network size={16} />}
+        label="Dev inspection bridge"
+        description="The localhost bridge behind the devtools MCP tools."
+        searchIds={['developer.activityDebugOverlay']}
+      >
+        <CardToggleRow
+          label="Inspection bridge"
+          description={
+            'Exposes screenshots, input, DOM and React queries, console and log tails, and engine and renderer '
+            + 'state through the kangentic_devtools_* MCP tools. Bound to 127.0.0.1 on a random port with no auth, '
+            + 'and writes .kangentic/preview.lock. On by default in dev; excluded from production builds.'
+          }
           checked={inspectionEnabled}
           onChange={(value) => updateGlobal({ developer: { previewInspectionServer: value } })}
         />
-        <Description>
-          When on, exposes screenshot, click, type, drag, DOM query, React fiber query, console + log
-          tail, and engine + renderer state via the <Code>kangentic_devtools_*</Code> MCP tools.
-          Writes a per-worktree lockfile at <Code>.kangentic/preview.lock</Code>. Bound to 127.0.0.1
-          on a random port, no auth. Defaults on in dev; excluded from production builds entirely.
-        </Description>
-      </section>
-
-      <section className="space-y-2">
-        <ToggleRow
-          icon={Code2}
-          title="Allow Unsafe Operations"
-          subtitle="Lets the agent run JavaScript, fake activity events, or send raw input to a session"
+        <CardToggleRow
+          label="Allow unsafe operations"
+          description={
+            'Gates three high-risk endpoints: devtools eval (runs any JavaScript in Kangentic\'s own renderer; the '
+            + 'agent browser\'s eval is a separate setting under Agent Browser), inject session event (fake '
+            + 'activity-engine events), and raw PTY input (any byte sequence, control codes included). Leave off '
+            + 'unless stress-testing.'
+          }
           checked={evalEnabled}
           onChange={(value) => updateGlobal({ developer: { previewEvalEnabled: value } })}
         />
-        <Description>
-          Off by default. Three high-risk endpoints are gated behind this toggle:{' '}
-          <strong>devtools eval</strong> (<Code>kangentic_devtools_eval</Code>, which runs any
-          JavaScript in Kangentic&apos;s own renderer process; the agent browser&apos;s eval is a
-          separate setting under Agent Browser),{' '}
-          <strong>inject session event</strong> (synthesize fake activity-engine events to test
-          watchdogs and predicates without spawning a real CLI), and{' '}
-          <strong>raw PTY input</strong> (write any byte sequence directly to a session's terminal,
-          including control codes that bypass the click/type input path). Flip on for stress-testing
-          and hard-to-reach UI paths; leave off otherwise.
-        </Description>
-      </section>
+      </SettingsCard>
+
+      <SettingsCard
+        icon={<Wrench size={16} />}
+        label="Dev triggers"
+        description="Open the surfaces a dev session cannot reach on its own."
+        searchIds={['developer.activityDebugOverlay']}
+      >
 
       {/* initUpdater() early-returns on !app.isPackaged (see
           src/main/updater.ts), so the release-notes modal is unreachable while
@@ -311,6 +299,7 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
             });
         }}
       />
-    </div>
+      </SettingsCard>
+    </>
   );
 }

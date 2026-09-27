@@ -1,5 +1,6 @@
 import type { AgentDetectionInfo, AppConfig } from '../../../../shared/types';
-import { SettingToggleRow, useScopedUpdate } from '../shared';
+import { useScopedUpdate } from '../shared';
+import { CardToggleRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 /**
@@ -26,7 +27,7 @@ export function AgentLaunchOptionFields({ agent, globalConfig }: {
   return (
     <>
       {agent.launchOptions.map((option) => (
-        <SettingToggleRow
+        <CardToggleRow
           key={option.id}
           {...settingProps('agent.launchOptions')}
           label={option.label}

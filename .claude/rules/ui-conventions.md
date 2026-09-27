@@ -26,6 +26,10 @@ chrome unless these are stated.
 - **Dropdowns:** use the shared `Select` component from
   `src/renderer/components/settings/shared.tsx`, never a raw `<select>` with inline classes.
   The shared component renders `appearance-none` with a custom ChevronDown for correct spacing.
+  A short fixed choice (two to four options whose labels fit) is not a dropdown: use
+  `SegmentedControl` (`CardChoiceRow` in a settings card), so every option shows and any is one
+  click away. Mechanical in the settings tabs only (`settings-card-design.test.ts`); review
+  elsewhere.
 - **Settings text fields commit on blur, Enter, or unmount, not per keystroke.** Use `SettingTextInput`
   (`settings/shared.tsx`), the text sibling of `Select`. A settings write is not cheap: one
   `config:set` is a synchronous whole-file write in main plus a `config:get` + `config:getGlobal`
@@ -50,6 +54,9 @@ chrome unless these are stated.
   (`src/renderer/components/SettingText.tsx`), or its `SETTING_LABEL_CLASS` /
   `SETTING_DESCRIPTION_CLASS` when a surface needs the two parts separately. Never re-type the
   label/description class pair inline.
+- **Settings tabs are cards.** Build a settings tab from `SettingsCard` and its tiles
+  (`settings/settings-card.tsx`), never a hand-rolled row. The layout, depth, alignment and
+  one-line description budgets are in `settings-card-design.md`.
 - **Control fill:** every input-like control draws one fill, border, and value colour, off the
   `surface-control` / `edge-input` tokens. Use `FIELD_CONTROL_CLASS` / `FIELD_SELECT_CLASS`
   (`src/renderer/components/Field.tsx`) in dialogs and `INPUT_CLASS`
@@ -112,7 +119,8 @@ chrome unless these are stated.
     State the effect and, if it is genuinely needed, one distinguishing clause. Drop flag names,
     issue numbers, and "applies only to X sessions" caveats. Model: existing registry entries like
     "Fold away large unchanged spans so a big file shows only the changed hunks with a little
-    context."
+    context." That budget is for a description behind an info icon. One a settings card shows
+    inline has to fit on one line, 54 to 66 characters (`settings-card-design.md`).
   - **Never open with a rhetorical or leading question** ("No app yet?", "Need help?"). A question
     presumes a state the reader may not be in, and the section is not conditioned on the answer.
     Write the noun phrase for what is behind the control, and keep sibling labels parallel ("How

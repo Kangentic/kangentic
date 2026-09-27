@@ -27,6 +27,7 @@ vi.mock('../../src/main/agent/shared/auto-name', async (importOriginal) => {
   return { ...actual, runCliPrintAnswer: answerSpy };
 });
 
+import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { CopilotAdapter } from '../../src/main/agent/adapters/copilot/copilot-adapter';
 import { CursorAdapter } from '../../src/main/agent/adapters/cursor/cursor-adapter';
 import { DroidAdapter } from '../../src/main/agent/adapters/droid/droid-adapter';
@@ -144,7 +145,7 @@ describe('answer run flags and prompt delivery', () => {
 
     answerSpy.mockClear();
     await expect(new OllamaAdapter().answerFromContext('THE PROMPT', '/bin/ollama', '/scratch', null))
-      .rejects.toThrow(/answering model/);
+      .rejects.toThrow(/choose a model for Ollama/);
     expect(answerSpy).not.toHaveBeenCalled();
   });
 
@@ -152,6 +153,66 @@ describe('answer run flags and prompt delivery', () => {
     for (const adapter of [new CopilotAdapter(), new CursorAdapter(), new DroidAdapter(), new GrokAdapter()]) {
       const options = await optionsFor(adapter, null);
       expect(options.args).not.toContain('--model');
+    }
+  });
+
+  it('passes the effort level as each CLI\'s own flag, and omits it when unset', async () => {
+    // Each flag probed on the real CLI's headless path: an unknown level is
+    // refused BY NAME by all three, so the flag is parsed in that mode.
+    const cases = [
+      { adapter: new GrokAdapter(), flag: '--reasoning-effort' },
+      { adapter: new CopilotAdapter(), flag: '--reasoning-effort' },
+      { adapter: new AntigravityAdapter(), flag: '--effort' },
+    ];
+    for (const { adapter, flag } of cases) {
+      expect(adapter.answerCapabilities.effort, `${adapter.name} declares effort`).toBe(true);
+      expect(adapter.answerCapabilities.defaultEffort, `${adapter.name} recommends low`).toBe('low');
+      answerSpy.mockClear();
+      await adapter.answerFromContext('THE PROMPT', '/bin/agent', '/scratch', null, { effort: 'low' });
+      const args = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0].args;
+      expect(args[args.indexOf(flag) + 1], `${adapter.name} passes the level after ${flag}`).toBe('low');
+      const withoutLevel = await optionsFor(adapter, null);
+      expect(withoutLevel.args, `${adapter.name} omits ${flag} when unset`).not.toContain(flag);
+    }
+    // Antigravity's inline empty prompt must stay the last argument.
+    answerSpy.mockClear();
+    await new AntigravityAdapter().answerFromContext('THE PROMPT', '/bin/agy', '/scratch', null, { effort: 'low' });
+    expect((answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0].args.at(-1)).toBe('--print=');
+  });
+
+  it('runs Claude without extended thinking at low, and lets a higher effort think', async () => {
+    // Measured on CLI 2.1.283: Sonnet at max thought for 2,500 to 6,400 tokens
+    // and got a count right that low missed; Haiku ignores effort and thinks for
+    // 12 to 19 s unless pinned. So low keeps the pin and anything higher lifts it.
+    const claude = new ClaudeAdapter();
+    expect(claude.answerCapabilities.effort).toBe(true);
+    expect(claude.answerCapabilities.defaultEffort).toBe('low');
+
+    const run = async (effort: string | null): Promise<RunCliPrintOptions> => {
+      answerSpy.mockClear();
+      await claude.answerFromContext('THE PROMPT', '/bin/claude', '/scratch', 'sonnet', { effort });
+      return (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    };
+
+    const low = await run('low');
+    expect(low.args[low.args.indexOf('--effort') + 1]).toBe('low');
+    expect(low.env).toEqual({ MAX_THINKING_TOKENS: '0' });
+
+    const unset = await run(null);
+    expect(unset.args).not.toContain('--effort');
+    expect(unset.env).toEqual({ MAX_THINKING_TOKENS: '0' });
+
+    const high = await run('high');
+    expect(high.args[high.args.indexOf('--effort') + 1]).toBe('high');
+    expect(high.env?.MAX_THINKING_TOKENS).toBeUndefined();
+  });
+
+  it('declares no effort where the run would not pass it on', () => {
+    for (const adapter of [
+      new CursorAdapter(), new DroidAdapter(), new OpenCodeAdapter(), new CodexAdapter(), new GeminiAdapter(),
+      new KimiAdapter(), new AiderAdapter(), new GooseAdapter(), new OllamaAdapter(),
+    ]) {
+      expect(adapter.answerCapabilities.effort, adapter.name).toBe(false);
     }
   });
 });

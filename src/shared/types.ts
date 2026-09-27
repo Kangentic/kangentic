@@ -116,8 +116,15 @@ export interface AnswerCapabilities {
   streaming: boolean;
   /** The run honours `retrieval`: the agent can call Kangentic's search itself. */
   search: boolean;
-  /** The run takes a model id, so the Answering model setting is required. */
+  /** The run takes a model id, so the Knowledge Graph Model setting is required. */
   model: boolean;
+  /** The run passes the Knowledge Graph Effort setting as the CLI's own effort flag. The
+   *  setting shows only when this is true AND the CLI reports effort levels. */
+  effort: boolean;
+  /** The level an answer runs at when the user has not chosen one: Kangentic's
+   *  recommendation for reading and reporting, which the user can override.
+   *  Used only when the CLI reports it; otherwise no flag is passed. */
+  defaultEffort?: string;
 }
 
 export interface AgentDetectionInfo {
@@ -3174,23 +3181,25 @@ export interface AppConfig {
     initScript: string | null;
     /** Symlink the root node_modules into each worktree so agents skip a fresh install. Disable to let initScript own the worktree's deps. */
     linkNodeModules: boolean;
-    /** Minutes between background PR-state refresh sweeps for the open project. null = off (on-open sweep only). */
-    prRefreshIntervalMinutes: number | null;
     /**
-     * Minutes between background `git fetch --all --prune` sweeps of the open
-     * project's remotes, so ahead/behind counts and base-drift checks read
-     * current remote refs without anyone opening a panel. null = off (on-open
-     * sweep only). The sweep only fetches; it never pulls, merges, or rebases.
+     * Keep the open project's PRs current in the background. On, each PR whose
+     * state can still change is checked about 2 minutes after its own last
+     * check, one call at a time and at least 10 s apart
+     * (`pr-refresh-scheduler.ts`). Off, PRs are checked when the project opens
+     * and nothing re-polls a PR whose checks are in flight. Replaces the retired
+     * `prRefreshIntervalMinutes`, which `legacy-git-keys.ts` reads once.
      */
-    autoFetchIntervalMinutes: number | null;
+    prAutoRefresh: boolean;
     /**
-     * Ask the host to evaluate branch policies when judging merge readiness,
-     * where that costs a call of its own (Azure DevOps: one `az rest` per open
-     * PR per sweep, roughly a second each). Off by default for that cost; a
-     * host whose verdict already carries policy (GitHub) ignores it. Without
-     * it an Azure PR's clean merge preview stays `unknown` rather than `ready`.
+     * Keep the open project's remote-tracking refs current, so ahead/behind
+     * counts and base-drift checks read the remote without anyone opening a
+     * panel. On, the project fetches all remotes 5 minutes after its last full
+     * fetch (`git-fetch-scheduler.ts`), and a card dragged toward Done warms the
+     * fetch early. It only fetches; it never pulls, merges, or rebases. Creating
+     * a worktree fetches its base branch whatever this says. Replaces the retired
+     * `autoFetchIntervalMinutes`, which `legacy-git-keys.ts` reads once.
      */
-    prEvaluateBranchPolicies: boolean;
+    autoFetch: boolean;
     /**
      * Count the viewer's own merge bypass as `ready`. On GitHub a PR still
      * waiting on a required review reads `BLOCKED`, or `BEHIND` once somebody
@@ -3351,7 +3360,7 @@ export interface AppConfig {
   /**
    * Conversation memory: local index over agent conversation transcripts for
    * search and recall. GLOBAL/shared scope (below the settings separator, in
-   * the Memory tab). Works offline with no API key.
+   * the Search tab). Works offline with no API key.
    */
   memory?: {
     /** Index agent conversation transcripts locally for search/recall.
@@ -3402,6 +3411,14 @@ export interface AppConfig {
      * for the same reason the agent has none.
      */
     answerModel?: string | null;
+    /**
+     * Which effort level the answering agent runs at, from the levels its CLI
+     * reports. Optional, unlike the model: unset runs at the adapter's
+     * recommended level (`AnswerCapabilities.defaultEffort`). Cleared with the
+     * model whenever `answerAgent` changes, since levels are per CLI (Claude's
+     * `max` is not Grok's).
+     */
+    answerEffort?: string | null;
   };
 
   /**
@@ -3783,9 +3800,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     copyFiles: [],
     initScript: null,
     linkNodeModules: true,
-    prRefreshIntervalMinutes: 5,
-    autoFetchIntervalMinutes: 5,
-    prEvaluateBranchPolicies: false,
+    prAutoRefresh: true,
+    autoFetch: true,
     prBypassCountsAsReady: true,
   },
   mcpServer: {
@@ -6097,8 +6113,8 @@ export interface ElectronAPI {
      * that follows within the throttle window either skips its own fetch or joins the
      * one already in flight and pays only its remainder. Fire-and-forget: never rejects,
      * never prompts (non-interactive git), and shares the background scheduler's cache
-     * and its `git.autoFetchIntervalMinutes` setting, so it is a no-op when the user has
-     * turned background fetching off. The board calls it when a drag of a worktree-backed
+     * and its `git.autoFetch` setting, so it is a no-op when the user has turned
+     * background fetching off. The board calls it when a drag of a worktree-backed
      * card begins, so a Done drop's probe is not starting a fetch after the release.
      */
     prefetchRemotes: (checkPath: string) => Promise<void>;
@@ -6751,8 +6767,8 @@ export interface SearchRequest {
   mode?: 'keyword' | 'smart';
 }
 
-/** Runtime state of the semantic (embedding) layer, for the palette Smart-mode
- *  UI. `lexical` = enabled but sqlite-vec unavailable, so search stays lexical. */
+/** Runtime state of the semantic (embedding) layer, for the Search
+ *  settings tab. `lexical` = enabled but sqlite-vec unavailable, so search stays lexical. */
 export type MemorySemanticState = 'disabled' | 'downloading' | 'lexical' | 'hybrid' | 'error';
 
 /** Download/availability state of the selected embedding model. */
@@ -7100,7 +7116,7 @@ export interface MemoryStatus {
   vecError?: string;
   /** When `semantic === 'error'` because the embedding worker crashed past its
    *  restart cap: its exit code plus the first error line of its stderr (home
-   *  directory redacted), so the Memory tab can say why. Undefined otherwise. */
+   *  directory redacted), so the Search tab can say why. Undefined otherwise. */
   workerError?: string;
 }
 

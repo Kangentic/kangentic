@@ -406,7 +406,7 @@ in one Sentry org, one triage surface.
   Every crash does log its stderr tail to the main console as a
   `[utility-process] <service> exited with code <n>` warning, which the log mirror persists to
   `<project>/.kangentic/logs/<date>.log`, so the text is on disk locally whether or not error
-  reporting is on. The Memory settings tab shows the same reason (exit code plus the first error
+  reporting is on. The Search settings tab shows the same reason (exit code plus the first error
   line) while semantic search is off because of it.
 - **A GPU health escalation is reported once, and on the NEXT launch, not live.**
   `src/main/diagnostics/gpu-health.ts` counts GPU `child-process-gone` deaths the same way

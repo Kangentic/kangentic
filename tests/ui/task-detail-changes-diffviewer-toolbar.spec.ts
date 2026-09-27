@@ -408,10 +408,10 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
 
     const settingsPanel = page.locator('[data-testid="settings-panel"]');
     await expect(settingsPanel).toBeVisible({ timeout: 5000 });
-    // 'Git Diff View' is the Changes tab's diffViewMode row label - content
-    // only that tab renders, so its presence is proof the tab landed there
-    // (not just that some Settings tab opened).
-    await expect(settingsPanel.getByText('Git Diff View')).toBeVisible();
+    // The diffViewMode row is content only the Changes tab renders, so its
+    // presence is proof the tab landed there (not just that some Settings tab
+    // opened).
+    await expect(settingsPanel.getByTestId('setting-row-diffViewMode')).toBeVisible();
 
     // Close via the store directly rather than Escape: a task-detail window
     // with a running session sits underneath, and this test's job is to check

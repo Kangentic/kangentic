@@ -41,7 +41,7 @@ IPC handlers (`src/main/ipc/handlers/**`), and config-change reconciliation - ma
   client that may no longer exist - semantic off, no project open - plus the dirty re-mark on a
   semantic/model/acceleration change).
 - **Prewarm** via `retrievalService.prewarmEmbedWorker(context)` (spawn + init the worker ahead
-  of a Smart query, on the Quick Find open; it embeds nothing and takes no hold).
+  of a question, on the Knowledge Graph open; it embeds nothing and takes no hold).
 
 A project switch must never perform synchronous embedding work. If you find yourself writing
 `await embedPass(...)` or `client.embed(...)` in a lifecycle hook or an IPC handler, that is the

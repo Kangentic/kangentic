@@ -36,7 +36,8 @@ type MockAdapter = {
   name: string;
   displayName: string;
   detect: (override?: string | null) => Promise<{ found: boolean; path: string | null; version: string | null }>;
-  answerCapabilities?: { streaming: boolean; search: boolean; model: boolean };
+  answerCapabilities?: { streaming: boolean; search: boolean; model: boolean; effort?: boolean; defaultEffort?: string };
+  discoverCapabilities?: (cliPath: string) => Promise<{ effortLevels?: string[] }>;
   answerFromContext?: (
     prompt: string,
     cliPath: string,
@@ -582,6 +583,47 @@ describe('the Ask handler', () => {
     expect(result.agentName).toBe('Codex');
     expect(codexSpy).toHaveBeenCalled();
     expect(claudeSpy).not.toHaveBeenCalled();
+  });
+
+  it('passes the answering effort only to a run that takes it, at a level its CLI reports', async () => {
+    const effortOf = (spy: ReturnType<typeof vi.fn>): string | null | undefined =>
+      (spy.mock.calls[0] as unknown as AnswerCall)[4]?.effort;
+    const grokLike = (spy: MockAdapter['answerFromContext'], levels: string[]): MockAdapter => ({
+      name: 'grok',
+      displayName: 'Grok',
+      detect: async () => ({ found: true, path: '/usr/bin/grok', version: '1' }),
+      answerCapabilities: { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' },
+      discoverCapabilities: async () => ({ effortLevels: levels }),
+      answerFromContext: spy,
+    });
+    const askWith = async (levels: string[], answerEffort: string | null): Promise<string | null | undefined> => {
+      const spy = vi.fn(async () => 'answered');
+      mockAdapters = [grokLike(spy, levels)];
+      memoryConfig = { answerAgent: 'grok', answerModel: 'grok-4.7', answerEffort };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+      expect((await ask('anything')).ok).toBe(true);
+      return effortOf(spy);
+    };
+
+    // The user's level, when the CLI reports it.
+    expect(await askWith(['low', 'medium', 'high'], 'high')).toBe('high');
+    // Nothing chosen runs at the adapter's recommended level.
+    expect(await askWith(['low', 'medium', 'high'], null)).toBe('low');
+    // A stale level falls back to the recommendation rather than being sent:
+    // Grok, Copilot and Antigravity all exit on an unknown one.
+    expect(await askWith(['low', 'medium', 'high'], 'max')).toBe('low');
+    // And when the CLI reports neither, no flag at all.
+    expect(await askWith(['medium', 'high'], 'max')).toBeNull();
+
+    // A run that does not declare effort never receives one, even when set.
+    const claudeSpy = vi.fn(async () => 'answered');
+    mockAdapters = [claudeAdapter(claudeSpy)];
+    memoryConfig = { answerAgent: 'claude', answerModel: 'haiku', answerEffort: 'low' };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+    expect((await ask('anything')).ok).toBe(true);
+    expect(effortOf(claudeSpy)).toBeNull();
   });
 
   it('reports a missing CLI rather than searching into a failure', async () => {

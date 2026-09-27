@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useRef } from 'react';
+import { Palette } from 'lucide-react';
 import type { AppConfig, ThemeChoice, ThemeMode } from '../../../../shared/types';
 import { NAMED_THEMES, THEME_BASES, resolveTheme } from '../../../../shared/types';
 import { useConfigStore } from '../../../stores/config-store';
 import { BrandMark } from '../../BrandMark';
-import { SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
+import { useScopedUpdate } from '../shared';
+import { SettingsCard, CardRow, CardToggleRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 type ThemeBase = 'dark' | 'light';
@@ -36,19 +38,26 @@ export function ThemeTab({ config }: { config: AppConfig }) {
   };
 
   return (
-    <>
-      <SettingToggleRow
-        {...settingProps('themeFollowsSystem')}
-        checked={following}
-        onChange={setFollowing}
-      />
-      <SettingRow {...settingProps('theme')}>
-        <ThemeSwatchGrid
-          choice={config}
-          onCommit={(theme) => updateProject(following ? pairPatchFor(theme) : { theme })}
+    <div className="space-y-4">
+      <SettingsCard
+        icon={<Palette size={16} />}
+        label="Appearance"
+        description="Pick a theme, or follow the system with a light and dark pair."
+        searchIds={['themeFollowsSystem', 'theme']}
+      >
+        <CardToggleRow
+          {...settingProps('themeFollowsSystem')}
+          checked={following}
+          onChange={setFollowing}
         />
-      </SettingRow>
-    </>
+        <CardRow {...settingProps('theme')}>
+          <ThemeSwatchGrid
+            choice={config}
+            onCommit={(theme) => updateProject(following ? pairPatchFor(theme) : { theme })}
+          />
+        </CardRow>
+      </SettingsCard>
+    </div>
   );
 }
 
@@ -310,7 +319,7 @@ function RadioGrid({ ariaLabel, sections, selected, muteUnselected, onSelect, on
         const offset = sections.slice(0, sectionIndex).reduce((sum, earlier) => sum + earlier.themes.length, 0);
         return (
           <React.Fragment key={section.base}>
-            {/* The `SectionHeader` h3 classes, so the group labels read as the panel's own. */}
+            {/* The settings sidebar's tier-header style, so the group labels read as the panel's own. */}
             <div className="text-xs font-semibold uppercase tracking-wider text-fg-faint pt-1 first:pt-0">{section.label}</div>
             {/* The column count is `COLUMNS`, which the Up/Down row math reads too, so the
                 two cannot drift apart; `grid-cols-3` would be a second copy of it. */}

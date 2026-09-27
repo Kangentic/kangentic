@@ -377,7 +377,9 @@ Press **Ctrl+Shift+F** (Cmd+Shift+F on macOS) or **Ctrl+F** (Cmd+F) to open the 
 - Backlog items by title and description
 - Session events (tool calls, agent activity from `events.jsonl`)
 - Registered projects by name and path
-- Past agent conversations, by keyword or by meaning (Smart mode, when semantic search is enabled in Settings > Memory) - see [Conversation Memory](#conversation-memory)
+- Past agent conversations, by the words in them - see [Conversation Memory](#conversation-memory)
+
+Quick Find matches words only, and it is instant: it starts no embedding model. Its last row, **Ask the Knowledge Graph: "what you typed"**, hands the query to the [Knowledge Graph](#knowledge-graph), which answers by meaning. A typed question usually has no keyword matches, and then that row is selected, so Enter asks it.
 
 Type `#<number>` (e.g. `#42`) to search by **ticket number**: the palette matches tasks whose display ID (`#N`) prefix-matches the number (`#4` matches #4, #40, #41, ...) and shows only those, skipping the other result kinds. The board search box (Ctrl+F on the board) accepts the same `#<number>` syntax to filter the board by ticket number.
 
@@ -555,7 +557,7 @@ Applies to every project (Settings > Task, not a per-project override). These de
 | Card Preview | The text under each card's title: the latest agent message (default), recent agent messages one line each, or the task description |
 | Ticket Numbers | Show each task's `#N` number as a muted badge on its card (on by default) |
 
-With Card Preview at its default, a card whose agent is running prints that agent's newest message in place of the description, in a shaded terminal panel, wrapped to three lines at default density, five at comfortable, one at compact. Recent agent messages prints the newest messages one line each and newest last in those same lines, for a sense of the agent's last few steps instead of one whole thought. The text updates live as the agent works. The panel appears exactly when the card's activity glyph does, including while the agent is waiting on you, and the moment the session pauses or ends the card goes back to showing the task description. A task with no session, or whose agent has not said anything yet, shows its description too. The Agent Monitor's cards honor the same setting and render it the same way. The Task tab also holds the Context Bar toggles below.
+With Card Preview at its default, a card whose agent is running prints that agent's newest message in place of the description, in a shaded terminal panel, wrapped to three lines at default density, five at comfortable, one at compact. **Recent** prints the agent's newest messages one line each and newest last in those same lines, for a sense of the agent's last few steps instead of one whole thought. The text updates live as the agent works. The panel appears exactly when the card's activity glyph does, including while the agent is waiting on you, and the moment the session pauses or ends the card goes back to showing the task description. A task with no session, or whose agent has not said anything yet, shows its description too. The Agent Monitor's cards honor the same setting and render it the same way. The Task tab also holds the Context Bar toggles below.
 
 ### Context Bar
 
@@ -589,17 +591,21 @@ All permission modes are available in both the global App Settings dropdown and 
 
 ### Git Settings
 
-| Setting | Description |
-|---------|-------------|
-| Worktrees Enabled | Create isolated branches per task |
-| Auto Cleanup | Delete branches when worktrees are removed |
-| Default Base Branch | Branch to create worktrees from (default: main) |
-| Copy Files | Files to copy from repo root into worktrees |
-| Post-Worktree Script | Shell script run in each new worktree after creation (e.g. `npm install`). A non-zero exit or timeout fails worktree creation |
-| Link node_modules | Symlink the root `node_modules` into each worktree to skip a fresh install (on by default). Turn off to let the Post-Worktree Script install the worktree's own dependencies |
-| Auto-refresh PRs | How often the background sweep refreshes linked PRs' state and merge readiness (every 2, 5, 10, or 15 minutes, or off; the on-open sweep still runs) |
-| Evaluate branch policies | Off by default. Ask Azure DevOps to evaluate a PR's branch policies (reviewer minimums, required builds, work-item linking) so a clean PR can read `ready` instead of plain `open`, at one extra `az` call per open PR per refresh. GitHub already reports policy in its normal call and ignores this |
-| Count merge bypass as ready | On by default. On GitHub, a PR still waiting on a required review reads `blocked` even when you can bypass that rule and merge it yourself, which is how the Merge column already lands PRs. That stays true once somebody else's PR lands and leaves yours behind the base. On, such a PR reads `ready`, at one extra `gh` call per such PR per refresh. Never past a check: the same call reads the branch's required checks and every one must have reported green. Turn it off to keep the review norm even where you could bypass. Azure DevOps ignores this |
+Three cards: **Branches**, **Worktrees**, and **Pull requests**.
+
+| Setting | Card | Description |
+|---------|------|-------------|
+| Default base branch | Branches | Branch new worktrees start from (default: main) |
+| Auto-fetch remote | Branches | On by default. Fetches all remotes 5 minutes after the project's last full fetch, so "behind" counts stay current. Any full fetch resets that clock: opening the Changes panel, the Done check, or this sweep. Creating a worktree always fetches its base branch first, even with this off. Off, the project still fetches when it opens |
+| Worktrees | Worktrees | On by default. Gives tasks the option to run in their own git worktree: the New Task dialog then offers Worktree or Project, starting on Worktree. Off, the dialog does not offer the choice and tasks run in the project folder, including one created earlier with Worktree picked. A task that already has a worktree keeps it. The rows below show only while this is on |
+| Auto-cleanup | Worktrees | Remove a task's worktree when the task completes |
+| Link node_modules | Worktrees | Symlink the root `node_modules` into each worktree to skip a fresh install (on by default). Turn off to let the Post-worktree script install the worktree's own dependencies |
+| Copy files | Worktrees | Files to copy from repo root into each new worktree, such as `.env` |
+| Post-worktree script | Worktrees | Shell script run in each new worktree after creation (e.g. `npm install`). A non-zero exit or timeout fails worktree creation |
+| Auto-refresh PRs | Pull requests | On by default. Checks each open PR about 2 minutes after its own last check, one call at a time and at least 10 s apart, so at most 360 calls an hour however many PRs are open. Any check resets a PR's clock: this queue, the 30 s re-poll while CI runs, an agent's `gh pr create`, or a manual refresh. Past 12 open PRs each PR's interval stretches instead of the cost growing. Off, PRs are checked when the project opens and nothing re-polls one whose checks are running |
+| Count merge bypass as ready | Pull requests | On by default, GitHub only. Ready means you could merge the PR now. A PR still waiting on a required review reads `blocked` even when you can bypass that rule and merge it yourself, which is how the Merge column already lands PRs. That stays true once somebody else's PR lands and leaves yours behind the base. On, such a PR reads `ready`, at one extra `gh` call per such PR per check. Never past a check: the same call reads the branch's required checks and every one must have reported green. Turn it off to keep the review norm even where you could bypass |
+
+Azure DevOps PRs always get their branch policies checked (reviewer minimums, required builds, work-item linking), so a clean Azure PR reads `ready` or `blocked` the same way a GitHub one does. Kangentic does not read Azure DevOps bypass permissions yet.
 
 ### Shortcuts
 
@@ -730,7 +736,7 @@ Desktop notifications are for when you are away: they fire only when the window 
 
 Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. It carries an **Open** button that opens the task. One toast per turn, not one per progress update.
 
-The Settings > Notifications panel exposes four configurable events: **Agent Idle**, **Agent Crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop only, Toast only, or Both. Toast duration and max visible count are also configurable.
+The Settings > Notifications panel exposes four configurable events: **Agent idle**, **Agent crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan complete**, and **Spawn stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop, Toast, or Both. Toast duration and max visible count are also configurable.
 
 ### Announcements
 
@@ -754,7 +760,7 @@ mechanics.
 
 The Mobile Devices tab is the desktop half of the mobile companion app's pairing link - global (applies to this desktop installation, not any one project) and off by default. Below the **Mobile Bridge** toggle it splits into two sections: **Relay** (where this desktop connects) and **Mobile** (which phones may use it). Each ends in a documentation link that stays usable with the bridge off, since someone still deciding whether to enable it is exactly the person who has not.
 
-Enable the toggle, then pick a **Relay**: *Kangentic Relay* (the default, the one Kangentic operates) or *Custom Relay* (your own self-hosted address). Dev builds also offer a *Local* option pointing at a relay on localhost. The address being dialed always sits in the field directly beneath the picker, read-only for the presets and editable for a custom relay, so there is one place to look regardless of which you chose; a shield in front of it marks the Kangentic-operated relay and appears for nothing else. **Test connection** probes that address before you pair: it reports whether the relay answered and how long it took, or prints why it did not. The relay forwards encrypted traffic and never holds your keys; **How the relay works** opens the relay documentation, which covers what it does, what an operator can still observe, and how to run your own. A custom address must use `wss://`, or `ws://` for localhost only, since the phone refuses to pair over an untrusted transport.
+Enable the toggle, then pick a **Relay**: *Kangentic* (the default, the one Kangentic operates) or *Custom* (your own self-hosted address). Dev builds also offer a *Local* option pointing at a relay on localhost. The address being dialed always sits in the field directly beneath the picker, read-only for the presets and editable for a custom relay, so there is one place to look regardless of which you chose; a shield in front of it marks the Kangentic-operated relay and appears for nothing else. **Test connection** probes that address before you pair: it reports whether the relay answered and how long it took, or prints why it did not. The relay forwards encrypted traffic and never holds your keys; **How the relay works** opens the relay documentation, which covers what it does, what an operator can still observe, and how to run your own. A custom address must use `wss://`, or `ws://` for localhost only, since the phone refuses to pair over an untrusted transport.
 
 Click **Pair a device** to display a QR code; scanning it with the Kangentic mobile app starts an end-to-end encrypted pairing handshake. Once the handshake completes, both the desktop and the phone show the same short code - compare them, then tap **Confirm** on the phone. The desktop auto-enrolls the device as soon as it hears back; there is no second confirmation to make on the desktop. This catches a photographed or relayed QR, since an attacker cannot make both sides show the same code. To back out, cancel on the phone (or close the desktop's pairing panel) before confirming.
 
@@ -831,12 +837,12 @@ useful thing to attach to a bug report. When the graphics process could not be s
 there is no such record: Chromium never reports a failed start to the app, and only the fallback
 itself is recorded.
 
-Unrelated, despite the similar name: **Model acceleration** in Settings > Memory controls where the
+Unrelated, despite the similar name: **Model acceleration** in Settings > Search controls where the
 semantic search model runs, not app rendering. The two are independent.
 
 ## Conversation Memory
 
-Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Memory.
+Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Search.
 
 ### What Gets Indexed
 
@@ -844,11 +850,11 @@ The structured transcript of each session: user turns, assistant replies, thinki
 
 ### Keyword and Semantic Search
 
-Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Search downloads a small embedding model once (three quality tiers from the `bge` family, the **Search quality** row) and then runs fully offline. It powers the [Knowledge Graph](#knowledge-graph) and hybrid `kangentic_search` for agents; Quick Find stays keyword-only. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU). Changing Search quality re-indexes in the background by itself. **Rebuild this project's index**, under Index conversations, is only needed if search misses a conversation you know exists: it re-parses the project's conversations without deleting anything. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
 
 ### Where It Surfaces
 
-- The [Search Palette](#search-palette) shows a **Conversations** group; a hit opens the viewer at the matched turn.
+- The [Search Palette](#search-palette) shows a **Conversations** group of keyword matches; a hit opens the viewer at the matched turn.
 - The **View conversation** pill in the [Task Detail Dialog](#task-detail-dialog) opens the task's newest session directly, no search needed.
 - Agents can recall past conversations themselves via the `kangentic_search` MCP tool (`mode: "hybrid"` for semantic) and drill into a cited turn with `kangentic_get_transcript` - see [mcp-server.md](mcp-server.md).
 
@@ -901,11 +907,11 @@ Totals are read from the durable usage ledgers, so they survive task and session
 
 Two things the numbers do NOT mean, both said on the tiles themselves. Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed, so a subscription session can report $0. And tokens are counted per turn and kept apart by type (fresh input, output, cache write, cache read) because cache reads are far larger and far cheaper than fresh input; per-turn counting started later than cost did, so a long range covers less of it, and the Tokens tile says from when.
 
-## Memory Graph
+## Knowledge Graph
 
 Open it from the network icon in the title bar or with `Mod+Shift+A`. It answers "what does this
 project's conversation index actually know, and how much of my history has it reached" - a question
-neither the Memory settings tab (a toggle and a Rebuild button) nor Quick Find (a flat result list)
+neither the Search settings tab (a toggle and a Rebuild button) nor Quick Find (a flat list of keyword matches)
 can answer.
 
 **The map.** Every indexed conversation is a point in 3D space, placed by the meaning of its
@@ -1022,12 +1028,15 @@ Each question costs one agent call, and the glyph at the end of the box names th
 press Enter.
 
 **Which agent answers** is its own setting, because the agent that runs your tasks and the agent
-that reads their history are different choices. Settings > Memory > **Answering agent** and
-**Answering model** are one choice for the whole app, and nothing picks them for you: until both
-are set, pressing Enter in the box opens Settings > Memory at that row and keeps your question
-typed, so you can come back and press Enter again. Reading the index is lighter work than writing
-code, so a cheaper model is usually enough. Every agent that has a headless read-only mode can
-answer; Warp cannot, since it has none.
+that reads their history are different choices. The **Knowledge Graph** card in Settings > Search
+holds its **Agent** and **Model**, one choice for the whole app, and nothing picks them for you:
+until both are set, pressing Enter in the box opens Settings > Search at that row and keeps your
+question typed, so you can come back and press Enter again. Reading the index is lighter work than
+writing code, so a cheaper model is usually enough. Every agent that has a headless read-only mode
+can answer; Warp cannot, since it has none. **Effort** appears when the agent's CLI reports
+effort levels, and starts at `low`, which answers fastest. Pick a higher level for questions that
+need counting or comparing across many tasks: at Claude's `max`, a count that `low` got wrong came
+out right, at about ten times the wait.
 
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:
@@ -1098,14 +1107,14 @@ General:
 
 - **Mod+Shift+S** - Toggle the settings panel
 - **Mod+Shift+U** - Toggle the Usage Stats dashboard
-- **Mod+Shift+A** - Toggle the Memory Graph (a map of what this project's conversation index has learned)
+- **Mod+Shift+A** - Toggle the Knowledge Graph (a map of what this project's conversation index has learned)
 - **Mod+Shift+M** - Toggle the Agent Monitor (every running agent, across all projects)
 - **Mod+Shift+B** - Switch between Board and Backlog view
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
 - **Mod+Shift+P** - Toggle the Command Terminal window
 - **Mod+Shift+F** - Open Quick Find (cross-project search palette)
-- **Mod+F** - Find on Board (focuses board search; opens Quick Find when not on the board)
+- **Mod+F** - Find on board (focuses board search; opens Quick Find when not on the board)
 - **Mod+N** - New Task on the board
 - **Escape** - Close any open dialog or the search palette
 

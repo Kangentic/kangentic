@@ -320,11 +320,11 @@ describe('registerGitDiffHandlers GIT_PREFETCH_REMOTES gate', () => {
   const PROJECT_PATH = '/mock/project';
   let getEffectiveConfig: ReturnType<typeof vi.fn>;
 
-  /** Mount the handlers with an auto-fetch interval, then return the prefetch handler. */
-  function mountWithInterval(autoFetchIntervalMinutes: number | null): PrefetchHandler {
+  /** Mount the handlers with the auto-fetch switch set, then return the prefetch handler. */
+  function mountWithAutoFetch(autoFetch: boolean): PrefetchHandler {
     vi.clearAllMocks();
     vi.mocked(fetchAllRemotesIfStale).mockResolvedValue(undefined);
-    getEffectiveConfig = vi.fn(() => ({ git: { autoFetchIntervalMinutes } }));
+    getEffectiveConfig = vi.fn(() => ({ git: { autoFetch } }));
     const context = {
       mainWindow: {},
       diffWatcher: { subscribe: vi.fn(() => vi.fn()) },
@@ -338,23 +338,19 @@ describe('registerGitDiffHandlers GIT_PREFETCH_REMOTES gate', () => {
   }
 
   it('fetches non-interactively for the given worktree when auto-fetch is on', async () => {
-    const handler = mountWithInterval(5);
+    const handler = mountWithAutoFetch(true);
 
     await handler(null, WORKTREE_PATH);
 
     // Non-interactive: a drag cannot be allowed to raise a credential prompt.
     expect(fetchAllRemotesIfStale).toHaveBeenCalledWith(WORKTREE_PATH, { nonInteractive: true });
     // Resolved against the current project, so a project override of the
-    // interval applies rather than the global value alone.
+    // switch applies rather than the global value alone.
     expect(getEffectiveConfig).toHaveBeenCalledWith(PROJECT_PATH);
   });
 
-  it.each([
-    ['null (off)', null],
-    ['zero', 0],
-    ['negative', -1],
-  ])('does not fetch when the auto-fetch interval is %s', async (_label, interval) => {
-    const handler = mountWithInterval(interval);
+  it('does not fetch when auto-fetch is off', async () => {
+    const handler = mountWithAutoFetch(false);
 
     await handler(null, WORKTREE_PATH);
 
@@ -366,7 +362,7 @@ describe('registerGitDiffHandlers GIT_PREFETCH_REMOTES gate', () => {
     ['a non-string', 42],
     ['undefined', undefined],
   ])('ignores %s as a path without touching the network', async (_label, checkPath) => {
-    const handler = mountWithInterval(5);
+    const handler = mountWithAutoFetch(true);
 
     await handler(null, checkPath);
 
@@ -376,7 +372,7 @@ describe('registerGitDiffHandlers GIT_PREFETCH_REMOTES gate', () => {
   it('falls back to the global config when no project is open', async () => {
     vi.clearAllMocks();
     vi.mocked(fetchAllRemotesIfStale).mockResolvedValue(undefined);
-    getEffectiveConfig = vi.fn(() => ({ git: { autoFetchIntervalMinutes: 5 } }));
+    getEffectiveConfig = vi.fn(() => ({ git: { autoFetch: true } }));
     const context = {
       mainWindow: {},
       diffWatcher: { subscribe: vi.fn(() => vi.fn()) },

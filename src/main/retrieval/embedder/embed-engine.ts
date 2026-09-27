@@ -26,8 +26,8 @@
  *    worker go. The hold used to be keyed on semantic search being ENABLED,
  *    which kept a 1.75 GB commit reservation resident for the life of the app
  *    with nothing to do (#706). It is keyed on work now; a query never holds,
- *    it just re-arms the idle timer, and Quick Find warms the worker on open
- *    (`prewarm`) so the first query after a release still lands warm.
+ *    it just re-arms the idle timer, and opening the Knowledge Graph warms the
+ *    worker (`prewarm`) so the first question after a release still lands warm.
  *
  * The DB is the durable queue (`chunksNeedingEmbedding` / `embedded_model`),
  * so a crash mid-drain just leaves chunks pending; the next markDirty (or the
@@ -231,7 +231,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
   }
 
   /** The client for the interactive paths (a search / MCP recall query, or a
-   *  Quick Find prewarm), or null for lexical-only. Non-null only when
+   *  Knowledge Graph prewarm), or null for lexical-only. Non-null only when
    *  semantic is enabled, the model is present, and the worker has not
    *  crashed past its cap. Never holds the worker: a query's own embed()
    *  re-arms the idle timer, and a prewarm arms it on ready. */
@@ -352,7 +352,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     // There is a batch, so hold the worker resident until the dirty set is
     // empty again (runLoop releases it). Taken only now, AFTER the empty
     // check: getStatus re-marks the current project on every poll (the
-    // Memory tab polls every 1.5 s), and a hold taken on every such pass
+    // Search tab polls every 1.5 s), and a hold taken on every such pass
     // would clear and re-arm the worker's idle countdown each time, so it
     // could never expire while that tab was open. Still ahead of the first
     // await, so no timer can fire between the wake and the hold.
@@ -471,7 +471,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       reconcileClientAndDirty(context);
     },
 
-    /** Spawn + init the worker ahead of a query (Quick Find open), embedding
+    /** Spawn + init the worker ahead of a query (Knowledge Graph open), embedding
      *  nothing. A no-op when there is nothing to warm. */
     prewarm(context: IpcContext): void {
       // Fired from an ipcMain.on handler, which has no promise to reject

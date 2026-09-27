@@ -309,7 +309,7 @@ export function TestHarness() {
         return;
       }
       useToastStore.getState().addToast({
-        message: `Seeded ${result.seeded} pending chunks - enable Semantic search (Settings > Memory) to watch the drain`,
+        message: `Seeded ${result.seeded} pending chunks - enable Semantic search (Settings > Search) to watch the drain`,
         variant: 'success',
       });
     } catch (error) {

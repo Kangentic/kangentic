@@ -788,16 +788,16 @@ export function registerProjectHandlers(context: IpcContext): void {
     // Apply project config overrides (always -- config may have changed)
     applyRuntimeConfig(context.sessionManager, context.configManager, project.path);
 
-    // Background PR-state refresh: an immediate (deferred) sweep + the periodic
-    // timer. Runs on EVERY open (cold restart AND warm switch-back) so a PR
-    // merged off-app while away is reflected on return; the sweep is deferred off
-    // the IPC critical path and the timer is torn down on switch/delete/shutdown.
+    // Background PR-state refresh: an immediate (deferred) sweep, then the
+    // per-PR queue. Runs on EVERY open (cold restart AND warm switch-back) so a
+    // PR merged off-app while away is reflected on return; the sweep is deferred
+    // off the IPC critical path and the queue is torn down on switch/delete/shutdown.
     prRefreshScheduler.startForProject(context, project);
 
     // Background remote-tracking refresh, same lifecycle: an immediate deferred
     // `git fetch --all --prune` so every "behind" count is measured against
-    // current refs the moment a project opens, then the periodic timer. Fetch
-    // only; nothing is pulled, merged, or rebased.
+    // current refs the moment a project opens, then one 5 minutes after each
+    // full fetch. Fetch only; nothing is pulled, merged, or rebased.
     gitFetchScheduler.startForProject(context, project);
 
     // Background conversation-memory indexing: a deferred, switch-guarded

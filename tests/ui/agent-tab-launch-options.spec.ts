@@ -1,6 +1,6 @@
 /**
  * UI tests for the launch-option toggles inside the Agent settings tab
- * (`agent-launch-option-fields.tsx`): one `SettingToggleRow` per
+ * (`agent-launch-option-fields.tsx`): one `CardToggleRow` per
  * `AgentDetectionInfo.launchOptions` entry declared by the currently-selected
  * agent's adapter (e.g. Codex's "Disable ChatGPT Apps"), stored at the global
  * `AppConfig.agent.launchOptions[agentName][optionId]`.
@@ -154,7 +154,8 @@ test.describe('AgentTab - Launch Option fields', () => {
 
     const toggle = page.getByRole('switch', { name: LAUNCH_OPTION_LABEL, exact: true });
     await expect(toggle).toBeVisible();
-    await expect(page.getByText(LAUNCH_OPTION_DESCRIPTION)).toBeVisible();
+    // The description sits behind the row's info icon, which names it.
+    await expect(page.getByRole('button', { name: `About ${LAUNCH_OPTION_LABEL}: ${LAUNCH_OPTION_DESCRIPTION}` })).toBeVisible();
 
     await closeSettings(page);
   });
@@ -164,7 +165,7 @@ test.describe('AgentTab - Launch Option fields', () => {
     await openAgentSettingsTabAs(page, 'claude');
 
     await expect(page.getByRole('switch', { name: LAUNCH_OPTION_LABEL, exact: true })).toHaveCount(0);
-    await expect(page.getByText(LAUNCH_OPTION_DESCRIPTION)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: `About ${LAUNCH_OPTION_LABEL}: ${LAUNCH_OPTION_DESCRIPTION}` })).toHaveCount(0);
 
     await closeSettings(page);
   });

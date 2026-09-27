@@ -13,7 +13,7 @@ import type { Browser, Page } from '@playwright/test';
  * removed from handleDragStart or if it starts firing for every card.
  *
  * Scope: this is the RENDERER half only. Whether main actually fetches is gated
- * there on `git.autoFetchIntervalMinutes` (off means the endpoint is a no-op),
+ * there on `git.autoFetch` (off means the endpoint is a no-op),
  * which the mock bridge never runs; that half lives in the main handler and is
  * covered by the throttle's own unit tests.
  *

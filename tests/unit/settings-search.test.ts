@@ -16,7 +16,7 @@ import { describe, it, expect, vi } from 'vitest';
 // a test-controlled value, then call the hook as a plain function. This is
 // sound because every assertion below is about `useAnySettingVisible`'s own
 // branching over that context value, not about how it is wired into
-// `SectionHeader` or the DOM - that integration is covered at the UI tier by
+// `SettingsCard` or the DOM - that integration is covered at the UI tier by
 // the "search matching only one section id" regression test in
 // tests/ui/mobile-devices-settings.spec.ts.
 let mockSearchContextValue: { isSearching: boolean; matchingIds: Set<string>; query: string };
@@ -82,7 +82,7 @@ describe('useAnySettingVisible', () => {
   // The four branches straight from the function's own JSDoc contract
   // (settings-search.tsx): not searching -> visible; searching with no/empty
   // ids -> visible; searching with ids -> visible if ANY id matches, hidden
-  // otherwise. `SectionHeader` and MobileDevicesTab's Relay/Mobile section
+  // otherwise. `SettingsCard` and MobileDevicesTab's Relay/Mobile section
   // bodies both apply this same rule to keep a header and its body from
   // disagreeing about a search - see the JSDoc on the hook itself.
 

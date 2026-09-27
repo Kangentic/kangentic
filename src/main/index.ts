@@ -1462,7 +1462,7 @@ const createWindow = () => {
       // prior session - the engine's drain loop is alive but stays parked on
       // an empty dirty-set until something marks this project dirty, and nothing
       // else does for THIS specific path (getStatus()'s self-heal only fires if
-      // the user happens to open Quick Find or Settings -> Memory).
+      // the user happens to open Settings -> Search).
       //
       // This call site fires exactly ONCE per app launch (preloadPromise is a
       // one-shot IIFE inside createWindow, structurally separate from the

@@ -13,7 +13,7 @@
  * could independently regress.
  *
  * Both headline cases also assert a SECOND, unrelated override survives the same close
- * (`git.worktreesEnabled`). `updateProjectOverride`'s write REPLACES the project's whole overrides
+ * (`git.autoFetch`). `updateProjectOverride`'s write REPLACES the project's whole overrides
  * object wholesale (`config.setProjectOverridesByPath`), merged client-side over whatever
  * `projectOverrides` the store currently holds - and closing the panel nulls that same store field
  * in the same synchronous update that unmounts the field. A fix that rescues `projectSettingsPath`
@@ -101,9 +101,9 @@ test.describe('SettingTextInput commit boundary', () => {
       // `setProjectOverridesByPath` replaces the project's overrides object wholesale,
       // so this is what proves the flush merges onto the project's OTHER settings
       // rather than onto an empty object.
-      const worktreesToggle = page.getByTestId('setting-row-git.worktreesEnabled');
-      await worktreesToggle.click();
-      await expect(worktreesToggle).toHaveAttribute('aria-checked', 'false');
+      const autoFetchToggle = page.getByTestId('setting-row-git.autoFetch');
+      await autoFetchToggle.click();
+      await expect(autoFetchToggle).toHaveAttribute('aria-checked', 'false');
 
       const initScript = page.getByTestId('setting-row-git.initScript').locator('input');
       await initScript.click();
@@ -120,7 +120,7 @@ test.describe('SettingTextInput commit boundary', () => {
       await openSettings(page);
       await openTab(page, 'Git');
       await expect(page.getByTestId('setting-row-git.initScript').locator('input')).toHaveValue('npm run build');
-      await expect(page.getByTestId('setting-row-git.worktreesEnabled')).toHaveAttribute('aria-checked', 'false');
+      await expect(page.getByTestId('setting-row-git.autoFetch')).toHaveAttribute('aria-checked', 'false');
     } finally {
       await browser.close();
     }
@@ -133,9 +133,9 @@ test.describe('SettingTextInput commit boundary', () => {
       await openSettings(page);
       await openTab(page, 'Git');
 
-      const worktreesToggle = page.getByTestId('setting-row-git.worktreesEnabled');
-      await worktreesToggle.click();
-      await expect(worktreesToggle).toHaveAttribute('aria-checked', 'false');
+      const autoFetchToggle = page.getByTestId('setting-row-git.autoFetch');
+      await autoFetchToggle.click();
+      await expect(autoFetchToggle).toHaveAttribute('aria-checked', 'false');
 
       const initScript = page.getByTestId('setting-row-git.initScript').locator('input');
       await initScript.click();
@@ -149,7 +149,7 @@ test.describe('SettingTextInput commit boundary', () => {
       await openSettings(page);
       await openTab(page, 'Git');
       await expect(page.getByTestId('setting-row-git.initScript').locator('input')).toHaveValue('npm run lint');
-      await expect(page.getByTestId('setting-row-git.worktreesEnabled')).toHaveAttribute('aria-checked', 'false');
+      await expect(page.getByTestId('setting-row-git.autoFetch')).toHaveAttribute('aria-checked', 'false');
     } finally {
       await browser.close();
     }

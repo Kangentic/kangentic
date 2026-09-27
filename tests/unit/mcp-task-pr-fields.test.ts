@@ -741,14 +741,14 @@ describe('link-time PR resolve', () => {
 
 describe('context.getPrResolveOptions() forwarding to linkPRForTask', () => {
   it('scheduleLinkTimeResolve (create/update link-time resolve) forwards it', async () => {
-    const context = makeContext({ getPrResolveOptions: vi.fn(() => ({ evaluateBranchPolicies: true })) });
+    const context = makeContext({ getPrResolveOptions: vi.fn(() => ({ bypassCountsAsReady: true })) });
 
     handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), context);
     await flushLinkTimeResolve();
 
     expect(mockLinkPRForTask).toHaveBeenCalledWith(
       'task-uuid-1',
-      expect.objectContaining({ resolveOptions: { evaluateBranchPolicies: true } }),
+      expect.objectContaining({ resolveOptions: { bypassCountsAsReady: true } }),
     );
   });
 
@@ -765,13 +765,13 @@ describe('context.getPrResolveOptions() forwarding to linkPRForTask', () => {
   });
 
   it('handleLinkPr (explicit link_pr) forwards it', async () => {
-    const context = makeContext({ getPrResolveOptions: vi.fn(() => ({ evaluateBranchPolicies: true })) });
+    const context = makeContext({ getPrResolveOptions: vi.fn(() => ({ bypassCountsAsReady: true })) });
 
     await handleLinkPr({ taskId: 'task-uuid-1' }, context);
 
     expect(mockLinkPRForTask).toHaveBeenCalledWith(
       'task-uuid-1',
-      expect.objectContaining({ resolveOptions: { evaluateBranchPolicies: true } }),
+      expect.objectContaining({ resolveOptions: { bypassCountsAsReady: true } }),
     );
   });
 

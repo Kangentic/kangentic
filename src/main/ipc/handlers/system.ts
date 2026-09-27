@@ -215,14 +215,14 @@ export function registerSystemHandlers(context: IpcContext): void {
       // the CONFIG_SET_PROJECT broadcast note). Scoped to the current project since only
       // its pop-outs are open.
       broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
-      // Re-arm the PR-refresh timer so a changed interval (Git tab) takes effect
-      // immediately without reopening the project. Imported lazily so registering
+      // Restart the PR-refresh queue so a flipped Auto-refresh PRs switch (Git
+      // tab) takes effect immediately without reopening the project. Imported lazily so registering
       // the system handlers does not pull the gh-backed PR runtime into this
       // module's graph (keeps unit tests that stub node:child_process light).
       void import('../../pr/pr-refresh-scheduler').then(({ prRefreshScheduler }) => {
         prRefreshScheduler.startForProject(context, project);
       });
-      // Re-arm the background remote-fetch timer for the same reason. A static
+      // Restart the background remote-fetch clock for the same reason. A static
       // import: the scheduler's graph (worktree manager, fetch throttle) is
       // already part of this module's, so there is no runtime to keep out.
       gitFetchScheduler.startForProject(context, project);

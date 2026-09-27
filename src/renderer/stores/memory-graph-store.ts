@@ -95,11 +95,22 @@ interface MemoryGraphState {
    *
    * In the store rather than the component because a question can outlive the
    * box's own render: pressing Enter before an answering agent is chosen sends
-   * the user to Settings > Memory, and the question they typed has to be there,
+   * the user to Settings > Search, and the question they typed has to be there,
    * unchanged, when they come back and press Enter again.
    */
   draftQuestion: string;
   setDraftQuestion: (text: string) => void;
+  /**
+   * A question handed in from outside the graph (Quick Find's Ask row), waiting
+   * for the graph body to ask it. The body asks it through its own path, so
+   * the setup check (no answering agent chosen yet) and the map's current
+   * scope apply exactly as they do to a question typed into the box.
+   */
+  queuedQuestion: string | null;
+  /** Open the graph and ask `question` there. */
+  askInGraph: (question: string, projectId: string | null) => void;
+  /** Take the queued question, clearing it, so it is asked once. */
+  takeQueuedQuestion: () => string | null;
   /** Ask a question: the first opens the chat, later ones follow up. */
   askQuestion: (question: string, options?: AskOptions) => Promise<void>;
   /** Ask a failed turn's question again, in its place. */
@@ -230,6 +241,23 @@ function createMemoryGraphStore() {
       draftQuestion: '',
 
       setDraftQuestion: (text) => set({ draftQuestion: text }),
+
+      queuedQuestion: null,
+
+      askInGraph: (question, projectId) => {
+        const trimmed = question.trim();
+        if (!trimmed) return;
+        // The draft too, so a question that goes to Settings first (no agent
+        // chosen yet) is still typed when the user comes back.
+        set({ queuedQuestion: trimmed, draftQuestion: trimmed });
+        get().open(projectId);
+      },
+
+      takeQueuedQuestion: () => {
+        const question = get().queuedQuestion;
+        if (question !== null) set({ queuedQuestion: null });
+        return question;
+      },
 
       askQuestion: async (question, options = {}) => {
         const trimmed = question.trim();

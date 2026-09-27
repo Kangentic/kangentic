@@ -1,9 +1,8 @@
 /**
  * Azure DevOps PR connector - resolves PRs via the `az` CLI (the `azure-devops`
  * extension, plus two `az rest` calls: the commit tier's `pullrequestquery`
- * and, behind `git.prEvaluateBranchPolicies`, the policy evaluations that
- * decide whether a clean merge preview is `ready`) and detects PR URLs from
- * terminal output.
+ * and the policy evaluations that decide whether a clean merge preview is
+ * `ready`) and detects PR URLs from terminal output.
  *
  * Detects `https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}`
  * and the legacy `https://{org}.visualstudio.com/...` spelling of the same.
@@ -96,9 +95,8 @@ async function viaAz<T>(operation: () => Promise<T>): Promise<T> {
 async function policyVerdictFor(
   item: AzurePrItem,
   remote: AzureRemote,
-  options: PRResolveOptions | undefined,
 ): Promise<PRMergeReadiness | undefined> {
-  if (!needsPolicyEvaluation(item, options)) return undefined;
+  if (!needsPolicyEvaluation(item)) return undefined;
   return foldPolicyEvaluations(
     await azImporter.resolvePolicyEvaluations(remote.org, item.projectId, item.number),
   );
@@ -143,19 +141,17 @@ const REVIEWER_POLICY_TYPE_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether the policy call can change this item's verdict at all, which is the
- * gate `git.prEvaluateBranchPolicies` opens. Only an active, non-draft PR whose
- * merge preview `succeeded` is worth the second `az` call: a draft never
- * renders readiness, a completed or abandoned PR never changes, every other
- * `mergeStatus` already decides the verdict on its own, and without the project
- * GUID there is no artifact id to ask about.
+ * Whether the policy call can change this item's verdict at all. Only an
+ * active, non-draft PR whose merge preview `succeeded` is worth the second `az`
+ * call: a draft never renders readiness, a completed or abandoned PR never
+ * changes, every other `mergeStatus` already decides the verdict on its own,
+ * and without the project GUID there is no artifact id to ask about. There is
+ * no setting in front of this any more (it was `git.prEvaluateBranchPolicies`,
+ * off by default), so a clean Azure PR reads ready or blocked like a GitHub
+ * one. The refresh queue's pacing bounds what the extra call costs.
  */
-function needsPolicyEvaluation(
-  item: AzurePrItem,
-  options: PRResolveOptions | undefined,
-): item is AzurePrItem & { projectId: string } {
-  return options?.evaluateBranchPolicies === true
-    && item.state === 'active'
+function needsPolicyEvaluation(item: AzurePrItem): item is AzurePrItem & { projectId: string } {
+  return item.state === 'active'
     && !item.isDraft
     && item.mergeStatus === 'succeeded'
     && typeof item.projectId === 'string'
@@ -354,7 +350,9 @@ export const azureDevOpsPRConnector: PRConnector = {
     repoCwd: string,
     branchName: string,
     baseBranch?: string,
-    options?: PRResolveOptions,
+    // Accepted for contract parity and ignored: the one option is GitHub's
+    // merge bypass, and Azure's bypass lives in the security namespace.
+    _options?: PRResolveOptions,
   ): Promise<ResolvedPR | null> {
     const remote = await remoteFor(repoCwd);
     if (!remote) return null;
@@ -366,11 +364,11 @@ export const azureDevOpsPRConnector: PRConnector = {
       if (!best) return null;
       // Policies are evaluated for the ONE chosen candidate, after
       // disambiguation, so a branch shared by several PRs costs one call.
-      return toResolvedPR(best, remote, await policyVerdictFor(best, remote, options));
+      return toResolvedPR(best, remote, await policyVerdictFor(best, remote));
     });
   },
 
-  async resolveByNumber(repoCwd: string, prNumber: number, options?: PRResolveOptions): Promise<ResolvedPR | null> {
+  async resolveByNumber(repoCwd: string, prNumber: number, _options?: PRResolveOptions): Promise<ResolvedPR | null> {
     const remote = await remoteFor(repoCwd);
     if (!remote) return null;
     return viaAz(async () => {
@@ -378,7 +376,7 @@ export const azureDevOpsPRConnector: PRConnector = {
       // An explicit number is unambiguous within the organization, so the fork
       // guard is bypassed here exactly as it is on the GitHub side.
       if (!item) return null;
-      return toResolvedPR(item, remote, await policyVerdictFor(item, remote, options));
+      return toResolvedPR(item, remote, await policyVerdictFor(item, remote));
     });
   },
 

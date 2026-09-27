@@ -65,7 +65,7 @@ export function MemoryGraphPage() {
               onClick={() => overlay.requestClose()}
               className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
               title="Close (Esc)"
-              aria-label="Close memory graph"
+              aria-label="Close Knowledge Graph"
               data-testid="memory-graph-close"
             >
               <X size={16} />
@@ -76,7 +76,7 @@ export function MemoryGraphPage() {
               a STATE, so one here would read as "the memory is idle" rather
               than naming the surface. */}
           <Network size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
-          <h1 className="text-sm font-semibold text-fg">Memory Graph</h1>
+          <h1 className="text-sm font-semibold text-fg">Knowledge Graph</h1>
         </DetachableSurfaceHeader>
 
         <LazyMemoryGraph onChooseAnswerAgent={openAnswerSettings} onRevealTask={revealTaskOnBoard} />

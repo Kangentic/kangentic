@@ -1392,30 +1392,14 @@ describe('linkPR (IPC wrapper): resolve options reach every readiness-capable ti
    * block reaches it only through `linkPR`'s effective-config read, which
    * always hands it a defined (possibly empty) git object - a literal
    * `undefined` is never passed directly anywhere else. Pins the annotation:
-   * dropping either `?.` in the mapper (reverting to
-   * `gitConfig.prEvaluateBranchPolicies === true`) would throw a TypeError
-   * here instead of reading every option off.
+   * dropping the `?.` in the mapper (reverting to
+   * `gitConfig.prBypassCountsAsReady === true`) would throw a TypeError here
+   * instead of reading every option off.
    */
   it('prResolveOptionsFromGitConfig(undefined) reads every option off rather than throwing', () => {
     expect(prResolveOptionsFromGitConfig(undefined)).toEqual({
-      evaluateBranchPolicies: false,
       bypassCountsAsReady: false,
     });
-  });
-
-  it('forwards evaluateBranchPolicies=true to the number tier and the branch tier', async () => {
-    conn.byNumber = null;
-    conn.byBranch = resolved(7);
-    const task = worktreeTask({}, { pr_number: 7, pr_url: 'u7', pr_state: 'open' });
-    const context = contextFor(task, { defaultBaseBranch: 'main', prEvaluateBranchPolicies: true });
-
-    await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
-
-    // Exact shape: every key the mapper knows, each an explicit boolean. The
-    // stubbed config here is RAW (no DEFAULT_CONFIG merge), so the absent
-    // bypass key reads false; production reads its default through the merge.
-    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ evaluateBranchPolicies: true, bypassCountsAsReady: false });
-    expect(conn.lastArgs.byBranch?.at(-1)).toEqual({ evaluateBranchPolicies: true, bypassCountsAsReady: false });
   });
 
   it('forwards bypassCountsAsReady=true to the number tier and the branch tier', async () => {
@@ -1426,18 +1410,21 @@ describe('linkPR (IPC wrapper): resolve options reach every readiness-capable ti
 
     await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
 
-    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: true });
-    expect(conn.lastArgs.byBranch?.at(-1)).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: true });
+    // Exact shape: every key the mapper knows, each an explicit boolean.
+    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ bypassCountsAsReady: true });
+    expect(conn.lastArgs.byBranch?.at(-1)).toEqual({ bypassCountsAsReady: true });
   });
 
   it('forwards every option as false when its key is absent, never undefined at the connector', async () => {
     conn.byNumber = resolved(7);
     const task = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open' });
+    // The stubbed config here is RAW (no DEFAULT_CONFIG merge), so the absent
+    // bypass key reads false; production reads its default through the merge.
     const context = contextFor(task, { defaultBaseBranch: 'main' });
 
     await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
 
-    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: false });
+    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ bypassCountsAsReady: false });
   });
 
   it('forwards bypassCountsAsReady=false when the project turned the default-on setting off', async () => {
@@ -1447,7 +1434,7 @@ describe('linkPR (IPC wrapper): resolve options reach every readiness-capable ti
 
     await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
 
-    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: false });
+    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ bypassCountsAsReady: false });
   });
 
   it('an unreadable config reads as every option off and still resolves', async () => {
@@ -1469,13 +1456,13 @@ describe('linkPR (IPC wrapper): resolve options reach every readiness-capable ti
     try {
       conn.byNumber = { ...resolved(7), mergeReadiness: 'unknown' };
       const task = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open', pr_merge_readiness: 'ready' });
-      const context = contextFor(task, { defaultBaseBranch: 'main', prEvaluateBranchPolicies: true });
+      const context = contextFor(task, { defaultBaseBranch: 'main', prBypassCountsAsReady: true });
 
       await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
       conn.lastArgs = {};
       await vi.advanceTimersByTimeAsync(5_000);
 
-      expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ evaluateBranchPolicies: true, bypassCountsAsReady: false });
+      expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ bypassCountsAsReady: true });
     } finally {
       cancelPendingVerdictRepolls();
       vi.useRealTimers();
@@ -1485,10 +1472,8 @@ describe('linkPR (IPC wrapper): resolve options reach every readiness-capable ti
   it.each([
     [undefined, false],
     [{}, false],
-    [{ prRefreshIntervalMinutes: null }, false],
-    [{ prRefreshIntervalMinutes: 0 }, false],
-    [{ prRefreshIntervalMinutes: -1 }, false],
-    [{ prRefreshIntervalMinutes: 5 }, true],
+    [{ prAutoRefresh: false }, false],
+    [{ prAutoRefresh: true }, true],
   ] as Array<[Record<string, unknown> | undefined, boolean]>)(
     'prRepollInFlightFromGitConfig(%j) is %s',
     (gitConfig, expected) => {
@@ -1502,11 +1487,11 @@ describe('linkPR (IPC wrapper): resolve options reach every readiness-capable ti
       conn.byNumber = { ...resolved(7), mergeReadiness: 'running' };
       // "Auto-refresh PRs: Off" promises no background polling.
       const offTask = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open' });
-      await linkPR(contextFor(offTask, { prRefreshIntervalMinutes: null }), { projectId: 'proj-1', taskId: offTask.id, force: true });
+      await linkPR(contextFor(offTask, { prAutoRefresh: false }), { projectId: 'proj-1', taskId: offTask.id, force: true });
       expect(vi.getTimerCount()).toBe(0);
 
       const onTask = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open' });
-      await linkPR(contextFor(onTask, { prRefreshIntervalMinutes: 5 }), { projectId: 'proj-1', taskId: onTask.id, force: true });
+      await linkPR(contextFor(onTask, { prAutoRefresh: true }), { projectId: 'proj-1', taskId: onTask.id, force: true });
       expect(vi.getTimerCount()).toBe(1);
     } finally {
       cancelPendingVerdictRepolls();

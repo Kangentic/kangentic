@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Check, CircleAlert, Loader2, Signal } from 'lucide-react';
 import type { AgentDetectionInfo, AgentExecutionServer, AgentProjectExecution, AppConfig, RemoteServerStatus } from '../../../../shared/types';
-import { Select, SettingRow, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { INPUT_CLASS, useScopedUpdate } from '../shared';
+import { CardRow, CardTile, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { Pill } from '../../Pill';
 
@@ -63,20 +64,21 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
 
   return (
     <>
-      <SettingRow {...settingProps('agent.executionMode')} label={`${agent.displayName} Execution`}>
-        <Select
-          value={usage.mode}
-          onChange={(event) => updateUsage({ mode: event.target.value as AgentProjectExecution['mode'] })}
-          data-testid={`execution-mode-${agent.name}`}
-        >
-          <option value="local">Local</option>
-          <option value="remote">Remote</option>
-        </Select>
-      </SettingRow>
+      <CardChoiceRow
+        {...settingProps('agent.executionMode')}
+        label={`${agent.displayName} execution`}
+        options={[
+          { value: 'local', label: 'Local', testId: `execution-mode-${agent.name}-local` },
+          { value: 'remote', label: 'Remote', testId: `execution-mode-${agent.name}-remote` },
+        ]}
+        value={usage.mode}
+        onChange={(mode) => updateUsage({ mode })}
+        testId={`execution-mode-${agent.name}`}
+      />
 
       {isRemote && (
         <>
-          <SettingRow
+          <CardRow
             {...settingProps('agent.executionServerUrl')}
             trailing={
               probeResult ? (
@@ -128,12 +130,12 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                 Test connection
               </button>
             </div>
-          </SettingRow>
+          </CardRow>
 
           {agent.remoteExecution.authKind === 'basic' && (
-            <SettingRow
+            <CardRow
               {...settingProps('agent.executionServerAuth')}
-              label={<span className="inline-flex items-center gap-2">Authentication<OptionalTag /></span>}
+              labelTrailing={<OptionalTag />}
             >
               <div className="flex gap-2">
                 {/* Per-keystroke for the same reason as the url above: "Test connection"
@@ -155,12 +157,13 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                   data-testid={`execution-server-password-${agent.name}`}
                 />
               </div>
-            </SettingRow>
+            </CardRow>
           )}
 
-          <SettingRow
+          <CardRow
             {...settingProps('agent.executionWorkingDirectory')}
-            label={<span className="inline-flex items-center gap-2">Server Working Directory<OptionalTag /></span>}
+            label="Server working directory"
+            labelTrailing={<OptionalTag />}
           >
             {/* Per-keystroke, matching its siblings above rather than being the one
                 field in this section with a different commit boundary. */}
@@ -172,10 +175,10 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
               className={INPUT_CLASS}
               data-testid={`execution-working-directory-${agent.name}`}
             />
-          </SettingRow>
+          </CardRow>
 
           {agent.remoteExecution.remoteModeCaveat && (
-            <p className="text-xs text-fg-faint">{agent.remoteExecution.remoteModeCaveat}</p>
+            <CardTile className="text-xs text-fg-faint">{agent.remoteExecution.remoteModeCaveat}</CardTile>
           )}
         </>
       )}

@@ -149,10 +149,26 @@ function preConfigWithSearchHits(
       return {
         currentProjectId: '${PROJECT_ID}',
         searchHits: hits,
-        // Semantic layer off, so Smart mode shows the "off" degraded notice
-        // while still returning the seeded (lexical) hits.
         memoryStatus: { indexingEnabled: true, semantic: 'disabled' },
       };
+    });
+  `;
+}
+
+/** One project and a search that finds nothing: a typed question usually has
+ *  no keyword matches, which is when the Ask row takes the selection. */
+function preConfigNoSearchHits(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: 'proj-search-empty', name: 'Empty Search Project', path: '/mock/empty-search',
+        github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-empty-' + i, position: i, created_at: ts }));
+      });
+      return { currentProjectId: 'proj-search-empty', searchHits: [] };
     });
   `;
 }
@@ -274,29 +290,15 @@ test.describe('Search Palette', () => {
     }
   });
 
-  test('opening Quick Find in Smart mode prewarms the embedding worker on the open, never on a keystroke; keyword mode never does', async () => {
+  test('Quick Find never starts the embedding worker, even with semantic search on', async () => {
     const { browser, page } = await launchWithState(preConfigWithSearchHits());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
       const prewarmCalls = () => page.evaluate(
         () => ((window as unknown as { __mockMemoryPrewarmCalls?: number[] }).__mockMemoryPrewarmCalls ?? []).length,
       );
-
-      // Keyword mode (semantic off): a full open, type, results round trip
-      // runs the palette's mount effect, and the worker is never warmed.
-      await page.keyboard.press('Control+Shift+F');
-      await expect(page.getByTestId('search-palette')).toBeVisible();
-      await page.getByTestId('search-palette-input').fill('auth');
-      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
-      expect(await prewarmCalls()).toBe(0);
-      await page.keyboard.press('Escape');
-      await expect(page.getByTestId('search-palette')).not.toBeVisible();
-
-      // Smart mode: the open itself is the precursor gesture for a semantic
-      // query, so the worker warms on the open, before any keystroke. The
-      // count is read rather than pinned at one: the dev renderer this tier
-      // runs mounts under StrictMode, which invokes the mount effect twice,
-      // and the second send is a no-op against the worker's memoized init.
+      // Keyword only, whatever the Search settings say: meaning-based search
+      // lives in the Knowledge Graph, so opening Quick Find warms nothing.
       await page.evaluate(() =>
         window.electronAPI.config.set({ memory: { indexingEnabled: true, semanticEnabled: true } }),
       );
@@ -308,13 +310,51 @@ test.describe('Search Palette', () => {
       });
       await page.keyboard.press('Control+Shift+F');
       await expect(page.getByTestId('search-palette')).toBeVisible();
-      await expect.poll(prewarmCalls).toBeGreaterThan(0);
-      const warmedOnOpen = await prewarmCalls();
-
-      // Typing a query, and the results it brings, warm it no further.
       await page.getByTestId('search-palette-input').fill('auth');
       await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
-      expect(await prewarmCalls()).toBe(warmedOnOpen);
+      expect(await prewarmCalls()).toBe(0);
+      await expect
+        .poll(async () =>
+          page.evaluate(() => {
+            const request = (window as unknown as { __mockLastSearchRequest?: { mode?: string } })
+              .__mockLastSearchRequest;
+            return request?.mode ?? null;
+          }),
+        )
+        .toBe('keyword');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the last row offers to ask the Knowledge Graph, and ArrowDown reaches it past the hits', async () => {
+    const { browser, page } = await launchWithState(preConfigWithSearchHits());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('auth');
+      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
+
+      const askRow = page.getByTestId('search-palette-ask');
+      await expect(askRow).toContainText('Ask the Knowledge Graph: "auth"');
+      // With hits, the first hit is selected, not the Ask row.
+      await expect(askRow).toHaveAttribute('aria-selected', 'false');
+      const hitCount = await page.getByTestId('search-palette-result').count();
+      for (let press = 0; press < hitCount; press += 1) await page.keyboard.press('ArrowDown');
+      await expect(askRow).toHaveAttribute('aria-selected', 'true');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a query with no keyword matches selects the Ask row', async () => {
+    const { browser, page } = await launchWithState(preConfigNoSearchHits());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('how many adapters did we add');
+      await expect(page.getByTestId('search-no-matches')).toContainText('No keyword matches in this project.');
+      await expect(page.getByTestId('search-palette-ask')).toHaveAttribute('aria-selected', 'true');
     } finally {
       await browser.close();
     }
@@ -578,7 +618,7 @@ test.describe('Search Palette', () => {
     }
   });
 
-  // ---------- Mode follows the Memory setting (no per-search toggle) -------
+  // ---------- Keyword only (no per-search toggle) -------
 
   test('has no per-search mode toggle', async () => {
     const { browser, page } = await launchWithState(preConfigWithSearchHits());
@@ -586,33 +626,8 @@ test.describe('Search Palette', () => {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
       await page.keyboard.press('Control+Shift+F');
       await expect(page.getByTestId('search-palette')).toBeVisible();
-      // The Keyword/Smart pill pair is gone; search auto-selects the mode.
+      // There is no Keyword/Smart choice: Quick Find is keyword-only.
       await expect(page.getByTestId('search-mode-toggle')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('with semantic search off, the query runs in keyword mode with no degraded notice', async () => {
-    const { browser, page } = await launchWithState(preConfigWithSearchHits());
-    try {
-      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-      await page.keyboard.press('Control+Shift+F');
-      await page.getByTestId('search-palette-input').fill('auth');
-      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
-
-      // Semantic search is off by default, so the search is keyword-only: no
-      // degraded notice, and the IPC request carries mode:'keyword'.
-      await expect(page.getByTestId('search-degraded-notice')).toHaveCount(0);
-      await expect
-        .poll(async () =>
-          page.evaluate(() => {
-            const request = (window as unknown as { __mockLastSearchRequest?: { mode?: string } })
-              .__mockLastSearchRequest;
-            return request?.mode ?? null;
-          }),
-        )
-        .toBe('keyword');
     } finally {
       await browser.close();
     }

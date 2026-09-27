@@ -48,6 +48,11 @@ async function openDictationTab(): Promise<void> {
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
   await page.getByRole('button', { name: 'Dictation', exact: true }).click();
+  // The Transcription card, where the banner lives, shows only with dictation
+  // on: off means hidden, not greyed out.
+  const master = page.getByRole('switch', { name: 'Voice dictation' });
+  if ((await master.getAttribute('aria-checked')) !== 'true') await master.click();
+  await expect(master).toHaveAttribute('aria-checked', 'true');
 }
 
 /** Switching to another tab unmounts `DictationTab`, so the next

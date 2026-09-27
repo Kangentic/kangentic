@@ -126,7 +126,7 @@ export function registerSearchHandlers(context: IpcContext): void {
     return retrievalService.getStatus(context);
   });
 
-  // The Quick Find open is the precursor gesture for a Smart query: spawn +
+  // Opening the Knowledge Graph is the precursor gesture for a question: spawn +
   // init the embedding worker now so the typing that follows covers its cold
   // start. Fire-and-forget; embeds nothing.
   ipcMain.on(IPC.MEMORY_PREWARM, () => {
@@ -266,7 +266,7 @@ export function registerSearchHandlers(context: IpcContext): void {
         const config = context.configManager.load();
 
         // Resolved through the SHARED rule the renderer uses to decide whether
-        // a question runs or goes to Settings > Memory first, so the two can
+        // a question runs or goes to Settings > Search first, so the two can
         // never disagree. The rule is explicit: the configured agent and model,
         // with no fallback to the project's agent or to any capable one.
         const agents = agentRegistry.list().flatMap((name) => {
@@ -288,8 +288,8 @@ export function registerSearchHandlers(context: IpcContext): void {
             ok: false,
             setup,
             reason: setup === 'agent'
-              ? 'choose an answering agent in Settings > Memory'
-              : 'choose an answering model in Settings > Memory',
+              ? 'choose an agent in the Knowledge Graph card in Settings > Search'
+              : 'choose a model in the Knowledge Graph card in Settings > Search',
           };
         }
         const resolved = resolveAnswerAgent({ agents, configured: configuredAgent });
@@ -387,6 +387,18 @@ export function registerSearchHandlers(context: IpcContext): void {
         // server hands such a caller exactly `kangentic_search`
         // (`buildAnswerMcpServer`) and publishes its searches to the trace.
         const capabilities = adapter.answerCapabilities;
+        // Effort only for a run that passes it on: the user's level, else the
+        // adapter's recommended default, and either only when the CLI reports
+        // it right now. A stale level would fail every question: Grok, Copilot
+        // and Antigravity all exit on an unknown one.
+        let effort: string | null = null;
+        if (capabilities?.effort && adapter.discoverCapabilities) {
+          const discovered = await adapter.discoverCapabilities(info.path).catch(() => undefined);
+          const levels = discovered?.effortLevels ?? [];
+          const configuredEffort = config.memory?.answerEffort ?? null;
+          if (configuredEffort && levels.includes(configuredEffort)) effort = configuredEffort;
+          else if (capabilities.defaultEffort && levels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
+        }
         const callerChat = answerContext.chatId || requestId || 'oneshot';
         const retrieval = context.mcpServerHandle && capabilities?.search
           ? {
@@ -459,6 +471,7 @@ export function registerSearchHandlers(context: IpcContext): void {
         try {
           raw = await withAnswerRunDirectory((runDirectory) => answerFromContext(prompt, cliPath, runDirectory, configuredModel, {
             retrieval,
+            effort,
             onEvent: (event) => {
               if (event.kind === 'text') emit({ kind: 'text', text: event.text });
               else emit({ kind: 'tool', name: event.name });

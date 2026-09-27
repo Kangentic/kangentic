@@ -54,17 +54,48 @@ const lastResolveAt = new Map<string, number>();
 const RESOLVE_TTL_MS = 60_000;
 
 /**
+ * When each task's PR was last actually checked, by anything: the refresh
+ * queue, the 30 s in-flight re-poll, an agent's `gh pr create`, a manual
+ * refresh, a column move. The refresh queue (`pr-refresh-scheduler.ts`) counts
+ * each PR's 2 minutes from here, which is what makes "any check resets the
+ * clock" true. Stamped only once a resolve gets past the terminal-state and
+ * coalesce gates, since a coalesced or skipped call checked nothing.
+ *
+ * Separate from `lastResolveAt` because that map is pruned after 60 s, well
+ * inside the queue's interval. This one is pruned by the queue itself to the
+ * tasks still eligible, and cleared on a project switch.
+ */
+const lastCheckedAt = new Map<string, number>();
+
+/** When `taskId`'s PR was last checked, or undefined if not this session. */
+export function lastPRCheckAt(taskId: string): number | undefined {
+  return lastCheckedAt.get(taskId);
+}
+
+/** Drop the check stamps of every task not in `keep` (tasks that left the refresh queue). */
+export function prunePRCheckStamps(keep: ReadonlySet<string>): void {
+  for (const taskId of lastCheckedAt.keys()) {
+    if (!keep.has(taskId)) lastCheckedAt.delete(taskId);
+  }
+}
+
+/** Forget every check stamp (project switch, tests). */
+export function clearPRCheckStamps(): void {
+  lastCheckedAt.clear();
+}
+
+/**
  * Hold-and-re-poll for a PENDING merge verdict. GitHub answers `UNKNOWN` for a
  * few seconds after every push while it recomputes mergeability, and Azure's
- * `succeeded` is `unknown` whenever branch policies are not evaluated (the
- * setting is off, or the policy call gave no readable answer). Writing that
+ * `succeeded` is `unknown` whenever the branch-policy call gave no readable
+ * answer. Writing that
  * over a determined verdict on first sight blanks the card's chip for a whole
  * sweep interval and then restores it: a flicker, not news. So a resolve that
  * meets a pending answer on a determined verdict KEEPS the stored value and
  * asks again after each of these delays; only when the budget is spent does
  * `unknown` land. That final write is what lets a chip clear once its host
- * really has stopped answering, such as an Azure PR whose policy evaluation
- * was switched off after it read `ready`. Bounded per task, one timer in
+ * really has stopped answering, such as an Azure PR whose policy call keeps
+ * failing after it read `ready`. Bounded per task, one timer in
  * flight at a time, `unref()`'d so it never holds a quit, and cleared by the
  * refresh scheduler on project switch / shutdown.
  */
@@ -76,7 +107,7 @@ const pendingVerdictRepolls = new Map<string, { attempt: number; timer: NodeJS.T
  * write straight through, but they are answers that expire: the next one is
  * `ready` or `blocked`, and it arrives when CI finishes, not when the sweep
  * next ticks. Left to the sweep, a card read `running` for up to a whole
- * `git.prRefreshIntervalMinutes` after its last check completed, and an agent
+ * refresh interval after its last check completed, and an agent
  * going idle right after CI could not rescue it, because the sweep's own
  * resolve seconds earlier had stamped the 60s coalesce (measured on #720:
  * 2m47s of lag, about 5 min without an incidental prompt).
@@ -276,8 +307,8 @@ export interface PRLinkDeps {
   /**
    * Re-poll an open PR whose persisted verdict is `queued` or `running` (see
    * `IN_FLIGHT_VERDICT_REPOLL_MS`). Absent means off. `linkPR` sets it from
-   * the project's `git.prRefreshIntervalMinutes`, so a project with background
-   * PR refresh switched off gets no background polling from this either. The
+   * the project's `git.prAutoRefresh`, so a project with background PR refresh
+   * switched off gets no background polling from this either. The
    * MCP command context reads the same setting through
    * `prRepollInFlightFromGitConfig`, so an agent's own link write arms the
    * chain too: during `/pull-request` the agent waits on CI inside one turn,
@@ -628,6 +659,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
       if (resolveNow - ts >= RESOLVE_TTL_MS) lastResolveAt.delete(id);
     }
     lastResolveAt.set(taskId, resolveNow);
+    lastCheckedAt.set(taskId, resolveNow);
 
     const cwd = task.worktree_path ?? deps.projectPath;
 
@@ -887,7 +919,7 @@ interface LinkPROptions {
 interface ProjectLinkSettings {
   defaultBaseBranch: string | undefined;
   resolveOptions: PRResolveOptions;
-  /** Background PR refresh is on (`git.prRefreshIntervalMinutes` > 0); see `PRLinkDeps.repollInFlightVerdict`. */
+  /** Background PR refresh is on (`git.prAutoRefresh`); see `PRLinkDeps.repollInFlightVerdict`. */
   repollInFlightVerdict: boolean;
 }
 
@@ -941,16 +973,17 @@ function resolveProjectLinkSettings(context: IpcContext, projectPath: string | n
  * boolean, never undefined, so a connector's `=== true` gate reads the same
  * value the config holds.
  *
- * `=== true` on both, including the default-ON `prBypassCountsAsReady`:
+ * `=== true` even though `prBypassCountsAsReady` defaults on:
  * `getEffectiveConfig` merges `DEFAULT_CONFIG`, so an absent key already reads
  * `true` by the time it gets here. The `{}` fallbacks in the callers (no
- * project path, an unreadable config) are the one asymmetry that setting
- * introduced: they leave a default-on option OFF, which is the safe direction
- * (a PR reads `blocked`, GitHub's own answer) and is deliberate.
+ * project path, an unreadable config) leave it OFF, which is the safe
+ * direction (a PR reads `blocked`, GitHub's own answer) and is deliberate.
+ *
+ * There is no branch-policy option any more: Azure DevOps always evaluates
+ * policies, so "ready" means the same thing on both hosts.
  */
 export function prResolveOptionsFromGitConfig(gitConfig: AppConfig['git'] | undefined): PRResolveOptions {
   return {
-    evaluateBranchPolicies: gitConfig?.prEvaluateBranchPolicies === true,
     bypassCountsAsReady: gitConfig?.prBypassCountsAsReady === true,
   };
 }
@@ -962,8 +995,7 @@ export function prResolveOptionsFromGitConfig(gitConfig: AppConfig['git'] | unde
  * `prResolveOptionsFromGitConfig` is shared.
  */
 export function prRepollInFlightFromGitConfig(gitConfig: AppConfig['git'] | undefined): boolean {
-  const refreshIntervalMinutes = gitConfig?.prRefreshIntervalMinutes;
-  return refreshIntervalMinutes != null && refreshIntervalMinutes > 0;
+  return gitConfig?.prAutoRefresh === true;
 }
 
 /**

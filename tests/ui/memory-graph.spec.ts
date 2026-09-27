@@ -35,7 +35,7 @@ function snapshotScript(options: {
   semanticAvailable?: boolean;
   stale?: boolean;
   /** Whether the answering agent and model are chosen. They have no fallback,
-   *  so a question with neither goes to Settings > Memory instead of running. */
+   *  so a question with neither goes to Settings > Search instead of running. */
   answerAgentChosen?: boolean;
 } = {}): string {
   const {
@@ -959,7 +959,7 @@ test.describe('memory graph', () => {
     );
     try {
       await askInBox(page, 'what fixed the relay?');
-      await expect(page.locator('[data-testid="memory-graph-setup-hint"]')).toContainText('Settings > Memory');
+      await expect(page.locator('[data-testid="memory-graph-setup-hint"]')).toContainText('Settings > Search');
       await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
       expect(await answerCalls(page)).toHaveLength(0);
     } finally {
@@ -1032,7 +1032,7 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('sends a question to Settings > Memory when no answering agent is chosen, and keeps it', async () => {
+  test('sends a question to Settings > Search when no answering agent is chosen, and keeps it', async () => {
     // The agent and model are one explicit global choice with no fallback, so
     // a question asked before they are set runs nothing. It goes to the place
     // the choice is made, and the typed question waits in the box.
@@ -1056,6 +1056,43 @@ test.describe('memory graph', () => {
     }
   });
 
+  // Quick Find matches words only; its last row hands what you typed to the
+  // Knowledge Graph, which asks it through the same path as its own box.
+  test('Quick Find\'s Ask row opens the graph with the question asked', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('what changed the renderer?');
+      const askRow = page.getByTestId('search-palette-ask');
+      // No keyword matches, so the Ask row holds the selection and Enter asks.
+      await expect(askRow).toHaveAttribute('aria-selected', 'true');
+      await page.keyboard.press('Enter');
+
+      await expect(page.getByTestId('search-palette')).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-graph-page"]')).toBeVisible();
+      await expect(page.locator('[data-testid="memory-chat"]')).toContainText('what changed the renderer?');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Quick Find\'s Ask row sends the question to Settings when no answering agent is chosen, and keeps it', async () => {
+    const preConfig = snapshotScript({ projection: projectionLiteral(30), answerAgentChosen: false });
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('what changed the renderer?');
+      await page.getByTestId('search-palette-ask').click();
+
+      await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+      await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
+      // The question waits in the graph's box for when the user comes back.
+      await expect(page.locator('[data-testid="memory-graph-search-input"]')).toHaveValue('what changed the renderer?');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('treats a chosen agent that cannot answer as not chosen', async () => {
     // The gate is the CAPABILITY, never the agent's name
     // (`.claude/rules/agent-adapters-boundary.md`), and no other agent is
@@ -1069,6 +1106,55 @@ test.describe('memory graph', () => {
       await input.press('Enter');
       await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
       await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('offers an answering effort that starts at the recommended level and clears with the agent', async () => {
+    // The row follows the adapter's declaration and the CLI's own levels, never
+    // a name. Unset shows the recommended level, so leaving it alone is visible.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30), answerAgentChosen: false })}
+      window.__mockPreConfigure(function (state) {
+        state.config.memory = Object.assign({}, state.config.memory, { indexingEnabled: true, semanticEnabled: true });
+        return {};
+      });
+      window.__mockAgentListOverrides = { grok: { found: true, path: '/usr/bin/grok', version: '1', capabilities: { effortLevels: ['low', 'medium', 'high', 'xhigh'], supportsModelOverride: true, models: ['grok-4.7'] } } };`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      const input = page.locator('[data-testid="memory-graph-search-input"]');
+      await input.fill('anything');
+      await input.press('Enter');
+      await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+
+      const agent = page.locator('[data-testid="memory-answer-agent"]');
+      const modelRow = page.locator('[data-testid="setting-row-memory.answerModel"]');
+      const effortRow = page.locator('[data-testid="setting-row-memory.answerEffort"]');
+      const effort = page.locator('[data-testid="memory-answer-effort"]');
+      const choose = async (agentName: string): Promise<void> => {
+        await agent.click();
+        await page.locator(`[data-testid="memory-answer-agent-option-${agentName}"]`).click();
+      };
+
+      await choose('claude');
+      await expect(modelRow).toBeVisible();
+      await expect(effortRow).toBeVisible();
+      await expect(effort).toHaveValue('');
+      await expect(effort).toHaveAttribute('placeholder', 'low');
+
+      await effort.click();
+      await page.locator('[data-testid="memory-answer-effort-option-max"]').click();
+      await expect(effort).toHaveValue('max');
+
+      // Levels belong to one CLI, so changing the agent clears the effort, and
+      // the new agent starts at its own recommendation.
+      await choose('grok');
+      await expect(effort).toHaveValue('');
+      await expect(effort).toHaveAttribute('placeholder', 'low');
+      await effort.click();
+      await expect(page.locator('[data-testid="memory-answer-effort-option-max"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-answer-effort-option-xhigh"]')).toBeVisible();
     } finally {
       await browser.close();
     }

@@ -9,7 +9,7 @@ import { discoverCopilotCapabilities } from './capability-discovery';
 import { createCopilotCommandInjectionVerifier } from './command-injection-verifier';
 import { runCliPrintSummarize,
   runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -247,7 +247,7 @@ export class CopilotAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true };
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -261,6 +261,10 @@ export class CopilotAdapter implements AgentAdapter {
    * non-interactive run has nothing that may write, and it refused both a file
    * write and a shell command in the probe.
    *
+   * Effort is per MODEL in Copilot: `auto` refuses `--reasoning-effort` with
+   * "does not support reasoning effort configuration", and that error reaches
+   * the user verbatim rather than the flag being dropped behind their back.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -269,12 +273,17 @@ export class CopilotAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
-      // The model flag is OMITTED when none is chosen: passing an
+      // The model and effort flags are OMITTED when none is chosen: passing an
       // empty value is an error.
-      args: ['--silent', ...(model ? ['--model', model] : [])],
+      args: [
+        '--silent',
+        ...(model ? ['--model', model] : []),
+        ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
+      ],
       prompt,
       cwd,
     });

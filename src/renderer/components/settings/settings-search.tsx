@@ -89,7 +89,7 @@ export function useSettingVisible(searchId: string | undefined): boolean {
 
 /**
  * Section-level counterpart to `useSettingVisible`: visible when ANY of the ids
- * match. This is the rule `SectionHeader` applies to its own `searchIds`, so a
+ * match. This is the rule `SettingsCard` applies to its own `searchIds`, so a
  * section whose heading and body both call this cannot drift apart. Gating a
  * body on a SUBSET of the ids its header advertises orphans the heading (the
  * header matches on one id, the body hides on another) and, worse, hides the

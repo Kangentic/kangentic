@@ -304,7 +304,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
   memory: {
     kind: 'memory',
     scope: 'global',
-    title: 'Memory Graph',
+    title: 'Knowledge Graph',
     // Wider than tall: the surface is a canvas beside the answer rail, and the
     // map is far more readable with horizontal room than vertical.
     defaultBounds: { width: 1200, height: 820 },

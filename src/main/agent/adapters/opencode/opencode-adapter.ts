@@ -478,7 +478,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true };
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).

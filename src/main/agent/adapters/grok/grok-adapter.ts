@@ -20,7 +20,7 @@ import {
   extractLastTurnAnswer,
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/auto-name';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -344,7 +344,7 @@ export class GrokAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true };
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -375,10 +375,11 @@ export class GrokAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
-      // The model flag is OMITTED when none is chosen: passing an
+      // The model and effort flags are OMITTED when none is chosen: passing an
       // empty value is an error.
       args: [
         '--output-format', 'streaming-messages-json',
@@ -387,6 +388,7 @@ export class GrokAdapter implements AgentAdapter {
         '--deny', 'Bash',
         '--no-subagents',
         ...(model ? ['--model', model] : []),
+        ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
       ],
       prompt,
       cwd,
