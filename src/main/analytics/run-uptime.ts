@@ -55,8 +55,9 @@ export type RunExit = 'clean' | 'failsafe' | 'abrupt';
  *  the last moment the run was known alive. For a `clean` or `failsafe` exit
  *  that is the exit itself; for an `abrupt` one it is the final checkpoint,
  *  which is the only clock an abrupt ending leaves behind. gpu-health.ts's
- *  report gate uses it to tell "the GPU died as this run ended" from "the GPU
- *  died once, forty minutes before something unrelated killed it". */
+ *  gpuEndedPreviousRun (the Sentry report gate and the acceleration recovery)
+ *  uses it to tell "the GPU crash-looped as this run ended" from "the GPU
+ *  crash-looped forty minutes before something unrelated killed it". */
 interface RunRecord {
   uptimeSeconds: number;
   exit: 'clean' | 'failsafe' | null;
