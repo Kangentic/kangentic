@@ -177,7 +177,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── Search (tab id `memory`; conversation search, semantic search, answers) ──
   { id: 'memory.indexingEnabled', tabId: 'memory', label: 'Index conversations', description: 'Powers Quick Find and the Knowledge Graph.', scope: 'global', keywords: ['index', 'conversation', 'transcript', 'search', 'recall', 'memory', 'privacy', 'local', 'offline', 'history', 'rebuild'] },
-  { id: 'memory.semanticEnabled', tabId: 'memory', label: 'Semantic search', description: 'Matches by meaning. The Knowledge Graph needs it.', scope: 'global', keywords: ['semantic', 'smart', 'embedding', 'vector', 'meaning', 'recall', 'search', 'model', 'offline', 'memory', 'download', 'knowledge graph'] },
+  { id: 'memory.semanticEnabled', tabId: 'memory', label: 'Semantic search', description: 'Finds conversations by meaning, not just exact words.', scope: 'global', keywords: ['semantic', 'smart', 'embedding', 'vector', 'meaning', 'recall', 'search', 'model', 'offline', 'memory', 'download', 'knowledge graph'] },
   { id: 'memory.embeddingModel', tabId: 'memory', label: 'Search quality', description: 'Faster and smaller, or slower and more accurate. Changing it re-indexes in the background by itself.', scope: 'global', keywords: ['embedding', 'model', 'semantic', 'quality', 'size', 'accuracy', 'balanced', 'bge', 'tier', 'download'] },
   // "Model acceleration", not "Hardware acceleration": Performance now owns a
   // row called Graphics acceleration, and two settings a user would read as

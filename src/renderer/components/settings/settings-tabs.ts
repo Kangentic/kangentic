@@ -82,8 +82,10 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   // -- Shared settings: Advanced tier --
   { id: 'dictation', label: 'Dictation', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   // Labelled Search, id kept as `memory`: the id is what tests, deep links
-  // (`open-answer-settings.ts`) and saved last-tab state address.
-  { id: 'memory', label: 'Search', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
+  // (`open-answer-settings.ts`) and saved last-tab state address. The tooltip
+  // names the Knowledge Graph because its settings live here too, and the
+  // label alone does not say so.
+  { id: 'memory', label: 'Search', category: 'system', tier: 'advanced', tooltip: 'Conversation search and the Knowledge Graph. Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'mobile', label: 'Mobile Devices', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },

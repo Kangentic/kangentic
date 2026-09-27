@@ -315,7 +315,7 @@ function scanUnit(unit: SourceUnit, tileComponents: Set<string>, isTabFile: bool
         const context: BudgetContext = hasSwitch ? 'beside_switch' : 'no_switch';
         const description = descriptionOf(opening);
         if (description !== undefined) descriptions.push({ file: fileLabel, line: lineOf(opening), owner: card, text: description, context });
-        const unavailable = attributeNamed(opening, 'unavailableReason', sourceFile);
+        const unavailable = attributeNamed(opening, 'requirement', sourceFile);
         if (unavailable?.initializer) {
           for (const text of stringLiterals(unavailable.initializer)) {
             descriptions.push({ file: fileLabel, line: lineOf(unavailable), owner: `${card} (unavailable)`, text, context });

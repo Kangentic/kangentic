@@ -58,9 +58,11 @@ stated here and held by the components.
   that left edge.
 - **A `CardToggleRow` tile is one click target.** A click anywhere on it flips the switch, and the
   hover tint fills the tile. A click on a control of its own (the switch, an `InfoTip`, a link) is
-  left to that control. A header with a switch behaves the same way.
+  left to that control. A header with a switch behaves the same way, and its click target is
+  tile-shaped: inset like a tile, with a tile gap between it and the first tile, so its hover
+  fill never runs into the option below.
 - **Every description a card shows fits on one line.** That covers a header's description, a
-  row's `inlineDescription`, and an `unavailableReason`. The budgets are 60 characters beside a
+  row's `inlineDescription`, and a `requirement` tag. The budgets are 60 characters beside a
   switch, 66 in a header with no switch, and 54 in a nested row. Anything longer goes in the
   row's `InfoTip`, which has no budget. See `ui-conventions.md` for the rest of the copy
   conventions.

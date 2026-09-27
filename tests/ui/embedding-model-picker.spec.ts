@@ -230,6 +230,53 @@ test.describe('Embedding model picker', () => {
   });
 });
 
+test.describe('Knowledge Graph card', () => {
+  test('stays visible with its description, tagged with its prerequisite, until it can be set up', async () => {
+    // It used to be hidden until semantic search was on, which left the
+    // feature invisible to anyone who had not already found it. It now shows
+    // like the Semantic search card does while indexing is off: dimmed, its
+    // description unchanged, a tag naming what it needs, with its rows
+    // appearing once nothing is missing.
+    const { browser, page } = await launchWithState(makePreConfig('ready'));
+    const setMemory = async (memory: { indexingEnabled?: boolean; semanticEnabled?: boolean }) => {
+      await page.evaluate((partial) => window.electronAPI.config.set({ memory: partial }), memory);
+      await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { config: { getState: () => { loadConfig: () => Promise<void> } } };
+        }).__zustandStores;
+        return stores?.config.getState().loadConfig();
+      });
+    };
+    try {
+      await openMemoryTab(page);
+      const card = page.getByTestId('knowledge-graph-card');
+      const agentRow = page.getByTestId('memory-answer-agent');
+
+      const description = 'The agent that answers the questions you ask in the graph.';
+      // Everything on: the card holds its rows and names no prerequisite.
+      await expect(agentRow).toBeVisible();
+      await expect(card).toContainText(description);
+      await expect(card).not.toContainText('Needs ');
+
+      // Semantic search off: the card stays, keeps its description, tags what
+      // it needs, and hides its rows.
+      await setMemory({ semanticEnabled: false });
+      await expect(card).toBeVisible();
+      await expect(card).toContainText(description);
+      await expect(card).toContainText('Needs semantic search');
+      await expect(agentRow).toHaveCount(0);
+
+      // Indexing off too: each card names only its own direct prerequisite.
+      await setMemory({ indexingEnabled: false });
+      await expect(card).toContainText('Needs semantic search');
+      await expect(page.locator('section[aria-label="Semantic search"]')).toContainText('Needs indexing');
+      await expect(agentRow).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
 test.describe('Semantic search error state', () => {
   test('shows the worker error detail when semantic search fails to start', async () => {
     const { browser, page } = await launchWithState(makeErrorPreConfig('exit 1: Cannot find module sharp'));

@@ -284,12 +284,44 @@ test.describe('Settings card header', () => {
     await closeSettings();
   });
 
+  test('a header\'s click target is tile-shaped and stands apart from the first tile', async () => {
+    // The header's hover fill used to run edge to edge and straight into the
+    // first tile, in the same fill, so a hovered header merged with the option
+    // below it. Its click target is now inset like a tile, with a tile gap under
+    // it. Measured on Git's Worktrees card, whose header has a switch.
+    await setGlobalConfigAndSync({ git: { worktreesEnabled: true } });
+    await openTab('Git');
+    const headerSwitch = page.getByRole('switch', { name: 'Worktrees', exact: true });
+    await expect(headerSwitch).toBeVisible();
+    const geometry = await headerSwitch.evaluate((switchElement) => {
+      const target = switchElement.parentElement as HTMLElement;
+      const card = target.closest('section') as HTMLElement;
+      const firstTile = card.children[1].children[0] as HTMLElement;
+      const targetRect = target.getBoundingClientRect();
+      const tileRect = firstTile.getBoundingClientRect();
+      return {
+        leftDelta: Math.abs(targetRect.left - tileRect.left),
+        rightDelta: Math.abs(targetRect.right - tileRect.right),
+        gap: tileRect.top - targetRect.bottom,
+        hoverFill: target.className.includes('hover:bg-'),
+      };
+    });
+    // The hover fill lives on the measured element, so the geometry is the fill's.
+    expect(geometry.hoverFill).toBe(true);
+    expect(geometry.leftDelta).toBeLessThan(1);
+    expect(geometry.rightDelta).toBeLessThan(1);
+    expect(geometry.gap).toBeGreaterThanOrEqual(4);
+    await closeSettings();
+  });
+
   test('a header whose prerequisite is off does not flip on a click', async () => {
     await setGlobalConfigAndSync({ memory: { indexingEnabled: false, semanticEnabled: false } });
     await openTab('Search');
 
     const card = page.locator('section[aria-label="Semantic search"]');
-    await expect(card).toContainText('Turn on Index conversations first.');
+    // The description stays; a tag after the title names the prerequisite.
+    await expect(card).toContainText('Needs indexing');
+    await expect(card).toContainText('Finds conversations by meaning, not just exact words.');
     await card.locator('h3').click();
     await expect(page.getByRole('switch', { name: 'Semantic search' })).toHaveAttribute('aria-checked', 'false');
 

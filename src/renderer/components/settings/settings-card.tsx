@@ -45,7 +45,13 @@ const CARD_BODY_INSET_PX = 12;
 const TILE_GAP_PX = 6;
 /** How far a tile's content sits in from the tile's right edge. */
 const TILE_RIGHT_PADDING_PX = 16;
-const HEADER_LEFT_PADDING_PX = 16;
+/**
+ * How far the header's icon sits inside the header's click target, so the
+ * hover fill clears the icon with room to spare rather than grazing it.
+ */
+const HEADER_ICON_INSET_PX = 12;
+/** The header icon's distance from the card edge: the tiles' inset plus the icon's own inset. */
+const HEADER_LEFT_PADDING_PX = CARD_BODY_INSET_PX + HEADER_ICON_INSET_PX;
 const HEADER_ICON_COLUMN_PX = 16;
 const HEADER_ICON_GAP_PX = 12;
 /**
@@ -64,6 +70,13 @@ const TILE_LEFT_PADDING_PX = HEADER_LEFT_PADDING_PX + HEADER_ICON_COLUMN_PX + HE
  * icon column, so a drag handle sits under the card's icon.
  */
 const TILE_GUTTER_OFFSET_PX = HEADER_LEFT_PADDING_PX - CARD_BODY_INSET_PX - TILE_LEFT_PADDING_PX;
+/**
+ * The header's click target is tile-shaped: inset from the card's sides like a
+ * tile, with a tile gap above it and a tile gap between it and the first tile,
+ * so its hover fill never runs into the option below. The gap plus this
+ * padding keeps the header's content 14px from the card edge, as before.
+ */
+const HEADER_TARGET_VERTICAL_PADDING_PX = 8;
 /** A nested tile (Only localhost under Allow navigation) starts this much further in. */
 const NESTED_TILE_INDENT_PX = 30;
 /**
@@ -112,10 +125,13 @@ interface SettingsCardProps {
   /** A longer note behind an info icon on the title, e.g. MCP Server's "How it works". */
   info?: string;
   /**
-   * A prerequisite is off (Semantic search with indexing off): the header
-   * greys out, the switch is disabled, and this line replaces the description.
+   * The prerequisite that is still off, as a short tag after the title
+   * ("Needs indexing"). While it is set the icon, title and description dim,
+   * the switch is disabled, and the caller leaves the body out. The
+   * description stays as it is, so the card still says what the feature is;
+   * the tag alone says what it is waiting for, and stays at full strength.
    */
-  unavailableReason?: string;
+  requirement?: string;
   /**
    * Tiles only: `CardRow`, `CardToggleRow`, `CardTile`. Pass it only when it
    * should show.
@@ -131,12 +147,14 @@ interface SettingsCardProps {
 }
 
 export function SettingsCard({
-  icon, label, description, searchId, searchIds, checked, onChange, info, unavailableReason, children, wideBody, testId,
+  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, children, wideBody, testId,
 }: SettingsCardProps) {
   const visible = useAnySettingVisible([...(searchId ? [searchId] : []), ...(searchIds ?? [])]);
   if (!visible) return null;
   const hasSwitch = checked !== undefined && onChange !== undefined;
-  const unavailable = unavailableReason !== undefined;
+  const unavailable = requirement !== undefined;
+  // Dims what the card is, never the tag that says what it needs.
+  const dimmed = unavailable ? 'opacity-50' : '';
   const toggle = checked !== undefined && onChange !== undefined && !unavailable
     ? () => onChange(!checked)
     : undefined;
@@ -147,39 +165,55 @@ export function SettingsCard({
       data-testid={testId ?? (searchId ? `settings-card-${searchId}` : undefined)}
       aria-label={label}
     >
+      {/* The outer layer insets the header like a tile and leaves a tile gap
+          above and below; the inner layer is the click target, so its hover
+          fill is a tile-shaped rect that never touches the first tile. The
+          icon lands in the tiles' gutter, the title on their label line, and
+          the switch on their right edge. */}
       <div
-        onClick={rowClickToggle(toggle)}
-        style={{ paddingLeft: HEADER_LEFT_PADDING_PX, paddingRight: HEADER_RIGHT_INSET_PX, columnGap: HEADER_ICON_GAP_PX }}
-        className={`flex items-center py-3.5 ${children ? 'rounded-t-lg' : 'rounded-lg'} ${
-          unavailable ? 'opacity-50' : ''
-        } ${toggle ? 'cursor-pointer select-none transition-colors hover:bg-surface-hover/40' : ''}`}
+        style={{ padding: `${TILE_GAP_PX}px ${CARD_BODY_INSET_PX}px` }}
       >
-        <span
-          className="flex flex-shrink-0 justify-center text-fg-muted"
-          style={{ width: HEADER_ICON_COLUMN_PX }}
-          aria-hidden="true"
+        <div
+          onClick={rowClickToggle(toggle)}
+          style={{
+            paddingLeft: HEADER_ICON_INSET_PX,
+            paddingRight: TILE_RIGHT_PADDING_PX,
+            paddingTop: HEADER_TARGET_VERTICAL_PADDING_PX,
+            paddingBottom: HEADER_TARGET_VERTICAL_PADDING_PX,
+            columnGap: HEADER_ICON_GAP_PX,
+          }}
+          className={`flex items-center rounded-md ${
+            toggle ? 'cursor-pointer select-none transition-colors hover:bg-surface-hover/40' : ''
+          }`}
         >
-          {icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <h3 className={`${SETTING_LABEL_CLASS} font-semibold`}>{label}</h3>
-            {info ? <InfoTip label={label} text={info} /> : null}
+          <span
+            className={`flex flex-shrink-0 justify-center text-fg-muted ${dimmed}`}
+            style={{ width: HEADER_ICON_COLUMN_PX }}
+            aria-hidden="true"
+          >
+            {icon}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <h3 className={`${SETTING_LABEL_CLASS} font-semibold ${dimmed}`}>{label}</h3>
+              {info ? <InfoTip label={label} text={info} /> : null}
+              {requirement ? <SettingTag>{requirement}</SettingTag> : null}
+            </div>
+            <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5 ${dimmed}`}>{description}</p>
           </div>
-          <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5`}>{unavailableReason ?? description}</p>
+          {hasSwitch ? (
+            <ToggleSwitch
+              checked={checked}
+              onChange={onChange}
+              disabled={unavailable}
+              ariaLabel={label}
+              // The switch, not the card, carries `setting-row-<id>`: that id
+              // named the role="switch" element before cards existed, and tests
+              // and settings search both address a toggle by it.
+              testId={searchId ? `setting-row-${searchId}` : undefined}
+            />
+          ) : null}
         </div>
-        {hasSwitch ? (
-          <ToggleSwitch
-            checked={checked}
-            onChange={onChange}
-            disabled={unavailable}
-            ariaLabel={label}
-            // The switch, not the card, carries `setting-row-<id>`: that id
-            // named the role="switch" element before cards existed, and tests
-            // and settings search both address a toggle by it.
-            testId={searchId ? `setting-row-${searchId}` : undefined}
-          />
-        ) : null}
       </div>
       {children ? (
         <div

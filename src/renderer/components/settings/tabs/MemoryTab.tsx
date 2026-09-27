@@ -174,7 +174,7 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
         searchIds={['memory.embeddingModel', 'memory.acceleration']}
         checked={semanticEnabled}
         onChange={(value) => updateGlobal({ memory: { semanticEnabled: value } })}
-        unavailableReason={indexingEnabled ? undefined : 'Turn on Index conversations first.'}
+        requirement={indexingEnabled ? undefined : 'Needs indexing'}
       >
         {/* Gated on indexingEnabled too, so turning indexing off (which
             disables the semantic switch) hides these rather than leaving them
@@ -221,17 +221,27 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
       {/* Only the agents that can actually answer. An agent with no
           `answerFromContext` is not a choice, it is a way to turn Ask off by
           accident - the same rule the dead facet rows and the colour modes
-          follow. The whole card is hidden when nothing can answer, since
-          picking between zero options is not a decision. Named for the
-          feature people know from the title bar and Quick Find, so its rows
-          can be plain Agent, Model and Effort. */}
-      {semanticReady && answerCapableAgents.length > 0 ? (
-        <SettingsCard
-          icon={<Network size={16} />}
-          label="Knowledge Graph"
-          description="The agent that answers the questions you ask in the graph."
-          searchIds={['memory.answerAgent', 'memory.answerModel', 'memory.answerEffort']}
-        >
+          follow. The card ALWAYS shows, so the feature is visible before it is
+          usable: until its prerequisites are met it is dimmed, with a tag
+          naming the one it depends on directly (semantic search, then an
+          agent that can answer), exactly as the Semantic search card dims with
+          "Needs indexing". Its description never changes, and its rows appear
+          once nothing is missing. Named for the feature people know from the title bar and
+          Quick Find, so its rows can be plain Agent, Model and Effort. */}
+      <SettingsCard
+        icon={<Network size={16} />}
+        label="Knowledge Graph"
+        description="The agent that answers the questions you ask in the graph."
+        searchIds={['memory.answerAgent', 'memory.answerModel', 'memory.answerEffort']}
+        requirement={!semanticReady
+          ? 'Needs semantic search'
+          : answerCapableAgents.length === 0
+            ? 'Needs an answering agent'
+            : undefined}
+        testId="knowledge-graph-card"
+      >
+        {semanticReady && answerCapableAgents.length > 0 ? (
+          <>
               {/* Starts EMPTY. The user's rule: the agent and model are one
                   explicit global choice, never assumed from a project. So there
                   is no default here to inherit and no "follow the project"
@@ -302,8 +312,9 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
                   />
                 </CardRow>
               ) : null}
-        </SettingsCard>
-      ) : null}
+          </>
+        ) : null}
+      </SettingsCard>
     </div>
   );
 }
