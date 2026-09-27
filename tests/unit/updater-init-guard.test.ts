@@ -338,3 +338,110 @@ describe('initUpdater on Linux', () => {
     });
   });
 });
+
+/**
+ * quitAndInstallIfUpdatePending(): the restart route a Graphics acceleration
+ * toggle takes when a downloaded update is already waiting. A plain
+ * app.relaunch() with autoInstallOnAppQuit on would let the installer run
+ * silently on quit WITHOUT relaunching, and it then closes the instance the
+ * relaunch just started, leaving the user with no app at all. This installs
+ * and force-relaunches in one step instead - the same call the release-notes
+ * modal's "Restart to update" button makes.
+ *
+ * `updateDownloaded` is module-scope state, set only inside the real
+ * update-downloaded handler initUpdater wires up. The describe blocks above
+ * already fire that handler against the file's one static `initUpdater`
+ * import (to test the payload it sends, not this flag), so a "nothing
+ * downloaded yet" case here cannot share that import - it would inherit
+ * `true` from an earlier test and pass for the wrong reason. Each test below
+ * resets the module registry and re-imports updater.ts fresh; the vi.mock
+ * factories registered at the top of this file still intercept the reload.
+ */
+describe('quitAndInstallIfUpdatePending', () => {
+  const originalResourcesPath = process.resourcesPath;
+  const originalPlatform = process.platform;
+
+  beforeEach(() => {
+    vi.resetModules();
+    Object.defineProperty(process, 'resourcesPath', {
+      value: '/fake/resources',
+      configurable: true,
+    });
+    mocks.autoUpdaterMock.on.mockReset();
+    mocks.autoUpdaterMock.quitAndInstall.mockReset();
+    mocks.autoUpdaterMock.autoDownload = true;
+    mocks.autoUpdaterMock.autoInstallOnAppQuit = false;
+    mocks.autoUpdaterMock.disableDifferentialDownload = false;
+    mocks.existsSyncMock.mockReset();
+    mocks.existsSyncMock.mockReturnValue(true);
+    mocks.trackEventMock.mockReset();
+    fakeWindowSend.mockReset();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'resourcesPath', {
+      value: originalResourcesPath,
+      configurable: true,
+    });
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+  });
+
+  it('returns false and never calls quitAndInstall when no update has downloaded', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    const updater = await import('../../src/main/updater');
+    updater.initUpdater(fakeWindow);
+    // Full wiring on win32 turns autoInstallOnAppQuit on by itself (see
+    // 'runs full wiring when manifest is present' above); the guard under
+    // test must still refuse to fire, because no download has happened.
+    expect(mocks.autoUpdaterMock.autoInstallOnAppQuit).toBe(true);
+
+    expect(updater.quitAndInstallIfUpdatePending()).toBe(false);
+    expect(mocks.autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('returns false when an update is downloaded but autoInstallOnAppQuit is off (Linux)', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    const updater = await import('../../src/main/updater');
+    updater.initUpdater(fakeWindow);
+    expect(mocks.autoUpdaterMock.autoInstallOnAppQuit).toBe(false);
+
+    const updateDownloadedCall = mocks.autoUpdaterMock.on.mock.calls.find(
+      (call) => call[0] === 'update-downloaded',
+    );
+    if (!updateDownloadedCall) throw new Error('update-downloaded handler was not registered');
+    const updateDownloadedHandler = updateDownloadedCall[1] as (info: {
+      version: string;
+      releaseNotes: unknown;
+    }) => void;
+    updateDownloadedHandler({ version: '9.9.9', releaseNotes: '' });
+
+    expect(updater.quitAndInstallIfUpdatePending()).toBe(false);
+    expect(mocks.autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('installs and force-relaunches when an update is downloaded and autoInstallOnAppQuit is on', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    const updater = await import('../../src/main/updater');
+    updater.initUpdater(fakeWindow);
+    expect(mocks.autoUpdaterMock.autoInstallOnAppQuit).toBe(true);
+
+    const updateDownloadedCall = mocks.autoUpdaterMock.on.mock.calls.find(
+      (call) => call[0] === 'update-downloaded',
+    );
+    if (!updateDownloadedCall) throw new Error('update-downloaded handler was not registered');
+    const updateDownloadedHandler = updateDownloadedCall[1] as (info: {
+      version: string;
+      releaseNotes: unknown;
+    }) => void;
+    updateDownloadedHandler({ version: '9.9.9', releaseNotes: '' });
+
+    expect(updater.quitAndInstallIfUpdatePending()).toBe(true);
+    expect(mocks.autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+    // isSilent, isForceRunAfter: the second flag is what brings the app back
+    // after the install, matching the release-notes modal's own call.
+    expect(mocks.autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(true, true);
+  });
+});
