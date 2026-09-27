@@ -29,8 +29,9 @@ import { atomicWriteJson } from '../config/board-config/atomic-write';
  *
  * What counts as which exit:
  *
- * - `clean`: performShutdown ran (window close, Cmd+Q, Ctrl+C, SIGTERM, an OS
- *   shutdown or log-off that reached the app, an update install).
+ * - `clean`: performShutdown ran (window close, Cmd+Q, Ctrl+C, SIGTERM, a
+ *   closed hosting terminal (SIGHUP), an OS shutdown or log-off that reached
+ *   the app, an update install, a restart to change Graphics acceleration).
  * - `failsafe`: performShutdown ran but Electron's teardown hung and the hard
  *   failsafe force-killed the process tree. Before this, that ending was
  *   visible only in the project log.

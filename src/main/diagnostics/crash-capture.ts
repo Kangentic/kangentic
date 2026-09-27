@@ -5,7 +5,7 @@ import { IPC } from '../../shared/ipc-channels';
 import type { CrashRecord } from '../../shared/types';
 import { resolveCrashRecord } from './source-map-resolver';
 import { isBenignStreamWriteError } from './benign-stream-error';
-import { recordGpuModeObservation, recordGpuProcessGone } from './gpu-health';
+import { isGpuFaultDeath, recordGpuModeObservation, recordGpuProcessGone } from './gpu-health';
 import { createLinuxGpuZygoteProbe } from './linux-gpu-zygote';
 import { getLastHostMemorySample } from './host-memory';
 import { PATHS } from '../config/paths';
@@ -121,14 +121,21 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
     if (details.type !== 'GPU' || details.reason === 'clean-exit') return;
     // breadcrumb-ok: Electron's child-process-gone reason is a fixed enum, not error text
     console.warn(`[gpu] GPU process gone: ${details.reason} (exit code ${details.exitCode})`);
+    // Marked so a triage reading these records (kangentic_get_recent_crashes)
+    // does not take a kill or a Windows session-teardown exit for a GPU
+    // crash. Chromium reports STATUS_DLL_INIT_FAILED_LOGOFF as `crashed`, so
+    // the reason alone says nothing (gpu-health.ts's isGpuFaultDeath).
+    const gpuFault = isGpuFaultDeath({ reason: details.reason, exitCode: details.exitCode ?? null });
     writeRecord(options.getProjectRoot(), {
       ts: new Date().toISOString(),
       kind: 'gpu-process-gone',
       source: 'gpu',
-      message: `GPU process gone: ${details.reason}`,
+      message: gpuFault
+        ? `GPU process gone: ${details.reason}`
+        : `GPU process gone: ${details.reason} (not a GPU fault)`,
       stack: null,
       origin: null,
-      context: { reason: details.reason, exitCode: details.exitCode },
+      context: { reason: details.reason, exitCode: details.exitCode, gpuFault },
       versions: getVersions(),
     });
     // Counts repeated deaths across the whole run (not gated on a project

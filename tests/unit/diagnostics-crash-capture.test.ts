@@ -45,10 +45,16 @@ vi.mock('electron', () => ({
 // gpu-health.ts's own counting/latch/decay/durable-write contract is covered
 // by tests/unit/gpu-health.test.ts; this file only pins that crash-capture's
 // listener calls it with the right arguments and for the right reasons.
-vi.mock('../../src/main/diagnostics/gpu-health', () => ({
-  recordGpuProcessGone: recordGpuProcessGoneMock,
-  recordGpuModeObservation: recordGpuModeObservationMock,
-}));
+// isGpuFaultDeath stays REAL: the local record's `gpuFault` marker is the
+// classifier's answer, and a stub would let the two drift apart.
+vi.mock('../../src/main/diagnostics/gpu-health', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/diagnostics/gpu-health')>();
+  return {
+    isGpuFaultDeath: actual.isGpuFaultDeath,
+    recordGpuProcessGone: recordGpuProcessGoneMock,
+    recordGpuModeObservation: recordGpuModeObservationMock,
+  };
+});
 
 // linux-gpu-zygote.ts has its own suite; here only the wiring matters, and
 // the real probe would read this machine's /proc on a Linux CI runner.
@@ -202,10 +208,13 @@ describe('crash-capture', () => {
       expect(records.map((record) => record.kind)).toEqual(['gpu-process-gone', 'gpu-process-gone']);
       expect(records.map((record) => record.source)).toEqual(['gpu', 'gpu']);
       expect(records.map((record) => record.context)).toEqual([
-        { reason: 'crashed', exitCode: 5 },
-        { reason: 'killed', exitCode: 1 },
+        { reason: 'crashed', exitCode: 5, gpuFault: true },
+        { reason: 'killed', exitCode: 1, gpuFault: false },
       ]);
       expect(records[0]!.message).toBe('GPU process gone: crashed');
+      // A kill is recorded too, but marked, so triage does not read it as a
+      // GPU crash.
+      expect(records[1]!.message).toBe('GPU process gone: killed (not a GPU fault)');
       expect(records[0]!.versions.kangentic).toBe('1.2.3');
       // The persisted log gets one warn per death (warn lines always persist).
       expect(warnSpy).toHaveBeenCalledTimes(2);
@@ -250,7 +259,8 @@ describe('crash-capture', () => {
       const files = fs.readdirSync(directory);
       expect(files).toHaveLength(1);
       const record = JSON.parse(fs.readFileSync(path.join(directory, files[0]!), 'utf-8')) as CrashRecord;
-      expect(record.context).toEqual({ reason: 'launch-failed', exitCode: null });
+      // A GPU process that could not even start is a GPU fault.
+      expect(record.context).toEqual({ reason: 'launch-failed', exitCode: null, gpuFault: true });
 
       expect(recordGpuProcessGoneMock).toHaveBeenCalledTimes(1);
       expect(recordGpuProcessGoneMock).toHaveBeenCalledWith(

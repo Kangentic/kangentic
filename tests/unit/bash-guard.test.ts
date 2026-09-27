@@ -74,6 +74,42 @@ describe('bash-guard', () => {
     });
   });
 
+  describe('blocks command substitution wherever bash expands it', () => {
+    // Bash expands backticks and $( ) inside DOUBLE quotes. A node -e string
+    // holding Markdown backticks once slipped past the old outside-quotes-only
+    // check, and bash ran the backticked text, starting a real dev server.
+    it('blocks backticks inside double quotes', () => {
+      const result = runGuard('node -e "console.log(`npm start`)"');
+      expect(result).not.toBeNull();
+      expect(result!.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(result!.hookSpecificOutput.permissionDecisionReason).toContain('Command substitution');
+    });
+
+    it('blocks $( ) inside double quotes', () => {
+      const result = runGuard('git commit -m "$(cat notes.txt)"');
+      expect(result).not.toBeNull();
+      expect(result!.hookSpecificOutput.permissionDecision).toBe('deny');
+    });
+
+    it('blocks unquoted $( ) and backticks', () => {
+      expect(runGuard('git log $(git rev-parse HEAD)')).not.toBeNull();
+      expect(runGuard('echo `whoami`')).not.toBeNull();
+    });
+
+    it('allows both inside single quotes, where bash keeps them literal', () => {
+      expect(runGuard("node -e 'console.log(`literal`)'")).toBeNull();
+      expect(runGuard("grep '$(' file.txt")).toBeNull();
+    });
+
+    it('allows an escaped backtick or dollar inside double quotes', () => {
+      expect(runGuard('echo "price \\$(5) and \\`tick\\`"')).toBeNull();
+    });
+
+    it('tracks an escaped double quote, so an operator after it still counts as quoted', () => {
+      expect(runGuard('echo "say \\"a && b\\" twice"')).toBeNull();
+    });
+  });
+
   describe('allows safe commands', () => {
     it('allows single commands', () => {
       expect(runGuard('git status')).toBeNull();

@@ -373,6 +373,26 @@ export async function downloadWithRetry(): Promise<void> {
   }
 }
 
+/** Set once an update has finished downloading and is waiting for a quit. */
+let updateDownloaded = false;
+
+/**
+ * For a restart the app asks for itself (changing Graphics acceleration).
+ * With an update downloaded and `autoInstallOnAppQuit` on, a plain quit runs
+ * the installer silently WITHOUT relaunching, and the installer closes the old
+ * instance `app.relaunch()` just started, so Restart now would leave the user
+ * with no app at all. Install and relaunch in one step instead: the same call
+ * the release-notes modal makes, and it still quits through `before-quit`.
+ * Returns false when nothing installs on quit, and the caller relaunches
+ * normally. Linux keeps `autoInstallOnAppQuit` off (see initUpdater), so a
+ * restart there never raises the package manager's password prompt.
+ */
+export function quitAndInstallIfUpdatePending(): boolean {
+  if (!updateDownloaded || !autoUpdater.autoInstallOnAppQuit) return false;
+  autoUpdater.quitAndInstall(true, true);
+  return true;
+}
+
 /**
  * Registered on every path that bails out of updater init (dev, and a
  * packaged build with no update manifest). The renderer's updater surfaces
@@ -481,6 +501,7 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     // In the template, not a second argument: the breadcrumb policy drops
     // every string argument after the first.
     console.log(`[UPDATER] Update downloaded: ${info.version}`);
+    updateDownloaded = true;
     if (updaterWindow && !updaterWindow.isDestroyed()) {
       updaterWindow.webContents.send(IPC.UPDATE_DOWNLOADED, {
         version: info.version,

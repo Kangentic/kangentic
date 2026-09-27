@@ -228,7 +228,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 `tests/unit/` test that runs in CI, and/or an auditor agent invoked during `/code-review`).
 
 **Always-on rules:**
-- `bash-single-command.md` - one command per Bash tool call; no `&&` `||` `|` `;` or redirects.
+- `bash-single-command.md` - one command per Bash tool call; no `&&` `||` `|` `;`, redirects, or command substitution.
 - `writing-style.md` - no AI tells in authored prose; no em-dashes, en-dashes, `--`, or curly quotes.
 - `typescript-style.md` - TypeScript strict mode; no `any` types; full descriptive names.
 - `no-personal-info.md` - no usernames, emails, machine paths, client names, or request origins in committed files (repo is public).

@@ -819,15 +819,20 @@ What to expect while it is off:
   output feel less smooth. Everything still works.
 - Animations and the rest of the UI are unaffected.
 - Nothing turns it back on by itself. When you want to try again, switch **Graphics acceleration**
-  back on in Settings > Performance and restart. If the failure returns, the next launch turns it
+  back on in Settings > Performance and choose **Restart now**. Kangentic restarts with acceleration
+  on, and running agents resume after the restart. If the failure returns, the next launch turns it
   off again.
+
+Only a graphics process that actually fails counts. Shutting down or restarting the computer with
+Kangentic open, ending it from Task Manager, or running out of memory does not turn acceleration off.
 
 Kangentic does not diagnose the cause, and deliberately does not guess at one. On the installs that
 failed at boot, the failures started seconds in, before any agent or terminal existed. A display
 driver is the usual culprit for that shape, so updating yours is the first thing worth trying, but
 the app has no way to confirm that from the inside and will not claim it did. If it keeps happening,
 the local crash records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the
-useful thing to attach to a bug report. When the graphics process could not be started at all,
+useful thing to attach to a bug report. A record whose message ends in "(not a GPU fault)" was a kill
+or a shutdown, not a failure. When the graphics process could not be started at all,
 there is no such record: Chromium never reports a failed start to the app, and only the fallback
 itself is recorded.
 

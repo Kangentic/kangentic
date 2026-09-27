@@ -324,6 +324,119 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     ).toContain('getOptionalIpcContext()?.configManager');
   });
 
+  it('decides the downgrade and the notice with the same fault-only predicate at both call sites', () => {
+    // The module-scope decision engages software rendering and the whenReady
+    // block persists it and arms the notice. If either one fell back to a rule
+    // that counts every GPU exit, a Windows shutdown with the app open (five
+    // session-teardown exits in 126 ms) would again turn a healthy GPU's
+    // acceleration off, or toast about a failure that never happened.
+    // Sliced up to the call rather than brace-matched: the function's return
+    // type is itself a `{ ... }` literal, which a balanced-block scan would
+    // take for the body.
+    const resolveStart = INDEX_CODE.indexOf('function resolveGraphicsMode()');
+    const resolveBody = INDEX_CODE.slice(resolveStart, INDEX_CODE.indexOf('const graphicsMode = resolveGraphicsMode();'));
+    expect(resolveStart).toBeGreaterThan(-1);
+    expect(resolveBody, 'resolveGraphicsMode must decide with gpuEndedPreviousRun').toContain('gpuEndedPreviousRun(pending,');
+    expect(
+      escalationReportTryBlock(),
+      'the whenReady block must re-derive killedTheLastRun with gpuEndedPreviousRun',
+    ).toContain('const killedTheLastRun = gpuEndedPreviousRun(pendingGpuEscalation, gpuReportContext);');
+    expect(INDEX_CODE, 'the old any-exit predicate must not come back').not.toContain('isDeathNearRunEnd');
+  });
+
+  it("titles and tags the report with the latest FAULT death, not the record's latest death", () => {
+    // A crash loop cut short by a Windows shutdown ends in session-teardown
+    // exits. Titling the issue with the record's own latest reason and code
+    // would group and triage it under STATUS_DLL_INIT_FAILED_LOGOFF instead of
+    // the crash.
+    const tryBlock = escalationReportTryBlock();
+    expect(tryBlock).toContain('const reportedDeath = gpuFaultSummary.lastFaultDeath ?? pendingGpuEscalation;');
+    expect(tryBlock).toContain('`GPU process exited repeatedly (reason ${reportedDeath.reason}, exit code ${reportedDeath.exitCode ?? \'unknown\'})`');
+    expect(tryBlock).toContain('reason: reportedDeath.reason,');
+    expect(tryBlock).toContain("exitCode: String(reportedDeath.exitCode ?? 'unknown'),");
+  });
+
+  it('saves the Graphics acceleration toggle through the IPC context config manager and restarts in the same handler', () => {
+    // Like the status handler above, this is a bare top-level registration the
+    // UI tier only ever reaches through the mock, so its body is pinned here.
+    const handlerStart = INDEX_CODE.indexOf('ipcMain.handle(IPC.GPU_HEALTH_SET_ACCELERATION');
+    expect(handlerStart, 'src/main/index.ts must register the GPU_HEALTH_SET_ACCELERATION handler').toBeGreaterThan(-1);
+    const handlerBody = sliceBalancedBlock(INDEX_CODE, INDEX_CODE.indexOf('{', handlerStart));
+    expect(
+      handlerBody,
+      'the save must resolve getOptionalIpcContext()?.configManager first, for the same stale-cache reason as the persist arm',
+    ).toContain('getOptionalIpcContext()?.configManager');
+    expect(handlerBody).toContain("graphicsAccelerationOffBy: enabled ? null : 'user'");
+    // The restart is what keeps the saved value matching the running mode.
+    // A save alone is the silent toggle this replaced.
+    const saveIndex = handlerBody.indexOf('configManager.save(');
+    const relaunchIndex = handlerBody.indexOf('relaunchApp(');
+    expect(saveIndex, 'the handler must save the setting').toBeGreaterThan(-1);
+    expect(relaunchIndex, 'the handler must restart after saving').toBeGreaterThan(saveIndex);
+    expect(handlerBody, 'the dev restart file is read only in dev builds').toContain('__KANGENTIC_DEV__ ? devRestartFileFrom(process.argv) : null');
+    // A plain relaunch with a downloaded update pending runs the installer on
+    // quit without relaunching, and the installer closes the relaunched app.
+    expect(handlerBody).toContain('installPendingUpdateAndRelaunch: quitAndInstallIfUpdatePending');
+    expect(handlerBody, 'app.exit() would skip before-quit, so the run would read as abrupt').not.toContain('app.exit(');
+  });
+
+  it('rejects a non-boolean enabled argument by throwing, not by coercing or silently no-opping', () => {
+    const handlerStart = INDEX_CODE.indexOf('ipcMain.handle(IPC.GPU_HEALTH_SET_ACCELERATION');
+    expect(handlerStart, 'src/main/index.ts must register the GPU_HEALTH_SET_ACCELERATION handler').toBeGreaterThan(-1);
+    const handlerBody = sliceBalancedBlock(INDEX_CODE, INDEX_CODE.indexOf('{', handlerStart));
+
+    const typeGuardIndex = handlerBody.indexOf("typeof enabled !== 'boolean'");
+    expect(
+      typeGuardIndex,
+      "the handler must validate its argument with typeof enabled !== 'boolean' before touching configManager or relaunchApp, so a malformed IPC payload is rejected instead of being coerced into a truthy or falsy acceleration setting",
+    ).toBeGreaterThan(-1);
+
+    const throwIndex = handlerBody.indexOf('throw', typeGuardIndex);
+    expect(
+      throwIndex,
+      'the type check must be followed by a throw',
+    ).toBeGreaterThan(typeGuardIndex);
+
+    // Guards against the check finding a throw belonging to a LATER, unrelated
+    // statement (the save-failure throw further down this same handler) once
+    // the type guard's own throw is weakened to a warn-and-return. No
+    // semicolon can sit between the condition and its own throw, since they
+    // share one if-statement.
+    expect(
+      handlerBody.slice(typeGuardIndex, throwIndex),
+      'the throw must belong to the SAME if-check as the type guard, not a later throw the guard merely happens to precede once its own throw is removed',
+    ).not.toContain(';');
+  });
+
+  it('throws before relaunching when configManager.save() reports a failed write, instead of restarting into the old mode with the failure toast lost in the quit', () => {
+    const handlerStart = INDEX_CODE.indexOf('ipcMain.handle(IPC.GPU_HEALTH_SET_ACCELERATION');
+    expect(handlerStart, 'src/main/index.ts must register the GPU_HEALTH_SET_ACCELERATION handler').toBeGreaterThan(-1);
+    const handlerBody = sliceBalancedBlock(INDEX_CODE, INDEX_CODE.indexOf('{', handlerStart));
+
+    // configManager.save() reports a failed write by RETURNING false, not by
+    // throwing, so the handler has to check the return value itself. A
+    // restart that goes ahead after a failed save would suspend every running
+    // agent and relaunch straight back into the OLD mode, with the
+    // write-failure toast lost in the quit before the user ever sees it.
+    const saveGuardIndex = handlerBody.indexOf('if (!configManager.save(');
+    expect(
+      saveGuardIndex,
+      'the handler must check the return value of configManager.save(...) with if (!configManager.save(...)), since a failed write reports itself by returning false rather than throwing',
+    ).toBeGreaterThan(-1);
+
+    const saveFailureThrowIndex = handlerBody.indexOf("throw new Error('Graphics acceleration could not be saved')");
+    expect(
+      saveFailureThrowIndex,
+      "a failed save must throw new Error('Graphics acceleration could not be saved'), so the invoke call rejects and the settings tab can surface the failure",
+    ).toBeGreaterThan(saveGuardIndex);
+
+    const relaunchIndex = handlerBody.indexOf('relaunchApp(');
+    expect(
+      relaunchIndex,
+      'relaunchApp( must run only AFTER the save-failure throw. A restart on a failed save would suspend every agent and come back in the old mode, and the write-failure toast would be lost in the quit',
+    ).toBeGreaterThan(saveFailureThrowIndex);
+  });
+
   it('reports the escalation only after setErrorReportingUser(clientId) has run, so the install id correlates it with a minidump of the same crash', () => {
     // Uses INDEX_CODE (comment-stripped), not tryBlock/INDEX_SOURCE: the
     // block's own comment narrates "Must run AFTER setErrorReportingUser
@@ -415,6 +528,15 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
       fallbackMessageIndex,
       "the fallback-only string ('GPU left hardware acceleration...') must be the ELSE arm: it has to sit after the ternary's :, not before it",
     ).toBeGreaterThan(colonIndex);
+  });
+
+  it('carries faultDeathCount from gpuFaultSummary.faultCount, so a report can tell how much of the record was real GPU faults versus kills and teardown exits', () => {
+    const tryBlock = escalationReportTryBlock();
+
+    expect(
+      tryBlock,
+      "the gpu_process context must carry faultDeathCount: gpuFaultSummary.faultCount. pendingGpuEscalation.count also collects kills and session-teardown exits alongside real GPU faults, so without this field a report cannot show how much of the record's count was noise rather than an actual fault",
+    ).toContain('faultDeathCount: gpuFaultSummary.faultCount');
   });
 
   it("sources previousRunExit from previousRunProps.lastRunExit with an 'unknown' fallback, the exact field name and sentinel that already drifted once (commit cf620796)", () => {

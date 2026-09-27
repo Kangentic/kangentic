@@ -528,6 +528,11 @@ export const IPC = {
   // registered is dropped silently - with the escalation record already
   // cleared, so nothing would ever resend it. The renderer pulls instead.
   GPU_HEALTH_STATUS: 'gpuHealth:status',
+  // Save Graphics acceleration and restart. One main-side call rather than a
+  // config:set followed by a relaunch: the graphics mode is chosen before
+  // app.whenReady, so a save that lands without the restart leaves the saved
+  // value disagreeing with how the app is actually rendering.
+  GPU_HEALTH_SET_ACCELERATION: 'gpuHealth:setAccelerationAndRestart',
 
   // Announcements (remote feed poll; see src/main/announcements.ts)
   ANNOUNCEMENTS_GET: 'announcements:get',
