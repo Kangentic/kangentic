@@ -62,6 +62,8 @@ interface LaunchOptions {
    * for a Performance-tab-only assertion.
    */
   omitProject?: boolean;
+  /** Makes the mock's gpuHealth.setAccelerationAndRestart() reject. */
+  restartRejects?: boolean;
 }
 
 async function launchWithState(
@@ -81,6 +83,7 @@ async function launchWithState(
     window.__mockGpuSoftwareRendering = ${options.softwareRendering === true};
     window.__mockGraphicsAccelerationWriteLandsAfterBoot = ${options.accelerationWriteLandsAfterBoot === true};
     window.__mockGpuHealthReadStatusRejects = ${options.readStatusRejects === true};
+    window.__mockGraphicsRestartRejects = ${options.restartRejects === true};
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
 
@@ -338,6 +341,182 @@ test.describe('Settings > Performance', () => {
       const notice = page.getByTestId('graphics-acceleration-notice');
       await expect(notice).toBeVisible();
       await expect(notice).toContainText('Kangentic turned this off after repeated failures.');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('turning it off asks to restart, and Cancel leaves the saved value and the switch alone', async () => {
+    // The graphics mode is chosen before the app is ready, so a save with no
+    // restart would leave the switch disagreeing with how the app renders.
+    // Cancel must save nothing, which is what snaps the switch back.
+    //
+    // omitProject in each restart test: this spec seeds an empty
+    // onboardedProjectIds, so an open project raises the onboarding checklist,
+    // whose backdrop takes the clicks. Performance is a system tab and renders
+    // with no project open.
+    const { browser, page } = await launchWithState({ omitProject: true });
+    try {
+      await openPerformanceTab(page);
+      const graphicsSwitch = page.getByRole('switch', { name: 'Graphics acceleration' });
+      await expect(graphicsSwitch).toHaveAttribute('aria-checked', 'true');
+      await graphicsSwitch.click();
+
+      const dialog = page.getByTestId('graphics-restart-confirm');
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText('Restart without graphics acceleration?');
+      await expect(dialog).toContainText('Kangentic restarts to apply this.');
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+      await expect(dialog).toHaveCount(0);
+      await expect(graphicsSwitch).toHaveAttribute('aria-checked', 'true');
+      const requests = await page.evaluate(() => (window as unknown as { __mockGraphicsRestartRequests?: boolean[] }).__mockGraphicsRestartRequests ?? []);
+      expect(requests).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Restart now saves the new value and restarts in one call', async () => {
+    const { browser, page } = await launchWithState({ omitProject: true });
+    try {
+      await openPerformanceTab(page);
+      const graphicsSwitch = page.getByRole('switch', { name: 'Graphics acceleration' });
+      await graphicsSwitch.click();
+      const dialog = page.getByTestId('graphics-restart-confirm');
+      await dialog.getByRole('button', { name: 'Restart now' }).click();
+
+      await expect(dialog).toHaveCount(0);
+      await expect.poll(() => page.evaluate(
+        () => (window as unknown as { __mockGraphicsRestartRequests?: boolean[] }).__mockGraphicsRestartRequests ?? [],
+      )).toEqual([false]);
+      // The mock applied the save the relaunched app would read.
+      await expect(graphicsSwitch).toHaveAttribute('aria-checked', 'false');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('turning it back on after Kangentic turned it off asks to restart with acceleration', async () => {
+    const { browser, page } = await launchWithState({
+      softwareRendering: true,
+      graphicsAccelerationEnabled: false,
+      graphicsAccelerationOffBy: 'app',
+      omitProject: true,
+    });
+    try {
+      await openPerformanceTab(page);
+      await page.getByRole('switch', { name: 'Graphics acceleration' }).click();
+      const dialog = page.getByTestId('graphics-restart-confirm');
+      await expect(dialog).toContainText('Restart with graphics acceleration?');
+      await dialog.getByRole('button', { name: 'Restart now' }).click();
+
+      await expect.poll(() => page.evaluate(
+        () => (window as unknown as { __mockGraphicsRestartRequests?: boolean[] }).__mockGraphicsRestartRequests ?? [],
+      )).toEqual([true]);
+      await expect(page.getByTestId('graphics-acceleration-notice')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('says so when the restart fails, and leaves the switch on the saved value', async () => {
+    const { browser, page } = await launchWithState({ restartRejects: true, omitProject: true });
+    try {
+      await openPerformanceTab(page);
+      const graphicsSwitch = page.getByRole('switch', { name: 'Graphics acceleration' });
+      await graphicsSwitch.click();
+      const dialog = page.getByTestId('graphics-restart-confirm');
+      await dialog.getByRole('button', { name: 'Restart now' }).click();
+
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByTestId('toast').filter({ hasText: 'Kangentic could not restart' })).toHaveCount(1);
+      await expect(graphicsSwitch).toHaveAttribute('aria-checked', 'true');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a second confirm while the restart is still pending sends only one request', async () => {
+    // ConfirmDialog has no debounce of its own (its buttons are never
+    // disabled), so PerformanceTab guards confirmGraphicsRestart with
+    // restartInFlightRef: a second confirm before the first
+    // setAccelerationAndRestart call resolves must return early rather than
+    // asking main to save and restart twice. The mock's hold flag keeps the
+    // first call pending so the dialog stays open (pendingGraphicsAcceleration
+    // is only cleared in confirmGraphicsRestart's finally) long enough to
+    // drive a second click at it.
+    const { browser, page } = await launchWithState({ omitProject: true });
+    try {
+      await openPerformanceTab(page);
+      await page.evaluate(() => {
+        (window as unknown as { __mockGraphicsRestartHold?: boolean }).__mockGraphicsRestartHold = true;
+      });
+
+      await page.getByRole('switch', { name: 'Graphics acceleration' }).click();
+      const dialog = page.getByTestId('graphics-restart-confirm');
+      await expect(dialog).toBeVisible();
+      const restartButton = dialog.getByRole('button', { name: 'Restart now' });
+
+      await restartButton.click();
+      await expect.poll(() => page.evaluate(
+        () => (window as unknown as { __mockGraphicsRestartRequests?: boolean[] }).__mockGraphicsRestartRequests ?? [],
+      )).toHaveLength(1);
+
+      // The dialog is still open (the first call is held pending), so this is
+      // exactly the double confirm the guard exists for.
+      await expect(dialog).toBeVisible();
+      await restartButton.click();
+
+      // No poll here on purpose: restartInFlightRef's guard is a synchronous
+      // early return, with nothing awaited before it. If the guard were
+      // deleted, the second click's call would already have pushed a second
+      // entry by the time the click's own event dispatch (already awaited
+      // above) completed, so checking immediately is deterministic, not a
+      // race against a future async write.
+      const requestsAfterSecondConfirm = await page.evaluate(
+        () => (window as unknown as { __mockGraphicsRestartRequests?: boolean[] }).__mockGraphicsRestartRequests ?? [],
+      );
+      expect(
+        requestsAfterSecondConfirm,
+        'a second confirm while the first setAccelerationAndRestart call is still pending must not reach main a second time',
+      ).toHaveLength(1);
+
+      // Release the held call so the dialog can finish its own close, and
+      // leave nothing pending for the browser teardown below.
+      await page.evaluate(() => {
+        const release = (window as unknown as { __mockGraphicsRestartHoldRelease?: () => void })
+          .__mockGraphicsRestartHoldRelease;
+        if (release) release();
+      });
+      await expect(dialog).toHaveCount(0);
+      const finalRequests = await page.evaluate(
+        () => (window as unknown as { __mockGraphicsRestartRequests?: boolean[] }).__mockGraphicsRestartRequests ?? [],
+      );
+      expect(finalRequests).toEqual([false]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the restart dialog shows the restart icon, not the warning triangle', async () => {
+    // ConfirmDialog falls back to the warning triangle (AlertTriangle, an
+    // alias of lucide's triangle-alert) unless the caller supplies its own
+    // icon. PerformanceTab passes RotateCw for this dialog because a restart
+    // is not a warning; this pins that the icon prop is actually rendered
+    // instead of ignored.
+    const { browser, page } = await launchWithState({ omitProject: true });
+    try {
+      await openPerformanceTab(page);
+      await page.getByRole('switch', { name: 'Graphics acceleration' }).click();
+
+      const dialog = page.getByTestId('graphics-restart-confirm');
+      await expect(dialog).toBeVisible();
+
+      await expect(dialog.locator('svg.lucide-rotate-cw')).toHaveCount(1);
+      await expect(
+        dialog.locator('svg.lucide-triangle-alert, svg.lucide-alert-triangle'),
+      ).toHaveCount(0);
     } finally {
       await browser.close();
     }

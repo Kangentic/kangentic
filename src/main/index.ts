@@ -5,6 +5,7 @@ import type { Event as ElectronEvent } from 'electron';
 import type { GpuGraphicsStatus } from '../shared/types';
 import path from 'node:path';
 import fs from 'node:fs';
+import { relaunchApp, devRestartFileFrom } from './app-relaunch';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
@@ -35,7 +36,7 @@ import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, s
 import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
-import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, isDeathNearRunEnd, shouldReportEscalation, summarizeGpuInfo } from './diagnostics/gpu-health';
+import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, summarizeGpuInfo } from './diagnostics/gpu-health';
 import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
@@ -257,7 +258,7 @@ process.on('unhandledRejection', (reason) => {
   }
 });
 
-import { initUpdater, updateUpdaterWindow, stopUpdaterTimers } from './updater';
+import { initUpdater, updateUpdaterWindow, stopUpdaterTimers, quitAndInstallIfUpdatePending } from './updater';
 import { initAnnouncements, updateAnnouncementsWindow, stopAnnouncementTimers } from './announcements';
 import { ensureSpawnHelperPermissions } from './pty/spawn/spawn-helper-permissions';
 
@@ -308,12 +309,14 @@ for (const arg of process.argv) {
  *
  *   1. The stored setting is off. That covers every launch after the first
  *      recovered one, and a user who chose it themselves.
- *   2. No setting yet, but the PREVIOUS run died with a GPU death at its end
- *      (gpu-health.ts's isDeathNearRunEnd). This is the launch that rescues an
- *      install which cannot otherwise start: DESKTOP-18's seven launches each
- *      died 8 to 12 seconds in, so waiting for a setting written by a later
- *      run would never have helped. whenReady persists the setting, so trigger
- *      1 takes over from there.
+ *   2. No setting yet, but the PREVIOUS run died of repeated GPU faults at its
+ *      end (gpu-health.ts's gpuEndedPreviousRun). This is the launch that
+ *      rescues an install which cannot otherwise start: DESKTOP-18's seven
+ *      launches each died 8 to 12 seconds in, so waiting for a setting written
+ *      by a later run would never have helped. whenReady persists the setting,
+ *      so trigger 1 takes over from there. Kills and session-teardown exits do
+ *      not count as faults, which is what keeps a Windows shutdown with the
+ *      app open from turning a healthy GPU's acceleration off.
  *
  * Both, not one. `--in-process-gpu` removes the GPU child process, so
  * Chromium's IntentionallyCrashBrowserForUnusableGpuProcess (the LOG(FATAL)
@@ -349,7 +352,7 @@ function resolveGraphicsMode(): { software: boolean; engagedNow: boolean } {
     const pending = readPendingGpuEscalation(GPU_HEALTH_FILE_PATH);
     if (!pending) return { software: false, engagedNow: false };
     const previousRun = peekPreviousRun(RUN_UPTIME_FILE_PATH);
-    const killedTheLastRun = isDeathNearRunEnd(pending, {
+    const killedTheLastRun = gpuEndedPreviousRun(pending, {
       previousRunExit: previousRun?.exit ?? null,
       lastKnownAliveAt: previousRun?.lastAliveAt ?? null,
     });
@@ -390,6 +393,38 @@ ipcMain.handle(IPC.GPU_HEALTH_STATUS, (): GpuGraphicsStatus => {
   const noticePending = pendingGpuNotice;
   pendingGpuNotice = false;
   return { softwareRendering: graphicsMode.software, noticePending };
+});
+
+// The Graphics acceleration toggle's only write path. Saving and restarting are
+// one call because the mode is chosen before whenReady above: a save with no
+// restart would leave the saved value disagreeing with how this launch renders,
+// which is what the old silent toggle did.
+//
+// Saved through the IPC context's manager, NOT windowConfigManager, for the
+// reason the whenReady persist arm gives: registerAllIpc built a second
+// ConfigManager that cached config.json, and its next save (window bounds on
+// the way out) would rewrite the file from that stale cache.
+ipcMain.handle(IPC.GPU_HEALTH_SET_ACCELERATION, (_event, enabled: unknown): void => {
+  if (typeof enabled !== 'boolean') throw new Error('setAccelerationAndRestart expects a boolean');
+  const configManager = getOptionalIpcContext()?.configManager ?? windowConfigManager;
+  // save() reports a failed write by returning false, not by throwing. A
+  // restart after one would suspend every agent and come back in the old mode,
+  // and the write-failure toast would be lost in the quit. Rejecting keeps the
+  // app up so the user sees both.
+  if (!configManager.save({ graphicsAccelerationEnabled: enabled, graphicsAccelerationOffBy: enabled ? null : 'user' })) {
+    throw new Error('Graphics acceleration could not be saved');
+  }
+  relaunchApp({
+    isTest: process.env.NODE_ENV === 'test',
+    devRestartFile: __KANGENTIC_DEV__ ? devRestartFileFrom(process.argv) : null,
+    installPendingUpdateAndRelaunch: quitAndInstallIfUpdatePending,
+    relaunch: () => app.relaunch(),
+    quit: () => app.quit(),
+    // sync-write-ok: dev.js looks for this file when Electron exits, so it
+    // must be on disk before app.quit(). A throw rejects the invoke, and the
+    // settings tab tells the user the restart did not happen.
+    writeFile: (filePath, contents) => fs.writeFileSync(filePath, contents),
+  });
 });
 
 // Set Windows AppUserModelID so the taskbar resolves the correct icon.
@@ -1990,7 +2025,7 @@ app.whenReady().then(async () => {
         previousRunExit: (previousRunProps.lastRunExit as string | undefined) ?? null,
         lastKnownAliveAt: previousRunLastAliveAt(),
       };
-      const killedTheLastRun = isDeathNearRunEnd(pendingGpuEscalation, gpuReportContext);
+      const killedTheLastRun = gpuEndedPreviousRun(pendingGpuEscalation, gpuReportContext);
 
       // Persist what the module-scope decision already engaged, so every
       // later launch reads the setting instead of re-deriving it from a
@@ -2056,15 +2091,25 @@ app.whenReady().then(async () => {
       // announced: a launch-failure ladder (DESKTOP-W), which Electron never
       // reports to JS. Its own message keeps it out of the crash-loop issue,
       // because the two shapes need different triage.
+      //
+      // The title and tags name the latest FAULT death, not the record's
+      // latest death: a crash loop cut short by a Windows shutdown ends in
+      // session-teardown exits, and titling the issue with one of those would
+      // send the triage to the wrong exit code. A record with no fault death
+      // keeps the record's own reason and code: a pre-upgrade record has no
+      // deaths list, and a record whose deaths are all kills or teardown exits
+      // has no fault to name. Only an unexplained fallback reports that one.
+      const gpuFaultSummary = summarizeGpuFaults(pendingGpuEscalation);
+      const reportedDeath = gpuFaultSummary.lastFaultDeath ?? pendingGpuEscalation;
       const gpuReportMessage = pendingGpuEscalation.count > 0
-        ? `GPU process exited repeatedly (reason ${pendingGpuEscalation.reason}, exit code ${pendingGpuEscalation.exitCode ?? 'unknown'})`
+        ? `GPU process exited repeatedly (reason ${reportedDeath.reason}, exit code ${reportedDeath.exitCode ?? 'unknown'})`
         : 'GPU left hardware acceleration with no GPU process exit reported';
       if (shouldReportEscalation(pendingGpuEscalation, gpuReportContext)) reportHandledError(
         new Error(gpuReportMessage),
         {
           source: 'gpu_process',
-          reason: pendingGpuEscalation.reason,
-          exitCode: String(pendingGpuEscalation.exitCode ?? 'unknown'),
+          reason: reportedDeath.reason,
+          exitCode: String(reportedDeath.exitCode ?? 'unknown'),
           crashCount: String(pendingGpuEscalation.count),
         },
         // Content goes in a context, never a tag, matching restart-policy.ts.
@@ -2084,6 +2129,10 @@ app.whenReady().then(async () => {
             reason: pendingGpuEscalation.reason,
             exitCode: pendingGpuEscalation.exitCode,
             count: pendingGpuEscalation.count,
+            // The deaths that counted as GPU faults. `count` includes kills
+            // and session-teardown exits, which the recovery ignores, so the
+            // gap between the two says how much of the record was noise.
+            faultDeathCount: gpuFaultSummary.faultCount,
             firstAt: pendingGpuEscalation.firstAt,
             lastAt: pendingGpuEscalation.lastAt,
             escalatedInVersion: pendingGpuEscalation.appVersion,
@@ -2445,3 +2494,17 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     if (performShutdown()) process.exit(0);
   });
 }
+
+// The terminal hosting the app closed. On macOS and Linux that is a real
+// SIGHUP. On Windows, libuv maps the console's CTRL_CLOSE_EVENT to it and holds
+// the console handler open so this can run. Without a listener, the default
+// action ends the process with no exit recorded, and an `npm start` session
+// whose terminal closed read as `abrupt` on its next launch. Whether a Windows
+// shutdown or log-off under a terminal delivers CTRL_CLOSE to this process
+// before killing it is unverified. The GPU check does not depend on it:
+// session-teardown exits never count as GPU faults (gpu-health.ts). Its own
+// statement rather than a third entry in the tuple above, whose literal
+// before-quit-drain-wiring.test.ts anchors on.
+process.on('SIGHUP', () => {
+  if (performShutdown()) process.exit(0);
+});

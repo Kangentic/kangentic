@@ -565,6 +565,7 @@ const api: ElectronAPI = {
 
   gpuHealth: {
     readStatus: () => ipcRenderer.invoke(IPC.GPU_HEALTH_STATUS),
+    setAccelerationAndRestart: (enabled: boolean) => ipcRenderer.invoke(IPC.GPU_HEALTH_SET_ACCELERATION, enabled),
   },
 
   announcements: {

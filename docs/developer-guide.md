@@ -174,6 +174,13 @@ Three parallel processes:
 2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the three `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/retrieval/embedder/embed-worker.ts`, `src/main/git/line-count/line-count-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
 3. **Electron** -- launched with `MAIN_WINDOW_VITE_DEV_SERVER_URL` pointing to Vite
 
+`dev.js` owns the Electron child and closes Vite when it exits, so the app never calls
+`app.relaunch()` under it. A restart the app asks for (changing Graphics acceleration) writes the
+file `dev.js` passes as `--dev-restart-file=`, then quits normally, and `dev.js` spawns Electron
+again with Vite still running (`src/main/app-relaunch.ts`). On Ctrl+C or a closed terminal, `dev.js`
+waits up to 3 s for Electron to exit on its own before killing it, since Electron gets the same
+signal and records a clean exit itself.
+
 The esbuild externals (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `sqlite-vec`, `@huggingface/transformers`, `font-list`, plus `electron` itself) are not bundled. They load at runtime from `node_modules`. The list is declared identically in `scripts/build.js` and `scripts/dev.js`, so change one and change the other. Everything else, `simple-git` included, is bundled. Getting an external into a packaged build is a separate question, covered under Packaging below.
 
 Flags:
