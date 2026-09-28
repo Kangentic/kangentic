@@ -104,13 +104,15 @@ export interface MemoryGraphCanvasProps {
   /** Nodes the agent's own searches found, drawn with a white ring. */
   ringed?: ReadonlySet<number>;
   /**
-   * While a question lights the map: the in-scope nodes it did NOT light stay
-   * on screen as small, faint grey context instead of vanishing, so the lit set
-   * reads against the map it came from. `scope` is the filtered set, or null
-   * when no filter is on (every node is in scope); a node outside it stays
-   * hidden, since the filters redefine what the map is.
+   * What the camera flies to when the lit set changes, when that is narrower
+   * than the lit set itself: an answer's own tasks rather than the whole
+   * related set around them. Absent means the lit set.
+   *
+   * Reported: framing the related set, which spans most of the map on a broad
+   * question, left the camera where it was, so an answer never looked like it
+   * narrowed anything.
    */
-  context?: { scope: ReadonlySet<number> | null };
+  focusIndices?: ReadonlyArray<number> | null;
   /**
    * The islands, when several projects' maps are composed: each project's name
    * and its node range. Their labels sit above each island, placed before the
@@ -129,17 +131,13 @@ export interface MemoryGraphCanvasProps {
 
 /** The dimmest a lit node draws: a weak relation, still readable as lit. */
 const WEAKEST_LIT_ALPHA = 0.3;
-/** How brightly an unlit node draws as context behind a question's lit set. */
-const CONTEXT_ALPHA = 0.18;
-/** Size multiplier for a context node: present, but clearly not part of the answer. */
-const CONTEXT_SCALE = 0.7;
 /** Size multiplier for a ringed node. */
 const RINGED_SCALE = 1.35;
 /** Below this strength a lit node draws as a dot, without a title or a region pill. */
 const LABEL_MIN_STRENGTH = 0.5;
 
 /**
- * Alpha for everything outside an active search or filter.
+ * Alpha for everything outside an active search, filter, or question.
  *
  * ZERO: a query SCOPES the map rather than tinting it. Dimming was tried first
  * and does not work at this density - 150 conversations and 486 links dimmed to
@@ -147,7 +145,13 @@ const LABEL_MIN_STRENGTH = 0.5;
  * some green in it rather than as an answer. Hidden nodes also drop their links
  * and stop being pickable (see `memory-graph-scene.ts`), so what is left on
  * screen is the query's own structure.
+ *
+ * A question scopes the same way. Its unlit nodes used to stay as grey context,
+ * and on a 1,132-conversation map that read as the whole map dimmed rather than
+ * as the tasks the answer was about (reported on the two-project preview).
  */
+const HIDDEN_ALPHA = 0;
+
 /**
  * How far the pointer may travel before a click becomes a camera drag.
  *
@@ -158,7 +162,6 @@ const LABEL_MIN_STRENGTH = 0.5;
  * arrived in the same tick as the press.
  */
 const DRAG_SLOP_PX = 3;
-const HIDDEN_ALPHA = 0;
 /** How brightly a conversation with no links draws, relative to a connected one. */
 const ISOLATED_ALPHA = 0.55;
 
@@ -354,7 +357,7 @@ export function MemoryGraphCanvas({
   framingIndices = null,
   strengths,
   ringed,
-  context,
+  focusIndices = null,
   islands,
   worldExtent = 1,
 }: MemoryGraphCanvasProps) {
@@ -785,14 +788,11 @@ export function MemoryGraphCanvas({
   // styles need it, and a memo that reached for the container during render
   // could only ever see the fallback on the first pass.
   const [accentColor, setAccentColor] = useState('#4ade80');
-  // The grey a context node draws in, from the theme like the two above.
-  const [contextColor, setContextColor] = useState('#71717a');
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     setEdgeColor(normalizeCssColor(readCssColor(container, '--color-fg-muted', '#8b949e')));
     setAccentColor(readCssColor(container, '--kng-active', '#4ade80'));
-    setContextColor(readCssColor(container, '--kng-fg-faint', '#71717a'));
   }, []);
 
   const framingInsets = useMemo(
@@ -990,25 +990,19 @@ export function MemoryGraphCanvas({
   const styles = useMemo<SceneNodeStyle[]>(() => {
     const hasHighlight = highlighted !== undefined && highlighted.size > 0;
     const accentTriplet = toLinearTriplet(accentColor);
-    const contextTriplet = toLinearTriplet(contextColor);
 
     return projection.nodes.map((node, index) => {
       const isSelected = index === selectedIndex;
       const isHovered = index === hoveredIndex;
       const isLit = hasHighlight && highlighted.has(index);
-      // An unlit node a question leaves in scope: grey context, not hidden.
-      const isContext = hasHighlight && !isLit && !isSelected && context !== undefined
-        && (context.scope === null || context.scope.has(index));
 
       // A lit node KEEPS its colour mode's colour: the answer's tasks read in
-      // their topic's colour against grey context, the way the Ask mockup draws
-      // them. Painting every lit node the one accent green hid which topics the
-      // answer came from, and made a filter alone recolour the whole map.
+      // their topic's colour. Painting every lit node the one accent green hid
+      // which topics the answer came from, and made a filter alone recolour the
+      // whole map.
       let color: [number, number, number];
       if (isSelected) {
         color = accentTriplet;
-      } else if (isContext) {
-        color = contextTriplet;
       } else if (colorMode === 'cluster') {
         color = toLinearTriplet(`hsl(${clusterHue(regionOf(node))} 62% 62%)`);
       } else if (colorMode === 'recency') {
@@ -1061,7 +1055,6 @@ export function MemoryGraphCanvas({
       let scale = MIN_NODE_SCALE + connectedness * DEGREE_SCALE_RANGE + lengthNudge;
       if (isSelected) scale *= SELECTED_SCALE;
       else if (isHovered) scale *= HOVERED_SCALE;
-      else if (isContext) scale *= CONTEXT_SCALE;
 
       // A conversation linked to nothing draws quieter than one that anchors a
       // region. They are the noisiest part of the wide view - scattered specks
@@ -1075,8 +1068,7 @@ export function MemoryGraphCanvas({
       // related set reads as a gradient toward the tasks the answer is about.
       const strength = isLit ? strengths?.get(index) : undefined;
       let alpha: number;
-      if (isContext) alpha = CONTEXT_ALPHA;
-      else if (hasHighlight && !isLit && !isSelected) alpha = HIDDEN_ALPHA;
+      if (hasHighlight && !isLit && !isSelected) alpha = HIDDEN_ALPHA;
       else if (strength !== undefined && !isSelected && !isHovered) {
         alpha = WEAKEST_LIT_ALPHA + (1 - WEAKEST_LIT_ALPHA) * Math.max(0, Math.min(1, strength));
       } else alpha = isolated ? ISOLATED_ALPHA : 1;
@@ -1087,8 +1079,9 @@ export function MemoryGraphCanvas({
   }, [
     projection.nodes, highlighted, selectedIndex, hoveredIndex, colorMode,
     recencyRank, lengthRank, durationRank, costRank, degrees, maxDegree, regionOf,
-    accentColor, contextColor, strengths, ringed, context,
+    accentColor, strengths, ringed,
   ]);
+  const drawnCount = useMemo(() => styles.reduce((count, style) => count + (style.alpha > 0 ? 1 : 0), 0), [styles]);
 
   useEffect(() => {
     // Recomputed alongside the styles, from the same alphas the scene gets, so a
@@ -1097,9 +1090,7 @@ export function MemoryGraphCanvas({
     const hasHighlight = highlighted !== undefined && highlighted.size > 0;
     for (let index = 0; index < styles.length; index += 1) {
       if (styles[index].alpha <= 0) continue;
-      // Grey context behind a question draws but never labels: only what the
-      // question lit names a region or carries a title, or every region on the
-      // map would get its pill back the moment context stopped being hidden.
+      // Only what a highlight lit names a region or carries a title.
       if (hasHighlight && !highlighted.has(index) && index !== selectedIndex) continue;
       drawn.push(index);
     }
@@ -1189,17 +1180,20 @@ export function MemoryGraphCanvas({
    * the camera themselves, and yanking it somewhere on a clear is worse than
    * leaving it - "Reset view" is the explicit way home.
    */
-  const highlightKey = highlighted && highlighted.size > 0
-    ? `${highlighted.size}:${[...highlighted].slice(0, 8).join(',')}`
-    : null;
+  // What to frame: the caller's focus when it names one (an answer's own
+  // tasks), else everything lit.
+  const flyTarget = focusIndices && focusIndices.length > 0
+    ? focusIndices
+    : highlighted && highlighted.size > 0 ? [...highlighted] : null;
+  const flyKey = flyTarget ? `${flyTarget.length}:${flyTarget.slice(0, 8).join(',')}` : null;
   useEffect(() => {
-    if (!highlightKey || !highlighted) return;
-    frameNodes([...highlighted]);
-    // `highlighted` is intentionally absent: a new Set with the same members
-    // would otherwise re-fly on every unrelated re-render. `highlightKey` is the
+    if (!flyKey || !flyTarget) return;
+    frameNodes([...flyTarget]);
+    // `flyTarget` is intentionally absent: a new array with the same members
+    // would otherwise re-fly on every unrelated re-render. `flyKey` is the
     // stable identity of its CONTENTS.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
-  }, [highlightKey, frameNodes]);
+  }, [flyKey, frameNodes]);
 
   // ---- picking --------------------------------------------------------------
   const pickAt = useCallback((clientX: number, clientY: number): number | null => {
@@ -1223,6 +1217,9 @@ export function MemoryGraphCanvas({
       data-no-dismiss
       data-testid="memory-graph-canvas"
       data-view-mode="3d"
+      // How many conversations are drawn, so a test can tell a scoped map from
+      // a dimmed one without reading the GPU buffers.
+      data-drawn-count={drawnCount}
     >
       {graph.unavailableReason ? (
         <div

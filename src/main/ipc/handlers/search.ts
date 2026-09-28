@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { createHash } from 'node:crypto';
 import { IPC } from '../../../shared/ipc-channels';
 import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
@@ -7,7 +8,11 @@ import { RetrievalStore } from '../../retrieval/retrieval-store';
 import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { graphService } from '../../retrieval/graph/graph-service';
-import { buildAnswerPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
+import { buildAnswerPrompt, buildFollowUpPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
+import { answerSessionPool, type PooledAnswerSession, type PrimedAnswerChat } from '../../retrieval/answer-session-pool';
+import { AnswerSessionError } from '../../agent/shared/answer-session/stdin-json-session';
+import type { AgentAdapter } from '../../agent/agent-adapter';
+import type { AnswerStreamEvent } from '../../agent/shared/auto-name';
 import {
   buildAnswerTaskTable,
   mergeAnswerTaskTables,
@@ -43,6 +48,7 @@ import type {
   MemoryGraphQueryHit,
   MemoryGraphAnswerResult,
   MemoryAnswerContext,
+  MemoryAnswerPrewarm,
   MemoryAnswerStreamEvent,
   MemoryRelatedTask,
   Project,
@@ -102,6 +108,133 @@ function readBoardTasks(projectId: string): BoardTaskFacts[] {
   }
 }
 
+/** How a question is answered: which agent, CLI, model, effort and search URL.
+ *  A warm session is started under exactly these, summed up as `sessionKey`. */
+interface AnswerRun {
+  adapter: AgentAdapter;
+  /** The adapter's fresh run, bound. */
+  answerFromContext: NonNullable<AgentAdapter['answerFromContext']>;
+  agentName: string;
+  cliPath: string;
+  model: string | null;
+  effort: string | null;
+  retrieval: { url: string; token: string } | undefined;
+  sessionKey: string;
+}
+
+/**
+ * Resolve the answering agent for a question or a prewarm, through the SHARED
+ * rule the renderer uses to decide whether a question runs or goes to Settings
+ * first, so the two can never disagree. The rule is explicit: the configured
+ * agent and model, with no fallback to the project's agent or to any capable one.
+ */
+async function resolveAnswerRun(
+  context: IpcContext,
+  homeProjectId: string,
+  chatId: string,
+): Promise<{ ok: true; run: AnswerRun } | { ok: false; failure: { ok: false; reason: string; setup?: 'agent' | 'model' } }> {
+  const { agentRegistry } = await import('../../agent/agent-registry');
+  const config = context.configManager.load();
+  const agents = agentRegistry.list().flatMap((name) => {
+    const entry = agentRegistry.get(name);
+    return entry
+      ? [{
+        name,
+        displayName: entry.displayName,
+        supportsAnswerFromContext: typeof entry.answerFromContext === 'function',
+        answerCapabilities: entry.answerCapabilities,
+      }]
+      : [];
+  });
+  const configuredAgent = config.memory?.answerAgent ?? null;
+  const configuredModel = config.memory?.answerModel ?? null;
+  const setup = answerSetupGap({ agents, configured: configuredAgent, configuredModel });
+  if (setup) {
+    return {
+      ok: false,
+      failure: {
+        ok: false,
+        setup,
+        reason: setup === 'agent'
+          ? 'choose an agent in the Knowledge Graph card in Settings > Search'
+          : 'choose a model in the Knowledge Graph card in Settings > Search',
+      },
+    };
+  }
+  const agentName = resolveAnswerAgent({ agents, configured: configuredAgent })?.name ?? '';
+  const adapter = agentRegistry.get(agentName);
+  if (!adapter?.answerFromContext) return { ok: false, failure: { ok: false, reason: `unknown agent: ${agentName}` } };
+  const info = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
+  if (!info.found || !info.path) return { ok: false, failure: { ok: false, reason: `${adapter.displayName} CLI not found` } };
+
+  // Effort only for a run that passes it on: the user's level, else the
+  // adapter's recommended default, and either only when the CLI reports it
+  // right now. A stale level would fail every question: Grok, Copilot and
+  // Antigravity all exit on an unknown one.
+  const capabilities = adapter.answerCapabilities;
+  let effort: string | null = null;
+  if (capabilities?.effort && adapter.discoverCapabilities) {
+    const discovered = await adapter.discoverCapabilities(info.path).catch(() => undefined);
+    const levels = discovered?.effortLevels ?? [];
+    const configuredEffort = config.memory?.answerEffort ?? null;
+    if (configuredEffort && levels.includes(configuredEffort)) effort = configuredEffort;
+    else if (capabilities.defaultEffort && levels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
+  }
+
+  // The ONE tool the agent may reach: Kangentic's own conversation search,
+  // scoped to the home project by the URL. Offered only to an agent whose
+  // answer run can use it, and only when the MCP server is up. The URL carries
+  // an ANSWER caller segment keyed by the chat: the server hands such a caller
+  // exactly `kangentic_search` (`buildAnswerMcpServer`) and publishes its
+  // searches to the trace.
+  const retrieval = context.mcpServerHandle && capabilities?.search
+    ? { url: appendAnswerCaller(context.mcpServerHandle.urlForProject(homeProjectId), chatId), token: context.mcpServerHandle.token }
+    : undefined;
+  const run = {
+    adapter,
+    answerFromContext: adapter.answerFromContext.bind(adapter),
+    agentName,
+    cliPath: info.path,
+    model: configuredModel,
+    effort,
+    retrieval,
+  };
+  return { ok: true, run: { ...run, sessionKey: JSON.stringify([agentName, info.path, configuredModel, effort, retrieval?.url ?? null]) } };
+}
+
+/**
+ * The chat's warm session under this run, or null when the agent has none.
+ * A prewarm passes the chat's end generation from before it awaited, so a
+ * chat that ended meanwhile gets nothing.
+ */
+function takeAnswerSession(chatId: string, run: AnswerRun, endGeneration?: number): PooledAnswerSession<PrimedAnswerChat> | null {
+  const openSession = run.adapter.openAnswerSession?.bind(run.adapter);
+  if (!openSession) return null;
+  try {
+    return answerSessionPool.take(chatId, run.sessionKey, (directory) => openSession({
+      cliPath: run.cliPath,
+      cwd: directory,
+      model: run.model,
+      effort: run.effort,
+      retrieval: run.retrieval,
+    }), { endGeneration });
+  } catch (error) {
+    // A session that cannot start costs the warm path, not the answer.
+    console.warn('[memory-graph] answer session did not start, answering with a fresh run:', error);
+    return null;
+  }
+}
+
+/**
+ * What a question's task table depends on besides the data: the projects in
+ * scope, whose tickets stand bare, the region granularity, and the map filter.
+ * A follow-up under the same signature reuses its session's table.
+ */
+function answerScopeSignature(projectIds: string[], homeProjectId: string, granularity: string, scopeDocKeys: string[] | null): string {
+  const filter = scopeDocKeys ? createHash('sha1').update([...scopeDocKeys].sort().join('\n')).digest('hex') : null;
+  return JSON.stringify([projectIds, homeProjectId, granularity, filter]);
+}
+
 /**
  * IPC handler for the renderer-side global search palette (Ctrl+Shift+F).
  *
@@ -143,9 +276,29 @@ export function registerSearchHandlers(context: IpcContext): void {
 
   // Opening the Knowledge Graph is the precursor gesture for a question: spawn +
   // init the embedding worker now so the typing that follows covers its cold
-  // start. Fire-and-forget; embeds nothing.
-  ipcMain.on(IPC.MEMORY_PREWARM, () => {
+  // start. Fire-and-forget; embeds nothing. With a chat, the answering agent's
+  // warm session starts too, for an agent that has one. An idle session makes
+  // no model call, so this costs a process and nothing else.
+  ipcMain.on(IPC.MEMORY_PREWARM, (_event, chat?: MemoryAnswerPrewarm) => {
     retrievalService.prewarmEmbedWorker(context);
+    if (!chat?.chatId) return;
+    const homeProjectId = chat.projectId ?? context.currentProjectId;
+    if (!homeProjectId) return;
+    // Read before the await: a chat that ends while its agent is resolved must
+    // not get a session afterwards.
+    const endGeneration = answerSessionPool.endGeneration(chat.chatId);
+    void resolveAnswerRun(context, homeProjectId, chat.chatId)
+      .then((resolved) => {
+        if (resolved.ok) takeAnswerSession(chat.chatId, resolved.run, endGeneration);
+      })
+      .catch((error: unknown) => console.warn('[memory-graph] answer prewarm failed:', error));
+  });
+
+  // The chat's warm session is no longer needed: the chat ended, or its graph
+  // closed. The next question in a kept chat opens a fresh one carrying the
+  // chat so far.
+  ipcMain.on(IPC.MEMORY_GRAPH_END_CHAT, (_event, chatId: string) => {
+    if (typeof chatId === 'string' && chatId) answerSessionPool.end(chatId);
   });
 
   ipcMain.handle(
@@ -289,46 +442,10 @@ export function registerSearchHandlers(context: IpcContext): void {
         // the open project when it is in scope.
         const homeProject = scopeProjects.find((entry) => entry.id === openProjectId) ?? scopeProjects[0];
 
-        const { agentRegistry } = await import('../../agent/agent-registry');
-        const config = context.configManager.load();
-
-        // Resolved through the SHARED rule the renderer uses to decide whether
-        // a question runs or goes to Settings > Search first, so the two can
-        // never disagree. The rule is explicit: the configured agent and model,
-        // with no fallback to the project's agent or to any capable one.
-        const agents = agentRegistry.list().flatMap((name) => {
-          const entry = agentRegistry.get(name);
-          return entry
-            ? [{
-              name,
-              displayName: entry.displayName,
-              supportsAnswerFromContext: typeof entry.answerFromContext === 'function',
-              answerCapabilities: entry.answerCapabilities,
-            }]
-            : [];
-        });
-        const configuredAgent = config.memory?.answerAgent ?? null;
-        const configuredModel = config.memory?.answerModel ?? null;
-        const setup = answerSetupGap({ agents, configured: configuredAgent, configuredModel });
-        if (setup) {
-          return {
-            ok: false,
-            setup,
-            reason: setup === 'agent'
-              ? 'choose an agent in the Knowledge Graph card in Settings > Search'
-              : 'choose a model in the Knowledge Graph card in Settings > Search',
-          };
-        }
-        const resolved = resolveAnswerAgent({ agents, configured: configuredAgent });
-        const agentName = resolved?.name ?? '';
-        const adapter = agentRegistry.get(agentName);
-        if (!adapter?.answerFromContext) {
-          return { ok: false, reason: `unknown agent: ${agentName}` };
-        }
-        const info = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
-        if (!info.found || !info.path) {
-          return { ok: false, reason: `${adapter.displayName} CLI not found` };
-        }
+        const callerChat = answerContext.chatId || requestId || 'oneshot';
+        const resolvedRun = await resolveAnswerRun(context, homeProject.id, callerChat);
+        if (!resolvedRun.ok) return resolvedRun.failure;
+        const { adapter, answerFromContext, cliPath, model: configuredModel, effort, retrieval } = resolvedRun.run;
 
         // The board: EVERY task inside the map's filters, not a retrieved
         // subset. This is what makes "what was the most expensive" answerable at
@@ -343,6 +460,21 @@ export function registerSearchHandlers(context: IpcContext): void {
         // between projects. A project whose map has not been built yet still
         // brings its board tasks.
         const scope = answerContext.scopeDocKeys ? new Set(answerContext.scopeDocKeys) : null;
+
+        // The chat's warm session, when the agent has one. Under the scope its
+        // first turn was asked in, a follow-up reuses that turn's table (the
+        // session already holds it) and sends only what is new; any other
+        // scope, or no primed turn yet, sends the whole prompt.
+        const scopeSignature = answerScopeSignature(scopeProjects.map((entry) => entry.id), homeProject.id, granularity, answerContext.scopeDocKeys ?? null);
+        let pooled = answerContext.chatId ? takeAnswerSession(answerContext.chatId, resolvedRun.run) : null;
+        // A session primed under another scope holds another table. Sending this
+        // one after it would leave two in its context, so it starts over.
+        if (answerContext.chatId && pooled?.primed && pooled.primed.scopeSignature !== scopeSignature) {
+          answerSessionPool.discard(pooled);
+          pooled = takeAnswerSession(answerContext.chatId, resolvedRun.run);
+        }
+        const primedTable = pooled?.primed?.table ?? null;
+
         const takenPrefixes = new Set<string>();
         // Across projects EVERY ticket carries its project, the open one's too.
         // With the open project's left bare, an agent read a Kangentic task
@@ -352,19 +484,24 @@ export function registerSearchHandlers(context: IpcContext): void {
           const projection = graphService.getProjection(entry.id);
           const refPrefix = acrossProjects ? refPrefixFor(entry.name, takenPrefixes) : null;
           if (refPrefix) takenPrefixes.add(refPrefix);
-          const boardTasks = timeSyncWork('answer:board-tasks', () => readBoardTasks(entry.id));
-          const table = timeSyncWork('answer:table', () => buildAnswerTaskTable(projection ?? EMPTY_PROJECTION, granularity, scope, boardTasks));
-          return { project: entry, projection, refPrefix, table };
+          return { project: entry, projection, refPrefix };
         });
         if (parts.every((part) => !part.projection)) return { ok: false, reason: 'the map is still building' };
-        const taskTable = acrossProjects
-          ? mergeAnswerTaskTables(parts.map((part) => ({
-            table: part.table,
-            projectId: part.project.id,
-            name: part.project.name,
-            refPrefix: part.refPrefix,
-          })))
-          : parts[0].table;
+        const buildTaskTable = () => {
+          const tables = parts.map((part) => {
+            const boardTasks = timeSyncWork('answer:board-tasks', () => readBoardTasks(part.project.id));
+            return timeSyncWork('answer:table', () => buildAnswerTaskTable(part.projection ?? EMPTY_PROJECTION, granularity, scope, boardTasks));
+          });
+          return acrossProjects
+            ? mergeAnswerTaskTables(parts.map((part, index) => ({
+              table: tables[index],
+              projectId: part.project.id,
+              name: part.project.name,
+              refPrefix: part.refPrefix,
+            })))
+            : tables[0];
+        };
+        const taskTable = primedTable ?? buildTaskTable();
         const projectNameById = new Map(scopeProjects.map((entry) => [entry.id, entry.name]));
         /** The project fields a wire task carries. The name only across projects,
          *  where it is what a row shows. */
@@ -457,53 +594,29 @@ export function registerSearchHandlers(context: IpcContext): void {
         const handedWire = related.handed.map(toWire);
         emit({ kind: 'set', related: handedWire, handedCount: related.handed.length });
 
-        // The ONE tool the agent may reach: Kangentic's own conversation search,
-        // scoped to this project by the URL. Offered only to an agent whose
-        // answer run can use it, and only when the MCP server is up.
-        //
-        // The URL carries an ANSWER caller segment, keyed by the chat: the
-        // server hands such a caller exactly `kangentic_search`
-        // (`buildAnswerMcpServer`) and publishes its searches to the trace.
-        const capabilities = adapter.answerCapabilities;
-        // Effort only for a run that passes it on: the user's level, else the
-        // adapter's recommended default, and either only when the CLI reports
-        // it right now. A stale level would fail every question: Grok, Copilot
-        // and Antigravity all exit on an unknown one.
-        let effort: string | null = null;
-        if (capabilities?.effort && adapter.discoverCapabilities) {
-          const discovered = await adapter.discoverCapabilities(info.path).catch(() => undefined);
-          const levels = discovered?.effortLevels ?? [];
-          const configuredEffort = config.memory?.answerEffort ?? null;
-          if (configuredEffort && levels.includes(configuredEffort)) effort = configuredEffort;
-          else if (capabilities.defaultEffort && levels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
-        }
-        const callerChat = answerContext.chatId || requestId || 'oneshot';
-        const retrieval = context.mcpServerHandle && capabilities?.search
-          ? {
-            url: appendAnswerCaller(context.mcpServerHandle.urlForProject(homeProject.id), callerChat),
-            token: context.mcpServerHandle.token,
-          }
-          : undefined;
-
-        const prompt = timeSyncWork('answer:prompt', () => buildAnswerPrompt(trimmed, {
+        const relatedForPrompt = related.handed.flatMap((task, index) => {
+          const ref = refByKey.get(task.key);
+          if (!ref) return [];
+          return [{
+            ref,
+            title: task.title,
+            strength: task.strength,
+            matches: task.matches,
+            firstMs: task.firstMs,
+            lastMs: task.lastMs,
+            passage: index < PASSAGES_SHOWN && task.bestChunkId !== null
+              ? related.passages.get(passageKey(task.projectId, task.bestChunkId)) ?? null
+              : null,
+            facts: rowByKey.get(task.key) ?? null,
+          }];
+        });
+        const canSearch = retrieval !== undefined;
+        // The whole prompt: table, rules, related work and the chat so far. What
+        // a fresh run gets, and what a session's first turn gets.
+        const buildFullPrompt = (): string => timeSyncWork('answer:prompt', () => buildAnswerPrompt(trimmed, {
           tasks: taskTable,
           nowMs: Date.now(),
-          related: related.handed.flatMap((task, index) => {
-            const ref = refByKey.get(task.key);
-            if (!ref) return [];
-            return [{
-              ref,
-              title: task.title,
-              strength: task.strength,
-              matches: task.matches,
-              firstMs: task.firstMs,
-              lastMs: task.lastMs,
-              passage: index < PASSAGES_SHOWN && task.bestChunkId !== null
-                ? related.passages.get(passageKey(task.projectId, task.bestChunkId)) ?? null
-                : null,
-              facts: rowByKey.get(task.key) ?? null,
-            }];
-          }),
+          related: relatedForPrompt,
           history: history.map((turn) => ({
             question: turn.question,
             answer: turn.answer,
@@ -512,11 +625,14 @@ export function registerSearchHandlers(context: IpcContext): void {
               return ref ? [ref] : [];
             }),
           })),
-          canSearch: retrieval !== undefined,
+          canSearch,
           ...(acrossProjects
             ? { projects: { names: scopeProjects.map((entry) => entry.name), searchDefault: homeProject.name } }
             : {}),
         }));
+        const prompt = primedTable
+          ? buildFollowUpPrompt(trimmed, { related: relatedForPrompt, canSearch })
+          : buildFullPrompt();
         // What this question cost to ask, reported rather than estimated after
         // the fact, with the same estimator the chunker sizes text with.
         const promptTokens = estimateTokens(prompt);
@@ -540,24 +656,40 @@ export function registerSearchHandlers(context: IpcContext): void {
           })
           : () => {};
 
-        // A NEUTRAL directory, not the project, and a fresh one per question.
-        // Measured: spawning in the project made the CLI load its CLAUDE.md and
-        // every always-on rule - 18,700 tokens on this repo per question; Grok
-        // loaded about 100k tokens of instruction files for a one-word reply.
-        // Fresh per question because runs write into it: a prompt file for a CLI
-        // that reads one, a per-run MCP config with the live token.
-        const answerFromContext = adapter.answerFromContext.bind(adapter);
-        const cliPath = info.path;
+        const onEvent = (event: AnswerStreamEvent): void => {
+          if (event.kind === 'text') emit({ kind: 'text', text: event.text });
+          else emit({ kind: 'tool', name: event.name });
+        };
+        // A fresh run: a NEUTRAL directory, not the project, and a fresh one per
+        // question. Measured: spawning in the project made the CLI load its
+        // CLAUDE.md and every always-on rule - 18,700 tokens on this repo per
+        // question; Grok loaded about 100k tokens of instruction files for a
+        // one-word reply. Fresh per question because runs write into it: a
+        // prompt file for a CLI that reads one, a per-run MCP config with the
+        // live token.
+        const runFresh = (freshPrompt: string): Promise<string> => withAnswerRunDirectory((runDirectory) => (
+          answerFromContext(freshPrompt, cliPath, runDirectory, configuredModel, { retrieval, effort, onEvent })
+        ));
         let raw: string;
         try {
-          raw = await withAnswerRunDirectory((runDirectory) => answerFromContext(prompt, cliPath, runDirectory, configuredModel, {
-            retrieval,
-            effort,
-            onEvent: (event) => {
-              if (event.kind === 'text') emit({ kind: 'text', text: event.text });
-              else emit({ kind: 'tool', name: event.name });
-            },
-          }));
+          if (pooled) {
+            try {
+              raw = await pooled.session.ask(prompt, onEvent);
+              pooled.primed = { scopeSignature, table: taskTable };
+              answerSessionPool.touch(pooled);
+            } catch (error) {
+              // A failed turn leaves the session in a state not worth reusing.
+              answerSessionPool.discard(pooled);
+              // A process that died before writing anything (it crashed, or
+              // lost its connection at start) is retried once as a fresh run,
+              // which the reader never sees. Anything else is the answer's
+              // real failure and is shown as one.
+              if (!(error instanceof AnswerSessionError && error.failure === 'exited' && error.beforeText)) throw error;
+              raw = await runFresh(primedTable ? buildFullPrompt() : prompt);
+            }
+          } else {
+            raw = await runFresh(prompt);
+          }
         } finally {
           stopTrace();
           // The stream ends whether the call succeeded or threw, so the renderer

@@ -220,6 +220,8 @@ function createMemoryGraphStore() {
     /** Run one turn to its end. The turn is already in the thread. */
     const runTurn = async (turn: MemoryChatTurn, history: MemoryAnswerHistoryTurn[], options: AskOptions): Promise<void> => {
       activeRequestId = turn.id;
+      // Minted by `open` normally, so the prewarmed session and the first
+      // question share it; here for a caller that asks without opening.
       if (!chatId) chatId = crypto.randomUUID();
       try {
         const result = await window.electronAPI.memory.answerFromGraph(
@@ -330,8 +332,12 @@ function createMemoryGraphStore() {
 
       endChat: () => {
         activeRequestId = null;
-        chatId = null;
+        // The ended chat's warm session goes, and the next chat's starts, so
+        // the question that follows X is as warm as the first one was.
+        if (chatId) window.electronAPI.memory.endChat(chatId);
+        chatId = crypto.randomUUID();
         set({ thread: [], focusedTurnId: null });
+        if (get().graphOpen) window.electronAPI.memory.prewarm({ chatId, projectId: get().projectId });
       },
 
       open: (projectId) => {
@@ -342,16 +348,21 @@ function createMemoryGraphStore() {
         void get().loadSnapshot(projectId);
         void get().loadProjects();
         // Start the embedding worker now, so the first question does not pay
-        // its cold start before the related work can light the map. Embeds
-        // nothing and takes no hold.
-        window.electronAPI.memory.prewarm();
+        // its cold start before the related work can light the map, and the
+        // answering agent's session for this chat, so it skips the CLI's
+        // start-up. Neither embeds nor calls a model until asked.
+        if (!chatId) chatId = crypto.randomUUID();
+        window.electronAPI.memory.prewarm({ chatId, projectId: projectId ?? get().projectId });
       },
 
       close: () => {
         // The scope is a view choice for this visit; the next open starts on the
-        // open project again.
+        // open project again. The chat is kept, its warm session is not: a
+        // process idling behind a closed graph serves nobody, and the next open
+        // warms one again.
         set({ graphOpen: false, scopeProjectIds: null, scopeSnapshots: {} });
         get().detach();
+        if (chatId) window.electronAPI.memory.endChat(chatId);
       },
 
       loadProjects: async () => {
@@ -504,7 +515,7 @@ function createMemoryGraphStore() {
             // A different project means a different chat: the tasks a thread
             // names belong to the project it was asked in.
             const nextProjectId = snapshot?.projectId ?? targetProjectId;
-            if (nextProjectId !== get().projectId && get().thread.length > 0) get().endChat();
+            const projectChanged = nextProjectId !== get().projectId && get().thread.length > 0;
             // Trust the id main RESOLVED, not the one requested. Callers routinely
             // pass null to mean "whatever project is current", and main resolves
             // it; keeping the null would leave `projectId` null forever, so the
@@ -521,6 +532,8 @@ function createMemoryGraphStore() {
               loaded: true,
               ...(scoped && nextProjectId ? { scopeSnapshots: { ...state.scopeSnapshots, [nextProjectId]: snapshot } } : {}),
             }));
+            // After the switch, so the next chat's session warms for the new project.
+            if (projectChanged) get().endChat();
 
             // Ask for a rebuild only when the cache is actually stale. The
             // request is cheap and idempotent, but firing it unconditionally on
@@ -544,8 +557,9 @@ function createMemoryGraphStore() {
         // Clear the old projection so the canvas never renders one project's map
         // labelled as another's while the new snapshot is in flight, and end
         // the chat, whose tasks belong to the old project.
-        get().endChat();
         set({ snapshot: null, projectId, loaded: false, followsCurrentProject: projectId === null });
+        // After the switch, so the next chat's session warms for the new project.
+        get().endChat();
         await get().loadSnapshot(projectId);
       },
     };

@@ -10,11 +10,19 @@
  * mid-line, and a parser fed half a JSON line yields nothing.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { writeScopedMcpConfig, makeStreamForwarder } from '../../src/main/agent/adapters/claude/claude-adapter';
+import type { StdinJsonSessionOptions } from '../../src/main/agent/shared/answer-session/stdin-json-session';
+
+const { sessionSpy } = vi.hoisted(() => ({ sessionSpy: vi.fn() }));
+vi.mock('../../src/main/agent/shared/answer-session/stdin-json-session', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/shared/answer-session/stdin-json-session')>();
+  return { ...actual, openStdinJsonSession: sessionSpy };
+});
+
+import { ClaudeAdapter, writeScopedMcpConfig, makeStreamForwarder } from '../../src/main/agent/adapters/claude/claude-adapter';
 
 const written: string[] = [];
 afterEach(() => {
@@ -49,6 +57,47 @@ describe('writeScopedMcpConfig', () => {
     // name on Windows and through a symlink on macOS.
     const temp = fs.realpathSync(os.tmpdir());
     expect(fs.realpathSync(first).startsWith(temp)).toBe(true);
+  });
+});
+
+describe('ClaudeAdapter.openAnswerSession', () => {
+  it('keeps the one-shot run\'s read-only flags and reads turns as stream-json', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-test-'));
+    try {
+      sessionSpy.mockReturnValue({});
+      new ClaudeAdapter().openAnswerSession({
+        cliPath: '/bin/claude',
+        cwd: directory,
+        model: 'sonnet',
+        effort: 'low',
+        retrieval: { url: 'http://127.0.0.1:1/mcp/p/answer-chat', token: 'secret' },
+      });
+      const options = sessionSpy.mock.calls[0][0] as StdinJsonSessionOptions;
+      const args = options.args;
+      expect(args.slice(0, 2)).toEqual(['--print', '--no-session-persistence']);
+      expect(args[args.indexOf('--tools') + 1]).toBe('');
+      expect(args).toContain('--strict-mcp-config');
+      expect(args[args.indexOf('--permission-prompts') + 1]).toBe('none');
+      expect(args[args.indexOf('--allowedTools') + 1]).toBe('mcp__kangentic__kangentic_search');
+      expect(args[args.indexOf('--input-format') + 1]).toBe('stream-json');
+      expect(args[args.indexOf('--output-format') + 1]).toBe('stream-json');
+      expect(args).toContain('--include-partial-messages');
+      expect(args[args.indexOf('--model') + 1]).toBe('sonnet');
+      expect(options.cwd).toBe(directory);
+      expect(options.env).toEqual({ MAX_THINKING_TOKENS: '0' });
+      // The session's config files live in the directory it owns.
+      expect(fs.existsSync(path.join(directory, 'mcp.json'))).toBe(true);
+      expect(fs.existsSync(path.join(directory, 'settings.json'))).toBe(true);
+      // A turn is one user message line; a turn ends on the result line.
+      expect(JSON.parse(options.formatTurn('the question'))).toEqual({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: 'the question' }] },
+      });
+      expect(options.isTurnEnd(JSON.stringify({ type: 'result', result: 'x' }))).toBe(true);
+      expect(options.isTurnEnd(JSON.stringify({ type: 'assistant', message: { content: 'result' } }))).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 

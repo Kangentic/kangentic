@@ -2,6 +2,7 @@ import { closeAll, getProjectDb } from './db/database';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
+import { answerSessionPool } from './retrieval/answer-session-pool';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
@@ -106,6 +107,10 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
     // path, so this is a no-op there; it matters for SIGINT/SIGTERM and other
     // shutdown entry points that reach performShutdown() without a 'close' event.
     runCleanupStep('popOutWindowManager.destroyAll', () => popOutWindowManager.destroyAll());
+
+    // End every warm Knowledge Graph answering process. Synchronous: each is a
+    // child process killed in place, and its run directory removed.
+    runCleanupStep('answerSessionPool.disposeAll', () => answerSessionPool.disposeAll());
 
     // Close active project's file watchers before killing sessions
     runCleanupStep('boardConfigManager.detach', () => dependencies.getBoardConfigManager().detach());

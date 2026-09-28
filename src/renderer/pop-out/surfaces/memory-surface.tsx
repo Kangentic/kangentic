@@ -21,7 +21,9 @@ export const memorySurface: SurfaceDescriptor<'memory'> = {
     // else in this window loads them. Without the list every question read as
     // "no agent chosen" and asking was impossible detached.
     void useConfigStore.getState().loadAgentList();
-    signal.addEventListener('abort', () => useMemoryGraphStore.getState().detach());
+    // `close`, not a bare `detach`: it also lets the chat's warm answering
+    // session go, which would otherwise idle in main until its own timeout.
+    signal.addEventListener('abort', () => useMemoryGraphStore.getState().close());
   },
 
   hmrResync: () => {

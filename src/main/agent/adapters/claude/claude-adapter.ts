@@ -33,6 +33,7 @@ import {
   ANSWER_STREAM_OUTPUT_BUDGET,
   type AnswerStreamEvent,
 } from '../../shared/auto-name';
+import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-session';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { describeClaudeStartupFailure } from './startup-failure';
@@ -46,6 +47,8 @@ import type {
   ParsedTranscript,
   ParsedTranscriptWindow,
   AnswerFromContextOptions,
+  AnswerSession,
+  AnswerSessionInput,
   ParsedSubagentUsage,
   SubagentTranscriptSignature,
 } from '../../agent-adapter';
@@ -101,10 +104,16 @@ export function writeScopedMcpConfig(
  * runs still called Opus), so the empty string is the value. Some answers also
  * narrated the choice ("rather than consulting the advisor") in the reply.
  *
+ * `autoMemoryEnabled` is the other. With it on, every run created
+ * ~/.claude/projects/<its run directory>/memory, so each question left a
+ * project folder behind even with `--no-session-persistence` (measured on CLI
+ * 2.1.283: one folder per run, none with it off). It also keeps the user's own
+ * memories out of an answer that may only draw on its prompt.
+ *
  * A file rather than inline JSON because an npm `.cmd` shim sends the argument
  * through cmd.exe's quote doubling.
  */
-const ANSWER_SETTINGS = { advisorModel: '' };
+const ANSWER_SETTINGS = { advisorModel: '', autoMemoryEnabled: false };
 
 export function writeAnswerSettings(directory: string): string {
   const settingsPath = path.join(directory, 'settings.json');
@@ -113,6 +122,88 @@ export function writeAnswerSettings(directory: string): string {
   // which turns it into the reason the chat shows.
   fs.writeFileSync(settingsPath, JSON.stringify(ANSWER_SETTINGS));
   return settingsPath;
+}
+
+/**
+ * The flags of every answer run, one-shot or session. Writes the run's settings
+ * (and its MCP config, when the agent may search) into `directory`.
+ *
+ * MINIMAL BY MEASUREMENT. A trivial ten-token prompt through this call carried
+ * ~52,000 tokens of context: built-in tool definitions, every MCP server the
+ * user has configured, and the project's CLAUDE.md. Ask needs none of it - the
+ * prompt is self-contained and the rules tell the agent to answer only from
+ * what is in it.
+ *
+ *   as it was                        ~52,000 tokens
+ *   + --tools '' --strict-mcp-config ~26,800
+ *   + a neutral cwd (the caller)      ~8,000
+ *
+ * `--tools ''` drops the built-in tools; `--strict-mcp-config` makes the scoped
+ * `--mcp-config` the WHOLE server list, so a user's own servers do not leak
+ * into a question about their task history, and `--allowedTools` pre-approves
+ * the single search tool by name, so a headless run never blocks on a
+ * permission prompt it has no way to answer.
+ *
+ * NOT `--permission-mode plan`, which this call carried as a "second lock"
+ * until it was measured. On CLI 2.1.260, plan mode with `--model haiku`
+ * answered from claude-sonnet-5 (message_start.model) at ~3x the notional cost
+ * and with ~10k more tokens of system prompt; the identical call without plan
+ * mode answered from haiku. What keeps this read-only is the empty tool list
+ * plus the allowlist, and `--permission-prompts none` denies anything that
+ * would ever prompt rather than letting a headless run block or be granted.
+ *
+ * The model and effort flags are OMITTED when unset, rather than passed empty:
+ * `--model ''` is an error, and the absence of the flag is exactly what "use
+ * the agent's own default" means to the CLI.
+ */
+function answerArgs(input: {
+  directory: string;
+  retrieval: AnswerFromContextOptions['retrieval'];
+  streaming: boolean;
+  model?: string | null;
+  effort: string | null;
+}): string[] {
+  const settingsPath = writeAnswerSettings(input.directory);
+  const mcpConfigPath = input.retrieval ? writeScopedMcpConfig(input.retrieval, input.directory) : null;
+  return [
+    '--print',
+    // An answer is not a conversation to resume. Without this every run saved
+    // its transcript, whole prompt included, as a new project under
+    // ~/.claude/projects keyed by its one-off run directory: 49 folders from
+    // one day of asking, each crowding the user's real projects out of the
+    // resume picker and out of the model scan in capability-discovery.ts.
+    '--no-session-persistence',
+    '--permission-prompts', 'none',
+    '--tools', '',
+    '--strict-mcp-config',
+    '--settings', settingsPath,
+    ...(mcpConfigPath ? ['--mcp-config', mcpConfigPath, '--allowedTools', ANSWER_RETRIEVAL_TOOL] : []),
+    // stream-json is what makes progress visible, and partial messages are
+    // what make it a STREAM: without them the CLI emits one line per completed
+    // turn, so a one-turn answer arrives all at once at the end (measured:
+    // first text at 4.8s of a 5.5s call); with them the model's deltas come
+    // through as written (measured: 1.3s to the first). `--verbose` is
+    // required alongside stream-json in print mode.
+    ...(input.streaming ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'] : []),
+    ...(input.model ? ['--model', input.model] : []),
+    ...(input.effort ? ['--effort', input.effort] : []),
+  ];
+}
+
+/** Low, or no level at all, answers without extended thinking; see
+ *  `answerCapabilities` for the measurement behind the split. */
+function answerEnv(effort: string | null): { env?: Record<string, string> } {
+  return effort === null || effort === 'low' ? { env: { MAX_THINKING_TOKENS: '0' } } : {};
+}
+
+/** The line that ends a stream-json turn. */
+function isResultLine(line: string): boolean {
+  if (!line.includes('"result"')) return false;
+  try {
+    return (JSON.parse(line) as { type?: unknown }).type === 'result';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -466,66 +557,13 @@ export class ClaudeAdapter implements AgentAdapter {
     const retrieval = options?.retrieval;
     const streaming = options?.onEvent !== undefined;
     const effort = options?.effort ?? null;
-    // Low, or no level at all, answers without extended thinking; see
-    // `answerCapabilities` for the measurement behind the split.
-    const thinkingOff = effort === null || effort === 'low';
     // One directory per call for its config files, removed whole when it ends.
     const configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
 
     try {
-      const settingsPath = writeAnswerSettings(configDirectory);
-      const mcpConfigPath = retrieval ? writeScopedMcpConfig(retrieval, configDirectory) : null;
       return await runCliPrintAnswer({
         cliPath,
-        // The flag is OMITTED when no model is chosen, rather than passed empty:
-        // `--model ''` is an error, and the absence of the flag is exactly what
-        // "use the agent's own default" means to the CLI.
-        // MINIMAL BY MEASUREMENT. A trivial ten-token prompt through this call
-        // carried ~52,000 tokens of context: built-in tool definitions, every MCP
-        // server the user has configured, and the project's CLAUDE.md. Ask needs
-        // none of it - the prompt is self-contained and the rules tell the agent
-        // to answer only from what is in it.
-        //
-        //   as it was                       ~52,000 tokens
-        //   + --tools '' --strict-mcp-config ~26,800
-        //   + a neutral cwd (the caller)      ~8,000
-        //
-        // `--tools ''` drops the built-in tools; `--strict-mcp-config` makes
-        // the scoped `--mcp-config` below the WHOLE server list, so a user's
-        // own servers do not leak into a question about their task history.
-        //
-        // NOT `--permission-mode plan`, which this call carried as a "second
-        // lock" until it was measured. On CLI 2.1.260, plan mode with
-        // `--model haiku` answered from claude-sonnet-5 (message_start.model)
-        // at ~3x the notional cost and with ~10k more tokens of system prompt;
-        // the identical call without plan mode answered from haiku. The lock
-        // was redundant and it was the most expensive line in the command.
-        // What keeps this read-only is the empty tool list plus the allowlist,
-        // and `--permission-prompts none` denies anything that would ever
-        // prompt rather than letting a headless run block or be granted.
-        args: [
-          '--print',
-          '--permission-prompts', 'none',
-          '--tools', '',
-          '--strict-mcp-config',
-          '--settings', settingsPath,
-          ...(mcpConfigPath
-            ? ['--mcp-config', mcpConfigPath, '--allowedTools', ANSWER_RETRIEVAL_TOOL]
-            : []),
-          // stream-json is what makes progress visible, and partial messages
-          // are what make it a STREAM: without them the CLI emits one line per
-          // completed turn, so a one-turn answer arrives all at once at the
-          // end (measured: first text at 4.8s of a 5.5s call); with them the
-          // model's deltas come through as written (measured: 1.3s to the
-          // first). `--verbose` is required alongside stream-json in print
-          // mode.
-          ...(streaming
-            ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages']
-            : []),
-          ...(model ? ['--model', model] : []),
-          // Omitted when unset, like the model.
-          ...(effort ? ['--effort', effort] : []),
-        ],
+        args: answerArgs({ directory: configDirectory, retrieval, streaming, model, effort }),
         // In stream mode stdout is a transcript of JSON lines, not the answer.
         // The final answer is the last assistant turn's text; the runner's
         // `extractRaw` seam is exactly where that reduction belongs.
@@ -551,7 +589,7 @@ export class ClaudeAdapter implements AgentAdapter {
       //
       // `MAX_THINKING_TOKENS` is Claude Code's own control, which is why this
       // lives in the Claude adapter rather than in the shared runner.
-        ...(thinkingOff ? { env: { MAX_THINKING_TOKENS: '0' } } : {}),
+        ...answerEnv(effort),
         prompt,
         cwd,
       });
@@ -561,6 +599,30 @@ export class ClaudeAdapter implements AgentAdapter {
       // beat after the child exits.
       fs.rmSync(configDirectory, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * The same run as `answerFromContext`, kept open: `--input-format
+   * stream-json` makes the CLI read one user turn per stdin line and answer
+   * each, ending every turn with a `result` line. Same flags otherwise, so the
+   * same read-only guarantee. The session owns `input.cwd` for its config
+   * files; the pool removes it with the session.
+   */
+  openAnswerSession(input: AnswerSessionInput): AnswerSession {
+    const effort = input.effort ?? null;
+    return openStdinJsonSession({
+      cliPath: input.cliPath,
+      args: [
+        ...answerArgs({ directory: input.cwd, retrieval: input.retrieval, streaming: true, model: input.model, effort }),
+        '--input-format', 'stream-json',
+      ],
+      cwd: input.cwd,
+      ...answerEnv(effort),
+      formatTurn: (prompt) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: prompt }] } }),
+      createReducer: createAnswerStreamReducer,
+      isTurnEnd: isResultLine,
+      extractAnswer: extractStreamedAnswer,
+    });
   }
 
   /**

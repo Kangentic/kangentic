@@ -548,8 +548,11 @@ export const IPC = {
   // Conversation-memory semantic-layer status (the Search settings tab).
   MEMORY_STATUS: 'memory:status',
   // Spawn + init the embedding worker ahead of the first question (Knowledge
-  // Graph open); fire-and-forget, embeds nothing.
+  // Graph open); fire-and-forget, embeds nothing. With a chat, also starts the
+  // answering agent's warm session.
   MEMORY_PREWARM: 'memory:prewarm',
+  /** Fire-and-forget: a chat's warm answering session is no longer needed. */
+  MEMORY_GRAPH_END_CHAT: 'memory:graphEndChat',
   // Re-parse and re-sweep the current project's conversation index, keeping
   // its chunks (the Search tab's "Rebuild this project's index").
   MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',

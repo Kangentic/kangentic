@@ -6589,8 +6589,13 @@ export interface ElectronAPI {
   memory: {
     getStatus: () => Promise<MemoryStatus>;
     /** Spawn + init the embedding worker ahead of the first Smart query, so
-     *  Quick Find's typing time covers the cold start. Fire-and-forget. */
-    prewarm: () => void;
+     *  Quick Find's typing time covers the cold start. Fire-and-forget. With a
+     *  chat (the Knowledge Graph opening), also starts the answering agent's
+     *  warm session for it. */
+    prewarm: (chat?: MemoryAnswerPrewarm) => void;
+    /** The chat's warm answering session is no longer needed (the chat ended,
+     *  or its graph closed). Fire-and-forget. */
+    endChat: (chatId: string) => void;
     /** Purge the project's conversation index and re-run the backfill sweep
      *  (recovery from a corrupt/stale index). Resolves when the purge is done;
      *  the rebuild sweep continues in the background. */
@@ -7046,6 +7051,14 @@ export interface MemoryAnswerContext {
    * call names. `scopeDocKeys` then spans every one of them.
    */
   projectIds?: string[];
+}
+
+/** The chat a Knowledge Graph prewarm starts the answering agent for. */
+export interface MemoryAnswerPrewarm {
+  /** The chat the warm session belongs to; the next question carries the same id. */
+  chatId: string;
+  /** The project the graph opened on, or null for the open project. */
+  projectId: string | null;
 }
 
 export type MemoryGraphAnswerResult =

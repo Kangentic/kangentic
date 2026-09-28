@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -18,7 +18,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
  * to narrate its way through 24 excerpts is still cut off rather than left to run.
  */
 const ANSWER_OUTPUT_BUDGET = 32_768;
-const ANSWER_TIMEOUT_MS = 120_000;
+export const ANSWER_TIMEOUT_MS = 120_000;
 
 /**
  * The stdout budget for a STREAMED answer, which is a different quantity.
@@ -514,26 +514,7 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
       : promptVia === 'file' && promptFilePath && promptFileFlag
         ? [...args, promptFileFlag, promptFilePath]
         : args;
-    const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath);
-    // When useShell is true, args are interpolated into a single command string and
-    // parsed by cmd.exe. We single-quote-wrap the prompt as a defensive measure: any
-    // embedded double quotes have been replaced upstream (see buildSummarizePrompt
-    // doesn't insert any), and arbitrary user description text could otherwise be
-    // mis-parsed by the shell. For non-shell spawns (macOS/Linux/Windows .exe) Node
-    // passes args literally to the child without shell interpretation.
-    const shellArgs = useShell ? finalArgs.map(quoteForCmdShell) : finalArgs;
-    const command = useShell ? `"${cliPath}" ${shellArgs.join(' ')}` : cliPath;
-    const spawnArgs = useShell ? [] : finalArgs;
-
-    const mergedEnv = env ? { ...process.env, ...env } : process.env;
-
-    const child = spawn(command, spawnArgs, {
-      cwd,
-      shell: useShell,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: mergedEnv,
-    });
+    const child = spawnCli(cliPath, finalArgs, cwd, env);
 
     let stdoutSize = 0;
     const stdoutChunks: Buffer[] = [];
@@ -615,6 +596,30 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
     } catch (error) {
       reject(error instanceof Error ? error : new Error(String(error)));
     }
+  });
+}
+
+/** Whether `spawnCli` runs this CLI through cmd.exe: a Windows `.cmd` or `.bat` shim. */
+export function cliRunsThroughShell(cliPath: string): boolean {
+  return process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath);
+}
+
+/**
+ * Spawn an agent CLI with piped stdio, the way every headless run does.
+ *
+ * A Windows `.cmd` or `.bat` shim (an npm-installed CLI) runs through cmd.exe,
+ * so its args are interpolated into one command string and each is quoted for
+ * cmd.exe (`quoteForCmdShell`). Everything else gets its args passed literally.
+ */
+export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Record<string, string>): ChildProcessWithoutNullStreams {
+  const useShell = cliRunsThroughShell(cliPath);
+  const command = useShell ? `"${cliPath}" ${args.map(quoteForCmdShell).join(' ')}` : cliPath;
+  return spawn(command, useShell ? [] : args, {
+    cwd,
+    shell: useShell,
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: env ? { ...process.env, ...env } : process.env,
   });
 }
 

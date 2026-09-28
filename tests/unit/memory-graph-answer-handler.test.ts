@@ -17,7 +17,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { MemoryAnswerContext, MemoryGraphAnswerResult } from '../../src/shared/types';
-import type { AnswerFromContextOptions } from '../../src/main/agent/agent-adapter';
+import type { AnswerFromContextOptions, AnswerSession, AnswerSessionInput } from '../../src/main/agent/agent-adapter';
+import type { AnswerStreamEvent } from '../../src/main/agent/shared/auto-name';
 import type {
   ProjectRelatedWork,
   RelatedWork,
@@ -34,9 +35,19 @@ vi.mock('electron', () => ({
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       capturedHandlers.set(channel, handler);
     }),
-    on: vi.fn(),
+    // The fire-and-forget channels (prewarm, end chat) register through `on`.
+    on: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+      capturedHandlers.set(channel, handler);
+    }),
   },
 }));
+
+// The first session opened sweeps stale run directories out of the real temp
+// folder; a unit run must not touch the developer's.
+vi.mock('../../src/main/agent/shared/answer-run-directory', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/answer-run-directory')>();
+  return { ...actual, sweepStaleAnswerRunDirectories: vi.fn(async () => 0) };
+});
 
 type MockAdapter = {
   name: string;
@@ -51,6 +62,7 @@ type MockAdapter = {
     model?: string | null,
     options?: AnswerFromContextOptions,
   ) => Promise<string>;
+  openAnswerSession?: (input: AnswerSessionInput) => AnswerSession;
 };
 
 /** Claude as the handler sees it: every extension, and a model required. */
@@ -104,7 +116,7 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
 }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
-  retrievalService: { getEmbedder: vi.fn(() => null) },
+  retrievalService: { getEmbedder: vi.fn(() => null), prewarmEmbedWorker: vi.fn() },
 }));
 vi.mock('../../src/main/retrieval/graph/graph-service', () => {
   const getSnapshot = vi.fn();
@@ -125,6 +137,8 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 }));
 
 import { registerSearchHandlers } from '../../src/main/ipc/handlers/search';
+import { answerSessionPool } from '../../src/main/retrieval/answer-session-pool';
+import { AnswerSessionError } from '../../src/main/agent/shared/answer-session/stdin-json-session';
 import { graphService } from '../../src/main/retrieval/graph/graph-service';
 import { broadcast } from '../../src/main/pop-out/window-broadcast';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -802,5 +816,165 @@ describe('the Ask handler', () => {
     if (result.ok) return;
     expect(result.reason).toMatch(/ask a question/i);
     expect(relatedSpy).not.toHaveBeenCalled();
+  });
+
+  describe('with a warm session', () => {
+    /** A session double: answers each turn with the next queued reply. */
+    class FakeSession implements AnswerSession {
+      readonly ready = Promise.resolve();
+      readonly exited = Promise.resolve();
+      alive = true;
+      busy = false;
+      disposed = false;
+      readonly prompts: string[] = [];
+      constructor(readonly input: AnswerSessionInput, private readonly replies: Array<string | Error>) {}
+      async ask(prompt: string, onEvent?: (event: AnswerStreamEvent) => void): Promise<string> {
+        this.prompts.push(prompt);
+        const reply = this.replies.shift() ?? 'Answered.';
+        if (reply instanceof Error) throw reply;
+        onEvent?.({ kind: 'text', text: reply });
+        return reply;
+      }
+      dispose(): void {
+        this.disposed = true;
+        this.alive = false;
+      }
+    }
+
+    let sessions: FakeSession[] = [];
+    function sessionAdapter(answerSpy: MockAdapter['answerFromContext'], replies: Array<string | Error> = []): MockAdapter {
+      return {
+        ...claudeAdapter(answerSpy),
+        openAnswerSession: (input) => {
+          const session = new FakeSession(input, replies);
+          sessions.push(session);
+          return session;
+        },
+      };
+    }
+
+    function prewarm(chatId: string): void {
+      const handler = capturedHandlers.get(IPC.MEMORY_PREWARM);
+      if (!handler) throw new Error('memory:prewarm handler not registered');
+      handler(undefined, { chatId, projectId: 'project-1' });
+    }
+
+    beforeEach(() => {
+      answerSessionPool.disposeAll();
+      sessions = [];
+    });
+
+    it('asks the chat\'s session, sending the whole prompt first and only what is new after', async () => {
+      const answerSpy = vi.fn(async () => 'fresh run');
+      mockAdapters = [sessionAdapter(answerSpy, ['#561 is the one.\nSELECTED: #561', '#564 cost less.\nSELECTED: #564'])];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      const first = await ask('which task framed the sphere?', 'req-1', { chatId: 'chat-1' });
+      expect(first.ok).toBe(true);
+      const second = await ask('and the cheaper one?', 'req-2', {
+        chatId: 'chat-1',
+        history: [{ question: 'which task framed the sphere?', answer: '#561 is the one.', taskKeys: ['task-1'] }],
+      });
+      expect(answerSpy).not.toHaveBeenCalled();
+      expect(sessions).toHaveLength(1);
+      const [firstPrompt, followUp] = sessions[0].prompts;
+      expect(firstPrompt).toMatch(/<task_table>\n/);
+      expect(firstPrompt).toContain('which task framed the sphere?');
+      // The session already holds the table, the rules and the first turn. (The
+      // related work's preface names the tag, so look for the block itself.)
+      expect(followUp).not.toMatch(/<task_table>\n/);
+      expect(followUp).not.toContain('<conversation_so_far>');
+      expect(followUp).toContain('A follow-up question in the same chat');
+      expect(followUp).toMatch(/<related_work>[\s\S]*#561\|Sphere fit framing/);
+      expect(followUp).toContain('and the cheaper one?');
+      // Refs still resolve against the table the session was primed with.
+      expect(second.ok && second.rows.map((row) => row.key)).toEqual(['task-2']);
+      // The session searches as the chat, so its searches reach this chat's trace.
+      expect(sessions[0].input.retrieval?.url).toBe('http://127.0.0.1:4321/mcp/project-1/answer-chat-1');
+      expect(sessions[0].input.model).toBe('haiku');
+    });
+
+    it('prewarms on open and answers from the prewarmed session', async () => {
+      mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'))];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      prewarm('chat-1');
+      await vi.waitFor(() => expect(sessions).toHaveLength(1));
+      await ask('anything', 'req-1', { chatId: 'chat-1' });
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].prompts).toHaveLength(1);
+    });
+
+    it('starts a fresh session when the scope changes, carrying the chat so far', async () => {
+      mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'))];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      await ask('first', 'req-1', { chatId: 'chat-1' });
+      await ask('second', 'req-2', {
+        chatId: 'chat-1',
+        scopeDocKeys: ['conversation::doc-3'],
+        history: [{ question: 'first', answer: 'Answered.', taskKeys: [] }],
+      });
+      // Two tables in one session's context would double what every later
+      // turn pays for, so the first session goes and a new one starts.
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0].disposed).toBe(true);
+      expect(sessions[1].prompts[0]).toMatch(/<task_table>\n/);
+      expect(sessions[1].prompts[0]).toContain('<conversation_so_far>');
+    });
+
+    it('retries quietly as a fresh run when the session died before writing anything', async () => {
+      const answerSpy = vi.fn(async () => 'From a fresh run.');
+      mockAdapters = [sessionAdapter(answerSpy, [new AnswerSessionError('the agent exited 1', 'exited', true)])];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      const result = await ask('anything', 'req-1', { chatId: 'chat-1' });
+      expect(result.ok && result.answer).toBe('From a fresh run.');
+      expect(answerSpy).toHaveBeenCalledTimes(1);
+      expect(answerSpy.mock.calls[0][0]).toMatch(/<task_table>\n/);
+      expect(sessions[0].disposed).toBe(true);
+    });
+
+    it('shows an agent error as the answer\'s failure, without a retry', async () => {
+      const answerSpy = vi.fn(async () => 'fresh run');
+      mockAdapters = [sessionAdapter(answerSpy, [new AnswerSessionError('Model not available', 'agent', true)])];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      const result = await ask('anything', 'req-1', { chatId: 'chat-1' });
+      expect(result).toMatchObject({ ok: false, reason: 'Model not available' });
+      expect(answerSpy).not.toHaveBeenCalled();
+      expect(sessions[0].disposed).toBe(true);
+    });
+
+    it('lets the session go when the chat ends', async () => {
+      mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'))];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      await ask('anything', 'req-1', { chatId: 'chat-1' });
+      const endChat = capturedHandlers.get(IPC.MEMORY_GRAPH_END_CHAT);
+      endChat?.(undefined, 'chat-1');
+      expect(sessions[0].disposed).toBe(true);
+      expect(answerSessionPool.size).toBe(0);
+    });
+
+    it('runs fresh for an agent without a session, and for a question with no chat', async () => {
+      const answerSpy = vi.fn(async () => 'Answered.');
+      mockAdapters = [claudeAdapter(answerSpy)];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+      await ask('anything', 'req-1', { chatId: 'chat-1' });
+      expect(answerSpy).toHaveBeenCalledTimes(1);
+
+      mockAdapters = [sessionAdapter(answerSpy)];
+      await ask('anything', 'req-2');
+      expect(answerSpy).toHaveBeenCalledTimes(2);
+      expect(sessions).toHaveLength(0);
+    });
   });
 });

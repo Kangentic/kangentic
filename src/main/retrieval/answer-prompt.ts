@@ -220,6 +220,31 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
 }
 
 /**
+ * A follow-up asked in a warm session that already holds the first prompt.
+ *
+ * The table, glossary, rules and every earlier turn are already in the
+ * session's context, so this carries only what is new: the related work found
+ * for this question, the reminder, and the question. On a 143k-character first
+ * prompt that is the difference between resending the whole table and sending
+ * a few kilobytes.
+ */
+export function buildFollowUpPrompt(
+  question: string,
+  context: Pick<AnswerPromptContext, 'related' | 'canSearch'>,
+): string {
+  return [
+    'A follow-up question in the same chat. The task table, the glossary and the rules above still apply,'
+      + ' and the related work below replaces the related work of earlier questions.',
+    '',
+    `<related_work>\n${formatRelatedWork(context.related)}\n</related_work>`,
+    '',
+    finalReminder(context.canSearch),
+    '',
+    `Question: ${question.trim()}`,
+  ].join('\n');
+}
+
+/**
  * The reply's shape, restated where the model reads it last.
  *
  * Measured on Haiku with the same rules stated only above the tables: it

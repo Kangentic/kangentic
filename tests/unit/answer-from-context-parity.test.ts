@@ -154,10 +154,22 @@ describe('answerFromContext parity', () => {
     const claude = adapterSources().find((entry) => entry.file.includes('claude-adapter'));
     expect(claude, 'the Claude adapter must exist for this to mean anything').toBeTruthy();
     const method = claude?.source.match(/async answerFromContext\([\s\S]*?\n  \}/)?.[0] ?? '';
+    // The flags live in one function both answer paths build from, the fresh
+    // run and the warm session, so the two cannot drift apart.
+    // Through its `return [`: the parameter type closes with a column-0 brace too.
+    const flags = claude?.source.match(/function answerArgs\([\s\S]*?return \[[\s\S]*?\n\}/)?.[0] ?? '';
+    const session = claude?.source.match(/openAnswerSession\(input[\s\S]*?\n  \}/)?.[0] ?? '';
+    const environment = claude?.source.match(/function answerEnv\([\s\S]*?\n\}/)?.[0] ?? '';
 
     expect(method, 'answerFromContext must be found for this check to bite').toContain('runCliPrintAnswer');
-    expect(method, 'built-in tools must be switched off').toMatch(/'--tools',\s*''/);
-    expect(method, 'the config file must be the WHOLE server list').toContain('--strict-mcp-config');
+    expect(method, 'the fresh run builds from the shared flags').toContain('answerArgs(');
+    expect(session, 'the warm session builds from the shared flags').toContain('answerArgs(');
+    expect(session, 'the warm session reads its turns as stream-json').toMatch(/'--input-format',\s*'stream-json'/);
+    expect(flags, 'built-in tools must be switched off').toMatch(/'--tools',\s*''/);
+    expect(flags, 'the config file must be the WHOLE server list').toContain('--strict-mcp-config');
+    // An answer is not a session to resume: saved, every run left its whole
+    // prompt under ~/.claude/projects as a project of its own.
+    expect(flags, 'answer runs must not be saved as sessions').toContain('--no-session-persistence');
 
     // NOT plan mode. It rode along as a "redundant second lock" until it was
     // measured on CLI 2.1.260: `--permission-mode plan` with `--model haiku`
@@ -167,15 +179,15 @@ describe('answerFromContext parity', () => {
     // doing nothing. The read-only guarantee is the empty tool list plus the
     // allowlist; prompts are switched off so a headless run can neither block
     // on one nor be granted anything by one.
-    expect(method, 'plan mode reroutes the model').not.toMatch(/'--permission-mode',\s*'plan'/);
-    expect(method, 'nothing may prompt, or be granted by a prompt').toMatch(/'--permission-prompts',\s*'none'/);
+    expect(flags, 'plan mode reroutes the model').not.toMatch(/'--permission-mode',\s*'plan'/);
+    expect(flags, 'nothing may prompt, or be granted by a prompt').toMatch(/'--permission-prompts',\s*'none'/);
 
     // The ONE tool it may reach: Kangentic's own conversation search, handed
     // over by a scoped config and pre-approved on the allowlist so a headless
     // run never blocks on a permission prompt it cannot answer. Strict mode
     // above is what keeps the user's own servers out of that file.
-    expect(method, 'the scoped server config must be named').toContain('--mcp-config');
-    expect(method, 'the search tool must be pre-approved').toMatch(/'--allowedTools',\s*ANSWER_RETRIEVAL_TOOL/);
+    expect(flags, 'the scoped server config must be named').toContain('--mcp-config');
+    expect(flags, 'the search tool must be pre-approved').toMatch(/'--allowedTools',\s*ANSWER_RETRIEVAL_TOOL/);
     expect(claude?.source).toMatch(/ANSWER_RETRIEVAL_TOOL = 'mcp__kangentic__kangentic_search'/);
     // That file carries a live token and must not outlive the call. It lives in
     // the call's own config directory, which goes whole.
@@ -187,16 +199,19 @@ describe('answerFromContext parity', () => {
     // in their settings, every answer consulted Opus: 17 to 21 s and up to
     // $0.18 a question, against 3 to 5 s without it (CLI 2.1.283). `null` does
     // not turn it off; the empty string does.
-    expect(method, 'the answer settings overlay must be named').toMatch(/'--settings',\s*settingsPath/);
-    expect(claude?.source).toMatch(/ANSWER_SETTINGS = \{ advisorModel: '' \}/);
+    expect(flags, 'the answer settings overlay must be named').toMatch(/'--settings',\s*settingsPath/);
+    expect(claude?.source).toMatch(/ANSWER_SETTINGS = \{ advisorModel: '',/);
+    // And no auto-memory: with it on, every run left a project folder under
+    // ~/.claude/projects, keyed by its one-off run directory.
+    expect(claude?.source).toMatch(/ANSWER_SETTINGS = \{[^}]*autoMemoryEnabled: false/);
 
     // Progress streams: one line per assistant turn as it happens, which is
     // what lets the renderer show text at first-token time (measured 1.1 to
     // 1.8s) rather than a spinner until the end (measured ~6s).
-    expect(method, 'the answer must stream').toMatch(/'--output-format',\s*'stream-json'/);
+    expect(flags, 'the answer must stream').toMatch(/'--output-format',\s*'stream-json'/);
     // Without partial messages stream-json is one line per COMPLETED turn, so
     // a one-turn answer still arrives all at once at the end.
-    expect(method, 'the stream must carry the model\'s own deltas').toContain('--include-partial-messages');
+    expect(flags, 'the stream must carry the model\'s own deltas').toContain('--include-partial-messages');
     // A stream is a transcript, not an answer. At the answer-sized budget the
     // CLI was killed after its second tool call and the "answer" was the
     // agent's own narration; the stream needs its own, far larger bound.
@@ -207,8 +222,10 @@ describe('answerFromContext parity', () => {
     // 253 output tokens of which 231 were thinking; off cost 2,041ms and 19,
     // and returned the identical answer. Losing this line doubles how long a
     // user waits for a result that does not change.
-    expect(method, 'extended thinking must be off for the answer call').toMatch(
+    expect(environment, 'extended thinking must be off for the answer call').toMatch(
       /MAX_THINKING_TOKENS:\s*'0'/,
     );
+    expect(method, 'the fresh run takes the answer environment').toContain('answerEnv(');
+    expect(session, 'the warm session takes the answer environment').toContain('answerEnv(');
   });
 });

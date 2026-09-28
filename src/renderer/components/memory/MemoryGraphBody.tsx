@@ -40,6 +40,7 @@ import {
 
 import { availableGranularities, DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
 import { availableColorModes } from './color-mode-availability';
+import { answerFocusIndices } from './answer-focus';
 import { answerSetupGap, resolveAnswerAgent } from '../../../shared/answer-agent';
 import { HoverTip } from '../HoverTip';
 import type { MemoryGraphGranularity, MemoryRelatedTask } from '../../../shared/types';
@@ -470,13 +471,14 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
   }, [exploreIndices, turnStrengths, ringed, facetIndices]);
 
   /**
-   * While a question lights the map, the rest of its scope stays on screen as
-   * grey context. Memoised so the canvas's style pass only reruns when the
-   * scope or the question changes.
+   * Where the camera goes once an answer lands: the tasks it is about, not the
+   * whole related set around them. Explore frames its own neighbourhood.
    */
-  const chatContext = useMemo(
-    () => (turnStrengths && !exploreIndices ? { scope: facetIndices ?? null } : undefined),
-    [turnStrengths, exploreIndices, facetIndices],
+  const answerFocus = useMemo(
+    () => (activeTurn?.status === 'done' && !exploreIndices
+      ? answerFocusIndices(activeTurn.rows, indexByDocKey, facetIndices)
+      : null),
+    [activeTurn, exploreIndices, indexByDocKey, facetIndices],
   );
 
   /** The conversations inside the map's filters: a question's scope. */
@@ -693,7 +695,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
         highlighted={highlighted}
         strengths={exploreIndices ? undefined : turnStrengths ?? undefined}
         ringed={exploreIndices ? undefined : ringed}
-        context={chatContext}
+        focusIndices={answerFocus}
         islands={graphView.islands ?? undefined}
         worldExtent={graphView.worldExtent}
         framingIndices={framingIndices}

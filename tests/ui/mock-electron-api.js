@@ -4548,10 +4548,24 @@
       // timestamp per call) so a UI test can assert Quick Find never sends it.
       // Not an exact count: StrictMode double-invokes a mount effect, and the
       // second send is a no-op against the worker's memoized init.
-      prewarm: function () {
+      // A prewarm that names a chat also warms that chat's answering session;
+      // those are recorded as their own list, chat ids and all.
+      prewarm: function (chat) {
         if (typeof window !== 'undefined') {
           if (!window.__mockMemoryPrewarmCalls) window.__mockMemoryPrewarmCalls = [];
           window.__mockMemoryPrewarmCalls.push(Date.now());
+          if (chat && chat.chatId) {
+            if (!window.__mockAnswerPrewarms) window.__mockAnswerPrewarms = [];
+            window.__mockAnswerPrewarms.push({ chatId: chat.chatId, projectId: chat.projectId });
+          }
+        }
+      },
+      // The chat's warm session is released; recorded so a UI test can assert
+      // X and closing the graph both let it go.
+      endChat: function (chatId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockEndChatCalls) window.__mockEndChatCalls = [];
+          window.__mockEndChatCalls.push(chatId);
         }
       },
       rebuildIndex: function (projectId) {

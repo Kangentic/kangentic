@@ -240,6 +240,47 @@ export interface AnswerFromContextOptions {
   effort?: string | null;
 }
 
+/** What an answer session is started with. It is fixed for the session's life:
+ *  a different model, effort or search URL is a different session. */
+export interface AnswerSessionInput {
+  cliPath: string;
+  /** An empty directory the session owns for its life (see `answer-run-directory.ts`). */
+  cwd: string;
+  model?: string | null;
+  effort?: string | null;
+  retrieval?: AnswerFromContextOptions['retrieval'];
+}
+
+/**
+ * A warm answering process: started before the question, asked turn by turn.
+ *
+ * Measured on a 143k-character answer prompt at Sonnet: first text 2.2 s from a
+ * fresh spawn, 1.3 s from a process that was already up, and 0.8 s for a
+ * follow-up in that same process, which also skips resending the task table.
+ * An idle process makes no model call, so starting one early costs nothing but
+ * the process.
+ */
+export interface AnswerSession {
+  /** Resolves once the process is up; rejects if it could not start. */
+  readonly ready: Promise<void>;
+  /** Resolves once the process is gone (or never started). A live process
+   *  holds its working directory on Windows, so that is removed after this. */
+  readonly exited: Promise<void>;
+  /** False once the process has exited or been disposed. */
+  readonly alive: boolean;
+  /** True while a turn is in flight. A session takes one turn at a time. */
+  readonly busy: boolean;
+  /**
+   * One user turn. Resolves with the turn's answer, streaming its events to
+   * `onEvent` as they arrive. Rejects on an agent error, a timeout, or the
+   * process exiting mid-turn; `AnswerSessionError.beforeText` says whether any
+   * text had streamed, which is when a caller may retry elsewhere unseen.
+   */
+  ask(prompt: string, onEvent?: (event: AnswerStreamEvent) => void): Promise<string>;
+  /** Ends the process. Synchronous, so the quit path can call it. Idempotent. */
+  dispose(): void;
+}
+
 /** Interface that every agent adapter must implement. */
 export interface AgentAdapter {
   /** Unique identifier for this agent type (e.g. 'claude', 'codex', 'aider'). */
@@ -880,6 +921,16 @@ export interface AgentAdapter {
     model?: string | null,
     options?: AnswerFromContextOptions,
   ): Promise<string>;
+
+  /**
+   * Optional: a warm answering process the Memory Graph starts when it opens
+   * and keeps for a chat, so a question skips the CLI's start-up and a
+   * follow-up skips resending the task table. Present only for a CLI that
+   * reads turns from a long-lived process and keeps the same read-only
+   * guarantee as `answerFromContext`. Absent means every question is a fresh
+   * `answerFromContext` run carrying the chat so far.
+   */
+  openAnswerSession?(input: AnswerSessionInput): AnswerSession;
 
   /**
    * Optional: notify the adapter that per-cwd data must move from `oldPath` to

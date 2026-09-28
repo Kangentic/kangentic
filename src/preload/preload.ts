@@ -783,7 +783,8 @@ const api: ElectronAPI = {
 
   memory: {
     getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
-    prewarm: () => ipcRenderer.send(IPC.MEMORY_PREWARM),
+    prewarm: (chat) => ipcRenderer.send(IPC.MEMORY_PREWARM, chat),
+    endChat: (chatId) => ipcRenderer.send(IPC.MEMORY_GRAPH_END_CHAT, chatId),
     rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
     graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_SNAPSHOT, projectId),
     graphProjects: () => ipcRenderer.invoke(IPC.MEMORY_GRAPH_PROJECTS),

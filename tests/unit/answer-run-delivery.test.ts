@@ -207,6 +207,13 @@ describe('answer run flags and prompt delivery', () => {
     expect(high.env?.MAX_THINKING_TOKENS).toBeUndefined();
   });
 
+  it('runs Claude without saving the run as a resumable session', async () => {
+    // Every run used to save its transcript, whole prompt included, as a new
+    // project under ~/.claude/projects keyed by its one-off directory.
+    const options = await optionsFor(new ClaudeAdapter());
+    expect(options.args).toContain('--no-session-persistence');
+  });
+
   it('declares no effort where the run would not pass it on', () => {
     for (const adapter of [
       new CursorAdapter(), new DroidAdapter(), new OpenCodeAdapter(), new CodexAdapter(), new GeminiAdapter(),

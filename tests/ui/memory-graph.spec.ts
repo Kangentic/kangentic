@@ -779,9 +779,14 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
+      const drawn = () => page.locator('[data-testid="memory-graph-canvas"]').getAttribute('data-drawn-count');
+      expect(await drawn()).toBe('30');
       await askInBox(page, 'what fixed the relay?');
       // Only the answer's task is titled; the dimmed related ones stay dots.
       await expect.poll(async () => visibleNodeTitles(page)).toEqual(['Conversation 3']);
+      // And the rest of the map is scoped away, not left as a grey wash:
+      // reported on a real map, where the wash read as everything dimmed.
+      await expect.poll(drawn).toBe('3');
     } finally {
       await browser.close();
     }
@@ -983,6 +988,48 @@ test.describe('memory graph', () => {
       const input = page.locator('[data-testid="memory-graph-search-input"]');
       await expect(input).toBeVisible();
       await expect(input).toHaveValue('');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('warms the answering agent for the chat, and lets it go when the chat or the graph ends', async () => {
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('Mostly #100.', [chatRow(0)])}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      type Recorded = { prewarms: Array<{ chatId: string }>; ended: string[]; asked: string[] };
+      const recorded = () => page.evaluate((): Recorded => {
+        const scope = window as unknown as {
+          __mockAnswerPrewarms?: Array<{ chatId: string }>;
+          __mockEndChatCalls?: string[];
+          __mockGraphAnswerCalls?: Array<{ context: { chatId?: string } | null }>;
+        };
+        return {
+          prewarms: scope.__mockAnswerPrewarms ?? [],
+          ended: scope.__mockEndChatCalls ?? [],
+          asked: (scope.__mockGraphAnswerCalls ?? []).map((call) => call.context?.chatId ?? ''),
+        };
+      });
+
+      // Opening warms a session for a chat, and the question asks in that chat.
+      await openMemoryGraph(page);
+      await expect.poll(async () => (await recorded()).prewarms.length).toBeGreaterThan(0);
+      const warmed = (await recorded()).prewarms.at(-1)!.chatId;
+      await askInBox(page, 'which tasks touched the relay?');
+      await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
+      expect((await recorded()).asked).toEqual([warmed]);
+
+      // X lets that session go and warms the next chat's.
+      await page.locator('[data-testid="memory-chat-end"]').click();
+      await expect.poll(async () => (await recorded()).ended).toContain(warmed);
+      const next = (await recorded()).prewarms.at(-1)!.chatId;
+      expect(next).not.toBe(warmed);
+
+      // Closing the graph lets the warm session go too.
+      await page.locator('[data-testid="memory-graph-close"]').click();
+      await page.locator('[data-testid="memory-graph-page"]').waitFor({ state: 'hidden', timeout: 5000 });
+      await expect.poll(async () => (await recorded()).ended).toContain(next);
     } finally {
       await browser.close();
     }
