@@ -33,6 +33,9 @@ import { ConversationIndexer } from './conversation/conversation-indexer';
 import { sweepTaskRecords } from './task/task-indexer';
 import { sweepChangeRecords } from './change/change-indexer';
 import { graphService } from './graph/graph-service';
+import { createDigestScheduler } from './digest/digest-scheduler';
+import { resolveAnswerRun } from './answer-run';
+import { withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
 import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
@@ -261,6 +264,41 @@ function queueRecordSweeps(context: IpcContext, projectId: string): void {
   });
 }
 
+/** Task digests are wanted: indexing and semantic search on (the Knowledge
+ *  Graph needs both), and digests not turned off. */
+function digestsEnabled(context: IpcContext): boolean {
+  try {
+    const memory = context.configManager.load().memory;
+    return memory?.indexingEnabled !== false && memory?.semanticEnabled === true && memory?.taskDigests !== false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Writes task digests with the answering agent, in the background. It waits
+ * for an answering agent like Ask does: with none chosen it resolves no writer
+ * and does nothing. A digest batch runs with no tool at all; it summarizes
+ * what it is handed.
+ */
+const digestScheduler = createDigestScheduler<IpcContext>({
+  isEnabled: digestsEnabled,
+  resolveWriter: async (context, projectId) => {
+    const resolved = await resolveAnswerRun(context, projectId, 'digest', { withSearch: false });
+    if (!resolved.ok) return null;
+    const run = resolved.run;
+    return {
+      agent: run.agentName,
+      model: run.model,
+      write: (prompt) => withAnswerRunDirectory((runDirectory) => (
+        run.answerFromContext(prompt, run.cliPath, run.answerHome, run.model, { effort: run.effort, runDirectory })
+      )),
+    };
+  },
+  // A digest is part of its task's record, so the record re-reads.
+  onWritten: (context, projectId) => queueRecordSweeps(context, projectId),
+});
+
 /** A board change re-reads its project's records once the burst settles. */
 function scheduleTaskRecordSweep(context: IpcContext, projectId: string): void {
   if (disposed) return;
@@ -273,6 +311,8 @@ function scheduleTaskRecordSweep(context: IpcContext, projectId: string): void {
     pendingTimers.delete(timer);
     taskRecordTimers.delete(projectId);
     queueRecordSweeps(context, projectId);
+    // A task that just reached Done gets its digest.
+    digestScheduler.request(context, projectId);
   }, TASK_RECORD_DEBOUNCE_MS);
   timer.unref();
   pendingTimers.add(timer);
@@ -374,6 +414,8 @@ export const retrievalService = {
         // background drain regardless of whether anything actually changed
         // (markDirty is cheap and idempotent).
         embedEngine.markDirty(project.id);
+        // Digests read the changes just indexed; the first open backfills.
+        digestScheduler.request(context, project.id);
       });
     });
   },
@@ -401,6 +443,10 @@ export const retrievalService = {
    *  piggyback the gate on. */
   reconcileEmbedWorker(context: IpcContext): void {
     embedEngine.reconcile(context);
+    // The same memory settings decide digests: choosing an answering agent,
+    // or turning digests back on, starts the backfill without a re-open.
+    const projectId = context.currentProjectId;
+    if (projectId) digestScheduler.request(context, projectId);
   },
 
   /** Spawn + init the embed worker ahead of a question (Knowledge Graph open),
@@ -534,6 +580,7 @@ export const retrievalService = {
     finalizeIndexTimers.clear();
     for (const timer of taskRecordTimers.values()) clearTimeout(timer);
     taskRecordTimers.clear();
+    digestScheduler.dispose();
     embedEngine.dispose();
   },
 };

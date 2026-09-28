@@ -242,11 +242,13 @@ export class RetrievalStore {
     run();
   }
 
-  /** Every corpus, gone: the Privacy "clear index". */
+  /** Every corpus, and the task digests written from it, gone: the Privacy
+   *  "clear index". */
   purgeAll(): void {
     const run = this.db.transaction(() => {
       this.db.prepare('DELETE FROM memory_chunks').run();
       this.db.prepare('DELETE FROM memory_index_state').run();
+      this.db.prepare('DELETE FROM memory_task_digests').run();
       for (const corpus of this.vecTables) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
     });
     run();
@@ -970,6 +972,15 @@ export class RetrievalStore {
       .prepare('SELECT COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL')
       .get() as { count: number };
     return `${chunks.count}|${chunks.maxId}|${embedded.count}`;
+  }
+
+  /** Task digests written, and the finished tasks (in a Done column) that can have one. */
+  digestCounts(): { written: number; finishedTasks: number } {
+    const written = (this.db.prepare('SELECT COUNT(*) AS count FROM memory_task_digests').get() as { count: number }).count;
+    const finishedTasks = (this.db
+      .prepare("SELECT COUNT(*) AS count FROM tasks t JOIN swimlanes w ON w.id = t.swimlane_id WHERE w.role = 'done'")
+      .get() as { count: number }).count;
+    return { written, finishedTasks };
   }
 
   /** Every board task's id, ticket and title: what a task-record match needs

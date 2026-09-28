@@ -31,6 +31,8 @@ export interface RelatedPromptTask {
   passage: string | null;
   /** The task's facts from the table, so a superlative inside the set needs no lookup. */
   facts: MemoryTaskFacts | null;
+  /** What the task set out to do and did, in a sentence or two, when a digest was written. */
+  digest?: string | null;
 }
 
 /**
@@ -84,8 +86,9 @@ function rules(context: AnswerPromptContext): string {
     : '<related_work>, <task_table> and <conversation_so_far>';
   return [
     `Answer only from ${sources}. Together they are the whole of what you know here.`,
-    '<related_work> is what a search of every recorded conversation found for this question, strongest first.'
-      + ' Decide which of those tasks the question is really about by their titles and passages, keep those,'
+    '<related_work> is what a search of every recorded conversation and task description found for this question,'
+      + ' strongest first. Decide which of those tasks the question is really about by their titles, digests and'
+      + ' passages, keep those,'
       + ' and ignore the ones that only share a word. Count and rank from them together with the table.',
     '<task_table> is complete and its numbers are exact: every task in scope is listed, and costs, durations'
       + ' and totals are already computed. Use it for anything factual. A question the table answers needs no search.',
@@ -154,9 +157,11 @@ function formatSpan(table: AnswerTaskTable, nowMs: number): string {
 /** The related work as a compact table, strongest first. */
 export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): string {
   if (related.length === 0) return 'Nothing in the recorded conversations matched this question.';
+  const quote = (text: string): string => `"${text.replace(/\|/g, '/').replace(/"/g, '\'')}"`;
   const header = [
     'ref', 'task', 'strength', 'matches', 'first', 'last',
     ...RELATED_FACT_FIELDS.map((field) => field.key),
+    'digest',
     'passage',
   ].join('|');
   const rows = related.map((task) => [
@@ -167,12 +172,13 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
     isoDate(task.firstMs),
     isoDate(task.lastMs),
     ...RELATED_FACT_FIELDS.map((field) => (task.facts ? field.cell(task.facts) : '')),
-    task.passage ? `"${task.passage.replace(/\|/g, '/').replace(/"/g, '\'')}"` : '',
+    task.digest ? quote(task.digest) : '',
+    task.passage ? quote(task.passage) : '',
   ].join('|'));
   return [
     'strength is how closely the task matched, relative to the best match (1.00). matches counts the passages that'
-      + ' matched, and first and last are when. The facts are the same as in <task_table>. Only the strongest tasks'
-      + ' show a passage.',
+      + ' matched, and first and last are when. The facts are the same as in <task_table>. digest says what a'
+      + ' finished task set out to do and did, where one was written. Only the strongest tasks show a passage.',
     header,
     ...rows,
   ].join('\n');

@@ -3419,6 +3419,13 @@ export interface AppConfig {
      * `max` is not Grok's).
      */
     answerEffort?: string | null;
+    /**
+     * Whether the answering agent writes a short digest of each finished task
+     * (what it set out to do, what it ended up doing), searched with the task's
+     * own record and shown to the agent beside it. On unless turned off; it
+     * waits for an answering agent, like Ask, and spends a call per ten tasks.
+     */
+    taskDigests?: boolean;
   };
 
   /**
@@ -6987,6 +6994,8 @@ export interface MemoryIndexSummary {
   /** One entry per corpus the store knows, in `MEMORY_CORPORA` order, present
    *  with zeros when nothing of it is indexed yet. */
   corpora: MemoryIndexCorpusSummary[];
+  /** Task digests written, of the finished tasks that can have one. */
+  digests: { written: number; finishedTasks: number };
   /** Bytes every corpus occupies: text plus vectors. */
   storageBytes: number;
 }

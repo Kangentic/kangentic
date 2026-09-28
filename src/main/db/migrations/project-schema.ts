@@ -893,6 +893,23 @@ export function runProjectMigrations(db: Database.Database): void {
 
   db.exec('CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 
+  // Task digests: one or two sentences per finished task, written by the
+  // answering agent (`src/main/retrieval/digest/`). `input_hash` is what the
+  // digest was written from, so a task whose input moved is rewritten.
+  // Keyed by task and removed with it by the digest sweep; a digest is text an
+  // agent wrote, not something the index can re-derive, so nothing else
+  // deletes it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_task_digests (
+      task_id TEXT PRIMARY KEY,
+      digest TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      model TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   // Durable per-turn token-usage ledger. Each assistant turn that reported usage
   // gets one row, keyed by the turn's own uuid. This is the long-lived record that
   // cost / burn-rate analysis reads from: it is populated by ConversationIndexer

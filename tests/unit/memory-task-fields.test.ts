@@ -258,13 +258,18 @@ describe('the prompt is built for its own length', () => {
     // task, which Haiku got wrong when it had to do it.
     const lines = formatRelatedWork(related).split('\n');
     expect(lines[1]).toBe(
-      'ref|task|strength|matches|first|last|cost_usd|duration|tokens|sessions|files|lines_added|lines_removed|outcome|pr|passage',
+      'ref|task|strength|matches|first|last|cost_usd|duration|tokens|sessions|files|lines_added|lines_removed|outcome|pr|digest|passage',
     );
     // A pull request is written "PR 417", never "#417", which would read as a task.
     expect(lines[2]).toBe(
-      '#529|Memory graph|1.00|12|2026-08-01|2026-09-20|136.74|77h 59m||3|42|3100|870|active|PR 417 open|"we lit the related set"',
+      '#529|Memory graph|1.00|12|2026-08-01|2026-09-20|136.74|77h 59m||3|42|3100|870|active|PR 417 open||"we lit the related set"',
     );
     expect(formatRelatedWork([])).toMatch(/Nothing/);
+  });
+
+  it('carries a finished task\'s digest beside its passage, quoted like it', () => {
+    const lines = formatRelatedWork([{ ...related[0], digest: 'Built the "set first" answer | and the map.' }]).split('\n');
+    expect(lines[2]).toContain('|"Built the \'set first\' answer / and the map."|"we lit the related set"');
   });
 
   it('tells the agent the reader cannot see the tags', () => {

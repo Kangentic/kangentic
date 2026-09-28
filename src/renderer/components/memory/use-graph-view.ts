@@ -81,6 +81,10 @@ export function sumIndex(summaries: ReadonlyArray<MemoryIndexSummary>): MemoryIn
   }
   return {
     corpora: [...byCorpus.values()],
+    digests: {
+      written: summaries.reduce((total, summary) => total + summary.digests.written, 0),
+      finishedTasks: summaries.reduce((total, summary) => total + summary.digests.finishedTasks, 0),
+    },
     storageBytes: summaries.reduce((total, summary) => total + summary.storageBytes, 0),
   };
 }

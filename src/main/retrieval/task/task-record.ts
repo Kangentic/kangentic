@@ -33,6 +33,18 @@ export interface TaskRecordSource {
   createdAt: string;
   /** ISO timestamp of its last edit; what the index re-reads on. */
   updatedAt: string;
+  /** The task's digest, when the answering agent has written one. */
+  digest?: string | null;
+  /** When the digest was written, ISO; a newer digest re-reads the record too. */
+  digestAt?: string | null;
+}
+
+/** When a record last changed: its own edit, or a newer digest of it. */
+export function recordChangedMs(record: Pick<TaskRecordSource, 'updatedAt' | 'digestAt'>): number | null {
+  const times = [record.updatedAt, record.digestAt]
+    .map((value) => (value ? Date.parse(value) : Number.NaN))
+    .filter((value) => !Number.isNaN(value));
+  return times.length > 0 ? Math.max(...times) : null;
 }
 
 function sha1(text: string): string {
@@ -74,14 +86,19 @@ function splitDescription(description: string): string[] {
 }
 
 /**
- * One record as chunks. Every chunk opens with the title (and the labels, when
- * there are any), so each one embeds as being about this task: a passage from
- * the middle of a long description is otherwise just prose.
+ * One record as chunks. Every chunk opens with the title (and the labels and
+ * digest, when there are any), so each one embeds as being about this task: a
+ * passage from the middle of a long description is otherwise just prose.
  */
 export function taskRecordChunks(record: TaskRecordSource): ChunkInput[] {
   const title = record.title.trim() || 'Untitled';
   const labels = record.labels.map((label) => label.trim()).filter((label) => label.length > 0);
-  const header = labels.length > 0 ? `${title}\nLabels: ${labels.join(', ')}` : title;
+  const digest = record.digest?.trim();
+  const header = [
+    title,
+    ...(labels.length > 0 ? [`Labels: ${labels.join(', ')}`] : []),
+    ...(digest ? [`Summary: ${digest}`] : []),
+  ].join('\n');
   const pieces = splitDescription(record.description);
   const createdMs = Date.parse(record.createdAt);
   const at = Number.isNaN(createdMs) ? null : createdMs;

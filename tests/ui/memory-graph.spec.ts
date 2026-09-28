@@ -76,6 +76,7 @@ function snapshotScript(options: {
             { corpus: 'task', documents: 412, chunks: 1400, embeddedChunks: 700, embeds: true },
             { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
           ],
+          digests: { written: 300, finishedTasks: 412 },
           storageBytes: 3221225472,
         },
       },
@@ -393,6 +394,8 @@ test.describe('memory graph', () => {
       await expect(tasks).toContainText('412, 50% embedded');
       await expect(changes).toContainText('Session changes');
       await expect(changes).toContainText('Not yet indexed');
+      // Digests are written in the background, so the row counts toward the finished tasks.
+      await expect(page.locator('[data-testid="memory-graph-index-digests"]')).toContainText('300 of 412');
       // The totals cover every corpus, not just the map's.
       const rows = page.locator('[data-testid="memory-graph-index-rows"]');
       await expect(rows).toContainText((51365 + 1400).toLocaleString('en-US'));
@@ -2386,6 +2389,7 @@ test.describe('memory graph', () => {
                   { corpus: 'task', documents: 12, chunks: 30, embeddedChunks: 30, embeds: true },
                   { corpus: 'change', documents: 8, chunks: 8, embeddedChunks: 0, embeds: false },
                 ],
+                digests: { written: 0, finishedTasks: 5 },
                 storageBytes: 1048576,
               },
             },

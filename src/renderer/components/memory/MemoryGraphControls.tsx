@@ -851,6 +851,17 @@ export function MemoryGraphControls({
                 />
               </div>
             ))}
+            {/* Its own row once any exist: digests are written in the
+                background, so the count climbs toward the finished tasks. */}
+            {index.digests.written > 0 ? (
+              <div data-testid="memory-graph-index-digests">
+                <IndexRow
+                  label="Task digests"
+                  value={`${index.digests.written.toLocaleString()} of ${index.digests.finishedTasks.toLocaleString()}`}
+                  hint="A sentence or two per finished task, written by the answering agent. Searched with the task's record."
+                />
+              </div>
+            ) : null}
             <IndexRow
               label="Chunks"
               value={totalChunks}

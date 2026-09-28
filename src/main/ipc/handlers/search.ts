@@ -11,7 +11,6 @@ import { graphService } from '../../retrieval/graph/graph-service';
 import { buildAnswerPrompt, buildFollowUpPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
 import { answerSessionPool, type PooledAnswerSession, type PrimedAnswerChat } from '../../retrieval/answer-session-pool';
 import { AnswerSessionError } from '../../agent/shared/answer-session/stdin-json-session';
-import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { AnswerStreamEvent } from '../../agent/shared/auto-name';
 import {
   buildAnswerTaskTable,
@@ -36,9 +35,10 @@ import { estimateTokens } from '../../retrieval/token-estimate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
-import { answerSetupGap, resolveAnswerAgent } from '../../../shared/answer-agent';
-import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
-import { ANSWER_CALLER_PREFIX, appendAnswerCaller } from '../../agent/mcp-http/caller-url';
+import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
+import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
+import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
+import { DigestStore } from '../../retrieval/digest/digest-store';
 import type {
   SearchHit,
   SearchRequest,
@@ -107,103 +107,6 @@ function readBoardTasks(projectId: string): BoardTaskFacts[] {
   } catch {
     return [];
   }
-}
-
-/** How a question is answered: which agent, CLI, model, effort and search URL.
- *  A warm session is started under exactly these, summed up as `sessionKey`. */
-interface AnswerRun {
-  adapter: AgentAdapter;
-  /** The adapter's fresh run, bound. */
-  answerFromContext: NonNullable<AgentAdapter['answerFromContext']>;
-  agentName: string;
-  cliPath: string;
-  model: string | null;
-  effort: string | null;
-  retrieval: { url: string; token: string } | undefined;
-  sessionKey: string;
-  /** The one working directory every answer run starts in (`answer-run-directory.ts`). */
-  answerHome: string;
-}
-
-/**
- * Resolve the answering agent for a question or a prewarm, through the SHARED
- * rule the renderer uses to decide whether a question runs or goes to Settings
- * first, so the two can never disagree. The rule is explicit: the configured
- * agent and model, with no fallback to the project's agent or to any capable one.
- */
-async function resolveAnswerRun(
-  context: IpcContext,
-  homeProjectId: string,
-  chatId: string,
-): Promise<{ ok: true; run: AnswerRun } | { ok: false; failure: { ok: false; reason: string; setup?: 'agent' | 'model' } }> {
-  const { agentRegistry } = await import('../../agent/agent-registry');
-  const config = context.configManager.load();
-  const agents = agentRegistry.list().flatMap((name) => {
-    const entry = agentRegistry.get(name);
-    return entry
-      ? [{
-        name,
-        displayName: entry.displayName,
-        supportsAnswerFromContext: typeof entry.answerFromContext === 'function',
-        answerCapabilities: entry.answerCapabilities,
-      }]
-      : [];
-  });
-  const configuredAgent = config.memory?.answerAgent ?? null;
-  const configuredModel = config.memory?.answerModel ?? null;
-  const setup = answerSetupGap({ agents, configured: configuredAgent, configuredModel });
-  if (setup) {
-    return {
-      ok: false,
-      failure: {
-        ok: false,
-        setup,
-        reason: setup === 'agent'
-          ? 'choose an agent in the Knowledge Graph card in Settings > Search'
-          : 'choose a model in the Knowledge Graph card in Settings > Search',
-      },
-    };
-  }
-  const agentName = resolveAnswerAgent({ agents, configured: configuredAgent })?.name ?? '';
-  const adapter = agentRegistry.get(agentName);
-  if (!adapter?.answerFromContext) return { ok: false, failure: { ok: false, reason: `unknown agent: ${agentName}` } };
-  const info = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
-  if (!info.found || !info.path) return { ok: false, failure: { ok: false, reason: `${adapter.displayName} CLI not found` } };
-
-  // Effort only for a run that passes it on: the user's level, else the
-  // adapter's recommended default, and either only when the CLI reports it
-  // right now. A stale level would fail every question: Grok, Copilot and
-  // Antigravity all exit on an unknown one.
-  const capabilities = adapter.answerCapabilities;
-  let effort: string | null = null;
-  if (capabilities?.effort && adapter.discoverCapabilities) {
-    const discovered = await adapter.discoverCapabilities(info.path).catch(() => undefined);
-    const levels = discovered?.effortLevels ?? [];
-    const configuredEffort = config.memory?.answerEffort ?? null;
-    if (configuredEffort && levels.includes(configuredEffort)) effort = configuredEffort;
-    else if (capabilities.defaultEffort && levels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
-  }
-
-  // The ONE tool the agent may reach: Kangentic's own conversation search,
-  // scoped to the home project by the URL. Offered only to an agent whose
-  // answer run can use it, and only when the MCP server is up. The URL carries
-  // an ANSWER caller segment keyed by the chat: the server hands such a caller
-  // exactly `kangentic_search` (`buildAnswerMcpServer`) and publishes its
-  // searches to the trace.
-  const retrieval = context.mcpServerHandle && capabilities?.search
-    ? { url: appendAnswerCaller(context.mcpServerHandle.urlForProject(homeProjectId), chatId), token: context.mcpServerHandle.token }
-    : undefined;
-  const run = {
-    adapter,
-    answerFromContext: adapter.answerFromContext.bind(adapter),
-    agentName,
-    cliPath: info.path,
-    model: configuredModel,
-    effort,
-    retrieval,
-    answerHome: await ensureAnswerHomeDirectory(),
-  };
-  return { ok: true, run: { ...run, sessionKey: JSON.stringify([agentName, info.path, configuredModel, effort, retrieval?.url ?? null]) } };
 }
 
 /**
@@ -612,6 +515,27 @@ export function registerSearchHandlers(context: IpcContext): void {
         const handedWire = related.handed.map(toWire);
         emit({ kind: 'set', related: handedWire, handedCount: related.handed.length });
 
+        // Each handed task's digest, read per project: a task id belongs to one.
+        const digestByTask = timeSyncWork('answer:digests', () => {
+          const digests = new Map<string, string>();
+          const taskIdsByProject = new Map<string, string[]>();
+          for (const task of related.handed) {
+            if (!task.taskId) continue;
+            const list = taskIdsByProject.get(task.projectId) ?? [];
+            list.push(task.taskId);
+            taskIdsByProject.set(task.projectId, list);
+          }
+          for (const [projectId, taskIds] of taskIdsByProject) {
+            try {
+              for (const [taskId, digest] of new DigestStore(getProjectDb(projectId)).digestsFor(taskIds)) {
+                digests.set(`${projectId}:${taskId}`, digest);
+              }
+            } catch {
+              // The related work stands without its digests.
+            }
+          }
+          return digests;
+        });
         const relatedForPrompt = related.handed.flatMap((task, index) => {
           const ref = refByKey.get(task.key);
           if (!ref) return [];
@@ -626,6 +550,7 @@ export function registerSearchHandlers(context: IpcContext): void {
               ? related.passages.get(passageKey(task.projectId, task.bestChunkId)) ?? null
               : null,
             facts: rowByKey.get(task.key) ?? null,
+            digest: task.taskId ? digestByTask.get(`${task.projectId}:${task.taskId}`) ?? null : null,
           }];
         });
         const canSearch = retrieval !== undefined;

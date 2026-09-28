@@ -144,8 +144,19 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       .reduce((total, entry) => total + entry.embeddedChunks, 0);
     return {
       corpora,
+      digests: digestCounts(store),
       storageBytes: (projection?.storageBytes ?? 0) + cached.otherTextBytes + otherEmbedded * dimensions * 4,
     };
+  }
+
+  /** Digests written, of the finished tasks: two small reads, never cached, so
+   *  the row moves as the background backfill writes. */
+  function digestCounts(store: RetrievalStore): MemoryIndexSummary['digests'] {
+    try {
+      return store.digestCounts();
+    } catch {
+      return { written: 0, finishedTasks: 0 };
+    }
   }
 
   /**

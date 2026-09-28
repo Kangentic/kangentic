@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageSquare, Sparkles, Check, RotateCcw, Network } from 'lucide-react';
 import { Select, DownloadProgressBar, useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardChoiceRow, CardTile } from '../settings-card';
+import { SettingsCard, CardRow, CardChoiceRow, CardTile, CardToggleRow } from '../settings-card';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { useProjectStore } from '../../../stores/project-store';
@@ -232,7 +232,7 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
         icon={<Network size={16} />}
         label="Knowledge Graph"
         description="The agent that answers the questions you ask in the graph."
-        searchIds={['memory.answerAgent', 'memory.answerModel', 'memory.answerEffort']}
+        searchIds={['memory.answerAgent', 'memory.answerModel', 'memory.answerEffort', 'memory.taskDigests']}
         requirement={!semanticReady
           ? 'Needs semantic search'
           : answerCapableAgents.length === 0
@@ -311,6 +311,17 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
                     testId="memory-answer-effort"
                   />
                 </CardRow>
+              ) : null}
+
+              {/* Written by the agent chosen above, so offered once there is one.
+                  On unless turned off: it spends calls, which is why it is a row
+                  at all rather than always on. */}
+              {chosenAnswerAgent ? (
+                <CardToggleRow
+                  {...settingProps('memory.taskDigests')}
+                  checked={globalConfig.memory?.taskDigests ?? true}
+                  onChange={(value) => updateGlobal({ memory: { taskDigests: value } })}
+                />
               ) : null}
           </>
         ) : null}

@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
-import { parseLabels, taskRecordChunks, TASK_RECORD_VERSION, type TaskRecordSource } from './task-record';
+import { parseLabels, recordChangedMs, taskRecordChunks, TASK_RECORD_VERSION, type TaskRecordSource } from './task-record';
 
 /**
  * Keeps the `task` corpus in step with the board: one document per task and
@@ -51,11 +51,15 @@ interface RecordRow {
   updatedAt: string;
 }
 
-/** Every task and backlog item as a record source. */
+/** Every task and backlog item as a record source, each task with its digest. */
 export function readTaskRecordSources(db: Database.Database): TaskRecordSource[] {
   const tasks = db
-    .prepare('SELECT id, title, description, labels, created_at AS createdAt, updated_at AS updatedAt FROM tasks')
-    .all() as RecordRow[];
+    .prepare(
+      `SELECT t.id, t.title, t.description, t.labels, t.created_at AS createdAt, t.updated_at AS updatedAt,
+              d.digest AS digest, d.created_at AS digestAt
+       FROM tasks t LEFT JOIN memory_task_digests d ON d.task_id = t.id`,
+    )
+    .all() as Array<RecordRow & { digest: string | null; digestAt: string | null }>;
   let backlog: RecordRow[] = [];
   try {
     backlog = db
@@ -74,7 +78,7 @@ export function readTaskRecordSources(db: Database.Database): TaskRecordSource[]
     updatedAt: row.updatedAt,
   });
   return [
-    ...tasks.map((row) => toSource(row, row.id, row.id)),
+    ...tasks.map((row) => ({ ...toSource(row, row.id, row.id), digest: row.digest, digestAt: row.digestAt })),
     ...backlog.map((row) => toSource(row, `${BACKLOG_DOC_PREFIX}${row.id}`, null)),
   ];
 }
@@ -105,17 +109,15 @@ export async function sweepTaskRecords(
 
   const stale = sources.filter((source) => {
     const signature = signatures.get(source.docId);
-    const updatedMs = Date.parse(source.updatedAt);
     return !signature
       || signature.sourcePath !== RECORD_SOURCE
-      || signature.sourceMtimeMs !== (Number.isNaN(updatedMs) ? null : updatedMs);
+      || signature.sourceMtimeMs !== recordChangedMs(source);
   });
 
   for (let start = 0; start < stale.length; start += RECORDS_PER_SLICE) {
     if (!shouldContinue()) return result;
     for (const source of stale.slice(start, start + RECORDS_PER_SLICE)) {
       const chunks = taskRecordChunks(source);
-      const updatedMs = Date.parse(source.updatedAt);
       try {
         store.upsertDocument(
           { corpus: CORPUS, docId: source.docId, sessionId: null, taskId: source.taskId, agentSessionId: null, metaJson: null },
@@ -126,7 +128,7 @@ export async function sweepTaskRecords(
           docId: source.docId,
           sessionId: null,
           sourcePath: RECORD_SOURCE,
-          sourceMtimeMs: Number.isNaN(updatedMs) ? null : updatedMs,
+          sourceMtimeMs: recordChangedMs(source),
           sourceSize: chunks.reduce((total, chunk) => total + chunk.text.length, 0),
           entryCount: 1,
           chunkCount: chunks.length,

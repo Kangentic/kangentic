@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
-import { taskRecordChunks, parseLabels, TASK_RECORD_VERSION } from '../../src/main/retrieval/task/task-record';
+import { taskRecordChunks, parseLabels, recordChangedMs, TASK_RECORD_VERSION } from '../../src/main/retrieval/task/task-record';
 import { sweepTaskRecords, BACKLOG_DOC_PREFIX } from '../../src/main/retrieval/task/task-indexer';
 
 const baseRecord = {
@@ -59,6 +59,14 @@ describe('taskRecordChunks', () => {
     const after = taskRecordChunks({ ...baseRecord, updatedAt: '2026-09-28T10:00:00.000Z' });
     expect(after).toEqual(before);
     expect(before[0].tsStart).toBe(Date.parse('2026-09-01T10:00:00.000Z'));
+  });
+
+  it('carries the task\'s digest on every chunk, and re-reads when a newer digest lands', () => {
+    const chunks = taskRecordChunks({ ...baseRecord, digest: 'Made the relay reconnect with backoff.', description: 'Body.' });
+    expect(chunks[0].text).toBe('Relay reconnect after router restart\nSummary: Made the relay reconnect with backoff.\n\nBody.');
+    expect(recordChangedMs({ updatedAt: baseRecord.updatedAt, digestAt: '2026-09-10T00:00:00.000Z' }))
+      .toBe(Date.parse('2026-09-10T00:00:00.000Z'));
+    expect(recordChangedMs({ updatedAt: baseRecord.updatedAt, digestAt: null })).toBe(Date.parse(baseRecord.updatedAt));
   });
 
   it('reads the labels column leniently', () => {
