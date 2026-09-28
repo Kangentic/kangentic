@@ -437,7 +437,8 @@ describe('RetrievalStore corpus reads', () => {
 
     expect(pending.map((chunk) => chunk.id)).toEqual([3, 90]);
     const seeks = calls.filter((call) => call.sql.includes('embedded_model IS NULL AND corpus = ?'));
-    expect(seeks.map((call) => call.args)).toEqual([['conversation', 5], ['task', 4], ['change', 3]]);
+    // Session changes are text only (`EMBEDDED_CORPORA`), so they are never served.
+    expect(seeks.map((call) => call.args)).toEqual([['conversation', 5], ['task', 4]]);
     // The whole-table `!=` scan is gone.
     expect(calls.some((call) => call.sql.includes('embedded_model != ?'))).toBe(false);
   });

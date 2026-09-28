@@ -6972,6 +6972,9 @@ export interface MemoryIndexCorpusSummary {
   chunks: number;
   /** Chunks with a vector; `chunks` minus these are still to be embedded. */
   embeddedChunks: number;
+  /** False for a corpus kept as text only (session changes), which is never
+   *  embedded and so has no embedded share to show. */
+  embeds: boolean;
 }
 
 /**

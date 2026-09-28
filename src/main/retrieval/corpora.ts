@@ -25,6 +25,21 @@ export type MemoryCorpus = typeof MEMORY_CORPORA[number];
 export const CONVERSATION_CORPUS: ReadonlyArray<MemoryCorpus> = ['conversation'];
 
 /**
+ * The corpora that get vectors. Session changes do not: measured free on the
+ * real index over seven questions (998 conversations, 1,159 change chunks),
+ * ranking by them as well as by task records lowered title-named recall inside
+ * the handed set from 69 of 96 to 65, even on a question about which tasks
+ * changed a file, because nearly every session changes many files. They stay
+ * indexed as text, which is what the task digests read, and embedding them
+ * would buy nothing a search uses.
+ */
+export const EMBEDDED_CORPORA: ReadonlyArray<MemoryCorpus> = ['conversation', 'task'];
+
+export function isEmbeddedCorpus(corpus: MemoryCorpus): boolean {
+  return EMBEDDED_CORPORA.includes(corpus);
+}
+
+/**
  * The vec0 table holding one corpus's vectors, rowid = chunk id.
  *
  * Conversations keep the original table name. The others are deliberately NOT

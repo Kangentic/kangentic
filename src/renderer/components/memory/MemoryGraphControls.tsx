@@ -341,7 +341,7 @@ const CORPUS_ROWS: Record<MemoryIndexCorpus, { label: string; hint: string }> = 
   },
   change: {
     label: 'Session changes',
-    hint: 'The files each session changed. Searched when you ask, never drawn.',
+    hint: 'The files each session changed, read from its conversation. Kept as text, never drawn.',
   },
 };
 
@@ -350,7 +350,7 @@ const CORPUS_ROWS: Record<MemoryIndexCorpus, { label: string; hint: string }> = 
 function corpusValue(entry: MemoryIndexCorpusSummary, semanticAvailable: boolean): string {
   if (entry.documents === 0) return 'Not yet indexed';
   const count = entry.documents.toLocaleString();
-  if (!semanticAvailable || entry.chunks === 0 || entry.embeddedChunks >= entry.chunks) return count;
+  if (!entry.embeds || !semanticAvailable || entry.chunks === 0 || entry.embeddedChunks >= entry.chunks) return count;
   return `${count}, ${Math.floor((entry.embeddedChunks / entry.chunks) * 100)}% embedded`;
 }
 
@@ -436,6 +436,9 @@ export function MemoryGraphControls({
   // Every corpus, not just what the map draws: the Index panel accounts for
   // the whole store.
   const totalChunks = index.corpora.reduce((total, entry) => total + entry.chunks, 0);
+  // The embedded share is of what gets embedded: a text-only corpus would
+  // otherwise hold it below 100% forever.
+  const embeddableChunks = index.corpora.reduce((total, entry) => total + (entry.embeds ? entry.chunks : 0), 0);
   const totalEmbedded = index.corpora.reduce((total, entry) => total + entry.embeddedChunks, 0);
   const [regionQuery, setRegionQuery] = useState('');
 
@@ -863,7 +866,7 @@ export function MemoryGraphControls({
             <IndexRow label="Links" value={edgeCount} />
             <IndexRow
               label="Embedded"
-              value={`${totalChunks > 0 ? Math.floor((totalEmbedded / totalChunks) * 100) : 0}%`}
+              value={`${embeddableChunks > 0 ? Math.floor((totalEmbedded / embeddableChunks) * 100) : 0}%`}
               tone={semanticAvailable ? 'ok' : 'problem'}
               hint={semanticAvailable ? undefined : 'The semantic layer is unavailable, so search is matching text only'}
             />

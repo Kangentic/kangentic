@@ -569,9 +569,9 @@ export function registerSearchHandlers(context: IpcContext): void {
           ...(scope ? {} : { recordOnlyTasks: timeSyncWork('answer:record-tasks', () => boardRecordTasks(part.project.id)) }),
         }));
         const nodesInScope = projectNodes.flatMap((entry) => entry.nodes);
-        // A desktop edit of a task's text reaches the index here, for the next
-        // question; nothing waits on it.
-        for (const part of parts) retrievalService.refreshTaskRecords(context, part.project.id);
+        // A desktop edit of a task's text, and a live conversation's latest
+        // changes, reach the index here, for the next question; nothing waits.
+        for (const part of parts) retrievalService.refreshRecords(context, part.project.id);
         // A failed search costs the related work, not the answer: the table
         // still settles every board question, and the agent can still search.
         let related: ProjectRelatedWork;

@@ -574,6 +574,21 @@ export interface AgentAdapter {
   readonly subagentSpawnToolName?: string;
 
   /**
+   * The agent's file-changing tools, and the input field that names the file:
+   * what the memory index's `change` corpus reads to list the files a session
+   * changed (Claude: `Edit`, `Write`, `MultiEdit` by `file_path`, `NotebookEdit`
+   * by `notebook_path`).
+   *
+   * Read from the conversation chunks' text, where the chunker writes each tool
+   * call as `Tool: <name> <json input, cut at 200 characters>`. That text
+   * survives the agent pruning its transcript, which is the state of most
+   * indexed conversations, so the changes of an old session are still found.
+   * Measured on 998 real conversations: 90.7% of 47,318 edit calls kept their
+   * whole path inside the cut. An adapter that omits this indexes no changes.
+   */
+  readonly fileChangeTools?: ReadonlyArray<{ tool: string; pathField: string }>;
+
+  /**
    * Optional: parse CUMULATIVE lifetime token usage for a session from the
    * agent's own transcript. This is the authoritative source for the per-task
    * lifetime-stats rollup, because the live statusLine token counts are a

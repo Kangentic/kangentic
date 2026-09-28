@@ -74,6 +74,7 @@ export function sumIndex(summaries: ReadonlyArray<MemoryIndexSummary>): MemoryIn
           documents: sum.documents + entry.documents,
           chunks: sum.chunks + entry.chunks,
           embeddedChunks: sum.embeddedChunks + entry.embeddedChunks,
+          embeds: sum.embeds && entry.embeds,
         }
         : { ...entry });
     }

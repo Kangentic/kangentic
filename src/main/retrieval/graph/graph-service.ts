@@ -20,7 +20,7 @@
 
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
-import { CONVERSATION_CORPUS, MEMORY_CORPORA } from '../corpora';
+import { CONVERSATION_CORPUS, isEmbeddedCorpus, MEMORY_CORPORA } from '../corpora';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { MemoryGraphSnapshot, MemoryIndexSummary } from '../../../shared/types';
@@ -131,7 +131,13 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     const totals = cached.totals;
     const corpora = MEMORY_CORPORA.map((corpus) => {
       const row = totals.find((entry) => entry.corpus === corpus);
-      return { corpus, documents: row?.documents ?? 0, chunks: row?.chunks ?? 0, embeddedChunks: row?.embeddedChunks ?? 0 };
+      return {
+        corpus,
+        documents: row?.documents ?? 0,
+        chunks: row?.chunks ?? 0,
+        embeddedChunks: row?.embeddedChunks ?? 0,
+        embeds: isEmbeddedCorpus(corpus),
+      };
     });
     const otherEmbedded = corpora
       .filter((entry) => entry.corpus !== 'conversation')

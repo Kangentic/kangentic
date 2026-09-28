@@ -467,6 +467,15 @@ export class ClaudeAdapter implements AgentAdapter {
    *  how the spawning turn is found again. */
   readonly subagentSpawnToolName = CLAUDE_SUBAGENT_SPAWN_TOOL;
 
+  /** Claude's file-changing tools and the field naming the file, for the
+   *  memory index's session changes. */
+  readonly fileChangeTools = [
+    { tool: 'Edit', pathField: 'file_path' },
+    { tool: 'Write', pathField: 'file_path' },
+    { tool: 'MultiEdit', pathField: 'file_path' },
+    { tool: 'NotebookEdit', pathField: 'notebook_path' },
+  ];
+
   /**
    * Lifetime cumulative tokens from Claude's own session JSONL. Prefers the
    * exact `transcriptPath` Claude reported in status.json; otherwise derives the

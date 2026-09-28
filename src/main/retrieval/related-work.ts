@@ -54,6 +54,11 @@
  *   The handed set grew from 33 tasks to 43 on average. The factor is
  *   clamped, so a record pool that barely clears the cutoff is not inflated
  *   into noise.
+ * - NOT SESSION CHANGES. Ranking by the files each session changed as well
+ *   lowered title-named recall from 69 of 96 to 65 over seven questions, one
+ *   of them about which tasks changed a file: nearly every session changes
+ *   many files, so the set only grew. They are indexed as text for the task
+ *   digests, and searched by nothing here (`EMBEDDED_CORPORA`).
  */
 
 import type Database from 'better-sqlite3';
@@ -68,14 +73,18 @@ import type { ChunkPlacement, Embedder } from './types';
 const SEMANTIC_POOL = 1_000;
 /** Keyword matches read, by bm25. */
 const LEXICAL_POOL = 500;
-/** Nearest task-record chunks read per query vector, and keyword matches among
- *  them. Records are their own pools, so they never push a conversation chunk
- *  out of the deep one; a project has a few thousand record chunks at most. */
-const RECORD_SEMANTIC_POOL = 500;
-const RECORD_LEXICAL_POOL = 200;
-/** Bounds on the factor that puts record relevance on the conversation scale. */
-const RECORD_SCALE_MIN = 0.5;
-const RECORD_SCALE_MAX = 1.5;
+/**
+ * The corpora searched beside the conversations, each in pools of its own so
+ * they never push a conversation chunk out of the deep one, and each rescaled
+ * to the conversations' relevance (see the header). A project holds a few
+ * thousand chunks of each at most.
+ */
+const SIDE_CORPORA: ReadonlyArray<{ corpus: MemoryCorpus; semanticPool: number; lexicalPool: number }> = [
+  { corpus: 'task', semanticPool: 500, lexicalPool: 200 },
+];
+/** Bounds on the factor that puts a side corpus on the conversation scale. */
+const SIDE_SCALE_MIN = 0.5;
+const SIDE_SCALE_MAX = 1.5;
 /** Weight of the log2 match-count term. */
 const CORROBORATION_WEIGHT = 0.03;
 /** Largest keyword bonus, for the best bm25 rank; it falls to nothing by `LEXICAL_RANK_SPAN`. */
@@ -458,20 +467,22 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     return relevanceByChunk;
   };
   const conversationRelevance = await semanticPool(CONVERSATION_CORPUS, SEMANTIC_POOL);
-  const recordRelevance = await semanticPool(['task'], RECORD_SEMANTIC_POOL);
-
-  // Records on the conversation scale: the best record scores what the best
-  // conversation chunk does (see the header), within bounds.
-  const conversationBest = Math.max(0, ...conversationRelevance.values());
-  const recordBest = Math.max(0, ...recordRelevance.values());
-  const recordScale = conversationBest > 0 && recordBest > 0
-    ? Math.min(RECORD_SCALE_MAX, Math.max(RECORD_SCALE_MIN, conversationBest / recordBest))
-    : 1;
   const relevanceByChunk = new Map(conversationRelevance);
-  for (const [chunkId, relevance] of recordRelevance) relevanceByChunk.set(chunkId, relevance * recordScale);
+
+  // Each side corpus on the conversation scale: its best chunk scores what the
+  // best conversation chunk does (see the header), within bounds.
+  const conversationBest = Math.max(0, ...conversationRelevance.values());
+  for (const side of SIDE_CORPORA) {
+    const sideRelevance = await semanticPool([side.corpus], side.semanticPool);
+    const sideBest = Math.max(0, ...sideRelevance.values());
+    const scale = conversationBest > 0 && sideBest > 0
+      ? Math.min(SIDE_SCALE_MAX, Math.max(SIDE_SCALE_MIN, conversationBest / sideBest))
+      : 1;
+    for (const [chunkId, relevance] of sideRelevance) relevanceByChunk.set(chunkId, relevance * scale);
+  }
 
   // Keyword matches, each corpus ranked on its own so a record's rank 1 earns
-  // what a conversation's does. A task keeps its better rank of the two.
+  // what a conversation's does. A task keeps its best rank of them.
   const keywordQuery = relatedKeywordQuery(`${input.question} ${anchors}`);
   let lexical: Array<{ chunkId: number; rank: number }> = [];
   if (keywordQuery) {
@@ -484,7 +495,10 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
         return [];
       }
     };
-    lexical = [...keywordPool(CONVERSATION_CORPUS, LEXICAL_POOL), ...keywordPool(['task'], RECORD_LEXICAL_POOL)];
+    lexical = [
+      ...keywordPool(CONVERSATION_CORPUS, LEXICAL_POOL),
+      ...SIDE_CORPORA.flatMap((side) => keywordPool([side.corpus], side.lexicalPool)),
+    ];
   }
 
   const chunkIds = [...new Set([...relevanceByChunk.keys(), ...lexical.map((hit) => hit.chunkId)])];

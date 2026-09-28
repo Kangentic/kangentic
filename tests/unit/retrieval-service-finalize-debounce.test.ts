@@ -74,6 +74,14 @@ const taskIndexerMock = vi.hoisted(() => ({
 vi.mock('../../src/main/retrieval/task/task-indexer', () => ({
   sweepTaskRecords: taskIndexerMock.sweepTaskRecords,
 }));
+const graphServiceMock = vi.hoisted(() => ({ notifyChanged: vi.fn() }));
+vi.mock('../../src/main/retrieval/graph/graph-service', () => ({ graphService: graphServiceMock }));
+const changeIndexerMock = vi.hoisted(() => ({
+  sweepChangeRecords: vi.fn(async () => ({ indexed: 0 })),
+}));
+vi.mock('../../src/main/retrieval/change/change-indexer', () => ({
+  sweepChangeRecords: changeIndexerMock.sweepChangeRecords,
+}));
 
 /** Minimal fake of the SessionManager surface scheduleFinalizeIndex reads:
  *  a real EventEmitter (so `.on('exit'|'session-changed', ...)` wiring in
@@ -204,6 +212,8 @@ describe('retrievalService - per-session finalize debounce', () => {
 
     expect(conversationIndexerMock.indexSubagentUsage).toHaveBeenCalledTimes(1);
     expect(conversationIndexerMock.indexSubagentUsage).toHaveBeenCalledWith('proj-1', 'sess-1');
+    // And the files it changed, read from what was just indexed.
+    expect(changeIndexerMock.sweepChangeRecords).toHaveBeenCalledWith('proj-1', null, expect.any(Function));
   });
 
   it('does NOT walk subagent usage on the live turn-boundary (activity) path', async () => {
@@ -254,6 +264,8 @@ describe('retrievalService - task records follow the board', () => {
     expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledTimes(1);
     expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledWith('proj-1', expect.any(Function));
     expect(embedEngineMock.markDirty).toHaveBeenCalledWith('proj-1');
+    // An open graph re-reads, so its Index counts the new records.
+    expect(graphServiceMock.notifyChanged).toHaveBeenCalledWith('proj-1');
   });
 
   it('ignores a column edit, which changes no task record', async () => {
@@ -270,7 +282,7 @@ describe('retrievalService - task records follow the board', () => {
     taskIndexerMock.sweepTaskRecords.mockResolvedValueOnce({ indexed: 0, removed: 0 });
     retrievalService.attach(makeContext(new FakeSessionManager()));
 
-    retrievalService.refreshTaskRecords(makeContext(new FakeSessionManager()), 'proj-1');
+    retrievalService.refreshRecords(makeContext(new FakeSessionManager()), 'proj-1');
     await vi.advanceTimersByTimeAsync(10);
 
     expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledTimes(1);

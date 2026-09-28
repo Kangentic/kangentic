@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { hasVecSupport } from './vec-support';
-import { isMemoryCorpus, MEMORY_CORPORA, vecTableName, type MemoryCorpus } from './corpora';
+import { EMBEDDED_CORPORA, isMemoryCorpus, MEMORY_CORPORA, vecTableName, type MemoryCorpus } from './corpora';
 import type {
   ChunkInput,
   ChunkPlacement,
@@ -473,12 +473,12 @@ export class RetrievalStore {
     return this.vecTables.has('conversation');
   }
 
-  /** Create every corpus's vec table at `dimensions` that does not exist yet.
-   *  Only the embedding path calls this (it alone knows the selected model's
-   *  dimension). No-op when sqlite-vec is unavailable. */
+  /** Create every embedded corpus's vec table at `dimensions` that does not
+   *  exist yet. Only the embedding path calls this (it alone knows the selected
+   *  model's dimension). No-op when sqlite-vec is unavailable. */
   ensureVecTable(dimensions: number): void {
     if (!hasVecSupport(this.db)) return;
-    for (const corpus of MEMORY_CORPORA) {
+    for (const corpus of EMBEDDED_CORPORA) {
       try {
         this.db.exec(
           `CREATE VIRTUAL TABLE IF NOT EXISTS ${vecTableName(corpus)} USING vec0(embedding float[${dimensions}])`,
@@ -497,14 +497,15 @@ export class RetrievalStore {
   resetVec(dimensions: number): void {
     if (!hasVecSupport(this.db)) return;
     const run = this.db.transaction(() => {
-      for (const corpus of MEMORY_CORPORA) {
-        this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
+      for (const corpus of MEMORY_CORPORA) this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
+      for (const corpus of EMBEDDED_CORPORA) {
         this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} USING vec0(embedding float[${dimensions}])`);
       }
       this.db.prepare('UPDATE memory_chunks SET embedded_model = NULL').run();
     });
     run();
-    for (const corpus of MEMORY_CORPORA) this.vecTables.add(corpus);
+    this.vecTables.clear();
+    for (const corpus of EMBEDDED_CORPORA) this.vecTables.add(corpus);
   }
 
   /**
@@ -604,7 +605,7 @@ export class RetrievalStore {
   chunksNeedingEmbedding(modelTag: string, limit: number): StoredChunk[] {
     if (this.vecTables.size === 0) return [];
     const rows: StoredChunkRow[] = [];
-    for (const corpus of MEMORY_CORPORA) {
+    for (const corpus of EMBEDDED_CORPORA) {
       if (rows.length >= limit) break;
       if (!this.vecTables.has(corpus)) continue;
       rows.push(...this.db

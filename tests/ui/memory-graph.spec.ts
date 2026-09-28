@@ -72,9 +72,9 @@ function snapshotScript(options: {
         // embedded, task records still embedding, session changes not reached.
         index: {
           corpora: [
-            { corpus: 'conversation', documents: 638, chunks: 51365, embeddedChunks: 51365 },
-            { corpus: 'task', documents: 412, chunks: 1400, embeddedChunks: 700 },
-            { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0 },
+            { corpus: 'conversation', documents: 638, chunks: 51365, embeddedChunks: 51365, embeds: true },
+            { corpus: 'task', documents: 412, chunks: 1400, embeddedChunks: 700, embeds: true },
+            { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
           ],
           storageBytes: 3221225472,
         },
@@ -2382,9 +2382,9 @@ test.describe('memory graph', () => {
               },
               index: {
                 corpora: [
-                  { corpus: 'conversation', documents: 10, chunks: 900, embeddedChunks: 900 },
-                  { corpus: 'task', documents: 12, chunks: 30, embeddedChunks: 30 },
-                  { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0 },
+                  { corpus: 'conversation', documents: 10, chunks: 900, embeddedChunks: 900, embeds: true },
+                  { corpus: 'task', documents: 12, chunks: 30, embeddedChunks: 30, embeds: true },
+                  { corpus: 'change', documents: 8, chunks: 8, embeddedChunks: 0, embeds: false },
                 ],
                 storageBytes: 1048576,
               },

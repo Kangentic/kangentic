@@ -107,9 +107,10 @@ describe('graph service coverage cache', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
     const first = service.getSnapshot('project-a', 'model');
     expect(first.index.corpora).toEqual([
-      { corpus: 'conversation', documents: 1, chunks: 4, embeddedChunks: 4 },
-      { corpus: 'task', documents: 2, chunks: 3, embeddedChunks: 1 },
-      { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0 },
+      { corpus: 'conversation', documents: 1, chunks: 4, embeddedChunks: 4, embeds: true },
+      { corpus: 'task', documents: 2, chunks: 3, embeddedChunks: 1, embeds: true },
+      // Kept as text only, so it has no embedded share to report.
+      { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
     ]);
     // No projection yet and no stored width: the size is the other corpora's text.
     expect(first.index.storageBytes).toBe(300);

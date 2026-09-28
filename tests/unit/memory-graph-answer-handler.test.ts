@@ -122,7 +122,7 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
 }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
-  retrievalService: { getEmbedder: vi.fn(() => null), prewarmEmbedWorker: vi.fn(), refreshTaskRecords: vi.fn() },
+  retrievalService: { getEmbedder: vi.fn(() => null), prewarmEmbedWorker: vi.fn(), refreshRecords: vi.fn() },
 }));
 vi.mock('../../src/main/retrieval/graph/graph-service', () => {
   const getSnapshot = vi.fn();

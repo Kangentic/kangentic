@@ -31,6 +31,8 @@ import { hasVecSupport } from './vec-support';
 import { lastVecLoadError } from './vec-extension';
 import { ConversationIndexer } from './conversation/conversation-indexer';
 import { sweepTaskRecords } from './task/task-indexer';
+import { sweepChangeRecords } from './change/change-indexer';
+import { graphService } from './graph/graph-service';
 import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
@@ -179,6 +181,9 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
       // one. The session has just finished, so this is the walk that actually
       // captures the whole fan-out.
       await indexer.indexSubagentUsage(projectId, sessionId);
+      // The files the finished session changed, read from what was just
+      // indexed. Only conversations re-indexed since their last read are read.
+      await sweepChangeRecords(projectId, projectPathFor(context, projectId), () => !disposed);
       // Flag the project dirty; embedEngine's own drain loop embeds the
       // freshly indexed chunks in the background, duty-cycle throttled. This
       // does NOT embed inline - that is the whole point of the split.
@@ -227,17 +232,32 @@ function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
   liveIndexTimers.set(sessionId, timer);
 }
 
+/** A project's root, so a changed file in its main checkout reads repo-relative. */
+function projectPathFor(context: IpcContext, projectId: string): string | null {
+  try {
+    return context.projectRepo.getById(projectId)?.path ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Re-read a project's task records on the serial job chain, and flag the
- * project for the embedding drain when anything changed. A sweep with nothing
- * to do reads two small tables and writes nothing, so this is safe to ask for
- * whenever the board may have moved.
+ * Re-read a project's task records and session changes on the serial job
+ * chain, and flag the project for the embedding drain when anything changed.
+ * A sweep with nothing to do reads a few small tables and writes nothing, so
+ * this is safe to ask for whenever the board or a conversation may have moved.
  */
-function queueTaskRecordSweep(context: IpcContext, projectId: string): void {
+function queueRecordSweeps(context: IpcContext, projectId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;
   chain(async () => {
-    const result = await sweepTaskRecords(projectId, () => !disposed);
-    if (result.indexed > 0 || result.removed > 0) embedEngine.markDirty(projectId);
+    const tasks = await sweepTaskRecords(projectId, () => !disposed);
+    const changes = await sweepChangeRecords(projectId, projectPathFor(context, projectId), () => !disposed);
+    if (tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0) {
+      embedEngine.markDirty(projectId);
+      // An open Knowledge Graph re-reads its snapshot, so the Index panel
+      // counts what was just indexed. The map itself does not move.
+      graphService.notifyChanged(projectId);
+    }
   });
 }
 
@@ -252,7 +272,7 @@ function scheduleTaskRecordSweep(context: IpcContext, projectId: string): void {
   const timer = setTimeout(() => {
     pendingTimers.delete(timer);
     taskRecordTimers.delete(projectId);
-    queueTaskRecordSweep(context, projectId);
+    queueRecordSweeps(context, projectId);
   }, TASK_RECORD_DEBOUNCE_MS);
   timer.unref();
   pendingTimers.add(timer);
@@ -345,8 +365,10 @@ export const retrievalService = {
         const stillThisProject = (): boolean =>
           !disposed && context.currentProjectId === project.id && activeSweepProjectId === project.id;
         await indexer.sweepProject(project.id, stillThisProject);
-        // The board's own records: cheap, and complete on the first open.
+        // The board's own records, and the files each conversation changed:
+        // both cheap once caught up, and complete on the first open.
         await sweepTaskRecords(project.id, stillThisProject);
+        await sweepChangeRecords(project.id, project.path, stillThisProject);
         // Covers project open, the startup backlog, AND crash-resume: the
         // sweep re-indexed whatever changed, and this flags it for the
         // background drain regardless of whether anything actually changed
@@ -356,11 +378,12 @@ export const retrievalService = {
     });
   },
 
-  /** Re-read a project's task records now (queued behind any indexing job).
-   *  Asked for when a question starts, which catches a desktop edit the board
-   *  event bus does not carry; nothing waits on it. */
-  refreshTaskRecords(context: IpcContext, projectId: string): void {
-    queueTaskRecordSweep(context, projectId);
+  /** Re-read a project's task records and session changes now (queued behind
+   *  any indexing job). Asked for when a question starts, which catches a
+   *  desktop edit the board event bus does not carry and a conversation the
+   *  turn-boundary index just re-read; nothing waits on it. */
+  refreshRecords(context: IpcContext, projectId: string): void {
+    queueRecordSweeps(context, projectId);
   },
 
   /** The embedder for the search path, or null for lexical-only. Consulted by
