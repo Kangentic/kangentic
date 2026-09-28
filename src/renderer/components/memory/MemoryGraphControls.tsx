@@ -395,9 +395,18 @@ function SectionHeader({
   );
 }
 
-/** Card chrome shared by the panel's four sections. No `overflow` here: the
- *  panel scrolls as a whole, and nothing inside a card may clip. */
-const CARD_CLASS = 'flex-shrink-0 rounded-lg border border-edge bg-surface-raised/80 backdrop-blur-md shadow-xl';
+/** Card chrome shared by the panel's four sections. No `overflow` here:
+ *  nothing inside a card may clip. */
+const CARD_SURFACE_CLASS = 'rounded-lg border border-edge bg-surface-raised/80 backdrop-blur-md shadow-xl';
+const CARD_CLASS = `flex-shrink-0 ${CARD_SURFACE_CLASS}`;
+/**
+ * The Regions card over a long list. It is the one card that gives way: it
+ * takes the height the others leave and its list scrolls, so the panel itself
+ * does not, and Index stays in view at the bottom. It keeps about three rows,
+ * below which the list stops being one; only a window too short for even that
+ * lets the panel scroll.
+ */
+const REGIONS_FLEX_CARD_CLASS = `flex min-h-[15rem] flex-col ${CARD_SURFACE_CLASS}`;
 
 /** Air kept between the Index flyout and the viewport's bottom edge, which
  *  clears the app's status bar showing through beneath this surface. */
@@ -516,10 +525,12 @@ export function MemoryGraphControls({
   };
 
   return (
-    // Capped at the height it is given and scrolling as a whole past it: at the
-    // 900x600 floor the three open cards are taller than the window. Four cards,
-    // in the order a question is scoped: what is on the map, how it is divided,
-    // how it is drawn, then reference.
+    // Capped at the height it is given. A long region list scrolls inside its
+    // card rather than the panel scrolling; the panel scrolls only when even
+    // the other cards fill it (measured: under about 890 px of window, and at
+    // the 900x600 floor Filter, Display and Index alone need 510 of its 450).
+    // Four cards, in the order a question is scoped: what is on the map, how it
+    // is divided, how it is drawn, then reference.
     <div
       className="pointer-events-auto flex max-h-full w-64 flex-col gap-3 overflow-y-auto"
       data-testid="memory-graph-controls"
@@ -595,7 +606,10 @@ export function MemoryGraphControls({
       ) : null}
 
       {showRegionList || showDetail ? (
-        <div className={CARD_CLASS}>
+        <div
+          className={showRegionList && regionFilterable && !regionsCollapsed ? REGIONS_FLEX_CARD_CLASS : CARD_CLASS}
+          data-testid="memory-graph-regions-card"
+        >
           <SectionHeader
             icon={<Shapes size={13} aria-hidden />}
             label="Regions"
@@ -604,13 +618,13 @@ export function MemoryGraphControls({
             testId="memory-graph-regions-toggle"
           />
           {!regionsCollapsed ? (
-            <div className="px-3 pb-3">
+            <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
               {/* Detail sits directly above the list it recuts. Only the
                   granularities that produce a DIFFERENT map: on a small index
                   every band clamps to the same region count, so the other chips
                   would repaint the identical picture. */}
               {showDetail ? (
-                <div className={showRegionList ? 'mb-3' : ''}>
+                <div className={`shrink-0 ${showRegionList ? 'mb-3' : ''}`}>
                   <GroupLabel hint="How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read.">
                     Detail
                   </GroupLabel>
@@ -630,7 +644,7 @@ export function MemoryGraphControls({
                   {/* The map's domains, each independently switchable. All on by
                       default: the map means the whole index until the user says
                       otherwise. */}
-                  <div className="mb-1.5 flex items-center justify-between">
+                  <div className="mb-1.5 flex shrink-0 items-center justify-between">
                     <span className="text-[11px] text-fg-muted">
                       {shownRegionCount} of {regions.length} shown
                     </span>
@@ -663,7 +677,7 @@ export function MemoryGraphControls({
                       mode, and hiding regions the user cannot see is the one
                       mistake this list can make. */}
                   {regionFilterable ? (
-                    <div className="relative mb-1.5">
+                    <div className="relative mb-1.5 shrink-0">
                       <Search
                         size={12}
                         className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-muted"
@@ -690,12 +704,12 @@ export function MemoryGraphControls({
                       ) : null}
                     </div>
                   ) : null}
-                  {/* Capped and scrollable: the region count reaches forty on a
-                      large index, and an uncapped list would push Display and
-                      Index a long way down. The count and the bulk actions stay
-                      OUTSIDE the scroller, since they are how you recover from a
-                      long list rather than part of it. */}
-                  <div className="max-h-[42vh] space-y-0.5 overflow-y-auto pr-0.5" data-testid="memory-graph-region-list">
+                  {/* The one scroller in the panel: the region count reaches
+                      forty on a large index, so the list takes the height the
+                      other cards leave. The count and the bulk actions stay
+                      OUTSIDE it, since they are how you recover from a long
+                      list rather than part of it. */}
+                  <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-0.5" data-testid="memory-graph-region-list">
                     {listedRegions.length === 0 ? (
                       <p
                         className="px-1.5 py-2 text-[11px] text-fg-muted"

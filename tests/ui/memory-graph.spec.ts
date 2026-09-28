@@ -2367,10 +2367,56 @@ test.describe('memory graph', () => {
     }
   });
 
+  test('a long region list scrolls inside its card, and the panel fits with Index at the bottom', async () => {
+    // The panel never scrolls while it fits: the Regions card gives way and its
+    // list is the one scroller, so Display and Index stay in view below it.
+    const manyRegions = `(function () {
+      var base = ${projectionLiteral(42)};
+      var regions = [];
+      for (var r = 0; r < 14; r++) {
+        regions.push({ id: r, label: 'topic ' + r, x: 0.5, y: 0.5, z: 0.5, size: 3 });
+      }
+      base.clusterings = base.clusterings.map(function (entry) {
+        return { granularity: entry.granularity, regions: regions };
+      });
+      base.nodes.forEach(function (node, i) {
+        node.clusters = { coarse: i % 14, balanced: i % 14, fine: i % 14 };
+      });
+      return base;
+    })()`;
+    const { browser, page } = await launchWithState(snapshotScript({ projection: manyRegions }));
+    try {
+      // Tall enough for every card, too short for all fourteen rows.
+      await page.setViewportSize({ width: 1280, height: 860 });
+      await openMemoryGraph(page);
+      await expect(page.locator('[data-testid="memory-graph-region-row"]')).toHaveCount(14);
+      const layout = await page.evaluate(() => {
+        const panel = document.querySelector('[data-testid="memory-graph-controls"]') as HTMLElement;
+        const list = document.querySelector('[data-testid="memory-graph-region-list"]') as HTMLElement;
+        const toggle = document.querySelector('[data-testid="memory-graph-index-toggle"]') as HTMLElement;
+        const panelBox = panel.getBoundingClientRect();
+        const toggleBox = toggle.getBoundingClientRect();
+        return {
+          panelOverflow: panel.scrollHeight - panel.clientHeight,
+          listOverflow: list.scrollHeight - list.clientHeight,
+          listHeight: list.clientHeight,
+          toggleInside: toggleBox.top >= panelBox.top && toggleBox.bottom <= panelBox.bottom + 1,
+        };
+      });
+      expect(layout.panelOverflow).toBeLessThanOrEqual(1);
+      expect(layout.listOverflow).toBeGreaterThan(0);
+      // About three rows at the least, so the list is still a list.
+      expect(layout.listHeight).toBeGreaterThanOrEqual(60);
+      expect(layout.toggleInside).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the panel scrolls at the smallest window, and Index still opens in full', async () => {
-    // At 900x600 the three open cards are taller than the space the panel has.
-    // The panel caps itself and scrolls, and the Index flyout renders outside it
-    // so the scrolling box cannot clip it.
+    // At 900x600 even Filter, Display and Index are taller than the space the
+    // panel has, so this is the one size where the panel scrolls. The Index
+    // flyout renders outside it so the scrolling box cannot clip it.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await page.setViewportSize({ width: 900, height: 600 });
