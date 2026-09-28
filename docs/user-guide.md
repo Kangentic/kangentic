@@ -1067,7 +1067,7 @@ Each question costs one agent call, and the glyph at the end of the box names th
 press Enter.
 
 **Which agent answers** is its own setting, because the agent that runs your tasks and the agent
-that reads their history are different choices. The **Knowledge Graph** card in Settings > Search
+that reads their history are different choices. The **Answering agent** card in Settings > Search
 holds its **Agent** and **Model**, one choice for the whole app, and nothing picks them for you:
 until both are set, pressing Enter in the box opens Settings > Search at that row and keeps your
 question typed, so you can come back and press Enter again. Reading the index is lighter work than
@@ -1077,13 +1077,21 @@ effort levels, and starts at `low`, which answers fastest. Pick a higher level f
 need counting or comparing across many tasks: at Claude's `max`, a count that `low` got wrong came
 out right, at about ten times the wait.
 
-**Task digests.** Once an answering agent is chosen, it also writes a sentence or two about each
-finished task: what it set out to do and what it ended up doing, from the task's title and
-description, the files its sessions changed, and how its last sessions ended. A digest is searched
-with the task and handed to the agent beside it, so a question finds a task by what it did, not
-only by what its title says. They are written in the background, ten tasks to a call, a few calls
-at a time; a board's first run writes one for every finished task (at Sonnet, about $0.05 per ten
-tasks). Turn **Task digests** off in the Knowledge Graph card to stop them.
+**Task digests** are off until you switch them on in the **Task digests** card in Settings >
+Search. An agent then writes a sentence or two about each finished task: what it set out to do and
+what it ended up doing, from the task's title and description, the files its sessions changed, and
+how its last sessions ended. A digest is searched with the task and handed to the answering agent
+beside it, so a question finds a task by what it did, not only by what its title says.
+
+The card has its own **Agent**, **Model** and **Effort**, separate from the answering agent's, and
+they start empty, so switching digests on spends nothing until you choose. Until then its status
+line shows what the first run will take ("Waiting for an agent: 412 tasks here, about 42 calls").
+Digests are written in the background, ten tasks to a call, a few calls at a time (at Sonnet, about
+$0.05 per ten tasks), and a task that reaches Done gets one on the next pass. The status line then
+says how far along it is, when it has caught up, how many tasks the agent passed over (tried again
+on the next launch), and when a failed call will be tried again. Switching digests off stops new
+calls and keeps the digests already written, so they go on helping search. A new model applies to
+new and changed tasks.
 
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:
@@ -1097,9 +1105,9 @@ The **Index** card lists everything the index holds, one row per kind: **Convers
 map draws), **Task records** (each task's and backlog item's own text) and **Session changes** (the
 files each session changed, kept as text). Each shows its count and, while it is still being
 embedded, how much of it is; a kind with nothing in it yet says **Not yet indexed**. **Task
-digests** appears once any are written, as how many of the finished tasks have one, and says how
-many the agent skipped when it passed some over (they are tried again on the next launch). Size on
-disk covers all of them. **Source file gone** counts conversations whose transcript file was
+digests** appears while digests are on or any exist, as how many of the finished tasks have one, or
+**Needs an agent** while they are on with no digest agent chosen. A count short of the total needs
+no explanation there; the Task digests card says why. Size on disk covers all of them. **Source file gone** counts conversations whose transcript file was
 deleted but whose indexed text is still searchable. The card's footer says when the index last took
 anything in ("Updated 3 minutes ago"), and its **Settings** button opens Settings > Search, where
 the index is rebuilt and its model and digests are set.

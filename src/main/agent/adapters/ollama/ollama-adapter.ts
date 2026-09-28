@@ -189,7 +189,7 @@ export class OllamaAdapter implements AgentAdapter {
     model?: string | null,
   ): Promise<string> {
     const chosenModel = model?.trim();
-    if (!chosenModel) throw new Error('choose a model for Ollama in the Knowledge Graph card in Settings > Search');
+    if (!chosenModel) throw new Error('choose a model for Ollama in Settings > Search');
     return runCliPrintAnswer({
       cliPath,
       args: ['run', chosenModel],

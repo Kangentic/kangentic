@@ -1,7 +1,7 @@
 import type { AgentAdapter } from '../agent/agent-adapter';
 import { ensureAnswerHomeDirectory } from '../agent/shared/answer-run-directory';
 import { appendAnswerCaller } from '../agent/mcp-http/caller-url';
-import { answerSetupGap, resolveAnswerAgent } from '../../shared/answer-agent';
+import { agentJobChoice, answerSetupGap, resolveAnswerAgent, type AgentJob } from '../../shared/answer-agent';
 import type { IpcContext } from '../ipc/ipc-context';
 
 /** How a question, or a batch of task digests, is answered: which agent, CLI,
@@ -32,6 +32,10 @@ export type AnswerRunResolution =
  * explicit: the configured agent and model, with no fallback to the project's
  * agent or to any capable one.
  *
+ * `job` picks whose choice is read: the Answering agent card's for a question
+ * or a prewarm, the Task digests card's for a digest batch. Neither falls back
+ * to the other.
+ *
  * `withSearch: false` resolves a run with no tool at all, which is what a
  * digest batch needs: it summarizes what it is handed.
  */
@@ -39,7 +43,7 @@ export async function resolveAnswerRun(
   context: IpcContext,
   homeProjectId: string,
   chatId: string,
-  options: { withSearch?: boolean } = {},
+  options: { withSearch?: boolean; job?: AgentJob } = {},
 ): Promise<AnswerRunResolution> {
   const { agentRegistry } = await import('../agent/agent-registry');
   const config = context.configManager.load();
@@ -54,18 +58,19 @@ export async function resolveAnswerRun(
       }]
       : [];
   });
-  const configuredAgent = config.memory?.answerAgent ?? null;
-  const configuredModel = config.memory?.answerModel ?? null;
+  const job = options.job ?? 'answer';
+  const choice = agentJobChoice(config.memory, job);
+  const configuredAgent = choice.agent;
+  const configuredModel = choice.model;
   const setup = answerSetupGap({ agents, configured: configuredAgent, configuredModel });
   if (setup) {
+    const card = job === 'digest' ? 'the Task digests card' : 'the Answering agent card';
     return {
       ok: false,
       failure: {
         ok: false,
         setup,
-        reason: setup === 'agent'
-          ? 'choose an agent in the Knowledge Graph card in Settings > Search'
-          : 'choose a model in the Knowledge Graph card in Settings > Search',
+        reason: `choose ${setup === 'agent' ? 'an agent' : 'a model'} in ${card} in Settings > Search`,
       },
     };
   }
@@ -84,7 +89,7 @@ export async function resolveAnswerRun(
   if (capabilities?.effort && adapter.discoverCapabilities) {
     const discovered = await adapter.discoverCapabilities(info.path).catch(() => undefined);
     const levels = discovered?.effortLevels ?? [];
-    const configuredEffort = config.memory?.answerEffort ?? null;
+    const configuredEffort = choice.effort;
     if (configuredEffort && levels.includes(configuredEffort)) effort = configuredEffort;
     else if (capabilities.defaultEffort && levels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
   }

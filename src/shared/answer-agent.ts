@@ -16,7 +16,40 @@
  * installed, resolves to nothing, and the surface asks for a choice.
  */
 
-import type { AnswerCapabilities, AnswerSetupGap } from './types';
+import type { AnswerCapabilities, AnswerSetupGap, AppConfig } from './types';
+
+/**
+ * The two jobs an agent does over the index: answering questions, and writing
+ * task digests. Each has its own agent, model and effort, chosen in its own
+ * Settings > Search card, and neither falls back to the other.
+ */
+export type AgentJob = 'answer' | 'digest';
+
+export interface AgentJobChoice {
+  agent: string | null;
+  model: string | null;
+  effort: string | null;
+}
+
+type MemoryConfig = NonNullable<AppConfig['memory']>;
+
+/** The agent, model and effort configured for one job. */
+export function agentJobChoice(memory: MemoryConfig | undefined, job: AgentJob): AgentJobChoice {
+  if (job === 'digest') {
+    return { agent: memory?.digestAgent ?? null, model: memory?.digestModel ?? null, effort: memory?.digestEffort ?? null };
+  }
+  return { agent: memory?.answerAgent ?? null, model: memory?.answerModel ?? null, effort: memory?.answerEffort ?? null };
+}
+
+/**
+ * Whether task digests are switched on. Off unless set: digests spend a call
+ * per ten tasks in the background, so they are opt-in. The one test main, the
+ * Settings card and the Index row all read, so none of them can default it the
+ * other way.
+ */
+export function taskDigestsOn(memory: MemoryConfig | undefined): boolean {
+  return memory?.taskDigests === true;
+}
 
 export interface AnswerAgentCandidate {
   name: string;
@@ -29,7 +62,8 @@ export interface AnswerAgentCandidate {
 
 export interface ResolveAnswerAgentInput<T extends AnswerAgentCandidate> {
   agents: ReadonlyArray<T>;
-  /** `memory.answerAgent`, or null/undefined when none has been chosen. */
+  /** The job's configured agent (`memory.answerAgent` or `memory.digestAgent`),
+   *  or null/undefined when none has been chosen. */
   configured?: string | null;
   /**
    * Whether a candidate must be detected on disk.
@@ -53,7 +87,7 @@ export function resolveAnswerAgent<T extends AnswerAgentCandidate>(
 }
 
 export interface AnswerSetupGapInput<T extends AnswerAgentCandidate> extends ResolveAnswerAgentInput<T> {
-  /** `memory.answerModel`, or null/undefined when none has been chosen. */
+  /** The job's configured model, or null/undefined when none has been chosen. */
   configuredModel?: string | null;
 }
 

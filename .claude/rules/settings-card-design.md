@@ -67,7 +67,7 @@ stated here and held by the components.
   row's `InfoTip`, which has no budget. See `ui-conventions.md` for the rest of the copy
   conventions.
 - **Labels are plain nouns in sentence case, and the card supplies the context.** Inside the
-  Knowledge Graph card the rows are Agent, Model and Effort, not "Answering agent". Keep the longer
+  Answering agent card the rows are Agent, Model and Effort, not "Answering model". Keep the longer
   phrase as a search keyword and put the card's name in the registry entry's `section`.
 
 ## Enforcement (self-maintaining)

@@ -686,7 +686,7 @@ Constraint: `PRIMARY KEY (corpus, doc_id)`. `status` is one of `ok`, `unsupporte
 
 ### memory_task_digests table
 
-One digest per finished task: a sentence or two the answering agent wrote about what the task set out to do and what it did (`src/main/retrieval/digest/`). It is carried in the task's record (the `task` corpus, as a `Summary:` line), so it is searched, and shown beside the task in Ask's related work. A digest never holds a `#N`: Ask's answering agent names tasks that way, so a PR number would read as a task. The prompt asks for none, and the parser drops what the model writes anyway (about one Sonnet digest in five ended "merged in PR #306").
+One digest per finished task: a sentence or two the digest agent (the Task digests card's own choice, opt-in) wrote about what the task set out to do and what it did (`src/main/retrieval/digest/`). It is carried in the task's record (the `task` corpus, as a `Summary:` line), so it is searched, and shown beside the task in Ask's related work. A digest never holds a `#N`: Ask's answering agent names tasks that way, so a PR number would read as a task. The prompt asks for none, and the parser drops what the model writes anyway (about one Sonnet digest in five ended "merged in PR #306").
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
@@ -697,7 +697,7 @@ One digest per finished task: a sentence or two the answering agent wrote about 
 | model | TEXT | | |
 | created_at | TEXT | NOT NULL | |
 
-`input_hash` is a hash of what the digest was written from (title, the start of the description, the files the task's sessions changed, and how its latest sessions ended), so a task whose input moved is rewritten. A digest is text an agent wrote and cannot be re-derived, so only the digest pass (for a task that no longer exists) and the Privacy "clear index" remove rows.
+`input_hash` is a hash of what the digest was written from (title, the start of the description, the files the task's sessions changed, and how its latest sessions ended), so a task whose input moved is rewritten. A digest is text an agent wrote and cannot be re-derived, so only the digest pass (for a task that no longer exists) and the Privacy "clear index" remove rows; switching digests off keeps them. `agent` and `model` record who wrote each one, since a new digest agent or model applies only to new and changed tasks.
 
 ### memory_meta table
 

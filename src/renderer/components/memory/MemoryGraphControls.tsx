@@ -47,6 +47,8 @@ import type {
 } from '../../../shared/types';
 import { PanelRow, InfoHint, formatBytes } from './PanelRow';
 import { formatRelativeTime } from '../../lib/datetime';
+import { useConfigStore } from '../../stores/config-store';
+import { agentJobChoice, answerSetupGap, taskDigestsOn } from '../../../shared/answer-agent';
 
 /** How far back a conversation's last activity may be. */
 export type MemoryGraphTimeWindow = 'any' | '7d' | '30d' | '90d';
@@ -333,7 +335,8 @@ function IndexRow({
   hint,
 }: {
   label: string;
-  value: number | string;
+  /** A number is formatted for the reader; anything else renders as given. */
+  value: number | ReactNode;
   tone?: 'neutral' | 'ok' | 'problem';
   hint?: string;
 }) {
@@ -463,6 +466,18 @@ export function MemoryGraphControls({
   // Closed by default: the numbers are reference, not a control.
   const [indexCollapsed, setIndexCollapsed] = useState(true);
   const [regionQuery, setRegionQuery] = useState('');
+
+  // Whether digests are on and still wait for their agent, through the rule
+  // main and the Task digests card use. Read here, not from the snapshot, so the
+  // row follows a settings change at once.
+  const digestsOn = useConfigStore((state) => taskDigestsOn(state.config.memory));
+  const digestAgent = useConfigStore((state) => agentJobChoice(state.config.memory, 'digest').agent);
+  const digestModel = useConfigStore((state) => agentJobChoice(state.config.memory, 'digest').model);
+  const agentList = useConfigStore((state) => state.agentList);
+  const digestsNeedAgent = useMemo(
+    () => digestsOn && answerSetupGap({ agents: agentList, configured: digestAgent, configuredModel: digestModel, requireFound: true }) !== null,
+    [digestsOn, agentList, digestAgent, digestModel],
+  );
 
   /**
    * Index opens to the SIDE, not downward, and outside the panel.
@@ -889,20 +904,21 @@ export function MemoryGraphControls({
                 />
               </div>
             ))}
-            {/* Its own row once any exist: digests are written in the
-                background, so the count climbs toward the finished tasks. */}
-            {index.digests.written > 0 ? (
+            {/* While digests are on, or any exist: they are written in the
+                background, so the count climbs toward the finished tasks. The
+                count alone, with no suffix: a count short of the total already
+                says digests stopped (switched off, a failed call, a task the
+                agent passed over), and Settings > Search says which. */}
+            {digestsOn || index.digests.written > 0 ? (
               <div data-testid="memory-graph-index-digests">
                 <IndexRow
                   label="Task digests"
-                  // Why the count falls short, only when it does and the agent
-                  // is the reason, rather than a gap the reader has to wonder at.
-                  value={`${index.digests.written.toLocaleString()} of ${index.digests.finishedTasks.toLocaleString()}${
-                    (index.digests.skipped ?? 0) > 0 ? `, ${(index.digests.skipped ?? 0).toLocaleString()} skipped` : ''
-                  }`}
-                  hint={(index.digests.skipped ?? 0) > 0
-                    ? "A sentence or two per finished task, written by the answering agent. Skipped means the agent passed a task over; it is tried again next launch."
-                    : "A sentence or two per finished task, written by the answering agent. Searched with the task's record."}
+                  value={digestsNeedAgent
+                    ? <span className="text-fg-muted">Needs an agent</span>
+                    : `${index.digests.written.toLocaleString()} of ${index.digests.finishedTasks.toLocaleString()}`}
+                  hint={digestsNeedAgent
+                    ? 'Choose the digest agent in Settings > Search.'
+                    : 'A sentence or two per finished task, searched with its record. Settings > Search says why a count stops short.'}
                 />
               </div>
             ) : null}

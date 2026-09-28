@@ -37,6 +37,11 @@ function snapshotScript(options: {
   /** Whether the answering agent and model are chosen. They have no fallback,
    *  so a question with neither goes to Settings > Search instead of running. */
   answerAgentChosen?: boolean;
+  /** Task digests: off (the default), switched on with no digest agent, or on
+   *  with one. They never borrow the answering agent. */
+  digestSetting?: 'off' | 'waiting' | 'on';
+  /** Digests the index holds, of 412 finished tasks. */
+  digestsWritten?: number;
 } = {}): string {
   const {
     projection = 'null',
@@ -44,11 +49,16 @@ function snapshotScript(options: {
     semanticAvailable = true,
     stale = false,
     answerAgentChosen = true,
+    digestSetting = 'off',
+    digestsWritten = 300,
   } = options;
   return `window.__mockPreConfigure(function (state) {
     ${answerAgentChosen
       ? "state.config.memory = Object.assign({}, state.config.memory, { answerAgent: 'claude', answerModel: 'haiku' });"
       : ''}
+    ${digestSetting === 'off'
+      ? ''
+      : `state.config.memory = Object.assign({}, state.config.memory, { taskDigests: true${digestSetting === 'on' ? ", digestAgent: 'claude', digestModel: 'haiku'" : ''} });`}
     return {
       memoryGraphSnapshot: {
         projectId: 'project-1',
@@ -76,7 +86,7 @@ function snapshotScript(options: {
             { corpus: 'task', documents: 412, chunks: 1400, embeddedChunks: 700, embeds: true },
             { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
           ],
-          digests: { written: 300, finishedTasks: 412, skipped: 1 },
+          digests: { written: ${digestsWritten}, finishedTasks: 412, skipped: 1 },
           storageBytes: 3221225472,
           lastIndexedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
         },
@@ -396,8 +406,11 @@ test.describe('memory graph', () => {
       await expect(changes).toContainText('Session changes');
       await expect(changes).toContainText('Not yet indexed');
       // Digests are written in the background, so the row counts toward the
-      // finished tasks, and says why it falls short when the agent is why.
-      await expect(page.locator('[data-testid="memory-graph-index-digests"]')).toContainText('300 of 412, 1 skipped');
+      // finished tasks. The count alone: why it falls short (off here, and one
+      // task skipped) is Settings' to say, not a suffix's.
+      const digests = page.locator('[data-testid="memory-graph-index-digests"]');
+      await expect(digests).toContainText('300 of 412');
+      await expect(digests).not.toContainText(',');
       // No Chunks and no overall Embedded row: size on disk says the first in a
       // unit people read, and each corpus row carries its own embedded share.
       const rows = page.locator('[data-testid="memory-graph-index-rows"]');
@@ -411,6 +424,30 @@ test.describe('memory graph', () => {
       await expect(page.locator('[data-testid="settings-tab-memory"]')).toHaveClass(/font-medium/);
     } finally {
       await browser.close();
+    }
+  });
+
+  test('the Index shows digests while they are on or exist, and names a missing digest agent', async () => {
+    // Opt-in: with digests off and none written, the row is absent. Switched
+    // on with no digest agent chosen, it says so rather than showing a count
+    // that is not moving; the answering agent is chosen and is not borrowed.
+    const states: Array<{ digestSetting: 'off' | 'waiting' | 'on'; digestsWritten: number; expected: string | null }> = [
+      { digestSetting: 'off', digestsWritten: 0, expected: null },
+      { digestSetting: 'waiting', digestsWritten: 0, expected: 'Needs an agent' },
+      { digestSetting: 'on', digestsWritten: 0, expected: '0 of 412' },
+    ];
+    for (const { digestSetting, digestsWritten, expected } of states) {
+      const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20), digestSetting, digestsWritten }));
+      try {
+        await openMemoryGraph(page);
+        await page.locator('[data-testid="memory-graph-index-toggle"]').click();
+        await expect(page.locator('[data-testid="memory-graph-index-corpus-task"]')).toBeVisible();
+        const row = page.locator('[data-testid="memory-graph-index-digests"]');
+        if (expected === null) await expect(row).toHaveCount(0);
+        else await expect(row).toContainText(expected);
+      } finally {
+        await browser.close();
+      }
     }
   });
 

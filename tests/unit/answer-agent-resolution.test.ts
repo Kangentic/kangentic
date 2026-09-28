@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { answerSetupGap, resolveAnswerAgent } from '../../src/shared/answer-agent';
+import { agentJobChoice, answerSetupGap, resolveAnswerAgent, taskDigestsOn } from '../../src/shared/answer-agent';
 
 const takesModel = { streaming: false, search: false, model: true };
 const takesNoModel = { streaming: false, search: false, model: false };
@@ -73,5 +73,31 @@ describe('the setup gap', () => {
 
   it('is complete once both are chosen', () => {
     expect(answerSetupGap({ agents: [claude, codex], configured: 'claude', configuredModel: 'haiku' })).toBeNull();
+  });
+});
+
+describe('each job reads its own choice', () => {
+  const memory = { answerAgent: 'claude', answerModel: 'sonnet', answerEffort: 'low' };
+
+  it('never lends the answering agent to task digests', () => {
+    // Digests spend on every finished task in the background, so they wait for
+    // their own explicit choice rather than riding on the answering agent's.
+    expect(agentJobChoice(memory, 'answer')).toEqual({ agent: 'claude', model: 'sonnet', effort: 'low' });
+    expect(agentJobChoice(memory, 'digest')).toEqual({ agent: null, model: null, effort: null });
+    const digestGap = answerSetupGap({ agents: [claude], configured: agentJobChoice(memory, 'digest').agent });
+    expect(digestGap).toBe('agent');
+  });
+
+  it('reads the digest agent, model and effort for digests', () => {
+    const both = { ...memory, digestAgent: 'codex', digestModel: 'mini', digestEffort: 'high' };
+    expect(agentJobChoice(both, 'digest')).toEqual({ agent: 'codex', model: 'mini', effort: 'high' });
+    expect(agentJobChoice(both, 'answer').agent).toBe('claude');
+  });
+
+  it('treats task digests as off unless switched on', () => {
+    expect(taskDigestsOn(undefined)).toBe(false);
+    expect(taskDigestsOn({})).toBe(false);
+    expect(taskDigestsOn({ taskDigests: false })).toBe(false);
+    expect(taskDigestsOn({ taskDigests: true })).toBe(true);
   });
 });

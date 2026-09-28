@@ -425,14 +425,14 @@ describe('settings card design', () => {
     }
     // Components that render tiles are found wherever they live: a local one, an
     // imported helper, and the keybindings rows.
-    for (const component of ['NotifyChannelRow', 'AgentExecutionFields', 'AgentLaunchOptionFields', 'HotkeyRow', 'OsHotkeyBanner', 'SortableActionItem', 'ActionRow']) {
+    for (const component of ['NotifyChannelRow', 'AgentExecutionFields', 'AgentLaunchOptionFields', 'HotkeyRow', 'OsHotkeyBanner', 'SortableActionItem', 'ActionRow', 'AgentJobRows', 'DigestStatusTile']) {
       expect(tileComponents.has(component), `expected ${component} to be recognised as rendering tiles`).toBe(true);
     }
     const owners = descriptions.map((entry) => entry.owner);
     // A registry-sourced header, a literal header, a settingProps binding, an
     // inline row, a nested row, and an unavailable reason.
     expect(owners).toContain('memory.semanticEnabled');
-    expect(owners).toContain('"Knowledge Graph"');
+    expect(owners).toContain('"Answering agent"');
     expect(descriptions.some((entry) => entry.text === registryDescriptions.get('mobileBridge.relayMode'))).toBe(true);
     expect(owners).toContain('browserAutomation.allowInteraction');
     expect(descriptions.find((entry) => entry.owner === 'browserAutomation.restrictNavigationToLocalhost')?.context).toBe('nested_row');

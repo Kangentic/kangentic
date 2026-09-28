@@ -3388,8 +3388,9 @@ export interface AppConfig {
      *
      * Explicit, with no fallback. It used to follow the project's default agent
      * and then any capable agent, which meant a question could spend tokens on
-     * an agent and model nobody chose. Unset now means Ask, task digests and the
-     * prewarmed process all wait, and asking opens Settings > Memory at this row.
+     * an agent and model nobody chose. Unset now means Ask and the prewarmed
+     * process wait, and asking opens Settings > Search at this row. Task digests
+     * have their own agent (`digestAgent`) and never fall back to this one.
      *
      * An adapter NAME (`claude`, `codex`), never a display name - the name is
      * the registry key and the display name is copy that can change.
@@ -3420,12 +3421,36 @@ export interface AppConfig {
      */
     answerEffort?: string | null;
     /**
-     * Whether the answering agent writes a short digest of each finished task
-     * (what it set out to do, what it ended up doing), searched with the task's
-     * own record and shown to the agent beside it. On unless turned off; it
-     * waits for an answering agent, like Ask, and spends a call per ten tasks.
+     * Whether an agent writes a short digest of each finished task (what it set
+     * out to do, what it ended up doing), searched with the task's own record and
+     * shown to the answering agent beside it.
+     *
+     * OFF unless switched on: it spends about one call per ten tasks, in the
+     * background, so it is opt-in. Read through `taskDigestsOn`
+     * (`src/shared/answer-agent.ts`) so main and the renderer agree that an
+     * unset value is off. Switching it off keeps the digests already written.
      */
     taskDigests?: boolean;
+    /**
+     * Which agent writes task digests. Its own explicit choice, like
+     * `answerAgent`, with no fallback to it: a background job that spends on
+     * every finished task must never ride on a model chosen for another job.
+     * While unset, digests wait. An adapter NAME, never a display name.
+     */
+    digestAgent?: string | null;
+    /**
+     * Which model the digest agent runs at. Adapter-specific, so it is cleared
+     * whenever `digestAgent` changes, and required when that agent's run takes a
+     * model (`AnswerCapabilities.model`). A new model applies to new and changed
+     * tasks; digests already written stay as written.
+     */
+    digestModel?: string | null;
+    /**
+     * Which effort level the digest agent runs at. Optional: unset runs at the
+     * adapter's recommended level. Cleared with the model when `digestAgent`
+     * changes.
+     */
+    digestEffort?: string | null;
   };
 
   /**
@@ -7001,7 +7026,7 @@ export interface MemoryIndexSummary {
   corpora: MemoryIndexCorpusSummary[];
   /**
    * Task digests written, of the finished tasks that can have one, and how many
-   * the answering agent passed over this run of the app (asked, and no digest
+   * the digest agent passed over this run of the app (asked, and no digest
    * came back; tried again on the next launch).
    */
   digests: { written: number; finishedTasks: number; skipped?: number };
@@ -7221,6 +7246,27 @@ export interface MemoryStatus {
    *  restart cap: its exit code plus the first error line of its stderr (home
    *  directory redacted), so the Search tab can say why. Undefined otherwise. */
   workerError?: string;
+  /** Task digests for the open project, for the Task digests card's status
+   *  line. Absent with no project open, or while digests are off. */
+  digests?: MemoryDigestStatus;
+}
+
+/** Task digests for one project, as the Task digests card's status line reads them. */
+export interface MemoryDigestStatus {
+  /** Digests written, of the finished tasks (in a Done column) that can have one. */
+  written: number;
+  finishedTasks: number;
+  /** Tasks the digest agent passed over this run of the app; tried again next launch. */
+  skipped: number;
+  /**
+   * What the scheduler is doing for this project. Waiting for an agent is not a
+   * state here: the renderer reads that setup gap from config, the same rule
+   * main applies.
+   */
+  state: 'idle' | 'writing' | 'retrying';
+  /** How long until a failed call is tried again, as of this read. Set only
+   *  while `retrying`; main measures it so the renderer never reads a clock. */
+  retryInMs: number | null;
 }
 
 interface SearchHitBase {

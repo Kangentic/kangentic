@@ -34,7 +34,9 @@ import { sweepTaskRecords } from './task/task-indexer';
 import { sweepChangeRecords } from './change/change-indexer';
 import { graphService } from './graph/graph-service';
 import { createDigestScheduler } from './digest/digest-scheduler';
+import { readDigestFingerprint } from './digest/digest-sources';
 import { resolveAnswerRun } from './answer-run';
+import { taskDigestsOn } from '../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
 import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
@@ -42,7 +44,7 @@ import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embe
 import { requiresUserInteraction } from '../../shared/activity-state';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
-import type { MemoryStatus, MemorySemanticState, MemoryModelState, Project, ActivityState } from '../../shared/types';
+import type { MemoryStatus, MemorySemanticState, MemoryModelState, MemoryDigestStatus, Project, ActivityState } from '../../shared/types';
 
 /** Grace period after a finalize event before indexing, so the agent CLI has
  *  flushed its native history file.
@@ -264,27 +266,28 @@ function queueRecordSweeps(context: IpcContext, projectId: string): void {
   });
 }
 
-/** Task digests are wanted: indexing and semantic search on (the Knowledge
- *  Graph needs both), and digests not turned off. */
+/** Task digests are wanted: switched on (they are opt-in), with indexing and
+ *  semantic search on, since the Knowledge Graph needs both. */
 function digestsEnabled(context: IpcContext): boolean {
   try {
     const memory = context.configManager.load().memory;
-    return memory?.indexingEnabled !== false && memory?.semanticEnabled === true && memory?.taskDigests !== false;
+    return memory?.indexingEnabled !== false && memory?.semanticEnabled === true && taskDigestsOn(memory);
   } catch {
     return false;
   }
 }
 
 /**
- * Writes task digests with the answering agent, in the background. It waits
- * for an answering agent like Ask does: with none chosen it resolves no writer
- * and does nothing. A digest batch runs with no tool at all; it summarizes
- * what it is handed.
+ * Writes task digests in the background with the digest agent, the Task
+ * digests card's own choice. With none chosen it resolves no writer and does
+ * nothing; it never borrows the answering agent. A digest batch runs with no
+ * tool at all; it summarizes what it is handed.
  */
 const digestScheduler = createDigestScheduler<IpcContext>({
   isEnabled: digestsEnabled,
+  readFingerprint: (_context, projectId) => readDigestFingerprint(getProjectDb(projectId)),
   resolveWriter: async (context, projectId) => {
-    const resolved = await resolveAnswerRun(context, projectId, 'digest', { withSearch: false });
+    const resolved = await resolveAnswerRun(context, projectId, 'digest', { withSearch: false, job: 'digest' });
     if (!resolved.ok) return null;
     const run = resolved.run;
     return {
@@ -304,6 +307,28 @@ const digestScheduler = createDigestScheduler<IpcContext>({
     await sweepChangeRecords(projectId, projectPathFor(context, projectId), () => !disposed);
   },
 });
+
+/**
+ * The open project's digests for the Task digests card's status line: two
+ * index reads (under 0.1 ms measured) and the scheduler's own state. Read on
+ * the Search tab's status poll, only while digests are on.
+ */
+function digestStatusFor(context: IpcContext): MemoryDigestStatus | undefined {
+  const projectId = context.currentProjectId;
+  if (!projectId || !digestsEnabled(context)) return undefined;
+  try {
+    const counts = new RetrievalStore(getProjectDb(projectId)).digestCounts();
+    const scheduler = digestScheduler.status(projectId);
+    return {
+      ...counts,
+      skipped: digestScheduler.skipped(projectId),
+      state: scheduler.state,
+      retryInMs: scheduler.retryAtMs === null ? null : Math.max(0, scheduler.retryAtMs - Date.now()),
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 /** A board change re-reads its project's records once the burst settles. */
 function scheduleTaskRecordSweep(context: IpcContext, projectId: string): void {
@@ -540,6 +565,7 @@ export const retrievalService = {
         state: modelState,
         progress: showProgress ? modelDownloadProgress : undefined,
       },
+      digests: digestStatusFor(context),
     };
   },
 

@@ -1,5 +1,5 @@
 /**
- * Take the user to Settings > Search, at the Knowledge Graph card's Agent row.
+ * Take the user to Settings > Search, at the Answering agent card's Agent row.
  *
  * Where a question goes when the Memory Graph cannot answer it yet: no agent is
  * chosen, or the chosen agent takes a model and none is. The rule is that this

@@ -983,9 +983,17 @@ export class RetrievalStore {
     return `${chunks.count}|${chunks.maxId}|${embedded.count}`;
   }
 
-  /** Task digests written, and the finished tasks (in a Done column) that can have one. */
+  /**
+   * The finished tasks (in a Done column) that can have a digest, and how many
+   * of them do. A digest outlives its task leaving Done, so it is counted only
+   * while the task is back in one: "N of M" never reads past M.
+   */
   digestCounts(): { written: number; finishedTasks: number } {
-    const written = (this.db.prepare('SELECT COUNT(*) AS count FROM memory_task_digests').get() as { count: number }).count;
+    const written = (this.db
+      .prepare(`SELECT COUNT(*) AS count FROM memory_task_digests d
+                JOIN tasks t ON t.id = d.task_id JOIN swimlanes w ON w.id = t.swimlane_id
+                WHERE w.role = 'done'`)
+      .get() as { count: number }).count;
     const finishedTasks = (this.db
       .prepare("SELECT COUNT(*) AS count FROM tasks t JOIN swimlanes w ON w.id = t.swimlane_id WHERE w.role = 'done'")
       .get() as { count: number }).count;

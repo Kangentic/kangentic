@@ -49,6 +49,35 @@ export function changedFilesOf(changeText: string): string[] {
     .filter((line) => line.length > 0);
 }
 
+/**
+ * What every finished task's digest is written from, summed up in one read, so
+ * a pass can tell nothing has changed without reading every input.
+ *
+ * It moves when a task enters or leaves a Done column, or is deleted from one
+ * (the count, and `move()` stamps the task it moves); when a finished task's
+ * title or description is edited (its `updated_at`); and when a conversation
+ * or session-changes document of a finished task is indexed again (the closing
+ * messages and changed files a digest reads). Indexing a RUNNING task's
+ * conversation does not move it, since that task is not in Done, which is what
+ * keeps a busy board's turn-by-turn indexing from waking the digest pass.
+ *
+ * One query, measured at 5.2 ms on a 673-task board against 38 to 44 ms for
+ * the full input read it lets a pass skip.
+ */
+export function readDigestFingerprint(db: Database.Database): string {
+  const row = db
+    .prepare(
+      `SELECT COUNT(DISTINCT t.id) AS tasks, MAX(t.updated_at) AS taskEdit, MAX(m.indexed_at) AS docIndexed
+       FROM tasks t
+       JOIN swimlanes w ON w.id = t.swimlane_id
+       LEFT JOIN sessions s ON s.task_id = t.id AND s.agent_session_id IS NOT NULL
+       LEFT JOIN memory_index_state m ON m.doc_id = s.agent_session_id AND m.corpus IN ('conversation', 'change')
+       WHERE w.role = 'done'`,
+    )
+    .get() as { tasks: number; taskEdit: string | null; docIndexed: string | null };
+  return `${row.tasks}|${row.taskEdit ?? ''}|${row.docIndexed ?? ''}`;
+}
+
 /** Every finished task's digest input, with its hash. */
 export async function readDigestCandidates(
   db: Database.Database,

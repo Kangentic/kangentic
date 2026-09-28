@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MessageSquare, Sparkles, Check, RotateCcw, Network } from 'lucide-react';
+import { MessageSquare, Sparkles, Check, RotateCcw, Network, ScrollText, Clock, RefreshCw, TriangleAlert } from 'lucide-react';
 import { Select, DownloadProgressBar, useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardChoiceRow, CardTile, CardToggleRow } from '../settings-card';
+import { SettingsCard, CardRow, CardChoiceRow, CardTile } from '../settings-card';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { useProjectStore } from '../../../stores/project-store';
@@ -10,9 +10,12 @@ import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityR
 import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
-import { resolveAnswerAgent } from '../../../../shared/answer-agent';
+import { agentJobChoice, answerSetupGap, resolveAnswerAgent, taskDigestsOn, type AgentJob } from '../../../../shared/answer-agent';
+import { DIGEST_BATCH_SIZE } from '../../../../shared/task-digests';
 import { EMBEDDING_MODELS } from '../../../../shared/embedding-models';
-import type { AppConfig, MemoryStatus, MemoryAcceleration } from '../../../../shared/types';
+import type {
+  AgentDetectionInfo, AnswerSetupGap, AppConfig, DeepPartial, MemoryDigestStatus, MemoryStatus, MemoryAcceleration,
+} from '../../../../shared/types';
 
 /**
  * Settings > Search (tab id `memory`). GLOBAL/shared scope (below the settings
@@ -51,34 +54,27 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
   // Default acceleration when unset (matches DEFAULT_CONFIG.memory.acceleration).
   const acceleration = globalConfig.memory?.acceleration ?? 'auto';
   // Installed agents that declare `answerFromContext`. Read from the capability
-  // rather than a hardcoded list, per `agent-adapters-boundary.md`.
+  // rather than a hardcoded list, per `agent-adapters-boundary.md`. The same
+  // agents can answer or write digests: a digest batch is an answer run with no
+  // tools.
   const agentList = useConfigStore((state) => state.agentList);
-  const answerCapableAgents = agentList
-    .filter((agent) => agent.found && agent.supportsAnswerFromContext);
-  const configuredAnswerAgent = globalConfig.memory?.answerAgent ?? null;
-  /**
-   * The chosen answering agent, resolved through the SAME rule main uses: the
-   * configured one, or nothing. There is no project fallback, so an unset row
-   * reads as unset, and asking before it is set brings the user here.
-   */
-  const chosenAnswerAgent = useMemo(
-    () => resolveAnswerAgent({ agents: agentList, configured: configuredAnswerAgent, requireFound: true }),
-    [agentList, configuredAnswerAgent],
+  const answerCapableAgents = useMemo(
+    () => agentList.filter((agent) => agent.found && agent.supportsAnswerFromContext),
+    [agentList],
   );
-  const chosenAgentName = chosenAnswerAgent?.name ?? null;
-  const { models: answerModels, effortLevels: answerEffortLevels } = useAgentCapabilityResolution(chosenAgentName);
-  const answerModelContextWindows = useModelContextWindows(chosenAgentName);
-  const answerModelDisplayNames = useModelDisplayNames(chosenAgentName);
-  // Whether this agent's ANSWER run takes a model, as its adapter declares it.
-  // When it does, the model is required: a question never runs on a default
-  // nobody chose.
-  const answerTakesModel = chosenAnswerAgent?.answerCapabilities?.model === true;
-  // Effort shows wherever the answer run passes it on AND the CLI reports
-  // levels. Unset runs at the adapter's recommended level, shown as the
-  // placeholder, so leaving it alone is a choice the user can see.
-  const answerTakesEffort = chosenAnswerAgent?.answerCapabilities?.effort === true && answerEffortLevels.length > 0;
-  const recommendedEffort = chosenAnswerAgent?.answerCapabilities?.defaultEffort;
-  const answerEffortDefault = recommendedEffort && answerEffortLevels.includes(recommendedEffort) ? recommendedEffort : null;
+  const digestsOn = taskDigestsOn(globalConfig.memory);
+  const digestChoice = agentJobChoice(globalConfig.memory, 'digest');
+  // What digests still wait for, through the rule main applies before a pass.
+  const digestSetup = answerSetupGap({
+    agents: agentList,
+    configured: digestChoice.agent,
+    configuredModel: digestChoice.model,
+    requireFound: true,
+  });
+  const updateMemory = useCallback(
+    (patch: MemoryPatch) => updateGlobal({ memory: patch }),
+    [updateGlobal],
+  );
 
   // Poll the semantic-layer status while the feature is on so the model-download
   // progress and readiness update live. Cleared on unmount / when turned off.
@@ -226,107 +222,231 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
           naming the one it depends on directly (semantic search, then an
           agent that can answer), exactly as the Semantic search card dims with
           "Needs indexing". Its description never changes, and its rows appear
-          once nothing is missing. Named for the feature people know from the title bar and
-          Quick Find, so its rows can be plain Agent, Model and Effort. */}
+          once nothing is missing. Named for what it chooses, not for the graph:
+          it has no switch and never turns the graph on or off. */}
       <SettingsCard
         icon={<Network size={16} />}
-        label="Knowledge Graph"
-        description="The agent that answers the questions you ask in the graph."
-        searchIds={['memory.answerAgent', 'memory.answerModel', 'memory.answerEffort', 'memory.taskDigests']}
+        label="Answering agent"
+        description="Answers the questions you ask in the Knowledge Graph."
+        searchIds={['memory.answerAgent', 'memory.answerModel', 'memory.answerEffort']}
         requirement={!semanticReady
           ? 'Needs semantic search'
           : answerCapableAgents.length === 0
-            ? 'Needs an answering agent'
+            ? 'Needs a supported agent'
             : undefined}
-        testId="knowledge-graph-card"
+        testId="answering-agent-card"
       >
         {semanticReady && answerCapableAgents.length > 0 ? (
+          <AgentJobRows job="answer" memory={globalConfig.memory} agents={agentList} capableAgents={answerCapableAgents} onChange={updateMemory} />
+        ) : null}
+      </SettingsCard>
+
+      {/* Opt-in: digests spend about a call per ten finished tasks, in the
+          background. Their own agent, model and effort, starting empty with no
+          fallback to the answering agent, so switching on spends nothing until
+          a choice is made, and the status line shows the backfill's size first.
+          Dimmed on the same prerequisites as the Answering agent card. */}
+      <SettingsCard
+        icon={<ScrollText size={16} />}
+        {...settingProps('memory.taskDigests')}
+        info="The agent reads each finished task's title, description, changed files and how its sessions ended, about ten tasks a call, in the background."
+        searchIds={['memory.digestAgent', 'memory.digestModel', 'memory.digestEffort']}
+        checked={digestsOn}
+        onChange={(value) => updateMemory({ taskDigests: value })}
+        requirement={!semanticReady
+          ? 'Needs semantic search'
+          : answerCapableAgents.length === 0
+            ? 'Needs a supported agent'
+            : undefined}
+        testId="task-digests-card"
+      >
+        {semanticReady && answerCapableAgents.length > 0 && digestsOn ? (
           <>
-              {/* Starts EMPTY. The user's rule: the agent and model are one
-                  explicit global choice, never assumed from a project. So there
-                  is no default here to inherit and no "follow the project"
-                  option; until something is picked, the Knowledge Graph sends a
-                  question to this row instead of running it. */}
-              {/* The same three controls as Settings > Agent's Project Defaults
-                  and the column manager: Combobox, ModelCombobox, Combobox. No
-                  Permissions: an answer run is read-only by construction, so a
-                  permission choice would be one the run must ignore. */}
-              <CardRow {...settingProps('memory.answerAgent')}>
-                <Combobox
-                  value={chosenAnswerAgent?.name ?? ''}
-                  onChange={(next) => updateGlobal({
-                    memory: {
-                      answerAgent: next === '' ? null : next,
-                      // A model id and an effort level belong to ONE CLI -
-                      // Claude's `haiku` means nothing to Codex - so changing
-                      // the agent clears both rather than carrying a flag the
-                      // new agent will reject.
-                      answerModel: null,
-                      answerEffort: null,
-                    },
-                  })}
-                  options={answerCapableAgents.map((agent) => ({ value: agent.name, label: agent.displayName }))}
-                  placeholder="Choose an agent"
-                  placeholderVariant="muted"
-                  allowClear={false}
-                  testId="memory-answer-agent"
-                />
-              </CardRow>
-
-              {/* Rendered once the chosen agent's answer run takes a model, and
-                  REQUIRED then: there is no "agent default" to fall back on, for
-                  the same reason there is no default agent. */}
-              {answerTakesModel ? (
-                <CardRow {...settingProps('memory.answerModel')}>
-                  <ModelCombobox
-                    value={globalConfig.memory?.answerModel ?? ''}
-                    onChange={(next) => updateGlobal({
-                      memory: { answerModel: next === '' ? null : next },
-                    })}
-                    availableModels={answerModels}
-                    placeholder="Choose a model"
-                    placeholderVariant="muted"
-                    testId="memory-answer-model"
-                    onOpen={() => useConfigStore.getState().rescanModels()}
-                    contextWindows={answerModelContextWindows}
-                    modelDisplayNames={answerModelDisplayNames}
-                  />
-                </CardRow>
-              ) : null}
-
-              {/* Optional, unlike the model: unset runs at the recommended level,
-                  shown as the placeholder, and clearing a pick returns to it.
-                  Plain "low", not "low (default)": the resolved placeholder
-                  styling already says it is what runs when nothing is picked. */}
-              {answerTakesEffort ? (
-                <CardRow {...settingProps('memory.answerEffort')}>
-                  <Combobox
-                    value={globalConfig.memory?.answerEffort ?? ''}
-                    onChange={(next) => updateGlobal({
-                      memory: { answerEffort: next === '' ? null : next },
-                    })}
-                    options={answerEffortLevels.map((level) => ({ value: level, label: level }))}
-                    placeholder={answerEffortDefault ?? 'Agent default'}
-                    placeholderVariant={answerEffortDefault ? 'resolved' : 'muted'}
-                    testId="memory-answer-effort"
-                  />
-                </CardRow>
-              ) : null}
-
-              {/* Written by the agent chosen above, so offered once there is one.
-                  On unless turned off: it spends calls, which is why it is a row
-                  at all rather than always on. */}
-              {chosenAnswerAgent ? (
-                <CardToggleRow
-                  {...settingProps('memory.taskDigests')}
-                  checked={globalConfig.memory?.taskDigests ?? true}
-                  onChange={(value) => updateGlobal({ memory: { taskDigests: value } })}
-                />
-              ) : null}
+            <AgentJobRows job="digest" memory={globalConfig.memory} agents={agentList} capableAgents={answerCapableAgents} onChange={updateMemory} />
+            <DigestStatusTile digests={status?.digests ?? null} setup={digestSetup} />
           </>
         ) : null}
       </SettingsCard>
     </div>
+  );
+}
+
+type MemoryPatch = NonNullable<DeepPartial<AppConfig>['memory']>;
+
+/** Each job's registry rows and test hooks. */
+const JOB_ROWS: Record<AgentJob, { agent: string; model: string; effort: string; testId: string }> = {
+  answer: { agent: 'memory.answerAgent', model: 'memory.answerModel', effort: 'memory.answerEffort', testId: 'memory-answer' },
+  digest: { agent: 'memory.digestAgent', model: 'memory.digestModel', effort: 'memory.digestEffort', testId: 'memory-digest' },
+};
+
+/** The config patch that sets one job's agent, model or effort. */
+function jobPatch(job: AgentJob, choice: { agent?: string | null; model?: string | null; effort?: string | null }): MemoryPatch {
+  const patch: MemoryPatch = {};
+  if (choice.agent !== undefined) patch[job === 'digest' ? 'digestAgent' : 'answerAgent'] = choice.agent;
+  if (choice.model !== undefined) patch[job === 'digest' ? 'digestModel' : 'answerModel'] = choice.model;
+  if (choice.effort !== undefined) patch[job === 'digest' ? 'digestEffort' : 'answerEffort'] = choice.effort;
+  return patch;
+}
+
+interface AgentJobRowsProps {
+  job: AgentJob;
+  memory: AppConfig['memory'];
+  agents: AgentDetectionInfo[];
+  /** Installed agents that can run the job: the Agent row's options. */
+  capableAgents: AgentDetectionInfo[];
+  onChange: (patch: MemoryPatch) => void;
+}
+
+/**
+ * Agent, Model and Effort for one job, in the Answering agent card or the Task
+ * digests card. The same three controls as Settings > Agent's Project Defaults
+ * and the column manager: Combobox, ModelCombobox, Combobox. No Permissions:
+ * both runs are read-only by construction, so a permission choice would be one
+ * the run must ignore.
+ */
+function AgentJobRows({ job, memory, agents, capableAgents, onChange }: AgentJobRowsProps) {
+  const rows = JOB_ROWS[job];
+  const choice = agentJobChoice(memory, job);
+  /**
+   * The chosen agent, resolved through the SAME rule main uses: the configured
+   * one, or nothing. There is no project fallback and no fallback between the
+   * two jobs, so an unset row reads as unset.
+   */
+  const chosen = useMemo(
+    () => resolveAnswerAgent({ agents, configured: choice.agent, requireFound: true }),
+    [agents, choice.agent],
+  );
+  const chosenName = chosen?.name ?? null;
+  const { models, effortLevels } = useAgentCapabilityResolution(chosenName);
+  const contextWindows = useModelContextWindows(chosenName);
+  const displayNames = useModelDisplayNames(chosenName);
+  // Whether this agent's run takes a model, as its adapter declares it. When it
+  // does, the model is required: nothing runs on a default nobody chose.
+  const takesModel = chosen?.answerCapabilities?.model === true;
+  // Effort shows wherever the run passes it on AND the CLI reports levels.
+  // Unset runs at the adapter's recommended level, shown as the placeholder, so
+  // leaving it alone is a choice the user can see.
+  const takesEffort = chosen?.answerCapabilities?.effort === true && effortLevels.length > 0;
+  const recommendedEffort = chosen?.answerCapabilities?.defaultEffort;
+  const effortDefault = recommendedEffort && effortLevels.includes(recommendedEffort) ? recommendedEffort : null;
+
+  return (
+    <>
+      {/* Starts EMPTY: the agent and model are one explicit global choice per
+          job, never assumed from a project or from the other job. */}
+      <CardRow {...settingProps(rows.agent)}>
+        <Combobox
+          value={chosenName ?? ''}
+          // A model id and an effort level belong to ONE CLI - Claude's `haiku`
+          // means nothing to Codex - so changing the agent clears both rather
+          // than carrying a flag the new agent will reject.
+          onChange={(next) => onChange(jobPatch(job, { agent: next === '' ? null : next, model: null, effort: null }))}
+          options={capableAgents.map((agent) => ({ value: agent.name, label: agent.displayName }))}
+          placeholder="Choose an agent"
+          placeholderVariant="muted"
+          allowClear={false}
+          testId={`${rows.testId}-agent`}
+        />
+      </CardRow>
+
+      {/* Rendered once the chosen agent's run takes a model, and REQUIRED then:
+          there is no "agent default" to fall back on, for the same reason there
+          is no default agent. */}
+      {takesModel ? (
+        <CardRow {...settingProps(rows.model)}>
+          <ModelCombobox
+            value={choice.model ?? ''}
+            onChange={(next) => onChange(jobPatch(job, { model: next === '' ? null : next }))}
+            availableModels={models}
+            placeholder="Choose a model"
+            placeholderVariant="muted"
+            testId={`${rows.testId}-model`}
+            onOpen={() => useConfigStore.getState().rescanModels()}
+            contextWindows={contextWindows}
+            modelDisplayNames={displayNames}
+          />
+        </CardRow>
+      ) : null}
+
+      {/* Optional, unlike the model: unset runs at the recommended level, shown
+          as the placeholder, and clearing a pick returns to it. Plain "low",
+          not "low (default)": the resolved placeholder styling already says it
+          is what runs when nothing is picked. */}
+      {takesEffort ? (
+        <CardRow {...settingProps(rows.effort)}>
+          <Combobox
+            value={choice.effort ?? ''}
+            onChange={(next) => onChange(jobPatch(job, { effort: next === '' ? null : next }))}
+            options={effortLevels.map((level) => ({ value: level, label: level }))}
+            placeholder={effortDefault ?? 'Agent default'}
+            placeholderVariant={effortDefault ? 'resolved' : 'muted'}
+            testId={`${rows.testId}-effort`}
+          />
+        </CardRow>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * What the open project's digests are doing, as one line under the Task
+ * digests card's rows. Before an agent (or model) is chosen it shows the size
+ * of the backfill, in tasks and calls, so the cost is visible before anything
+ * runs. Calls, not dollars: no adapter reports a price.
+ */
+function DigestStatusTile({ digests, setup }: { digests: MemoryDigestStatus | null; setup: AnswerSetupGap | null }) {
+  if (!digests) return null;
+  const toWrite = Math.max(0, digests.finishedTasks - digests.written);
+  const calls = Math.ceil(toWrite / DIGEST_BATCH_SIZE);
+  if (setup) {
+    const waitingFor = setup === 'model' ? 'a model' : 'an agent';
+    return (
+      <CardTile className="flex items-center gap-1.5 text-xs text-fg-muted" testId="digest-status">
+        <Clock size={13} className="flex-shrink-0" aria-hidden="true" />
+        <span data-testid="digest-status-text">
+          {toWrite > 0
+            ? `Waiting for ${waitingFor}: ${toWrite.toLocaleString()} tasks here, about ${calls.toLocaleString()} calls.`
+            : `Waiting for ${waitingFor}.`}
+        </span>
+      </CardTile>
+    );
+  }
+  if (digests.state === 'retrying') {
+    const minutes = Math.max(1, Math.round((digests.retryInMs ?? 0) / 60_000));
+    return (
+      <CardTile className="flex items-center gap-1.5 text-xs text-fg-muted" testId="digest-status">
+        <TriangleAlert size={13} className="flex-shrink-0 text-warning" aria-hidden="true" />
+        <span data-testid="digest-status-text">
+          A call failed. Trying again in {minutes} {minutes === 1 ? 'minute' : 'minutes'}.
+        </span>
+      </CardTile>
+    );
+  }
+  // Caught up: every finished task has a digest, or the rest are ones the agent
+  // passed over this launch.
+  if (toWrite === 0 || (digests.state === 'idle' && toWrite <= digests.skipped)) {
+    return (
+      <CardTile className="flex items-center gap-1.5 text-xs text-fg-muted" testId="digest-status">
+        <Check size={13} className="flex-shrink-0 text-emerald-500" aria-hidden="true" />
+        <span data-testid="digest-status-text">
+          {toWrite === 0
+            ? `All ${digests.finishedTasks.toLocaleString()} finished tasks in this project have one.`
+            : `${digests.written.toLocaleString()} of ${digests.finishedTasks.toLocaleString()} written, ${digests.skipped.toLocaleString()} skipped until the next launch.`}
+        </span>
+      </CardTile>
+    );
+  }
+  const percent = digests.finishedTasks > 0 ? (digests.written / digests.finishedTasks) * 100 : 0;
+  return (
+    <CardTile className="text-xs text-fg-muted" testId="digest-status">
+      <div className="flex items-center gap-1.5">
+        <RefreshCw size={13} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
+        <span data-testid="digest-status-text">
+          Writing: {digests.written.toLocaleString()} of {digests.finishedTasks.toLocaleString()} finished tasks in this project.
+        </span>
+      </div>
+      <DownloadProgressBar percent={percent} />
+    </CardTile>
   );
 }
 

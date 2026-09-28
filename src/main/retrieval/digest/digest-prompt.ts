@@ -1,21 +1,24 @@
 import crypto from 'node:crypto';
+import { DIGEST_BATCH_SIZE } from '../../../shared/task-digests';
 
 /**
- * Task digests: one or two sentences per finished task, written by the
- * answering agent, saying what the task set out to do and what it ended up
- * doing. A digest is searched with the task's own record and shown to the
- * agent beside the task, so a question finds a task by what it did, not only by
- * what its title and conversations happen to say.
+ * Task digests: one or two sentences per finished task, written by the digest
+ * agent (the Task digests card's own choice), saying what the task set out to
+ * do and what it ended up doing. A digest is searched with the task's own
+ * record and shown to the answering agent beside the task, so a question finds
+ * a task by what it did, not only by what its title and conversations happen
+ * to say.
  *
  * The input is compact on purpose: the title, the start of the description,
  * the files the task's sessions changed, and how each of its last sessions
  * ended. About ten tasks share one call.
  */
 
+/** Tasks per call, shared with the Task digests card's call estimate. */
+export { DIGEST_BATCH_SIZE };
+
 /** Bump when the input or the prompt changes, so every digest is rewritten. */
 export const TASK_DIGEST_VERSION = 1;
-/** Tasks per call. */
-export const DIGEST_BATCH_SIZE = 10;
 /** A digest longer than this is cut: it is a summary, not a report. */
 export const DIGEST_MAX_CHARS = 360;
 

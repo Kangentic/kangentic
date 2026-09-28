@@ -264,7 +264,7 @@ describe('the digest scheduler', () => {
     expect(timers.map((timer) => timer.delayMs)).toEqual([5 * 60_000]);
   });
 
-  it('does nothing while no answering agent is chosen, or when digests are off', async () => {
+  it('does nothing while no digest agent is chosen, or when digests are off', async () => {
     const off = harness([]);
     off.disable();
     off.scheduler.request('context', 'project');
@@ -283,5 +283,95 @@ describe('the digest scheduler', () => {
     await settle();
     await settle();
     expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['first', 'second']);
+  });
+
+  describe('on a caught-up board', () => {
+    /** A scheduler whose fingerprint the test moves, counting what each request costs. */
+    function fingerprinted(results: Array<{ written: number; remaining: number; failed?: boolean }>) {
+      let fingerprint = 'board-1';
+      const resolveWriter = vi.fn(async () => ({ agent: 'claude', model: null, write: async () => '' }));
+      const beforePass = vi.fn(async () => undefined);
+      const runPass = vi.fn(async () => ({ unanswered: [], failed: false, ...(results.shift() ?? { written: 0, remaining: 0 }) }));
+      const scheduler = createDigestScheduler<string>({
+        isEnabled: () => true,
+        readFingerprint: () => fingerprint,
+        resolveWriter,
+        beforePass,
+        onWritten: () => undefined,
+        runPass: runPass as never,
+        setTimer: () => ({ cancel: () => undefined }),
+      });
+      return { scheduler, resolveWriter, beforePass, runPass, move: (next: string) => { fingerprint = next; } };
+    }
+
+    it('skips the writer, the change sweep and the input read when nothing a digest reads changed', async () => {
+      const board = fingerprinted([{ written: 3, remaining: 0 }]);
+      board.scheduler.request('context', 'project');
+      await settle();
+      expect(board.runPass).toHaveBeenCalledTimes(1);
+
+      // Another board change, nothing new under Done: the fingerprint alone.
+      board.scheduler.request('context', 'project');
+      await settle();
+      expect(board.resolveWriter).toHaveBeenCalledTimes(1);
+      expect(board.beforePass).toHaveBeenCalledTimes(1);
+      expect(board.runPass).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs again once the fingerprint moves', async () => {
+      const board = fingerprinted([{ written: 3, remaining: 0 }, { written: 1, remaining: 0 }]);
+      board.scheduler.request('context', 'project');
+      await settle();
+      board.move('board-2');
+      board.scheduler.request('context', 'project');
+      await settle();
+      expect(board.runPass).toHaveBeenCalledTimes(2);
+    });
+
+    it('never skips after a failed call, or while digests remain', async () => {
+      const failed = fingerprinted([{ written: 0, remaining: 0, failed: true }]);
+      failed.scheduler.request('context', 'project');
+      await settle();
+      failed.scheduler.request('context', 'project');
+      await settle();
+      expect(failed.runPass).toHaveBeenCalledTimes(2);
+
+      const remaining = fingerprinted([{ written: 30, remaining: 12 }]);
+      remaining.scheduler.request('context', 'project');
+      await settle();
+      remaining.scheduler.request('context', 'project');
+      await settle();
+      expect(remaining.runPass).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('reports writing while a pass runs, then retrying with when, for the Task digests card', async () => {
+    let finishPass: (result: { written: number; remaining: number; unanswered: string[]; failed: boolean }) => void = () => undefined;
+    const runPass = vi.fn(() => new Promise((resolve) => { finishPass = resolve; }));
+    const timers: Array<() => void> = [];
+    const scheduler = createDigestScheduler<string>({
+      isEnabled: () => true,
+      resolveWriter: async () => ({ agent: 'claude', model: null, write: async () => '' }),
+      onWritten: () => undefined,
+      runPass: runPass as never,
+      setTimer: (fire) => {
+        timers.push(fire);
+        return { cancel: () => undefined };
+      },
+      now: () => 1_000,
+    });
+    expect(scheduler.status('project')).toEqual({ state: 'idle', retryAtMs: null });
+    scheduler.request('context', 'project');
+    await settle();
+    expect(scheduler.status('project')).toEqual({ state: 'writing', retryAtMs: null });
+    expect(scheduler.status('another project')).toEqual({ state: 'idle', retryAtMs: null });
+
+    finishPass({ written: 0, remaining: 20, unanswered: [], failed: true });
+    await settle();
+    expect(scheduler.status('project')).toEqual({ state: 'retrying', retryAtMs: 1_000 + 5 * 60_000 });
+
+    // The retry fires: no longer waiting.
+    timers[0]();
+    expect(scheduler.status('project').state).not.toBe('retrying');
   });
 });
