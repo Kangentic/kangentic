@@ -806,6 +806,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 733, pre-PR | 26f +1012 plus 3 new files | 164KB, 2755 lines | 8 (4) | 21 | 0 | 9 | 10 of 8 pack-carrying | 8 / 5, plus 2 found in verification |
 | task 734, pre-PR | 36f +1490 plus 1 new file | 248KB, 4510 lines | 9 (6) | 28 | 0 | 10 | 3 of 9 pack-carrying | 31 / 27 |
 | task 734, second pass | 32f +1824 plus 2 new files | 260KB, 4765 lines | 9 (5) | 25 | 0 | 10 | 6 of 9 pack-carrying | 31 / 20 |
+| task 734, third pass | 37f +2922 plus 2 new files | 317KB, 5814 lines | 7 (2) | 32 | 0 | 9 | 16 of 8 pack-carrying | 35 / 28 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -935,3 +936,19 @@ both outside it. None was a `HUNK_CONTEXT_LINES` case. The driver dropped 11 of 
 Most were informational or off the diff. Two convention findings graded against a prompt worded
 more strictly than the rules they cited, a hover-only claim on a supplementary `title` and an
 adapter-boundary claim on a call that does not branch on an agent.
+
+The task 734 third-pass row is the same task again, with the two earlier passes' tests now
+committed and the source still uncommitted. The conventions finder hit the 25,000-token Read cap
+on a 2000-line call and loaded the pack in smaller windows, as in the second pass. The IPC and HMR
+auditors were told to jump to their sections by the table of contents instead of loading all
+5814 lines, and neither reported missing anything. The maintainability finder did not report its
+reads, so its count is absent from the 16. Most of the 16 were outside the changed set: the
+agent-list handler and config store (IPC), `paths.ts` (twice), and test files for coverage.
+None was a `HUNK_CONTEXT_LINES` case. The one High finding came from verification, not from a
+finder as raised. `platform-guard` flagged the exact `cliPath` compare as a Low case-sensitivity
+nit. The driver traced the spawn path to `resolveShimLaunch`, which swaps an npm `claude.cmd` for
+its `.ps1` or extensionless sibling, so the compare always failed there and the spawn-time alias
+conversion never ran. The driver dropped 7 of 35 candidates: two duplicates of a non-atomic
+write already self-healing on read, a speculative ASCII glyph fallback, a forced-probe cost that
+predates the change, a documented cold-start pass-through, an informational mock note, and a
+`closeMenu` extraction the effect deps rule out.
