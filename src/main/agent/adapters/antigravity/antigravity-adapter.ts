@@ -17,9 +17,11 @@ import { runAntigravityPrint } from './print-runner';
 import {
   buildSummarizePrompt,
   cleanSummarizeOutput,
+  forwardStreamLines,
   runCliPrintAnswer,
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/auto-name';
+import { antigravityAnswerEvents, antigravityConversationId, removeAntigravityConversation } from './answer-stream';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -302,7 +304,7 @@ export class AntigravityAdapter implements AgentAdapter {
     return cleaned;
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' };
+  readonly answerCapabilities = { streaming: true, search: false, model: true, effort: true, defaultEffort: 'low' };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -327,6 +329,19 @@ export class AntigravityAdapter implements AgentAdapter {
    * directory, never the project, so it cannot overwrite that workspace's
    * `agy -c` mapping either.
    *
+   * STREAMING: an `agent_response` step's `step_update` events carry
+   * `text_delta` as the text is written (`answer-stream.ts`, measured on
+   * 1.2.11).
+   *
+   * NO SEARCH. A workspace plugin does load our server (the interactive path's
+   * mechanism), but the agent never reached it: asked to call the search, it
+   * ran a shell command instead, and headless mode auto-denies any tool that
+   * needs a permission it cannot prompt for. Not offered until a run shows the
+   * tool called.
+   *
+   * Each run's conversation (its brain folder with the whole transcript, its
+   * database and presence lock) is removed afterwards.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -337,25 +352,35 @@ export class AntigravityAdapter implements AgentAdapter {
     model?: string | null,
     options?: AnswerFromContextOptions,
   ): Promise<string> {
-    return runCliPrintAnswer({
-      cliPath,
-      // The model and effort flags are OMITTED when none is chosen: passing an
-      // empty value is an error.
-      args: [
-        '--mode', 'plan',
-        '--input-format', 'stream-json',
-        '--output-format', 'stream-json',
-        ...(model ? ['--model', model] : []),
-        ...(options?.effort ? ['--effort', options.effort] : []),
-        '--print=',
-      ],
-      prompt: formatAntigravityUserMessage(prompt),
-      cwd,
-      extractRaw: extractAntigravityStreamResponse,
-      // A stream is a transcript, not an answer: step updates and their
-      // deltas carry far more than the answer text.
-      outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
-    });
+    const onEvent = options?.onEvent;
+    let conversationId: string | null = null;
+    try {
+      return await runCliPrintAnswer({
+        cliPath,
+        // The model and effort flags are OMITTED when none is chosen: passing an
+        // empty value is an error.
+        args: [
+          '--mode', 'plan',
+          '--input-format', 'stream-json',
+          '--output-format', 'stream-json',
+          ...(model ? ['--model', model] : []),
+          ...(options?.effort ? ['--effort', options.effort] : []),
+          '--print=',
+        ],
+        prompt: formatAntigravityUserMessage(prompt),
+        cwd,
+        extractRaw: extractAntigravityStreamResponse,
+        // A stream is a transcript, not an answer: step updates and their
+        // deltas carry far more than the answer text.
+        outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+        onChunk: forwardStreamLines((line) => {
+          conversationId ??= antigravityConversationId(line);
+          if (onEvent) for (const event of antigravityAnswerEvents(line)) onEvent(event);
+        }),
+      });
+    } finally {
+      if (conversationId) await removeAntigravityConversation(conversationId);
+    }
   }
 
   /**
