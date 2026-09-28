@@ -360,6 +360,9 @@ export const retrievalService = {
    *  central embedding engine's drain loop. Idempotent; call once at startup. */
   attach(context: IpcContext): void {
     embedEngine.attach(context);
+    // A finished drain changes the Index's embedded shares, and for
+    // conversations it can leave the map stale; the re-read handles both.
+    embedEngine.setOnDrained((projectId) => graphService.notifyChanged(projectId));
     if (attached) return;
     attached = true;
     context.sessionManager.on('exit', (sessionId: string) => {

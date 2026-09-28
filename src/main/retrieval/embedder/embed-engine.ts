@@ -195,6 +195,15 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
    * no verbose logging cost for a user who never turns that on.
    */
   const drainRuns = new Map<string, { startedAt: number; chunks: number; batches: number }>();
+  /**
+   * Told when a project that had chunks to embed has none left. The Knowledge
+   * Graph re-reads its Index then: a corpus's embedded share is read when the
+   * graph loads, and nothing else moves it, so a row caught mid-embed (a task
+   * digest re-embeds its whole record) said "98% embedded" until the graph was
+   * reopened. Once per run, not per batch, so an open graph is not re-read
+   * every few seconds.
+   */
+  let onDrained: ((projectId: string) => void) | undefined;
 
   function wake(): void {
     if (wakeResolve) {
@@ -345,6 +354,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
           elapsedMs,
           chunksPerMinute: elapsedMs > 0 ? Math.round((run.chunks / elapsedMs) * 60_000) : null,
         });
+        onDrained?.(projectId);
       }
       return 'drained';
     }
@@ -462,6 +472,11 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     },
 
     markDirty,
+
+    /** Register the caught-up listener. Last writer wins, like the graph's. */
+    setOnDrained(listener: (projectId: string) => void): void {
+      onDrained = listener;
+    },
 
     getEmbedder(context: IpcContext): Embedder | null {
       return resolveClient(context);

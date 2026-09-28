@@ -349,6 +349,41 @@ describe('createEmbedEngine drain loop', () => {
     engine.dispose();
   });
 
+  it('says once when a project that had work has caught up, and never for a poll that found none', async () => {
+    const working = new FakeStore('proj-drains', [makeChunk(50), makeChunk(51), makeChunk(52)], []);
+    const idle = new FakeStore('proj-idle', [], []);
+    const dbWorking = { __fakeProjectId: 'proj-drains' } as unknown as Database.Database;
+    const dbIdle = { __fakeProjectId: 'proj-idle' } as unknown as Database.Database;
+    markVecCapable(dbWorking);
+    markVecCapable(dbIdle);
+    const dbs = new Map([['proj-drains', dbWorking], ['proj-idle', dbIdle]]);
+    const stores = new Map([['proj-drains', working], ['proj-idle', idle]]);
+    const drained: string[] = [];
+
+    const engine = createEmbedEngine({
+      getDb: (projectId) => dbs.get(projectId)!,
+      createStore: (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!,
+      createClient: () => makeFakeClient(),
+      delay: immediateDelay,
+      drainBatchSize: 1,
+    });
+    engine.setOnDrained((projectId) => drained.push(projectId));
+
+    engine.attach(makeContext({ currentProjectId: 'proj-drains' }));
+    engine.markDirty('proj-drains');
+    engine.markDirty('proj-idle');
+    await vi.waitFor(() => expect(working.remaining).toBe(0));
+    await vi.waitFor(() => expect(drained).toEqual(['proj-drains']));
+
+    // The Search tab's poll re-marks a caught-up project: no second call.
+    engine.markDirty('proj-drains');
+    engine.markDirty('proj-idle');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(drained).toEqual(['proj-drains']);
+
+    engine.dispose();
+  });
+
   it('releases the hold after a drain iteration that throws', async () => {
     const store = new FakeStore('proj-throws', [makeChunk(40)], []);
     const db = { name: 'proj-throws' } as unknown as Database.Database;

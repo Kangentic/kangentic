@@ -33,6 +33,7 @@ vi.mock('../../src/main/retrieval/embedder/embedding-model', () => ({
 
 const embedEngineMock = vi.hoisted(() => ({
   attach: vi.fn(),
+  setOnDrained: vi.fn(),
   markDirty: vi.fn(),
   dispose: vi.fn(),
   getEmbedder: vi.fn(() => null),
