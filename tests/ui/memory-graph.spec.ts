@@ -1421,27 +1421,40 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('does not offer an outcome nothing in the index has', async () => {
-    // Archiving happens after Done essentially always, so "Abandoned" (archived
-    // without ever reaching Done) matches nothing on a real board and would sit
-    // there as a permanently empty choice. The option list is built from what
-    // the corpus actually contains, so this corrects itself per project rather
-    // than being a judgement baked in about one board.
+  test('keeps an outcome nothing in the index has, disabled, so both rows have four columns', async () => {
+    // Archiving happens after Done essentially always, so "Dropped" (archived
+    // without ever reaching Done) often matches nothing. It stays in the row,
+    // disabled with the reason, rather than leaving: the status row keeps the
+    // time row's four segments, and a scope change never adds or removes one.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openMemoryGraph(page);
       const outcome = page.locator('[data-testid="memory-graph-filter-outcome"]');
       await expect(outcome).toContainText('Finished');
       await expect(outcome.getByRole('radio', { name: 'Still open' })).toHaveText('Open');
-      await expect(outcome).not.toContainText('Dropped');
+      const dropped = page.locator('[data-testid="memory-graph-filter-outcome-abandoned"]');
+      await expect(dropped).toHaveText('Dropped');
+      await expect(dropped).toBeDisabled();
+      await expect(dropped).toHaveAttribute('title', 'No dropped tasks on this map');
+      await expect(page.locator('[data-testid="memory-graph-filter-outcome-done"]')).toBeEnabled();
+
+      // Same count, same width, so the segments stack in columns. The tolerance
+      // is for font metrics: a missing segment moves a column by a quarter of
+      // the row, about 55px, not a few.
+      const columns = await page.evaluate(() => ['since', 'outcome'].map((row) => Array.from(
+        document.querySelectorAll<HTMLElement>(`[data-testid="memory-graph-filter-${row}"] [role="radio"]`),
+      ).map((option) => option.getBoundingClientRect().left)));
+      expect(columns[0]).toHaveLength(4);
+      expect(columns[1]).toHaveLength(4);
+      columns[0].forEach((left, index) => expect(Math.abs(left - columns[1][index])).toBeLessThanOrEqual(3));
     } finally {
       await browser.close();
     }
   });
 
-  test('offers an outcome once something in the index has it', async () => {
-    // The other half of the rule: a board where work really was dropped gets the
-    // option, so this is availability rather than removal.
+  test('enables an outcome once something in the index has it', async () => {
+    // The other half of the rule: a board where work really was dropped can pick
+    // it, so this is availability rather than removal.
     const withAbandoned = `(function () {
       var base = ${projectionLiteral(6)};
       base.nodes[1].outcome = 'abandoned';
@@ -1450,7 +1463,7 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(snapshotScript({ projection: withAbandoned }));
     try {
       await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toContainText('Dropped');
+      await expect(page.locator('[data-testid="memory-graph-filter-outcome-abandoned"]')).toBeEnabled();
       // Four statuses is the widest this row gets: none may be cut off.
       const clipped = await page.evaluate(() => Array.from(
         document.querySelectorAll<HTMLElement>('[data-testid="memory-graph-filter-outcome"] [role="radio"]'),

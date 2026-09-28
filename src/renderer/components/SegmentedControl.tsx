@@ -75,8 +75,10 @@ interface SegmentedControlProps<T extends string> {
    * Narrower horizontal padding, the same height. For four short options in a
    * narrow column (the Knowledge Graph's time and status filters), where the
    * default 12px a side alone pushed the row past its 224px: measured, "Any,
-   * 7 days, 30 days, 90 days" needed 260px at the default and 185px quiet and
-   * tight.
+   * 7 days, 30 days, 90 days" needed 260px at the default and 185px quiet with
+   * 6px a side. It is 4px a side so the widest status label ("Finished") also
+   * fits a quarter of the row: a label wider than its share takes space from
+   * its neighbours, and the time and status rows stop lining up in columns.
    */
   tight?: boolean;
   /** Stretch to fill the container, options sharing the width equally. */
@@ -102,7 +104,7 @@ const GROUND_CLASSES = {
 const OPTION_TEXT = {
   default: {
     size: 'px-3 py-1 text-sm font-medium',
-    tightSize: 'px-1.5 py-1 text-sm font-medium',
+    tightSize: 'px-1 py-1 text-sm font-medium',
     selected: 'text-fg',
     idle: 'text-fg-muted',
     idleHover: 'hover:text-fg',
@@ -110,7 +112,7 @@ const OPTION_TEXT = {
   },
   quiet: {
     size: 'px-3 py-1.5 text-xs',
-    tightSize: 'px-1.5 py-1.5 text-xs',
+    tightSize: 'px-1 py-1.5 text-xs',
     selected: 'text-fg-secondary',
     idle: 'text-fg-muted',
     idleHover: 'hover:text-fg-secondary',

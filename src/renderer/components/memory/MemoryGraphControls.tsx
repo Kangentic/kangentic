@@ -113,11 +113,10 @@ export interface FacetAvailability {
    * The outcomes actually present, in display order - not a boolean.
    *
    * On a real board archiving happens after Done essentially always, so
-   * "Abandoned" (archived without ever reaching Done) matches nothing and would
-   * sit there as a permanently empty choice. Offering only what exists makes
-   * that self-correcting rather than a judgement about one board: the option
-   * appears on a board where work really does get dropped, and the row itself
-   * disappears when fewer than two outcomes remain.
+   * "Dropped" (archived without ever reaching Done) often matches nothing. The
+   * status row still shows it, disabled, so the row keeps four segments that
+   * line up with the time row's and a scope change never adds or removes one.
+   * The row itself disappears when fewer than two outcomes remain.
    */
   outcomes: ReadonlyArray<MemoryGraphOutcome>;
 }
@@ -598,13 +597,21 @@ export function MemoryGraphControls({
                         // "Still open", which is not an outcome at all - it is the
                         // absence of one.
                         { value: 'any' as const, label: 'Any', ariaLabel: 'Any status', title: 'Any status', testId: 'memory-graph-filter-outcome-any' },
-                        ...facetAvailability.outcomes.map((outcome) => ({
-                          value: outcome,
-                          label: OUTCOME_SHORT_LABELS[outcome],
-                          ariaLabel: OUTCOME_LABELS[outcome],
-                          title: OUTCOME_LABELS[outcome],
-                          testId: `memory-graph-filter-outcome-${outcome}`,
-                        })),
+                        // Every status, always, so this row has the time row's
+                        // four columns and a scope change never adds or removes
+                        // a segment. One the map has no task in stays in place,
+                        // disabled, and says why.
+                        ...OUTCOME_ORDER.map((outcome) => {
+                          const present = facetAvailability.outcomes.includes(outcome);
+                          return {
+                            value: outcome,
+                            label: OUTCOME_SHORT_LABELS[outcome],
+                            ariaLabel: OUTCOME_LABELS[outcome],
+                            title: present ? OUTCOME_LABELS[outcome] : `No ${OUTCOME_SHORT_LABELS[outcome].toLowerCase()} tasks on this map`,
+                            disabled: !present,
+                            testId: `memory-graph-filter-outcome-${outcome}`,
+                          };
+                        }),
                       ]}
                       value={facets.outcome}
                       onChange={(outcome) => onFacetsChange({ ...facets, outcome })}
