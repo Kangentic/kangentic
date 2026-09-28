@@ -869,7 +869,7 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('dims the related tasks the answer is not about', async () => {
+  test('an answer narrows the map to the tasks it is about', async () => {
     const answered = {
       ok: true, agentName: 'Claude Code', answer: 'It was #103.', rows: [chatRow(3)],
       related: [chatRow(3), chatRow(4, 0.9), chatRow(5, 0.8)], handedCount: 3, promptTokens: 1,
@@ -882,11 +882,10 @@ test.describe('memory graph', () => {
       const drawn = () => page.locator('[data-testid="memory-graph-canvas"]').getAttribute('data-drawn-count');
       expect(await drawn()).toBe('30');
       await askInBox(page, 'what fixed the relay?');
-      // Only the answer's task is titled; the dimmed related ones stay dots.
+      // Once it lands, the map IS the answer: its one task, not the related set
+      // dimmed behind it, and not a grey wash of everything else.
       await expect.poll(async () => visibleNodeTitles(page)).toEqual(['Conversation 3']);
-      // And the rest of the map is scoped away, not left as a grey wash:
-      // reported on a real map, where the wash read as everything dimmed.
-      await expect.poll(drawn).toBe('3');
+      await expect.poll(drawn).toBe('1');
     } finally {
       await browser.close();
     }
@@ -978,10 +977,10 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('an answer about one conversation keeps its neighbours on the map', async () => {
-    // It used to light that one conversation and hide everything else, which
-    // left a single dot on an empty field. Its nearest neighbours stay as
-    // dim context, which the fixture makes the next three conversations.
+  test('an answer about one conversation shows just that one', async () => {
+    // Its neighbours used to come back as dim context, which read as clutter
+    // around a one-task answer. The camera flies in close instead, so the one
+    // conversation is the picture.
     const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
       ${answeredScript('That was #110, one conversation.', [chatRow(10)])}`;
     const { browser, page } = await launchWithState(preConfig);
@@ -990,9 +989,8 @@ test.describe('memory graph', () => {
       await askInBox(page, 'what was the longest conversation?');
       await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
 
-      // The answer's conversation is titled; the neighbours around it are dim
-      // context dots.
       await expect.poll(async () => (await visibleNodeTitles(page)).sort()).toEqual(['Conversation 10']);
+      await expect.poll(() => page.locator('[data-testid="memory-graph-canvas"]').getAttribute('data-drawn-count')).toBe('1');
     } finally {
       await browser.close();
     }

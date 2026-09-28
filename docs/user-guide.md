@@ -1022,10 +1022,13 @@ and every task's own record (its title, labels, description and digest) for the 
 and in under a second, and rolls the matches up per task. A task's record can bring it in even when
 none of its conversations was indexed, as long as the map is not filtered. The map lights
 that related set at once, brighter where a task matches more strongly, and the chat reads "Reading
-14 related tasks" while the agent works. When the answer lands, the tasks it is about stay bright
-and titled, the rest of the related set dims to unlabelled dots, and the map eases from one picture
-to the next rather than snapping. An answer that names no task, such as "nothing here covers that",
-lights nothing and leaves the plain map. The filters in the left panel are the scope of the
+14 related tasks" while the agent works. When the answer lands, the map narrows to the tasks it is
+about and nothing else: eleven tasks for an answer that names eleven, one conversation for an answer
+about one. The rest fades out and the camera flies in, so a follow-up that narrows the answer
+narrows the map with it, and clicking an earlier turn brings its tasks back the same way. If none of
+the answer's tasks has a conversation of its own (tasks found by their records alone), the related
+set stays, dimmed, so the map still points at the work the answer drew on. An answer that names no
+task, such as "nothing here covers that", lights nothing and leaves the plain map. The filters in the left panel are the scope of the
 question: a filtered map means a filtered table and a filtered search, so the chat never repeats
 them.
 

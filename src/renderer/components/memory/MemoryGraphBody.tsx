@@ -57,13 +57,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *  read without scrolling. */
 const DETAIL_NEIGHBOR_COUNT = 6;
 
-/** Below this many lit conversations, an answer's neighbours come back as context. */
+/** Below this many conversations, an answer's own nodes also take the white ring. */
 const FEW_LIT = 3;
-/** Neighbours of each lit conversation shown as context. */
-const CONTEXT_NEIGHBORS = 6;
-/** How strongly context draws: visible, and clearly not part of the answer. */
-const CONTEXT_STRENGTH = 0.15;
-/** A related task's strength is scaled by this once the answer names its own tasks. */
+/** A related task's strength is scaled by this in the one answered map that
+ *  still shows the related set: an answer whose tasks have no node of their own. */
 const RELATED_AFTER_ANSWER = 0.3;
 
 function CenteredNotice({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
@@ -393,10 +390,13 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
   /**
    * How strongly each conversation on the map relates to the active turn.
    *
-   * Read off the turn's related work, a task's strength going to every one of
-   * its conversations, and the tasks the answer is ABOUT at full strength on
-   * top. So the map shows the whole related set as a gradient and the rows'
-   * tasks as the brightest part of it.
+   * Two pictures, one per stage. While the agent reads, the related set, by
+   * match strength: what retrieval handed over. Once the answer lands, the
+   * tasks it is ABOUT and nothing else, so the map is the answer: eleven
+   * dictation tasks when it names eleven, one conversation when it names one
+   * (decided 2026-09-28). The related set used to stay dimly behind the answer,
+   * and a small answer brought its neighbours back as context; both left the
+   * reader looking at two dozen nodes for a one-task answer.
    */
   const turnStrengths = useMemo(() => {
     if (!activeTurn || (!activeTurn.related && activeTurn.rows.length === 0)) return null;
@@ -413,42 +413,32 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
         strengths.set(index, Math.max(strengths.get(index) ?? 0, strength));
       }
     };
-    // While the agent reads, the related set is the picture, by match strength.
-    // Once the answer lands, the tasks it is ABOUT are the picture and the rest
-    // of the related set recedes to context. Reported: with 28 related tasks at
-    // similar brightness, nothing said why those nodes were lit, and most of
-    // them were not what the answer was about.
     const answered = activeTurn.status === 'done';
-    for (const task of activeTurn.related ?? []) {
-      light(task.docKeys, answered ? task.strength * RELATED_AFTER_ANSWER : task.strength);
+    if (answered) {
+      for (const row of activeTurn.rows) light(row.docKeys, 1);
+      if (strengths.size > 0) return strengths;
+      // None of the answer's tasks has a node of its own (found by their task
+      // records alone). The related set stays, dimmed, so the map still points
+      // at the part of the work the answer drew on rather than at everything.
+      for (const task of activeTurn.related ?? []) light(task.docKeys, task.strength * RELATED_AFTER_ANSWER);
+      return strengths.size > 0 ? strengths : null;
     }
+    for (const task of activeTurn.related ?? []) light(task.docKeys, task.strength);
     for (const row of activeTurn.rows) light(row.docKeys, 1);
-    if (strengths.size === 0) return null;
-
-    // An answer about one or two conversations lit only those, and every other
-    // node vanished, so the map was a single dot on a black field. Their
-    // nearest neighbours come back dimly as context, the way the mockup draws
-    // it, which also gives the camera a neighbourhood to frame.
-    if (strengths.size < FEW_LIT) {
-      const lists = snapshot?.projection?.nodeNeighbors ?? [];
-      for (const index of [...strengths.keys()]) {
-        for (const neighbor of (lists[index] ?? []).slice(0, CONTEXT_NEIGHBORS)) {
-          if (!strengths.has(neighbor.index)) strengths.set(neighbor.index, CONTEXT_STRENGTH);
-        }
-      }
-    }
-    return strengths;
-  }, [activeTurn, indexByDocKey, snapshot]);
+    return strengths.size > 0 ? strengths : null;
+  }, [activeTurn, indexByDocKey]);
 
   /**
-   * Nodes drawn with the white ring: what the agent's own searches found, and
-   * the answer itself when it is about so few conversations that they are the
-   * whole point of the picture.
+   * Nodes drawn with the white ring: what the agent's own searches found while
+   * it reads, and the answer itself when it is about so few conversations that
+   * they are the whole point of the picture. A search hit outside the answer
+   * goes with the rest of the related set once the answer lands.
    */
   const ringed = useMemo(() => {
     if (!activeTurn) return undefined;
     const set = new Set<number>();
-    for (const search of activeTurn.searches) {
+    const answeredTurn = activeTurn.status === 'done' && activeTurn.rows.length > 0;
+    for (const search of answeredTurn ? [] : activeTurn.searches) {
       for (const docKey of search.docKeys) {
         const index = indexByDocKey.get(docKey);
         if (index !== undefined) set.add(index);
