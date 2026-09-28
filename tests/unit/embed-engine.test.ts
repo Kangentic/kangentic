@@ -349,15 +349,22 @@ describe('createEmbedEngine drain loop', () => {
     engine.dispose();
   });
 
-  it('says once when a project that had work has caught up, and never for a poll that found none', async () => {
-    const working = new FakeStore('proj-drains', [makeChunk(50), makeChunk(51), makeChunk(52)], []);
+  it('says once when a project that had task records to embed has caught up, never for a conversation-only run or a poll that found none', async () => {
+    const taskChunk = (id: number): StoredChunk => ({ ...makeChunk(id), corpus: 'task' });
+    // Records and a conversation chunk in one run: the run counts.
+    const working = new FakeStore('proj-drains', [taskChunk(50), taskChunk(51), makeChunk(52)], []);
+    // An agent turn's chunks alone: no push, since a re-read recomputes the
+    // map's coverage on main for every window showing the graph.
+    const turn = new FakeStore('proj-turn', [makeChunk(60), makeChunk(61)], []);
     const idle = new FakeStore('proj-idle', [], []);
     const dbWorking = { __fakeProjectId: 'proj-drains' } as unknown as Database.Database;
+    const dbTurn = { __fakeProjectId: 'proj-turn' } as unknown as Database.Database;
     const dbIdle = { __fakeProjectId: 'proj-idle' } as unknown as Database.Database;
     markVecCapable(dbWorking);
+    markVecCapable(dbTurn);
     markVecCapable(dbIdle);
-    const dbs = new Map([['proj-drains', dbWorking], ['proj-idle', dbIdle]]);
-    const stores = new Map([['proj-drains', working], ['proj-idle', idle]]);
+    const dbs = new Map([['proj-drains', dbWorking], ['proj-turn', dbTurn], ['proj-idle', dbIdle]]);
+    const stores = new Map([['proj-drains', working], ['proj-turn', turn], ['proj-idle', idle]]);
     const drained: string[] = [];
 
     const engine = createEmbedEngine({
@@ -371,8 +378,12 @@ describe('createEmbedEngine drain loop', () => {
 
     engine.attach(makeContext({ currentProjectId: 'proj-drains' }));
     engine.markDirty('proj-drains');
+    engine.markDirty('proj-turn');
     engine.markDirty('proj-idle');
-    await vi.waitFor(() => expect(working.remaining).toBe(0));
+    await vi.waitFor(() => {
+      expect(working.remaining).toBe(0);
+      expect(turn.remaining).toBe(0);
+    });
     await vi.waitFor(() => expect(drained).toEqual(['proj-drains']));
 
     // The Search tab's poll re-marks a caught-up project: no second call.
