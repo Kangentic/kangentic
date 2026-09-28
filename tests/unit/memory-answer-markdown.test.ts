@@ -92,6 +92,18 @@ describe('linkifying tickets in an answer', () => {
     expect(linkifyTickets('**mobile#3 and #4** matter.', prefixes))
       .toBe('[mobile#3](#kng-ticket-3-mobile) and [#4](#kng-ticket-4) matter.');
   });
+
+  it('marks every prefixed ticket in a slash-joined run', () => {
+    // Seen in a real answer: "kangentic#383/kangentic#440/kangentic#493" drew
+    // one mark and left the other two as text.
+    const prefixes = new Set(['kangentic', 'mobile']);
+    expect(linkifyTickets('and kangentic#383/kangentic#440/mobile#49 round it out', prefixes))
+      .toBe('and [kangentic#383](#kng-ticket-383-kangentic)/[kangentic#440](#kng-ticket-440-kangentic)/[mobile#49](#kng-ticket-49-mobile) round it out');
+    expect(linkifyTickets('#383/mobile#49 and mobile#45/#12', prefixes))
+      .toBe('[#383](#kng-ticket-383)/[mobile#49](#kng-ticket-49-mobile) and [mobile#45](#kng-ticket-45-mobile)/[#12](#kng-ticket-12)');
+    // A path segment that happens to spell a prefix is still not a ticket.
+    expect(linkifyTickets('see docs/kangentic#12 there', prefixes)).toBe('see docs/kangentic#12 there');
+  });
 });
 
 describe('keeping a mark on one line with its punctuation', () => {

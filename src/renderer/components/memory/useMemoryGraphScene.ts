@@ -131,17 +131,23 @@ interface UseMemoryGraphSceneOptions {
    * which it could not be if it framed the hits.
    */
   framingIndices?: ReadonlyArray<number> | null;
+  /** How many unit boxes wide the map is (composed islands spread past one). The
+   *  camera may pull back that much further, so the whole map still fits. */
+  worldExtent?: number;
 }
 
 export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): MemoryGraphSceneHandle {
   const {
     canvasRef, containerRef, nodes, edges, signature, edgeColor, regionOf, onFrame,
-    insets = NO_VIEWPORT_INSETS, framingIndices = null,
+    insets = NO_VIEWPORT_INSETS, framingIndices = null, worldExtent = 1,
   } = options;
 
   // Read inside effects that must not re-run when a panel opens: the scene is
   // never rebuilt for chrome, only re-aimed.
   const insetsRef = useRef(insets);
+  // Read when the controls are built; a later change is applied by its own
+  // effect below rather than by rebuilding the scene.
+  const worldExtentRef = useRef(worldExtent);
   // Same reason: a facet change must not rebuild the scene. It is read at FIT
   // time, which is the only moment the framing is recomputed.
   const framingIndicesRef = useRef(framingIndices);
@@ -163,7 +169,15 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     insetsRef.current = insets;
     framingIndicesRef.current = framingIndices;
     onFrameRef.current = onFrame;
+    worldExtentRef.current = worldExtent;
   });
+
+  // A composed map is wider than one project's, so the camera may pull back in
+  // proportion. The scene is rebuilt for a new composition anyway (its signature
+  // changes); this keeps the limit right if the extent ever moves without it.
+  useEffect(() => {
+    if (controlsRef.current) controlsRef.current.maxDistance = MAX_DISTANCE * worldExtent;
+  }, [worldExtent]);
 
   /**
    * Whether the camera is still sitting at the framing we computed for it.
@@ -283,7 +297,7 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
 
     const controls = new CameraControls(scene.camera, canvas);
     controls.minDistance = MIN_DISTANCE;
-    controls.maxDistance = MAX_DISTANCE;
+    controls.maxDistance = MAX_DISTANCE * worldExtentRef.current;
     // Damping is what makes it feel like a camera rather than a slider: the
     // glide after you let go. `update()` reports non-settled until it decays,
     // which is what keeps the frame loop alive through that glide.

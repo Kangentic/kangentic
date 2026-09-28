@@ -1189,7 +1189,10 @@ if (import.meta.hot) {
       const memoryGraph = useMemoryGraphStore.getState();
       void memoryGraph.loadSnapshot();
       void memoryGraph.loadProjects();
-      for (const scopedProjectId of memoryGraph.scopeProjectIds ?? []) void memoryGraph.loadScopeSnapshot(scopedProjectId);
+      // The open project's island comes from loadSnapshot above.
+      for (const scopedProjectId of memoryGraph.scopeProjectIds ?? []) {
+        if (scopedProjectId !== memoryGraph.projectId) void memoryGraph.loadScopeSnapshot(scopedProjectId);
+      }
     }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();

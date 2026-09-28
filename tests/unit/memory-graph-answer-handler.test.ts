@@ -106,9 +106,18 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: { getEmbedder: vi.fn(() => null) },
 }));
-vi.mock('../../src/main/retrieval/graph/graph-service', () => ({
-  graphService: { getSnapshot: vi.fn(), requestRefresh: vi.fn(), setOnChanged: vi.fn() },
-}));
+vi.mock('../../src/main/retrieval/graph/graph-service', () => {
+  const getSnapshot = vi.fn();
+  return {
+    graphService: {
+      getSnapshot,
+      // Ask reads the map alone; each test sets it through the snapshot.
+      getProjection: (projectId: string) => getSnapshot(projectId, '')?.projection ?? null,
+      requestRefresh: vi.fn(),
+      setOnChanged: vi.fn(),
+    },
+  };
+});
 vi.mock('../../src/main/search/search-core', () => ({ runSearchEverything: vi.fn() }));
 vi.mock('../../src/main/pop-out/window-broadcast', () => ({ broadcast: vi.fn() }));
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
@@ -721,11 +730,15 @@ describe('the Ask handler', () => {
       ]);
 
       const [prompt, , , , options] = answerSpy.mock.calls[0] as unknown as AnswerCall;
-      // Two tasks share ticket 561, and the table keeps them apart.
-      expect(prompt).toMatch(/\n#561\|Sphere fit framing\|/);
+      // Two tasks share ticket 561, and the table keeps them apart. Every ref
+      // names its project, the open one's too: left bare, an agent read a task
+      // ABOUT the mobile app as the mobile project's.
+      expect(prompt).toMatch(/\nkangentic#561\|Sphere fit framing\|/);
       expect(prompt).toMatch(/\nmobile-app#561\|Relay pairing\|/);
-      expect(prompt).toMatch(/projects: Kangentic 2 tasks[^;\n]*written #N; Mobile App 1 tasks[^\n]*written mobile-app#N/);
-      expect(prompt).toContain('written mobile-app#88');
+      expect(prompt).not.toMatch(/\n#\d+\|/);
+      expect(prompt).toMatch(/projects: Kangentic 2 tasks[^;\n]*written kangentic#N; Mobile App 1 tasks[^\n]*written mobile-app#N/);
+      expect(prompt).toContain('written kangentic#529 or mobile-app#88');
+      expect(prompt).toContain('never what the task is about');
       // The search reaches every project in scope, by name.
       expect(prompt).toContain('The question spans 2 projects: Kangentic, Mobile App');
       // The other project's passage, found by its project-qualified key.
@@ -733,9 +746,10 @@ describe('the Ask handler', () => {
       // A search covers the open project unless told otherwise.
       expect(options?.retrieval?.url).toBe('http://127.0.0.1:4321/mcp/project-1/answer-req-x');
 
+      // The answer wrote the open project's #564 bare, which still resolves.
       expect(result.rows).toEqual([
         expect.objectContaining({ key: 'task-9', ref: 'mobile-app#561', projectId: 'project-2', projectName: 'Mobile App' }),
-        expect.objectContaining({ key: 'task-2', ref: '#564', projectId: 'project-1', projectName: 'Kangentic' }),
+        expect.objectContaining({ key: 'task-2', ref: 'kangentic#564', projectId: 'project-1', projectName: 'Kangentic' }),
       ]);
       expect(result.answer).toBe('Mostly mobile-app#561, then #564.');
     });

@@ -27,6 +27,7 @@ import {
 } from '../../retrieval/related-work';
 import { watchAnswerSearches } from '../../agent/mcp-http/answer-search-trace';
 import { estimateTokens } from '../../retrieval/token-estimate';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
 import { answerSetupGap, resolveAnswerAgent } from '../../../shared/answer-agent';
@@ -332,21 +333,27 @@ export function registerSearchHandlers(context: IpcContext): void {
         // The board: EVERY task inside the map's filters, not a retrieved
         // subset. This is what makes "what was the most expensive" answerable at
         // all - an agent shown 24 of 347 tasks answers confidently about 24.
-        // Read from the cached projection, which is a cheap read by contract.
+        // Read from the cached projection alone (`getProjection`), without the
+        // coverage a snapshot also computes, since that grouping over every chunk
+        // was most of a 267 ms main-thread read per project.
         //
         // Across projects, each project's table is built on its own (its own
         // regions, its own board) and the tables merged, every ticket outside
         // the open project carrying its project's prefix: ticket numbers repeat
         // between projects. A project whose map has not been built yet still
         // brings its board tasks.
-        const model = resolveEmbeddingModel(config.memory?.embeddingModel);
         const scope = answerContext.scopeDocKeys ? new Set(answerContext.scopeDocKeys) : null;
         const takenPrefixes = new Set<string>();
+        // Across projects EVERY ticket carries its project, the open one's too.
+        // With the open project's left bare, an agent read a Kangentic task
+        // about the mobile app as "mobile#432": the prefix looked like a topic.
+        // A ref that always names its project leaves nothing to infer.
         const parts = scopeProjects.map((entry) => {
-          const projection = graphService.getSnapshot(entry.id, model.modelTag).projection;
-          const refPrefix = acrossProjects && entry.id !== openProjectId ? refPrefixFor(entry.name, takenPrefixes) : null;
+          const projection = graphService.getProjection(entry.id);
+          const refPrefix = acrossProjects ? refPrefixFor(entry.name, takenPrefixes) : null;
           if (refPrefix) takenPrefixes.add(refPrefix);
-          const table = buildAnswerTaskTable(projection ?? EMPTY_PROJECTION, granularity, scope, readBoardTasks(entry.id));
+          const boardTasks = timeSyncWork('answer:board-tasks', () => readBoardTasks(entry.id));
+          const table = timeSyncWork('answer:table', () => buildAnswerTaskTable(projection ?? EMPTY_PROJECTION, granularity, scope, boardTasks));
           return { project: entry, projection, refPrefix, table };
         });
         if (parts.every((part) => !part.projection)) return { ok: false, reason: 'the map is still building' };
@@ -390,6 +397,14 @@ export function registerSearchHandlers(context: IpcContext): void {
           refByKey.set(row.key, ref);
           keyByRef.set(ref, row.key);
           rowByKey.set(row.key, row);
+        });
+        // A bare ticket still means the open project's task, as it does
+        // everywhere else in the app, so an answer that drops the prefix on one
+        // of those still resolves. Never another project's: that ticket is theirs.
+        taskTable.rows.forEach((row) => {
+          if (!acrossProjects || row.projectId !== openProjectId || row.displayId == null) return;
+          const bare = `#${row.displayId}`;
+          if (!keyByRef.has(bare)) keyByRef.set(bare, row.key);
         });
 
         const emit = (event: MemoryAnswerStreamEvent): void => {
@@ -470,7 +485,7 @@ export function registerSearchHandlers(context: IpcContext): void {
           }
           : undefined;
 
-        const prompt = buildAnswerPrompt(trimmed, {
+        const prompt = timeSyncWork('answer:prompt', () => buildAnswerPrompt(trimmed, {
           tasks: taskTable,
           nowMs: Date.now(),
           related: related.handed.flatMap((task, index) => {
@@ -501,7 +516,7 @@ export function registerSearchHandlers(context: IpcContext): void {
           ...(acrossProjects
             ? { projects: { names: scopeProjects.map((entry) => entry.name), searchDefault: homeProject.name } }
             : {}),
-        });
+        }));
         // What this question cost to ask, reported rather than estimated after
         // the fact, with the same estimator the chunker sizes text with.
         const promptTokens = estimateTokens(prompt);

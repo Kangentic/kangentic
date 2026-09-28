@@ -21,6 +21,7 @@
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { MemoryGraphSnapshot } from '../../../shared/types';
 import {
   runProjectionPass,
@@ -60,6 +61,13 @@ export interface GraphServiceDeps {
 export function createGraphService(deps: GraphServiceDeps = {}) {
   const getDb = deps.getDb ?? getProjectDb;
   const running = new Map<string, RunningPass>();
+  /**
+   * Each project's last coverage, and the fingerprint it was computed at.
+   * Coverage groups every chunk (about 285 ms on a large index, on main) and
+   * was recomputed on every graph open and every refresh push; it only changes
+   * when the index does, which the fingerprint (about 6 ms) detects.
+   */
+  const coverageCache = new Map<string, { fingerprint: string; coverage: CoverageSummary }>();
   // Settable rather than constructor-only: the singleton is created at import
   // time but the push target (the main window) only exists once IPC registers.
   let onChanged: ((projectId: string) => void) | undefined = deps.onChanged;
@@ -74,6 +82,16 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       chunkTotals: store.documentChunkTotals(),
       knownDocumentIds,
     });
+  }
+
+  /** Coverage, recomputed only when the index behind it has changed. */
+  function coverageFor(projectId: string, store: RetrievalStore): CoverageSummary {
+    const fingerprint = store.coverageFingerprint();
+    const cached = coverageCache.get(projectId);
+    if (cached && cached.fingerprint === fingerprint) return cached.coverage;
+    const coverage = timeSyncWork('graph:coverage', () => buildCoverage(store, knownDocumentIds(store)));
+    coverageCache.set(projectId, { fingerprint, coverage });
+    return coverage;
   }
 
   /**
@@ -125,11 +143,21 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       onChanged?.(projectId);
     },
 
+    /**
+     * The cached map alone, for a caller that needs no coverage or freshness:
+     * Ask's task table. Coverage groups every chunk in the index, which is the
+     * larger share of a snapshot read on a large project, and Ask reads one
+     * map per project in scope on every question.
+     */
+    getProjection(projectId: string): GraphSnapshot['projection'] {
+      return timeSyncWork('graph:projection', () => readCachedProjection(storeFor(projectId)));
+    },
+
     /** Cheap read. Never runs the pass. */
     getSnapshot(projectId: string, modelTag: string): GraphSnapshot {
       const store = storeFor(projectId);
-      const coverage = buildCoverage(store, knownDocumentIds(store));
-      const projection = readCachedProjection(store);
+      const coverage = coverageFor(projectId, store);
+      const projection = timeSyncWork('graph:projection', () => readCachedProjection(store));
       const embedding = resolveEmbedding(store, modelTag, 0);
       return {
         projectId,

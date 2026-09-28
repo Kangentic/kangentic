@@ -631,6 +631,39 @@ export class RetrievalStore {
   }
 
   /** Highest chunk id present, used as half the cache signature. */
+  /**
+   * A cheap summary of everything coverage is computed from, so a caller can
+   * tell whether a coverage it already holds is still true.
+   *
+   * Coverage groups every chunk by document, which measured about 285 ms on an
+   * 89k-chunk index. These reads are index lookups and small tables: about 6 ms
+   * together. Chunks added or removed move the count and the top id; embedding
+   * progress moves the embedded count (indexed); a document's state moving moves
+   * its status tallies; a new transcript moves the session count.
+   */
+  coverageFingerprint(): string {
+    const chunks = this.db.prepare('SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS maxId FROM memory_chunks').get() as {
+      count: number;
+      maxId: number;
+    };
+    const embedded = this.db.prepare('SELECT COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL').get() as {
+      count: number;
+    };
+    const states = this.db
+      .prepare('SELECT status, COUNT(*) AS count, MAX(indexed_at) AS latest FROM memory_index_state GROUP BY status ORDER BY status')
+      .all() as Array<{ status: string; count: number; latest: string | null }>;
+    const sessions = this.db
+      .prepare('SELECT COUNT(DISTINCT agent_session_id) AS count FROM sessions WHERE agent_session_id IS NOT NULL')
+      .get() as { count: number };
+    return [
+      chunks.count,
+      chunks.maxId,
+      embedded.count,
+      states.map((state) => `${state.status}:${state.count}:${state.latest ?? ''}`).join(','),
+      sessions.count,
+    ].join('|');
+  }
+
   maxChunkId(): number {
     const row = this.db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM memory_chunks').get() as {
       id: number;

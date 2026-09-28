@@ -117,6 +117,14 @@ export interface MemoryGraphCanvasProps {
    * region pills so a region name never covers a project's.
    */
   islands?: ReadonlyArray<{ name: string; start: number; end: number }>;
+  /**
+   * How many unit boxes wide the map is: 1 for one project, more for composed
+   * islands, which keep their own size and spread the world instead. Only the
+   * camera's reach scales with it. The label fades stay in world distance on
+   * purpose: an island is its own size, so at the same distance it reads the
+   * same whether or not other projects are on the map.
+   */
+  worldExtent?: number;
 }
 
 /** The dimmest a lit node draws: a weak relation, still readable as lit. */
@@ -348,6 +356,7 @@ export function MemoryGraphCanvas({
   ringed,
   context,
   islands,
+  worldExtent = 1,
 }: MemoryGraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -802,6 +811,7 @@ export function MemoryGraphCanvas({
     onFrame: positionOverlays,
     insets: framingInsets,
     framingIndices,
+    worldExtent,
   });
   const { requestRender, resetView, frameNodes, setOrbitAnchor } = graph;
 

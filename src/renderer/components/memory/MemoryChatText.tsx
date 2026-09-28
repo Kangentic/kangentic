@@ -55,9 +55,11 @@ const TICKET_FRAGMENT = /^#kng-ticket-(\d+)(?:-([a-z0-9-]+))?$/;
  */
 export function linkifyTickets(text: string, prefixes: ReadonlySet<string> = new Set()): string {
   // Prefixes are lowercase letters, digits and dashes (`refPrefixFor`), so they
-  // need no escaping. Longest first, so `mobile-app` wins over `mobile`.
+  // need no escaping. Longest first, so `mobile-app` wins over `mobile`. A `/`
+  // counts as a boundary only after another ticket, as in the bare form below:
+  // "kangentic#383/kangentic#440" is two.
   const prefixPattern = prefixes.size > 0
-    ? new RegExp(`(^|[^\\w#&[/-])(${[...prefixes].sort((left, right) => right.length - left.length).join('|')})#(\\d{1,6})\\b`, 'gi')
+    ? new RegExp(`(^|[^\\w#&[/-]|(?<=#\\d{1,6})\\/)(${[...prefixes].sort((left, right) => right.length - left.length).join('|')})#(\\d{1,6})\\b`, 'gi')
     : null;
   let inFence = false;
   return text.split('\n').map((line) => {
@@ -81,11 +83,12 @@ export function linkifyTickets(text: string, prefixes: ReadonlySet<string> = new
         : unbolded;
       return prefixed
         // Not after a word, `&` (an entity), `[` (already link text) or `/` (a URL),
-        // except a `/` that follows another ticket: "#413/#503/#494" is three.
+        // except a `/` that follows another ticket: "#413/#503/#494" is three,
+        // and so is "mobile#45/#12", whose first ticket is a link by now.
         // Never after "PR": "PR #417" is a pull request, and many task titles
         // quote one, so a mark there would open an unrelated task #417.
         .replace(
-          /(?<!\b(?:PR|pr|[Pp]ull request))(^|[^\w#&[/]|(?<=#\d{1,6})\/)#(\d{1,6})\b/g,
+          /(?<!\b(?:PR|pr|[Pp]ull request))(^|[^\w#&[/]|(?<=(?:#\d{1,6}|\(#kng-ticket-[a-z0-9-]+\)))\/)#(\d{1,6})\b/g,
           (_whole, before: string, ticket: string) => `${before}[#${ticket}](#kng-ticket-${ticket})`,
         );
     }).join('');
@@ -154,6 +157,7 @@ export function MemoryChatText({
   tasksByTicket,
   onOpenTask,
   canOpenTask,
+  homeProjectId = null,
 }: {
   text: string;
   /** Tasks the answer can name, by the ref it writes (`ticketRef`). A ticket not here stays plain text. */
@@ -161,6 +165,9 @@ export function MemoryChatText({
   onOpenTask: (task: MemoryRelatedTask) => void;
   /** A mark for a task that cannot be opened here draws as a mark but is not a control. */
   canOpenTask: (task: MemoryRelatedTask) => boolean;
+  /** The project the graph is on, whose marks draw bare even when the answer
+   *  wrote them with their project (`kangentic#529`). */
+  homeProjectId?: string | null;
 }) {
   const components: Components = {
     a: ({ href, children, ...rest }) => {
@@ -170,10 +177,12 @@ export function MemoryChatText({
         const task = tasksByTicket.get(prefix ? `${prefix}#${ticket}` : `#${ticket}`);
         if (!task) return <span>{children}</span>;
         // Another project's ticket names its project, muted, the way its row
-        // does. The open project's stay bare, as the answer writes them.
+        // does. The graph's own project's stay bare, as they read everywhere
+        // else in the app, whatever the answer wrote.
+        const namesProject = prefix !== undefined && task.projectId !== homeProjectId;
         const label = (
           <>
-            {prefix ? <span className="font-normal text-fg-muted">{task.projectName ?? prefix} </span> : null}
+            {namesProject ? <span className="font-normal text-fg-muted">{task.projectName ?? prefix} </span> : null}
             #{task.displayId}
           </>
         );

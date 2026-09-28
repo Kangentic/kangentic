@@ -65,14 +65,15 @@ describe('composeIslands', () => {
     expect(composed.projection.nodes[6].clusters.coarse).toBe(1);
   });
 
-  it('keeps each island inside the unit box and apart from the others', () => {
+  it('draws the largest island at its own size and keeps the islands apart', () => {
+    // Shrinking it to fit made the map brighter the moment a second project
+    // joined: the same nodes, packed denser, under additive glow.
     const firstXs = composed.projection.nodes.slice(0, 4).map((entry) => entry.x);
     const secondXs = composed.projection.nodes.slice(4).map((entry) => entry.x);
-    for (const value of [...firstXs, ...secondXs]) {
-      expect(value).toBeGreaterThanOrEqual(0);
-      expect(value).toBeLessThanOrEqual(1);
-    }
+    expect(Math.max(...firstXs) - Math.min(...firstXs)).toBeCloseTo(1, 5);
     expect(Math.max(...firstXs)).toBeLessThan(Math.min(...secondXs));
+    // Two side by side need more than one unit box, and the extent says so.
+    expect(composed.extent).toBeGreaterThan(2);
   });
 
   it('changes its signature only when a member map changes', () => {
@@ -95,22 +96,44 @@ describe('composeIslands', () => {
 });
 
 describe('placeIslands', () => {
-  it('scales an island by the square root of its size, with a floor for tiny projects', () => {
-    const [large, medium, tiny] = placeIslands([900, 100, 1]);
-    expect(medium.scale / large.scale).toBeCloseTo(Math.sqrt(100 / 900), 5);
-    expect(tiny.scale / large.scale).toBeGreaterThan(0.3);
+  it('keeps the largest island at its own size and scales the rest by the square root of their share', () => {
+    const { placements: [large, medium, tiny] } = placeIslands([900, 100, 1]);
+    expect(large.scale).toBe(1);
+    expect(medium.scale).toBeCloseTo(Math.sqrt(100 / 900), 5);
+    // Floored, so a project with a handful of conversations is still a place.
+    expect(tiny.scale).toBeGreaterThan(0.3);
   });
 
-  it('lays nineteen islands out on a near-square grid inside the unit box', () => {
-    const placements = placeIslands(Array.from({ length: 19 }, (_, index) => 100 - index));
+  it('lays nineteen islands out on a near-square grid centred on the unit box, none overlapping', () => {
+    const { placements, extent } = placeIslands(Array.from({ length: 19 }, (_, index) => 100 - index));
+    // Five columns by four rows, each cell wider than an island.
+    expect(extent).toBeGreaterThan(5);
+    const half = extent / 2;
     for (const placement of placements) {
-      expect(placement.centerX - placement.scale / 2).toBeGreaterThanOrEqual(0);
-      expect(placement.centerX + placement.scale / 2).toBeLessThanOrEqual(1);
-      expect(placement.centerY - placement.scale / 2).toBeGreaterThanOrEqual(0);
-      expect(placement.centerY + placement.scale / 2).toBeLessThanOrEqual(1);
+      expect(placement.centerX - placement.scale / 2).toBeGreaterThanOrEqual(0.5 - half);
+      expect(placement.centerX + placement.scale / 2).toBeLessThanOrEqual(0.5 + half);
+      expect(placement.centerY - placement.scale / 2).toBeGreaterThanOrEqual(0.5 - half);
+      expect(placement.centerY + placement.scale / 2).toBeLessThanOrEqual(0.5 + half);
+    }
+    for (let first = 0; first < placements.length; first += 1) {
+      for (let second = first + 1; second < placements.length; second += 1) {
+        const apartX = Math.abs(placements[first].centerX - placements[second].centerX)
+          >= (placements[first].scale + placements[second].scale) / 2;
+        const apartY = Math.abs(placements[first].centerY - placements[second].centerY)
+          >= (placements[first].scale + placements[second].scale) / 2;
+        expect(apartX || apartY).toBe(true);
+      }
     }
     // The first island (the open project) is at the top left.
     expect(placements[0].centerY).toBeGreaterThan(placements[18].centerY);
     expect(placements[0].centerX).toBeLessThan(placements[1].centerX);
+  });
+
+  it('draws one project exactly as its own map', () => {
+    const { placements: [only], extent } = placeIslands([500]);
+    expect(only.centerX).toBeCloseTo(0.5, 9);
+    expect(only.centerY).toBeCloseTo(0.5, 9);
+    expect(only.scale).toBe(1);
+    expect(extent).toBeCloseTo(1 / 0.84, 5);
   });
 });

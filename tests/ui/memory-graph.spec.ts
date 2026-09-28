@@ -2446,10 +2446,11 @@ test.describe('memory graph', () => {
         projectName: 'Mobile App',
         ref: 'mobile-app#101',
       },
-      { ...chatRow(0, 0.8), projectId: 'project-1', projectName: 'Kangentic', ref: '#100' },
+      // Across projects every ref names its project, the open one's too.
+      { ...chatRow(0, 0.8), projectId: 'project-1', projectName: 'Kangentic', ref: 'kangentic#100' },
     ];
     const { browser, page } = await launchWithState(
-      `${projectsScript()}${answeredScript('Mostly mobile-app#101, then #100.', rows)}`,
+      `${projectsScript()}${answeredScript('Mostly mobile-app#101, then kangentic#100.', rows)}`,
     );
     try {
       await openMemoryGraph(page);
@@ -2463,7 +2464,8 @@ test.describe('memory graph', () => {
       const [call] = await answerCalls(page);
       expect((call.context as { projectIds?: string[] } | null)?.projectIds).toEqual(['project-1', 'project-2']);
 
-      // Another project's ticket names its project; the open project's stays bare.
+      // Another project's ticket names its project; the open project's draws
+      // bare, though the answer wrote it with its project.
       await expect(page.locator('[data-testid="memory-chat-ticket"]')).toHaveText(['Mobile App #101', '#100']);
       await expect(page.locator('[data-testid="memory-chat-row-project"]')).toHaveText(['Mobile App', 'Kangentic']);
 

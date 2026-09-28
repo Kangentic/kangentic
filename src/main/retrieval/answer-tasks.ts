@@ -519,10 +519,11 @@ export function formatTaskFieldGlossary(table?: AnswerTaskTable): string {
 
 /** The ref column's line: bare tickets, and the project prefix when the table spans projects. */
 function describeRef(table: AnswerTaskTable | undefined): string {
-  const prefixed = table?.projects?.find((project) => project.refPrefix)?.refPrefix;
-  if (!prefixed) return 'the task\'s board ticket, written #529, which is how to name a task in the answer.';
+  const prefixes = (table?.projects ?? []).flatMap((project) => (project.refPrefix ? [project.refPrefix] : []));
+  if (prefixes.length === 0) return 'the task\'s board ticket, written #529, which is how to name a task in the answer.';
   const hasBare = table?.projects?.some((project) => !project.refPrefix) ?? false;
+  const written = prefixes.length > 1 ? `${prefixes[0]}#529 or ${prefixes[1]}#88` : `${prefixes[0]}#88`;
   return (hasBare ? 'the task\'s board ticket, written #529 for the open project. A task from another project' : 'the task\'s board ticket. Every task')
-    + ` leads with its project's short name, written ${prefixed}#88. Ticket numbers repeat between projects,`
+    + ` leads with its project's short name, written ${written}. Ticket numbers repeat between projects,`
     + ' so always write the ref whole: it is how to name a task in the answer.';
 }

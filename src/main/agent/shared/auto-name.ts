@@ -593,7 +593,7 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
         return;
       }
       if (code !== 0) {
-        const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim().slice(0, 200);
+        const stderr = stderrExcerpt(Buffer.concat(stderrChunks).toString('utf-8'));
         reject(new Error(`summarize CLI exited ${code}${stderr ? `: ${stderr}` : ''}`));
         return;
       }
@@ -616,6 +616,26 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
       reject(error instanceof Error ? error : new Error(String(error)));
     }
   });
+}
+
+/** Longest stderr excerpt a failure message carries. */
+const STDERR_EXCERPT_CHARS = 240;
+
+/**
+ * The part of a failed CLI's stderr worth showing: its last line that names an
+ * error, else its last few lines.
+ *
+ * The first 200 characters, which is what this used to show, are usually a
+ * banner. Codex prints its version, working directory, model and sandbox before
+ * the 401 that explains the failure, so the message cut off at "sandbox:
+ * read-only reason" and named everything but the cause.
+ * @internal Exported for unit tests only; not part of the public API.
+ */
+export function stderrExcerpt(stderr: string): string {
+  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const errorLine = [...lines].reverse().find((line) => /error|denied|unauthori[sz]ed|forbidden|not (?:found|available)|limit/i.test(line));
+  const chosen = errorLine ?? lines.slice(-3).join(' ');
+  return chosen.length > STDERR_EXCERPT_CHARS ? `${chosen.slice(0, STDERR_EXCERPT_CHARS - 3)}...` : chosen;
 }
 
 /**

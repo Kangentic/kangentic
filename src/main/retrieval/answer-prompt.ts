@@ -75,8 +75,9 @@ const HISTORY_ANSWER_CHARS = 1_200;
 
 function rules(context: AnswerPromptContext): string {
   const { canSearch, projects } = context;
-  // A real prefix from this table, so the example is one the agent will meet.
-  const prefix = context.tasks.projects?.find((project) => project.refPrefix)?.refPrefix ?? null;
+  // Real prefixes from this table, so the examples are refs the agent will meet.
+  const prefixes = (context.tasks.projects ?? []).flatMap((project) => (project.refPrefix ? [project.refPrefix] : []));
+  const [firstPrefix, secondPrefix = firstPrefix] = prefixes;
   const sources = canSearch
     ? '<related_work>, <task_table>, <conversation_so_far> and what kangentic_search returns'
     : '<related_work>, <task_table> and <conversation_so_far>';
@@ -109,9 +110,10 @@ function rules(context: AnswerPromptContext): string {
       + ' Never answer every reading and leave the reader to choose.',
     'For a count, work the number out from the table and the related work first, then state it once, as a number,'
       + ' before naming any task. Never list tasks in the reply as a way of counting them.',
-    prefix
-      ? `Name every task by its ref exactly as the table writes it, like #561 or ${prefix}#88, project name`
-        + ' included. Never invent a ref.'
+    firstPrefix
+      ? `Name every task by its ref exactly as the table writes it, like ${firstPrefix}#561 or ${secondPrefix}#88,`
+        + ' project name included. The part before # is the project the task belongs to, never what the task is'
+        + ' about. Never invent a ref.'
       : 'Name every task by its ref exactly as the table writes it, like #561. Never invent a ref.',
     'Answer the way you would in a chat: a few direct sentences, no preamble, no restating the question, no'
       + ' headings, no bold, and no list or table. The interface lists every task on your SELECTED line as a'
@@ -124,7 +126,9 @@ function rules(context: AnswerPromptContext): string {
       + ' from anything you know outside these sources - not about this codebase, and not about the world.',
     'End with one final line of exactly this form, naming every task your answer is about. For a count or a'
       + ' "which tasks" question, name all of them, not a sample:',
-    prefix ? `SELECTED: #564, ${prefix}#88, #573` : 'SELECTED: #564, #561, #573',
+    firstPrefix
+      ? `SELECTED: ${firstPrefix}#564, ${secondPrefix}#88, ${firstPrefix}#573`
+      : 'SELECTED: #564, #561, #573',
     'Write "SELECTED: none" when the answer is not about particular tasks.',
   ].join('\n');
 }

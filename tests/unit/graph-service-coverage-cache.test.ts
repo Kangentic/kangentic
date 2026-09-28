@@ -1,0 +1,88 @@
+/**
+ * The graph service computes a project's coverage once per index state.
+ *
+ * Coverage groups every chunk in the index (about 285 ms on a large project,
+ * on main), and it was recomputed on every graph open and every refresh push.
+ * The cache keys on `coverageFingerprint()`, so an unchanged index serves the
+ * cached summary and a changed one recomputes.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const storeState = {
+  fingerprint: 'chunks:10',
+  chunkTotalsCalls: 0,
+};
+
+vi.mock('../../src/main/db/database', () => ({ getProjectDb: () => ({}) }));
+
+vi.mock('../../src/main/retrieval/graph/projection-engine', () => ({
+  runProjectionPass: vi.fn(),
+  readCachedProjection: () => null,
+  writeProjectionCache: vi.fn(),
+  isProjectionFresh: () => false,
+}));
+
+vi.mock('../../src/main/retrieval/retrieval-store', () => ({
+  RetrievalStore: class {
+    readonly hasVec = true;
+    coverageFingerprint(): string {
+      return storeState.fingerprint;
+    }
+    listIndexState(): unknown[] {
+      return [];
+    }
+    documentChunkTotals(): unknown[] {
+      storeState.chunkTotalsCalls += 1;
+      return [{ corpus: 'conversation', docId: 'doc-1', chunkCount: 4, embeddedCount: 4 }];
+    }
+    knownConversationDocIds(): string[] {
+      return ['doc-1'];
+    }
+    storedEmbeddingSignature(): null {
+      return null;
+    }
+    maxChunkId(): number {
+      return 4;
+    }
+  },
+}));
+
+import { createGraphService } from '../../src/main/retrieval/graph/graph-service';
+
+describe('graph service coverage cache', () => {
+  beforeEach(() => {
+    storeState.fingerprint = 'chunks:10';
+    storeState.chunkTotalsCalls = 0;
+  });
+
+  it('reads coverage once while the index is unchanged', () => {
+    const service = createGraphService({ getDb: () => ({}) as never });
+    const first = service.getSnapshot('project-a', 'model');
+    const second = service.getSnapshot('project-a', 'model');
+    expect(storeState.chunkTotalsCalls).toBe(1);
+    expect(second.coverage).toBe(first.coverage);
+  });
+
+  it('recomputes coverage when the fingerprint moves', () => {
+    const service = createGraphService({ getDb: () => ({}) as never });
+    service.getSnapshot('project-a', 'model');
+    storeState.fingerprint = 'chunks:11';
+    service.getSnapshot('project-a', 'model');
+    expect(storeState.chunkTotalsCalls).toBe(2);
+  });
+
+  it('keeps each project on its own cache entry', () => {
+    const service = createGraphService({ getDb: () => ({}) as never });
+    service.getSnapshot('project-a', 'model');
+    service.getSnapshot('project-b', 'model');
+    service.getSnapshot('project-a', 'model');
+    expect(storeState.chunkTotalsCalls).toBe(2);
+  });
+
+  it('reads the projection alone without touching coverage', () => {
+    const service = createGraphService({ getDb: () => ({}) as never });
+    expect(service.getProjection('project-a')).toBeNull();
+    expect(storeState.chunkTotalsCalls).toBe(0);
+  });
+});

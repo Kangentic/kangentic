@@ -27,6 +27,9 @@ export interface GraphView {
   regionProjectNames: Partial<Record<MemoryGraphGranularity, string[]>> | null;
   /** Scoped projects whose map is not drawable yet: still loading, or building. */
   pendingProjectIds: string[];
+  /** How many unit boxes wide the drawn map is: 1 unless islands are composed.
+   *  The camera's reach scales with it (`compose-islands.ts`). */
+  worldExtent: number;
 }
 
 function addBuckets(first: MemoryCoverageBucket, second: MemoryCoverageBucket): MemoryCoverageBucket {
@@ -69,7 +72,7 @@ export function useGraphView(): GraphView {
   // recomposition that changes nothing does not rebuild the scene.
   return useMemo((): GraphView => {
     if (!scope) {
-      return { snapshot, islands: null, nodeProjectIds: null, regionProjectNames: null, pendingProjectIds: [] };
+      return { snapshot, islands: null, nodeProjectIds: null, regionProjectNames: null, pendingProjectIds: [], worldExtent: 1 };
     }
     const nameOf = (projectId: string): string => projects.find((project) => project.id === projectId)?.name ?? 'Project';
     const loaded = scope.flatMap((projectId) => {
@@ -86,6 +89,7 @@ export function useGraphView(): GraphView {
         nodeProjectIds: null,
         regionProjectNames: null,
         pendingProjectIds,
+        worldExtent: 1,
       };
     }
 
@@ -116,6 +120,7 @@ export function useGraphView(): GraphView {
         nodeProjectIds: null,
         regionProjectNames: null,
         pendingProjectIds,
+        worldExtent: 1,
       };
     }
     if (ready.length === 1) {
@@ -126,6 +131,7 @@ export function useGraphView(): GraphView {
         nodeProjectIds: only.projection.nodes.map(() => only.projectId),
         regionProjectNames: null,
         pendingProjectIds,
+        worldExtent: 1,
       };
     }
     const composed = composeIslands(ready);
@@ -135,6 +141,7 @@ export function useGraphView(): GraphView {
       nodeProjectIds: composed.nodeProjectIds,
       regionProjectNames: composed.regionProjectNames,
       pendingProjectIds,
+      worldExtent: composed.extent,
     };
   }, [snapshot, openProjectId, scope, scopeSnapshots, projects]);
 }

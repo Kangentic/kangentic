@@ -199,6 +199,17 @@ function historyOf(thread: ReadonlyArray<MemoryChatTurn>): MemoryAnswerHistoryTu
 
 function createMemoryGraphStore() {
   return create<MemoryGraphState>((set, get) => {
+    /**
+     * Re-read every scoped project but the open one, whose island comes from
+     * the graph's own snapshot read (`loadSnapshot`). Reading it twice cost a
+     * second coverage pass on main for every refresh.
+     */
+    const refreshScopedProjects = (): void => {
+      for (const id of get().scopeProjectIds ?? []) {
+        if (id !== get().projectId) void get().loadScopeSnapshot(id);
+      }
+    };
+
     /** Patch one turn in place, by id. */
     const updateTurn = (turnId: string, patch: (turn: MemoryChatTurn) => Partial<MemoryChatTurn>): void => {
       set((state) => ({
@@ -424,7 +435,7 @@ function createMemoryGraphStore() {
           unsubscribeConfig = window.electronAPI.config.onChanged(() => {
             if (!get().graphOpen) return;
             void get().loadSnapshot(get().followsCurrentProject ? null : get().projectId);
-            for (const id of get().scopeProjectIds ?? []) void get().loadScopeSnapshot(id);
+            refreshScopedProjects();
           });
         }
         // Progress on the turn in flight. Gated on the request id, so an event
@@ -447,8 +458,11 @@ function createMemoryGraphStore() {
         }
         if (unsubscribeChanged) return;
         unsubscribeChanged = window.electronAPI.memory.onGraphChanged((changedProjectId) => {
-          // A scoped project's map finished: re-read just that one.
-          if (get().scopeProjectIds?.includes(changedProjectId)) void get().loadScopeSnapshot(changedProjectId);
+          // A scoped project's map finished: re-read just that one. The open
+          // project's own read below refreshes its island too.
+          if (get().scopeProjectIds?.includes(changedProjectId) && changedProjectId !== get().projectId) {
+            void get().loadScopeSnapshot(changedProjectId);
+          }
           const { projectId, followsCurrentProject } = get();
           if (followsCurrentProject) {
             // Following main: re-read with null so main re-resolves. A push for
@@ -496,12 +510,17 @@ function createMemoryGraphStore() {
             // it; keeping the null would leave `projectId` null forever, so the
             // completion-push filter below would discard every push and a finished
             // build would never appear.
-            set({
+            // The open project's island is this same snapshot, so a scope that
+            // holds it takes it from here rather than reading it a second time.
+            const scoped = snapshot !== null && nextProjectId !== null
+              && (get().scopeProjectIds?.includes(nextProjectId) ?? false);
+            set((state) => ({
               snapshot,
               projectId: nextProjectId,
               loading: false,
               loaded: true,
-            });
+              ...(scoped && nextProjectId ? { scopeSnapshots: { ...state.scopeSnapshots, [nextProjectId]: snapshot } } : {}),
+            }));
 
             // Ask for a rebuild only when the cache is actually stale. The
             // request is cheap and idempotent, but firing it unconditionally on

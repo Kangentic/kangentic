@@ -47,6 +47,7 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../db/database';
 import { RetrievalStore } from './retrieval-store';
 import { SEMANTIC_RELEVANCE_CUTOFF } from './memory-search';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import type { ChunkPlacement, Embedder } from './types';
 
 /** Nearest chunks read per query vector. */
@@ -314,6 +315,11 @@ async function embedQuery(
   }
 }
 
+/** Let queued I/O and IPC run before the next synchronous database step. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 /** A passage as the prompt shows it: one line, bounded. */
 function passageLine(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
@@ -347,12 +353,18 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     ?? await embedQuery(input.embedder, relatedQueryTexts(input.question, input.anchorQuestions ?? []), input.embedWaitMs);
 
   // Best relevance per chunk across both query vectors.
+  //
+  // Each scan is synchronous SQLite over every vector in the project (measured
+  // 340 to 370 ms on 89k chunks), on main, which also carries terminal output
+  // and IPC. Yielding before each one splits the work into one scan per slice
+  // instead of one freeze for all of it.
   const noiseFloor = input.embedder?.noiseFloor ?? 0;
   const relevanceByChunk = new Map<number, number>();
   for (const vector of vectors) {
+    await yieldToEventLoop();
     let hits: ReturnType<RetrievalStore['searchSemantic']>;
     try {
-      hits = store.searchSemantic(vector, SEMANTIC_POOL);
+      hits = timeSyncWork('related:semantic', () => store.searchSemantic(vector, SEMANTIC_POOL));
     } catch {
       hits = [];
     }
@@ -367,8 +379,10 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
   const keywordQuery = relatedKeywordQuery(`${input.question} ${anchors}`);
   let lexical: Array<{ chunkId: number; rank: number }> = [];
   if (keywordQuery) {
+    await yieldToEventLoop();
     try {
-      lexical = store.searchLexical(keywordQuery, LEXICAL_POOL).map((hit) => ({ chunkId: hit.chunkId, rank: hit.rank }));
+      lexical = timeSyncWork('related:lexical', () => store.searchLexical(keywordQuery, LEXICAL_POOL))
+        .map((hit) => ({ chunkId: hit.chunkId, rank: hit.rank }));
     } catch {
       lexical = [];
     }
@@ -376,8 +390,11 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
 
   const chunkIds = [...new Set([...relevanceByChunk.keys(), ...lexical.map((hit) => hit.chunkId)])];
   const placements = new Map<number, ChunkPlacement>();
+  await yieldToEventLoop();
   try {
-    for (const placement of store.getChunkPlacements(chunkIds)) placements.set(placement.id, placement);
+    for (const placement of timeSyncWork('related:placements', () => store.getChunkPlacements(chunkIds))) {
+      placements.set(placement.id, placement);
+    }
   } catch {
     return { ...empty, elapsedMs: Date.now() - started };
   }
@@ -463,12 +480,6 @@ export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInpu
   const passages = new Map<string, string>();
   for (const project of input.projects) {
     if (project.nodes.length === 0) continue;
-    // Each search is synchronous SQLite (a KNN over the whole project, about
-    // 350 ms on the largest index), and with the vectors already in hand
-    // nothing in it awaits. Yielding between projects lets terminal output and
-    // IPC through, so asking across every project freezes main for one
-    // project's search at a time, never all of them back to back.
-    await new Promise<void>((resolve) => setImmediate(resolve));
     let work: RelatedWork;
     try {
       work = await searchRelatedWork({

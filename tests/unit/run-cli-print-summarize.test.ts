@@ -380,7 +380,7 @@ describe('runCliPrintSummarize - non-zero exit code (#6)', () => {
     expect(rejection.message).toBe('summarize CLI exited 3');
   });
 
-  it('truncates very long stderr to 200 characters in the error message', async () => {
+  it('truncates very long stderr in the error message', async () => {
     const child = makeFakeChild();
     mockSpawn.mockReturnValue(child);
 
@@ -397,9 +397,39 @@ describe('runCliPrintSummarize - non-zero exit code (#6)', () => {
     child.emit('close', 1);
 
     const rejection = await resultPromise.catch((error: Error) => error);
-    // Production code: .trim().slice(0, 200)
-    const expectedSuffix = 'E'.repeat(200);
-    expect(rejection.message).toBe(`summarize CLI exited 1: ${expectedSuffix}`);
+    expect(rejection.message).toBe(`summarize CLI exited 1: ${'E'.repeat(237)}...`);
+  });
+
+  it('shows the line that names the error, not the banner above it', async () => {
+    // Codex prints its version, workdir, model and sandbox before the 401 that
+    // explains the failure; the first 200 characters named everything but it.
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+
+    const resultPromise = runCliPrintSummarize({
+      cliPath: '/usr/bin/fake',
+      args: [],
+      prompt: 'prompt',
+      cwd: '/tmp',
+      timeoutMs: 30_000,
+    });
+
+    child.stderr.emit('data', Buffer.from([
+      'Reading prompt from stdin...',
+      'OpenAI Codex v0.154.0',
+      '--------',
+      'workdir: /tmp/answer',
+      'model: gpt-5.5',
+      'sandbox: read-only',
+      'ERROR: Reconnecting... 5/5',
+      'ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
+    ].join('\n')));
+    child.emit('close', 1);
+
+    const rejection = await resultPromise.catch((error: Error) => error);
+    expect(rejection.message).toBe(
+      'summarize CLI exited 1: ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
+    );
   });
 });
 

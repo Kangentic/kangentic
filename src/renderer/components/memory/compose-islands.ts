@@ -4,7 +4,9 @@
  * Each project's projection is laid out on its own, in its own embedding space,
  * and cached per project. Composing them is therefore a placement, not a new
  * layout: each map is scaled by how many conversations it holds and set into a
- * cell of a grid, and every index (nodes, links, neighbours, regions) is offset
+ * cell of a grid that may run past the unit box (`extent` says how far, so the
+ * camera can pull back far enough), and every index (nodes, links,
+ * neighbours, regions) is offset
  * so the composed projection reads exactly like a single one to everything that
  * draws it. No link crosses between islands, because no similarity was ever
  * computed across projects, and a combined layout would cost a fresh neighbour
@@ -43,6 +45,8 @@ export interface ComposedIslands {
   nodeProjectIds: string[];
   /** The project each composed region belongs to, by region id, per granularity. */
   regionProjectNames: Partial<Record<MemoryGraphGranularity, string[]>>;
+  /** How many unit boxes wide the composed map is: 1 for one project's own map. */
+  extent: number;
 }
 
 /** Share of a grid cell the largest island fills, leaving a gutter between islands. */
@@ -52,32 +56,43 @@ const ISLAND_FILL = 0.84;
 const MIN_ISLAND_SCALE = 0.32;
 
 /**
- * Where each island sits and how large it is, in the unit box.
+ * Where each island sits and how large it is, around the unit box's centre.
  *
  * A near-square grid, filled row by row in the order given (the caller puts the
  * open project first). Each island's side scales with the square root of its
  * conversation count, so its AREA tracks how much work it holds.
+ *
+ * The LARGEST island keeps its own size (scale 1) and the grid grows around it,
+ * rather than every island shrinking to fit the unit box. Shrinking made the map
+ * brighter the moment a second project joined: nodes keep their size on screen
+ * relative to the camera, so an island drawn at 0.42 of its size packed its
+ * nodes about five times as densely, and additive glow turned that density into
+ * light. A smaller island scaled by the square root of its share ends up about
+ * as dense as the largest, so every island reads at the largest one's density.
  */
-export function placeIslands(sizes: ReadonlyArray<number>): Array<{ centerX: number; centerY: number; scale: number }> {
+export function placeIslands(sizes: ReadonlyArray<number>): {
+  placements: Array<{ centerX: number; centerY: number; scale: number }>;
+  extent: number;
+} {
   const count = sizes.length;
-  if (count === 0) return [];
+  if (count === 0) return { placements: [], extent: 1 };
   const columns = Math.ceil(Math.sqrt(count));
   const rows = Math.ceil(count / columns);
-  const cell = 1 / Math.max(columns, rows);
-  const offsetX = (1 - columns * cell) / 2;
-  const offsetY = (1 - rows * cell) / 2;
+  const cell = 1 / ISLAND_FILL;
+  const left = 0.5 - (columns * cell) / 2;
+  const top = 0.5 + (rows * cell) / 2;
   const largest = Math.max(1, ...sizes);
-  return sizes.map((size, index) => {
+  const placements = sizes.map((size, index) => {
     const column = index % columns;
     const row = Math.floor(index / columns);
-    const relative = Math.max(MIN_ISLAND_SCALE, Math.sqrt(Math.max(size, 1) / largest));
     return {
-      centerX: offsetX + (column + 0.5) * cell,
+      centerX: left + (column + 0.5) * cell,
       // Row 0 at the TOP: world y points up.
-      centerY: 1 - (offsetY + (row + 0.5) * cell),
-      scale: cell * ISLAND_FILL * relative,
+      centerY: top - (row + 0.5) * cell,
+      scale: Math.max(MIN_ISLAND_SCALE, Math.sqrt(Math.max(size, 1) / largest)),
     };
   });
+  return { placements, extent: Math.max(columns, rows) * cell };
 }
 
 function placed(value: number, center: number, scale: number): number {
@@ -85,7 +100,7 @@ function placed(value: number, center: number, scale: number): number {
 }
 
 export function composeIslands(sources: ReadonlyArray<IslandSource>): ComposedIslands {
-  const placements = placeIslands(sources.map((source) => source.projection.nodes.length));
+  const { placements, extent } = placeIslands(sources.map((source) => source.projection.nodes.length));
   const nodes: MemoryGraphNode[] = [];
   const edges: MemoryGraphEdge[] = [];
   const nodeNeighbors: Array<ReadonlyArray<{ index: number; similarity: number }>> = [];
@@ -182,5 +197,6 @@ export function composeIslands(sources: ReadonlyArray<IslandSource>): ComposedIs
     islands,
     nodeProjectIds,
     regionProjectNames,
+    extent,
   };
 }

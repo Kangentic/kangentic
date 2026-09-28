@@ -695,6 +695,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
         ringed={exploreIndices ? undefined : ringed}
         context={chatContext}
         islands={graphView.islands ?? undefined}
+        worldExtent={graphView.worldExtent}
         framingIndices={framingIndices}
         selectedIndex={selectedIndex}
         onSelect={selectNode}
@@ -858,6 +859,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
             onOpenTask={openTask}
             canOpenTask={canOpenTask}
             onFocusTurn={focusTurn}
+            homeProjectId={projectId}
           />
         </div>
       ) : null}

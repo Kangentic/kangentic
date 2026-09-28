@@ -60,20 +60,25 @@ interface TurnProps {
   onOpenTask: (task: MemoryRelatedTask) => void;
   canOpenTask: (task: MemoryRelatedTask) => boolean;
   onFocus: () => void;
+  homeProjectId: string | null;
 }
 
-function AgentTurn({ turn, isLatest, agentName, onRetry, onOpenTask, canOpenTask, onFocus }: TurnProps) {
+function AgentTurn({ turn, isLatest, agentName, onRetry, onOpenTask, canOpenTask, onFocus, homeProjectId }: TurnProps) {
   // Every task this turn can name, by the ref the answer writes: the ones it is
   // about, and the related work it was handed. A ref, not a bare number, since
-  // an answer across projects can name #88 and mobile#88.
+  // an answer across projects names kangentic#88 and mobile#88. The graph's own
+  // project's tasks answer to their bare ticket too, as they do everywhere else.
   const tasksByTicket = useMemo(() => {
     const map = new Map<string, MemoryRelatedTask>();
+    const bare = new Map<string, MemoryRelatedTask>();
     for (const task of [...(turn.related ?? []), ...turn.rows]) {
       const ref = ticketRef(task);
       if (ref) map.set(ref, task);
+      if (task.displayId != null && task.projectId === homeProjectId) bare.set(`#${task.displayId}`, task);
     }
+    for (const [ref, task] of bare) if (!map.has(ref)) map.set(ref, task);
     return map;
-  }, [turn.related, turn.rows]);
+  }, [turn.related, turn.rows, homeProjectId]);
 
   const prose = stripProtocolLine(turn.text);
 
@@ -128,7 +133,13 @@ function AgentTurn({ turn, isLatest, agentName, onRetry, onOpenTask, canOpenTask
             <Shimmer width="64%" />
           </div>
         ) : (
-          <MemoryChatText text={prose} tasksByTicket={tasksByTicket} onOpenTask={onOpenTask} canOpenTask={canOpenTask} />
+          <MemoryChatText
+            text={prose}
+            tasksByTicket={tasksByTicket}
+            onOpenTask={onOpenTask}
+            canOpenTask={canOpenTask}
+            homeProjectId={homeProjectId}
+          />
         )}
         {turn.status === 'done' ? (
           <MemorySourceRows
@@ -153,6 +164,7 @@ export function MemoryChat({
   onOpenTask,
   canOpenTask,
   onFocusTurn,
+  homeProjectId = null,
 }: {
   thread: ReadonlyArray<MemoryChatTurn>;
   agentName: string;
@@ -165,6 +177,9 @@ export function MemoryChat({
   canOpenTask: (task: MemoryRelatedTask) => boolean;
   /** Show this turn's tasks on the map. */
   onFocusTurn: (turnId: string) => void;
+  /** The project the graph is on. Its tickets draw bare in an answer across
+   *  projects, and a bare ticket in the prose means one of them. */
+  homeProjectId?: string | null;
 }) {
   const [draft, setDraft] = useState('');
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -225,6 +240,7 @@ export function MemoryChat({
               onOpenTask={onOpenTask}
               canOpenTask={canOpenTask}
               onFocus={() => onFocusTurn(turn.id)}
+              homeProjectId={homeProjectId}
             />
           </div>
         ))}
