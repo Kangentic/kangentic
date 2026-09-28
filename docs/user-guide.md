@@ -1011,7 +1011,9 @@ the right and the box goes. Follow-ups go in the chat's own box, and the **X** i
 the chat and brings the box back. The chat is not saved, and it also ends when you switch projects.
 
 **Set first, answer on top.** Before the agent starts, Kangentic searches every indexed conversation
-for the question, locally and in under a second, and rolls the matches up per task. The map lights
+and every task's own record (its title, labels, description and digest) for the question, locally
+and in under a second, and rolls the matches up per task. A task's record can bring it in even when
+none of its conversations was indexed, as long as the map is not filtered. The map lights
 that related set at once, brighter where a task matches more strongly, and the chat reads "Reading
 14 related tasks" while the agent works. When the answer lands, the tasks it is about stay bright
 and titled, the rest of the related set dims to unlabelled dots, and the map eases from one picture
@@ -1020,8 +1022,8 @@ lights nothing and leaves the plain map. The filters in the left panel are the s
 question: a filtered map means a filtered table and a filtered search, so the chat never repeats
 them.
 
-**How it answers.** The agent is handed the related tasks with their strongest passages and facts,
-a complete table of every task in scope, and the chat so far. The table holds every task on the
+**How it answers.** The agent is handed the related tasks with their strongest passages, facts and
+digests, a complete table of every task in scope, and the chat so far. The table holds every task on the
 board, including ones with no indexed conversation, and settles factual questions exactly: what
 each task cost, how long it ran, its tokens, how many sessions it took, how many files and lines
 its branch changed, which pull request it opened and whether that merged, when it was last active,
@@ -1060,6 +1062,14 @@ effort levels, and starts at `low`, which answers fastest. Pick a higher level f
 need counting or comparing across many tasks: at Claude's `max`, a count that `low` got wrong came
 out right, at about ten times the wait.
 
+**Task digests.** Once an answering agent is chosen, it also writes a sentence or two about each
+finished task: what it set out to do and what it ended up doing, from the task's title and
+description, the files its sessions changed, and how its last sessions ended. A digest is searched
+with the task and handed to the agent beside it, so a question finds a task by what it did, not
+only by what its title says. They are written in the background, ten tasks to a call, a few calls
+at a time; a board's first run writes one for every finished task (at Sonnet, about $0.05 per ten
+tasks). Turn **Task digests** off in the Knowledge Graph card to stop them.
+
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:
 
@@ -1068,8 +1078,14 @@ understanding:
   queries. On a mature project this is most of the index, and it is not a problem.
 - **not yet indexed** - conversations the background sweep has not reached yet.
 
-The panel counts conversations, not files: it says nothing about how much of your repository is
-indexed.
+The **Index** card lists everything the index holds, one row per kind: **Conversations** (what the
+map draws), **Task records** (each task's and backlog item's own text) and **Session changes** (the
+files each session changed, kept as text). Each shows its count and, while it is still being
+embedded, how much of it is; a kind with nothing in it yet says **Not yet indexed**. **Task
+digests** appears once any are written, as how many of the finished tasks have one. Chunks and
+size on disk cover all of them.
+
+The index holds what the board and its conversations recorded, not your repository's files.
 
 The map is drawn on the GPU. On a machine that cannot provide a 3D drawing context (a blocklisted
 driver, some remote sessions) it says so, and the coverage numbers and Ask keep working.
