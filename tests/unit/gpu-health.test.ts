@@ -25,6 +25,11 @@ import path from 'node:path';
  *     have eaten their own report;
  *   - shouldReportEscalation does not blame the GPU for an unrelated abrupt
  *     death (a renderer OOM, a kill, a power loss);
+ *   - only FAULT deaths count toward the recovery and the report: a kill, an
+ *     OOM, or a session-teardown exit code never does, whatever reason
+ *     Chromium gave it. A Windows shutdown with the app open wrote five GPU
+ *     deaths in 126 ms, and counting them turned a healthy GPU's acceleration
+ *     off;
  *   - a fallback with NO death at all is recorded and counts as one near the
  *     end of a run. That is DESKTOP-W. GPU launch failures never reach JS, so
  *     Chromium's `gpu-info-update` at its last rung is the only trace. Only a
@@ -58,7 +63,9 @@ import {
   clearGpuEscalation,
   resetGpuHealthForTests,
   isEscalationFromCurrentRun,
-  isDeathNearRunEnd,
+  gpuEndedPreviousRun,
+  isGpuFaultDeath,
+  summarizeGpuFaults,
   shouldReportEscalation,
   summarizeGpuInfo,
 } from '../../src/main/diagnostics/gpu-health';
@@ -426,7 +433,7 @@ describe('recordGpuModeObservation (the fallback a launch-failure ladder leaves)
     // The next launch: no exit recorded, and the last run-uptime checkpoint
     // is the third one-minute tick, 57 seconds before the fatal.
     const context = { previousRunExit: 'abrupt', lastKnownAliveAt: '2026-09-23T17:57:57.936Z' };
-    expect(isDeathNearRunEnd(record!, context)).toBe(true);
+    expect(gpuEndedPreviousRun(record!, context)).toBe(true);
     expect(shouldReportEscalation(record!, context)).toBe(true);
   });
 
@@ -646,11 +653,11 @@ describe('recordGpuModeObservation (the fallback a launch-failure ladder leaves)
     expect(record.count).toBe(0);
 
     const cleanExit = { previousRunExit: 'clean', lastKnownAliveAt: new Date(START_MS + 3_600_000).toISOString() };
-    expect(isDeathNearRunEnd(record, cleanExit)).toBe(false);
+    expect(gpuEndedPreviousRun(record, cleanExit)).toBe(false);
     expect(shouldReportEscalation(record, cleanExit)).toBe(false);
 
     const unrelatedAbruptEnd = { previousRunExit: 'abrupt', lastKnownAliveAt: new Date(START_MS + 20 * 60_000).toISOString() };
-    expect(isDeathNearRunEnd(record, unrelatedAbruptEnd)).toBe(false);
+    expect(gpuEndedPreviousRun(record, unrelatedAbruptEnd)).toBe(false);
     expect(shouldReportEscalation(record, unrelatedAbruptEnd)).toBe(false);
   });
 
@@ -1209,18 +1216,33 @@ describe('isEscalationFromCurrentRun', () => {
   });
 });
 
-describe('shouldReportEscalation / isDeathNearRunEnd', () => {
-  const record = (count: number, lastAt: string) => ({
-    reason: 'crashed',
-    exitCode: 1,
-    count,
-    firstAt: lastAt,
-    lastAt,
-    appVersion: '0.41.0',
-    featureStatus: {},
-    deaths: [],
-    modeChanges: [],
-  });
+/** DESKTOP-18's GPU exit: EXCEPTION_BREAKPOINT (0x80000003), stored signed. */
+const EXCEPTION_BREAKPOINT_SIGNED = -2147483645;
+
+describe('shouldReportEscalation / gpuEndedPreviousRun', () => {
+  /** A record holding `faultDeathCount` real GPU crashes, one second apart,
+   *  the last at `lastAt`. An unparseable `lastAt` stamps every death with it. */
+  const record = (faultDeathCount: number, lastAt: string) => {
+    const lastMs = Date.parse(lastAt);
+    const deaths = Array.from({ length: faultDeathCount }, (_unused, index) => ({
+      reason: 'crashed',
+      exitCode: EXCEPTION_BREAKPOINT_SIGNED,
+      at: Number.isFinite(lastMs) ? new Date(lastMs - (faultDeathCount - 1 - index) * 1_000).toISOString() : lastAt,
+      compositing: 'enabled',
+      webgl: 'enabled',
+    }));
+    return {
+      reason: 'crashed',
+      exitCode: EXCEPTION_BREAKPOINT_SIGNED,
+      count: faultDeathCount,
+      firstAt: deaths[0]?.at ?? lastAt,
+      lastAt,
+      appVersion: '0.41.0',
+      featureStatus: {},
+      deaths,
+      modeChanges: [],
+    };
+  };
 
   it('does NOT blame the GPU when an unrelated crash ended the run (DESKTOP-16 shape)', () => {
     // One GPU death, then forty more minutes of healthy running, then the
@@ -1228,17 +1250,24 @@ describe('shouldReportEscalation / isDeathNearRunEnd', () => {
     // that a graphics failure to the user's face.
     const context = { previousRunExit: 'abrupt', lastKnownAliveAt: '2026-09-18T03:15:00.000Z' };
     const oneEarlyDeath = record(1, '2026-09-18T02:35:00.000Z');
-    expect(isDeathNearRunEnd(oneEarlyDeath, context)).toBe(false);
+    expect(gpuEndedPreviousRun(oneEarlyDeath, context)).toBe(false);
     expect(shouldReportEscalation(oneEarlyDeath, context)).toBe(false);
   });
 
-  it('reports and blames the GPU when the death sits at the end of an abrupt run (DESKTOP-18 shape)', () => {
+  it('reports and blames the GPU when a crash loop sits at the end of an abrupt run (DESKTOP-18 shape)', () => {
     // A 9-second run writes only its init checkpoint, so "last known alive"
-    // is the run start and the death lands after it.
+    // is the run start and the deaths land after it.
     const context = { previousRunExit: 'abrupt', lastKnownAliveAt: '2026-09-18T02:35:36.705Z' };
-    const dyingRun = record(2, '2026-09-18T02:35:44.000Z');
-    expect(isDeathNearRunEnd(dyingRun, context)).toBe(true);
+    const dyingRun = record(5, '2026-09-18T02:35:44.000Z');
+    expect(gpuEndedPreviousRun(dyingRun, context)).toBe(true);
     expect(shouldReportEscalation(dyingRun, context)).toBe(true);
+  });
+
+  it('does not blame a lone GPU crash at the end of an abrupt run, since the fatal needs Chromium to have fallen back first', () => {
+    const context = { previousRunExit: 'abrupt', lastKnownAliveAt: '2026-09-18T02:35:36.705Z' };
+    const oneLateDeath = record(1, '2026-09-18T02:35:44.000Z');
+    expect(gpuEndedPreviousRun(oneLateDeath, context)).toBe(false);
+    expect(shouldReportEscalation(oneLateDeath, context)).toBe(false);
   });
 
   it('reports a threshold breach the run then survived, but does not blame it for the ending', () => {
@@ -1247,22 +1276,33 @@ describe('shouldReportEscalation / isDeathNearRunEnd', () => {
     const context = { previousRunExit: 'clean', lastKnownAliveAt: '2026-09-18T03:15:00.000Z' };
     const survived = record(3, '2026-09-18T02:35:00.000Z');
     expect(shouldReportEscalation(survived, context)).toBe(true);
-    expect(isDeathNearRunEnd(survived, context)).toBe(false);
+    expect(gpuEndedPreviousRun(survived, context)).toBe(false);
   });
 
   it('tolerates a pre-upgrade run record with no timestamp', () => {
     const context = { previousRunExit: 'abrupt', lastKnownAliveAt: null };
-    expect(isDeathNearRunEnd(record(1, '2026-09-18T02:35:44.000Z'), context)).toBe(false);
+    expect(gpuEndedPreviousRun(record(3, '2026-09-18T02:35:44.000Z'), context)).toBe(false);
+  });
+
+  it('keeps the rescue for a pre-upgrade escalation record that has a count but no deaths list', () => {
+    const context = { previousRunExit: 'abrupt', lastKnownAliveAt: '2026-09-18T02:35:36.705Z' };
+    const preUpgrade = { ...record(0, '2026-09-18T02:35:44.000Z'), count: 3 };
+    expect(summarizeGpuFaults(preUpgrade)).toEqual({
+      faultCount: 3,
+      unexplainedFallback: false,
+      lastFaultAt: '2026-09-18T02:35:44.000Z',
+      lastFaultDeath: null,
+    });
+    expect(gpuEndedPreviousRun(preUpgrade, context)).toBe(true);
   });
 
   /**
-   * The existing tests above use deaths ~7s and ~40min from
-   * lastKnownAliveAt, both far from the edge, so changing the module's
-   * private DEATH_NEAR_RUN_END_MS (90_000ms) to, say, 60_000 or 120_000 would
-   * turn nothing red. These pin the comparison at the boundary itself:
-   * `lastDeath >= lastAlive - DEATH_NEAR_RUN_END_MS`.
+   * These pin the comparison at the boundary itself:
+   * `lastFault >= lastAlive - DEATH_NEAR_RUN_END_MS`. Each record carries
+   * three fault deaths, so the only thing deciding each case is where the
+   * last one sits.
    */
-  describe('isDeathNearRunEnd boundary (DEATH_NEAR_RUN_END_MS = 90_000ms)', () => {
+  describe('gpuEndedPreviousRun boundary (DEATH_NEAR_RUN_END_MS = 90_000ms)', () => {
     const lastAliveMs = Date.parse('2026-09-18T02:35:36.705Z');
     const context = {
       previousRunExit: 'abrupt',
@@ -1270,27 +1310,27 @@ describe('shouldReportEscalation / isDeathNearRunEnd', () => {
     };
 
     it('is true exactly at the 90s boundary (>=, not >)', () => {
-      const atBoundary = record(1, new Date(lastAliveMs - 90_000).toISOString());
-      expect(isDeathNearRunEnd(atBoundary, context)).toBe(true);
+      const atBoundary = record(3, new Date(lastAliveMs - 90_000).toISOString());
+      expect(gpuEndedPreviousRun(atBoundary, context)).toBe(true);
     });
 
     it('is true just inside the boundary (89999ms before lastKnownAliveAt)', () => {
-      const justInside = record(1, new Date(lastAliveMs - 90_000 + 1).toISOString());
-      expect(isDeathNearRunEnd(justInside, context)).toBe(true);
+      const justInside = record(3, new Date(lastAliveMs - 90_000 + 1).toISOString());
+      expect(gpuEndedPreviousRun(justInside, context)).toBe(true);
     });
 
     it('is false just outside the boundary (90001ms before lastKnownAliveAt)', () => {
-      const justOutside = record(1, new Date(lastAliveMs - 90_000 - 1).toISOString());
-      expect(isDeathNearRunEnd(justOutside, context)).toBe(false);
+      const justOutside = record(3, new Date(lastAliveMs - 90_000 - 1).toISOString());
+      expect(gpuEndedPreviousRun(justOutside, context)).toBe(false);
     });
 
-    it('is true when the death postdates lastKnownAliveAt (a death AFTER the last checkpoint is also near-end)', () => {
-      const afterAlive = record(1, new Date(lastAliveMs + 5_000).toISOString());
-      expect(isDeathNearRunEnd(afterAlive, context)).toBe(true);
+    it('is true when the last fault postdates lastKnownAliveAt (a fault AFTER the last checkpoint is also near-end)', () => {
+      const afterAlive = record(3, new Date(lastAliveMs + 5_000).toISOString());
+      expect(gpuEndedPreviousRun(afterAlive, context)).toBe(true);
     });
 
-    it('returns false when record.lastAt is unparseable, even with a valid lastKnownAliveAt', () => {
-      expect(isDeathNearRunEnd(record(1, 'not-a-date'), context)).toBe(false);
+    it('returns false when the deaths are unparseable, even with a valid lastKnownAliveAt', () => {
+      expect(gpuEndedPreviousRun(record(3, 'not-a-date'), context)).toBe(false);
     });
 
     it('returns false when context.lastKnownAliveAt is a non-empty but unparseable string', () => {
@@ -1300,8 +1340,170 @@ describe('shouldReportEscalation / isDeathNearRunEnd', () => {
       // `Number.isFinite(lastAlive)` guard instead, since a non-empty string
       // passes the truthiness check and only fails at Date.parse.
       const unparseableContext = { previousRunExit: 'abrupt', lastKnownAliveAt: 'also-not-a-date' };
-      expect(isDeathNearRunEnd(record(1, '2026-09-18T02:35:44.000Z'), unparseableContext)).toBe(false);
+      expect(gpuEndedPreviousRun(record(3, '2026-09-18T02:35:44.000Z'), unparseableContext)).toBe(false);
     });
+  });
+});
+
+describe('which GPU exits count as faults', () => {
+  it('classifies by reason AND exit code, never the reason alone', () => {
+    const death = (reason: string, exitCode: number | null) => ({ reason, exitCode });
+    // Faults: the GPU process itself failed.
+    expect(isGpuFaultDeath(death('crashed', EXCEPTION_BREAKPOINT_SIGNED))).toBe(true);
+    expect(isGpuFaultDeath(death('abnormal-exit', 1))).toBe(true);
+    expect(isGpuFaultDeath(death('launch-failed', null))).toBe(true);
+    expect(isGpuFaultDeath(death('integrity-failure', -1073740760))).toBe(true);
+    expect(isGpuFaultDeath(death('crashed', null))).toBe(true);
+    // Something done TO the process, or memory: software rendering fixes none.
+    expect(isGpuFaultDeath(death('killed', 1))).toBe(false);
+    expect(isGpuFaultDeath(death('oom', -536870904))).toBe(false);
+    expect(isGpuFaultDeath(death('memory-eviction', 0))).toBe(false);
+    // A reason a future Electron adds counts only once someone decides it should.
+    expect(isGpuFaultDeath(death('some-new-reason', 1))).toBe(false);
+  });
+
+  it('never counts a session-teardown exit code, signed as records store it or unsigned', () => {
+    // STATUS_DLL_INIT_FAILED_LOGOFF, which Chromium reports as `crashed`.
+    expect(isGpuFaultDeath({ reason: 'crashed', exitCode: -1073741205 })).toBe(false);
+    expect(isGpuFaultDeath({ reason: 'crashed', exitCode: 0xc000026b })).toBe(false);
+    // DBG_TERMINATE_PROCESS.
+    expect(isGpuFaultDeath({ reason: 'crashed', exitCode: 1073807364 })).toBe(false);
+    expect(isGpuFaultDeath({ reason: 'crashed', exitCode: 0x40010004 })).toBe(false);
+    // STATUS_CONTROL_C_EXIT.
+    expect(isGpuFaultDeath({ reason: 'crashed', exitCode: -1073741510 })).toBe(false);
+    expect(isGpuFaultDeath({ reason: 'crashed', exitCode: 0xc000013a })).toBe(false);
+  });
+
+  it('does not turn acceleration off after a Windows shutdown with the app open (the 2026-09-26 incident, replayed through the writers)', () => {
+    // The crash log's exact sequence, oldest first. The run had been on
+    // hardware since boot. Windows killed the GPU process, Chromium relaunched
+    // it four times, and each relaunch died because Windows will not start a
+    // graphics process while the session is ending. After the third death
+    // Chromium fell back off hardware. Then Windows killed the main process,
+    // which recorded no exit.
+    const clock = makeClock(Date.parse('2026-09-26T03:05:00.000Z'));
+    observe(clock, HARDWARE_STATUS);
+    const deathAt = (iso: string, reason: string, exitCode: number) => {
+      clock.advance(Date.parse(iso) - clock.now());
+      recordGpuProcessGone(escalationPath, reason, exitCode, '0.43.2', { now: clock.now });
+    };
+    deathAt('2026-09-26T03:33:44.892Z', 'killed', 1073807364);
+    deathAt('2026-09-26T03:33:44.929Z', 'crashed', -1073741205);
+    deathAt('2026-09-26T03:33:44.958Z', 'crashed', -1073741205);
+    clock.advance(1);
+    observe(clock, DISPLAY_COMPOSITOR_STATUS);
+    deathAt('2026-09-26T03:33:44.993Z', 'crashed', -1073741205);
+    deathAt('2026-09-26T03:33:45.018Z', 'crashed', -1073741205);
+
+    const pending = readPendingGpuEscalation(escalationPath)!;
+    // Every death is still on disk for triage.
+    expect(pending.count).toBe(5);
+    expect(pending.modeChanges).toHaveLength(1);
+    expect(summarizeGpuFaults(pending)).toEqual({ faultCount: 0, unexplainedFallback: false, lastFaultAt: null, lastFaultDeath: null });
+    // Nothing to count on the dashboard either: not one of the five was a fault.
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+
+    const context = { previousRunExit: 'abrupt', lastKnownAliveAt: '2026-09-26T03:33:05.000Z' };
+    expect(gpuEndedPreviousRun(pending, context)).toBe(false);
+    expect(shouldReportEscalation(pending, context)).toBe(false);
+  });
+
+  it('does not blame the GPU for kills, OOMs, or a Ctrl+C at the end of an abrupt run', () => {
+    const context = { previousRunExit: 'abrupt', lastKnownAliveAt: new Date(START_MS).toISOString() };
+    const endings: Array<[string, number]> = [
+      ['killed', 1], // Task Manager End task, taskkill /T /F
+      ['oom', -536870904], // Chromium's OOM termination under commit exhaustion
+      ['crashed', -1073741510], // STATUS_CONTROL_C_EXIT from the npm start console
+    ];
+    for (const [reason, exitCode] of endings) {
+      resetGpuHealthForTests();
+      fs.rmSync(escalationPath, { force: true });
+      const clock = makeClock();
+      for (let deathIndex = 0; deathIndex < 3; deathIndex++) {
+        clock.advance(1_000);
+        recordGpuProcessGone(escalationPath, reason, exitCode, '0.43.2', { now: clock.now });
+      }
+      const pending = readPendingGpuEscalation(escalationPath)!;
+      expect(pending.count).toBe(3);
+      expect(gpuEndedPreviousRun(pending, context)).toBe(false);
+      expect(shouldReportEscalation(pending, context)).toBe(false);
+    }
+  });
+
+  it('rescues a DESKTOP-18 crash loop replayed through the writers', () => {
+    const runStartMs = Date.parse('2026-09-18T02:35:36.705Z');
+    const clock = makeClock(runStartMs);
+    for (let deathIndex = 0; deathIndex < 5; deathIndex++) {
+      clock.advance(1_500);
+      recordGpuProcessGone(escalationPath, 'crashed', EXCEPTION_BREAKPOINT_SIGNED, '0.41.0', { now: clock.now });
+    }
+    const pending = readPendingGpuEscalation(escalationPath)!;
+    const context = { previousRunExit: 'abrupt', lastKnownAliveAt: new Date(runStartMs).toISOString() };
+    expect(summarizeGpuFaults(pending).faultCount).toBe(5);
+    expect(gpuEndedPreviousRun(pending, context)).toBe(true);
+    expect(shouldReportEscalation(pending, context)).toBe(true);
+  });
+
+  it('lets a non-fault death explain a fallback only when it came within 5 s before it', () => {
+    const context = { previousRunExit: 'abrupt', lastKnownAliveAt: new Date(START_MS).toISOString() };
+    const fallbackAfterKill = (gapMs: number) => {
+      resetGpuHealthForTests();
+      fs.rmSync(escalationPath, { force: true });
+      const clock = makeClock();
+      observe(clock, HARDWARE_STATUS);
+      clock.advance(1_000);
+      recordGpuProcessGone(escalationPath, 'killed', 1, '0.43.2', { now: clock.now });
+      clock.advance(gapMs);
+      observe(clock, DISPLAY_COMPOSITOR_STATUS);
+      return readPendingGpuEscalation(escalationPath)!;
+    };
+
+    const explained = fallbackAfterKill(2_000);
+    expect(summarizeGpuFaults(explained).unexplainedFallback).toBe(false);
+    expect(gpuEndedPreviousRun(explained, context)).toBe(false);
+
+    const unexplained = fallbackAfterKill(10_000);
+    expect(summarizeGpuFaults(unexplained).unexplainedFallback).toBe(true);
+    expect(gpuEndedPreviousRun(unexplained, context)).toBe(true);
+  });
+
+  it('still counts real crashes that came before a session-teardown burst', () => {
+    // A GPU that was genuinely crash-looping when the user shut Windows down:
+    // the teardown exits add nothing, but they do not hide the real faults.
+    const clock = makeClock();
+    for (let deathIndex = 0; deathIndex < 3; deathIndex++) {
+      clock.advance(1_000);
+      recordGpuProcessGone(escalationPath, 'crashed', EXCEPTION_BREAKPOINT_SIGNED, '0.43.2', { now: clock.now });
+    }
+    clock.advance(500);
+    recordGpuProcessGone(escalationPath, 'killed', 1073807364, '0.43.2', { now: clock.now });
+    clock.advance(40);
+    recordGpuProcessGone(escalationPath, 'crashed', -1073741205, '0.43.2', { now: clock.now });
+
+    const pending = readPendingGpuEscalation(escalationPath)!;
+    const context = { previousRunExit: 'abrupt', lastKnownAliveAt: new Date(START_MS).toISOString() };
+    const faults = summarizeGpuFaults(pending);
+    expect(faults.faultCount).toBe(3);
+    expect(gpuEndedPreviousRun(pending, context)).toBe(true);
+    // The record's latest death is the teardown exit, but the report is
+    // titled by the latest FAULT, so the triage sees the real crash code.
+    expect(pending.exitCode).toBe(-1073741205);
+    expect(faults.lastFaultDeath?.exitCode).toBe(EXCEPTION_BREAKPOINT_SIGNED);
+    // Aptabase ticked on the first crash and latched on the third, and the
+    // two teardown exits after that added nothing.
+    expect(mockTrackEvent.mock.calls.map((call) => call[1].phase)).toEqual(['first', 'latched']);
+    expect(mockTrackEvent.mock.calls.every((call) => call[1].exitCode === EXCEPTION_BREAKPOINT_SIGNED)).toBe(true);
+  });
+
+  it('never ticks Aptabase for kills or session-teardown exits', () => {
+    const clock = makeClock();
+    const nonFaults: Array<[string, number]> = [['killed', 1], ['killed', 1073807364], ['crashed', -1073741205], ['crashed', -1073741510], ['oom', -536870904]];
+    for (const [reason, exitCode] of nonFaults) {
+      clock.advance(100);
+      recordGpuProcessGone(escalationPath, reason, exitCode, '0.43.2', { now: clock.now });
+    }
+    expect(readPendingGpuEscalation(escalationPath)?.count).toBe(5);
+    expect(mockTrackEvent).not.toHaveBeenCalled();
   });
 });
 

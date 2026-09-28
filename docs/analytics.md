@@ -27,7 +27,7 @@ Eighteen event types are tracked, all on critical-path actions only:
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
 | `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`), exitCode (see below), phase (`first` / `latched`) |
-| `gpu_process_gone` | The GPU process exited abnormally (not a clean exit on quit): at most twice per app run, on the first death and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
+| `gpu_process_gone` | The GPU process failed (a fault death: not a kill, an OOM, or a Windows session-teardown exit): at most twice per app run, on the first fault and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
 | `mobile_bridge_forced_redial` | The mobile bridge abandoned a relay socket that still read connected but carried nothing (a socket the relay reaped while the network was away; see `docs/mobile-bridge.md`): at most once per reason per app run | reason (`paired-silent` / `parked-stale`) |
 
 There is no close event. Every quit path exits before a network send can complete, so
@@ -35,8 +35,9 @@ There is no close event. Every quit path exits before a network send can complet
 checkpointed to `<configDir>/analytics-run.json` once a minute and reported by the NEXT launch as
 `lastRunUptimeSeconds` (Aptabase averages numeric properties, which is what replaces the
 dashboard's own Avg. Duration) and the `lastRunUptime` bucket. `lastRunExit` says how that run
-ended: `clean` (the quit path ran: window close, Cmd+Q, Ctrl+C, SIGTERM, an OS shutdown or log-off
-that reached the app, an update install), `failsafe` (the quit path ran but Electron's teardown
+ended: `clean` (the quit path ran: window close, Cmd+Q, Ctrl+C, SIGTERM, a closed hosting terminal
+(SIGHUP), an OS shutdown or log-off that reached the app, an update install, a restart to change
+Graphics acceleration), `failsafe` (the quit path ran but Electron's teardown
 hung and the hard failsafe force-killed the process), or `abrupt` (nothing was recorded: a crash, a
 kill, a power loss). Uptime is wall-clock and includes time asleep. Aptabase's own session
 duration is coarse by comparison, since heartbeats are the only events a long agent run emits.
@@ -45,8 +46,8 @@ Each write also stamps `at`, the wall-clock moment of that write, so the last re
 when the run was last known alive. For a `clean` or `failsafe` exit that is the exit itself; for an
 `abrupt` one it is the final checkpoint, which is the only clock an abrupt ending leaves behind.
 It is read locally rather than reported: `previousRunLastAliveAt()` feeds the GPU report gate,
-which needs to tell "the GPU died as this run ended" from "the GPU died once, forty minutes before
-something unrelated killed it".
+which needs to tell "the GPU crash-looped as this run ended" from "the GPU crash-looped forty
+minutes before something unrelated killed it".
 
 `utility_worker_crashed`'s `exitCode` is the raw value Electron's `utilityProcess` `exit` event
 reports, so it is NOT comparable across platforms (POSIX derives it from `waitpid`, Windows from
@@ -63,8 +64,10 @@ the embed client rebuilds its policy on every model change and project switch.
 `gpu_process_gone` follows the same shape for the GPU process (`src/main/diagnostics/gpu-health.ts`),
 mirroring Chromium's own judgment of GPU health: three deaths inside five minutes is also the point
 at which Chromium falls back to software compositing on its own
-(`GpuProcessHost::RecordProcessCrash`). `first` fires on the first death, `latched` on the third;
-neither fires again for the rest of the RUN, even across a later decay reset and a fresh escalation -
+(`GpuProcessHost::RecordProcessCrash`). `first` fires on the first death, `latched` on the third,
+counting FAULT deaths only (`isGpuFaultDeath`, see "Error Reporting" below): a kill or a Windows
+session-teardown exit is written to the record but never ticks, or every shutdown with the app open
+would read as a GPU death on the dashboard. Neither fires again for the rest of the RUN, even across a later decay reset and a fresh escalation -
 the phase gate is per-run, not per-window, which is what keeps this at exactly two Aptabase events no
 matter how many separate incidents one launch has. `exitCode`'s `-1` sentinel does NOT carry the same
 meaning it does for `utility_worker_crashed` above: there it means the fork never started, but here it
@@ -455,20 +458,38 @@ in one Sentry org, one triage surface.
   block reads it. A VM or broken-GL machine that falls back at every boot makes that common. The
   recovery decision is safe, because it reads the record at module scope before any GPU process
   exists, and the software mode it engages never writes. What can be lost is the report of something
-  the previous run survived: a fallback, or a crash loop that reached the report threshold. Not
-  every pending record earns an issue:
-  `shouldReportEscalation` reports on `count >= 3`, OR when the previous run ended `abrupt` AND the
-  record's `lastAt` (the last death or fallback) sits within 90s of that run's last known sign of
-  life (`run-uptime.ts`'s `at` checkpoint). The second arm needs both halves - `abrupt` alone means
-  only that no exit was recorded, which covers a renderer OOM, a task-manager kill and a power loss,
-  and pairing it with "the GPU died once at some point" would blame graphics for a death it had
-  nothing to do with. A fallback the run survived is not reported: VMs and broken-GL machines can
-  fall back at every boot. When it does report, `src/main/index.ts` calls `reportHandledError` with
+  the previous run survived: a fallback, or a crash loop that reached the report threshold.
+
+  Only FAULT deaths count toward the report and the recovery, and the record is judged when it is
+  read, so a record an older version wrote is judged the same way. A fault death
+  (`isGpuFaultDeath`) has a reason naming a failure in the GPU process itself (`crashed`,
+  `abnormal-exit`, `launch-failed`, `integrity-failure`) AND an exit code outside the
+  session-teardown set: `0xC000026B` (STATUS_DLL_INIT_FAILED_LOGOFF), `0x40010004`
+  (DBG_TERMINATE_PROCESS) and `0xC000013A` (STATUS_CONTROL_C_EXIT), compared unsigned because
+  records store the signed form. `killed`, `oom` and `memory-eviction` never count. The reason alone
+  is not enough, because Chromium reports an exit code it does not recognize as `crashed`. A Windows
+  shutdown with the dev instance open wrote five GPU deaths in 126 ms: one `killed` with
+  `0x40010004`, then four relaunches `crashed` with `0xC000026B`, because Windows will not start a
+  graphics process while the session is ending. The main process died with them and recorded no
+  exit. Counting every death, that read as a crash loop that killed the run, and the next launch
+  turned a healthy GPU's acceleration off. A fallback counts too, unless a non-fault death came up
+  to 5 s before it, since Chromium steps down its ladder on the counted failure itself.
+
+  Not every pending record earns an issue: `shouldReportEscalation` reports on 3+ fault deaths, OR
+  when `gpuEndedPreviousRun` holds. That needs all three of: the previous run ended `abrupt`; the
+  GPU faulted repeatedly (3+ fault deaths, or a fallback no non-fault death explains, which is
+  DESKTOP-W's only trace); and the latest fault sits within 90s of that run's last known sign of
+  life (`run-uptime.ts`'s `at` checkpoint). `abrupt` alone means only that no exit was recorded,
+  which covers a renderer OOM, a task-manager kill and a power loss. A lone crash cannot have
+  killed the app, because Chromium's fatal is only reachable after it has fallen back, which takes
+  three counted failures. A fallback the run survived is not reported: VMs and broken-GL machines
+  can fall back at every boot. When it does report, `src/main/index.ts` calls `reportHandledError` with
   the message `GPU process exited repeatedly (...)`, or `GPU left hardware acceleration with no GPU
   process exit reported` for a fallback-only record, which groups the launch-failure shape as its
   own issue. It carries tags
   `source: gpu_process`, `reason`, `exitCode`, `crashCount`, and a `gpu_process` context carrying
-  `reason`, `exitCode`, `count`, `firstAt`, `lastAt`, `escalatedInVersion` (the app version that
+  `reason`, `exitCode`, `count`, `faultDeathCount` (how many of `count` were fault deaths; the gap
+  is kills and teardown exits), `firstAt`, `lastAt`, `escalatedInVersion` (the app version that
   produced the escalation, not the one reporting it - the same build-attribution concern the native
   crash correction below exists for), `featureStatusAtEscalation`, `featureStatusOnReport`, and
   `previousRunExit`. The last three are deliberately three separate facts, not one:
@@ -483,7 +504,7 @@ in one Sentry org, one triage surface.
   `gpuInfoOnReport` (`app.getGPUInfo('complete')`, the one call of it in this path, naming the
   machine's actual graphics stack), `killedTheLastRun`, and `softwareRenderingEngaged`.
 - **A GPU failure that killed the last run also downgrades this one, once.** When
-  `killedTheLastRun` holds, `src/main/index.ts` has already started Chromium with
+  `killedTheLastRun` (`gpuEndedPreviousRun`, above) holds, `src/main/index.ts` has already started Chromium with
   `app.disableHardwareAcceleration()` and `--in-process-gpu` (decided at module scope, because
   that API throws once the app is ready), and now persists `graphicsAccelerationEnabled: false` with
   `graphicsAccelerationOffBy: 'app'` so later launches read the setting instead of re-deriving it
@@ -492,6 +513,8 @@ in one Sentry org, one triage surface.
   (`IPC.GPU_HEALTH_STATUS`) rather than main pushing it: both facts are decided during boot, when a
   `webContents.send` can land before any listener is registered and be dropped silently, and the
   record behind them is already gone. Reading consumes the notice, so a reload cannot re-toast.
+  The way back is the Settings > Performance toggle, which saves and restarts in one call
+  (`IPC.GPU_HEALTH_SET_ACCELERATION`) through the normal quit, so that run records `clean`.
   See "Graphics failures" in [user-guide.md](user-guide.md) for what the user sees.
 - **A transient updater feed failure is counted, not reported.** `hasTransientNetworkCause`
   (`src/main/updater.ts`) gates the `reportHandledError` call in the `autoUpdater.on('error')`

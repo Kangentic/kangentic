@@ -507,6 +507,20 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
     expect(signalBlock).toContain('if (performShutdown()) process.exit(0);');
   });
 
+  it('records a clean exit when the hosting terminal closes (SIGHUP), on the same bare signal route', () => {
+    // Without a listener, SIGHUP (on Windows, the console's CTRL_CLOSE_EVENT)
+    // ends the process with no exit recorded, so an `npm start` whose
+    // terminal closed read as `abrupt` on the next launch.
+    const hangupStart = INDEX_SOURCE.indexOf("process.on('SIGHUP', () => {");
+    expect(hangupStart, 'src/main/index.ts must handle SIGHUP').toBeGreaterThan(-1);
+    const hangupHandler = INDEX_SOURCE.slice(hangupStart, INDEX_SOURCE.indexOf('});', hangupStart) + 3);
+    expect(hangupHandler).toContain('if (performShutdown()) process.exit(0);');
+    expect(
+      hangupHandler,
+      'SIGHUP process.exit()s with no loop turn, so nothing may stay deferred there',
+    ).not.toContain('allowGrace');
+  });
+
   /**
    * Rule 3 of synchronous-shutdown.md, pinned mechanically: the only analytics
    * in the quit path is a synchronous disk write. app_close used to be fired

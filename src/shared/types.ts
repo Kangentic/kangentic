@@ -6218,8 +6218,13 @@ export interface ElectronAPI {
   //
   // `noticePending` is consumed by the read, so a renderer reload cannot
   // re-toast the same incident. `softwareRendering` is not.
+  //
+  // `setAccelerationAndRestart` saves `graphicsAccelerationEnabled` and
+  // restarts Kangentic through the normal quit, since the mode can only be
+  // chosen before app.whenReady. The promise may never settle: the app quits.
   gpuHealth: {
     readStatus: () => Promise<GpuGraphicsStatus>;
+    setAccelerationAndRestart: (enabled: boolean) => Promise<void>;
   };
 
   // Announcements (remote feed; active = filtered for this client in main.

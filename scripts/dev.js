@@ -58,6 +58,36 @@ const stopWatcher = setInterval(() => {
 // Never keep the process alive just to watch for stops.
 stopWatcher.unref();
 
+// Restart channel, the other direction. A setting that only applies at startup
+// (Graphics acceleration) restarts the app. This process owns the Electron
+// child and closes Vite when it exits, so an app.relaunch() would start an
+// Electron with no dev server behind it. Instead Electron writes this file and
+// quits normally (src/main/app-relaunch.ts), and the 'close' handler in
+// spawnElectron() launches it again with Vite still running. The path reaches
+// Electron as a --dev-restart-file= argument, not an env var. A stale file
+// from a crashed instance is removed so it cannot turn this instance's first
+// exit into a restart.
+const restartFilePath = path.join(projectDir, '.kangentic', `dev-${port}.restart`);
+try {
+  fs.rmSync(restartFilePath, { force: true });
+} catch {
+  // best-effort, as for the stop file above
+}
+
+/** True, once, when Electron asked to be restarted. Removing the file is what
+ *  makes it once: if the removal fails, the request is refused rather than
+ *  risk restarting on every later exit. */
+function consumeRestartRequest() {
+  if (!fs.existsSync(restartFilePath)) return false;
+  try {
+    fs.rmSync(restartFilePath, { force: true });
+    return true;
+  } catch (removeError) {
+    console.warn('[dev] Restart requested but the request file could not be removed; exiting instead:', removeError.message);
+    return false;
+  }
+}
+
 // A kill (TerminateProcess on Windows) skips Electron's before-quit entirely:
 // the synchronous cleanup never runs, PTY children are orphaned, session
 // records stay 'running', and the run reads as abrupt on the next launch. The
@@ -387,7 +417,11 @@ async function start() {
   // Electron launches, so the main process adopts it instead of cloning on boot.
   await previewClonePromise;
 
-  electronProc = spawn(electronExe, electronArgs, {
+  spawnElectron(electronArgs, spawnEnv);
+}
+
+function spawnElectron(electronArgs, spawnEnv) {
+  electronProc = spawn(electronExe, [...electronArgs, `--dev-restart-file=${restartFilePath}`], {
     cwd: projectDir,
     stdio: 'inherit',
     env: spawnEnv,
@@ -396,6 +430,17 @@ async function start() {
   const electronLaunchedAt = Date.now();
   electronProc.on('close', (code) => {
     console.log(`[dev] Electron exited with code ${code}`);
+    // Electron asked to be restarted (see restartFilePath). Checked before
+    // the banner and before cleanup(), because cleanup() closes Vite and, for
+    // an ephemeral preview, deletes .kangentic/ with the preview's data in it.
+    // The PID file holds THIS process's pid, so it stays valid across the
+    // respawn for worktree-preview.js. A Ctrl+C or closed terminal that
+    // landed while the restart was pending wins: the user asked to stop.
+    if (!cleaningUp && !awaitingElectronExit && consumeRestartRequest()) {
+      console.log('[dev] Restart requested by the app - launching Electron again');
+      spawnElectron(electronArgs, spawnEnv);
+      return;
+    }
     // A near-instant code-0 exit from a NON-ephemeral launch is almost always
     // the single-instance lock: another Kangentic (usually the installed app)
     // already holds it, so main/index.ts calls app.exit(0) silently and the
@@ -494,16 +539,39 @@ function logSync(line) {
   }
 }
 
-process.on('SIGINT', () => cleanup(0));
+// Ctrl+C and a closed terminal reach Electron as well as this process, since
+// it shares this console (stdio: 'inherit'). Electron handles both itself: it
+// records a clean exit and quits (src/main/index.ts). Killing it at once, as
+// cleanup() does, raced that write, so the run read as abrupt on the next
+// launch. So wait a moment for Electron to exit on its own; its 'close'
+// handler then runs cleanup(). A second Ctrl+C skips the wait. SIGTERM comes
+// from tooling aimed at this process alone, so it keeps the immediate cleanup.
+const CONSOLE_SIGNAL_ELECTRON_EXIT_WAIT_MS = 3000;
+let awaitingElectronExit = false;
+
+function cleanupOnceElectronExits() {
+  if (awaitingElectronExit || !electronProc || electronProc.exitCode !== null) {
+    cleanup(0);
+    return;
+  }
+  awaitingElectronExit = true;
+  const timer = setTimeout(() => {
+    console.warn(`[dev] Electron did not exit within ${CONSOLE_SIGNAL_ELECTRON_EXIT_WAIT_MS}ms of the signal; killing it`);
+    cleanup(0);
+  }, CONSOLE_SIGNAL_ELECTRON_EXIT_WAIT_MS);
+  electronProc.once('close', () => clearTimeout(timer));
+}
+
+process.on('SIGINT', () => cleanupOnceElectronExits());
 process.on('SIGTERM', () => cleanup(0));
 // Closing the preview's terminal WINDOW delivers SIGHUP (on Windows, Node maps
 // the console CTRL_CLOSE_EVENT to it, with a ~10s grace window before the OS
 // terminates unconditionally; on unix, terminal close sends a real SIGHUP).
 // Without this handler the dev server survived a closed terminal as an orphan
 // still holding its port and Electron child, and left a stale PID file behind
-// for the next launch to misreport. cleanup() is comfortably faster than the
-// grace window (sync kills + fs removals).
-process.on('SIGHUP', () => cleanup(0));
+// for the next launch to misreport. The wait above plus cleanup() stays well
+// inside the grace window (sync kills + fs removals).
+process.on('SIGHUP', () => cleanupOnceElectronExits());
 
 // A post-start crash (a rejected promise in a Vite callback, a throw from an
 // event listener registered during start()) otherwise takes Node's default

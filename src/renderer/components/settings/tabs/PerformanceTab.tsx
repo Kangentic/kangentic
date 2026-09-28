@@ -1,8 +1,12 @@
-import { Gauge, TriangleAlert } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Gauge, RotateCw, TriangleAlert } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardToggleRow, CardTile } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
+import { useToastStore } from '../../../stores/toast-store';
+import { useConfigStore } from '../../../stores/config-store';
 
 /**
  * Chromium rendering and app-wide motion.
@@ -22,6 +26,32 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   const turnedOffByApp =
     !globalConfig.graphicsAccelerationEnabled && globalConfig.graphicsAccelerationOffBy === 'app';
+  // The value the user asked for, held until they confirm the restart. The
+  // switch stays bound to the SAVED value, so Cancel snaps it back by simply
+  // clearing this.
+  const [pendingGraphicsAcceleration, setPendingGraphicsAcceleration] = useState<boolean | null>(null);
+  // ConfirmDialog confirms on Enter, so a second press before the dialog
+  // closes would ask main to save and restart twice.
+  const restartInFlightRef = useRef(false);
+
+  const confirmGraphicsRestart = async (enabled: boolean) => {
+    if (restartInFlightRef.current) return;
+    restartInFlightRef.current = true;
+    try {
+      await window.electronAPI.gpuHealth.setAccelerationAndRestart(enabled);
+      // Main saved the setting and is quitting. Re-read it so the switch
+      // shows the saved value for the moment the window is still up.
+      void useConfigStore.getState().loadConfig();
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Kangentic could not restart: ${error instanceof Error ? error.message : String(error)}. Restart it to apply the change.`,
+        variant: 'error',
+      });
+    } finally {
+      restartInFlightRef.current = false;
+      setPendingGraphicsAcceleration(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -34,19 +64,18 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
         {/* A toggle, not a two-option dropdown. The value is genuinely binary,
             and Animations below it is the same shape of setting - rendering one
             as a select and the other as a switch is the inconsistency a user
-            notices first. */}
+            notices first.
+
+            It saves nothing on its own. The graphics mode is chosen before the
+            app is ready and cannot change while it runs, so a change goes
+            through the restart dialog below, and main saves it and restarts in
+            one call. Whatever the user picks there becomes THEIR choice,
+            including off (`graphicsAccelerationOffBy: 'user'`), which is what
+            stops a later GPU failure overwriting it and hides the callout. */}
         <CardToggleRow
           {...settingProps('graphicsAccelerationEnabled')}
           checked={globalConfig.graphicsAccelerationEnabled}
-          onChange={(value) =>
-            updateGlobal({
-              graphicsAccelerationEnabled: value,
-              // Whatever the user picks is now THEIR choice, including turning
-              // it off themselves. That is what stops a later GPU failure
-              // overwriting it, and what hides the callout below.
-              graphicsAccelerationOffBy: value ? null : 'user',
-            })
-          }
+          onChange={(value) => setPendingGraphicsAcceleration(value)}
         />
 
         {/* Shown only when KANGENTIC turned it off, never when the user did.
@@ -68,6 +97,21 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
           onChange={(value) => updateGlobal({ animationsEnabled: value })}
         />
       </SettingsCard>
+
+      {pendingGraphicsAcceleration !== null && (
+        <ConfirmDialog
+          testId="graphics-restart-confirm"
+          // A restart, not a warning, so not the default warning triangle.
+          icon={<RotateCw size={16} className="text-accent-fg" />}
+          title={pendingGraphicsAcceleration
+            ? 'Restart with graphics acceleration?'
+            : 'Restart without graphics acceleration?'}
+          message="Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
+          confirmLabel="Restart now"
+          onConfirm={() => { void confirmGraphicsRestart(pendingGraphicsAcceleration); }}
+          onCancel={() => setPendingGraphicsAcceleration(null)}
+        />
+      )}
     </div>
   );
 }

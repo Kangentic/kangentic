@@ -4308,6 +4308,36 @@
           noticePending: noticePending,
         });
       },
+      // The real handler saves the setting and restarts the app. The mock
+      // cannot restart, so it records the request in
+      // window.__mockGraphicsRestartRequests (a spec asserts on it) and applies
+      // the same config write, which is what the relaunched app would read.
+      // Set window.__mockGraphicsRestartRejects = true to simulate the restart
+      // failing.
+      setAccelerationAndRestart: function (enabled) {
+        if (window.__mockGraphicsRestartRejects === true) {
+          return Promise.reject(new Error('mock gpuHealth.setAccelerationAndRestart rejection'));
+        }
+        if (!Array.isArray(window.__mockGraphicsRestartRequests)) window.__mockGraphicsRestartRequests = [];
+        window.__mockGraphicsRestartRequests.push(enabled);
+        config = deepMerge(config, {
+          graphicsAccelerationEnabled: enabled,
+          graphicsAccelerationOffBy: enabled ? null : 'user',
+        });
+        // Test hook: hold this call pending instead of resolving it, so a spec
+        // can drive a second confirm (a second click, a second Enter) while
+        // the first is still in flight, the way restartInFlightRef's guard is
+        // meant to be exercised. Set window.__mockGraphicsRestartHold = true
+        // before the confirm; the promise resolves once the spec calls the
+        // function this stashes on window.__mockGraphicsRestartHoldRelease.
+        // Default behaviour (hold unset) is unchanged: resolves immediately.
+        if (window.__mockGraphicsRestartHold === true) {
+          return new Promise(function (resolve) {
+            window.__mockGraphicsRestartHoldRelease = resolve;
+          });
+        }
+        return Promise.resolve();
+      },
     },
 
     announcements: {

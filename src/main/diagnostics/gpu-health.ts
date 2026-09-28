@@ -62,7 +62,8 @@ import type { LinuxProcessSnapshot, ZygoteState } from './linux-gpu-zygote';
  * listener's synchronous write was on disk before the process died, in the
  * same millisecond as the fatal.
  * `recordGpuModeObservation` records that transition and moves `lastAt`, so
- * the next launch's near-end check counts it as a GPU death.
+ * the next launch's near-end check counts it as a GPU failure, unless a
+ * non-fault death just before it explains it (see WHICH EXITS COUNT below).
  *
  * Only a transition AWAY from hardware compositing writes, with one exception.
  * A machine that is degraded from its first read (our own software mode, a
@@ -92,9 +93,28 @@ import type { LinuxProcessSnapshot, ZygoteState } from './linux-gpu-zygote';
  * previous run survived: a fallback, or a crash loop that reached the report
  * threshold.
  *
+ * WHICH EXITS COUNT, decided when the record is READ, never when it is
+ * written. The writers record every non-clean GPU exit, because the record is
+ * also the triage trail. The recovery and the report then count only FAULT
+ * deaths (`isGpuFaultDeath`): a reason that names a failure in the GPU process
+ * itself, with an exit code that does not mean the session was ending. Judging
+ * at read time also covers a record an older version wrote.
+ *
+ * Both halves are needed, because the reason alone lies. A Windows shutdown
+ * with the dev instance open wrote this sequence in 126 ms: the GPU exited
+ * `killed` with `0x40010004` (DBG_TERMINATE_PROCESS), then Chromium relaunched
+ * it four times and each relaunch died `crashed` with `0xC000026B`
+ * (STATUS_DLL_INIT_FAILED_LOGOFF), because Windows will not start a graphics
+ * process while the session is ending. Chromium sends every exit code it does
+ * not recognize to `crashed`. The main process died with them and recorded no
+ * exit, so the run read `abrupt`, and a rule that counted any GPU exit near an
+ * abrupt end turned a healthy GPU's acceleration off and blamed it on
+ * "repeated failures". Counting faults only, that record holds none.
+ *
  * Telemetry still follows the restart-policy precedent: `gpu_process_gone`
- * ticks Aptabase on the FIRST death and again when the count crosses the
- * threshold (never once per death), because an unbounded per-crash count is
+ * ticks Aptabase on the FIRST fault death and again when the fault count
+ * crosses the threshold (never once per death, and never for a kill or a
+ * teardown exit), because an unbounded per-crash count is
  * exactly what made three utility-process crashes read as "71 crashes a day"
  * before that policy existed.
  */
@@ -132,8 +152,8 @@ export interface GpuModeChangeRecord {
 }
 
 export interface GpuHealthOptions {
-  /** Deaths within the decay window before Aptabase's second tick fires. No
-   *  longer gates the durable write, which happens on every death. */
+  /** Fault deaths within the decay window before Aptabase's second tick
+   *  fires. No longer gates the durable write, which happens on every death. */
   maxCrashes?: number;
   /** Quiet period after which the crash count resets. */
   decayMs?: number;
@@ -185,7 +205,8 @@ export interface GpuEscalationRecord {
    *  record. */
   count: number;
   /** The earliest and latest GPU failure this record knows of, a death or a
-   *  fallback. `lastAt` is what every near-end and same-run check reads. */
+   *  fallback, of any kind. `lastAt` is what the same-run check reads. The
+   *  near-end check reads the latest FAULT instead (`summarizeGpuFaults`). */
   firstAt: string;
   lastAt: string;
   appVersion: string;
@@ -203,6 +224,9 @@ export interface GpuEscalationRecord {
 type CrashPhase = 'first' | 'latched';
 
 let crashCount = 0;
+/** The fault deaths among `crashCount` (isGpuFaultDeath), which is what the
+ *  Aptabase `latched` tick counts. Decays with it. */
+let faultCrashCount = 0;
 let firstCrashAt: number | null = null;
 let lastCrashAt: number | null = null;
 let deaths: GpuDeathRecord[] = [];
@@ -228,6 +252,7 @@ let lastModeChangeAt: number | null = null;
 /** Forget all module state (vitest shares module instances). */
 export function resetGpuHealthForTests(): void {
   crashCount = 0;
+  faultCrashCount = 0;
   firstCrashAt = null;
   lastCrashAt = null;
   deaths = [];
@@ -243,6 +268,7 @@ function decayIfQuiet(nowMs: number, decayMs: number): void {
   if (crashCount === 0 || lastCrashAt === null) return;
   if (nowMs - lastCrashAt < decayMs) return;
   crashCount = 0;
+  faultCrashCount = 0;
   firstCrashAt = null;
   lastCrashAt = null;
   deaths = [];
@@ -343,8 +369,15 @@ export function recordGpuProcessGone(
   if (firstCrashAt === null) firstCrashAt = nowMs;
   lastCrashAt = nowMs;
 
-  trackPhaseOnce('first', reason, normalizedExitCode);
-  if (crashCount >= maxCrashes) trackPhaseOnce('latched', reason, normalizedExitCode);
+  // Aptabase counts GPU FAULTS only. A kill or a session-teardown exit is
+  // still written to the record below for triage, but ticking it would make
+  // every Windows shutdown with the app open read as a GPU death on the
+  // dashboard.
+  if (isGpuFaultDeath({ reason, exitCode: normalizedExitCode })) {
+    faultCrashCount += 1;
+    trackPhaseOnce('first', reason, normalizedExitCode);
+    if (faultCrashCount >= maxCrashes) trackPhaseOnce('latched', reason, normalizedExitCode);
+  }
 
   // A throwing getFeatureStatus must not lose the write or escape into the
   // child-process-gone emit (see GpuHealthOptions).
@@ -568,10 +601,118 @@ export function isEscalationFromCurrentRun(record: GpuEscalationRecord, processS
   return lastAt >= processStart;
 }
 
-/** How close a GPU death has to be to the previous run's last known sign of
- *  life to count as part of how that run ended. One run-uptime checkpoint
- *  interval (60s) plus slack: the checkpoint is the only clock we have for an
- *  abrupt end, so the tolerance has to exceed its granularity. */
+/** Reasons that name a failure in the GPU process itself. Everything else is
+ *  something done TO the process (`killed`: Task Manager, taskkill, a signal)
+ *  or a memory event (`oom`, `memory-eviction`), and software rendering fixes
+ *  none of those. An allow-list, so a reason a future Electron adds counts
+ *  only once someone decides it should. */
+const GPU_FAULT_REASONS: ReadonlySet<string> = new Set(['crashed', 'abnormal-exit', 'launch-failed', 'integrity-failure']);
+
+/** Windows exit codes that mean the session or its console was ending, not
+ *  that the GPU failed. Records store `exitCode` signed (`-1073741205`), so
+ *  the comparison is on the unsigned value. No POSIX exit status reaches this
+ *  range, so the set needs no platform guard. */
+const GPU_SESSION_TEARDOWN_EXIT_CODES: ReadonlySet<number> = new Set([
+  // STATUS_DLL_INIT_FAILED_LOGOFF: Windows refused to start a graphics process
+  // because the window station is shutting down. Chromium reports it `crashed`.
+  0xc000026b,
+  // DBG_TERMINATE_PROCESS: the OS terminated the process as the session ended.
+  0x40010004,
+  // STATUS_CONTROL_C_EXIT: a console Ctrl+C or console close, which is how
+  // children of an `npm start` terminal die.
+  0xc000013a,
+]);
+
+/** A death that says the GPU process itself failed: an allow-listed reason
+ *  AND an exit code outside the session-teardown set. Never the reason alone,
+ *  because Chromium reports an unrecognized exit code as `crashed` (see the
+ *  module doc's WHICH EXITS COUNT). A null exit code with a fault reason still
+ *  counts: nothing says it was teardown. */
+export function isGpuFaultDeath(death: Pick<GpuDeathRecord, 'reason' | 'exitCode'>): boolean {
+  if (!GPU_FAULT_REASONS.has(death.reason)) return false;
+  if (death.exitCode === null) return true;
+  return !GPU_SESSION_TEARDOWN_EXIT_CODES.has(death.exitCode >>> 0);
+}
+
+/** How close before a fallback a non-fault death has to be to explain it.
+ *  Chromium steps down its ladder on the counted failure itself, so the
+ *  fallback lands within one GPU launch round trip of the death that caused
+ *  it: 1 ms after the third SIGKILL on Linux, and inside the 126 ms the
+ *  shutdown incident spanned. Five seconds is slack, not a measurement. */
+const FALLBACK_EXPLAINED_BY_DEATH_MS = 5_000;
+
+export interface GpuFaultSummary {
+  /** Fault deaths in the record, a lower bound once the middle of `deaths`
+   *  has been trimmed. */
+  faultCount: number;
+  /** Whether a fallback happened with no non-fault death just before it. A
+   *  launch-failure ladder (DESKTOP-W) leaves only this. */
+  unexplainedFallback: boolean;
+  /** The latest fault death or unexplained fallback, or null when the record
+   *  holds neither. */
+  lastFaultAt: string | null;
+  /** The latest FAULT death, or null when there is none. The Sentry report
+   *  names this one rather than the record's latest death, which in a crash
+   *  loop cut short by a shutdown is a teardown exit. */
+  lastFaultDeath: GpuDeathRecord | null;
+}
+
+/**
+ * The part of a record that counts as GPU failure. A record written before
+ * `deaths` existed has only its `count` and times, so it is taken as `count`
+ * fault deaths at `lastAt`: a false rescue on a pre-upgrade record is one
+ * launch in software, while a missed one is an install that cannot start.
+ */
+export function summarizeGpuFaults(record: GpuEscalationRecord): GpuFaultSummary {
+  let faultCount = 0;
+  let lastFaultMs = Number.NEGATIVE_INFINITY;
+  const noteFault = (atIso: string): void => {
+    const atMs = Date.parse(atIso);
+    if (Number.isFinite(atMs) && atMs > lastFaultMs) lastFaultMs = atMs;
+  };
+
+  if (record.deaths.length === 0 && record.count > 0) {
+    faultCount = record.count;
+    noteFault(record.lastAt);
+  }
+  const nonFaultDeathTimes: number[] = [];
+  let lastFaultDeath: GpuDeathRecord | null = null;
+  for (const death of record.deaths) {
+    if (isGpuFaultDeath(death)) {
+      faultCount += 1;
+      noteFault(death.at);
+      // `deaths` is in order, so the last fault seen is the latest.
+      lastFaultDeath = death;
+    } else {
+      const atMs = Date.parse(death.at);
+      if (Number.isFinite(atMs)) nonFaultDeathTimes.push(atMs);
+    }
+  }
+
+  let unexplainedFallback = false;
+  for (const modeChange of record.modeChanges) {
+    const atMs = Date.parse(modeChange.at);
+    if (!Number.isFinite(atMs)) continue;
+    const explained = nonFaultDeathTimes.some(
+      (deathMs) => deathMs <= atMs && atMs - deathMs <= FALLBACK_EXPLAINED_BY_DEATH_MS,
+    );
+    if (explained) continue;
+    unexplainedFallback = true;
+    noteFault(modeChange.at);
+  }
+
+  return {
+    faultCount,
+    unexplainedFallback,
+    lastFaultAt: Number.isFinite(lastFaultMs) ? new Date(lastFaultMs).toISOString() : null,
+    lastFaultDeath,
+  };
+}
+
+/** How close the latest GPU fault has to be to the previous run's last known
+ *  sign of life to count as part of how that run ended. One run-uptime
+ *  checkpoint interval (60s) plus slack: the checkpoint is the only clock we
+ *  have for an abrupt end, so the tolerance has to exceed its granularity. */
 const DEATH_NEAR_RUN_END_MS = 90_000;
 
 export interface EscalationReportContext {
@@ -583,51 +724,55 @@ export interface EscalationReportContext {
 }
 
 /**
- * Whether the previous run looks like it DIED of this GPU failure, rather
- * than merely having had one.
+ * Whether the previous run DIED of repeated GPU faults, rather than merely
+ * having had a GPU exit. This is the one condition that turns graphics
+ * acceleration off and tells the user so, and all three parts are required:
  *
- * Both halves are load-bearing. `abrupt` alone is far too broad: it means
- * only that no exit was recorded, which covers a renderer OOM (DESKTOP-16's
- * shape), a native PTY crash, a task-manager kill, and a power loss. Pairing
- * it with "and the GPU died once, at some point" would blame the graphics
- * process for a death it had nothing to do with. So the death also has to sit
- * near the end of that run.
- *
- * A fallback counts as a death here: `lastAt` is the latest of either. That
- * is what catches DESKTOP-W, whose launch failures leave only the fallback,
- * recorded moments before the fatal. The near-end half still applies, so a
- * machine that fell back at boot and died of something else twenty minutes
- * later is not blamed on its GPU.
- *
- * This is the condition that engages safe mode, because it is the one that
- * means the app could not survive its own launch.
+ *   1. The run ended `abrupt`. On its own that is far too broad: it means only
+ *      that no exit was recorded, which covers a renderer OOM (DESKTOP-16's
+ *      shape), a native PTY crash, a task-manager kill, and a power loss.
+ *   2. The GPU FAULTED repeatedly: 3+ fault deaths, or a fallback no non-fault
+ *      death explains. Chromium's fatal is only reachable after it has fallen
+ *      back, which takes three counted failures, so a lone crash cannot have
+ *      killed the app. The fallback clause is what catches DESKTOP-W, whose
+ *      launch failures leave only the fallback. Kills and session-teardown
+ *      exits never count (`isGpuFaultDeath`), which is what keeps a Windows
+ *      shutdown from reading as a GPU crash loop.
+ *   3. The latest fault sits near the end of that run, so a machine that fell
+ *      back at boot and died of something else twenty minutes later is not
+ *      blamed on its GPU.
  */
-export function isDeathNearRunEnd(record: GpuEscalationRecord, context: EscalationReportContext): boolean {
+export function gpuEndedPreviousRun(record: GpuEscalationRecord, context: EscalationReportContext): boolean {
   if (context.previousRunExit !== 'abrupt') return false;
   if (!context.lastKnownAliveAt) return false;
-  const lastDeath = Date.parse(record.lastAt);
+  const faults = summarizeGpuFaults(record);
+  if (faults.faultCount < DEFAULT_MAX_CRASHES && !faults.unexplainedFallback) return false;
+  if (faults.lastFaultAt === null) return false;
+  const lastFault = Date.parse(faults.lastFaultAt);
   const lastAlive = Date.parse(context.lastKnownAliveAt);
-  if (!Number.isFinite(lastDeath) || !Number.isFinite(lastAlive)) return false;
-  return lastDeath >= lastAlive - DEATH_NEAR_RUN_END_MS;
+  if (!Number.isFinite(lastFault) || !Number.isFinite(lastAlive)) return false;
+  return lastFault >= lastAlive - DEATH_NEAR_RUN_END_MS;
 }
 
 /**
  * Whether a pending record is worth a Sentry issue. Deliberately WIDER than
- * `isDeathNearRunEnd`: a run that hit the threshold and then exited cleanly
+ * `gpuEndedPreviousRun`: a run that hit the threshold and then exited cleanly
  * means Chromium fell back on its own and survived, which is worth knowing
  * about even though the user needs no recovery and sees nothing.
  *
- * A fallback-only record (`count` 0) on a run that survived is NOT reported.
- * VMs and broken-GL machines can fall back at every boot, and a report per
- * launch from each of them would be noise that buries the real shape.
+ * The threshold counts FAULT deaths, not every death, so a session teardown
+ * burst files nothing. A fallback-only record on a run that survived is NOT
+ * reported either. VMs and broken-GL machines can fall back at every boot, and
+ * a report per launch from each of them would be noise that buries the real
+ * shape.
  */
 export function shouldReportEscalation(
   record: GpuEscalationRecord,
   context: EscalationReportContext,
   options: { maxCrashes?: number } = {},
 ): boolean {
-  if (record.count >= (options.maxCrashes ?? DEFAULT_MAX_CRASHES)) return true;
-  return isDeathNearRunEnd(record, context);
+  if (summarizeGpuFaults(record).faultCount >= (options.maxCrashes ?? DEFAULT_MAX_CRASHES)) return true;
+  return gpuEndedPreviousRun(record, context);
 }
 
 /**
