@@ -36,7 +36,7 @@ import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
 import { answerSetupGap, resolveAnswerAgent } from '../../../shared/answer-agent';
-import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
+import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
 import { ANSWER_CALLER_PREFIX, appendAnswerCaller } from '../../agent/mcp-http/caller-url';
 import type {
   SearchHit,
@@ -120,6 +120,8 @@ interface AnswerRun {
   effort: string | null;
   retrieval: { url: string; token: string } | undefined;
   sessionKey: string;
+  /** The one working directory every answer run starts in (`answer-run-directory.ts`). */
+  answerHome: string;
 }
 
 /**
@@ -198,6 +200,7 @@ async function resolveAnswerRun(
     model: configuredModel,
     effort,
     retrieval,
+    answerHome: await ensureAnswerHomeDirectory(),
   };
   return { ok: true, run: { ...run, sessionKey: JSON.stringify([agentName, info.path, configuredModel, effort, retrieval?.url ?? null]) } };
 }
@@ -213,7 +216,8 @@ function takeAnswerSession(chatId: string, run: AnswerRun, endGeneration?: numbe
   try {
     return answerSessionPool.take(chatId, run.sessionKey, (directory) => openSession({
       cliPath: run.cliPath,
-      cwd: directory,
+      cwd: run.answerHome,
+      runDirectory: directory,
       model: run.model,
       effort: run.effort,
       retrieval: run.retrieval,
@@ -660,15 +664,12 @@ export function registerSearchHandlers(context: IpcContext): void {
           if (event.kind === 'text') emit({ kind: 'text', text: event.text });
           else emit({ kind: 'tool', name: event.name });
         };
-        // A fresh run: a NEUTRAL directory, not the project, and a fresh one per
-        // question. Measured: spawning in the project made the CLI load its
-        // CLAUDE.md and every always-on rule - 18,700 tokens on this repo per
-        // question; Grok loaded about 100k tokens of instruction files for a
-        // one-word reply. Fresh per question because runs write into it: a
-        // prompt file for a CLI that reads one, a per-run MCP config with the
-        // live token.
+        // A fresh run starts in the answer home, never the project (whose
+        // instruction files cost 18,700 tokens a question on this repo), and
+        // writes what it passes by path into a run directory of its own that
+        // goes when it ends. See `answer-run-directory.ts` for why the two differ.
         const runFresh = (freshPrompt: string): Promise<string> => withAnswerRunDirectory((runDirectory) => (
-          answerFromContext(freshPrompt, cliPath, runDirectory, configuredModel, { retrieval, effort, onEvent })
+          answerFromContext(freshPrompt, cliPath, resolvedRun.run.answerHome, configuredModel, { retrieval, effort, onEvent, runDirectory })
         ));
         let raw: string;
         try {

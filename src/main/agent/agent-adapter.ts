@@ -238,14 +238,24 @@ export interface AnswerFromContextOptions {
    *  sent to an adapter declaring `answerCapabilities.effort`; absent leaves the
    *  CLI's default in place. */
   effort?: string | null;
+  /**
+   * A fresh directory this run owns, removed when it ends: where it writes
+   * anything it passes by path (a prompt file, an MCP config with the live
+   * token). The run's `cwd` is the shared answer home, so nothing per-run
+   * belongs there (see `answer-run-directory.ts`). Absent for a caller that
+   * has none; the adapter then makes its own.
+   */
+  runDirectory?: string;
 }
 
 /** What an answer session is started with. It is fixed for the session's life:
  *  a different model, effort or search URL is a different session. */
 export interface AnswerSessionInput {
   cliPath: string;
-  /** An empty directory the session owns for its life (see `answer-run-directory.ts`). */
+  /** The shared answer home the process starts in (see `answer-run-directory.ts`). */
   cwd: string;
+  /** A directory the session owns for its life, for the files it passes by path. */
+  runDirectory: string;
   model?: string | null;
   effort?: string | null;
   retrieval?: AnswerFromContextOptions['retrieval'];

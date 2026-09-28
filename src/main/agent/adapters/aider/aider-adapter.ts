@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { AgentDetector } from '../../shared/agent-detector';
 import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
@@ -6,7 +7,7 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { runCliPrintAnswer } from '../../shared/auto-name';
 import { AiderSessionHistoryParser } from './session-history-parser';
 import { createAiderCommandInjectionVerifier } from './command-injection-verifier';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -211,6 +212,12 @@ export class AiderAdapter implements AgentAdapter {
    * other confirmation, `--no-auto-commits`, no update check, no model
    * warnings, and plain unstreamed output.
    *
+   * Its history files go in the run directory, not the working directory: the
+   * working directory is the answer home every question shares, and Aider
+   * APPENDS to `.aider.chat.history.md` and `.aider.input.history` there, so
+   * every answer's prompt would pile up in one file. `--no-restore-chat-history`
+   * keeps an earlier answer out of this one.
+   *
    * From Aider's published options; not yet run against an installed Aider on
    * the machine this was written on, which is why `extractAiderAnswer` strips
    * the status lines Aider is documented to print rather than parsing a format.
@@ -223,7 +230,9 @@ export class AiderAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
+    const runDirectory = options?.runDirectory ?? cwd;
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
@@ -238,12 +247,16 @@ export class AiderAdapter implements AgentAdapter {
         '--no-check-update',
         '--no-show-model-warnings',
         '--no-suggest-shell-commands',
+        '--no-restore-chat-history',
+        '--chat-history-file', path.join(runDirectory, '.aider.chat.history.md'),
+        '--input-history-file', path.join(runDirectory, '.aider.input.history'),
         ...(model ? ['--model', model] : []),
       ],
       prompt,
       cwd,
       promptVia: 'file',
       promptFileFlag: '--message-file',
+      promptDirectory: runDirectory,
       extractRaw: extractAiderAnswer,
     });
   }

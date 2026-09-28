@@ -67,7 +67,8 @@ describe('ClaudeAdapter.openAnswerSession', () => {
       sessionSpy.mockReturnValue({});
       new ClaudeAdapter().openAnswerSession({
         cliPath: '/bin/claude',
-        cwd: directory,
+        cwd: '/answer-home',
+        runDirectory: directory,
         model: 'sonnet',
         effort: 'low',
         retrieval: { url: 'http://127.0.0.1:1/mcp/p/answer-chat', token: 'secret' },
@@ -83,9 +84,10 @@ describe('ClaudeAdapter.openAnswerSession', () => {
       expect(args[args.indexOf('--output-format') + 1]).toBe('stream-json');
       expect(args).toContain('--include-partial-messages');
       expect(args[args.indexOf('--model') + 1]).toBe('sonnet');
-      expect(options.cwd).toBe(directory);
+      // It starts in the shared answer home...
+      expect(options.cwd).toBe('/answer-home');
       expect(options.env).toEqual({ MAX_THINKING_TOKENS: '0' });
-      // The session's config files live in the directory it owns.
+      // ...and its config files live in the run directory it owns.
       expect(fs.existsSync(path.join(directory, 'mcp.json'))).toBe(true);
       expect(fs.existsSync(path.join(directory, 'settings.json'))).toBe(true);
       // A turn is one user message line; a turn ends on the result line.

@@ -33,7 +33,7 @@ vi.mock('../../src/main/retrieval/related-work', () => ({
 }));
 
 import { registerSearchTools } from '../../src/main/agent/mcp-http/search-tools';
-import { watchAnswerSearches } from '../../src/main/agent/mcp-http/answer-search-trace';
+import { ANSWER_SEARCH_BUDGET, watchAnswerSearches } from '../../src/main/agent/mcp-http/answer-search-trace';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 
 function makeProject(overrides: Partial<Project> = {}): Project {
@@ -424,6 +424,55 @@ describe('kangentic_search MCP tool', () => {
         stop();
       }
       expect(seen).toEqual([{ query: 'relay', sessionIds: ['session-a', 'session-b', 'session-c'] }]);
+    });
+  });
+
+  describe('an answer run\'s search budget', () => {
+    it('allows a question its budget of searches, then tells the agent to answer instead of searching', async () => {
+      // Measured: told to search again when a search missed, one agent made
+      // about 50 searches over 95 seconds before writing a word.
+      const answerServer = makeFakeServer();
+      registerSearchTools(answerServer as never, resolver, 'answer-chat-2');
+      const stop = watchAnswerSearches('answer-chat-2', () => undefined);
+      try {
+        for (let search = 0; search < ANSWER_SEARCH_BUDGET; search += 1) {
+          const result = await answerServer.getHandler('kangentic_search')({ query: `query ${search}` });
+          expect(result.content[0].text).not.toContain('Do not search again');
+        }
+        const callsWithinBudget = mockRunSearchEverything.mock.calls.length;
+        const refused = await answerServer.getHandler('kangentic_search')({ query: 'one more' });
+        expect(refused.isError).toBeUndefined();
+        expect(refused.content[0].text).toContain('answer now from what you have already found');
+        // Refused before any work: no search ran.
+        expect(mockRunSearchEverything.mock.calls.length).toBe(callsWithinBudget);
+      } finally {
+        stop();
+      }
+    });
+
+    it('gives each question its own budget', async () => {
+      const answerServer = makeFakeServer();
+      registerSearchTools(answerServer as never, resolver, 'answer-chat-3');
+      let stop = watchAnswerSearches('answer-chat-3', () => undefined);
+      for (let search = 0; search <= ANSWER_SEARCH_BUDGET; search += 1) {
+        await answerServer.getHandler('kangentic_search')({ query: `query ${search}` });
+      }
+      stop();
+      // The next question in the chat watches again, and searches again.
+      stop = watchAnswerSearches('answer-chat-3', () => undefined);
+      try {
+        const result = await answerServer.getHandler('kangentic_search')({ query: 'next question' });
+        expect(result.content[0].text).not.toContain('Do not search again');
+      } finally {
+        stop();
+      }
+    });
+
+    it('never limits an ordinary agent\'s search', async () => {
+      for (let search = 0; search <= ANSWER_SEARCH_BUDGET + 1; search += 1) {
+        const result = await server.getHandler('kangentic_search')({ query: `query ${search}` });
+        expect(result.content[0].text).not.toContain('Do not search again');
+      }
     });
   });
 

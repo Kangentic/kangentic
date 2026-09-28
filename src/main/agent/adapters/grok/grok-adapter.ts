@@ -4,22 +4,37 @@ import { promisify } from 'node:util';
 import { GrokDetector } from './detector';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from './command-builder';
 import { removeHooksFile } from './hook-manager';
-import { removeMcpConfig } from './mcp-config';
+import { KANGENTIC_MCP_TOKEN_ENV, KANGENTIC_MCP_URL_ENV, removeMcpConfig, writeMcpConfig } from './mcp-config';
 import { GrokStatusParser } from './status-parser';
 import { GrokSessionHistoryParser, grokModelDisplayName } from './session-history-parser';
 import { parseGrokTranscript, grokTranscriptUsage, grokTranscriptToolCounts } from './transcript-parser';
 import { createGrokCommandInjectionVerifier } from './command-injection-verifier';
 import { discoverGrokCapabilities } from './capability-discovery';
-import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
+import { ensureAnswerHomeTrust, ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { migrateGrokProjectData } from './project-relocation';
-import { grokUpdatesJsonlPath } from './session-paths';
+import { grokSessionDir, grokUpdatesJsonlPath } from './session-paths';
 import {
   runCliPrintSummarize,
   runCliPrintAnswer,
   buildSummarizePrompt,
+  createAnswerStreamReducer,
   extractLastTurnAnswer,
+  forwardStreamLines,
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/auto-name';
+
+/** The session id on a `streaming-messages-json` init line, or null. */
+export function grokInitSessionId(line: string): string | null {
+  if (!line.includes('"init"')) return null;
+  try {
+    const record = JSON.parse(line) as { type?: unknown; subtype?: unknown; session_id?: unknown };
+    return record.type === 'system' && record.subtype === 'init' && typeof record.session_id === 'string'
+      ? record.session_id
+      : null;
+  } catch {
+    return null;
+  }
+}
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -344,7 +359,7 @@ export class GrokAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' };
+  readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -367,6 +382,28 @@ export class GrokAdapter implements AgentAdapter {
    * assistant turn of a stream-json transcript, whose envelope and file read
    * need the stream-sized stdout budget.
    *
+   * STREAMING: `streaming-messages-json` is the Anthropic Messages wire format,
+   * and `--include-partial-messages` adds the text deltas, so Claude's reducer
+   * reads it unchanged (measured on grok 1.0.0: first text delta at 1.9 s).
+   *
+   * SEARCH: Grok has no per-run MCP flag. It reads `<cwd>/.grok/config.toml`,
+   * but only in a TRUSTED folder: untrusted, the server silently never starts
+   * ("No MCP tools are available in this session", measured). So the answer
+   * home gets one trust entry, once (`ensureAnswerHomeTrust`), and the same
+   * static managed block interactive sessions use, whose `${VAR}` references
+   * Grok expands from the process environment: the URL and token reach the
+   * run through `env`, never through a file. `--trust` also starts the server,
+   * and was rejected: it records the folder in the user's trust store, one
+   * entry per question. Grok loads MCP tools deferred, so the agent reaches
+   * ours through its `search_tool` and `use_tool` pair; the trace sees the
+   * search either way, since the server reports it.
+   *
+   * `--disable-web-search` and `--no-memory`: an answer draws only on its
+   * prompt and our search, so the web and the user's cross-session memory stay
+   * out of it. And the session the run leaves in `~/.grok/sessions` is removed
+   * after it (Grok has no no-persistence flag); only the one this run created,
+   * named by the stream's init line.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -377,26 +414,52 @@ export class GrokAdapter implements AgentAdapter {
     model?: string | null,
     options?: AnswerFromContextOptions,
   ): Promise<string> {
-    return runCliPrintAnswer({
-      cliPath,
-      // The model and effort flags are OMITTED when none is chosen: passing an
-      // empty value is an error.
-      args: [
-        '--output-format', 'streaming-messages-json',
-        '--deny', 'Write',
-        '--deny', 'Edit',
-        '--deny', 'Bash',
-        '--no-subagents',
-        ...(model ? ['--model', model] : []),
-        ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
-      ],
-      prompt,
-      cwd,
-      promptVia: 'file',
-      promptFileFlag: '--prompt-file',
-      extractRaw: extractLastTurnAnswer,
-      outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+    const retrieval = options?.retrieval;
+    const onEvent = options?.onEvent;
+    if (retrieval) {
+      await ensureAnswerHomeTrust(cwd);
+      writeMcpConfig(cwd);
+    }
+    let sessionId: string | null = null;
+    const reduce = createAnswerStreamReducer();
+    const onChunk = forwardStreamLines((line) => {
+      sessionId ??= grokInitSessionId(line);
+      if (onEvent) for (const event of reduce(line)) onEvent(event);
     });
+    try {
+      return await runCliPrintAnswer({
+        cliPath,
+        // The model and effort flags are OMITTED when none is chosen: passing an
+        // empty value is an error.
+        args: [
+          '--output-format', 'streaming-messages-json',
+          ...(onEvent ? ['--include-partial-messages'] : []),
+          '--deny', 'Write',
+          '--deny', 'Edit',
+          '--deny', 'Bash',
+          '--no-subagents',
+          '--disable-web-search',
+          '--no-memory',
+          ...(model ? ['--model', model] : []),
+          ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
+        ],
+        prompt,
+        cwd,
+        promptVia: 'file',
+        promptFileFlag: '--prompt-file',
+        promptDirectory: options?.runDirectory ?? cwd,
+        extractRaw: extractLastTurnAnswer,
+        outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+        onChunk,
+        ...(retrieval
+          ? { env: { [KANGENTIC_MCP_URL_ENV]: retrieval.url, [KANGENTIC_MCP_TOKEN_ENV]: retrieval.token } }
+          : {}),
+      });
+    } finally {
+      if (sessionId) {
+        await fs.promises.rm(grokSessionDir(cwd, sessionId), { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
   }
 
   /** Drop the per-worktree trust entry when Kangentic deletes the worktree. */

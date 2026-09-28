@@ -188,9 +188,20 @@ describe('extractStreamedAnswer', () => {
     expect(() => extractLastTurnAnswer(failedRun)).toThrow(/issue with the selected model/);
   });
 
-  it('still fails, with a generic message, when a failed result carries no text', () => {
+  it('names the subtype when a failed result carries no text, and fails generically with nothing at all', () => {
     const failedRun = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true });
-    expect(() => extractStreamedAnswer(failedRun)).toThrow('the agent reported an error');
+    expect(() => extractStreamedAnswer(failedRun)).toThrow('error during execution');
+    const bare = JSON.stringify({ type: 'result', subtype: 'success', is_error: true });
+    expect(() => extractStreamedAnswer(bare)).toThrow('the agent reported an error');
+  });
+
+  it('reads the cause from the fields a CLI puts it in when result is empty', () => {
+    // Seen from Grok: a quota failure ended on an error result with no text,
+    // and the chat said only "the agent reported an error".
+    const withError = JSON.stringify({ type: 'result', is_error: true, error: { message: 'API error (status 429): free usage exhausted' } });
+    expect(() => extractLastTurnAnswer(withError)).toThrow('free usage exhausted');
+    const withErrors = JSON.stringify({ type: 'result', is_error: true, errors: ['rate limited', 'try later'] });
+    expect(() => extractStreamedAnswer(withErrors)).toThrow('rate limited; try later');
   });
 
   it('treats is_error: false as an ordinary answer', () => {

@@ -85,11 +85,38 @@ describe('answer run flags and prompt delivery', () => {
       '--output-format', 'streaming-messages-json',
       '--deny', 'Write', '--deny', 'Edit', '--deny', 'Bash',
       '--no-subagents',
+      // An answer draws on its prompt and our search, not the web or the
+      // user's own cross-session memory.
+      '--disable-web-search',
+      '--no-memory',
       '--model', 'some-model',
     ]);
     expect(options.promptVia).toBe('file');
     expect(options.promptFileFlag).toBe('--prompt-file');
     expect(options.extractRaw).toBe(extractLastTurnAnswer);
+  });
+
+  it('Grok streams its deltas, and reaches the search tool through the environment, never a file', async () => {
+    const grok = new GrokAdapter();
+    expect(grok.answerCapabilities.streaming).toBe(true);
+    expect(grok.answerCapabilities.search).toBe(true);
+    const events: unknown[] = [];
+    answerSpy.mockClear();
+    // The answer home's trust entry and the static config block are the
+    // adapter's own business; no retrieval here keeps this run off disk.
+    await grok.answerFromContext('THE PROMPT', '/bin/grok', '/answer-home', null, {
+      onEvent: (event) => events.push(event),
+      runDirectory: '/run-directory',
+    });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(options.args).toContain('--include-partial-messages');
+    // The prompt file goes in the run's own directory, never the shared home.
+    expect(options.promptDirectory).toBe('/run-directory');
+    expect(options.cwd).toBe('/answer-home');
+    // Deltas arrive in the Anthropic Messages wire format.
+    options.onChunk?.(`${JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello' } } })}\n`);
+    expect(events).toEqual([{ kind: 'text', text: 'Hello' }]);
+    expect(options.env).toBeUndefined();
   });
 
   it('OpenCode pipes the prompt to the read-only plan agent, without -q', async () => {

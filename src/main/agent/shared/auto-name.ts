@@ -175,6 +175,9 @@ export interface RunCliPrintOptions {
   /** The flag that names the prompt file, when `promptVia` is 'file'
    *  (`--prompt-file`, `--message-file`). */
   promptFileFlag?: string;
+  /** Where a `promptVia: 'file'` run writes its prompt. Defaults to `cwd`; an
+   *  answer run passes its run directory, since its `cwd` is shared. */
+  promptDirectory?: string;
   /**
    * Optional pre-cleanup transform: receives raw stdout, returns the candidate title text
    * to feed into `cleanSummarizeOutput`. Useful when the CLI emits NDJSON / stream-json:
@@ -301,6 +304,27 @@ function eventsFromStreamEvent(record: Record<string, unknown>): AnswerStreamEve
 }
 
 /**
+ * Turn a stream of stdout chunks into whole lines.
+ *
+ * Chunk boundaries fall anywhere, including mid-line, so a partial line is held
+ * until its newline arrives. The tail left after the final chunk is not flushed
+ * on purpose: it is either empty or a line the CLI never finished, and neither
+ * is an event.
+ */
+export function forwardStreamLines(onLine: (line: string) => void): (chunk: string) => void {
+  let pending = '';
+  return (chunk) => {
+    pending += chunk;
+    let newline = pending.indexOf('\n');
+    while (newline !== -1) {
+      onLine(pending.slice(0, newline).replace(/\r$/, ''));
+      pending = pending.slice(newline + 1);
+      newline = pending.indexOf('\n');
+    }
+  };
+}
+
+/**
  * A line-by-line reducer with one piece of state: whether partial messages
  * are flowing.
  *
@@ -333,9 +357,37 @@ export function createAnswerStreamReducer(): (rawLine: string) => AnswerStreamEv
  * error message. Returned as text, that message reads as the agent's reply;
  * thrown, the runner rejects and the chat shows its failed turn, with the
  * message as the reason and a Try again button.
+ *
+ * Not every CLI puts the cause in `result`. Grok ended a quota failure with an
+ * error result and no text, and the chat said only "the agent reported an
+ * error" over what its own log called "429 ... free usage exhausted". So the
+ * other fields such a line carries are read too, then the subtype.
  */
 function throwIfErrorResult(record: Record<string, unknown>, resultText: string | null): void {
-  if (record.is_error === true) throw new Error(resultText || 'the agent reported an error');
+  if (record.is_error !== true) return;
+  throw new Error(resultText || errorResultText(record) || 'the agent reported an error');
+}
+
+/** The cause an error result line names outside `result`, if any. */
+function errorResultText(record: Record<string, unknown>): string | null {
+  const describe = (value: unknown): string | null => {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (Array.isArray(value)) {
+      const parts = value.map(describe).filter((part): part is string => part !== null);
+      return parts.length > 0 ? parts.join('; ') : null;
+    }
+    if (value && typeof value === 'object') {
+      const message = (value as { message?: unknown }).message;
+      return typeof message === 'string' && message.trim() ? message.trim() : null;
+    }
+    return null;
+  };
+  for (const key of ['error', 'errors', 'message']) {
+    const text = describe(record[key]);
+    if (text) return text;
+  }
+  const subtype = typeof record.subtype === 'string' ? record.subtype : '';
+  return subtype && subtype !== 'success' ? subtype.replace(/_/g, ' ') : null;
 }
 
 /**
@@ -442,6 +494,7 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
     timeoutMs = DEFAULT_TIMEOUT_MS,
     promptVia = 'stdin',
     promptFileFlag,
+    promptDirectory = cwd,
     extractRaw,
     env,
     outputBudget = OUTPUT_BUDGET,
@@ -450,11 +503,12 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
   } = options;
 
   // Written before the spawn and removed when the call ends, whatever the
-  // outcome. The caller owns `cwd`; this owns only the one file it wrote there.
+  // outcome. The caller owns the directory; this owns only the one file it
+  // wrote there.
   let promptFilePath: string | null = null;
   if (promptVia === 'file') {
     if (!promptFileFlag) throw new Error('promptVia "file" needs a promptFileFlag');
-    promptFilePath = path.join(cwd, PROMPT_FILE_NAME);
+    promptFilePath = path.join(promptDirectory, PROMPT_FILE_NAME);
     // sync-write-ok: the CLI cannot run without its prompt file, so a failed
     // write rejects this call, and the answer handler reports it to the user.
     fs.writeFileSync(promptFilePath, prompt, 'utf-8');

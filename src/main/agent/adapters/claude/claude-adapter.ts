@@ -30,6 +30,7 @@ import {
   buildSummarizePrompt,
   extractStreamedAnswer,
   createAnswerStreamReducer,
+  forwardStreamLines,
   ANSWER_STREAM_OUTPUT_BUDGET,
   type AnswerStreamEvent,
 } from '../../shared/auto-name';
@@ -216,20 +217,12 @@ function isResultLine(line: string): boolean {
  * event.
  */
 export function makeStreamForwarder(onEvent: (event: AnswerStreamEvent) => void): (chunk: string) => void {
-  let pending = '';
   // Stateful, so a turn that arrived as deltas is not shown a second time when
   // its complete `assistant` line follows.
   const reduce = createAnswerStreamReducer();
-  return (chunk) => {
-    pending += chunk;
-    let newline = pending.indexOf('\n');
-    while (newline !== -1) {
-      const line = pending.slice(0, newline);
-      pending = pending.slice(newline + 1);
-      for (const event of reduce(line)) onEvent(event);
-      newline = pending.indexOf('\n');
-    }
-  };
+  return forwardStreamLines((line) => {
+    for (const event of reduce(line)) onEvent(event);
+  });
 }
 import type {
   AgentPermissionEntry,
@@ -557,8 +550,10 @@ export class ClaudeAdapter implements AgentAdapter {
     const retrieval = options?.retrieval;
     const streaming = options?.onEvent !== undefined;
     const effort = options?.effort ?? null;
-    // One directory per call for its config files, removed whole when it ends.
-    const configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
+    // The run's own directory for its config files; one made here, and removed
+    // whole when the call ends, for a caller that passed none.
+    const ownsDirectory = !options?.runDirectory;
+    const configDirectory = options?.runDirectory ?? fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
 
     try {
       return await runCliPrintAnswer({
@@ -596,8 +591,9 @@ export class ClaudeAdapter implements AgentAdapter {
     } finally {
       // The MCP config carries a live token. It exists only for the duration of
       // one call, and `force` because Windows may still hold the handle for a
-      // beat after the child exits.
-      fs.rmSync(configDirectory, { recursive: true, force: true });
+      // beat after the child exits. A caller's run directory is the caller's
+      // to remove.
+      if (ownsDirectory) fs.rmSync(configDirectory, { recursive: true, force: true });
     }
   }
 
@@ -605,15 +601,15 @@ export class ClaudeAdapter implements AgentAdapter {
    * The same run as `answerFromContext`, kept open: `--input-format
    * stream-json` makes the CLI read one user turn per stdin line and answer
    * each, ending every turn with a `result` line. Same flags otherwise, so the
-   * same read-only guarantee. The session owns `input.cwd` for its config
-   * files; the pool removes it with the session.
+   * same read-only guarantee. Its config files live in `input.runDirectory`,
+   * which the pool removes with the session.
    */
   openAnswerSession(input: AnswerSessionInput): AnswerSession {
     const effort = input.effort ?? null;
     return openStdinJsonSession({
       cliPath: input.cliPath,
       args: [
-        ...answerArgs({ directory: input.cwd, retrieval: input.retrieval, streaming: true, model: input.model, effort }),
+        ...answerArgs({ directory: input.runDirectory, retrieval: input.retrieval, streaming: true, model: input.model, effort }),
         '--input-format', 'stream-json',
       ],
       cwd: input.cwd,

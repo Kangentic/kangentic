@@ -6,7 +6,7 @@ import type { RequestResolver } from './project-resolver';
 import { runSearchEverything } from '../../search/search-core';
 import type { SearchHit, Project } from '../../../shared/types';
 import { isAnswerCaller } from './caller-url';
-import { publishAnswerSearch } from './answer-search-trace';
+import { ANSWER_SEARCH_BUDGET, claimAnswerSearch, publishAnswerSearch } from './answer-search-trace';
 import {
   indexedConversationNodes,
   searchRelatedWork,
@@ -55,6 +55,17 @@ export function registerSearchTools(
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ query, scope, mode, taskId, groupBy, project }): Promise<McpToolResult> => {
+      // An answer run's question has a search budget. Past it, the tool says
+      // so in words the agent acts on (answer now), rather than failing, so a
+      // run that over-searches still ends in an answer.
+      if (callerSessionId && isAnswerCaller(callerSessionId) && !claimAnswerSearch(callerSessionId)) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `This question has used its ${ANSWER_SEARCH_BUDGET} searches. Do not search again: answer now from what you have already found.`,
+          }],
+        };
+      }
       const resolved = resolver.resolveProject(project);
       if ('error' in resolved) {
         return {

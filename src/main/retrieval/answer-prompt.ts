@@ -14,6 +14,7 @@
  * design has none: every answer is prose plus rows, whatever was asked.
  */
 
+import { ANSWER_SEARCH_BUDGET } from '../agent/mcp-http/answer-search-trace';
 import type { AnswerTaskTable } from './answer-tasks';
 import { formatTaskFieldGlossary, formatTaskTable, summarizeTaskTable } from './answer-tasks';
 import { MEMORY_TASK_FIELDS, type MemoryTaskFacts, type MemoryTaskFieldKey } from '../../shared/memory-task-fields';
@@ -95,6 +96,8 @@ function rules(context: AnswerPromptContext): string {
           + ' with mode "hybrid" and a query describing what you are looking for. If it misses, search again with'
           + ' different words before concluding the conversations do not cover it. Never tell the reader you would'
           + ' need to search: search.',
+        `You may search at most ${ANSWER_SEARCH_BUDGET} times for one question, so make each search a different`
+          + ' angle rather than a fragment of the last one, and answer from what you have once they are spent.',
         ...(projects
           ? [
             `The question spans ${projects.names.length} projects: ${projects.names.join(', ')}. A search covers`

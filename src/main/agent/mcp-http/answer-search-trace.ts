@@ -20,20 +20,52 @@ export interface AnswerSearchEvent {
 
 type Listener = (event: AnswerSearchEvent) => void;
 
-const listeners = new Map<string, Listener>();
+/**
+ * Searches one question may make.
+ *
+ * Measured on Grok 4.7: told to "search again with different words before
+ * concluding", it made about 50 searches over 95 seconds before writing a
+ * word, chasing fragments of a sentence it wanted to quote. The answer was
+ * right and nobody would wait for it. The related work already hands over the
+ * strongest matches, so a few searches cover a real gap. The prompt states the
+ * budget; this enforces it, for every agent, whatever its prompt adherence.
+ */
+export const ANSWER_SEARCH_BUDGET = 4;
 
-/** Watch one answer caller's searches. Returns the unsubscribe. */
+interface Watch {
+  listener: Listener;
+  used: number;
+}
+
+const watches = new Map<string, Watch>();
+
+/** Watch one answer caller's searches for one question, with a fresh search
+ *  budget. Returns the unsubscribe. */
 export function watchAnswerSearches(callerId: string, listener: Listener): () => void {
-  listeners.set(callerId, listener);
+  const watch: Watch = { listener, used: 0 };
+  watches.set(callerId, watch);
   return () => {
-    if (listeners.get(callerId) === listener) listeners.delete(callerId);
+    if (watches.get(callerId) === watch) watches.delete(callerId);
   };
+}
+
+/**
+ * Claim one search for this caller's question. False once its budget is
+ * spent. A caller no question is watching (a probe, a run whose question
+ * already ended) is not limited here.
+ */
+export function claimAnswerSearch(callerId: string): boolean {
+  const watch = watches.get(callerId);
+  if (!watch) return true;
+  if (watch.used >= ANSWER_SEARCH_BUDGET) return false;
+  watch.used += 1;
+  return true;
 }
 
 /** Called by the search tool after an answer caller's search. Never throws. */
 export function publishAnswerSearch(callerId: string, event: AnswerSearchEvent): void {
   try {
-    listeners.get(callerId)?.(event);
+    watches.get(callerId)?.listener(event);
   } catch {
     // A broken listener must never fail the agent's search.
   }

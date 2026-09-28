@@ -311,15 +311,22 @@ describe('the Ask handler', () => {
     });
   });
 
-  it('runs each question in a fresh scratch directory and removes it afterwards', async () => {
+  it('starts every question in the one answer home, with a fresh run directory it removes afterwards', async () => {
     // Never the project: its instruction files cost tokens the answer may not
-    // use. Never a shared directory: a run writes its prompt file and MCP config
-    // there, and two answers would overwrite each other's.
-    let runDirectory = '';
-    let existedDuringRun = false;
-    const answerSpy = vi.fn(async (_prompt: string, _cliPath: string, cwd: string) => {
-      runDirectory = cwd;
-      existedDuringRun = fs.existsSync(cwd);
+    // use. Always the SAME working directory: agent CLIs key state by it, and a
+    // fresh one per question left an entry per question in the user's tools.
+    // What the run writes and passes by path goes in its own run directory,
+    // which goes when it ends.
+    const seen: Array<{ cwd: string; runDirectory: string; runDirectoryExisted: boolean }> = [];
+    const answerSpy = vi.fn(async (
+      _prompt: string,
+      _cliPath: string,
+      cwd: string,
+      _model?: string | null,
+      options?: AnswerFromContextOptions,
+    ) => {
+      const runDirectory = options?.runDirectory ?? '';
+      seen.push({ cwd, runDirectory, runDirectoryExisted: fs.existsSync(runDirectory) });
       return 'Answered.';
     });
     mockAdapters = [claudeAdapter(answerSpy)];
@@ -327,10 +334,14 @@ describe('the Ask handler', () => {
     registerSearchHandlers(makeContext() as any);
 
     await ask('anything');
-    expect(path.basename(runDirectory)).toMatch(/^kangentic-answer-/);
-    expect(path.dirname(runDirectory)).toBe(os.tmpdir());
-    expect(existedDuringRun).toBe(true);
-    expect(fs.existsSync(runDirectory)).toBe(false);
+    await ask('anything else');
+    expect(seen[0].cwd).toBe(path.join(os.tmpdir(), 'kangentic-ask-home'));
+    expect(seen[1].cwd).toBe(seen[0].cwd);
+    expect(fs.existsSync(seen[0].cwd)).toBe(true);
+    expect(path.basename(seen[0].runDirectory)).toMatch(/^kangentic-answer-/);
+    expect(seen[1].runDirectory).not.toBe(seen[0].runDirectory);
+    expect(seen[0].runDirectoryExisted).toBe(true);
+    expect(fs.existsSync(seen[0].runDirectory)).toBe(false);
   });
 
   it('offers the search tool only to an agent whose answer run can use it', async () => {
