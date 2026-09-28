@@ -11,7 +11,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { linkifyTickets, stripProtocolLine } from '../../src/renderer/components/memory/MemoryChatText';
+import {
+  keepMarksWithPunctuation,
+  linkifyTickets,
+  stripProtocolLine,
+  type AnswerTreeNode,
+} from '../../src/renderer/components/memory/MemoryChatText';
 
 describe('linkifying tickets in an answer', () => {
   it('rewrites a ticket into a private link', () => {
@@ -86,6 +91,50 @@ describe('linkifying tickets in an answer', () => {
       .toBe('Mostly [Mobile-App#88](#kng-ticket-88-mobile-app), [mobile#3](#kng-ticket-3-mobile) and [#88](#kng-ticket-88); not web#4.');
     expect(linkifyTickets('**mobile#3 and #4** matter.', prefixes))
       .toBe('[mobile#3](#kng-ticket-3-mobile) and [#4](#kng-ticket-4) matter.');
+  });
+});
+
+describe('keeping a mark on one line with its punctuation', () => {
+  // Seen in a real answer: "#383" ended a line and ", #377" opened the next,
+  // since Chrome breaks beside an inline-block where it would not beside a word.
+  const text = (value: string): AnswerTreeNode => ({ type: 'text', value });
+  const mark = (ticket: number): AnswerTreeNode => ({
+    type: 'element', tagName: 'a', properties: { href: `#kng-ticket-${ticket}` }, children: [text(`#${ticket}`)],
+  });
+  /** A node read back as text, with `[...]` around each no-wrap group. */
+  const flatten = (node: AnswerTreeNode): string => {
+    if (node.type === 'text') return node.value ?? '';
+    const inner = (node.children ?? []).map(flatten).join('');
+    const className = node.properties?.className;
+    return Array.isArray(className) && className.includes('whitespace-nowrap') ? `[${inner}]` : inner;
+  };
+
+  it('groups a mark with the punctuation after it and a ( before it', () => {
+    const paragraph: AnswerTreeNode = {
+      type: 'element', tagName: 'p',
+      children: [text('Mostly '), mark(383), text(', then '), mark(381), text(' (see '), mark(413), text(').')],
+    };
+    keepMarksWithPunctuation(paragraph);
+    expect(flatten(paragraph)).toBe('Mostly [#383,] then #381 (see [#413).]');
+  });
+
+  it('takes the ( directly before a mark, and reaches marks nested in other elements', () => {
+    const paragraph: AnswerTreeNode = {
+      type: 'element', tagName: 'p',
+      children: [text('Both ('), { type: 'element', tagName: 'strong', children: [mark(5)] }, text(' and ('), mark(6), text(')')],
+    };
+    keepMarksWithPunctuation(paragraph);
+    // The first mark sits inside <strong>, so its ( is outside its parent and stays put.
+    expect(flatten(paragraph)).toBe('Both (#5 and [(#6)]');
+  });
+
+  it('leaves a link that is not a ticket alone', () => {
+    const paragraph: AnswerTreeNode = {
+      type: 'element', tagName: 'p',
+      children: [{ type: 'element', tagName: 'a', properties: { href: 'https://example.com' }, children: [text('docs')] }, text('.')],
+    };
+    keepMarksWithPunctuation(paragraph);
+    expect(flatten(paragraph)).toBe('docs.');
   });
 });
 

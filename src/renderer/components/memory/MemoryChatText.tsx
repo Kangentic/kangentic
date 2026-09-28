@@ -33,6 +33,13 @@ export function ticketRef(task: Pick<MemoryRelatedTask, 'ref' | 'displayId'>): s
   return task.ref ?? (task.displayId != null ? `#${task.displayId}` : null);
 }
 
+/**
+ * A ticket mark's shape. Tight on purpose: no margin, and 3px of padding, so
+ * the punctuation after a mark sits against it the way it would against a
+ * word. With 5px of padding and a 1px margin, "#383, #381" read as "#383 ,".
+ */
+const MARK_CLASS = 'inline-block rounded bg-surface-control px-[3px] align-baseline text-[11.5px] font-semibold';
+
 /** A ticket's link fragment: `#kng-ticket-561`, or `#kng-ticket-88-mobile` with its project prefix. */
 const TICKET_FRAGMENT = /^#kng-ticket-(\d+)(?:-([a-z0-9-]+))?$/;
 
@@ -85,6 +92,63 @@ export function linkifyTickets(text: string, prefixes: ReadonlySet<string> = new
   }).join('\n');
 }
 
+/** The fields of the rendered answer's tree that `keepMarksWithPunctuation` reads. */
+export interface AnswerTreeNode {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: AnswerTreeNode[];
+}
+
+function isTicketLink(node: AnswerTreeNode): boolean {
+  const href = node.properties?.href;
+  return node.type === 'element' && node.tagName === 'a' && typeof href === 'string' && href.startsWith('#kng-ticket-');
+}
+
+/**
+ * Keep each mark on one line with the punctuation touching it. A mark is an
+ * inline-block, and Chrome breaks a line beside one where it never would beside
+ * a word, a word joiner included: "#383" ended a line and ", #377" opened the
+ * next. So a mark, a `(` right before it and the punctuation right after it go
+ * into one no-wrap span. Runs on the parsed tree, after markdown, so the
+ * markdown itself is never rewritten for layout.
+ */
+export function keepMarksWithPunctuation(parent: AnswerTreeNode): void {
+  const children = parent.children;
+  if (!children) return;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    if (!isTicketLink(child)) {
+      keepMarksWithPunctuation(child);
+      continue;
+    }
+    const previous = children[index - 1];
+    const next = children[index + 1];
+    const before = previous?.type === 'text' && previous.value?.endsWith('(') ? '(' : '';
+    const after = next?.type === 'text' ? /^[,.;:!?)]+/.exec(next.value ?? '')?.[0] ?? '' : '';
+    if (!before && !after) continue;
+    const group: AnswerTreeNode[] = [];
+    if (before && previous) {
+      previous.value = previous.value?.slice(0, -before.length);
+      group.push({ type: 'text', value: before });
+    }
+    group.push(child);
+    if (after && next) {
+      next.value = next.value?.slice(after.length);
+      group.push({ type: 'text', value: after });
+    }
+    children[index] = { type: 'element', tagName: 'span', properties: { className: ['whitespace-nowrap'] }, children: group };
+  }
+}
+
+/** `keepMarksWithPunctuation` as a rehype step. */
+function rehypeKeepMarksWithPunctuation() {
+  return (tree: { type: string }) => keepMarksWithPunctuation(tree as AnswerTreeNode);
+}
+
+const REHYPE_PLUGINS = [rehypeKeepMarksWithPunctuation];
+
 export function MemoryChatText({
   text,
   tasksByTicket,
@@ -118,7 +182,7 @@ export function MemoryChatText({
             <span
               title={task.title}
               data-testid="memory-chat-ticket"
-              className="mx-px inline-block rounded bg-surface-control px-[5px] align-baseline text-[11.5px] font-semibold text-fg-muted"
+              className={`${MARK_CLASS} text-fg-muted`}
             >
               {label}
             </span>
@@ -130,7 +194,7 @@ export function MemoryChatText({
             onClick={() => onOpenTask(task)}
             title={task.title}
             data-testid="memory-chat-ticket"
-            className="mx-px inline-block rounded bg-surface-control px-[5px] align-baseline text-[11.5px] font-semibold text-fg hover:bg-surface-hover cursor-pointer"
+            className={`${MARK_CLASS} text-fg hover:bg-surface-hover cursor-pointer`}
           >
             {label}
           </button>
@@ -162,7 +226,7 @@ export function MemoryChatText({
 
   return (
     <div className="markdown-body memory-answer-body text-[13px] leading-[1.6] text-fg" data-testid="memory-chat-answer">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
         {linkifyTickets(stripProtocolLine(text), prefixes)}
       </ReactMarkdown>
     </div>
