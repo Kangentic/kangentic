@@ -51,6 +51,21 @@ describe('the digest prompt', () => {
     ]);
   });
 
+  it('drops PR and issue numbers, which the answering agent would read as task marks', () => {
+    const reply = [
+      'D1: Restyled the Backlog edit dialog to match the task detail; merged in PR #306.',
+      'D2: Fixed push alerts rendering twice, merged as PR #303, and debounced the idle signal.',
+      'D3: Bumped the build tooling and merged dependabot PR #12.',
+      'D4: Fixed GitHub issue #88 in the relay (#91) client.',
+    ].join('\n');
+    expect([...parseDigestReply(reply, 4).values()]).toEqual([
+      'Restyled the Backlog edit dialog to match the task detail.',
+      'Fixed push alerts rendering twice, and debounced the idle signal.',
+      'Bumped the build tooling.',
+      'Fixed GitHub issue in the relay client.',
+    ]);
+  });
+
   it('cuts a digest that runs long, since it is a summary', () => {
     const digests = parseDigestReply(`D1: ${'word '.repeat(200)}`, 1);
     expect((digests.get(0) ?? '').length).toBeLessThanOrEqual(363);

@@ -73,6 +73,26 @@ export function buildDigestPrompt(inputs: ReadonlyArray<DigestInput>): string {
   ].join('\n');
 }
 
+const MERGED_CLAUSE = /[;,]?\s*(?:and\s+)?(?:was\s+)?(?:merged|landed|shipped)\s+(?:in|as|via)?\s*(?:\w+\s+)?(?:PR|pull request)\s*#\d+/gi;
+const NUMBER_REF = /\s*\(#\d+\)|\s*#\d+/g;
+
+/**
+ * A digest without its `#N` references. The answering agent names tasks as
+ * `#N`, so a PR or issue number inside a digest reads as a task it could cite.
+ * The rules ask for none, and about one Sonnet digest in five still ended
+ * "merged in PR #306" (40 of 210 on the real board), so the reply is cleaned
+ * rather than trusted. Whether a task merged is in the facts already.
+ */
+export function withoutNumberRefs(text: string): string {
+  return text
+    .replace(MERGED_CLAUSE, '')
+    .replace(NUMBER_REF, '')
+    .replace(/\s+([.,;])/g, '$1')
+    .replace(/[,;]+\./g, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 /**
  * The digests a reply holds, by the task's position in the batch. A label the
  * reply skipped is absent, so that task is tried again in a later batch.
@@ -84,7 +104,7 @@ export function parseDigestReply(reply: string, count: number): Map<number, stri
     if (!match) continue;
     const position = Number(match[1]) - 1;
     if (position < 0 || position >= count || digests.has(position)) continue;
-    const digest = clip(match[2].replace(/^["']|["']$/g, ''), DIGEST_MAX_CHARS);
+    const digest = clip(withoutNumberRefs(match[2].replace(/^["']|["']$/g, '')), DIGEST_MAX_CHARS);
     if (digest) digests.set(position, digest);
   }
   return digests;
