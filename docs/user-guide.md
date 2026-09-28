@@ -1086,8 +1086,8 @@ beside it, so a question finds a task by what it did, not only by what its title
 The card has its own **Agent**, **Model** and **Effort**, separate from the answering agent's, and
 they start empty, so switching digests on spends nothing until you choose. Until then its status
 line shows what the first run will take ("Waiting for an agent: 412 tasks here, about 42 calls").
-Digests are written in the background, ten tasks to a call, a few calls at a time (at Sonnet, about
-$0.05 per ten tasks), and a task that reaches Done gets one on the next pass. The status line then
+Digests are written in the background, ten tasks to a call, three calls at a time (at Sonnet, about
+$0.02 per ten tasks, and about three minutes for 700 tasks), and a task that reaches Done gets one on the next pass. The status line then
 says how far along it is, when it has caught up, how many tasks the agent passed over (tried again
 on the next launch), and when a failed call will be tried again. Switching digests off stops new
 calls and keeps the digests already written, so they go on helping search. A new model applies to

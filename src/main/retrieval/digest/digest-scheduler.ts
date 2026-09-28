@@ -1,23 +1,24 @@
 import { runDigestPass, type DigestPassResult, type DigestWriter } from './digest-pass';
 
 /**
- * When task digests are written: one pass at a time for the whole app, a few
- * batches per pass, and another pass after a short gap while any finished task
- * is still without a current digest. A board's first backfill therefore runs
- * in the background at one call every few seconds instead of as one burst, and
- * a pass whose call failed backs off rather than retrying at once.
+ * When task digests are written: one pass at a time for the whole app, three
+ * calls of ten tasks per pass running side by side, and the next pass straight
+ * after while any finished task is still without a current digest. A pass
+ * whose call failed backs off rather than retrying at once.
  *
  * Every board change asks for a pass, so a caught-up board must answer cheaply:
  * a request whose fingerprint matches the last caught-up pass skips everything.
  *
- * Measured on a real board: a batch of ten tasks at Sonnet cost $0.046 and
- * took 9.3 s, so a 673-task backfill is about 68 calls and $3.
+ * Measured on a real board (Sonnet 5.5, low effort): a call of ten tasks costs
+ * $0.020 and takes 6.6 s, and three side by side take 7.7 s. A 673-task
+ * backfill is 68 calls and about $1.40, in about three minutes; one call at a
+ * time with a 15 s pause between passes took 11.5.
  */
 
-/** Batches (of ten tasks) per pass. */
+/** Batches (of ten tasks) per pass, all running at once. */
 const PASS_BATCHES = 3;
-/** Gap before the next pass while work remains. */
-const PASS_GAP_MS = 15_000;
+/** Pause before the next pass while work remains: a yield, not pacing. */
+const PASS_GAP_MS = 1_000;
 /** Gap after a pass whose call failed. */
 const FAILURE_BACKOFF_MS = 5 * 60_000;
 

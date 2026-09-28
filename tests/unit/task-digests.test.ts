@@ -178,6 +178,43 @@ describe('a digest pass', () => {
     const failed = await runDigestPass('project', { agent: 'claude', model: null, write: async () => { throw new Error('quota'); } }, { maxBatches: 3, shouldContinue: () => true }, passDeps(fakeBoard({ finished: ['a', 'b'] }).db));
     expect(failed).toMatchObject({ written: 0, remaining: 2, failed: true });
   });
+
+  it('runs the batches of a pass side by side, not one after another', async () => {
+    // A call's time is the model writing each digest, so three calls at once
+    // write thirty tasks in about the time one writes ten.
+    const finished = Array.from({ length: 30 }, (_unused, index) => `t${index}`);
+    const { db } = fakeBoard({ finished });
+    const release: Array<() => void> = [];
+    const write = vi.fn((prompt: string) => new Promise<string>((resolve) => {
+      const count = (prompt.match(/<task label=/g) ?? []).length;
+      release.push(() => resolve(Array.from({ length: count }, (_unused, index) => `D${index + 1}: Digest.`).join('\n')));
+    }));
+
+    const pass = runDigestPass('project', { agent: 'claude', model: 'sonnet', write }, { maxBatches: 3, shouldContinue: () => true }, passDeps(db));
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(3));
+    // All three are in flight before any has answered.
+    expect(release).toHaveLength(3);
+    release.forEach((answer) => answer());
+    expect(await pass).toMatchObject({ written: 30, remaining: 0, failed: false });
+  });
+
+  it('keeps the digests of the calls that answered when another fails', async () => {
+    const finished = Array.from({ length: 20 }, (_unused, index) => `t${index}`);
+    const { db, calls } = fakeBoard({ finished });
+    let callIndex = 0;
+    const write = vi.fn(async (prompt: string) => {
+      callIndex += 1;
+      if (callIndex === 1) throw new Error('rate limited');
+      const count = (prompt.match(/<task label=/g) ?? []).length;
+      return Array.from({ length: count }, (_unused, index) => `D${index + 1}: Digest.`).join('\n');
+    });
+
+    const result = await runDigestPass('project', { agent: 'claude', model: 'sonnet', write }, { maxBatches: 3, shouldContinue: () => true }, passDeps(db));
+
+    // The failed call's ten stay for a later pass; the other ten are written.
+    expect(result).toMatchObject({ written: 10, remaining: 10, failed: true });
+    expect(digestWrites(calls)).toHaveLength(10);
+  });
 });
 
 describe('the digest scheduler', () => {
@@ -208,13 +245,14 @@ describe('the digest scheduler', () => {
   }
   const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-  it('runs another pass after a short gap while digests remain, and re-reads the records after each write', async () => {
+  it('runs the next pass straight after while digests remain, and re-reads the records after each write', async () => {
     const { scheduler, runPass, onWritten, timers } = harness([{ written: 30, remaining: 40 }, { written: 30, remaining: 0 }]);
     scheduler.request('context', 'project');
     await settle();
     expect(runPass).toHaveBeenCalledTimes(1);
     expect(onWritten).toHaveBeenCalledWith('context', 'project');
-    expect(timers.map((timer) => timer.delayMs)).toEqual([15_000]);
+    // A yield, not pacing: a backfill is meant to finish.
+    expect(timers.map((timer) => timer.delayMs)).toEqual([1_000]);
 
     timers[0].fire();
     await settle();

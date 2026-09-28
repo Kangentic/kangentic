@@ -38,6 +38,13 @@ const defaultDeps: DigestPassDeps = {
  * Write the digests of up to `maxBatches` batches of finished tasks whose
  * digest is missing or out of date, most recent work first. Never throws.
  *
+ * The batches of one pass run AT ONCE. A call's time is the model writing
+ * about 75 tokens per digest, so a bigger batch is barely faster per task
+ * (measured on Sonnet 5.5 at low effort: ten tasks 6.6 s, thirty 15.9 s),
+ * while three calls side by side write thirty in 7.7 s. A failed call costs
+ * only its own batch: the others' digests are kept, and its tasks stay for a
+ * later pass.
+ *
  * `skip` holds tasks an earlier pass asked about and got no digest for, so one
  * the agent keeps passing over costs a call once, not every pass.
  */
@@ -66,20 +73,30 @@ export async function runDigestPass(
     return result;
   }
 
-  let attempted = 0;
-  for (let batchIndex = 0; batchIndex < options.maxBatches && attempted < stale.length; batchIndex += 1) {
-    if (!options.shouldContinue()) break;
-    const batch = stale.slice(attempted, attempted + DIGEST_BATCH_SIZE);
-    attempted += batch.length;
-    let reply: string;
+  const batches: Array<typeof stale> = [];
+  for (let start = 0; batches.length < options.maxBatches && start < stale.length; start += DIGEST_BATCH_SIZE) {
+    batches.push(stale.slice(start, start + DIGEST_BATCH_SIZE));
+  }
+  if (!options.shouldContinue()) {
+    result.remaining = stale.length;
+    return result;
+  }
+  const replies = await Promise.all(batches.map(async (batch) => {
     try {
-      reply = await writer.write(buildDigestPrompt(batch.map((candidate) => candidate.input)));
+      return { batch, reply: await writer.write(buildDigestPrompt(batch.map((candidate) => candidate.input))) };
     } catch (error) {
       console.warn('[retrieval] a digest batch failed:', error);
-      result.failed = true;
-      attempted -= batch.length;
-      break;
+      return { batch, reply: null };
     }
+  }));
+
+  let attempted = 0;
+  for (const { batch, reply } of replies) {
+    if (reply === null) {
+      result.failed = true;
+      continue;
+    }
+    attempted += batch.length;
     const digests = parseDigestReply(reply, batch.length);
     batch.forEach((candidate, position) => {
       const digest = digests.get(position);
