@@ -1,5 +1,9 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { CopilotDetector } from './detector';
+import { createCopilotAnswerReducer, extractCopilotAnswer } from './answer-stream';
 import { CopilotCommandBuilder } from './command-builder';
 import { removeSessionConfig } from './hook-manager';
 import { CopilotStatusParser } from './status-parser';
@@ -7,8 +11,13 @@ import { CopilotStreamParser } from './stream-parser';
 import { migrateCopilotProjectData } from './project-relocation';
 import { discoverCopilotCapabilities } from './capability-discovery';
 import { createCopilotCommandInjectionVerifier } from './command-injection-verifier';
-import { runCliPrintSummarize,
-  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
+import {
+  runCliPrintSummarize,
+  runCliPrintAnswer,
+  buildSummarizePrompt,
+  forwardStreamLines,
+  ANSWER_STREAM_OUTPUT_BUDGET,
+} from '../../shared/auto-name';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -247,7 +256,7 @@ export class CopilotAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' };
+  readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -265,6 +274,23 @@ export class CopilotAdapter implements AgentAdapter {
    * "does not support reasoning effort configuration", and that error reaches
    * the user verbatim rather than the flag being dropped behind their back.
    *
+   * STREAMING is `--output-format json --stream on`: JSONL whose
+   * `assistant.message_delta` lines carry the text as written
+   * (`answer-stream.ts`, measured on CLI 1.0.88).
+   *
+   * SEARCH is our server added for this run only (`--additional-mcp-config`,
+   * which augments the user's own config), approved by name (`--allow-tool`),
+   * and made the ONLY tool the model can see: `--available-tools kangentic`
+   * disabled every built-in tool in the probe (create, edit, powershell, view,
+   * web_fetch among them) while the search worked. Stronger than not approving
+   * them, since the model is never offered a write it could ask for.
+   * `--disable-builtin-mcps` drops the GitHub server.
+   *
+   * The session is named up front (`--session-id`) and removed from
+   * `~/.copilot/session-state` after the run: an answer is not a session to
+   * resume, and each one left a folder there, which Copilot's model discovery
+   * also reads.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -275,18 +301,53 @@ export class CopilotAdapter implements AgentAdapter {
     model?: string | null,
     options?: AnswerFromContextOptions,
   ): Promise<string> {
-    return runCliPrintAnswer({
-      cliPath,
-      // The model and effort flags are OMITTED when none is chosen: passing an
-      // empty value is an error.
-      args: [
-        '--silent',
-        ...(model ? ['--model', model] : []),
-        ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
-      ],
-      prompt,
-      cwd,
-    });
+    const retrieval = options?.retrieval;
+    const onEvent = options?.onEvent;
+    const sessionId = randomUUID();
+    const searchArgs: string[] = [];
+    if (retrieval) {
+      const configPath = path.join(options?.runDirectory ?? cwd, 'copilot-answer-mcp.json');
+      // sync-write-ok: the run names this file in --additional-mcp-config and
+      // cannot search without it. The throw reaches the MEMORY_GRAPH_ANSWER
+      // handler's catch, which shows it as the answer's failure.
+      fs.writeFileSync(configPath, JSON.stringify({
+        mcpServers: { kangentic: { type: 'http', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token } } },
+      }));
+      searchArgs.push(
+        '--additional-mcp-config', `@${configPath}`,
+        '--allow-tool', 'kangentic',
+        '--available-tools', 'kangentic',
+        '--disable-builtin-mcps',
+      );
+    }
+    const reduce = createCopilotAnswerReducer();
+    try {
+      return await runCliPrintAnswer({
+        cliPath,
+        // The model and effort flags are OMITTED when none is chosen: passing an
+        // empty value is an error.
+        args: [
+          '--silent',
+          '--output-format', 'json',
+          '--stream', onEvent ? 'on' : 'off',
+          '--session-id', sessionId,
+          '--no-ask-user',
+          ...searchArgs,
+          ...(model ? ['--model', model] : []),
+          ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
+        ],
+        prompt,
+        cwd,
+        extractRaw: extractCopilotAnswer,
+        outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+        ...(onEvent
+          ? { onChunk: forwardStreamLines((line) => { for (const event of reduce(line)) onEvent(event); }) }
+          : {}),
+      });
+    } finally {
+      await fs.promises.rm(path.join(os.homedir(), '.copilot', 'session-state', sessionId), { recursive: true, force: true })
+        .catch(() => undefined);
+    }
   }
 
   /**

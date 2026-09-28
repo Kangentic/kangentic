@@ -4,10 +4,17 @@ import { AgentDetector } from '../../shared/agent-detector';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { CursorStreamParser } from './stream-parser';
-import { runCliPrintSummarize,
-  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
+import {
+  runCliPrintSummarize,
+  runCliPrintAnswer,
+  buildSummarizePrompt,
+  forwardStreamLines,
+  ANSWER_STREAM_OUTPUT_BUDGET,
+} from '../../shared/auto-name';
 import { discoverCursorCapabilities } from './capability-discovery';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
+import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
+import { CURSOR_MCP_TOKEN_ENV, CURSOR_MCP_URL_ENV, removeCursorChat, writeCursorAnswerWorkspace } from './answer-workspace';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type {
   AgentCapabilities,
   AgentPermissionEntry,
@@ -342,7 +349,7 @@ export class CursorAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+  readonly answerCapabilities = { streaming: true, search: true, model: true, effort: false };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -357,6 +364,22 @@ export class CursorAdapter implements AgentAdapter {
    *   characters, past the Windows command-line limit, and `-p` reads a piped
    *   prompt (measured: a 61,584-character prompt answered from its middle row).
    *
+   * STREAMING is `stream-json` with `--stream-partial-output`, read by
+   * `answer-stream.ts` (the answer is the complete final assistant line; the
+   * `result` line fuses every turn's text).
+   *
+   * SEARCH is a workspace `.cursor/mcp.json` in the answer home, STATIC: its
+   * url and token header are `${env:...}` references Cursor expands from the
+   * process environment (measured: the server connected), so no token is ever
+   * on disk. Loading the server takes `--approve-mcps`, but CALLING its tool
+   * in ask mode was refused ("User rejected MCP") until the workspace's
+   * `.cursor/cli.json` allowed exactly `Mcp(kangentic:kangentic_search)`. That
+   * file also denies shell and writes, on top of ask mode. `--force` would
+   * also have let the call through, and everything else with it.
+   *
+   * Each run's chat is removed from `~/.cursor/chats` afterwards: an answer is
+   * not a chat to resume.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -365,21 +388,42 @@ export class CursorAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
-    return runCliPrintAnswer({
-      cliPath,
-      // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error.
-      args: [
-        '--trust',
-        '--mode', 'ask',
-        '--output-format', 'text',
-        ...(model ? ['--model', model] : []),
-        '-p',
-      ],
-      prompt,
-      cwd,
-    });
+    const retrieval = options?.retrieval;
+    const onEvent = options?.onEvent;
+    if (retrieval) await writeCursorAnswerWorkspace(cwd);
+    let sessionId: string | null = null;
+    const reduce = createCursorAnswerReducer();
+    try {
+      return await runCliPrintAnswer({
+        cliPath,
+        // The model flag is OMITTED when none is chosen: passing an
+        // empty value is an error.
+        args: [
+          '--trust',
+          '--mode', 'ask',
+          '--output-format', 'stream-json',
+          ...(onEvent ? ['--stream-partial-output'] : []),
+          ...(retrieval ? ['--approve-mcps'] : []),
+          ...(model ? ['--model', model] : []),
+          '-p',
+        ],
+        prompt,
+        cwd,
+        extractRaw: extractCursorAnswer,
+        outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+        onChunk: forwardStreamLines((line) => {
+          sessionId ??= cursorInitSessionId(line);
+          if (onEvent) for (const event of reduce(line)) onEvent(event);
+        }),
+        ...(retrieval
+          ? { env: { [CURSOR_MCP_URL_ENV]: retrieval.url, [CURSOR_MCP_TOKEN_ENV]: retrieval.token } }
+          : {}),
+      });
+    } finally {
+      if (sessionId) await removeCursorChat(sessionId);
+    }
   }
 
   getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {

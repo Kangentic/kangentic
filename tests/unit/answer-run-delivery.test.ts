@@ -19,6 +19,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 const { answerSpy } = vi.hoisted(() => ({ answerSpy: vi.fn(async () => 'answered') }));
 
@@ -61,16 +64,81 @@ async function optionsFor(
 describe('answer run flags and prompt delivery', () => {
   beforeEach(() => answerSpy.mockClear());
 
-  it('Copilot pipes the prompt and passes no prompt flag', async () => {
+  it('Copilot pipes the prompt, reads JSONL, and names its session so the run can remove it', async () => {
     const options = await optionsFor(new CopilotAdapter());
-    expect(options.args).toEqual(['--silent', '--model', 'some-model']);
+    const sessionIdIndex = options.args.indexOf('--session-id');
+    expect(options.args.slice(0, 5)).toEqual(['--silent', '--output-format', 'json', '--stream', 'off']);
+    expect(options.args[sessionIdIndex + 1]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(options.args).toContain('--no-ask-user');
+    expect(options.args.slice(-2)).toEqual(['--model', 'some-model']);
+    // No search offered, so no MCP config and no tool rules.
+    expect(options.args).not.toContain('--additional-mcp-config');
     expect(options.promptVia ?? 'stdin').toBe('stdin');
+  });
+
+  it('Copilot searches with our server as the ONLY tool the model can see', async () => {
+    // Measured on CLI 1.0.88: `--available-tools kangentic` disabled every
+    // built-in (create, edit, powershell, view, web_fetch, ...) and the search
+    // still ran.
+    const runDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-answer-test-'));
+    try {
+      answerSpy.mockClear();
+      const events: unknown[] = [];
+      await new CopilotAdapter().answerFromContext('THE PROMPT', '/bin/copilot', '/answer-home', null, {
+        retrieval: { url: 'http://127.0.0.1:1/mcp/p/answer-chat', token: 'secret' },
+        onEvent: (event) => events.push(event),
+        runDirectory,
+      });
+      const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+      const configArg = options.args[options.args.indexOf('--additional-mcp-config') + 1];
+      expect(configArg).toBe(`@${path.join(runDirectory, 'copilot-answer-mcp.json')}`);
+      expect(JSON.parse(fs.readFileSync(configArg.slice(1), 'utf-8'))).toEqual({
+        mcpServers: { kangentic: { type: 'http', url: 'http://127.0.0.1:1/mcp/p/answer-chat', headers: { 'X-Kangentic-Token': 'secret' } } },
+      });
+      expect(options.args[options.args.indexOf('--available-tools') + 1]).toBe('kangentic');
+      expect(options.args[options.args.indexOf('--allow-tool') + 1]).toBe('kangentic');
+      expect(options.args).toContain('--disable-builtin-mcps');
+      expect(options.args[options.args.indexOf('--stream') + 1]).toBe('on');
+      options.onChunk?.(`${JSON.stringify({ type: 'assistant.message_delta', data: { messageId: 'm1', deltaContent: 'Hi' } })}\n`);
+      expect(events).toEqual([{ kind: 'text', text: 'Hi' }]);
+    } finally {
+      fs.rmSync(runDirectory, { recursive: true, force: true });
+    }
   });
 
   it('Cursor runs in ask mode, trusted, with the prompt piped to -p', async () => {
     const options = await optionsFor(new CursorAdapter());
-    expect(options.args).toEqual(['--trust', '--mode', 'ask', '--output-format', 'text', '--model', 'some-model', '-p']);
+    expect(options.args).toEqual(['--trust', '--mode', 'ask', '--output-format', 'stream-json', '--model', 'some-model', '-p']);
     expect(options.promptVia ?? 'stdin').toBe('stdin');
+  });
+
+  it('Cursor searches through a static workspace config and a permission for our one tool', async () => {
+    // Measured: ask mode refused the MCP call ("User rejected MCP") until the
+    // workspace's cli.json allowed exactly this tool. The url and token are
+    // environment references, so neither is written to disk.
+    const answerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-answer-home-'));
+    try {
+      answerSpy.mockClear();
+      await new CursorAdapter().answerFromContext('THE PROMPT', '/bin/cursor-agent', answerHome, null, {
+        retrieval: { url: 'http://127.0.0.1:1/mcp/p/answer-chat', token: 'secret' },
+        onEvent: () => undefined,
+      });
+      const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+      expect(options.args).toContain('--approve-mcps');
+      expect(options.args).toContain('--stream-partial-output');
+      expect(options.args).not.toContain('--force');
+      expect(options.env).toEqual({ KANGENTIC_MCP_URL: 'http://127.0.0.1:1/mcp/p/answer-chat', KANGENTIC_MCP_TOKEN: 'secret' });
+      const mcpConfig = fs.readFileSync(path.join(answerHome, '.cursor', 'mcp.json'), 'utf-8');
+      expect(mcpConfig).not.toContain('secret');
+      expect(JSON.parse(mcpConfig).mcpServers.kangentic).toEqual({
+        url: '${env:KANGENTIC_MCP_URL}',
+        headers: { 'X-Kangentic-Token': '${env:KANGENTIC_MCP_TOKEN}' },
+      });
+      expect(JSON.parse(fs.readFileSync(path.join(answerHome, '.cursor', 'cli.json'), 'utf-8')).permissions.allow)
+        .toEqual(['Mcp(kangentic:kangentic_search)']);
+    } finally {
+      fs.rmSync(answerHome, { recursive: true, force: true });
+    }
   });
 
   it('Droid pipes the prompt to exec, which is read-only by default', async () => {
@@ -121,8 +189,20 @@ describe('answer run flags and prompt delivery', () => {
 
   it('OpenCode pipes the prompt to the read-only plan agent, without -q', async () => {
     const options = await optionsFor(new OpenCodeAdapter());
-    expect(options.args).toEqual(['run', '--agent', 'plan', '--model', 'some-model']);
+    expect(options.args).toEqual(['run', '--agent', 'plan', '--format', 'json', '--pure', '--model', 'some-model']);
     expect(options.promptVia ?? 'stdin').toBe('stdin');
+    expect(options.env).toBeUndefined();
+  });
+
+  it('OpenCode adds our server for the one process, through its config environment variable', async () => {
+    answerSpy.mockClear();
+    await new OpenCodeAdapter().answerFromContext('THE PROMPT', '/bin/opencode', '/answer-home', null, {
+      retrieval: { url: 'http://127.0.0.1:1/mcp/p/answer-chat', token: 'secret' },
+    });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(JSON.parse(options.env?.OPENCODE_CONFIG_CONTENT ?? '{}')).toEqual({
+      mcp: { kangentic: { type: 'remote', url: 'http://127.0.0.1:1/mcp/p/answer-chat', headers: { 'X-Kangentic-Token': 'secret' }, enabled: true } },
+    });
   });
 
   it('Codex runs exec in its read-only sandbox, without the interactive approval flag', async () => {

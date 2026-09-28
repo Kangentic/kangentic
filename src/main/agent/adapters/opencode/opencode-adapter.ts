@@ -10,9 +10,16 @@ import { migrateOpenCodeProjectData } from './project-relocation';
 import { removeHooks as removeOpenCodeHooks } from './hook-manager';
 import { discoverOpenCodeCapabilities } from './capability-discovery';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages } from './remote-client';
-import { runCliPrintSummarize,
-  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+import {
+  runCliPrintSummarize,
+  runCliPrintAnswer,
+  buildSummarizePrompt,
+  forwardStreamLines,
+  spawnCli,
+  ANSWER_STREAM_OUTPUT_BUDGET,
+} from '../../shared/auto-name';
+import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -478,7 +485,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+  readonly answerCapabilities = { streaming: true, search: true, model: true, effort: false };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
@@ -490,6 +497,20 @@ export class OpenCodeAdapter implements AgentAdapter {
    * No `-q`: with it the shipped call returned nothing at all. The spinner it
    * was meant to hide goes to stderr, so stdout is the answer either way.
    *
+   * STREAMING is `--format json`, whose events carry each text part whole as
+   * its step ends (`answer-stream.ts`): by step, not by token, but the
+   * narration, the search and the answer each land as they happen.
+   *
+   * SEARCH is our server added through `OPENCODE_CONFIG_CONTENT`, which
+   * OpenCode merges over the user's config for this process only, so nothing
+   * is written anywhere. The plan agent called it without asking (measured on
+   * 1.18.31: 12 hits). `--pure` keeps external plugins out of an answer and
+   * still loads MCP servers.
+   *
+   * The session each run leaves in OpenCode's database is deleted afterwards
+   * (`opencode session delete`): the answer home is not a git repository, so
+   * its sessions would otherwise pile up in the user's global session list.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -498,15 +519,44 @@ export class OpenCodeAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
-    return runCliPrintAnswer({
-      cliPath,
-      // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error.
-      args: ['run', '--agent', 'plan', ...(model ? ['--model', model] : [])],
-      prompt,
-      cwd,
-    });
+    const retrieval = options?.retrieval;
+    const onEvent = options?.onEvent;
+    let sessionId: string | null = null;
+    try {
+      return await runCliPrintAnswer({
+        cliPath,
+        // The model flag is OMITTED when none is chosen: passing an
+        // empty value is an error.
+        args: ['run', '--agent', 'plan', '--format', 'json', '--pure', ...(model ? ['--model', model] : [])],
+        prompt,
+        cwd,
+        extractRaw: extractOpenCodeAnswer,
+        outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+        onChunk: forwardStreamLines((line) => {
+          sessionId ??= openCodeSessionId(line);
+          if (onEvent) for (const event of openCodeAnswerEvents(line)) onEvent(event);
+        }),
+        ...(retrieval
+          ? {
+            env: {
+              OPENCODE_CONFIG_CONTENT: JSON.stringify({
+                mcp: { kangentic: { type: 'remote', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token }, enabled: true } },
+              }),
+            },
+          }
+          : {}),
+      });
+    } finally {
+      // After the answer, not before it: the delete is its own process, and
+      // the reader is not kept waiting on it.
+      if (sessionId) {
+        const deletion = spawnCli(cliPath, ['session', 'delete', sessionId], cwd);
+        deletion.on('error', () => undefined);
+        deletion.stdin.end();
+      }
+    }
   }
 
   /**
