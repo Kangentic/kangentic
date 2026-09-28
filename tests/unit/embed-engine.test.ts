@@ -12,6 +12,7 @@ vi.mock('../../src/main/retrieval/embedder/embedding-model', () => ({
 import {
   createEmbedEngine,
   computeEmbedSleepMs,
+  RECORD_PROGRESS_INTERVAL_MS,
   type EmbedStore,
   type EmbedWorkerClient,
 } from '../../src/main/retrieval/embedder/embed-engine';
@@ -374,7 +375,7 @@ describe('createEmbedEngine drain loop', () => {
       delay: immediateDelay,
       drainBatchSize: 1,
     });
-    engine.setOnDrained((projectId) => drained.push(projectId));
+    engine.setOnRecordsEmbedded((projectId) => drained.push(projectId));
 
     engine.attach(makeContext({ currentProjectId: 'proj-drains' }));
     engine.markDirty('proj-drains');
@@ -391,6 +392,43 @@ describe('createEmbedEngine drain loop', () => {
     engine.markDirty('proj-idle');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(drained).toEqual(['proj-drains']);
+
+    engine.dispose();
+  });
+
+  it('reports a long record run as it goes, at most once per interval, then once at the end', async () => {
+    const taskChunk = (id: number): StoredChunk => ({ ...makeChunk(id), corpus: 'task' });
+    // Six batches of one record chunk, the clock moving 20 s per batch: reports
+    // at 40, 80 and 120 s of the run, then the caught-up one.
+    const store = new FakeStore('proj-records', [70, 71, 72, 73, 74, 75].map(taskChunk), []);
+    const db = { name: 'proj-records' } as unknown as Database.Database;
+    markVecCapable(db);
+    let clock = 0;
+    const client = makeFakeClient({
+      embed: vi.fn(async (texts: string[]) => {
+        clock += 20_000;
+        return texts.map(() => new Float32Array([0.1]));
+      }),
+    });
+    const reports: Array<{ projectId: string; remaining: number }> = [];
+
+    const engine = createEmbedEngine({
+      getDb: () => db,
+      createStore: () => store,
+      createClient: () => client,
+      delay: immediateDelay,
+      drainBatchSize: 1,
+      now: () => clock,
+    });
+    engine.setOnRecordsEmbedded((projectId) => reports.push({ projectId, remaining: store.remaining }));
+
+    engine.attach(makeContext({ currentProjectId: 'proj-records' }));
+    engine.markDirty('proj-records');
+    await vi.waitFor(() => expect(reports.at(-1)?.remaining).toBe(0));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(RECORD_PROGRESS_INTERVAL_MS).toBe(30_000);
+    expect(reports.map((report) => report.remaining)).toEqual([4, 2, 0, 0]);
 
     engine.dispose();
   });

@@ -119,7 +119,16 @@ export interface EmbedEngineDeps {
   drainBatchSize: number;
   interactiveIdleWaitCapMs: number;
   transientBackoffMs: number;
+  /** The clock the record-progress reports are paced by. */
+  now: () => number;
 }
+
+/**
+ * How often a run that embeds task records reports its progress. A full record
+ * run takes minutes (2,342 chunks in about six on the real board), and a share
+ * that moved only at the end sat at "0% embedded" the whole time.
+ */
+export const RECORD_PROGRESS_INTERVAL_MS = 30_000;
 
 const defaultDeps: EmbedEngineDeps = {
   getDb: getProjectDb,
@@ -130,6 +139,7 @@ const defaultDeps: EmbedEngineDeps = {
   drainBatchSize: EMBED_DRAIN_BATCH,
   interactiveIdleWaitCapMs: INTERACTIVE_IDLE_WAIT_CAP_MS,
   transientBackoffMs: TRANSIENT_BACKOFF_MS,
+  now: () => Date.now(),
 };
 
 /** Config/model accessors the engine needs from an IpcContext. Kept as free
@@ -195,20 +205,30 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
    * Settings -> Developer -> Persist Console Logs is on (see log-mirror.ts) -
    * no verbose logging cost for a user who never turns that on.
    */
-  const drainRuns = new Map<string, { startedAt: number; chunks: number; batches: number; sideChunks: number }>();
+  const drainRuns = new Map<string, {
+    startedAt: number;
+    chunks: number;
+    batches: number;
+    /** Chunks embedded that are not conversations: task records. */
+    sideChunks: number;
+    /** When this run last reported its records' progress. */
+    reportedAt: number;
+  }>();
   /**
-   * Told when a project that had task records to embed has none left. The
-   * Knowledge Graph re-reads its Index then: a corpus's embedded share is read
-   * when the graph loads, and nothing else moves it, so a row caught mid-embed
-   * (a task digest re-embeds its whole record) said "98% embedded" until the
-   * graph was reopened.
+   * Told when task records have been embedded: at most every
+   * `RECORD_PROGRESS_INTERVAL_MS` while a run embeds them, and once when it has
+   * nothing left. The Knowledge Graph re-reads its Index then: a corpus's
+   * embedded share is read when the graph loads, and nothing else moves it, so
+   * a row caught mid-embed (a task digest re-embeds its whole record) said
+   * "98% embedded" until the graph was reopened.
    *
-   * Once per run, and only for a run that embedded something besides
-   * conversations. A conversation-only run follows every agent turn, and a
-   * re-read after each one recomputes the map's coverage on main (about 280 ms
-   * on a 92k-chunk index) for every window showing the graph.
+   * Only for a run that embedded something besides conversations. A
+   * conversation-only run follows every agent turn, and a re-read after each
+   * one recomputes the map's coverage on main (about 280 ms on a 92k-chunk
+   * index) for every window showing the graph. A records-only re-read leaves
+   * that coverage cached.
    */
-  let onDrained: ((projectId: string) => void) | undefined;
+  let onRecordsEmbedded: ((projectId: string) => void) | undefined;
 
   function wake(): void {
     if (wakeResolve) {
@@ -359,7 +379,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
           elapsedMs,
           chunksPerMinute: elapsedMs > 0 ? Math.round((run.chunks / elapsedMs) * 60_000) : null,
         });
-        if (run.sideChunks > 0) onDrained?.(projectId);
+        if (run.sideChunks > 0) onRecordsEmbedded?.(projectId);
       }
       return 'drained';
     }
@@ -379,7 +399,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     await raceWithCap(resolvedClient.waitForInteractiveIdle(), deps.interactiveIdleWaitCapMs, deps.delay);
 
     if (!drainRuns.has(projectId)) {
-      drainRuns.set(projectId, { startedAt: Date.now(), chunks: 0, batches: 0, sideChunks: 0 });
+      drainRuns.set(projectId, { startedAt: Date.now(), chunks: 0, batches: 0, sideChunks: 0, reportedAt: deps.now() });
     }
 
     const startedAt = Date.now();
@@ -410,6 +430,11 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       run.chunks += batch.length;
       run.batches += 1;
       run.sideChunks += batch.filter((chunk) => !(CONVERSATION_CORPUS as ReadonlyArray<string>).includes(chunk.corpus)).length;
+      // Progress on a long record run, so the Index's share moves while it runs.
+      if (run.sideChunks > 0 && deps.now() - run.reportedAt >= RECORD_PROGRESS_INTERVAL_MS) {
+        run.reportedAt = deps.now();
+        onRecordsEmbedded?.(projectId);
+      }
     }
     console.debug('[embed-engine] batch', {
       projectId,
@@ -479,9 +504,9 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
 
     markDirty,
 
-    /** Register the caught-up listener. Last writer wins, like the graph's. */
-    setOnDrained(listener: (projectId: string) => void): void {
-      onDrained = listener;
+    /** Register the records-embedded listener. Last writer wins, like the graph's. */
+    setOnRecordsEmbedded(listener: (projectId: string) => void): void {
+      onRecordsEmbedded = listener;
     },
 
     getEmbedder(context: IpcContext): Embedder | null {

@@ -56,7 +56,7 @@ vi.mock('../../src/main/retrieval/conversation/conversation-indexer', () => ({
 
 const embedEngineMock = vi.hoisted(() => ({
   attach: vi.fn(),
-  setOnDrained: vi.fn(),
+  setOnRecordsEmbedded: vi.fn(),
   markDirty: vi.fn(),
   dispose: vi.fn(),
   getEmbedder: vi.fn(() => null),
@@ -281,7 +281,7 @@ describe('retrievalService - task records follow the board', () => {
 
   it('re-reads an open graph when a project finishes embedding, so its Index shares are current', () => {
     retrievalService.attach(makeContext(new FakeSessionManager()));
-    const listener = embedEngineMock.setOnDrained.mock.calls.at(-1)?.[0] as ((projectId: string) => void) | undefined;
+    const listener = embedEngineMock.setOnRecordsEmbedded.mock.calls.at(-1)?.[0] as ((projectId: string) => void) | undefined;
     expect(listener).toBeTypeOf('function');
     listener?.('proj-1');
     expect(graphServiceMock.notifyChanged).toHaveBeenCalledWith('proj-1');
