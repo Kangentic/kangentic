@@ -939,11 +939,12 @@ adapter-boundary claim on a call that does not branch on an agent.
 
 The task 734 third-pass row is the same task again, with the two earlier passes' tests now
 committed and the source still uncommitted. The conventions finder hit the 25,000-token Read cap
-on a 2000-line call and loaded the pack in smaller windows, as in the second pass. The IPC and HMR
-auditors were told to jump to their sections by the table of contents instead of loading all
-5814 lines, and neither reported missing anything. The maintainability finder did not report its
-reads, so its count is absent from the 16. Most of the 16 were outside the changed set: the
-agent-list handler and config store (IPC), `paths.ts` (twice), and test files for coverage.
+on a 2000-line call and loaded the pack in smaller windows, as in the second pass. The IPC, HMR,
+and `platform-guard` auditors were told to jump to their sections by the table of contents
+instead of loading all 5814 lines, and none reported missing anything. The maintainability
+finder did not report its reads, so its count is absent from the 16. Most of the 16 were outside
+the changed set: the agent-list handler and config store (IPC), `paths.ts` (`platform-guard`),
+and test files for coverage.
 None was a `HUNK_CONTEXT_LINES` case. The one High finding came from verification, not from a
 finder as raised. `platform-guard` flagged the exact `cliPath` compare as a Low case-sensitivity
 nit. The driver traced the spawn path to `resolveShimLaunch`, which swaps an npm `claude.cmd` for
