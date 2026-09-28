@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChartColumn, CloudDownload, Command, Megaphone, Minus, Network, Settings, Square, SquareActivity, X } from 'lucide-react';
+import { Brain, ChartColumn, CloudDownload, Command, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -282,7 +282,7 @@ export function TitleBar({
           aria-label="Knowledge Graph"
           data-testid="memory-graph-button"
         >
-          <Network size={20} />
+          <Brain size={20} />
         </button>
         <button
           onClick={() => (statsPopOut.isOpen ? statsPopOut.focus() : toggleStats())}

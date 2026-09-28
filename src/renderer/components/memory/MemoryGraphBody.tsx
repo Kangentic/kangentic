@@ -21,7 +21,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, CornerDownLeft, Loader2, Network, Sparkles, X } from 'lucide-react';
+import { Brain, Compass, CornerDownLeft, Loader2, Sparkles, X } from 'lucide-react';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
 import { useConfigStore } from '../../stores/config-store';
 import { MemoryChat } from './MemoryChat';
@@ -255,38 +255,43 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
   }, [exploreFromIndex, snapshot]);
 
   /**
-   * Which facet rows can do anything on this corpus.
+   * Which filter segments can narrow this corpus.
    *
-   * A control that can only ever return the same set is worse than no control,
-   * so each row is measured rather than assumed. Time is the one that is not
-   * simply "is the field populated": if every conversation falls inside the
-   * NARROWEST window then all four options select identically, and the row is
-   * dead despite every timestamp being present.
+   * A segment that could only return what "Any" returns is disabled with its
+   * reason, so each one is measured rather than assumed. Time is the one that
+   * is not simply "is the field populated": if every conversation falls inside
+   * the NARROWEST window then all four options select identically, despite
+   * every timestamp being present. A status is the same when every node has it.
    */
   const facetAvailability = useMemo<FacetAvailability>(() => {
     if (!nodes || nodes.length === 0) return NO_FACETS_AVAILABLE;
     const narrowestCutoff = nowMs - TIME_WINDOW_DAYS['7d'] * DAY_MS;
-    const outcomes = new Set<string>();
+    const outcomeCounts = new Map<string, number>();
     let hasOlderThanNarrowest = false;
     for (const node of nodes) {
-      if (node.outcome) outcomes.add(node.outcome);
+      if (node.outcome) outcomeCounts.set(node.outcome, (outcomeCounts.get(node.outcome) ?? 0) + 1);
       if (node.lastActivityMs !== null && node.lastActivityMs < narrowestCutoff) {
         hasOlderThanNarrowest = true;
       }
     }
+    // In a fixed display order, whatever order the corpus yielded.
+    const presentOutcomes = OUTCOME_ORDER.filter((outcome) => outcomeCounts.has(outcome));
     return {
       since: hasOlderThanNarrowest,
-      // Only outcomes this corpus actually contains, in a fixed display order.
-      outcomes: OUTCOME_ORDER.filter((outcome) => outcomes.has(outcome)),
+      outcomes: presentOutcomes.filter((outcome) => outcomeCounts.get(outcome) !== nodes.length),
+      presentOutcomes,
     };
   }, [nodes, nowMs]);
 
   // A selection can outlive the option that offered it - switch to a project
-  // where nothing was abandoned and the scope would silently hold at zero with
-  // no control left on screen to explain why. Healed during render, so no
-  // frame ever commits the dead scope.
+  // where nothing was abandoned and the scope would silently hold at zero on a
+  // segment that is now disabled. Healed during render, so no frame ever
+  // commits the dead scope.
   if (facets.outcome !== 'any' && !facetAvailability.outcomes.includes(facets.outcome)) {
     setFacets((current) => ({ ...current, outcome: 'any' }));
+  }
+  if (facets.since !== 'any' && !facetAvailability.since) {
+    setFacets((current) => ({ ...current, since: 'any' }));
   }
 
   // A rebuild re-clusters from scratch, so region 4 in the old projection is not
@@ -640,7 +645,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
   if (!snapshot) {
     return (
       <CenteredNotice
-        icon={<Network size={22} />}
+        icon={<Brain size={22} />}
         title="No project open"
         body="Open a project to see what its conversation index has learned."
       />

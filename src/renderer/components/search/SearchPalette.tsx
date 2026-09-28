@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, Loader2, Archive, MessageSquare, Terminal, History, Sparkles, Network, CornerDownLeft } from 'lucide-react';
+import { Search, X, Loader2, Archive, MessageSquare, Terminal, History, Sparkles, Brain, CornerDownLeft } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -404,7 +404,7 @@ function AskRow({ question, rowIndex, isSelected, onHover, onClick }: AskRowProp
         isSelected ? 'bg-surface-hover' : 'hover:bg-surface-hover/60'
       }`}
     >
-      <Network size={16} className="flex-shrink-0 text-accent" aria-hidden="true" />
+      <Brain size={16} className="flex-shrink-0 text-accent" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate text-sm text-fg">
         Ask the Knowledge Graph: <span className="text-fg-secondary">{`"${question}"`}</span>
       </span>

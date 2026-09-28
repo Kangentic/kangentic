@@ -16,7 +16,7 @@
  */
 
 import { useEffect } from 'react';
-import { Network, X } from 'lucide-react';
+import { Brain, X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
@@ -85,7 +85,7 @@ export function MemoryGraphPage() {
           {/* A plain lucide glyph, not a branding activity mark: those all mean
               a STATE, so one here would read as "the memory is idle" rather
               than naming the surface. */}
-          <Network size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
+          <Brain size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
           <h1 className="text-sm font-semibold text-fg">Knowledge Graph</h1>
           <ScopeLabel />
         </DetachableSurfaceHeader>

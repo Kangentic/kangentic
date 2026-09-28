@@ -1637,9 +1637,11 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('hides a filter row that could only ever do nothing', async () => {
-    // One region means the region picker can
-    // only return everything, and one outcome means the same of that row.
+  test('keeps a filter row that could only ever do nothing, each choice disabled with its reason', async () => {
+    // One region means the region picker can only return everything, so the
+    // Regions card goes. One status means the same of the status row, but the
+    // filter rows never leave: a scope change must not move the panel, so the
+    // row stays with every status disabled and saying why.
     const oneRegion = `(function () {
       var base = ${projectionLiteral(6)};
       base.clusterings = base.clusterings.map(function (entry) {
@@ -1657,10 +1659,43 @@ test.describe('memory graph', () => {
       await expect(page.locator('[data-testid="memory-graph-canvas"]')).toBeVisible();
       // One region means the panel can only ever show everything.
       await expect(page.locator('[data-testid="memory-graph-regions-toggle"]')).toHaveCount(0);
-      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toHaveCount(0);
-      // Time survives: the fixture's timestamps are years old, so the windows
-      // still select different sets.
+
+      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toBeVisible();
+      await expect(page.locator('[data-testid="memory-graph-filter-outcome-any"]')).toBeEnabled();
+      const finished = page.locator('[data-testid="memory-graph-filter-outcome-done"]');
+      await expect(finished).toBeDisabled();
+      await expect(finished).toHaveAttribute('title', 'Everything on this map is finished');
+      const open = page.locator('[data-testid="memory-graph-filter-outcome-active"]');
+      await expect(open).toBeDisabled();
+      await expect(open).toHaveAttribute('title', 'No open tasks on this map');
+
+      // Time stays live: the fixture's timestamps are years old, so the
+      // windows still select different sets.
+      await expect(page.locator('[data-testid="memory-graph-filter-since-7d"]')).toBeEnabled();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('keeps the time row when everything is recent, its windows disabled with the reason', async () => {
+    // Every conversation inside the narrowest window means all four time
+    // choices select the same set. The row stays, so the status row below it
+    // does not jump up.
+    const allRecent = `(function () {
+      var base = ${projectionLiteral(6)};
+      base.nodes.forEach(function (node) { node.lastActivityMs = Date.now() - 60 * 60 * 1000; });
+      return base;
+    })()`;
+    const { browser, page } = await launchWithState(snapshotScript({ projection: allRecent }));
+    try {
+      await openMemoryGraph(page);
       await expect(page.locator('[data-testid="memory-graph-filter-since"]')).toBeVisible();
+      await expect(page.locator('[data-testid="memory-graph-filter-since-any"]')).toBeEnabled();
+      for (const timeWindow of ['7d', '30d', '90d']) {
+        const option = page.locator(`[data-testid="memory-graph-filter-since-${timeWindow}"]`);
+        await expect(option).toBeDisabled();
+        await expect(option).toHaveAttribute('title', 'Nothing on this map is older than 7 days');
+      }
     } finally {
       await browser.close();
     }

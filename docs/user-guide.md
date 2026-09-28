@@ -914,7 +914,7 @@ Two things the numbers do NOT mean, both said on the tiles themselves. Cost is A
 
 ## Knowledge Graph
 
-Open it from the network icon in the title bar or with `Mod+Shift+A`. It answers "what does this
+Open it from the brain icon in the title bar or with `Mod+Shift+A`. It answers "what does this
 project's conversation index actually know, and how much of my history has it reached" - a question
 neither the Search settings tab (a toggle and a Rebuild button) nor Quick Find (a flat list of keyword matches)
 can answer.
@@ -986,9 +986,10 @@ setting produces the same regions, and the control hides itself rather than offe
 repaint the identical picture.
 
 **Filter** scopes the map by time (Any, 7 days, 30 days, 90 days) and by status (Any, Finished,
-Open, Dropped), each a row of buttons so every choice shows and takes one click. Each row appears
-only when it can actually narrow this index: the time row is hidden when every conversation falls
-inside the shortest window, and a status appears only if something in the index has it. Unlike the
+Open, Dropped), each a row of buttons so every choice shows and takes one click. Both rows always
+show all four choices, so changing the scope never moves the panel. A choice that cannot narrow
+this index is disabled, and its tooltip says why: every time window when nothing is older than 7
+days, a status no task has, and the one status every task has. Unlike the
 colour mode, this row survives a lopsided board, which is the point of it - scoping to the handful
 still open is exactly the question a green map cannot answer.
 

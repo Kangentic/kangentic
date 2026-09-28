@@ -101,26 +101,27 @@ export function facetsAreEmpty(facets: MemoryGraphFacets): boolean {
 }
 
 /**
- * Which facet rows have anything to offer on THIS corpus.
+ * Which filter segments can narrow THIS corpus.
  *
- * A control that can only ever return the same set is worse than no control.
- * Time is the
+ * Both rows always show all four segments, so a scope change never adds or
+ * removes a row or a segment. A segment that could only return what "Any"
+ * returns stays in place, disabled, and its tooltip says why. Time is the
  * subtle one: if every conversation is inside the narrowest window then all
- * three windows and "Any time" select identically, so the row is dead even
- * though the timestamps exist.
+ * three windows and "Any time" select identically, even though the timestamps
+ * exist.
  */
 export interface FacetAvailability {
   since: boolean;
   /**
-   * The outcomes actually present, in display order - not a boolean.
+   * The statuses a segment can select, in display order: on the map, and not
+   * on every node of it (selecting the only status there is selects everything).
    *
    * On a real board archiving happens after Done essentially always, so
-   * "Dropped" (archived without ever reaching Done) often matches nothing. The
-   * status row still shows it, disabled, so the row keeps four segments that
-   * line up with the time row's and a scope change never adds or removes one.
-   * The row itself disappears when fewer than two outcomes remain.
+   * "Dropped" (archived without ever reaching Done) often matches nothing.
    */
   outcomes: ReadonlyArray<MemoryGraphOutcome>;
+  /** The statuses on the map at all, which picks a disabled segment's reason. */
+  presentOutcomes: ReadonlyArray<MemoryGraphOutcome>;
 }
 
 export type MemoryGraphOutcome = 'done' | 'active' | 'abandoned';
@@ -164,7 +165,10 @@ const TIME_OPTIONS: ReadonlyArray<SegmentedControlOption<MemoryGraphTimeWindow>>
 /** Display order, independent of whatever order the corpus happened to yield. */
 export const OUTCOME_ORDER: ReadonlyArray<MemoryGraphOutcome> = ['done', 'active', 'abandoned'];
 
-export const NO_FACETS_AVAILABLE: FacetAvailability = { since: false, outcomes: [] };
+export const NO_FACETS_AVAILABLE: FacetAvailability = { since: false, outcomes: [], presentOutcomes: [] };
+
+/** A time window's tooltip when nothing on the map is older than the narrowest one. */
+const NO_OLDER_WORK_TITLE = 'Nothing on this map is older than 7 days';
 
 /**
  * Every colour mode, in display order. What is OFFERED is filtered from this by
@@ -540,8 +544,6 @@ export function MemoryGraphControls({
   }, [listedRegions]);
   const grouped = regionGroups.some((group) => group.name !== null) && regionGroups.length > 1;
 
-  const anyFacetAvailable = facetAvailability.since || facetAvailability.outcomes.length > 1;
-  const showFilter = projectsPicker != null || anyFacetAvailable;
   const showRegionList = regions.length > 1;
   const showDetail = availableGranularities.length > 1;
 
@@ -563,86 +565,85 @@ export function MemoryGraphControls({
       className="pointer-events-auto flex max-h-full w-64 flex-col gap-3 overflow-y-auto"
       data-testid="memory-graph-controls"
     >
-      {showFilter ? (
-        <div className={CARD_CLASS} data-testid="memory-graph-filter-card">
-          <SectionHeader
-            icon={<Filter size={13} aria-hidden />}
-            label="Filter"
-            collapsed={filterCollapsed}
-            onToggle={() => setFilterCollapsed((current) => !current)}
-            testId="memory-graph-filter-toggle"
-          />
-          {!filterCollapsed ? (
-            // The scope of the map, and of any question asked of it.
-            <div className="space-y-3 px-3 pb-3">
-              {projectsPicker != null ? (
-                <div>
-                  <GroupLabel hint="Which projects the map shows and a question is asked across. Starts on the open project.">
-                    Projects
-                  </GroupLabel>
-                  {projectsPicker}
-                </div>
-              ) : null}
-              {anyFacetAvailable ? (
-                // A STACK of rows rather than one control, because these are
-                // independent questions. Segmented rather than dropdowns: short
-                // fixed choices show every option and cost one click. No group
-                // labels, which would add 40px and bring the panel's scrollbar
-                // back sooner; each row's options say what they are (days,
-                // statuses), and each option's full name is its accessible name
-                // and tooltip. Quiet and tight, because four options have 224px.
-                <div className="space-y-1.5">
-                  {facetAvailability.since ? (
-                    <SegmentedControl
-                      options={TIME_OPTIONS}
-                      value={facets.since}
-                      onChange={(since) => onFacetsChange({ ...facets, since })}
-                      ariaLabel="Filter by when the conversation was last active"
-                      testId="memory-graph-filter-since"
-                      quiet
-                      tight
-                      fullWidth
-                    />
-                  ) : null}
+      <div className={CARD_CLASS} data-testid="memory-graph-filter-card">
+        <SectionHeader
+          icon={<Filter size={13} aria-hidden />}
+          label="Filter"
+          collapsed={filterCollapsed}
+          onToggle={() => setFilterCollapsed((current) => !current)}
+          testId="memory-graph-filter-toggle"
+        />
+        {!filterCollapsed ? (
+          // The scope of the map, and of any question asked of it.
+          <div className="space-y-3 px-3 pb-3">
+            {projectsPicker != null ? (
+              <div>
+                <GroupLabel hint="Which projects the map shows and a question is asked across. Starts on the open project.">
+                  Projects
+                </GroupLabel>
+                {projectsPicker}
+              </div>
+            ) : null}
+            {/* A STACK of rows rather than one control, because these are
+                independent questions. Segmented rather than dropdowns: short
+                fixed choices show every option and cost one click. No group
+                labels, which would add 40px and bring the panel's scrollbar
+                back sooner; each row's options say what they are (days,
+                statuses), and each option's full name is its accessible name
+                and tooltip. Quiet and tight, because four options have 224px.
+                Both rows always show, four segments each, so a scope change
+                never moves the panel: a segment that cannot narrow this map
+                stays in place, disabled, and says why. */}
+            <div className="space-y-1.5">
+              <SegmentedControl
+                options={TIME_OPTIONS.map((option) => (
+                  option.value === 'any' || facetAvailability.since
+                    ? option
+                    : { ...option, title: NO_OLDER_WORK_TITLE, disabled: true }
+                ))}
+                value={facets.since}
+                onChange={(since) => onFacetsChange({ ...facets, since })}
+                ariaLabel="Filter by when the conversation was last active"
+                testId="memory-graph-filter-since"
+                quiet
+                tight
+                fullWidth
+              />
 
-                  {facetAvailability.outcomes.length > 1 ? (
-                    <SegmentedControl
-                      options={[
-                        // "Any status", not "Any outcome": one of the values is
-                        // "Still open", which is not an outcome at all - it is the
-                        // absence of one.
-                        { value: 'any' as const, label: 'Any', ariaLabel: 'Any status', title: 'Any status', testId: 'memory-graph-filter-outcome-any' },
-                        // Every status, always, so this row has the time row's
-                        // four columns and a scope change never adds or removes
-                        // a segment. One the map has no task in stays in place,
-                        // disabled, and says why.
-                        ...OUTCOME_ORDER.map((outcome) => {
-                          const present = facetAvailability.outcomes.includes(outcome);
-                          return {
-                            value: outcome,
-                            label: OUTCOME_SHORT_LABELS[outcome],
-                            ariaLabel: OUTCOME_LABELS[outcome],
-                            title: present ? OUTCOME_LABELS[outcome] : `No ${OUTCOME_SHORT_LABELS[outcome].toLowerCase()} tasks on this map`,
-                            disabled: !present,
-                            testId: `memory-graph-filter-outcome-${outcome}`,
-                          };
-                        }),
-                      ]}
-                      value={facets.outcome}
-                      onChange={(outcome) => onFacetsChange({ ...facets, outcome })}
-                      ariaLabel="Filter by the task's status"
-                      testId="memory-graph-filter-outcome"
-                      quiet
-                      tight
-                      fullWidth
-                    />
-                  ) : null}
-                </div>
-              ) : null}
+              <SegmentedControl
+                options={[
+                  // "Any status", not "Any outcome": one of the values is
+                  // "Still open", which is not an outcome at all - it is the
+                  // absence of one.
+                  { value: 'any' as const, label: 'Any', ariaLabel: 'Any status', title: 'Any status', testId: 'memory-graph-filter-outcome-any' },
+                  ...OUTCOME_ORDER.map((outcome) => {
+                    const selectable = facetAvailability.outcomes.includes(outcome);
+                    const present = facetAvailability.presentOutcomes.includes(outcome);
+                    let title = OUTCOME_LABELS[outcome];
+                    if (!present) title = `No ${OUTCOME_SHORT_LABELS[outcome].toLowerCase()} tasks on this map`;
+                    else if (!selectable) title = `Everything on this map is ${OUTCOME_LABELS[outcome].toLowerCase()}`;
+                    return {
+                      value: outcome,
+                      label: OUTCOME_SHORT_LABELS[outcome],
+                      ariaLabel: OUTCOME_LABELS[outcome],
+                      title,
+                      disabled: !selectable,
+                      testId: `memory-graph-filter-outcome-${outcome}`,
+                    };
+                  }),
+                ]}
+                value={facets.outcome}
+                onChange={(outcome) => onFacetsChange({ ...facets, outcome })}
+                ariaLabel="Filter by the task's status"
+                testId="memory-graph-filter-outcome"
+                quiet
+                tight
+                fullWidth
+              />
             </div>
-          ) : null}
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+      </div>
 
       {showRegionList || showDetail ? (
         <div

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MessageSquare, Sparkles, Check, RotateCcw, Network, ScrollText, Clock, RefreshCw, TriangleAlert } from 'lucide-react';
+import { MessageSquare, Sparkles, Check, RotateCcw, Brain, ScrollText, Clock, RefreshCw, TriangleAlert } from 'lucide-react';
 import { Select, DownloadProgressBar, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardChoiceRow, CardTile } from '../settings-card';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
@@ -238,7 +238,7 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
           once nothing is missing. Named for what it chooses, not for the graph:
           it has no switch and never turns the graph on or off. */}
       <SettingsCard
-        icon={<Network size={16} />}
+        icon={<Brain size={16} />}
         label="Answering agent"
         description="Answers the questions you ask in the Knowledge Graph."
         searchIds={['memory.answerAgent', 'memory.answerModel', 'memory.answerEffort']}

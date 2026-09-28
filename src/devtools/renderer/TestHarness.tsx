@@ -16,7 +16,7 @@
  */
 
 import { useRef, useState } from 'react';
-import { Plus, FolderPlus, FileDiff, Database, MessagesSquare, ChartColumn, Waypoints, Network, GripVertical } from 'lucide-react';
+import { Plus, FolderPlus, FileDiff, Database, MessagesSquare, ChartColumn, Waypoints, Brain, GripVertical } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
@@ -554,7 +554,7 @@ export function TestHarness() {
         data-testid="dev-seed-memory-graph-real"
         title="Mirror a slice of the REAL parent project's conversation index (titles, text, embeddings) into this preview, so the Memory Graph shows actual work"
       >
-        <Network size={16} />
+        <Brain size={16} />
         {seedingRealIndex ? 'Mirroring...' : 'Mirror Real Index'}
       </button>
     </div>
