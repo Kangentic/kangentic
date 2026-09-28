@@ -38,7 +38,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as url from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { QUESTIONS } from './eval-ask-questions.mjs';
+// The answer table's own query, not a copy. Node strips the types on import.
+import { BOARD_TASK_FACTS_SQL, toBoardTaskFacts } from '../src/main/retrieval/board-task-facts.ts';
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..');
@@ -97,8 +100,13 @@ async function evaluate(port, expression, timeoutMs = 30_000) {
  * discipline. Sums are nullable throughout: a task that recorded no cost is not
  * a free one, and turning that into a zero would make it the cheapest thing on
  * the board and silently wrong every superlative.
+ *
+ * `boardTasks` are the board's own records. Since task records joined the
+ * index, the answer's table holds every board task, and one with no indexed
+ * conversation joins as its own row. Without them this rolled up 516 tasks
+ * against the answer's 683, and failed three answers that were right.
  */
-function rollUpConversations(nodes) {
+function rollUpConversations(nodes, boardTasks = []) {
   const byTask = new Map();
   for (const node of nodes) {
     const key = node.taskId ?? `conversation:${node.docKey}`;
@@ -132,7 +140,42 @@ function rollUpConversations(nodes) {
     if (existing.outcome === null) existing.outcome = node.outcome;
     if (existing.displayId === null) existing.displayId = node.displayId;
   }
+  for (const task of boardTasks) {
+    if (byTask.has(task.taskId)) continue;
+    byTask.set(task.taskId, {
+      taskId: task.taskId,
+      displayId: task.displayId,
+      title: task.title,
+      sessions: task.sessions,
+      costUsd: task.costUsd,
+      durationMs: task.durationMs,
+      tokens: task.tokens,
+      outcome: task.outcome,
+      lastActivityMs: task.lastActivityMs,
+      docKeys: [],
+    });
+  }
   return [...byTask.values()];
+}
+
+/**
+ * Every board task with its facts, read from the preview's database with the
+ * answer table's own query. A `/preview` keeps its databases inside the
+ * worktree (`scripts/dev.js`, `--ephemeral`). Read-only, so the running app
+ * keeps its lock.
+ */
+function readBoardTasks(projectId) {
+  if (!projectId) throw new Error('The preview has no project open.');
+  const dbPath = path.join(PROJECT_ROOT, '.kangentic', 'data', 'projects', `${projectId}.db`);
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(`No project database at ${dbPath}. Start the preview with /preview, which keeps it there.`);
+  }
+  const database = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    return database.prepare(BOARD_TASK_FACTS_SQL).all().map(toBoardTaskFacts);
+  } finally {
+    database.close();
+  }
 }
 
 function addMetric(current, next) {
@@ -143,13 +186,14 @@ function addMetric(current, next) {
 /** Ground-truth providers, one per corpus. The seam the repo corpus plugs into. */
 const ROLLUPS = {
   conversation: async (port) => {
-    const nodes = await evaluate(
+    const { nodes, projectId } = await evaluate(
       port,
       '(async () => { const s = await window.electronAPI.memory.graphSnapshot(null);'
-      + ' return s.projection ? s.projection.nodes : null; })()',
+      + ' const project = await window.electronAPI.projects.getCurrent();'
+      + ' return { nodes: s.projection ? s.projection.nodes : null, projectId: project ? project.id : null }; })()',
     );
     if (!nodes) throw new Error('The preview has no projection yet. Let the map finish building.');
-    return rollUpConversations(nodes);
+    return rollUpConversations(nodes, readBoardTasks(projectId));
   },
 };
 

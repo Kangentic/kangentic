@@ -5,6 +5,7 @@ import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { searchConversationMemory } from '../../retrieval/memory-search';
 import { RetrievalStore } from '../../retrieval/retrieval-store';
+import { toBoardTaskFacts } from '../../retrieval/board-task-facts';
 import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { graphService } from '../../retrieval/graph/graph-service';
@@ -83,27 +84,7 @@ import type { IpcContext } from '../ipc-context';
  */
 function readBoardTasks(projectId: string): BoardTaskFacts[] {
   try {
-    return new RetrievalStore(getProjectDb(projectId)).boardTaskFacts().map((task) => {
-      const lastActivityMs = task.lastActivity ? Date.parse(task.lastActivity) : Number.NaN;
-      return {
-        taskId: task.taskId,
-        displayId: task.displayId,
-        title: task.title,
-        outcome: task.outcome,
-        sessions: task.sessions,
-        costUsd: task.costUsd,
-        durationMs: task.durationMs,
-        tokens: task.tokens,
-        lastActivityMs: Number.isNaN(lastActivityMs) ? null : lastActivityMs,
-        agent: task.agent,
-        model: task.model,
-        filesChanged: task.filesChanged,
-        linesAdded: task.linesAdded,
-        linesRemoved: task.linesRemoved,
-        prNumber: task.prNumber,
-        prState: task.prState,
-      };
-    });
+    return new RetrievalStore(getProjectDb(projectId)).boardTaskFacts().map(toBoardTaskFacts);
   } catch {
     return [];
   }

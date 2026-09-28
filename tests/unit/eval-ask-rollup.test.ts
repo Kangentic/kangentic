@@ -16,6 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildAnswerTaskTable } from '../../src/main/retrieval/answer-tasks';
+import { toBoardTaskFacts, type BoardTaskFactsRow } from '../../src/main/retrieval/board-task-facts';
 import type { MemoryGraphNode, MemoryGraphProjection } from '../../src/shared/types';
 // The harness is plain ESM on purpose (it runs under bare node against a live
 // preview), so it is imported here exactly as it ships.
@@ -97,6 +98,41 @@ describe('the Ask harness rollup matches the shipped one', () => {
     const harness = __testing.rollUpConversations(nodes);
 
     expect(harness).toHaveLength(shipped.length);
+    expect(comparable(harness)).toEqual(comparable(shipped));
+  });
+
+  it('adds the board tasks with no indexed conversation, as the shipped table does', () => {
+    // The answer's table holds every board task since task records joined the
+    // index. A harness that rolled up conversations alone counted 516 tasks
+    // against the answer's 683 and failed three answers that were right.
+    const nodes = [
+      node({ docKey: 'a', taskId: 't1', displayId: 529, costUsd: 10, durationMs: 60_000, tokens: 1_000, outcome: 'done', lastActivityMs: 1_000 }),
+    ];
+    const boardRow = (taskId: string, displayId: number, costUsd: number | null): BoardTaskFactsRow => ({
+      taskId,
+      displayId,
+      title: `Task ${displayId}`,
+      outcome: 'done',
+      sessions: 2,
+      costUsd,
+      durationMs: 5_000,
+      tokens: null,
+      lastActivity: '2026-09-01T12:00:00.000Z',
+      agent: null,
+      model: null,
+      filesChanged: null,
+      linesAdded: null,
+      linesRemoved: null,
+      prNumber: null,
+      prState: null,
+    });
+    // t1 is on the board too: its conversation row must win, not be doubled.
+    const boardTasks = [boardRow('t1', 529, 99), boardRow('t9', 14, 3.5), boardRow('t10', 15, null)].map(toBoardTaskFacts);
+
+    const shipped = buildAnswerTaskTable(projection(nodes), 'balanced', null, boardTasks).rows;
+    const harness = __testing.rollUpConversations(nodes, boardTasks);
+
+    expect(harness).toHaveLength(3);
     expect(comparable(harness)).toEqual(comparable(shipped));
   });
 
