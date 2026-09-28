@@ -27,6 +27,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { MemoryChat } from './MemoryChat';
 import { MemoryCoverageStrip } from './MemoryCoverageStrip';
 import { MemoryGraphCanvas, type MemoryGraphColorMode } from './MemoryGraphCanvas';
+import type { RememberedCamera } from './useMemoryGraphScene';
 import {
   MemoryGraphControls,
   EMPTY_FACETS,
@@ -99,6 +100,13 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
   const retryTurn = useMemoryGraphStore((state) => state.retryTurn);
   const focusTurn = useMemoryGraphStore((state) => state.focusTurn);
   const endChat = useMemoryGraphStore((state) => state.endChat);
+  /**
+   * The camera as the last map left it, so the next map in this visit (a
+   * project added to or taken out of the scope, a finished pass) flies from
+   * there instead of cutting to its framing. Held here rather than in the
+   * canvas, which unmounts while a scope's maps are all still building.
+   */
+  const cameraMemory = useRef<RememberedCamera | null>(null);
 
   /**
    * Who answers, and what is still missing before anyone can, through the SAME
@@ -698,6 +706,8 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
         focusIndices={answerFocus}
         islands={graphView.islands ?? undefined}
         worldExtent={graphView.worldExtent}
+        cameraMemory={cameraMemory}
+        cameraMemoryKey={projectId}
         framingIndices={framingIndices}
         selectedIndex={selectedIndex}
         onSelect={selectNode}

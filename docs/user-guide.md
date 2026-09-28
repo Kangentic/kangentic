@@ -927,6 +927,12 @@ possible to get un-lost, and **Controls**, which shows these keys. With regions 
 view frames what is left rather than the regions you hid, so resetting a scoped map fills the view
 instead of pulling it back out.
 
+Every change to what the map shows moves the camera by flying, never by a cut: narrowing a filter
+or landing an answer flies to what is lit, clearing it or ending the chat flies back to the whole
+map, and adding or removing a project flies from where you were to the new map. Three things still
+reframe at once: resizing the window (a fly would fight the drag), opening the graph, and switching
+the open project.
+
 **Clicking around.** Hover a point for its title and size; click it for a detail panel. With a
 chat open, the panel's **Back** control returns to it.
 

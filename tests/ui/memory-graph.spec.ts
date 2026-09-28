@@ -2597,6 +2597,103 @@ test.describe('memory graph', () => {
     }
   });
 
+  /**
+   * In how many of the frames after a click the camera was moving. Titles are
+   * placed by projecting each node through the camera on every frame, so a frame
+   * counts when a title that was drawn in the frame before is drawn somewhere
+   * else: a fly moves them frame after frame, a cut moves them once. Titles are
+   * matched by their text across the pooled slots, and ones fading in or out
+   * are simply not compared.
+   */
+  async function movingFramesAfterClick(page: Page, selector: string | null, nth = 0, frames = 45): Promise<number> {
+    return page.evaluate(async ({ target, index, count }) => {
+      const placed = (): Map<string, string> => new Map(Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="memory-graph-node-title"]'),
+      )
+        .filter((element) => Number(element.style.opacity || '0') > 0)
+        .map((element) => {
+          const box = element.getBoundingClientRect();
+          return [element.textContent ?? '', `${Math.round(box.left)},${Math.round(box.top)}`];
+        }));
+      if (target) document.querySelectorAll<HTMLElement>(target)[index]?.click();
+      let previous = placed();
+      let moving = 0;
+      for (let frame = 0; frame < count; frame += 1) {
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+        const current = placed();
+        if ([...current].some(([text, where]) => previous.has(text) && previous.get(text) !== where)) moving += 1;
+        previous = current;
+      }
+      return moving;
+    }, { target: selector, index: nth, count: frames });
+  }
+
+  /** Until the camera has stopped, so the next step's frames are its own. */
+  async function waitForCameraToSettle(page: Page): Promise<void> {
+    await expect.poll(async () => movingFramesAfterClick(page, null, 0, 12), { timeout: 10_000 }).toBe(0);
+  }
+
+  test('adding a project to the map flies there, rather than cutting', async () => {
+    const { browser, page } = await launchWithState(projectsScript());
+    try {
+      await openMemoryGraph(page);
+      await expect.poll(async () => page.locator('[data-testid="memory-graph-node-title"]').count()).toBeGreaterThan(0);
+      await page.locator('[data-testid="memory-graph-projects"]').click();
+      await waitForCameraToSettle(page);
+      const moving = await movingFramesAfterClick(page, '[data-testid="memory-graph-projects-all"]');
+      await expect(page.locator('[data-testid="memory-graph-island-label"]')).toHaveCount(2);
+      // A cut moves the titles in a frame or two; the fly moves them in many.
+      expect(moving).toBeGreaterThanOrEqual(5);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('clearing a filter flies back to the whole map, and a resize still refits at once', async () => {
+    const separated = `(function () {
+      var base = ${projectionLiteral(40)};
+      base.nodes.forEach(function (node, i) {
+        var far = i >= 20;
+        node.clusters = { coarse: 0, balanced: far ? 1 : 0, fine: far ? 1 : 0 };
+        node.x = (far ? 0.55 : 0.12) + (i % 5) * 0.06;
+        node.y = (far ? 0.55 : 0.12) + (Math.floor(i / 5) % 4) * 0.06;
+        node.z = (far ? 0.55 : 0.12) + (i % 4) * 0.06;
+      });
+      return base;
+    })()`;
+    const { browser, page } = await launchWithState(snapshotScript({ projection: separated }));
+    try {
+      await openMemoryGraph(page);
+      await expect.poll(async () => page.locator('[data-testid="memory-graph-node-title"]').count()).toBeGreaterThan(0);
+      const rowSelector = '[data-testid="memory-graph-region-row"]';
+      await waitForCameraToSettle(page);
+      // Hide the far block: the camera flies to what is left.
+      expect(await movingFramesAfterClick(page, rowSelector, 1)).toBeGreaterThanOrEqual(5);
+      await waitForCameraToSettle(page);
+      // Show it again: that is a change to the map too, so it flies home.
+      expect(await movingFramesAfterClick(page, rowSelector, 1)).toBeGreaterThanOrEqual(5);
+      await waitForCameraToSettle(page);
+
+      // A resize is not a change to the map: it refits in one step, since a
+      // drag-resize fires every frame and a fly would fight itself.
+      await page.setViewportSize({ width: 1200, height: 760 });
+      const afterResize = await page.evaluate(async () => {
+        const seen = new Set<string>();
+        for (let frame = 0; frame < 20; frame += 1) {
+          await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+          const titles = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="memory-graph-node-title"]'))
+            .filter((element) => Number(element.style.opacity || '0') > 0)
+            .map((element) => { const box = element.getBoundingClientRect(); return `${Math.round(box.left)},${Math.round(box.top)}`; });
+          seen.add(titles.join('|'));
+        }
+        return seen.size;
+      });
+      expect(afterResize).toBeLessThanOrEqual(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a scope whose map is still building keeps the picker, so the scope can be changed back', async () => {
     // A never-shown project builds its map once, which takes about a minute on
     // a large one. Without the picker on that screen, closing the graph was

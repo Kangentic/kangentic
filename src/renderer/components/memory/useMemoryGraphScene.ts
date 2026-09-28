@@ -134,13 +134,45 @@ interface UseMemoryGraphSceneOptions {
   /** How many unit boxes wide the map is (composed islands spread past one). The
    *  camera may pull back that much further, so the whole map still fits. */
   worldExtent?: number;
+  /**
+   * Where the camera was when the last scene went, held by a host that outlives
+   * the canvas. A new map inside an open graph (a project added to or taken out
+   * of the scope, a finished map pass) starts from that pose and FLIES to its
+   * framing, where a fresh camera would snap there. Absent on the first open.
+   */
+  cameraMemory?: React.MutableRefObject<RememberedCamera | null>;
+  /**
+   * Whose map the remembered pose belongs to: the open project. A pose from
+   * another project is never flown from, since a project switch paints flat
+   * (`.claude/rules/restore-no-animation-replay.md`).
+   */
+  cameraMemoryKey?: string | null;
+}
+
+/** The camera as the last scene left it. */
+export interface RememberedCamera {
+  key: string | null;
+  /** The map it was looking at. The same map built again (React's StrictMode
+   *  runs the scene effect twice at mount) takes the pose back without a fly. */
+  signature: string;
+  position: Vector3;
+  target: Vector3;
+  /** Whether it sat at the default framing, which the new map then flies to.
+   *  Otherwise the reader had gone somewhere, and the pose is kept. */
+  viewWasDefault: boolean;
 }
 
 export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): MemoryGraphSceneHandle {
   const {
     canvasRef, containerRef, nodes, edges, signature, edgeColor, regionOf, onFrame,
     insets = NO_VIEWPORT_INSETS, framingIndices = null, worldExtent = 1,
+    cameraMemory, cameraMemoryKey = null,
   } = options;
+  // Read by the scene effect, which must not re-run for a new key alone.
+  const cameraMemoryKeyRef = useRef(cameraMemoryKey);
+  /** Whether this scene started from a remembered pose, so its first fit flies
+   *  too rather than snapping over the fly it just began. */
+  const flyOnArrivalRef = useRef(false);
 
   // Read inside effects that must not re-run when a panel opens: the scene is
   // never rebuilt for chrome, only re-aimed.
@@ -170,6 +202,7 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     framingIndicesRef.current = framingIndices;
     onFrameRef.current = onFrame;
     worldExtentRef.current = worldExtent;
+    cameraMemoryKeyRef.current = cameraMemoryKey;
   });
 
   // A composed map is wider than one project's, so the camera may pull back in
@@ -322,7 +355,32 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     // Reset view and a resize make - so "initial", "reset" and "re-fitted"
     // cannot drift apart. `saveState` still runs so camera-controls has a sane
     // baseline, but nothing relies on it any more.
-    applyDefaultViewRef.current?.(false);
+    //
+    // A NEW map inside an open graph flies instead: every change to what the
+    // map shows moves the camera by flying, never by a cut. The camera starts
+    // where the last scene left it and goes to the new framing; one the reader
+    // had flown away from stays put, and a fly target the host still holds is
+    // flown to again by the host once this scene exists.
+    // This scene's own key, taken now: by the time its cleanup runs, the ref
+    // already holds the NEXT scene's, which would let a project switch fly.
+    const sceneKey = cameraMemoryKeyRef.current;
+    const remembered = cameraMemory?.current ?? null;
+    if (remembered && remembered.key === sceneKey) {
+      // A different map flies; the same map built again only takes its pose
+      // back, or StrictMode's second mount turned the opening fit into a fly.
+      const newMap = remembered.signature !== signature;
+      flyOnArrivalRef.current = newMap;
+      controls.setLookAt(
+        remembered.position.x, remembered.position.y, remembered.position.z,
+        remembered.target.x, remembered.target.y, remembered.target.z,
+        false,
+      );
+      if (remembered.viewWasDefault) applyDefaultViewRef.current?.(newMap);
+      else viewIsDefaultRef.current = false;
+    } else {
+      flyOnArrivalRef.current = false;
+      applyDefaultViewRef.current?.(false);
+    }
     controls.saveState();
 
     // Any user interaction restarts the loop. `control` covers camera-controls'
@@ -341,9 +399,18 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     canvas.addEventListener('pointerdown', wake);
     canvas.addEventListener('wheel', takeOver, { passive: true });
 
+    // The size the fit above was made for. The observer reports once as soon as
+    // it starts watching, at that same size. That report still re-aims, since
+    // the chrome may have been measured since, but a scene flying in from a
+    // remembered pose re-aims as a fly, or it would cut its own fly short.
+    let fittedWidth = Math.round(container.clientWidth);
+    let fittedHeight = Math.round(container.clientHeight);
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
       if (!rect) return;
+      const resized = Math.round(rect.width) !== fittedWidth || Math.round(rect.height) !== fittedHeight;
+      fittedWidth = Math.round(rect.width);
+      fittedHeight = Math.round(rect.height);
       scene.setSize(rect.width, rect.height, insetsRef.current);
       // A fit is a function of the pane, so a pane that changed shape has a
       // different answer. Without this, narrowing the window cropped the map
@@ -351,7 +418,7 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
       // back was a control the user had to know to press. Re-framed instantly
       // rather than animated: a drag-resize fires this on every frame, and an
       // animation would fight itself the whole way across the screen.
-      if (viewIsDefaultRef.current) applyDefaultViewRef.current?.(false);
+      if (viewIsDefaultRef.current) applyDefaultViewRef.current?.(!resized && flyOnArrivalRef.current);
       requestRender();
     });
     observer.observe(container);
@@ -368,6 +435,20 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
         frameRef.current = null;
+      }
+      // Where the next map in this graph flies from.
+      if (cameraMemory) {
+        const position = new Vector3();
+        const target = new Vector3();
+        controls.getPosition(position);
+        controls.getTarget(target);
+        cameraMemory.current = {
+          key: sceneKey,
+          signature,
+          position,
+          target,
+          viewWasDefault: viewIsDefaultRef.current,
+        };
       }
       controls.dispose();
       scene.dispose();
@@ -417,7 +498,9 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
     if (aimedRef.current) return;
     aimedRef.current = true;
     scene.setSize(container.clientWidth, container.clientHeight, insets);
-    if (viewIsDefaultRef.current) applyDefaultViewRef.current?.(false);
+    // A scene that began from a remembered pose is mid-fly: re-aim it the same
+    // way rather than cutting to the end.
+    if (viewIsDefaultRef.current) applyDefaultViewRef.current?.(flyOnArrivalRef.current);
     requestRender();
   }, [insets, containerRef, requestRender]);
 

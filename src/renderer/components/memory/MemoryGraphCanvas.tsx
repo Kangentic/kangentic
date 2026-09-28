@@ -33,7 +33,7 @@ import {
 } from 'react';
 import { Keyboard, RotateCcw } from 'lucide-react';
 import { Color, Vector3 } from 'three';
-import { useMemoryGraphScene } from './useMemoryGraphScene';
+import { useMemoryGraphScene, type RememberedCamera } from './useMemoryGraphScene';
 import {
   WORLD_SIZE,
   clusterHue,
@@ -119,6 +119,11 @@ export interface MemoryGraphCanvasProps {
    * region pills so a region name never covers a project's.
    */
   islands?: ReadonlyArray<{ name: string; start: number; end: number }>;
+  /** Held by the host so a new map flies from where the last one's camera was;
+   *  see `useMemoryGraphScene`. */
+  cameraMemory?: React.MutableRefObject<RememberedCamera | null>;
+  /** The open project, which a remembered pose must belong to. */
+  cameraMemoryKey?: string | null;
   /**
    * How many unit boxes wide the map is: 1 for one project, more for composed
    * islands, which keep their own size and spread the world instead. Only the
@@ -360,6 +365,8 @@ export function MemoryGraphCanvas({
   focusIndices = null,
   islands,
   worldExtent = 1,
+  cameraMemory,
+  cameraMemoryKey = null,
 }: MemoryGraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -812,6 +819,8 @@ export function MemoryGraphCanvas({
     insets: framingInsets,
     framingIndices,
     worldExtent,
+    cameraMemory,
+    cameraMemoryKey,
   });
   const { requestRender, resetView, frameNodes, setOrbitAnchor } = graph;
 
@@ -1169,16 +1178,19 @@ export function MemoryGraphCanvas({
   }, [positionOverlays, showTitles, requestRender]);
 
   /**
-   * Fly to frame the surviving set whenever a filter narrows the map.
+   * Fly to frame the surviving set whenever a filter narrows the map, and fly
+   * home when it clears.
    *
    * This is the other half of hiding the rest: scoping the view is only useful
    * if the camera then goes there, otherwise a query can leave you staring at
    * empty space where the non-matches used to be. Keyed on a stable signature of
    * the set, so re-renders that do not change WHICH nodes match never re-fly.
    *
-   * Clearing the filter deliberately does NOT fly back. The user may have moved
-   * the camera themselves, and yanking it somewhere on a clear is worse than
-   * leaving it - "Reset view" is the explicit way home.
+   * Every change to what the map shows moves the camera by flying (decided
+   * 2026-09-28, reversing "clearing never flies back"): a cleared filter or an
+   * ended chat flies to the default view, and a new scene (a project added to
+   * the scope, a finished map pass) flies to the target again, since its nodes
+   * may have moved while the key stayed the same.
    */
   // What to frame: the caller's focus when it names one (an answer's own
   // tasks), else everything lit.
@@ -1186,14 +1198,23 @@ export function MemoryGraphCanvas({
     ? focusIndices
     : highlighted && highlighted.size > 0 ? [...highlighted] : null;
   const flyKey = flyTarget ? `${flyTarget.length}:${flyTarget.slice(0, 8).join(',')}` : null;
+  const flewToTargetRef = useRef(false);
   useEffect(() => {
-    if (!flyKey || !flyTarget) return;
-    frameNodes([...flyTarget]);
+    if (!graph.scene) return;
+    if (flyKey && flyTarget) {
+      flewToTargetRef.current = true;
+      frameNodes([...flyTarget]);
+      return;
+    }
+    if (flewToTargetRef.current) {
+      flewToTargetRef.current = false;
+      resetView();
+    }
     // `flyTarget` is intentionally absent: a new array with the same members
     // would otherwise re-fly on every unrelated re-render. `flyKey` is the
     // stable identity of its CONTENTS.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
-  }, [flyKey, frameNodes]);
+  }, [flyKey, frameNodes, resetView, graph.scene]);
 
   // ---- picking --------------------------------------------------------------
   const pickAt = useCallback((clientX: number, clientY: number): number | null => {
