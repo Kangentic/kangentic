@@ -634,7 +634,7 @@ TypeScript type: `SentSessionMessage` in `src/shared/types.ts`. Repository: `Sen
 
 ### memory_chunks table
 
-Conversation-memory index: a per-project retrieval store over the STRUCTURED transcript (TranscriptEntry-derived chunks), not the raw `session_transcripts` scrollback blob. Corpus-generic (a `corpus` column) so the same store can later index repo files/docs; `session_id`/`task_id` are nullable for that reuse and always set for the conversation corpus.
+Memory index: a per-project retrieval store. The `corpus` column says what a row indexes, and `MEMORY_CORPORA` (`src/main/retrieval/corpora.ts`) lists them in the order the embedding drain serves them: `conversation` (the STRUCTURED transcript, TranscriptEntry-derived chunks, not the raw `session_transcripts` scrollback blob), `task` (a task's own record), and `change` (the files a session changed). `session_id`/`task_id` are nullable; the conversation corpus always sets both.
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
@@ -657,13 +657,13 @@ Conversation-memory index: a per-project retrieval store over the STRUCTURED tra
 | meta_json | TEXT | | |
 | created_at | TEXT | NOT NULL | |
 
-Constraint: `UNIQUE(corpus, doc_id, seq)`. Indices: `idx_memory_chunks_doc` (corpus, doc_id, seq), `idx_memory_chunks_session` (session_id), `idx_memory_chunks_embedded` (embedded_model). Cascade cleanup via the `trg_sessions_delete_memory` DELETE trigger on `sessions`.
+Constraint: `UNIQUE(corpus, doc_id, seq)`. Indices: `idx_memory_chunks_doc` (corpus, doc_id, seq), `idx_memory_chunks_session` (session_id), `idx_memory_chunks_embedded` (embedded_model), `idx_memory_chunks_corpus` (corpus), and `idx_memory_chunks_pending` (embedded_model, corpus). SQLite appends rowid to every index, so the last two answer per-corpus reads as seeks in id order: the map's scan and signature (a projection page measured 142 ms without them and 0.2 ms with, on 92k chunks) and the embedding drain's next never-embedded chunks of one corpus (214 ms against 0.01 ms). Cascade cleanup via the `trg_sessions_delete_memory` DELETE trigger on `sessions`.
 
 ### memory_chunks_fts (FTS5)
 
 FTS5 external-content virtual table over `memory_chunks.text` (`content='memory_chunks'`, `content_rowid='id'`, `tokenize='unicode61 remove_diacritics 2'`), kept in sync by the `trg_memory_chunks_ai`/`_ad`/`_au` triggers. Provides `bm25()` ranking and `snippet()` for conversation search. FTS5 is compiled into the shipped better-sqlite3, so this needs no extra dependency.
 
-The vector table `memory_chunks_vec` (`USING vec0`) is NOT created by migrations: it needs the sqlite-vec extension loaded, which may be unavailable, so `RetrievalStore.ensureVecTable()` creates it lazily at runtime only when the extension loaded. No trigger references it (a missing-module trigger body would break every `DELETE FROM sessions`); vec rows are cleaned by application code.
+The vector tables (`USING vec0`, rowid = chunk id) are one per corpus: `memory_chunks_vec` for conversations, `memory_vec_task` and `memory_vec_change` for the others (`vecTableName`). One table per corpus rather than a corpus column, because reading a vector back out costs 1.14 ms a row (a copy of the conversation table would have been about 105 s of synchronous reads) and a small table of its own gives an exact per-corpus top k (3.0 ms for 2.9k rows). A search over several corpora merges the tables by distance. They are NOT created by migrations: they need the sqlite-vec extension loaded, which may be unavailable, so `RetrievalStore.ensureVecTable()` creates them lazily at runtime only when the extension loaded. No trigger references them (a missing-module trigger body would break every `DELETE FROM sessions`); vec rows are cleaned by application code.
 
 ### memory_index_state table
 
@@ -688,8 +688,8 @@ Constraint: `PRIMARY KEY (corpus, doc_id)`. `status` is one of `ok`, `unsupporte
 
 Key/value bookkeeping for the memory index.
 
-- `chunker_version` - a mismatch against the current chunker version purges and reindexes the project.
-- `vec_dims` - the width of the `memory_chunks_vec` table, set from the selected embedding model. A change forces a full re-embed, since vec0 tables are fixed-width.
+- `chunker_version` - a mismatch against the current chunker version purges and reindexes the project's conversations and the session changes read from them; task records are left in place.
+- `vec_dims` - the width of the vector tables, set from the selected embedding model. A change forces a full re-embed, since vec0 tables are fixed-width.
 - `graph_projection_v11` - the Knowledge Graph's cached projection (nodes, edges, the three region carve-ups, the 3D layout, each conversation's agent/model/effort and its duration/cost/tokens, the exact per-node neighbour lists, the index size on disk, and the corpus signature it was built from), JSON-encoded. The version suffix must be bumped whenever the payload SHAPE changes, because the freshness signature does not move for it and a stale blob would otherwise be served and rendered. It is bumped for a change to the CLUSTERING too, for the same reason: v6 chose the region count from the data, v8 replaced that score with a size rule, and v10 raised the region ceiling and stopped choosing the count from a leading slice of the corpus - none of which alters the shape, but each of which would otherwise keep serving the previous carve-up forever.
 - `graph_projection_sums_v1` - the per-document running vector SUMS behind that projection, so a rebuild scans only chunks newer than the highest id already folded in. Reading every embedding costs ~62s on a large corpus, so this is what keeps that a one-time cost rather than a per-rebuild one.
 

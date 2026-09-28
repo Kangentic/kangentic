@@ -46,6 +46,7 @@
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../db/database';
 import { RetrievalStore } from './retrieval-store';
+import { CONVERSATION_CORPUS } from './corpora';
 import { SEMANTIC_RELEVANCE_CUTOFF } from './memory-search';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import type { ChunkPlacement, Embedder } from './types';
@@ -364,7 +365,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     await yieldToEventLoop();
     let hits: ReturnType<RetrievalStore['searchSemantic']>;
     try {
-      hits = timeSyncWork('related:semantic', () => store.searchSemantic(vector, SEMANTIC_POOL));
+      hits = timeSyncWork('related:semantic', () => store.searchSemantic(vector, SEMANTIC_POOL, CONVERSATION_CORPUS));
     } catch {
       hits = [];
     }
@@ -381,7 +382,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
   if (keywordQuery) {
     await yieldToEventLoop();
     try {
-      lexical = timeSyncWork('related:lexical', () => store.searchLexical(keywordQuery, LEXICAL_POOL))
+      lexical = timeSyncWork('related:lexical', () => store.searchLexical(keywordQuery, LEXICAL_POOL, CONVERSATION_CORPUS))
         .map((hit) => ({ chunkId: hit.chunkId, rank: hit.rank }));
     } catch {
       lexical = [];

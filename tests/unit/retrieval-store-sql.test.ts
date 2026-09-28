@@ -214,7 +214,7 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
         sql.includes('sqlite_master')
           ? { name: 'memory_chunks_vec' }
           : sql.includes('content_hash')
-            ? { content_hash: 'hash-7' }
+            ? { content_hash: 'hash-7', corpus: 'conversation' }
             : undefined,
     });
     markVecCapable(db);
@@ -241,6 +241,26 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
     // The chunk is marked embedded with the model tag.
     const markCall = findRun(calls, 'UPDATE memory_chunks SET embedded_model');
     expect(markCall?.args).toEqual(['bge-base@q8', 7]);
+  });
+
+  it('writes a task chunk into the task corpus table, never the conversation one', () => {
+    const { db, calls } = makeRecordingDb({
+      get: (sql) =>
+        sql.includes('sqlite_master')
+          ? { name: 'present' }
+          : sql.includes('content_hash')
+            ? { content_hash: 'hash-9', corpus: 'task' }
+            : undefined,
+    });
+    markVecCapable(db);
+
+    new RetrievalStore(db).writeEmbeddings(
+      [{ chunkId: 9, vector: new Float32Array([0.1, 0.2, 0.3]), contentHash: 'hash-9' }],
+      'bge-base@q8',
+    );
+
+    expect(findRun(calls, 'INSERT INTO memory_vec_task')?.args[0]).toBe(9n);
+    expect(findRun(calls, 'INSERT INTO memory_chunks_vec')).toBeUndefined();
   });
 
   it('skips a chunk whose content_hash changed since it was fetched, without writing a stale vector', () => {
@@ -288,7 +308,7 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
 });
 
 describe('RetrievalStore.countChunksNeedingEmbedding', () => {
-  it('returns the COUNT(*) for the same WHERE clause as chunksNeedingEmbedding', () => {
+  it('counts never-embedded chunks and chunks under another tag, as index ranges', () => {
     const { db, calls } = makeRecordingDb({
       get: (sql) =>
         sql.includes('sqlite_master')
@@ -303,8 +323,9 @@ describe('RetrievalStore.countChunksNeedingEmbedding', () => {
 
     expect(count).toBe(3);
     const countCall = calls.find((call) => call.method === 'get' && call.sql.includes('COUNT(*)'));
-    expect(countCall?.sql).toContain('embedded_model IS NULL OR embedded_model != ?');
-    expect(countCall?.args).toEqual(['bge-base@q8']);
+    // `!=` is not an index range; `<` and `>` are.
+    expect(countCall?.sql).toContain('embedded_model IS NULL OR embedded_model < ? OR embedded_model > ?');
+    expect(countCall?.args).toEqual(['bge-base@q8', 'bge-base@q8']);
   });
 
   it('returns 0 when the vec table is not ready', () => {
@@ -323,7 +344,7 @@ describe('RetrievalStore.searchLexical', () => {
       ],
     });
 
-    const hits = new RetrievalStore(db).searchLexical('"foo"*', 32);
+    const hits = new RetrievalStore(db).searchLexical('"foo"*', 32, ['conversation']);
 
     expect(hits).toEqual([
       { chunkId: 5, rank: 1, bm25: -3.2, snippet: 'alpha' },
@@ -333,12 +354,28 @@ describe('RetrievalStore.searchLexical', () => {
 
     const matchCall = calls.find((call) => call.sql.includes('MATCH'));
     expect(matchCall?.sql).toContain('memory_chunks_fts');
-    expect(matchCall?.args).toEqual(['"foo"*', 32]);
+    expect(matchCall?.args).toEqual(['"foo"*', 'conversation', 32]);
   });
 
   it('returns an empty list when the FTS query matches nothing', () => {
     const { db } = makeRecordingDb({ all: () => [] });
-    expect(new RetrievalStore(db).searchLexical('"nope"*', 32)).toEqual([]);
+    expect(new RetrievalStore(db).searchLexical('"nope"*', 32, ['conversation'])).toEqual([]);
+  });
+
+  it('matches only the corpora it is given, since the FTS table covers every corpus', () => {
+    const { db, calls } = makeRecordingDb({ all: () => [] });
+
+    new RetrievalStore(db).searchLexical('"foo"*', 32, ['conversation', 'task']);
+
+    const matchCall = calls.find((call) => call.sql.includes('MATCH'));
+    expect(matchCall?.sql).toContain('memory_chunks.corpus IN (?,?)');
+    expect(matchCall?.args).toEqual(['"foo"*', 'conversation', 'task', 32]);
+  });
+
+  it('asks nothing of the database for no corpora', () => {
+    const { db, calls } = makeRecordingDb({ all: () => [] });
+    expect(new RetrievalStore(db).searchLexical('"foo"*', 32, [])).toEqual([]);
+    expect(calls).toHaveLength(0);
   });
 
   it('joins against memory_chunks and binds taskId when scoping to one task', () => {
@@ -346,13 +383,103 @@ describe('RetrievalStore.searchLexical', () => {
       all: () => [{ id: 9, snip: 'delta', score: -2.0 }],
     });
 
-    const hits = new RetrievalStore(db).searchLexical('"foo"*', 32, 'task-42');
+    const hits = new RetrievalStore(db).searchLexical('"foo"*', 32, ['conversation'], 'task-42');
 
     expect(hits).toEqual([{ chunkId: 9, rank: 1, bm25: -2.0, snippet: 'delta' }]);
     const matchCall = calls.find((call) => call.sql.includes('MATCH'));
     expect(matchCall?.sql).toContain('JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid');
     expect(matchCall?.sql).toContain('memory_chunks.task_id = ?');
-    expect(matchCall?.args).toEqual(['"foo"*', 'task-42', 32]);
+    expect(matchCall?.args).toEqual(['"foo"*', 'conversation', 'task-42', 32]);
+  });
+});
+
+describe('RetrievalStore corpus reads', () => {
+  /** A store whose every vec table exists, recording its SQL. */
+  function vecStore(handlers: Parameters<typeof makeRecordingDb>[0] = {}) {
+    const recording = makeRecordingDb({
+      ...handlers,
+      get: (sql, args) => (sql.includes('sqlite_master') ? { name: 'present' } : handlers.get?.(sql, args)),
+    });
+    markVecCapable(recording.db);
+    return { store: new RetrievalStore(recording.db), calls: recording.calls };
+  }
+
+  it('merges each corpus table by distance and re-ranks the merged list', () => {
+    const { store, calls } = vecStore({
+      all: (sql) => {
+        if (sql.includes('FROM memory_chunks_vec')) return [{ id: 1, distance: 0.2 }, { id: 2, distance: 0.6 }];
+        if (sql.includes('FROM memory_vec_task')) return [{ id: 50, distance: 0.4 }];
+        return [];
+      },
+    });
+
+    const hits = store.searchSemantic(new Float32Array([0.1]), 2, ['conversation', 'task']);
+
+    expect(hits).toEqual([
+      { chunkId: 1, rank: 1, distance: 0.2 },
+      { chunkId: 50, rank: 2, distance: 0.4 },
+    ]);
+    // Each table is asked for the whole limit: its own exact top k.
+    expect(calls.filter((call) => call.sql.includes('MATCH')).map((call) => call.args[1])).toEqual([2, 2]);
+  });
+
+  it('serves never-embedded conversations before task records, each as an index seek', () => {
+    const conversationRow = { ...storedRow, id: 3 };
+    const taskRow = { ...storedRow, id: 90, corpus: 'task' };
+    const { store, calls } = vecStore({
+      all: (sql, args) => {
+        if (sql.includes('embedded_model IS NULL AND corpus = ?')) return args[0] === 'conversation' ? [conversationRow] : args[0] === 'task' ? [taskRow] : [];
+        return [];
+      },
+    });
+
+    const pending = store.chunksNeedingEmbedding('bge-base@q8', 5);
+
+    expect(pending.map((chunk) => chunk.id)).toEqual([3, 90]);
+    const seeks = calls.filter((call) => call.sql.includes('embedded_model IS NULL AND corpus = ?'));
+    expect(seeks.map((call) => call.args)).toEqual([['conversation', 5], ['task', 4], ['change', 3]]);
+    // The whole-table `!=` scan is gone.
+    expect(calls.some((call) => call.sql.includes('embedded_model != ?'))).toBe(false);
+  });
+
+  it('keeps the map signature and coverage fingerprint on conversations alone', () => {
+    const { store, calls } = vecStore({ get: () => ({ id: 0, count: 0, maxId: 0 }), all: () => [] });
+
+    store.maxChunkId('conversation');
+    store.coverageFingerprint();
+
+    const chunkReads = calls.filter((call) => call.sql.includes('FROM memory_chunks') && !call.sql.includes('sqlite_master'));
+    expect(chunkReads.length).toBeGreaterThan(0);
+    // Every read that counts chunks or states is scoped: a task edit re-indexes
+    // a task record, and must not rebuild the map or its coverage.
+    for (const call of chunkReads) {
+      expect(call.sql.includes("corpus = 'conversation'") || call.args.includes('conversation')).toBe(true);
+    }
+    const stateRead = calls.find((call) => call.sql.includes('FROM memory_index_state'));
+    expect(stateRead?.sql).toContain("corpus = 'conversation'");
+  });
+
+  it('purges only the corpora named, vectors included', () => {
+    const { store, calls } = vecStore({});
+
+    store.purgeCorpora(['conversation', 'change']);
+
+    expect(findRun(calls, 'DELETE FROM memory_chunks WHERE corpus IN')?.args).toEqual(['conversation', 'change']);
+    expect(findRun(calls, 'DELETE FROM memory_chunks_vec')).toBeDefined();
+    expect(findRun(calls, 'DELETE FROM memory_vec_change')).toBeDefined();
+    expect(findRun(calls, 'DELETE FROM memory_vec_task')).toBeUndefined();
+  });
+
+  it('removes a replaced document\'s vectors from its own corpus table only', () => {
+    const existing = [{ id: 70, seq: 0, content_hash: 'old', turn_uuid_start: null, turn_uuid_end: null }];
+    const { store, calls } = vecStore({
+      all: (sql) => (sql.includes('content_hash') ? existing : []),
+    });
+
+    store.upsertDocument({ ...ref, corpus: 'task', docId: 'task-1' }, [chunk(0, 'new')]);
+
+    expect(findRun(calls, 'DELETE FROM memory_vec_task WHERE rowid IN')?.args).toEqual([70n]);
+    expect(findRun(calls, 'DELETE FROM memory_chunks_vec')).toBeUndefined();
   });
 });
 

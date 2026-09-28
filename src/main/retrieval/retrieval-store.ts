@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { hasVecSupport } from './vec-support';
+import { isMemoryCorpus, MEMORY_CORPORA, vecTableName, type MemoryCorpus } from './corpora';
 import type {
   ChunkInput,
   ChunkPlacement,
@@ -61,30 +62,38 @@ function toStoredChunk(row: StoredChunkRow): StoredChunk {
   };
 }
 
+/** A corpus list for SQL: one placeholder per corpus. */
+function corpusPlaceholders(corpora: ReadonlyArray<MemoryCorpus>): string {
+  return corpora.map(() => '?').join(',');
+}
+
 /**
  * Per-project-DB retrieval store. Owns memory_chunks (+ its FTS5 shadow) and
- * memory_index_state. The vector table (memory_chunks_vec) is created lazily by
- * ensureVecTable() only when the sqlite-vec extension loaded for this
- * connection; all vec methods no-op when it did not, so the whole engine
- * degrades to lexical-only structurally.
+ * memory_index_state. The vector tables (one per corpus, see `corpora.ts`) are
+ * created lazily by ensureVecTable() only when the sqlite-vec extension loaded
+ * for this connection; all vec methods no-op when it did not, so the whole
+ * engine degrades to lexical-only structurally.
  */
 export class RetrievalStore {
-  private vecReady = false;
+  /** The corpora whose vec table exists on this connection. */
+  private readonly vecTables = new Set<MemoryCorpus>();
 
   constructor(private readonly db: Database.Database) {
-    // The vec table's dimension is fixed by the selected model, which only the
-    // embedding path knows, so the store does NOT create it here. It only
-    // DISCOVERS an existing table (created earlier by ensureVecTable) so the
-    // search path can query it. A fake DB (unit tests) is never vec-capable, so
-    // this no-ops and never runs the sqlite_master query.
+    // The vec tables' dimension is fixed by the selected model, which only the
+    // embedding path knows, so the store does NOT create them here. It only
+    // DISCOVERS existing tables (created earlier by ensureVecTable) so the
+    // search path can query them. A fake DB (unit tests) is never vec-capable,
+    // so this no-ops and never runs the sqlite_master query.
     if (hasVecSupport(db)) {
-      try {
-        const exists = this.db
-          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_chunks_vec'")
-          .get();
-        this.vecReady = exists !== undefined;
-      } catch {
-        this.vecReady = false;
+      for (const corpus of MEMORY_CORPORA) {
+        try {
+          const exists = this.db
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .get(vecTableName(corpus));
+          if (exists !== undefined) this.vecTables.add(corpus);
+        } catch {
+          // Treated as absent: that corpus searches lexically only.
+        }
       }
     }
   }
@@ -128,7 +137,7 @@ export class RetrievalStore {
         const placeholders = deletedIds.map(() => '?').join(',');
         // FTS rows are removed by the AFTER DELETE trigger; vec rows are not
         // (no trigger may touch the vec table), so remove them in-code.
-        this.deleteVecRows(deletedIds);
+        this.deleteVecRows(deletedIds, ref.corpus);
         this.db
           .prepare(`DELETE FROM memory_chunks WHERE id IN (${placeholders})`)
           .run(...deletedIds);
@@ -226,18 +235,36 @@ export class RetrievalStore {
           .prepare('SELECT id FROM memory_chunks WHERE corpus = ? AND doc_id = ?')
           .all(corpus, docId) as Array<{ id: number }>
       ).map((row) => row.id);
-      this.deleteVecRows(ids);
+      this.deleteVecRows(ids, corpus);
       this.db.prepare('DELETE FROM memory_chunks WHERE corpus = ? AND doc_id = ?').run(corpus, docId);
       this.db.prepare('DELETE FROM memory_index_state WHERE corpus = ? AND doc_id = ?').run(corpus, docId);
     });
     run();
   }
 
+  /** Every corpus, gone: the Privacy "clear index". */
   purgeAll(): void {
     const run = this.db.transaction(() => {
       this.db.prepare('DELETE FROM memory_chunks').run();
       this.db.prepare('DELETE FROM memory_index_state').run();
-      if (this.vecReady) this.db.prepare('DELETE FROM memory_chunks_vec').run();
+      for (const corpus of this.vecTables) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
+    });
+    run();
+  }
+
+  /**
+   * Some corpora gone, the rest untouched. A chunker change invalidates the
+   * conversation chunks (and what is derived from them), not the task records.
+   */
+  purgeCorpora(corpora: ReadonlyArray<MemoryCorpus>): void {
+    if (corpora.length === 0) return;
+    const placeholders = corpusPlaceholders(corpora);
+    const run = this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM memory_chunks WHERE corpus IN (${placeholders})`).run(...corpora);
+      this.db.prepare(`DELETE FROM memory_index_state WHERE corpus IN (${placeholders})`).run(...corpora);
+      for (const corpus of corpora) {
+        if (this.vecTables.has(corpus)) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
+      }
     });
     run();
   }
@@ -334,13 +361,23 @@ export class RetrievalStore {
 
   // --- Read path -----------------------------------------------------------
 
-  /** `taskId`, when given, restricts the FTS match itself to that task's chunks
-   *  (a JOIN against memory_chunks, not a post-filter) so ranking and `limit`
-   *  apply within the task instead of discarding most of a small result set
-   *  after the fact. */
-  searchLexical(matchQuery: string, limit: number, taskId?: string): LexicalHit[] {
+  /** `corpora` restricts the match to those corpora: the FTS table covers every
+   *  corpus, so a search that names none would rank task records against
+   *  conversation turns. `taskId`, when given, restricts the FTS match itself to
+   *  that task's chunks (a JOIN against memory_chunks, not a post-filter) so
+   *  ranking and `limit` apply within the task instead of discarding most of a
+   *  small result set after the fact. */
+  searchLexical(
+    matchQuery: string,
+    limit: number,
+    corpora: ReadonlyArray<MemoryCorpus>,
+    taskId?: string,
+  ): LexicalHit[] {
+    if (corpora.length === 0) return [];
     const taskFilter = taskId ? 'AND memory_chunks.task_id = ?' : '';
-    const params = taskId ? [matchQuery, taskId, limit] : [matchQuery, limit];
+    const params: Array<string | number> = [matchQuery, ...corpora];
+    if (taskId) params.push(taskId);
+    params.push(limit);
     const rows = this.db
       .prepare(
         `SELECT memory_chunks_fts.rowid AS id,
@@ -348,7 +385,7 @@ export class RetrievalStore {
                 bm25(memory_chunks_fts) AS score
          FROM memory_chunks_fts
          JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid
-         WHERE memory_chunks_fts MATCH ? ${taskFilter}
+         WHERE memory_chunks_fts MATCH ? AND memory_chunks.corpus IN (${corpusPlaceholders(corpora)}) ${taskFilter}
          ORDER BY score
          LIMIT ?`,
       )
@@ -430,40 +467,44 @@ export class RetrievalStore {
 
   // --- Vector path (Phase 2; no-op until ensureVecTable succeeds) -----------
 
+  /** True when the conversation vectors are searchable, which is what the map
+   *  and the semantic status mean by "semantic". */
   get hasVec(): boolean {
-    return this.vecReady;
+    return this.vecTables.has('conversation');
   }
 
-  /** Create the vec table at `dimensions` if the extension loaded and it does
-   *  not exist yet. Only the embedding path calls this (it alone knows the
-   *  selected model's dimension). No-op when sqlite-vec is unavailable. */
+  /** Create every corpus's vec table at `dimensions` that does not exist yet.
+   *  Only the embedding path calls this (it alone knows the selected model's
+   *  dimension). No-op when sqlite-vec is unavailable. */
   ensureVecTable(dimensions: number): void {
     if (!hasVecSupport(this.db)) return;
-    try {
-      this.db.exec(
-        `CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_vec USING vec0(embedding float[${dimensions}])`,
-      );
-      this.vecReady = true;
-    } catch (error) {
-      console.warn('[retrieval] vec table create failed, lexical-only:', error);
-      this.vecReady = false;
+    for (const corpus of MEMORY_CORPORA) {
+      try {
+        this.db.exec(
+          `CREATE VIRTUAL TABLE IF NOT EXISTS ${vecTableName(corpus)} USING vec0(embedding float[${dimensions}])`,
+        );
+        this.vecTables.add(corpus);
+      } catch (error) {
+        console.warn(`[retrieval] vec table create failed for ${corpus}, lexical-only:`, error);
+        this.vecTables.delete(corpus);
+      }
     }
   }
 
-  /** Recreate the vec table at a new dimension (a model switch that changes
+  /** Recreate every vec table at a new dimension (a model switch that changes
    *  vector width) and clear every chunk's embedding marker so they re-embed.
    *  vec0 tables are fixed-width, so a dimension change requires a full reset. */
   resetVec(dimensions: number): void {
     if (!hasVecSupport(this.db)) return;
     const run = this.db.transaction(() => {
-      this.db.exec('DROP TABLE IF EXISTS memory_chunks_vec');
-      this.db.exec(
-        `CREATE VIRTUAL TABLE memory_chunks_vec USING vec0(embedding float[${dimensions}])`,
-      );
+      for (const corpus of MEMORY_CORPORA) {
+        this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
+        this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} USING vec0(embedding float[${dimensions}])`);
+      }
       this.db.prepare('UPDATE memory_chunks SET embedded_model = NULL').run();
     });
     run();
-    this.vecReady = true;
+    for (const corpus of MEMORY_CORPORA) this.vecTables.add(corpus);
   }
 
   /**
@@ -490,71 +531,109 @@ export class RetrievalStore {
     rows: Array<{ chunkId: number; vector: Float32Array; contentHash: string }>,
     modelTag: string,
   ): void {
-    if (!this.vecReady || rows.length === 0) return;
+    if (this.vecTables.size === 0 || rows.length === 0) return;
     const run = this.db.transaction(() => {
       // vec0 virtual tables do NOT support UPSERT - an
       // `INSERT ... ON CONFLICT DO UPDATE` throws "UPSERT not implemented for
       // virtual table". Re-embedding a chunk (a model switch, or a rowid reused
       // after a content change) is therefore a DELETE followed by a plain
       // INSERT, which is sqlite-vec's documented update path.
-      const checkHash = this.db.prepare('SELECT content_hash FROM memory_chunks WHERE id = ?');
-      const deleteVec = this.db.prepare('DELETE FROM memory_chunks_vec WHERE rowid = ?');
-      const insertVec = this.db.prepare('INSERT INTO memory_chunks_vec(rowid, embedding) VALUES (?, ?)');
+      //
+      // The live row also says which corpus, and so which vec table, the
+      // vector belongs to.
+      const checkHash = this.db.prepare('SELECT content_hash, corpus FROM memory_chunks WHERE id = ?');
       const markChunk = this.db.prepare('UPDATE memory_chunks SET embedded_model = ? WHERE id = ?');
       for (const { chunkId, vector, contentHash } of rows) {
-        const current = checkHash.get(chunkId) as { content_hash: string } | undefined;
+        const current = checkHash.get(chunkId) as { content_hash: string; corpus: string } | undefined;
         if (!current || current.content_hash !== contentHash) continue;
+        // A corpus with no table on this connection stays pending.
+        if (!isMemoryCorpus(current.corpus) || !this.vecTables.has(current.corpus)) continue;
+        const table = vecTableName(current.corpus);
         // vec0 rejects a JS number for its rowid ("Only integers are allowed
         // for primary key values") - it must be bound as a BigInt (verified
         // against sqlite-vec 0.1.9 under Electron).
         const rowid = BigInt(chunkId);
-        deleteVec.run(rowid);
-        insertVec.run(rowid, Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength));
+        this.db.prepare(`DELETE FROM ${table} WHERE rowid = ?`).run(rowid);
+        this.db
+          .prepare(`INSERT INTO ${table}(rowid, embedding) VALUES (?, ?)`)
+          .run(rowid, Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength));
         markChunk.run(modelTag, chunkId);
       }
     });
     run();
   }
 
-  searchSemantic(query: Float32Array, limit: number): SemanticHit[] {
-    if (!this.vecReady) return [];
+  /**
+   * The nearest chunks across `corpora`, closest first.
+   *
+   * Each corpus is its own vec0 table, so each is searched for its own top
+   * `limit` and the lists merge by distance. Every table holds the same model's
+   * vectors, so distances compare across them.
+   */
+  searchSemantic(query: Float32Array, limit: number, corpora: ReadonlyArray<MemoryCorpus>): SemanticHit[] {
     const buffer = Buffer.from(query.buffer, query.byteOffset, query.byteLength);
-    const rows = this.db
-      .prepare(
-        `SELECT rowid AS id, distance
-         FROM memory_chunks_vec
-         WHERE embedding MATCH ? AND k = ?
-         ORDER BY distance`,
-      )
-      .all(buffer, limit) as Array<{ id: number; distance: number }>;
-    return rows.map((row, index) => ({ chunkId: row.id, rank: index + 1, distance: row.distance }));
+    const merged: Array<{ id: number; distance: number }> = [];
+    for (const corpus of corpora) {
+      if (!this.vecTables.has(corpus)) continue;
+      const rows = this.db
+        .prepare(
+          `SELECT rowid AS id, distance
+           FROM ${vecTableName(corpus)}
+           WHERE embedding MATCH ? AND k = ?
+           ORDER BY distance`,
+        )
+        .all(buffer, limit) as Array<{ id: number; distance: number }>;
+      merged.push(...rows);
+    }
+    if (corpora.length > 1) merged.sort((left, right) => left.distance - right.distance);
+    return merged.slice(0, limit).map((row, index) => ({ chunkId: row.id, rank: index + 1, distance: row.distance }));
   }
 
+  /**
+   * The next chunks to embed: never-embedded ones corpus by corpus in
+   * `MEMORY_CORPORA` order (conversations first), then any left under another
+   * model's tag.
+   *
+   * Written against `idx_memory_chunks_pending (embedded_model, corpus)`. The
+   * older single query (`embedded_model IS NULL OR embedded_model != ?`, by id)
+   * scanned the whole table whenever nothing was pending, measured at 214 ms on
+   * 92k chunks, and it ran on every drain poll. Each query here is an index seek:
+   * the index stores rowid last, so a (NULL, corpus) range comes back in id
+   * order with no sort, and the stale-tag range is empty in the steady state.
+   */
   chunksNeedingEmbedding(modelTag: string, limit: number): StoredChunk[] {
-    if (!this.vecReady) return [];
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM memory_chunks
-         WHERE embedded_model IS NULL OR embedded_model != ?
-         ORDER BY id ASC
-         LIMIT ?`,
-      )
-      .all(modelTag, limit) as StoredChunkRow[];
+    if (this.vecTables.size === 0) return [];
+    const rows: StoredChunkRow[] = [];
+    for (const corpus of MEMORY_CORPORA) {
+      if (rows.length >= limit) break;
+      if (!this.vecTables.has(corpus)) continue;
+      rows.push(...this.db
+        .prepare('SELECT * FROM memory_chunks WHERE embedded_model IS NULL AND corpus = ? ORDER BY id ASC LIMIT ?')
+        .all(corpus, limit - rows.length) as StoredChunkRow[]);
+    }
+    if (rows.length < limit) {
+      // Rows left under another model of the same width (a switch that did not
+      // reset the tables). Rare, so order does not matter here.
+      const stale = this.db
+        .prepare('SELECT * FROM memory_chunks WHERE embedded_model < ? OR embedded_model > ? LIMIT ?')
+        .all(modelTag, modelTag, limit - rows.length) as StoredChunkRow[];
+      rows.push(...stale.filter((row) => isMemoryCorpus(row.corpus) && this.vecTables.has(row.corpus)));
+    }
     return rows.map(toStoredChunk);
   }
 
-  /** Cheap count of chunks still pending embedding for `modelTag` (same WHERE
-   *  clause as `chunksNeedingEmbedding`, backed by `idx_memory_chunks_embedded`).
-   *  Not yet wired to a caller: exposed for a future embedding status/telemetry
-   *  surface that needs a pending count without fetching full rows. */
+  /** Cheap count of chunks still pending embedding for `modelTag` (the same
+   *  rows `chunksNeedingEmbedding` serves, as index seeks). Not yet wired to a
+   *  caller: exposed for a future embedding status/telemetry surface that needs
+   *  a pending count without fetching full rows. */
   countChunksNeedingEmbedding(modelTag: string): number {
-    if (!this.vecReady) return 0;
+    if (this.vecTables.size === 0) return 0;
     const row = this.db
       .prepare(
         `SELECT COUNT(*) AS count FROM memory_chunks
-         WHERE embedded_model IS NULL OR embedded_model != ?`,
+         WHERE embedded_model IS NULL OR embedded_model < ? OR embedded_model > ?`,
       )
-      .get(modelTag) as { count: number };
+      .get(modelTag, modelTag) as { count: number };
     return row.count;
   }
 
@@ -567,8 +646,13 @@ export class RetrievalStore {
    * the vec table is deliberate: `memory_chunks_vec` is a vec0 virtual table
    * whose cost is dominated by per-row blob decode, so there is no cheaper
    * ordering to be had on that side.
+   *
+   * One corpus at a time, through `idx_memory_chunks_corpus (corpus)`, which
+   * carries rowid, so the page is a range seek in id order. Filtering by corpus
+   * any other way let the planner pick the (corpus, doc_id, seq) index and sort
+   * the whole corpus for every page: 142 ms against 0.2 ms, measured.
    */
-  listChunkIdentities(afterChunkId: number, limit: number): Array<{
+  listChunkIdentities(afterChunkId: number, limit: number, corpus: MemoryCorpus): Array<{
     id: number;
     corpus: string;
     docId: string;
@@ -576,11 +660,11 @@ export class RetrievalStore {
     return this.db
       .prepare(
         `SELECT id, corpus, doc_id AS docId FROM memory_chunks
-         WHERE id > ? AND embedded_model IS NOT NULL
+         WHERE corpus = ? AND id > ? AND embedded_model IS NOT NULL
          ORDER BY id ASC
          LIMIT ?`,
       )
-      .all(afterChunkId, limit) as Array<{ id: number; corpus: string; docId: string }>;
+      .all(corpus, afterChunkId, limit) as Array<{ id: number; corpus: string; docId: string }>;
   }
 
   /**
@@ -593,12 +677,12 @@ export class RetrievalStore {
    * chunks leave gaps - so a page can legitimately return fewer rows than it
    * asked for, and that must not be read as end-of-scan.
    */
-  readVectors(chunkIds: number[]): Map<number, Float32Array> {
+  readVectors(chunkIds: number[], corpus: MemoryCorpus): Map<number, Float32Array> {
     const vectors = new Map<number, Float32Array>();
-    if (!this.vecReady || chunkIds.length === 0) return vectors;
+    if (!this.vecTables.has(corpus) || chunkIds.length === 0) return vectors;
     const placeholders = chunkIds.map(() => '?').join(',');
     const rows = this.db
-      .prepare(`SELECT rowid AS id, embedding FROM memory_chunks_vec WHERE rowid IN (${placeholders})`)
+      .prepare(`SELECT rowid AS id, embedding FROM ${vecTableName(corpus)} WHERE rowid IN (${placeholders})`)
       .all(...chunkIds) as Array<{ id: number; embedding: Buffer }>;
     for (const row of rows) {
       // Copy out of the sqlite-owned buffer: the statement's memory is reused
@@ -612,45 +696,52 @@ export class RetrievalStore {
     return vectors;
   }
 
-  /** Per-document chunk and embedded counts, for the coverage strip and for
-   *  detecting a re-indexed document during an incremental projection pass. */
-  documentChunkTotals(): Array<{
+  /** Per-document chunk and embedded counts in `corpora`, for the coverage
+   *  strip and for detecting a re-indexed document during an incremental
+   *  projection pass. */
+  documentChunkTotals(corpora: ReadonlyArray<MemoryCorpus>): Array<{
     corpus: string;
     docId: string;
     chunkCount: number;
     embeddedCount: number;
   }> {
+    if (corpora.length === 0) return [];
     return this.db
       .prepare(
         `SELECT corpus, doc_id AS docId, COUNT(*) AS chunkCount,
                 SUM(CASE WHEN embedded_model IS NOT NULL THEN 1 ELSE 0 END) AS embeddedCount
          FROM memory_chunks
+         WHERE corpus IN (${corpusPlaceholders(corpora)})
          GROUP BY corpus, doc_id`,
       )
-      .all() as Array<{ corpus: string; docId: string; chunkCount: number; embeddedCount: number }>;
+      .all(...corpora) as Array<{ corpus: string; docId: string; chunkCount: number; embeddedCount: number }>;
   }
 
-  /** Highest chunk id present, used as half the cache signature. */
   /**
-   * A cheap summary of everything coverage is computed from, so a caller can
-   * tell whether a coverage it already holds is still true.
+   * A cheap summary of everything conversation coverage is computed from, so a
+   * caller can tell whether a coverage it already holds is still true.
    *
    * Coverage groups every chunk by document, which measured about 285 ms on an
-   * 89k-chunk index. These reads are index lookups and small tables: about 6 ms
-   * together. Chunks added or removed move the count and the top id; embedding
-   * progress moves the embedded count (indexed); a document's state moving moves
-   * its status tallies; a new transcript moves the session count.
+   * 89k-chunk index. These reads are index seeks and small tables. Chunks added
+   * or removed move the count and the top id; embedding progress moves the
+   * embedded count; a document's state moving moves its status tallies; a new
+   * transcript moves the session count.
+   *
+   * Conversations only. Coverage describes conversations, and a task edit
+   * re-indexes that task's record: counted here, every board change would throw
+   * the coverage away and pay the 285 ms again.
    */
   coverageFingerprint(): string {
-    const chunks = this.db.prepare('SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS maxId FROM memory_chunks').get() as {
-      count: number;
-      maxId: number;
-    };
-    const embedded = this.db.prepare('SELECT COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL').get() as {
-      count: number;
-    };
+    const chunks = this.db
+      .prepare("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS maxId FROM memory_chunks WHERE corpus = 'conversation'")
+      .get() as { count: number; maxId: number };
+    const embedded = this.db
+      .prepare("SELECT COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL AND corpus = 'conversation'")
+      .get() as { count: number };
     const states = this.db
-      .prepare('SELECT status, COUNT(*) AS count, MAX(indexed_at) AS latest FROM memory_index_state GROUP BY status ORDER BY status')
+      .prepare(
+        "SELECT status, COUNT(*) AS count, MAX(indexed_at) AS latest FROM memory_index_state WHERE corpus = 'conversation' GROUP BY status ORDER BY status",
+      )
       .all() as Array<{ status: string; count: number; latest: string | null }>;
     const sessions = this.db
       .prepare('SELECT COUNT(DISTINCT agent_session_id) AS count FROM sessions WHERE agent_session_id IS NOT NULL')
@@ -664,8 +755,10 @@ export class RetrievalStore {
     ].join('|');
   }
 
-  maxChunkId(): number {
-    const row = this.db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM memory_chunks').get() as {
+  /** Highest chunk id in one corpus: half the projection's cache signature.
+   *  A seek on `idx_memory_chunks_corpus`, which carries rowid. */
+  maxChunkId(corpus: MemoryCorpus): number {
+    const row = this.db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM memory_chunks WHERE corpus = ?').get(corpus) as {
       id: number;
     };
     return row.id;
@@ -781,6 +874,9 @@ export class RetrievalStore {
          LEFT JOIN tasks t ON t.id = c.task_id
          LEFT JOIN swimlanes w ON w.id = t.swimlane_id
          LEFT JOIN sessions s ON s.id = c.session_id
+         -- Conversations only: they are the map's nodes. A task record or a
+         -- session's changes is looked up through its task, not drawn.
+         WHERE c.corpus = 'conversation'
          GROUP BY c.corpus, c.doc_id`,
       )
       .all() as Array<{
@@ -980,25 +1076,33 @@ export class RetrievalStore {
     return { dimensions, modelTag: row.modelTag };
   }
 
-  listIndexState(): Array<{ corpus: string; docId: string; status: string }> {
+  listIndexState(corpus: MemoryCorpus): Array<{ corpus: string; docId: string; status: string }> {
     return this.db
-      .prepare('SELECT corpus, doc_id AS docId, status FROM memory_index_state')
-      .all() as Array<{ corpus: string; docId: string; status: string }>;
+      .prepare('SELECT corpus, doc_id AS docId, status FROM memory_index_state WHERE corpus = ?')
+      .all(corpus) as Array<{ corpus: string; docId: string; status: string }>;
   }
 
   /** Startup GC: drop vec rows whose chunk was removed while the extension was
-   *  unavailable (triggers cannot touch the vec table). */
+   *  unavailable (triggers cannot touch the vec table), in every corpus. A row
+   *  that belongs to another corpus's chunk goes too. */
   reconcileVecOrphans(): void {
-    if (!this.vecReady) return;
-    this.db
-      .prepare('DELETE FROM memory_chunks_vec WHERE rowid NOT IN (SELECT id FROM memory_chunks)')
-      .run();
+    for (const corpus of this.vecTables) {
+      this.db
+        .prepare(`DELETE FROM ${vecTableName(corpus)} WHERE rowid NOT IN (SELECT id FROM memory_chunks WHERE corpus = ?)`)
+        .run(corpus);
+    }
   }
 
-  private deleteVecRows(ids: number[]): void {
-    if (!this.vecReady || ids.length === 0) return;
+  /** Delete vec rows by chunk id: from `corpus`'s table when it is known, from
+   *  every table when it is not. */
+  private deleteVecRows(ids: number[], corpus: string): void {
+    if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
-    // vec0 rowids must be bound as BigInt (see writeEmbeddings).
-    this.db.prepare(`DELETE FROM memory_chunks_vec WHERE rowid IN (${placeholders})`).run(...ids.map((id) => BigInt(id)));
+    const tables = isMemoryCorpus(corpus) ? [corpus] : [...MEMORY_CORPORA];
+    for (const table of tables) {
+      if (!this.vecTables.has(table)) continue;
+      // vec0 rowids must be bound as BigInt (see writeEmbeddings).
+      this.db.prepare(`DELETE FROM ${vecTableName(table)} WHERE rowid IN (${placeholders})`).run(...ids.map((id) => BigInt(id)));
+    }
   }
 }

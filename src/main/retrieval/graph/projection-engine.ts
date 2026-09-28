@@ -27,6 +27,7 @@
  */
 
 import type { RetrievalStore } from '../retrieval-store';
+import { CONVERSATION_CORPUS } from '../corpora';
 import type { MemoryGraphNode, MemoryGraphProjection } from '../../../shared/types';
 import { MEMORY_GRAPH_GRANULARITIES } from '../../../shared/types';
 import {
@@ -199,7 +200,10 @@ export async function runProjectionPass(
   const scanBatch = deps.scanBatch ?? SCAN_BATCH;
   const aborted = (): boolean => deps.signal?.aborted === true;
 
-  const totals = store.documentChunkTotals();
+  // The map is drawn from conversations. Task records and session changes are
+  // searched, never drawn, so they stay out of the scan and out of the
+  // signature: a board edit must not rebuild the map.
+  const totals = store.documentChunkTotals(CONVERSATION_CORPUS);
   const liveCounts = new Map<string, number>();
   for (const row of totals) {
     if (row.embeddedCount > 0) liveCounts.set(`${row.corpus}::${row.docId}`, row.embeddedCount);
@@ -213,10 +217,10 @@ export async function runProjectionPass(
     if (aborted()) return null;
     const startedAt = Date.now();
 
-    const identities = store.listChunkIdentities(cursor, scanBatch);
+    const identities = store.listChunkIdentities(cursor, scanBatch, 'conversation');
     if (identities.length === 0) break;
 
-    const vectors = store.readVectors(identities.map((row) => row.id));
+    const vectors = store.readVectors(identities.map((row) => row.id), 'conversation');
     for (const identity of identities) {
       const vector = vectors.get(identity.id);
       if (vector === undefined) continue;
@@ -346,7 +350,7 @@ export async function runProjectionPass(
     // already paid for; throwing it away is what made the panel's "closest
     // conversations" a subset of whatever survived the mesh quantile.
     nodeNeighbors: buildNodeNeighborLists(neighbors, pooled.docKeys.length, DETAIL_NEIGHBOR_COUNT),
-    signature: buildSignature(modelTag, embeddedChunks, store.maxChunkId()),
+    signature: buildSignature(modelTag, embeddedChunks, store.maxChunkId('conversation')),
     modelTag,
     dimensions,
     // Only the vector half is arithmetic: vec0 rows are fixed-width, so it is

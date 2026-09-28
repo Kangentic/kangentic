@@ -3,6 +3,7 @@ import { getProjectDb } from '../db/database';
 import { agentRegistry } from '../agent/agent-registry';
 import type { Project } from '../../shared/types';
 import { RetrievalStore } from './retrieval-store';
+import { CONVERSATION_CORPUS } from './corpora';
 import { escapeFtsMatchQuery } from './fts-query';
 import { reciprocalRankFusion } from './fusion';
 import { trackFeatureUsed } from '../analytics/usage';
@@ -212,9 +213,11 @@ export async function searchConversationMemory(
   return [...bestBySession.values()].sort((a, b) => b.score - a.score).slice(0, k);
 }
 
+// Conversation search: every hit here opens a transcript at a turn, which only
+// the conversation corpus has.
 function safeLexical(store: RetrievalStore, matchQuery: string, taskId?: string) {
   try {
-    return store.searchLexical(matchQuery, PER_LIST_LIMIT, taskId);
+    return store.searchLexical(matchQuery, PER_LIST_LIMIT, CONVERSATION_CORPUS, taskId);
   } catch {
     // A malformed MATCH slips through, or the FTS table is missing on an old DB.
     return [];
@@ -223,7 +226,7 @@ function safeLexical(store: RetrievalStore, matchQuery: string, taskId?: string)
 
 function safeSemantic(store: RetrievalStore, queryVector: Float32Array, limit: number) {
   try {
-    return store.searchSemantic(queryVector, limit);
+    return store.searchSemantic(queryVector, limit, CONVERSATION_CORPUS);
   } catch {
     return [];
   }

@@ -535,9 +535,11 @@ export class ConversationIndexer {
     }
     const store = new RetrievalStore(db);
 
-    // A chunker change invalidates every stored chunk: purge + reindex.
+    // A chunker change invalidates every conversation chunk and the session
+    // changes read from them: purge + reindex. Task records are chunked by
+    // their own indexer and survive.
     if (store.getMeta(CHUNKER_VERSION_KEY) !== String(this.deps.chunkerVersion)) {
-      store.purgeAll();
+      store.purgeCorpora(['conversation', 'change']);
       store.setMeta(CHUNKER_VERSION_KEY, String(this.deps.chunkerVersion));
     }
 

@@ -20,6 +20,7 @@
 
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
+import { CONVERSATION_CORPUS } from '../corpora';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { MemoryGraphSnapshot } from '../../../shared/types';
@@ -77,9 +78,11 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   }
 
   function buildCoverage(store: RetrievalStore, knownDocumentIds: string[]): CoverageSummary {
+    // Conversation coverage: what the map draws. The other corpora report in
+    // the Index panel's own rows.
     return aggregateCoverage({
-      indexState: store.listIndexState(),
-      chunkTotals: store.documentChunkTotals(),
+      indexState: store.listIndexState('conversation'),
+      chunkTotals: store.documentChunkTotals(CONVERSATION_CORPUS),
       knownDocumentIds,
     });
   }
@@ -168,7 +171,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
           projection,
           embedding.modelTag,
           coverage.totalEmbeddedChunks,
-          store.maxChunkId(),
+          store.maxChunkId('conversation'),
         ),
         semanticAvailable: store.hasVec,
       };

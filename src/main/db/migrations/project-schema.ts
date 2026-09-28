@@ -834,6 +834,14 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_doc ON memory_chunks(corpus, doc_id, seq)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_session ON memory_chunks(session_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_embedded ON memory_chunks(embedded_model)');
+  // Per-corpus reads (conversations, task records, session changes). SQLite
+  // appends rowid to every index, so `(corpus)` answers MAX(id) and an id-range
+  // page within one corpus as a seek, and `(embedded_model, corpus)` hands the
+  // embedding drain its next never-embedded chunks of one corpus in id order.
+  // Measured on 92k chunks: a projection page 142 ms without it and 0.2 ms with,
+  // and the drain's "anything pending?" read 214 ms against 0.01 ms.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_corpus ON memory_chunks(corpus)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_pending ON memory_chunks(embedded_model, corpus)');
 
   // FTS5 external-content index over memory_chunks.text. FTS5 is compiled into
   // the shipped better-sqlite3, so this is always safe. External content (not
