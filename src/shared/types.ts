@@ -6994,10 +6994,17 @@ export interface MemoryIndexSummary {
   /** One entry per corpus the store knows, in `MEMORY_CORPORA` order, present
    *  with zeros when nothing of it is indexed yet. */
   corpora: MemoryIndexCorpusSummary[];
-  /** Task digests written, of the finished tasks that can have one. */
-  digests: { written: number; finishedTasks: number };
+  /**
+   * Task digests written, of the finished tasks that can have one, and how many
+   * the answering agent passed over this run of the app (asked, and no digest
+   * came back; tried again on the next launch).
+   */
+  digests: { written: number; finishedTasks: number; skipped?: number };
   /** Bytes every corpus occupies: text plus vectors. */
   storageBytes: number;
+  /** When anything was last written to the index, any corpus, ISO; null when
+   *  nothing ever has been. With several projects, the least recent of them. */
+  lastIndexedAt?: string | null;
 }
 
 /** One conversation matched by a Memory Graph query. */

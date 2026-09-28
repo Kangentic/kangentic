@@ -39,6 +39,8 @@ export interface DigestSchedulerDeps<Context> {
 export interface DigestScheduler<Context> {
   /** Ask for a pass over a project; one already running takes it next. */
   request: (context: Context, projectId: string) => void;
+  /** How many tasks the agent passed over in this project, this run of the app. */
+  skipped: (projectId: string) => number;
   dispose: () => void;
   /** True while a pass is running (for tests). */
   readonly busy: boolean;
@@ -115,6 +117,7 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
 
   return {
     request,
+    skipped: (projectId) => skipByProject.get(projectId)?.size ?? 0,
     dispose: () => {
       disposed = true;
       for (const timer of timers.values()) timer.cancel();

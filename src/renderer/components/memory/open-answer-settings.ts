@@ -17,6 +17,14 @@ import { useConfigStore } from '../../stores/config-store';
 const ANSWER_AGENT_ROW_SELECTOR = '[data-testid="setting-row-memory.answerAgent"]';
 const REVEAL_FRAME_BUDGET = 30;
 
+/** Take the user to Settings > Search, where the index is managed: the Index
+ *  flyout's Settings button. */
+export function openSearchSettings(): void {
+  const store = useConfigStore.getState();
+  store.setLastSettingsTab('memory');
+  store.setSettingsOpen(true);
+}
+
 export function openAnswerSettings(): void {
   const store = useConfigStore.getState();
   store.setLastSettingsTab('memory');

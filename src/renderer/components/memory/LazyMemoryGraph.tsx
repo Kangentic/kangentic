@@ -64,13 +64,16 @@ interface LazyMemoryGraphProps {
    * board, so such a row shows but cannot be opened there.
    */
   onRevealTask?: (taskId: string, projectId?: string) => void;
+  /** Opens Settings > Search from the Index flyout. Absent in the detached
+   *  window, which has no settings panel, so the flyout shows no button there. */
+  onOpenSettings?: () => void;
 }
 
-export function LazyMemoryGraph({ onChooseAnswerAgent, onRevealTask }: LazyMemoryGraphProps = {}) {
+export function LazyMemoryGraph({ onChooseAnswerAgent, onRevealTask, onOpenSettings }: LazyMemoryGraphProps = {}) {
   return (
     <PanelErrorBoundary label="Knowledge Graph">
       <Suspense fallback={<MemoryGraphSkeleton />}>
-        <MemoryGraphBody onChooseAnswerAgent={onChooseAnswerAgent} onRevealTask={onRevealTask} />
+        <MemoryGraphBody onChooseAnswerAgent={onChooseAnswerAgent} onRevealTask={onRevealTask} onOpenSettings={onOpenSettings} />
       </Suspense>
     </PanelErrorBoundary>
   );

@@ -32,8 +32,8 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Database, Filter, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
-import { SegmentedControl } from '../SegmentedControl';
+import { ChevronDown, ChevronRight, Database, Filter, Search, Settings, Shapes, SlidersHorizontal, X } from 'lucide-react';
+import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { OverlayPopover } from '../OverlayPopover';
 import { Select } from '../settings/shared';
 import type { MemoryGraphColorMode } from './MemoryGraphCanvas';
@@ -46,6 +46,7 @@ import type {
   MemoryIndexSummary,
 } from '../../../shared/types';
 import { PanelRow, InfoHint, formatBytes } from './PanelRow';
+import { formatRelativeTime } from '../../lib/datetime';
 
 /** How far back a conversation's last activity may be. */
 export type MemoryGraphTimeWindow = 'any' | '7d' | '30d' | '90d';
@@ -142,6 +143,22 @@ export const OUTCOME_LABELS: Readonly<Record<MemoryGraphOutcome, string>> = {
   // leaves the board, so it is not the opposite of finishing - dropping is.
   abandoned: 'Dropped',
 };
+
+/** The status filter's segment labels: `OUTCOME_LABELS` cut to fit four
+ *  segments in the panel, the full label kept as each one's name and tooltip. */
+const OUTCOME_SHORT_LABELS: Readonly<Record<MemoryGraphOutcome, string>> = {
+  done: 'Finished',
+  active: 'Open',
+  abandoned: 'Dropped',
+};
+
+/** The time filter's segments, the full window as each one's name and tooltip. */
+const TIME_OPTIONS: ReadonlyArray<SegmentedControlOption<MemoryGraphTimeWindow>> = [
+  { value: 'any', label: 'Any', ariaLabel: 'Any time', title: 'Any time', testId: 'memory-graph-filter-since-any' },
+  { value: '7d', label: '7 days', ariaLabel: 'Last 7 days', title: 'Last 7 days', testId: 'memory-graph-filter-since-7d' },
+  { value: '30d', label: '30 days', ariaLabel: 'Last 30 days', title: 'Last 30 days', testId: 'memory-graph-filter-since-30d' },
+  { value: '90d', label: '90 days', ariaLabel: 'Last 90 days', title: 'Last 90 days', testId: 'memory-graph-filter-since-90d' },
+];
 
 /** Display order, independent of whatever order the corpus happened to yield. */
 export const OUTCOME_ORDER: ReadonlyArray<MemoryGraphOutcome> = ['done', 'active', 'abandoned'];
@@ -248,6 +265,9 @@ export interface MemoryGraphControlsProps {
   /** The Projects picker, rendered at the top of Filter. Absent when fewer than
    *  two projects have an index, since a one-option scope is a dead control. */
   projectsPicker?: ReactNode;
+  /** Opens Settings > Search, where the index is rebuilt and its model and
+   *  digests are set. Absent in the detached window, which has no settings. */
+  onOpenSettings?: () => void;
 }
 
 /**
@@ -435,6 +455,7 @@ export function MemoryGraphControls({
   edgeCount,
   building,
   projectsPicker,
+  onOpenSettings,
 }: MemoryGraphControlsProps) {
   // Open by default: these three are controls the user acts on.
   const [filterCollapsed, setFilterCollapsed] = useState(false);
@@ -442,13 +463,6 @@ export function MemoryGraphControls({
   const [displayCollapsed, setDisplayCollapsed] = useState(false);
   // Closed by default: the numbers are reference, not a control.
   const [indexCollapsed, setIndexCollapsed] = useState(true);
-  // Every corpus, not just what the map draws: the Index panel accounts for
-  // the whole store.
-  const totalChunks = index.corpora.reduce((total, entry) => total + entry.chunks, 0);
-  // The embedded share is of what gets embedded: a text-only corpus would
-  // otherwise hold it below 100% forever.
-  const embeddableChunks = index.corpora.reduce((total, entry) => total + (entry.embeds ? entry.chunks : 0), 0);
-  const totalEmbedded = index.corpora.reduce((total, entry) => total + entry.embeddedChunks, 0);
   const [regionQuery, setRegionQuery] = useState('');
 
   /**
@@ -557,46 +571,49 @@ export function MemoryGraphControls({
               ) : null}
               {anyFacetAvailable ? (
                 // A STACK of rows rather than one control, because these are
-                // independent questions. Each option is written to be
-                // self-describing ("Last 30 days", not "30d"), so the rows need no
-                // labels of their own and the panel stays narrow.
+                // independent questions. Segmented rather than dropdowns: short
+                // fixed choices show every option and cost one click. No group
+                // labels, which would add 40px and bring the panel's scrollbar
+                // back sooner; each row's options say what they are (days,
+                // statuses), and each option's full name is its accessible name
+                // and tooltip. Quiet and tight, because four options have 224px.
                 <div className="space-y-1.5">
                   {facetAvailability.since ? (
-                    <Select
+                    <SegmentedControl
+                      options={TIME_OPTIONS}
                       value={facets.since}
-                      onChange={(event) =>
-                        onFacetsChange({ ...facets, since: event.target.value as MemoryGraphTimeWindow })
-                      }
-                      aria-label="Filter by when the conversation was last active"
-                      data-testid="memory-graph-filter-since"
-                    >
-                      <option value="any">Any time</option>
-                      <option value="7d">Last 7 days</option>
-                      <option value="30d">Last 30 days</option>
-                      <option value="90d">Last 90 days</option>
-                    </Select>
+                      onChange={(since) => onFacetsChange({ ...facets, since })}
+                      ariaLabel="Filter by when the conversation was last active"
+                      testId="memory-graph-filter-since"
+                      quiet
+                      tight
+                      fullWidth
+                    />
                   ) : null}
 
                   {facetAvailability.outcomes.length > 1 ? (
-                    <Select
+                    <SegmentedControl
+                      options={[
+                        // "Any status", not "Any outcome": one of the values is
+                        // "Still open", which is not an outcome at all - it is the
+                        // absence of one.
+                        { value: 'any' as const, label: 'Any', ariaLabel: 'Any status', title: 'Any status', testId: 'memory-graph-filter-outcome-any' },
+                        ...facetAvailability.outcomes.map((outcome) => ({
+                          value: outcome,
+                          label: OUTCOME_SHORT_LABELS[outcome],
+                          ariaLabel: OUTCOME_LABELS[outcome],
+                          title: OUTCOME_LABELS[outcome],
+                          testId: `memory-graph-filter-outcome-${outcome}`,
+                        })),
+                      ]}
                       value={facets.outcome}
-                      onChange={(event) =>
-                        onFacetsChange({
-                          ...facets,
-                          outcome: event.target.value as MemoryGraphFacets['outcome'],
-                        })
-                      }
-                      aria-label="Filter by the task's status"
-                      data-testid="memory-graph-filter-outcome"
-                    >
-                      {/* "Any status", not "Any outcome": one of the values is
-                          "Still open", which is not an outcome at all - it is
-                          the absence of one. */}
-                      <option value="any">Any status</option>
-                      {facetAvailability.outcomes.map((outcome) => (
-                        <option key={outcome} value={outcome}>{OUTCOME_LABELS[outcome]}</option>
-                      ))}
-                    </Select>
+                      onChange={(outcome) => onFacetsChange({ ...facets, outcome })}
+                      ariaLabel="Filter by the task's status"
+                      testId="memory-graph-filter-outcome"
+                      quiet
+                      tight
+                      fullWidth
+                    />
                   ) : null}
                 </div>
               ) : null}
@@ -871,16 +888,21 @@ export function MemoryGraphControls({
               <div data-testid="memory-graph-index-digests">
                 <IndexRow
                   label="Task digests"
-                  value={`${index.digests.written.toLocaleString()} of ${index.digests.finishedTasks.toLocaleString()}`}
-                  hint="A sentence or two per finished task, written by the answering agent. Searched with the task's record."
+                  // Why the count falls short, only when it does and the agent
+                  // is the reason, rather than a gap the reader has to wonder at.
+                  value={`${index.digests.written.toLocaleString()} of ${index.digests.finishedTasks.toLocaleString()}${
+                    (index.digests.skipped ?? 0) > 0 ? `, ${(index.digests.skipped ?? 0).toLocaleString()} skipped` : ''
+                  }`}
+                  hint={(index.digests.skipped ?? 0) > 0
+                    ? "A sentence or two per finished task, written by the answering agent. Skipped means the agent passed a task over; it is tried again next launch."
+                    : "A sentence or two per finished task, written by the answering agent. Searched with the task's record."}
                 />
               </div>
             ) : null}
-            <IndexRow
-              label="Chunks"
-              value={totalChunks}
-              hint="Passages everything above was split into. Search matches a chunk, not a whole document."
-            />
+            {/* No Chunks row and no overall Embedded row: chunks are how the
+                store splits text, which size on disk says in a unit people
+                read, and each corpus row above already shows its own embedded
+                share while that is below 100%. */}
             {index.storageBytes > 0 ? (
               <IndexRow
                 label="Size on disk"
@@ -889,15 +911,9 @@ export function MemoryGraphControls({
               />
             ) : null}
             <IndexRow label="Links" value={edgeCount} />
-            <IndexRow
-              label="Embedded"
-              value={`${embeddableChunks > 0 ? Math.floor((totalEmbedded / embeddableChunks) * 100) : 0}%`}
-              tone={semanticAvailable ? 'ok' : 'problem'}
-              hint={semanticAvailable ? undefined : 'The semantic layer is unavailable, so search is matching text only'}
-            />
             {coverage.sourceMissingButSearchable.documents > 0 ? (
               <IndexRow
-                label="Transcript deleted"
+                label="Source file gone"
                 value={coverage.sourceMissingButSearchable.documents}
                 // Said plainly because it is NOT a problem: the text and the
                 // embeddings are still indexed and still answer queries.
@@ -925,6 +941,28 @@ export function MemoryGraphControls({
             <span>Links are exact; position is approximate.</span>
             <InfoHint text="Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee." />
           </p>
+
+          {/* Whether the numbers are current, and where to act on them. */}
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-edge/60 pt-2">
+            {/* Only with a time to give: an empty index already says "Not yet
+                indexed" on each corpus row above. */}
+            <span className="text-[11px] text-fg-muted" data-testid="memory-graph-index-updated">
+              {index.lastIndexedAt ? `Updated ${formatRelativeTime(index.lastIndexedAt)}` : null}
+            </span>
+            {onOpenSettings ? (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                title="Rebuild the index, or change its model and digests, in Settings > Search"
+                // The camera toolbar's button, so the graph's actions read alike.
+                className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
+                data-testid="memory-graph-index-settings"
+              >
+                <Settings size={13} aria-hidden />
+                Settings
+              </button>
+            ) : null}
+          </div>
         </div>
       </OverlayPopover>
     </div>

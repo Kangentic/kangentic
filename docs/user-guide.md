@@ -980,7 +980,8 @@ you want to read. How finely the map CAN be cut is bounded by the index: on a sm
 setting produces the same regions, and the control hides itself rather than offering choices that
 repaint the identical picture.
 
-**Filter** scopes the map by time and by status (Finished, Still open, Dropped). Each row appears
+**Filter** scopes the map by time (Any, 7 days, 30 days, 90 days) and by status (Any, Finished,
+Open, Dropped), each a row of buttons so every choice shows and takes one click. Each row appears
 only when it can actually narrow this index: the time row is hidden when every conversation falls
 inside the shortest window, and a status appears only if something in the index has it. Unlike the
 colour mode, this row survives a lopsided board, which is the point of it - scoping to the handful
@@ -1088,8 +1089,12 @@ The **Index** card lists everything the index holds, one row per kind: **Convers
 map draws), **Task records** (each task's and backlog item's own text) and **Session changes** (the
 files each session changed, kept as text). Each shows its count and, while it is still being
 embedded, how much of it is; a kind with nothing in it yet says **Not yet indexed**. **Task
-digests** appears once any are written, as how many of the finished tasks have one. Chunks and
-size on disk cover all of them.
+digests** appears once any are written, as how many of the finished tasks have one, and says how
+many the agent skipped when it passed some over (they are tried again on the next launch). Size on
+disk covers all of them. **Source file gone** counts conversations whose transcript file was
+deleted but whose indexed text is still searchable. The card's footer says when the index last took
+anything in ("Updated 3 minutes ago"), and its **Settings** button opens Settings > Search, where
+the index is rebuilt and its model and digests are set.
 
 The index holds what the board and its conversations recorded, not your repository's files.
 

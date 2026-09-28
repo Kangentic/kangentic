@@ -241,6 +241,22 @@ describe('the digest scheduler', () => {
     expect(order).toEqual(['changes', 'pass']);
   });
 
+  it('counts the tasks the agent passed over, per project, for the Index to show', async () => {
+    const runPass = vi.fn(async () => ({ written: 9, remaining: 0, unanswered: ['task-a'], failed: false }));
+    const scheduler = createDigestScheduler<string>({
+      isEnabled: () => true,
+      resolveWriter: async () => ({ agent: 'claude', model: null, write: async () => '' }),
+      onWritten: () => undefined,
+      runPass: runPass as never,
+      setTimer: () => ({ cancel: () => undefined }),
+    });
+    expect(scheduler.skipped('project')).toBe(0);
+    scheduler.request('context', 'project');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(scheduler.skipped('project')).toBe(1);
+    expect(scheduler.skipped('another project')).toBe(0);
+  });
+
   it('backs off after a failed call instead of retrying at once', async () => {
     const { scheduler, timers } = harness([{ written: 0, remaining: 20, failed: true }]);
     scheduler.request('context', 'project');

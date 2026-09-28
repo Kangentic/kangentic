@@ -83,9 +83,11 @@ interface MemoryGraphBodyProps {
   onChooseAnswerAgent?: () => void;
   /** See `LazyMemoryGraph`: how a row with no conversation reaches its task. */
   onRevealTask?: (taskId: string, projectId?: string) => void;
+  /** See `LazyMemoryGraph`: the Index flyout's way to Settings > Search. */
+  onOpenSettings?: () => void;
 }
 
-export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGraphBodyProps) {
+export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSettings }: MemoryGraphBodyProps) {
   // The open project's snapshot, or several projects composed into islands.
   const graphView = useGraphView();
   const snapshot = graphView.snapshot;
@@ -834,6 +836,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
           edgeCount={projection.edges.length}
           building={snapshot.building}
           projectsPicker={projectsPicker}
+          onOpenSettings={onOpenSettings}
         />
       </div>
 

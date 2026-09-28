@@ -363,6 +363,9 @@ export const retrievalService = {
     // Embedded task records move the Index's embedded shares, which an open
     // graph only learns by re-reading its snapshot.
     embedEngine.setOnRecordsEmbedded((projectId) => graphService.notifyChanged(projectId));
+    // The Index says how many finished tasks the agent passed over, which only
+    // the scheduler knows.
+    graphService.setDigestsSkipped((projectId) => digestScheduler.skipped(projectId));
     if (attached) return;
     attached = true;
     context.sessionManager.on('exit', (sessionId: string) => {

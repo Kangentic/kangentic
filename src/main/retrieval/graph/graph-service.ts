@@ -79,6 +79,9 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   // Settable rather than constructor-only: the singleton is created at import
   // time but the push target (the main window) only exists once IPC registers.
   let onChanged: ((projectId: string) => void) | undefined = deps.onChanged;
+  /** How many finished tasks the digest scheduler passed over, by project. Set
+   *  by the retrieval service, which owns the scheduler and imports this module. */
+  let digestsSkipped: ((projectId: string) => number) | undefined;
 
   function storeFor(projectId: string): RetrievalStore {
     return new RetrievalStore(getDb(projectId));
@@ -144,18 +147,20 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       .reduce((total, entry) => total + entry.embeddedChunks, 0);
     return {
       corpora,
-      digests: digestCounts(store),
+      digests: digestCounts(projectId, store),
       storageBytes: (projection?.storageBytes ?? 0) + cached.otherTextBytes + otherEmbedded * dimensions * 4,
+      lastIndexedAt: store.lastIndexedAt(),
     };
   }
 
   /** Digests written, of the finished tasks: two small reads, never cached, so
    *  the row moves as the background backfill writes. */
-  function digestCounts(store: RetrievalStore): MemoryIndexSummary['digests'] {
+  function digestCounts(projectId: string, store: RetrievalStore): MemoryIndexSummary['digests'] {
+    const skipped = digestsSkipped?.(projectId) ?? 0;
     try {
-      return store.digestCounts();
+      return { ...store.digestCounts(), skipped };
     } catch {
-      return { written: 0, finishedTasks: 0 };
+      return { written: 0, finishedTasks: 0, skipped };
     }
   }
 
@@ -193,6 +198,11 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
      *  correct across a dev-mode IPC re-registration. */
     setOnChanged(listener: (projectId: string) => void): void {
       onChanged = listener;
+    },
+
+    /** Register where the Index reads how many tasks digests passed over. */
+    setDigestsSkipped(provider: (projectId: string) => number): void {
+      digestsSkipped = provider;
     },
 
     /**

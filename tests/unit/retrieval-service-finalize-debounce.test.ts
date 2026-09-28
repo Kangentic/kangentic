@@ -75,7 +75,7 @@ const taskIndexerMock = vi.hoisted(() => ({
 vi.mock('../../src/main/retrieval/task/task-indexer', () => ({
   sweepTaskRecords: taskIndexerMock.sweepTaskRecords,
 }));
-const graphServiceMock = vi.hoisted(() => ({ notifyChanged: vi.fn() }));
+const graphServiceMock = vi.hoisted(() => ({ notifyChanged: vi.fn(), setDigestsSkipped: vi.fn() }));
 vi.mock('../../src/main/retrieval/graph/graph-service', () => ({ graphService: graphServiceMock }));
 const changeIndexerMock = vi.hoisted(() => ({
   sweepChangeRecords: vi.fn(async () => ({ indexed: 0 })),

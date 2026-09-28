@@ -26,7 +26,7 @@ import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
 import { memoryWindowManager } from '../../window-manager';
 import { LazyMemoryGraph } from './LazyMemoryGraph';
 import { MemoryDetailLayer } from './MemoryDetailLayer';
-import { openAnswerSettings } from './open-answer-settings';
+import { openAnswerSettings, openSearchSettings } from './open-answer-settings';
 import { scopeLabel } from './MemoryProjectsPicker';
 
 export function MemoryGraphPage() {
@@ -90,7 +90,11 @@ export function MemoryGraphPage() {
           <ScopeLabel />
         </DetachableSurfaceHeader>
 
-        <LazyMemoryGraph onChooseAnswerAgent={openAnswerSettings} onRevealTask={revealTaskOnBoard} />
+        <LazyMemoryGraph
+          onChooseAnswerAgent={openAnswerSettings}
+          onRevealTask={revealTaskOnBoard}
+          onOpenSettings={openSearchSettings}
+        />
       </div>
 
       {/* Conversation windows the graph opens, over the map. The inset matches

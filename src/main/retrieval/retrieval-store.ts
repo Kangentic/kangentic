@@ -921,6 +921,15 @@ export class RetrievalStore {
     return { conversations: documentsIn('conversation'), taskRecords: documentsIn('task'), lastIndexedAt: recency.lastIndexedAt };
   }
 
+  /** When anything was last written to the index, any corpus: the Index's
+   *  "Updated" line. One row per document, so a small read. */
+  lastIndexedAt(): string | null {
+    const row = this.db
+      .prepare('SELECT MAX(indexed_at) AS lastIndexedAt FROM memory_index_state')
+      .get() as { lastIndexedAt: string | null };
+    return row.lastIndexedAt;
+  }
+
   /**
    * What each corpus holds: documents, chunks, and chunks with a vector. The
    * Index panel's rows.

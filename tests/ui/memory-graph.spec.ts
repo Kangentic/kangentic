@@ -76,8 +76,9 @@ function snapshotScript(options: {
             { corpus: 'task', documents: 412, chunks: 1400, embeddedChunks: 700, embeds: true },
             { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
           ],
-          digests: { written: 300, finishedTasks: 412 },
+          digests: { written: 300, finishedTasks: 412, skipped: 1 },
           storageBytes: 3221225472,
+          lastIndexedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
         },
       },
     };
@@ -394,11 +395,20 @@ test.describe('memory graph', () => {
       await expect(tasks).toContainText('412, 50% embedded');
       await expect(changes).toContainText('Session changes');
       await expect(changes).toContainText('Not yet indexed');
-      // Digests are written in the background, so the row counts toward the finished tasks.
-      await expect(page.locator('[data-testid="memory-graph-index-digests"]')).toContainText('300 of 412');
-      // The totals cover every corpus, not just the map's.
+      // Digests are written in the background, so the row counts toward the
+      // finished tasks, and says why it falls short when the agent is why.
+      await expect(page.locator('[data-testid="memory-graph-index-digests"]')).toContainText('300 of 412, 1 skipped');
+      // No Chunks and no overall Embedded row: size on disk says the first in a
+      // unit people read, and each corpus row carries its own embedded share.
       const rows = page.locator('[data-testid="memory-graph-index-rows"]');
-      await expect(rows).toContainText((51365 + 1400).toLocaleString('en-US'));
+      await expect(rows).toContainText('Size on disk');
+      await expect(rows).not.toContainText('Chunks');
+      await expect(rows).not.toContainText('Embedded');
+      // Whether the numbers are current, and where to act on them.
+      await expect(page.locator('[data-testid="memory-graph-index-updated"]')).toHaveText('Updated 3 minutes ago');
+      await page.locator('[data-testid="memory-graph-index-settings"]').click();
+      await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+      await expect(page.locator('[data-testid="settings-tab-memory"]')).toHaveClass(/font-medium/);
     } finally {
       await browser.close();
     }
@@ -1157,7 +1167,7 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await page.locator('[data-testid="memory-graph-filter-outcome"]').selectOption('done');
+      await page.locator('[data-testid="memory-graph-filter-outcome-done"]').click();
       await askInBox(page, 'how many tasks finished?');
 
       await expect.poll(async () => (await answerCalls(page)).length).toBe(1);
@@ -1306,11 +1316,22 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-filter-since"]')).toBeVisible();
-      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toBeVisible();
-      // Every option says what it means on its own, so the rows need no labels.
-      await expect(page.locator('[data-testid="memory-graph-filter-since"]')).toContainText('Last 30 days');
-      await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toContainText('Finished');
+      const since = page.locator('[data-testid="memory-graph-filter-since"]');
+      const outcome = page.locator('[data-testid="memory-graph-filter-outcome"]');
+      await expect(since).toBeVisible();
+      await expect(outcome).toBeVisible();
+      // Segmented, so every option shows: a row of days and a row of statuses,
+      // each option's full meaning kept as its accessible name.
+      await expect(since.getByRole('radio', { name: 'Last 30 days' })).toHaveText('30 days');
+      await expect(outcome.getByRole('radio', { name: 'Finished' })).toBeVisible();
+      await page.locator('[data-testid="memory-graph-filter-since-7d"]').click();
+      await expect(page.locator('[data-testid="memory-graph-filter-since-7d"]')).toHaveAttribute('aria-checked', 'true');
+      // Four options in a narrow panel: none of them may be cut off.
+      const clipped = await page.evaluate(() => Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="memory-graph-filter-since"] [role="radio"], [data-testid="memory-graph-filter-outcome"] [role="radio"]'),
+      ).filter((option) => option.scrollWidth > option.clientWidth + 1 || option.getBoundingClientRect().right > option.closest('[role="radiogroup"]')!.getBoundingClientRect().right + 1)
+        .map((option) => option.textContent));
+      expect(clipped).toEqual([]);
       // Regions are their own panel now, not a row in this group.
       await expect(page.locator('[data-testid="memory-graph-filter-region"]')).toHaveCount(0);
     } finally {
@@ -1413,8 +1434,8 @@ test.describe('memory graph', () => {
       await openMemoryGraph(page);
       const outcome = page.locator('[data-testid="memory-graph-filter-outcome"]');
       await expect(outcome).toContainText('Finished');
-      await expect(outcome).toContainText('Still open');
-      await expect(outcome).not.toContainText('Abandoned');
+      await expect(outcome.getByRole('radio', { name: 'Still open' })).toHaveText('Open');
+      await expect(outcome).not.toContainText('Dropped');
     } finally {
       await browser.close();
     }
@@ -1432,6 +1453,12 @@ test.describe('memory graph', () => {
     try {
       await openMemoryGraph(page);
       await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toContainText('Dropped');
+      // Four statuses is the widest this row gets: none may be cut off.
+      const clipped = await page.evaluate(() => Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="memory-graph-filter-outcome"] [role="radio"]'),
+      ).filter((option) => option.scrollWidth > option.clientWidth + 1 || option.getBoundingClientRect().right > option.closest('[role="radiogroup"]')!.getBoundingClientRect().right + 1)
+        .map((option) => option.textContent));
+      expect(clipped).toEqual([]);
     } finally {
       await browser.close();
     }
@@ -2350,7 +2377,7 @@ test.describe('memory graph', () => {
 
       await page.locator('[data-testid="memory-graph-index-toggle"]').click();
       await expect(indexPanel).toContainText('Size on disk');
-      await expect(indexPanel).toContainText('Chunks');
+      await expect(indexPanel).toContainText('Links');
       await expect(page.locator('[data-testid="memory-coverage-strip"]')).toHaveCount(0);
 
       // It opens to the SIDE, and that is not cosmetic: Index is the last thing

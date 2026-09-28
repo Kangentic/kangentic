@@ -71,6 +71,14 @@ interface SegmentedControlProps<T extends string> {
    * never leaves the option unnamed.
    */
   labelClassName?: string;
+  /**
+   * Narrower horizontal padding, the same height. For four short options in a
+   * narrow column (the Knowledge Graph's time and status filters), where the
+   * default 12px a side alone pushed the row past its 224px: measured, "Any,
+   * 7 days, 30 days, 90 days" needed 260px at the default and 185px quiet and
+   * tight.
+   */
+  tight?: boolean;
   /** Stretch to fill the container, options sharing the width equally. */
   fullWidth?: boolean;
   /** Group-level test hook. */
@@ -94,6 +102,7 @@ const GROUND_CLASSES = {
 const OPTION_TEXT = {
   default: {
     size: 'px-3 py-1 text-sm font-medium',
+    tightSize: 'px-1.5 py-1 text-sm font-medium',
     selected: 'text-fg',
     idle: 'text-fg-muted',
     idleHover: 'hover:text-fg',
@@ -101,6 +110,7 @@ const OPTION_TEXT = {
   },
   quiet: {
     size: 'px-3 py-1.5 text-xs',
+    tightSize: 'px-1.5 py-1.5 text-xs',
     selected: 'text-fg-secondary',
     idle: 'text-fg-muted',
     idleHover: 'hover:text-fg-secondary',
@@ -138,6 +148,7 @@ export function SegmentedControl<T extends string>({
   ground = 'control',
   quiet = false,
   labelClassName = '',
+  tight = false,
   fullWidth = false,
   testId,
   ariaLabel,
@@ -343,7 +354,7 @@ export function SegmentedControl<T extends string>({
               onClick={() => onChange(option.value)}
               data-testid={option.testId}
               data-selected={selected}
-              className={`relative z-[1] flex items-center justify-center gap-1.5 rounded ${text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+              className={`relative z-[1] flex items-center justify-center gap-1.5 rounded ${tight ? text.tightSize : text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
                 fullWidth ? 'flex-1' : ''
               } ${
                 selected
