@@ -483,6 +483,57 @@ test.describe('memory graph', () => {
     }
   });
 
+  test('a push over a map that was fresh when opened re-reads it without asking for a rebuild', async () => {
+    // Record sweeps and finished embedding drains push too, and an agent's turn
+    // makes the map stale. Rebuilding on such a push started a pass on every
+    // turn of an open graph and moved its nodes under the reader.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(10), stale: false }));
+    try {
+      await openMemoryGraph(page);
+      await expect(page.locator('[data-testid="memory-graph-canvas"]')).toBeVisible();
+      const readsBefore = await page.evaluate(
+        () => (window as unknown as { __mockGraphSnapshotCalls?: unknown[] }).__mockGraphSnapshotCalls?.length ?? 0,
+      );
+      await page.evaluate(() => {
+        const api = (window as unknown as { electronAPI: { memory: { graphSnapshot: () => Promise<unknown> } } }).electronAPI;
+        const previous = api.memory.graphSnapshot.bind(api.memory);
+        api.memory.graphSnapshot = async () => {
+          const snapshot = await previous() as { stale: boolean } | null;
+          return snapshot ? { ...snapshot, stale: true } : snapshot;
+        };
+        (window as unknown as { __mockFireGraphChanged: (id: string) => void }).__mockFireGraphChanged('project-1');
+      });
+      await expect
+        .poll(async () => page.evaluate(
+          () => (window as unknown as { __mockGraphSnapshotCalls?: unknown[] }).__mockGraphSnapshotCalls?.length ?? 0,
+        ))
+        .toBeGreaterThan(readsBefore);
+      const refreshes = await page.evaluate(
+        () => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0,
+      );
+      expect(refreshes).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a push that finds a requested rebuild still stale asks for the next one', async () => {
+    // A pass that finishes while the index kept growing leaves the map stale
+    // again, and the map fills in pass by pass, as on a first build.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(10), stale: true }));
+    try {
+      await openMemoryGraph(page);
+      const refreshCount = () => page.evaluate(
+        () => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0,
+      );
+      await expect.poll(refreshCount).toBe(1);
+      await page.evaluate(() => (window as unknown as { __mockFireGraphChanged: (id: string) => void }).__mockFireGraphChanged('project-1'));
+      await expect.poll(refreshCount).toBe(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
   /**
    * Select a conversation on the map the way a reader does: press on it.
    *

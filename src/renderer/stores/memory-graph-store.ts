@@ -121,7 +121,7 @@ interface MemoryGraphState {
   /** End the chat: clear the thread and bring the box back. */
   endChat: () => void;
 
-  loadSnapshot: (projectId?: string | null) => Promise<void>;
+  loadSnapshot: (projectId?: string | null, options?: SnapshotReadOptions) => Promise<void>;
   /** Point the surface at a different project without a rebuild: the cached
    *  projection for that project is served immediately if it exists. */
   pointAt: (projectId: string | null) => Promise<void>;
@@ -145,7 +145,14 @@ interface MemoryGraphState {
    * would collapse several parallel loads into one.
    */
   scopeSnapshots: Record<string, MemoryGraphSnapshot | null>;
-  loadScopeSnapshot: (projectId: string) => Promise<void>;
+  loadScopeSnapshot: (projectId: string, options?: SnapshotReadOptions) => Promise<void>;
+}
+
+/** How a snapshot read came about. */
+interface SnapshotReadOptions {
+  /** Main pushed `memory:graphChanged`, rather than the reader acting. Such a
+   *  read never starts a rebuild of its own (see `rebuildsAsked`). */
+  fromPush?: boolean;
 }
 
 // Pattern A: module-scope state preserved across HMR. These must round-trip as
@@ -175,6 +182,30 @@ let chatId: string | null = import.meta.hot?.data?.memoryGraphChatId ?? null;
 const scopeReadsInFlight = new Set<string>();
 // hmr-safe: pairs with scopeReadsInFlight above
 const scopeReadsPending = new Set<string>();
+/**
+ * Projects whose map this surface asked main to rebuild, until a read finds it
+ * fresh. A push re-reads the snapshot, and only a project in here chains
+ * another pass. Record sweeps and finished embedding drains push too, and any
+ * turn an agent takes makes the map stale, so when every push could rebuild, an
+ * open graph that was fresh when opened started a pass on each turn (a full
+ * rescan once a live session's document grew) and moved its nodes under the
+ * reader.
+ */
+// hmr-safe: losing it across a Fast Refresh ends one chain of rebuilds at most, and the next open asks again
+const rebuildsAsked = new Set<string>();
+
+/** Ask main to rebuild a stale map: always on a read the reader caused, and on
+ *  a push only to carry on a rebuild this surface asked for. */
+function rebuildIfStale(projectId: string, snapshot: MemoryGraphSnapshot | null, fromPush: boolean): void {
+  if (!snapshot || snapshot.building) return;
+  if (!snapshot.stale && snapshot.projection !== null) {
+    rebuildsAsked.delete(projectId);
+    return;
+  }
+  if (fromPush && !rebuildsAsked.has(projectId)) return;
+  rebuildsAsked.add(projectId);
+  void window.electronAPI.memory.refreshGraph(projectId);
+}
 
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
@@ -361,6 +392,8 @@ function createMemoryGraphStore() {
         // process idling behind a closed graph serves nobody, and the next open
         // warms one again.
         set({ graphOpen: false, scopeProjectIds: null, scopeSnapshots: {} });
+        // The next open reads afresh and asks for its own rebuilds.
+        rebuildsAsked.clear();
         get().detach();
         if (chatId) window.electronAPI.memory.endChat(chatId);
       },
@@ -397,7 +430,7 @@ function createMemoryGraphStore() {
         }
       },
 
-      loadScopeSnapshot: async (projectId) => {
+      loadScopeSnapshot: async (projectId, options) => {
         if (scopeReadsInFlight.has(projectId)) {
           scopeReadsPending.add(projectId);
           return;
@@ -410,16 +443,16 @@ function createMemoryGraphStore() {
           set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: snapshot } }));
           // Only a SELECTED project is ever asked to build, never one merely
           // listed in the picker.
-          if (snapshot && (snapshot.stale || snapshot.projection === null) && !snapshot.building) {
-            void window.electronAPI.memory.refreshGraph(projectId);
-          }
+          rebuildIfStale(projectId, snapshot, options?.fromPush === true);
         } catch {
           if (get().scopeProjectIds?.includes(projectId)) {
             set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: null } }));
           }
         } finally {
           scopeReadsInFlight.delete(projectId);
-          if (scopeReadsPending.delete(projectId)) void get().loadScopeSnapshot(projectId);
+          // The read asked for meanwhile was a push's: a reader's own read of a
+          // scoped project happens once, when it is picked.
+          if (scopeReadsPending.delete(projectId)) void get().loadScopeSnapshot(projectId, { fromPush: true });
         }
       },
 
@@ -472,20 +505,20 @@ function createMemoryGraphStore() {
           // A scoped project's map finished: re-read just that one. The open
           // project's own read below refreshes its island too.
           if (get().scopeProjectIds?.includes(changedProjectId) && changedProjectId !== get().projectId) {
-            void get().loadScopeSnapshot(changedProjectId);
+            void get().loadScopeSnapshot(changedProjectId, { fromPush: true });
           }
           const { projectId, followsCurrentProject } = get();
           if (followsCurrentProject) {
             // Following main: re-read with null so main re-resolves. A push for
             // another project is exactly how a detached window learns the main
             // window switched, since it has no project store of its own.
-            void get().loadSnapshot(null);
+            void get().loadSnapshot(null, { fromPush: true });
             return;
           }
           // Pinned: ignore a pass finishing for a project we are not showing, or
           // a re-point gets clobbered by the previous project's late result.
           if (changedProjectId !== projectId) return;
-          void get().loadSnapshot(changedProjectId);
+          void get().loadSnapshot(changedProjectId, { fromPush: true });
         });
       },
 
@@ -498,7 +531,7 @@ function createMemoryGraphStore() {
         unsubscribeStream = null;
       },
 
-      loadSnapshot: async (projectId) => {
+      loadSnapshot: async (projectId, options) => {
         const targetProjectId = projectId ?? get().projectId;
         if (inFlight) return inFlight;
 
@@ -515,7 +548,8 @@ function createMemoryGraphStore() {
             // A different project means a different chat: the tasks a thread
             // names belong to the project it was asked in.
             const nextProjectId = snapshot?.projectId ?? targetProjectId;
-            const projectChanged = nextProjectId !== get().projectId && get().thread.length > 0;
+            const switched = nextProjectId !== get().projectId;
+            const projectChanged = switched && get().thread.length > 0;
             // Trust the id main RESOLVED, not the one requested. Callers routinely
             // pass null to mean "whatever project is current", and main resolves
             // it; keeping the null would leave `projectId` null forever, so the
@@ -537,10 +571,10 @@ function createMemoryGraphStore() {
 
             // Ask for a rebuild only when the cache is actually stale. The
             // request is cheap and idempotent, but firing it unconditionally on
-            // every open would re-enter the paced pass for no reason.
-            if (snapshot && (snapshot.stale || snapshot.projection === null) && !snapshot.building) {
-              void window.electronAPI.memory.refreshGraph(targetProjectId);
-            }
+            // every open would re-enter the paced pass for no reason. A push
+            // that moved a following window to another project is the main
+            // window's switch, the reader's act, so it may start one.
+            if (nextProjectId) rebuildIfStale(nextProjectId, snapshot, options?.fromPush === true && !switched);
           } catch {
             if (ordinal === fetchOrdinal) set({ loading: false, loaded: true });
           } finally {
