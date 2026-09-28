@@ -27,6 +27,9 @@ import { getProjectDb } from '../../main/db/database';
 import { getPlatformConfigDir } from '../../main/config/paths';
 import { loadVecExtension } from '../../main/retrieval/vec-extension';
 import { RetrievalStore } from '../../main/retrieval/retrieval-store';
+import { parseLabels } from '../../main/retrieval/task/task-record';
+import { sweepTaskRecords } from '../../main/retrieval/task/task-indexer';
+import { embedEngine } from '../../main/retrieval/embedder/embed-engine';
 import { TaskRepository } from '../../main/db/repositories/task-repository';
 import { SessionRepository } from '../../main/db/repositories/session-repository';
 import { SwimlaneRepository } from '../../main/db/repositories/swimlane-repository';
@@ -190,21 +193,29 @@ export function seedMemoryGraphFromRealIndex(
     // prints on a card, and the memory surface labels a task with it. A preview
     // that allocated its own 1..N would show numbers that look like tickets and
     // point at nothing, which is worse than showing none.
+    // The description and labels ride along too: they are the `task` corpus,
+    // what a question finds a task by when its conversations say little, and
+    // a placeholder description would leave that corpus nothing to search.
     const sourceTaskById = new Map<
       string,
-      { title: string; archived: boolean; laneRole: string | null; displayId: number | null }
+      {
+        title: string; description: string; labels: string[]; archived: boolean;
+        laneRole: string | null; displayId: number | null;
+      }
     >();
     for (const row of sourceDb
       .prepare(
-        `SELECT t.id, t.title, t.archived_at AS archivedAt, t.display_id AS displayId, w.role AS laneRole
+        `SELECT t.id, t.title, t.description, t.labels, t.archived_at AS archivedAt, t.display_id AS displayId, w.role AS laneRole
          FROM tasks t LEFT JOIN swimlanes w ON w.id = t.swimlane_id`,
       )
       .all() as Array<{
-        id: string; title: string; archivedAt: string | null;
+        id: string; title: string; description: string | null; labels: string | null; archivedAt: string | null;
         displayId: number | null; laneRole: string | null;
       }>) {
       sourceTaskById.set(row.id, {
         title: row.title,
+        description: row.description ?? '',
+        labels: parseLabels(row.labels),
         archived: row.archivedAt !== null,
         laneRole: row.laneRole,
         displayId: row.displayId,
@@ -288,7 +299,8 @@ export function seedMemoryGraphFromRealIndex(
       const lane = source?.laneRole === 'done' && doneSwimlane ? doneSwimlane : todoSwimlane;
       const created = taskRepo.create({
         title,
-        description: 'Mirrored from the real conversation index by the Test Harness.',
+        description: source?.description || 'Mirrored from the real conversation index by the Test Harness.',
+        labels: source?.labels ?? [],
         swimlane_id: lane.id,
       });
       if (source?.archived) taskRepo.archive(created.id);
@@ -538,7 +550,14 @@ export function registerSeedMemoryGraphRealDevIpc(getContext: () => IpcContext |
       // Build the map before returning, so the click lands on the surface rather
       // than on a "Building the map" spinner. See `build-memory-graph-now.ts` for
       // why this is safe to run unthrottled here and nowhere else.
-      if (context.currentProjectId) await buildMemoryGraphNow(context.currentProjectId);
+      if (context.currentProjectId) {
+        await buildMemoryGraphNow(context.currentProjectId);
+        // The mirrored tasks' own records, the `task` corpus, indexed now so a
+        // first question searches them; the embedding drain picks them up
+        // ahead of any conversation re-embed.
+        await sweepTaskRecords(context.currentProjectId);
+        embedEngine.markDirty(context.currentProjectId);
+      }
       return seeded;
     },
   );

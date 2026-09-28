@@ -6950,14 +6950,42 @@ export interface MemoryGraphProjection {
   nodeNeighbors: ReadonlyArray<ReadonlyArray<{ index: number; similarity: number }>>;
 
   /**
-   * Bytes the index occupies: chunk text plus vectors.
+   * Bytes the conversations occupy: chunk text plus vectors.
    *
    * Computed in the background pass, not on the snapshot read, because the text
    * half is a full scan (~170ms over 52k chunks). It therefore travels with the
-   * map and is exactly as fresh as it.
+   * map and is exactly as fresh as it. The whole index's size, every corpus, is
+   * `MemoryIndexSummary.storageBytes`.
    */
   storageBytes: number;
   builtAt: string;
+}
+
+/** A corpus of the memory index, as the Index panel lists it. */
+export type MemoryIndexCorpus = 'conversation' | 'task' | 'change';
+
+/** What one corpus holds. */
+export interface MemoryIndexCorpusSummary {
+  corpus: MemoryIndexCorpus;
+  /** Conversations, task records, or sessions with changes: the corpus's documents. */
+  documents: number;
+  chunks: number;
+  /** Chunks with a vector; `chunks` minus these are still to be embedded. */
+  embeddedChunks: number;
+}
+
+/**
+ * Everything the index holds, every corpus, for the Index panel. The map and
+ * its coverage describe conversations; this describes the whole store, so a
+ * corpus that is indexed but never drawn (task records, session changes) is
+ * still accounted for.
+ */
+export interface MemoryIndexSummary {
+  /** One entry per corpus the store knows, in `MEMORY_CORPORA` order, present
+   *  with zeros when nothing of it is indexed yet. */
+  corpora: MemoryIndexCorpusSummary[];
+  /** Bytes every corpus occupies: text plus vectors. */
+  storageBytes: number;
 }
 
 /** One conversation matched by a Memory Graph query. */
@@ -7131,6 +7159,8 @@ export interface MemoryGraphProjectSummary {
   /** Indexed conversations, which is what its map draws. 0 means there is
    *  nothing to draw, and the picker lists it as not indexed. */
   conversations: number;
+  /** Indexed task records (tasks and backlog items), searched but never drawn. */
+  taskRecords: number;
   /** When its index last took in a conversation, epoch ms, so the picker can
    *  list projects by recent work. Null when nothing is indexed. */
   lastActivityMs: number | null;
@@ -7141,6 +7171,8 @@ export interface MemoryGraphSnapshot {
   /** Null until the first projection pass completes. */
   projection: MemoryGraphProjection | null;
   coverage: MemoryCoverageSummary;
+  /** Every corpus the index holds, for the Index panel. */
+  index: MemoryIndexSummary;
   building: boolean;
   /** Stale projections are still served: a slightly old map beats a blank one. */
   stale: boolean;

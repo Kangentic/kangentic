@@ -38,7 +38,13 @@ import { OverlayPopover } from '../OverlayPopover';
 import { Select } from '../settings/shared';
 import type { MemoryGraphColorMode } from './MemoryGraphCanvas';
 import { clusterHue } from './memory-graph-scene';
-import type { MemoryCoverageSummary, MemoryGraphGranularity } from '../../../shared/types';
+import type {
+  MemoryCoverageSummary,
+  MemoryGraphGranularity,
+  MemoryIndexCorpus,
+  MemoryIndexCorpusSummary,
+  MemoryIndexSummary,
+} from '../../../shared/types';
 import { PanelRow, InfoHint, formatBytes } from './PanelRow';
 
 /** How far back a conversation's last activity may be. */
@@ -234,11 +240,10 @@ export interface MemoryGraphControlsProps {
   availableGranularities: MemoryGraphGranularity[];
   onGranularityChange: (granularity: MemoryGraphGranularity) => void;
   coverage: MemoryCoverageSummary;
+  /** Every corpus the index holds, and its size on disk. */
+  index: MemoryIndexSummary;
   semanticAvailable: boolean;
   edgeCount: number;
-  /** Bytes the index occupies. Computed in the background pass, so it travels
-   *  with the map rather than being measured on every panel open. */
-  storageBytes: number;
   building: boolean;
   /** The Projects picker, rendered at the top of Filter. Absent when fewer than
    *  two projects have an index, since a one-option scope is a dead control. */
@@ -324,6 +329,31 @@ function IndexRow({
   );
 }
 
+/** How the Index panel names each corpus, and what its row's hint says. */
+const CORPUS_ROWS: Record<MemoryIndexCorpus, { label: string; hint: string }> = {
+  conversation: {
+    label: 'Conversations',
+    hint: 'Agent conversations indexed for the projects on the map. These are what the map draws.',
+  },
+  task: {
+    label: 'Task records',
+    hint: 'Each task and backlog item: its title, labels and description. Searched when you ask, never drawn.',
+  },
+  change: {
+    label: 'Session changes',
+    hint: 'The files each session changed. Searched when you ask, never drawn.',
+  },
+};
+
+/** A corpus row's value: its document count, and while it is still embedding,
+ *  how much of it is. A corpus with nothing in it says so rather than 0. */
+function corpusValue(entry: MemoryIndexCorpusSummary, semanticAvailable: boolean): string {
+  if (entry.documents === 0) return 'Not yet indexed';
+  const count = entry.documents.toLocaleString();
+  if (!semanticAvailable || entry.chunks === 0 || entry.embeddedChunks >= entry.chunks) return count;
+  return `${count}, ${Math.floor((entry.embeddedChunks / entry.chunks) * 100)}% embedded`;
+}
+
 function SectionHeader({
   icon,
   label,
@@ -391,9 +421,9 @@ export function MemoryGraphControls({
   availableGranularities,
   onGranularityChange,
   coverage,
+  index,
   semanticAvailable,
   edgeCount,
-  storageBytes,
   building,
   projectsPicker,
 }: MemoryGraphControlsProps) {
@@ -403,6 +433,10 @@ export function MemoryGraphControls({
   const [displayCollapsed, setDisplayCollapsed] = useState(false);
   // Closed by default: the numbers are reference, not a control.
   const [indexCollapsed, setIndexCollapsed] = useState(true);
+  // Every corpus, not just what the map draws: the Index panel accounts for
+  // the whole store.
+  const totalChunks = index.corpora.reduce((total, entry) => total + entry.chunks, 0);
+  const totalEmbedded = index.corpora.reduce((total, entry) => total + entry.embeddedChunks, 0);
   const [regionQuery, setRegionQuery] = useState('');
 
   /**
@@ -802,28 +836,34 @@ export function MemoryGraphControls({
         <div className="px-3 py-3">
           {/* A definition list, not the coverage STRIP: aligned label and value
               rows are what a narrow column of reference numbers wants. */}
-          <dl className="divide-y divide-edge/60">
-            <IndexRow
-              label="Conversations"
-              value={coverage.totalDocumentsWithChunks}
-              hint="Conversations indexed for the projects on the map. Says nothing about how much of a repository is indexed."
-            />
+          <dl className="divide-y divide-edge/60" data-testid="memory-graph-index-rows">
+            {/* One row per corpus the index holds, conversations first. A
+                corpus not indexed yet says so rather than showing a zero. */}
+            {index.corpora.map((entry) => (
+              <div key={entry.corpus} data-testid={`memory-graph-index-corpus-${entry.corpus}`}>
+                <IndexRow
+                  label={CORPUS_ROWS[entry.corpus].label}
+                  value={corpusValue(entry, semanticAvailable)}
+                  hint={CORPUS_ROWS[entry.corpus].hint}
+                />
+              </div>
+            ))}
             <IndexRow
               label="Chunks"
-              value={coverage.totalChunks}
-              hint="Passages the conversations were split into. Search matches a chunk, not a whole conversation."
+              value={totalChunks}
+              hint="Passages everything above was split into. Search matches a chunk, not a whole document."
             />
-            {storageBytes > 0 ? (
+            {index.storageBytes > 0 ? (
               <IndexRow
                 label="Size on disk"
-                value={formatBytes(storageBytes)}
-                hint="The indexed text plus its embedding vectors."
+                value={formatBytes(index.storageBytes)}
+                hint="The indexed text of every corpus plus its embedding vectors."
               />
             ) : null}
             <IndexRow label="Links" value={edgeCount} />
             <IndexRow
               label="Embedded"
-              value={`${Math.round(coverage.embeddedFraction * 100)}%`}
+              value={`${totalChunks > 0 ? Math.floor((totalEmbedded / totalChunks) * 100) : 0}%`}
               tone={semanticAvailable ? 'ok' : 'problem'}
               hint={semanticAvailable ? undefined : 'The semantic layer is unavailable, so search is matching text only'}
             />

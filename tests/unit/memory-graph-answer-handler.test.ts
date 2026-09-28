@@ -112,11 +112,17 @@ vi.mock('../../src/main/retrieval/related-work', async (importActual) => {
 /** Board tasks as `RetrievalStore.boardTaskFacts` reads them, per test. */
 let mockBoardTasks: unknown[] = [];
 vi.mock('../../src/main/retrieval/retrieval-store', () => ({
-  RetrievalStore: class { boardTaskFacts() { return mockBoardTasks; } },
+  RetrievalStore: class {
+    boardTaskFacts() { return mockBoardTasks; }
+    boardTaskTitles() {
+      return (mockBoardTasks as Array<{ taskId: string; displayId: number | null; title: string }>)
+        .map(({ taskId, displayId, title }) => ({ taskId, displayId, title }));
+    }
+  },
 }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
-  retrievalService: { getEmbedder: vi.fn(() => null), prewarmEmbedWorker: vi.fn() },
+  retrievalService: { getEmbedder: vi.fn(() => null), prewarmEmbedWorker: vi.fn(), refreshTaskRecords: vi.fn() },
 }));
 vi.mock('../../src/main/retrieval/graph/graph-service', () => {
   const getSnapshot = vi.fn();
@@ -278,6 +284,10 @@ describe('the Ask handler', () => {
     expect(table).toMatch(/\n#14\|Add support for OpenCode agent\|/);
     // Still the conversation-backed tasks too, once each.
     expect(table.match(/\n#561\|/g)).toHaveLength(1);
+    // Unscoped, its own record can reach it in the related work, too.
+    expect(relatedSpy.mock.calls[0][0].recordOnlyTasks).toEqual([
+      { taskId: 'task-old', displayId: 14, title: 'Add support for OpenCode agent' },
+    ]);
   });
 
   it('hands the agent the board, the related work, and the one search tool', async () => {
@@ -528,6 +538,9 @@ describe('the Ask handler', () => {
     await ask('what is in scope?', 'req-3', { scopeDocKeys: ['conversation::doc-3'] });
 
     expect(relatedSpy.mock.calls[0][0].nodes.map((node) => node.docKey)).toEqual(['conversation::doc-3']);
+    // The filters select conversations, so no task reaches the related work
+    // through its record alone: that is only for an unscoped question.
+    expect(relatedSpy.mock.calls[0][0].recordOnlyTasks).toBeUndefined();
     const prompt = answerSpy.mock.calls[0][0] as string;
     expect(prompt).toContain('Terminal scrollback repaint');
     // task-1 is outside the filter, so even the related work drops it.

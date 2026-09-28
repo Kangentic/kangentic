@@ -20,10 +20,10 @@
 
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
-import { CONVERSATION_CORPUS } from '../corpora';
+import { CONVERSATION_CORPUS, MEMORY_CORPORA } from '../corpora';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import type { MemoryGraphSnapshot } from '../../../shared/types';
+import type { MemoryGraphSnapshot, MemoryIndexSummary } from '../../../shared/types';
 import {
   runProjectionPass,
   readCachedProjection,
@@ -69,6 +69,13 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
    * when the index does, which the fingerprint (about 6 ms) detects.
    */
   const coverageCache = new Map<string, { fingerprint: string; coverage: CoverageSummary }>();
+  /** Each project's corpus totals, and the fingerprint they were read at. */
+  const corpusCache = new Map<string, {
+    fingerprint: string;
+    totals: ReturnType<RetrievalStore['corpusTotals']>;
+    /** Text bytes of every corpus but conversations, which the map's pass sums. */
+    otherTextBytes: number;
+  }>();
   // Settable rather than constructor-only: the singleton is created at import
   // time but the push target (the main window) only exists once IPC registers.
   let onChanged: ((projectId: string) => void) | undefined = deps.onChanged;
@@ -95,6 +102,44 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     const coverage = timeSyncWork('graph:coverage', () => buildCoverage(store, knownDocumentIds(store)));
     coverageCache.set(projectId, { fingerprint, coverage });
     return coverage;
+  }
+
+  /**
+   * Everything the index holds, every corpus, for the Index panel.
+   *
+   * The counts are three index reads (about 15 ms on a 94k-chunk index), so
+   * they are kept until the store's size moves; the fingerprint is cheaper. The
+   * size adds the other corpora, text and vectors, to the conversations' size
+   * the map's pass measured.
+   */
+  function indexSummaryFor(
+    projectId: string,
+    store: RetrievalStore,
+    projection: GraphSnapshot['projection'],
+    dimensions: number,
+  ): MemoryIndexSummary {
+    const fingerprint = store.corpusFingerprint();
+    let cached = corpusCache.get(projectId);
+    if (!cached || cached.fingerprint !== fingerprint) {
+      cached = timeSyncWork('graph:index-totals', () => ({
+        fingerprint,
+        totals: store.corpusTotals(),
+        otherTextBytes: store.corpusTextBytes(MEMORY_CORPORA.filter((corpus) => corpus !== 'conversation')),
+      }));
+      corpusCache.set(projectId, cached);
+    }
+    const totals = cached.totals;
+    const corpora = MEMORY_CORPORA.map((corpus) => {
+      const row = totals.find((entry) => entry.corpus === corpus);
+      return { corpus, documents: row?.documents ?? 0, chunks: row?.chunks ?? 0, embeddedChunks: row?.embeddedChunks ?? 0 };
+    });
+    const otherEmbedded = corpora
+      .filter((entry) => entry.corpus !== 'conversation')
+      .reduce((total, entry) => total + entry.embeddedChunks, 0);
+    return {
+      corpora,
+      storageBytes: (projection?.storageBytes ?? 0) + cached.otherTextBytes + otherEmbedded * dimensions * 4,
+    };
   }
 
   /**
@@ -166,6 +211,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
         projectId,
         projection,
         coverage,
+        index: indexSummaryFor(projectId, store, projection, embedding.dimensions),
         building: running.has(projectId),
         stale: !isProjectionFresh(
           projection,

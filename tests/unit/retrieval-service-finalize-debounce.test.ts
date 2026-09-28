@@ -28,6 +28,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import { BoardEventBus } from '../../src/main/mobile-bridge/board-event-bus';
 
 // retrieval-service.ts's other direct imports that would otherwise drag in
 // electron (vec-extension.ts) or a native module built for Electron's Node
@@ -67,6 +68,13 @@ vi.mock('../../src/main/retrieval/embedder/embed-engine', () => ({
   embedEngine: embedEngineMock,
 }));
 
+const taskIndexerMock = vi.hoisted(() => ({
+  sweepTaskRecords: vi.fn(async () => ({ indexed: 1, removed: 0 })),
+}));
+vi.mock('../../src/main/retrieval/task/task-indexer', () => ({
+  sweepTaskRecords: taskIndexerMock.sweepTaskRecords,
+}));
+
 /** Minimal fake of the SessionManager surface scheduleFinalizeIndex reads:
  *  a real EventEmitter (so `.on('exit'|'session-changed', ...)` wiring in
  *  `attach()` is exercised as written) plus the two lookups the debounced
@@ -87,9 +95,10 @@ class FakeSessionManager extends EventEmitter {
   }
 }
 
-function makeContext(sessionManager: FakeSessionManager): IpcContext {
+function makeContext(sessionManager: FakeSessionManager, boardEvents = new BoardEventBus()): IpcContext {
   return {
     sessionManager,
+    boardEvents,
     configManager: { load: () => ({ memory: { indexingEnabled: true } }) },
     currentProjectId: null,
   } as unknown as IpcContext;
@@ -213,5 +222,58 @@ describe('retrievalService - per-session finalize debounce', () => {
     // vacuously because nothing ran at all.
     expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-1', 'sess-1');
     expect(conversationIndexerMock.indexSubagentUsage).not.toHaveBeenCalled();
+  });
+});
+
+describe('retrievalService - task records follow the board', () => {
+  let retrievalService: typeof import('../../src/main/retrieval/retrieval-service')['retrievalService'];
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    vi.resetModules();
+    ({ retrievalService } = await import('../../src/main/retrieval/retrieval-service'));
+  });
+
+  afterEach(() => {
+    retrievalService.dispose();
+    vi.useRealTimers();
+  });
+
+  it('re-reads a project once after a burst of task changes, and flags it for embedding', async () => {
+    const boardEvents = new BoardEventBus();
+    retrievalService.attach(makeContext(new FakeSessionManager(), boardEvents));
+
+    boardEvents.emitBoardChanged({ projectId: 'proj-1', change: 'task-updated', ids: ['task-1'] });
+    await vi.advanceTimersByTimeAsync(1000);
+    boardEvents.emitBoardChanged({ projectId: 'proj-1', change: 'task-created', ids: ['task-2'] });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(taskIndexerMock.sweepTaskRecords).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledTimes(1);
+    expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledWith('proj-1', expect.any(Function));
+    expect(embedEngineMock.markDirty).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('ignores a column edit, which changes no task record', async () => {
+    const boardEvents = new BoardEventBus();
+    retrievalService.attach(makeContext(new FakeSessionManager(), boardEvents));
+
+    boardEvents.emitBoardChanged({ projectId: 'proj-1', change: 'swimlane-updated', ids: ['lane-1'] });
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(taskIndexerMock.sweepTaskRecords).not.toHaveBeenCalled();
+  });
+
+  it('does not flag a project for embedding when a sweep changed nothing', async () => {
+    taskIndexerMock.sweepTaskRecords.mockResolvedValueOnce({ indexed: 0, removed: 0 });
+    retrievalService.attach(makeContext(new FakeSessionManager()));
+
+    retrievalService.refreshTaskRecords(makeContext(new FakeSessionManager()), 'proj-1');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledTimes(1);
+    expect(embedEngineMock.markDirty).not.toHaveBeenCalled();
   });
 });

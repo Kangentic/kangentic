@@ -30,6 +30,7 @@ const { mockSearchRelatedWork, mockIndexedConversationNodes } = vi.hoisted(() =>
 vi.mock('../../src/main/retrieval/related-work', () => ({
   searchRelatedWork: mockSearchRelatedWork,
   indexedConversationNodes: mockIndexedConversationNodes,
+  boardRecordTasks: () => [{ taskId: 'task-quiet', displayId: 14, title: 'A task with no conversation' }],
 }));
 
 import { registerSearchTools } from '../../src/main/agent/mcp-http/search-tools';
@@ -377,9 +378,12 @@ describe('kangentic_search MCP tool', () => {
 
       expect(mockRunSearchEverything).not.toHaveBeenCalled();
       expect(mockIndexedConversationNodes).toHaveBeenCalledWith(DEFAULT_PROJECT_ID);
-      const input = mockSearchRelatedWork.mock.calls[0][0] as { question: string; projectId: string; nodes: unknown[]; embedder: unknown };
+      const input = mockSearchRelatedWork.mock.calls[0][0] as { question: string; projectId: string; nodes: unknown[]; embedder: unknown; recordOnlyTasks: unknown };
       expect(input).toMatchObject({ question: 'relay', projectId: DEFAULT_PROJECT_ID, embedder: SENTINEL_EMBEDDER });
       expect(input.nodes).toBe(NODES);
+      // The tool ranks the whole project, so every board task is in reach of
+      // its own record, conversations or not.
+      expect(input.recordOnlyTasks).toEqual([{ taskId: 'task-quiet', displayId: 14, title: 'A task with no conversation' }]);
 
       const text = result.content[0].text;
       expect(text).toContain('2 of 2 related task(s) for "relay", strongest first.');

@@ -68,6 +68,16 @@ function snapshotScript(options: {
           embeddedFraction: 1,
           knownDocumentIdsMatched: 638,
         },
+        // Every corpus the store holds: conversations drawn and fully
+        // embedded, task records still embedding, session changes not reached.
+        index: {
+          corpora: [
+            { corpus: 'conversation', documents: 638, chunks: 51365, embeddedChunks: 51365 },
+            { corpus: 'task', documents: 412, chunks: 1400, embeddedChunks: 700 },
+            { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0 },
+          ],
+          storageBytes: 3221225472,
+        },
       },
     };
   });`;
@@ -360,6 +370,32 @@ test.describe('memory graph', () => {
       await expect(index).toContainText('3.00 GB');
       // Position is a ~33%-faithful reduction of 1024 dimensions; edges are exact.
       await expect(index).toContainText('Links are exact');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Index lists every corpus the store holds, and says which is not indexed yet', async () => {
+    // The map draws conversations, but the index holds more than that. Each
+    // corpus gets its own row, a corpus still embedding says how far along it
+    // is, and one with nothing in it says so rather than showing a zero.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-index-toggle"]').click();
+      const conversations = page.locator('[data-testid="memory-graph-index-corpus-conversation"]');
+      const tasks = page.locator('[data-testid="memory-graph-index-corpus-task"]');
+      const changes = page.locator('[data-testid="memory-graph-index-corpus-change"]');
+      await expect(conversations).toContainText('Conversations');
+      await expect(conversations).toContainText('638');
+      await expect(conversations).not.toContainText('embedded');
+      await expect(tasks).toContainText('Task records');
+      await expect(tasks).toContainText('412, 50% embedded');
+      await expect(changes).toContainText('Session changes');
+      await expect(changes).toContainText('Not yet indexed');
+      // The totals cover every corpus, not just the map's.
+      const rows = page.locator('[data-testid="memory-graph-index-rows"]');
+      await expect(rows).toContainText((51365 + 1400).toLocaleString('en-US'));
     } finally {
       await browser.close();
     }
@@ -2321,9 +2357,9 @@ test.describe('memory graph', () => {
       window.__mockPreConfigure(function () {
         return {
           memoryGraphProjects: [
-            { id: 'project-1', name: 'Kangentic', conversations: 20, lastActivityMs: 1700000100000 },
-            { id: 'project-2', name: 'Mobile App', conversations: 10, lastActivityMs: 1700000050000 },
-            { id: 'project-3', name: 'Website', conversations: 0, lastActivityMs: null },
+            { id: 'project-1', name: 'Kangentic', conversations: 20, taskRecords: 30, lastActivityMs: 1700000100000 },
+            { id: 'project-2', name: 'Mobile App', conversations: 10, taskRecords: 12, lastActivityMs: 1700000050000 },
+            { id: 'project-3', name: 'Website', conversations: 0, taskRecords: 0, lastActivityMs: null },
           ],
           memoryGraphSnapshotsByProject: {
             'project-2': {
@@ -2343,6 +2379,14 @@ test.describe('memory graph', () => {
                 totalEmbeddedChunks: 900,
                 embeddedFraction: 1,
                 knownDocumentIdsMatched: 10,
+              },
+              index: {
+                corpora: [
+                  { corpus: 'conversation', documents: 10, chunks: 900, embeddedChunks: 900 },
+                  { corpus: 'task', documents: 12, chunks: 30, embeddedChunks: 30 },
+                  { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0 },
+                ],
+                storageBytes: 1048576,
               },
             },
           },
@@ -2365,8 +2409,8 @@ test.describe('memory graph', () => {
       window.__mockPreConfigure(function () {
         return {
           memoryGraphProjects: [
-            { id: 'project-1', name: 'Kangentic', conversations: 12, lastActivityMs: 1700000100000 },
-            { id: 'project-3', name: 'Website', conversations: 0, lastActivityMs: null },
+            { id: 'project-1', name: 'Kangentic', conversations: 12, taskRecords: 20, lastActivityMs: 1700000100000 },
+            { id: 'project-3', name: 'Website', conversations: 0, taskRecords: 0, lastActivityMs: null },
           ],
         };
       });`);

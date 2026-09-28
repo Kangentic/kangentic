@@ -14,6 +14,8 @@ import type {
   MemoryCoverageSummary,
   MemoryGraphGranularity,
   MemoryGraphSnapshot,
+  MemoryIndexCorpusSummary,
+  MemoryIndexSummary,
 } from '../../../shared/types';
 import { composeIslands, type Island, type IslandSource } from './compose-islands';
 
@@ -58,6 +60,28 @@ export function sumCoverage(summaries: ReadonlyArray<MemoryCoverageSummary>): Me
     knownDocumentIdsMatched: sum.knownDocumentIdsMatched + next.knownDocumentIdsMatched,
   }), first);
   return { ...total, embeddedFraction: total.totalChunks > 0 ? total.totalEmbeddedChunks / total.totalChunks : 0 };
+}
+
+/** The index across projects: each corpus's counts summed, and the sizes. */
+export function sumIndex(summaries: ReadonlyArray<MemoryIndexSummary>): MemoryIndexSummary {
+  const byCorpus = new Map<MemoryIndexCorpusSummary['corpus'], MemoryIndexCorpusSummary>();
+  for (const summary of summaries) {
+    for (const entry of summary.corpora) {
+      const sum = byCorpus.get(entry.corpus);
+      byCorpus.set(entry.corpus, sum
+        ? {
+          corpus: entry.corpus,
+          documents: sum.documents + entry.documents,
+          chunks: sum.chunks + entry.chunks,
+          embeddedChunks: sum.embeddedChunks + entry.embeddedChunks,
+        }
+        : { ...entry });
+    }
+  }
+  return {
+    corpora: [...byCorpus.values()],
+    storageBytes: summaries.reduce((total, summary) => total + summary.storageBytes, 0),
+  };
 }
 
 export function useGraphView(): GraphView {
@@ -107,6 +131,7 @@ export function useGraphView(): GraphView {
     const base = {
       projectId: openProjectId ?? loaded[0].projectId,
       coverage: sumCoverage(snapshots.map((entry) => entry.coverage)),
+      index: sumIndex(snapshots.map((entry) => entry.index)),
       // Surface-wide "building" only while there is nothing to draw at all; a
       // project still building beside ready ones is named on its own.
       building: ready.length === 0 && snapshots.some((entry) => entry.building),

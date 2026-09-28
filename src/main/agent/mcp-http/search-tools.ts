@@ -8,6 +8,7 @@ import type { SearchHit, Project } from '../../../shared/types';
 import { isAnswerCaller } from './caller-url';
 import { ANSWER_SEARCH_BUDGET, claimAnswerSearch, publishAnswerSearch } from './answer-search-trace';
 import {
+  boardRecordTasks,
   indexedConversationNodes,
   searchRelatedWork,
   type RelatedWork,
@@ -180,6 +181,9 @@ async function searchByTask(input: {
     question: input.query,
     projectId: input.projectId,
     nodes,
+    // Unscoped: every board task is in reach of its own record, so a task
+    // with no indexed conversation still ranks.
+    recordOnlyTasks: boardRecordTasks(input.projectId),
     embedder: input.embedder,
     embedWaitMs: 5000,
   });

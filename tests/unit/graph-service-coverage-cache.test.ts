@@ -12,6 +12,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const storeState = {
   fingerprint: 'chunks:10',
   chunkTotalsCalls: 0,
+  corpusFingerprint: 'all:10',
+  corpusTotalsCalls: 0,
 };
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: () => ({}) }));
@@ -45,6 +47,19 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
     maxChunkId(): number {
       return 4;
     }
+    corpusFingerprint(): string {
+      return storeState.corpusFingerprint;
+    }
+    corpusTotals(): unknown[] {
+      storeState.corpusTotalsCalls += 1;
+      return [
+        { corpus: 'conversation', documents: 1, chunks: 4, embeddedChunks: 4 },
+        { corpus: 'task', documents: 2, chunks: 3, embeddedChunks: 1 },
+      ];
+    }
+    corpusTextBytes(): number {
+      return 300;
+    }
   },
 }));
 
@@ -54,6 +69,8 @@ describe('graph service coverage cache', () => {
   beforeEach(() => {
     storeState.fingerprint = 'chunks:10';
     storeState.chunkTotalsCalls = 0;
+    storeState.corpusFingerprint = 'all:10';
+    storeState.corpusTotalsCalls = 0;
   });
 
   it('reads coverage once while the index is unchanged', () => {
@@ -84,5 +101,26 @@ describe('graph service coverage cache', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
     expect(service.getProjection('project-a')).toBeNull();
     expect(storeState.chunkTotalsCalls).toBe(0);
+  });
+
+  it('reports every corpus, a missing one as zeros, and keeps the totals until the store moves', () => {
+    const service = createGraphService({ getDb: () => ({}) as never });
+    const first = service.getSnapshot('project-a', 'model');
+    expect(first.index.corpora).toEqual([
+      { corpus: 'conversation', documents: 1, chunks: 4, embeddedChunks: 4 },
+      { corpus: 'task', documents: 2, chunks: 3, embeddedChunks: 1 },
+      { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0 },
+    ]);
+    // No projection yet and no stored width: the size is the other corpora's text.
+    expect(first.index.storageBytes).toBe(300);
+
+    service.getSnapshot('project-a', 'model');
+    expect(storeState.corpusTotalsCalls).toBe(1);
+    storeState.corpusFingerprint = 'all:11';
+    service.getSnapshot('project-a', 'model');
+    expect(storeState.corpusTotalsCalls).toBe(2);
+    // The corpus totals and conversation coverage are cached apart: a task
+    // record moving the store does not recompute coverage.
+    expect(storeState.chunkTotalsCalls).toBe(1);
   });
 });

@@ -898,23 +898,85 @@ export class RetrievalStore {
   }
 
   /**
-   * How many conversations this project has indexed, and when its index last
-   * took one in: the Projects picker's row for this project.
+   * How many conversations and task records this project has indexed, and when
+   * its index last took a conversation in: the Projects picker's row for this
+   * project. Conversations are what its map draws; task records are searched.
    *
-   * The count reads the (corpus, doc_id) index alone. The obvious
+   * Each count reads the (corpus, doc_id) index alone. The obvious
    * COUNT(DISTINCT doc_id) with MAX(ts_end) beside it builds a temp B-tree and
    * reads every chunk row: measured at 350ms across 19 real projects, warm,
    * against 12ms for this. Recency comes from the index state instead, which a
    * conversation's own re-index keeps current.
    */
-  conversationSummary(): { conversations: number; lastIndexedAt: string | null } {
-    const count = this.db
-      .prepare("SELECT COUNT(*) AS conversations FROM (SELECT DISTINCT doc_id FROM memory_chunks WHERE corpus = 'conversation')")
-      .get() as { conversations: number };
+  projectIndexSummary(): { conversations: number; taskRecords: number; lastIndexedAt: string | null } {
+    const documentsIn = (corpus: MemoryCorpus): number => (this.db
+      .prepare('SELECT COUNT(*) AS count FROM (SELECT DISTINCT doc_id FROM memory_chunks WHERE corpus = ?)')
+      .get(corpus) as { count: number }).count;
     const recency = this.db
       .prepare("SELECT MAX(indexed_at) AS lastIndexedAt FROM memory_index_state WHERE corpus = 'conversation'")
       .get() as { lastIndexedAt: string | null };
-    return { conversations: count.conversations, lastIndexedAt: recency.lastIndexedAt };
+    return { conversations: documentsIn('conversation'), taskRecords: documentsIn('task'), lastIndexedAt: recency.lastIndexedAt };
+  }
+
+  /**
+   * What each corpus holds: documents, chunks, and chunks with a vector. The
+   * Index panel's rows.
+   *
+   * Three index reads rather than one GROUP BY over the table: the documents
+   * come off `(corpus, doc_id, seq)`, the chunks off `(corpus)`, and the
+   * embedded chunks off `(embedded_model, corpus)`, each covering, so no chunk
+   * row is read. A corpus with nothing in it is absent.
+   */
+  corpusTotals(): Array<{ corpus: string; documents: number; chunks: number; embeddedChunks: number }> {
+    const documents = this.db
+      .prepare('SELECT corpus, COUNT(*) AS count FROM (SELECT DISTINCT corpus, doc_id FROM memory_chunks) GROUP BY corpus')
+      .all() as Array<{ corpus: string; count: number }>;
+    const chunks = this.db
+      .prepare('SELECT corpus, COUNT(*) AS count FROM memory_chunks GROUP BY corpus')
+      .all() as Array<{ corpus: string; count: number }>;
+    const embedded = this.db
+      .prepare('SELECT corpus, COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL GROUP BY corpus')
+      .all() as Array<{ corpus: string; count: number }>;
+    const countOf = (rows: Array<{ corpus: string; count: number }>, corpus: string): number =>
+      rows.find((row) => row.corpus === corpus)?.count ?? 0;
+    return documents.map((row) => ({
+      corpus: row.corpus,
+      documents: row.count,
+      chunks: countOf(chunks, row.corpus),
+      embeddedChunks: countOf(embedded, row.corpus),
+    }));
+  }
+
+  /** Characters of text held in some corpora. For the small ones: the
+   *  conversation total is a paged scan in the projection pass (see
+   *  `indexedTextBytesPage`). */
+  corpusTextBytes(corpora: ReadonlyArray<MemoryCorpus>): number {
+    if (corpora.length === 0) return 0;
+    const row = this.db
+      .prepare(`SELECT COALESCE(SUM(length(text)), 0) AS bytes FROM memory_chunks WHERE corpus IN (${corpusPlaceholders(corpora)})`)
+      .get(...corpora) as { bytes: number };
+    return row.bytes;
+  }
+
+  /** A cheap summary of every corpus's size, so a caller can tell whether the
+   *  corpus totals it holds are still true: the chunk count, the top id, and
+   *  the embedded count, each an index read. */
+  corpusFingerprint(): string {
+    const chunks = this.db
+      .prepare('SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS maxId FROM memory_chunks')
+      .get() as { count: number; maxId: number };
+    const embedded = this.db
+      .prepare('SELECT COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL')
+      .get() as { count: number };
+    return `${chunks.count}|${chunks.maxId}|${embedded.count}`;
+  }
+
+  /** Every board task's id, ticket and title: what a task-record match needs
+   *  to become a row when none of the task's conversations is in scope. */
+  boardTaskTitles(): Array<{ taskId: string; displayId: number | null; title: string }> {
+    return this.db
+      .prepare('SELECT id AS taskId, display_id AS displayId, title FROM tasks')
+      .all() as Array<{ taskId: string; displayId: number | null; title: string }>;
   }
 
   /**
@@ -1021,16 +1083,16 @@ export class RetrievalStore {
    * exactly `embeddedChunks * dimensions * 4` (verified against the live table,
    * which held uniform 4096-byte blobs at 1024 dimensions).
    */
-  indexedTextBytesPage(afterChunkId: number, limit: number): { bytes: number; lastChunkId: number } {
+  indexedTextBytesPage(afterChunkId: number, limit: number, corpus: MemoryCorpus): { bytes: number; lastChunkId: number } {
     const rows = this.db
       .prepare(
         `SELECT id, length(text) AS bytes
          FROM memory_chunks
-         WHERE id > ?
+         WHERE corpus = ? AND id > ?
          ORDER BY id
          LIMIT ?`,
       )
-      .all(afterChunkId, limit) as Array<{ id: number; bytes: number | null }>;
+      .all(corpus, afterChunkId, limit) as Array<{ id: number; bytes: number | null }>;
     let bytes = 0;
     let lastChunkId = 0;
     for (const row of rows) {
@@ -1074,6 +1136,22 @@ export class RetrievalStore {
       .get() as { modelTag: string; count: number } | undefined;
     if (!row) return null;
     return { dimensions, modelTag: row.modelTag };
+  }
+
+  /** Each indexed document's source signature in one corpus, keyed by doc id:
+   *  what a record sweep compares against without reading any chunk. */
+  indexSignatures(corpus: MemoryCorpus): Map<string, { sourcePath: string | null; sourceMtimeMs: number | null }> {
+    const rows = this.db
+      .prepare('SELECT doc_id AS docId, source_path AS sourcePath, source_mtime_ms AS sourceMtimeMs FROM memory_index_state WHERE corpus = ?')
+      .all(corpus) as Array<{ docId: string; sourcePath: string | null; sourceMtimeMs: number | null }>;
+    return new Map(rows.map((row) => [row.docId, { sourcePath: row.sourcePath, sourceMtimeMs: row.sourceMtimeMs }]));
+  }
+
+  /** Every document id holding chunks in one corpus. */
+  documentIds(corpus: MemoryCorpus): string[] {
+    return (this.db
+      .prepare('SELECT DISTINCT doc_id AS docId FROM memory_chunks WHERE corpus = ?')
+      .all(corpus) as Array<{ docId: string }>).map((row) => row.docId);
   }
 
   listIndexState(corpus: MemoryCorpus): Array<{ corpus: string; docId: string; status: string }> {

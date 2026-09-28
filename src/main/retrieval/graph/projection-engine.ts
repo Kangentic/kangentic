@@ -388,7 +388,9 @@ async function sumIndexedTextBytes(
   for (;;) {
     if (aborted()) return null;
     const startedAt = Date.now();
-    const page = store.indexedTextBytesPage(cursor, scanBatch);
+    // The map's own corpus. The snapshot adds the other corpora's size, which
+    // is small enough to read live (`MemoryIndexSummary`).
+    const page = store.indexedTextBytesPage(cursor, scanBatch, 'conversation');
     if (page.lastChunkId === 0) break;
     bytes += page.bytes;
     cursor = page.lastChunkId;

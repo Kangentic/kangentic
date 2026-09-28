@@ -41,12 +41,25 @@
  *   count by the task's size moved recall by at most one task. A huge task
  *   such as #529 tops "how many adapters did we add?" on its best passage,
  *   not its size, and still ranks first with no corroboration term at all.
+ * - TASK RECORDS, ON THE CONVERSATION SCALE. A task's own record (title,
+ *   labels, description) is searched beside its conversations, and reaches a
+ *   task with no conversation at all when the question is unscoped. A short
+ *   record does not score like a transcript chunk, so record relevance is
+ *   rescaled so its best equals the conversations' best for that question.
+ *   Measured over the same six questions (683 tasks, 2,342 record chunks):
+ *   title-named recall inside the handed set rose from 46 of 71 to 58, and
+ *   "how many adapters did we add?" found #14 to #17, which have no indexed
+ *   conversation. Records at their raw scores reached 57 of 71 but none of
+ *   the four, because that question's records peaked at 0.39 against 0.54.
+ *   The handed set grew from 33 tasks to 43 on average. The factor is
+ *   clamped, so a record pool that barely clears the cutoff is not inflated
+ *   into noise.
  */
 
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../db/database';
 import { RetrievalStore } from './retrieval-store';
-import { CONVERSATION_CORPUS } from './corpora';
+import { CONVERSATION_CORPUS, type MemoryCorpus } from './corpora';
 import { SEMANTIC_RELEVANCE_CUTOFF } from './memory-search';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import type { ChunkPlacement, Embedder } from './types';
@@ -55,6 +68,14 @@ import type { ChunkPlacement, Embedder } from './types';
 const SEMANTIC_POOL = 1_000;
 /** Keyword matches read, by bm25. */
 const LEXICAL_POOL = 500;
+/** Nearest task-record chunks read per query vector, and keyword matches among
+ *  them. Records are their own pools, so they never push a conversation chunk
+ *  out of the deep one; a project has a few thousand record chunks at most. */
+const RECORD_SEMANTIC_POOL = 500;
+const RECORD_LEXICAL_POOL = 200;
+/** Bounds on the factor that puts record relevance on the conversation scale. */
+const RECORD_SCALE_MIN = 0.5;
+const RECORD_SCALE_MAX = 1.5;
 /** Weight of the log2 match-count term. */
 const CORROBORATION_WEIGHT = 0.03;
 /** Largest keyword bonus, for the best bm25 rank; it falls to nothing by `LEXICAL_RANK_SPAN`. */
@@ -129,18 +150,36 @@ export interface RelatedWorkTask {
   lastMs: number | null;
   /** Every conversation of the task inside the scope, so the map can light them. */
   docKeys: string[];
-  /** The best-matching chunk, for its passage and for where a row opens. */
+  /** The best-matching chunk, for its passage. A task's own record can be it. */
   bestChunkId: number | null;
+  /** Where a row opens: the best-matching CONVERSATION chunk's session and
+   *  turn. Null for a task matched through its record alone. */
   sessionId: string | null;
   turnUuid: string | null;
+}
+
+/** A board task a record match may land on when no conversation of it is in scope. */
+export interface RelatedWorkRecordTask {
+  taskId: string;
+  displayId: number | null;
+  title: string;
 }
 
 export interface RollUpInput {
   semantic: ReadonlyArray<{ chunkId: number; relevance: number }>;
   lexical: ReadonlyArray<{ chunkId: number; rank: number }>;
   placements: ReadonlyMap<number, ChunkPlacement>;
-  /** Only the nodes in scope. A chunk whose document is not here is dropped. */
+  /** Only the nodes in scope. A conversation chunk whose document is not here
+   *  is dropped. */
   nodesByDocKey: ReadonlyMap<string, RelatedWorkNode>;
+  /**
+   * The tasks a task-record chunk may reach with no conversation in scope: the
+   * whole board when the question is unscoped, nothing when the map is
+   * filtered, because the filters select conversations and a task with none
+   * cannot be inside them. The same rule the board table follows. A record of a
+   * task that does have a conversation in scope always counts.
+   */
+  recordOnlyTasks?: ReadonlyMap<string, RelatedWorkRecordTask>;
 }
 
 /** The task a node belongs to. A conversation with no task is its own task. */
@@ -153,6 +192,9 @@ interface Accumulator {
   node: RelatedWorkNode;
   best: number;
   bestChunkId: number | null;
+  /** The best conversation chunk: where the row opens. */
+  bestConversation: number;
+  bestConversationChunkId: number | null;
   chunkIds: Set<number>;
   lexicalRank: number | null;
   firstMs: number | null;
@@ -165,23 +207,42 @@ interface Accumulator {
  */
 export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
   const docKeysByTask = new Map<string, string[]>();
+  const nodeByTask = new Map<string, RelatedWorkNode>();
   for (const node of input.nodesByDocKey.values()) {
     const key = relatedTaskKey(node);
     const list = docKeysByTask.get(key) ?? [];
     list.push(node.docKey);
     docKeysByTask.set(key, list);
+    if (!nodeByTask.has(key)) nodeByTask.set(key, node);
   }
+
+  /** The node a chunk counts toward, or null when it is out of scope. */
+  const nodeFor = (placement: ChunkPlacement): RelatedWorkNode | null => {
+    if (placement.corpus === 'conversation') return input.nodesByDocKey.get(`${placement.corpus}::${placement.docId}`) ?? null;
+    // A task record: its task's own conversations when one is in scope, else
+    // the board's task when the question is unscoped. A backlog item has no
+    // board task, so it never reaches a row.
+    if (placement.corpus !== 'task' || !placement.taskId) return null;
+    const conversationNode = nodeByTask.get(placement.taskId);
+    if (conversationNode) return conversationNode;
+    const recordTask = input.recordOnlyTasks?.get(placement.taskId);
+    if (!recordTask) return null;
+    return { docKey: `task::${placement.taskId}`, taskId: recordTask.taskId, displayId: recordTask.displayId, title: recordTask.title };
+  };
 
   const byTask = new Map<string, Accumulator>();
   const accumulatorFor = (chunkId: number): { entry: Accumulator; placement: ChunkPlacement } | null => {
     const placement = input.placements.get(chunkId);
     if (!placement) return null;
-    const node = input.nodesByDocKey.get(`${placement.corpus}::${placement.docId}`);
+    const node = nodeFor(placement);
     if (!node) return null;
     const key = relatedTaskKey(node);
     let entry = byTask.get(key);
     if (!entry) {
-      entry = { key, node, best: 0, bestChunkId: null, chunkIds: new Set(), lexicalRank: null, firstMs: null, lastMs: null };
+      entry = {
+        key, node, best: 0, bestChunkId: null, bestConversation: 0, bestConversationChunkId: null,
+        chunkIds: new Set(), lexicalRank: null, firstMs: null, lastMs: null,
+      };
       byTask.set(key, entry);
     }
     entry.chunkIds.add(chunkId);
@@ -201,6 +262,10 @@ export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
       found.entry.best = hit.relevance;
       found.entry.bestChunkId = hit.chunkId;
     }
+    if (found.placement.corpus === 'conversation' && hit.relevance > found.entry.bestConversation) {
+      found.entry.bestConversation = hit.relevance;
+      found.entry.bestConversationChunkId = hit.chunkId;
+    }
   }
   for (const hit of input.lexical) {
     const found = accumulatorFor(hit.chunkId);
@@ -209,6 +274,9 @@ export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
       found.entry.lexicalRank = hit.rank;
       // A keyword-only task still needs a passage to show.
       if (found.entry.bestChunkId === null) found.entry.bestChunkId = hit.chunkId;
+    }
+    if (found.placement.corpus === 'conversation' && found.entry.bestConversationChunkId === null) {
+      found.entry.bestConversationChunkId = hit.chunkId;
     }
   }
 
@@ -222,7 +290,7 @@ export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
 
   const top = scored[0]?.score ?? 0;
   return scored.map(({ entry, score }) => {
-    const placement = entry.bestChunkId !== null ? input.placements.get(entry.bestChunkId) : undefined;
+    const opensAt = entry.bestConversationChunkId !== null ? input.placements.get(entry.bestConversationChunkId) : undefined;
     return {
       key: entry.key,
       taskId: entry.node.taskId,
@@ -233,10 +301,11 @@ export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
       matches: entry.chunkIds.size,
       firstMs: entry.firstMs,
       lastMs: entry.lastMs,
-      docKeys: docKeysByTask.get(entry.key) ?? [entry.node.docKey],
+      // A task reached through its record alone has nothing on the map.
+      docKeys: docKeysByTask.get(entry.key) ?? [],
       bestChunkId: entry.bestChunkId,
-      sessionId: placement?.sessionId ?? null,
-      turnUuid: placement?.turnUuidStart ?? null,
+      sessionId: opensAt?.sessionId ?? null,
+      turnUuid: opensAt?.turnUuidStart ?? null,
     };
   });
 }
@@ -268,6 +337,10 @@ export interface SearchRelatedWorkInput {
   projectId: string;
   /** The map's nodes inside the user's filters. */
   nodes: ReadonlyArray<RelatedWorkNode>;
+  /** Board tasks a task record may reach with none of their conversations in
+   *  scope: every task when the question is unscoped, none when it is
+   *  filtered (see `RollUpInput.recordOnlyTasks`). */
+  recordOnlyTasks?: ReadonlyArray<RelatedWorkRecordTask>;
   embedder: Embedder | null;
   /** Task keys a follow-up keeps from the turn before. */
   pinnedKeys?: ReadonlySet<string>;
@@ -340,7 +413,8 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
 
   const nodesByDocKey = new Map<string, RelatedWorkNode>();
   for (const node of input.nodes) nodesByDocKey.set(node.docKey, node);
-  if (nodesByDocKey.size === 0) return { ...empty, elapsedMs: Date.now() - started };
+  const recordOnlyTasks = new Map((input.recordOnlyTasks ?? []).map((task) => [task.taskId, task]));
+  if (nodesByDocKey.size === 0 && recordOnlyTasks.size === 0) return { ...empty, elapsedMs: Date.now() - started };
 
   let store: RetrievalStore;
   try {
@@ -360,33 +434,57 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
   // and IPC. Yielding before each one splits the work into one scan per slice
   // instead of one freeze for all of it.
   const noiseFloor = input.embedder?.noiseFloor ?? 0;
-  const relevanceByChunk = new Map<number, number>();
-  for (const vector of vectors) {
-    await yieldToEventLoop();
-    let hits: ReturnType<RetrievalStore['searchSemantic']>;
-    try {
-      hits = timeSyncWork('related:semantic', () => store.searchSemantic(vector, SEMANTIC_POOL, CONVERSATION_CORPUS));
-    } catch {
-      hits = [];
+  const relevanceOf = (distance: number): number => {
+    const cosine = 1 - (distance * distance) / 2;
+    return noiseFloor > 0 && noiseFloor < 1 ? (cosine - noiseFloor) / (1 - noiseFloor) : cosine;
+  };
+  /** Best relevance per chunk across the query vectors, one corpus's pool. */
+  const semanticPool = async (corpus: ReadonlyArray<MemoryCorpus>, limit: number): Promise<Map<number, number>> => {
+    const relevanceByChunk = new Map<number, number>();
+    for (const vector of vectors) {
+      await yieldToEventLoop();
+      let hits: ReturnType<RetrievalStore['searchSemantic']>;
+      try {
+        hits = timeSyncWork('related:semantic', () => store.searchSemantic(vector, limit, corpus));
+      } catch {
+        hits = [];
+      }
+      for (const hit of hits) {
+        const relevance = relevanceOf(hit.distance);
+        const previous = relevanceByChunk.get(hit.chunkId);
+        if (previous === undefined || relevance > previous) relevanceByChunk.set(hit.chunkId, relevance);
+      }
     }
-    for (const hit of hits) {
-      const cosine = 1 - (hit.distance * hit.distance) / 2;
-      const relevance = noiseFloor > 0 && noiseFloor < 1 ? (cosine - noiseFloor) / (1 - noiseFloor) : cosine;
-      const previous = relevanceByChunk.get(hit.chunkId);
-      if (previous === undefined || relevance > previous) relevanceByChunk.set(hit.chunkId, relevance);
-    }
-  }
+    return relevanceByChunk;
+  };
+  const conversationRelevance = await semanticPool(CONVERSATION_CORPUS, SEMANTIC_POOL);
+  const recordRelevance = await semanticPool(['task'], RECORD_SEMANTIC_POOL);
 
+  // Records on the conversation scale: the best record scores what the best
+  // conversation chunk does (see the header), within bounds.
+  const conversationBest = Math.max(0, ...conversationRelevance.values());
+  const recordBest = Math.max(0, ...recordRelevance.values());
+  const recordScale = conversationBest > 0 && recordBest > 0
+    ? Math.min(RECORD_SCALE_MAX, Math.max(RECORD_SCALE_MIN, conversationBest / recordBest))
+    : 1;
+  const relevanceByChunk = new Map(conversationRelevance);
+  for (const [chunkId, relevance] of recordRelevance) relevanceByChunk.set(chunkId, relevance * recordScale);
+
+  // Keyword matches, each corpus ranked on its own so a record's rank 1 earns
+  // what a conversation's does. A task keeps its better rank of the two.
   const keywordQuery = relatedKeywordQuery(`${input.question} ${anchors}`);
   let lexical: Array<{ chunkId: number; rank: number }> = [];
   if (keywordQuery) {
     await yieldToEventLoop();
-    try {
-      lexical = timeSyncWork('related:lexical', () => store.searchLexical(keywordQuery, LEXICAL_POOL, CONVERSATION_CORPUS))
-        .map((hit) => ({ chunkId: hit.chunkId, rank: hit.rank }));
-    } catch {
-      lexical = [];
-    }
+    const keywordPool = (corpus: ReadonlyArray<MemoryCorpus>, limit: number): Array<{ chunkId: number; rank: number }> => {
+      try {
+        return timeSyncWork('related:lexical', () => store.searchLexical(keywordQuery, limit, corpus))
+          .map((hit) => ({ chunkId: hit.chunkId, rank: hit.rank }));
+      } catch {
+        return [];
+      }
+    };
+    lexical = [...keywordPool(CONVERSATION_CORPUS, LEXICAL_POOL), ...keywordPool(['task'], RECORD_LEXICAL_POOL)];
   }
 
   const chunkIds = [...new Set([...relevanceByChunk.keys(), ...lexical.map((hit) => hit.chunkId)])];
@@ -405,6 +503,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     lexical,
     placements,
     nodesByDocKey,
+    recordOnlyTasks,
   });
   const handed = selectHandedTasks(ranked, input.pinnedKeys);
 
@@ -456,9 +555,14 @@ export function toProjectRelatedWork(work: RelatedWork, projectId: string): Proj
   };
 }
 
-export interface SearchRelatedWorkAcrossInput extends Omit<SearchRelatedWorkInput, 'projectId' | 'nodes' | 'queryVectors'> {
-  /** Each project in the question's scope, with its nodes inside the map's filters. */
-  projects: ReadonlyArray<{ projectId: string; nodes: ReadonlyArray<RelatedWorkNode> }>;
+export interface SearchRelatedWorkAcrossInput extends Omit<SearchRelatedWorkInput, 'projectId' | 'nodes' | 'queryVectors' | 'recordOnlyTasks'> {
+  /** Each project in the question's scope, with its nodes inside the map's
+   *  filters and the board tasks its records may reach. */
+  projects: ReadonlyArray<{
+    projectId: string;
+    nodes: ReadonlyArray<RelatedWorkNode>;
+    recordOnlyTasks?: ReadonlyArray<RelatedWorkRecordTask>;
+  }>;
 }
 
 /**
@@ -480,7 +584,7 @@ export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInpu
   const ranked: ProjectRelatedWorkTask[] = [];
   const passages = new Map<string, string>();
   for (const project of input.projects) {
-    if (project.nodes.length === 0) continue;
+    if (project.nodes.length === 0 && (project.recordOnlyTasks ?? []).length === 0) continue;
     let work: RelatedWork;
     try {
       work = await searchRelatedWork({
@@ -488,6 +592,7 @@ export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInpu
         anchorQuestions,
         projectId: project.projectId,
         nodes: project.nodes,
+        recordOnlyTasks: project.recordOnlyTasks,
         embedder: input.embedder,
         queryVectors: vectors,
         embedWaitMs: input.embedWaitMs,
@@ -511,6 +616,22 @@ export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInpu
     semantic: vectors.length > 0,
     elapsedMs: Date.now() - started,
   };
+}
+
+/**
+ * Every board task, as the tasks a task-record match may reach in an unscoped
+ * question. Empty when the project has no readable database, which leaves the
+ * ranking to the conversations.
+ */
+export function boardRecordTasks(
+  projectId: string,
+  getDb: (projectId: string) => Database.Database = getProjectDb,
+): RelatedWorkRecordTask[] {
+  try {
+    return new RetrievalStore(getDb(projectId)).boardTaskTitles();
+  } catch {
+    return [];
+  }
 }
 
 /** A rollup node, plus the session that opens it. */

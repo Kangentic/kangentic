@@ -27,6 +27,7 @@ import {
   searchRelatedWork,
   searchRelatedWorkAcross,
   toProjectRelatedWork,
+  boardRecordTasks,
   type ProjectRelatedWork,
   type ProjectRelatedWorkTask,
 } from '../../retrieval/related-work';
@@ -558,11 +559,19 @@ export function registerSearchHandlers(context: IpcContext): void {
         // tasks the turn before was about, or "of those" has no referent.
         const history = (answerContext.history ?? []).slice(-HISTORY_TURNS);
         const previousTurn = history[history.length - 1];
+        // Unscoped, a task's own record reaches it even when none of its
+        // conversations was indexed; the map's filters select conversations,
+        // so under a filter only tasks with one inside it count (the board
+        // table's rule).
         const projectNodes = parts.map((part) => ({
           projectId: part.project.id,
           nodes: (part.projection?.nodes ?? []).filter((node) => !scope || scope.has(node.docKey)),
+          ...(scope ? {} : { recordOnlyTasks: timeSyncWork('answer:record-tasks', () => boardRecordTasks(part.project.id)) }),
         }));
         const nodesInScope = projectNodes.flatMap((entry) => entry.nodes);
+        // A desktop edit of a task's text reaches the index here, for the next
+        // question; nothing waits on it.
+        for (const part of parts) retrievalService.refreshTaskRecords(context, part.project.id);
         // A failed search costs the related work, not the answer: the table
         // still settles every board question, and the agent can still search.
         let related: ProjectRelatedWork;
@@ -577,7 +586,12 @@ export function registerSearchHandlers(context: IpcContext): void {
           related = acrossProjects
             ? await searchRelatedWorkAcross({ ...searchInput, projects: projectNodes })
             : toProjectRelatedWork(
-              await searchRelatedWork({ ...searchInput, projectId: homeProject.id, nodes: nodesInScope }),
+              await searchRelatedWork({
+                ...searchInput,
+                projectId: homeProject.id,
+                nodes: nodesInScope,
+                recordOnlyTasks: projectNodes[0]?.recordOnlyTasks,
+              }),
               homeProject.id,
             );
         } catch (error) {
@@ -840,16 +854,17 @@ export function registerSearchHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.MEMORY_GRAPH_PROJECTS, (): MemoryGraphProjectSummary[] => {
     return context.projectRepo.list().map((project) => {
       try {
-        const summary = new RetrievalStore(getProjectDb(project.id)).conversationSummary();
+        const summary = new RetrievalStore(getProjectDb(project.id)).projectIndexSummary();
         const lastActivityMs = summary.lastIndexedAt ? Date.parse(summary.lastIndexedAt) : Number.NaN;
         return {
           id: project.id,
           name: project.name,
           conversations: summary.conversations,
+          taskRecords: summary.taskRecords,
           lastActivityMs: Number.isNaN(lastActivityMs) ? null : lastActivityMs,
         };
       } catch {
-        return { id: project.id, name: project.name, conversations: 0, lastActivityMs: null };
+        return { id: project.id, name: project.name, conversations: 0, taskRecords: 0, lastActivityMs: null };
       }
     });
   });

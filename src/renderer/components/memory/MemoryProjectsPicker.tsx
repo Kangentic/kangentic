@@ -240,7 +240,14 @@ export function MemoryProjectsPicker({
                 </span>
                 <span className="min-w-0 flex-1 truncate">{project.name}</span>
                 {isPending ? <span className="flex-shrink-0 text-[11px] text-fg-muted">Building</span> : null}
-                <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint">{project.conversations}</span>
+                {/* The count is what the map draws; the task records it also
+                    searches are named on hover. */}
+                <span
+                  className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint"
+                  title={`${project.conversations.toLocaleString()} conversations, ${project.taskRecords.toLocaleString()} task records`}
+                >
+                  {project.conversations}
+                </span>
               </button>
             );
           })}

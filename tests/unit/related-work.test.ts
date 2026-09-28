@@ -169,6 +169,72 @@ describe('rolling hits up to tasks', () => {
   });
 });
 
+describe('task records in the rollup', () => {
+  /** A chunk of a task's own record (the `task` corpus). */
+  function recordPlacement(id: number, taskId: string | null, docId = taskId ?? `backlog:${id}`): ChunkPlacement {
+    return { id, corpus: 'task', docId, sessionId: null, taskId, tsStart: 50, turnUuidStart: null };
+  }
+
+  it('counts a record toward its task, and the row still opens the best conversation', () => {
+    const ranked = rollUpRelatedWork({
+      semantic: [
+        { chunkId: 1, relevance: 0.5 },
+        { chunkId: 70, relevance: 0.9 },
+      ],
+      lexical: [],
+      placements: new Map([
+        [1, { ...placement(1, 'a'), taskId: 't1' }],
+        [70, recordPlacement(70, 't1')],
+      ]),
+      nodesByDocKey: nodes(['a', 't1', 561]),
+    });
+
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0].matches).toBe(2);
+    // The record is the best passage for the prompt...
+    expect(ranked[0].bestChunkId).toBe(70);
+    // ...but a row opens a conversation, which a record is not.
+    expect(ranked[0].sessionId).toBe('session-a');
+    expect(ranked[0].turnUuid).toBe('turn-1');
+    expect(ranked[0].docKeys).toEqual(['conversation::a']);
+  });
+
+  it('reaches a task with no conversation when the question is unscoped, with nothing to light', () => {
+    const ranked = rollUpRelatedWork({
+      semantic: [{ chunkId: 70, relevance: 0.7 }],
+      lexical: [],
+      placements: new Map([[70, recordPlacement(70, 't-quiet')]]),
+      nodesByDocKey: nodes(['a', 't1', 1]),
+      recordOnlyTasks: new Map([['t-quiet', { taskId: 't-quiet', displayId: 14, title: 'Add support for an agent' }]]),
+    });
+
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0]).toMatchObject({ key: 't-quiet', displayId: 14, title: 'Add support for an agent', docKeys: [], sessionId: null });
+  });
+
+  it('drops a record whose task has no conversation inside a filtered scope', () => {
+    // The filters select conversations, so a task with none cannot be inside them.
+    const ranked = rollUpRelatedWork({
+      semantic: [{ chunkId: 70, relevance: 0.7 }],
+      lexical: [{ chunkId: 70, rank: 1 }],
+      placements: new Map([[70, recordPlacement(70, 't-quiet')]]),
+      nodesByDocKey: nodes(['a', 't1', 1]),
+    });
+    expect(ranked).toEqual([]);
+  });
+
+  it('never makes a row of a backlog item, which has no board task', () => {
+    const ranked = rollUpRelatedWork({
+      semantic: [{ chunkId: 80, relevance: 0.9 }],
+      lexical: [],
+      placements: new Map([[80, recordPlacement(80, null)]]),
+      nodesByDocKey: nodes(['a', 't1', 1]),
+      recordOnlyTasks: new Map([['t1', { taskId: 't1', displayId: 1, title: 'One' }]]),
+    });
+    expect(ranked).toEqual([]);
+  });
+});
+
 describe('choosing the handed set', () => {
   function rankedWithScores(scores: number[]): RelatedWorkTask[] {
     return scores.map((score, index) => ({

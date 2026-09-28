@@ -819,9 +819,9 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
           availableGranularities={grainOptions}
           onGranularityChange={setGranularity}
           coverage={snapshot.coverage}
+          index={snapshot.index}
           semanticAvailable={snapshot.semanticAvailable}
           edgeCount={projection.edges.length}
-          storageBytes={projection.storageBytes}
           building={snapshot.building}
           projectsPicker={projectsPicker}
         />

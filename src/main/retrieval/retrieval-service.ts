@@ -30,6 +30,7 @@ import { RetrievalStore } from './retrieval-store';
 import { hasVecSupport } from './vec-support';
 import { lastVecLoadError } from './vec-extension';
 import { ConversationIndexer } from './conversation/conversation-indexer';
+import { sweepTaskRecords } from './task/task-indexer';
 import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
@@ -54,6 +55,9 @@ const FINALIZE_DEBOUNCE_MS = 3500;
  *  before a live re-index, so a burst of activity transitions within a turn
  *  coalesces into one index and the CLI has flushed the new turn to disk. */
 const LIVE_INDEX_DEBOUNCE_MS = 1500;
+/** Grace after a board change before its task records are re-read, so a drag
+ *  or a burst of agent edits settles into one sweep. */
+const TASK_RECORD_DEBOUNCE_MS = 2000;
 
 const indexer = new ConversationIndexer();
 
@@ -68,6 +72,8 @@ const pendingTimers = new Set<NodeJS.Timeout>();
 const liveIndexTimers = new Map<string, NodeJS.Timeout>();
 /** Per-session trailing-debounce timers for finalize (suspend / exit) indexing. */
 const finalizeIndexTimers = new Map<string, NodeJS.Timeout>();
+/** Per-project trailing-debounce timers for task-record re-reads. */
+const taskRecordTimers = new Map<string, NodeJS.Timeout>();
 
 // Model-file download state (downloading the local embedding model to disk).
 // The embed WORKER and its warm-hold / crash / device state live in
@@ -221,6 +227,38 @@ function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
   liveIndexTimers.set(sessionId, timer);
 }
 
+/**
+ * Re-read a project's task records on the serial job chain, and flag the
+ * project for the embedding drain when anything changed. A sweep with nothing
+ * to do reads two small tables and writes nothing, so this is safe to ask for
+ * whenever the board may have moved.
+ */
+function queueTaskRecordSweep(context: IpcContext, projectId: string): void {
+  if (disposed || !isIndexingEnabled(context)) return;
+  chain(async () => {
+    const result = await sweepTaskRecords(projectId, () => !disposed);
+    if (result.indexed > 0 || result.removed > 0) embedEngine.markDirty(projectId);
+  });
+}
+
+/** A board change re-reads its project's records once the burst settles. */
+function scheduleTaskRecordSweep(context: IpcContext, projectId: string): void {
+  if (disposed) return;
+  const existing = taskRecordTimers.get(projectId);
+  if (existing) {
+    clearTimeout(existing);
+    pendingTimers.delete(existing);
+  }
+  const timer = setTimeout(() => {
+    pendingTimers.delete(timer);
+    taskRecordTimers.delete(projectId);
+    queueTaskRecordSweep(context, projectId);
+  }, TASK_RECORD_DEBOUNCE_MS);
+  timer.unref();
+  pendingTimers.add(timer);
+  taskRecordTimers.set(projectId, timer);
+}
+
 /** Ensure the selected model is downloaded when semantic is enabled. Runs the
  *  download once per model; progress is exposed via getStatus(). */
 function ensureModelDownload(context: IpcContext): void {
@@ -271,6 +309,13 @@ export const retrievalService = {
       // so the ongoing conversation is searchable without waiting for it to end.
       if (requiresUserInteraction(activity)) scheduleLiveIndex(context, sessionId);
     });
+    // Task records follow the board. The bus hears agent and MCP edits and
+    // every move; a plain desktop edit of a task's text is caught by the
+    // refresh a question asks for (`refreshTaskRecords`).
+    context.boardEvents.onBoardChanged((event) => {
+      if (event.change === 'swimlane-updated') return;
+      scheduleTaskRecordSweep(context, event.projectId);
+    });
   },
 
   /** Run a deferred, project-switch-guarded backfill sweep for a project, then
@@ -297,10 +342,11 @@ export const retrievalService = {
       if (isSemanticEnabled(context)) ensureModelDownload(context);
 
       chain(async () => {
-        await indexer.sweepProject(
-          project.id,
-          () => !disposed && context.currentProjectId === project.id && activeSweepProjectId === project.id,
-        );
+        const stillThisProject = (): boolean =>
+          !disposed && context.currentProjectId === project.id && activeSweepProjectId === project.id;
+        await indexer.sweepProject(project.id, stillThisProject);
+        // The board's own records: cheap, and complete on the first open.
+        await sweepTaskRecords(project.id, stillThisProject);
         // Covers project open, the startup backlog, AND crash-resume: the
         // sweep re-indexed whatever changed, and this flags it for the
         // background drain regardless of whether anything actually changed
@@ -308,6 +354,13 @@ export const retrievalService = {
         embedEngine.markDirty(project.id);
       });
     });
+  },
+
+  /** Re-read a project's task records now (queued behind any indexing job).
+   *  Asked for when a question starts, which catches a desktop edit the board
+   *  event bus does not carry; nothing waits on it. */
+  refreshTaskRecords(context: IpcContext, projectId: string): void {
+    queueTaskRecordSweep(context, projectId);
   },
 
   /** The embedder for the search path, or null for lexical-only. Consulted by
@@ -456,6 +509,8 @@ export const retrievalService = {
     liveIndexTimers.clear();
     for (const timer of finalizeIndexTimers.values()) clearTimeout(timer);
     finalizeIndexTimers.clear();
+    for (const timer of taskRecordTimers.values()) clearTimeout(timer);
+    taskRecordTimers.clear();
     embedEngine.dispose();
   },
 };
