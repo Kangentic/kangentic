@@ -25,6 +25,13 @@ export interface DigestSchedulerDeps<Context> {
   resolveWriter: (context: Context, projectId: string) => Promise<DigestWriter | null>;
   /** After a pass that wrote digests: re-read the task records that carry them. */
   onWritten: (context: Context, projectId: string) => void;
+  /**
+   * Before a pass reads its tasks: bring what a digest is written from up to
+   * date. A digest's hash covers the files its task changed, so a pass that
+   * ran ahead of the change sweep would write digests without them and then
+   * rewrite every one once the changes landed, paying the backfill twice.
+   */
+  beforePass?: (context: Context, projectId: string) => Promise<void>;
   runPass?: typeof runDigestPass;
   setTimer?: (callback: () => void, delayMs: number) => { cancel: () => void };
 }
@@ -67,6 +74,7 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
     try {
       const writer = await deps.resolveWriter(context, projectId);
       if (writer && !disposed && deps.isEnabled(context)) {
+        await deps.beforePass?.(context, projectId);
         const skip = skipByProject.get(projectId) ?? new Set<string>();
         skipByProject.set(projectId, skip);
         result = await runPass(projectId, writer, {
@@ -75,6 +83,9 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
           skip,
         });
         for (const taskId of result.unanswered) skip.add(taskId);
+        // One line a pass, so a backfill's progress and any task the agent
+        // passed over can be read back from the log.
+        console.log(`[retrieval] digests project=${projectId} written=${result.written} remaining=${result.remaining} unanswered=${result.unanswered.length}${result.failed ? ' failed' : ''}`);
         if (result.written > 0) deps.onWritten(context, projectId);
       }
     } catch (error) {

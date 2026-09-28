@@ -260,11 +260,12 @@ export class GeminiAdapter implements AgentAdapter {
 
   /**
    * Streams (measured on 0.61.0: `stream-json` writes assistant text as
-   * `message` deltas), but does not search. A headless plan-mode run never
-   * offers an MCP tool, not even from a trusted folder with the server marked
-   * `trust: true` (probed: the server connected and the tool was "not
-   * registered"), and asked to search, the model handed the question to its
-   * own `codebase_investigator` subagent.
+   * `message` deltas), but does not search. In the runs tried, a headless
+   * plan-mode run never registered our MCP tool, not even from a trusted
+   * folder with the server marked `trust: true` (the server connected and the
+   * tool was "not registered"), and asked to search, the model handed the
+   * question to its own `codebase_investigator` subagent. Default mode was
+   * tried only with the built-in tools narrowed to `read_file`.
    */
   readonly answerCapabilities = { streaming: true, search: false, model: true, effort: false };
 

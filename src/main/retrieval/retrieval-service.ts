@@ -297,6 +297,12 @@ const digestScheduler = createDigestScheduler<IpcContext>({
   },
   // A digest is part of its task's record, so the record re-reads.
   onWritten: (context, projectId) => queueRecordSweeps(context, projectId),
+  // The files a task changed are part of what its digest is written from.
+  // Cheap once caught up; on a cold start (which skips the project-open sweep)
+  // it is what keeps the first digests from being written without them.
+  beforePass: async (context, projectId) => {
+    await sweepChangeRecords(projectId, projectPathFor(context, projectId), () => !disposed);
+  },
 });
 
 /** A board change re-reads its project's records once the burst settles. */
