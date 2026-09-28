@@ -39,6 +39,7 @@ import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode/opencode
 import { CodexAdapter } from '../../src/main/agent/adapters/codex/codex-adapter';
 import { GeminiAdapter } from '../../src/main/agent/adapters/gemini/gemini-adapter';
 import { KimiAdapter } from '../../src/main/agent/adapters/kimi/kimi-adapter';
+import { QwenAdapter } from '../../src/main/agent/adapters/qwen-code/qwen-adapter';
 import {
   AntigravityAdapter,
   extractAntigravityStreamResponse,
@@ -205,14 +206,19 @@ describe('answer run flags and prompt delivery', () => {
     });
   });
 
-  it('Codex runs exec in its read-only sandbox, without the interactive approval flag', async () => {
+  it('Codex runs exec in its read-only sandbox, without the interactive approval flag or a saved session', async () => {
     const options = await optionsFor(new CodexAdapter());
-    expect(options.args).toEqual(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--model', 'some-model']);
+    expect(options.args).toEqual(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'some-model']);
   });
 
   it('Gemini skips the folder-trust check the scratch directory would otherwise hit', async () => {
     const options = await optionsFor(new GeminiAdapter());
     expect(options.args).toEqual(['--skip-trust', '--output-format', 'text', '--approval-mode', 'plan', '--model', 'some-model']);
+  });
+
+  it('Qwen answers in plan mode without saving the question as a chat', async () => {
+    const options = await optionsFor(new QwenAdapter());
+    expect(options.args).toEqual(['--output-format', 'text', '--approval-mode', 'plan', '--chat-recording=false', '--model', 'some-model']);
   });
 
   it('Kimi uses its own plan flag, not Claude\'s', async () => {

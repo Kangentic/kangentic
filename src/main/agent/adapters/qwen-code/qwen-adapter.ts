@@ -293,6 +293,11 @@ export class QwenAdapter implements AgentAdapter {
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
+   *
+   * `--chat-recording=false` keeps the question out of the user's Qwen
+   * history. Without it every answer saved a chat under
+   * `~/.qwen/projects/<cwd>/chats/`; with it nothing was written there or
+   * under `~/.qwen/tmp` (measured on a run that reached the model).
    */
   async answerFromContext(
     prompt: string,
@@ -305,7 +310,7 @@ export class QwenAdapter implements AgentAdapter {
       // The model flag is OMITTED when none is chosen: passing an
       // empty value is an error, and the absence of the flag is what
       // "the agent's own default" means to the CLI.
-      args: ['--output-format', 'text', '--approval-mode', 'plan', ...(model ? ['--model', model] : [])],
+      args: ['--output-format', 'text', '--approval-mode', 'plan', '--chat-recording=false', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
     });

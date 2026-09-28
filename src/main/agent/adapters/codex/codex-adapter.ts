@@ -309,6 +309,12 @@ export class CodexAdapter implements AgentAdapter {
    * No `--ask-for-approval`: it is an interactive flag that `codex exec`
    * rejects, so the shipped call failed before it reached the model.
    *
+   * `--ephemeral` ("run without persisting session files to disk", codex
+   * 0.154's own help): an answer is not a session to resume, and every run
+   * otherwise added one to `~/.codex/sessions`. Streaming (`--json`) and
+   * search (a `-c mcp_servers` override) stay off until a logged-in run
+   * verifies them; this machine's Codex answers 401.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -322,7 +328,7 @@ export class CodexAdapter implements AgentAdapter {
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
       // empty value is an error.
-      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', ...(model ? ['--model', model] : [])],
+      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
     });
