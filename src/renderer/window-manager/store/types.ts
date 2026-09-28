@@ -130,6 +130,11 @@ export interface ManagedWindow {
    *  `conversationSessionId`; setting that from the graph would open a second
    *  window on the board layer, under the graph. */
   scrollToTurnUuid?: string;
+  /** Transient, never persisted: the project a `conversation` window's
+   *  transcript belongs to, when it is not the open one. The Knowledge Graph
+   *  opens conversations from every project it shows; absent means the open
+   *  project, which is every board-opened window. */
+  projectId?: string;
 }
 
 /**

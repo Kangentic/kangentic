@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Check, Search, Sparkles, X } from 'lucide-react';
 import type { MemoryRelatedTask } from '../../../shared/types';
 import type { MemoryChatTurn } from '../../stores/memory-graph-store';
-import { MemoryChatText, stripProtocolLine } from './MemoryChatText';
+import { MemoryChatText, stripProtocolLine, ticketRef } from './MemoryChatText';
 import { MemorySourceRows } from './MemorySourceRows';
 
 function Avatar() {
@@ -63,12 +63,14 @@ interface TurnProps {
 }
 
 function AgentTurn({ turn, isLatest, agentName, onRetry, onOpenTask, canOpenTask, onFocus }: TurnProps) {
-  // Every task this turn can name, by ticket: the ones it is about, and the
-  // related work it was handed.
+  // Every task this turn can name, by the ref the answer writes: the ones it is
+  // about, and the related work it was handed. A ref, not a bare number, since
+  // an answer across projects can name #88 and mobile#88.
   const tasksByTicket = useMemo(() => {
-    const map = new Map<number, MemoryRelatedTask>();
+    const map = new Map<string, MemoryRelatedTask>();
     for (const task of [...(turn.related ?? []), ...turn.rows]) {
-      if (task.displayId != null) map.set(task.displayId, task);
+      const ref = ticketRef(task);
+      if (ref) map.set(ref, task);
     }
     return map;
   }, [turn.related, turn.rows]);
@@ -189,9 +191,11 @@ export function MemoryChat({
       className="flex h-full flex-col overflow-hidden rounded-[10px] border border-edge bg-surface-raised/95 shadow-xl backdrop-blur-md"
       data-testid="memory-chat"
     >
+      {/* Titled for what it is, not who answers: the agent is a Settings
+          choice, and the sparkle belongs to the replies alone, so each answer
+          carries it once rather than the panel stamping it again above them. */}
       <div className="flex items-center gap-2 border-b border-edge py-2.5 pl-3.5 pr-2.5">
-        <Sparkles size={14} className="flex-shrink-0 text-accent-fg" aria-hidden />
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-fg">{agentName}</span>
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-fg" data-testid="memory-chat-title">Chat</span>
         <button
           type="button"
           onClick={onEnd}

@@ -164,6 +164,32 @@ export interface SceneNodeStyle {
 /** Below this a node counts as filtered out rather than dim. */
 const HIDDEN_ALPHA = 0.001;
 
+/**
+ * How long a change of node styles takes to settle, in ms.
+ *
+ * Reported: between turns of a chat the map snapped from one picture to the
+ * next, which read as a redraw rather than as the same map changing emphasis.
+ * Long enough to see the lit set move, short enough that the map never lags
+ * the answer it illustrates.
+ */
+const STYLE_TRANSITION_MS = 380;
+
+/** Ease-out cubic: fast at first, so the change starts at once, then settling. */
+function easeOut(progress: number): number {
+  return 1 - (1 - progress) ** 3;
+}
+
+/**
+ * The app's Animations setting (`.no-motion` on the root) and the OS's reduced
+ * motion preference both mean snap, as every other motion in the app does.
+ */
+function motionReduced(): boolean {
+  if (typeof document === 'undefined') return true;
+  if (document.documentElement.classList.contains('no-motion')) return true;
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export interface MemoryGraphSceneOptions {
   canvas: HTMLCanvasElement;
   nodes: ReadonlyArray<MemoryGraphNode>;
@@ -185,13 +211,25 @@ export interface MemoryGraphScene {
   /** Resize, and re-aim the frustum at the clear area. Returns what it applied,
    *  since the framing fit needs the same numbers. */
   setSize(width: number, height: number, insets?: ViewportInsets): ViewportDescription;
-  /** Rewrite per-node colour/size/alpha. No allocation, no geometry rebuild. */
-  setNodeStyles(styles: ReadonlyArray<SceneNodeStyle>): void;
+  /**
+   * Rewrite per-node colour/size/alpha. No allocation, no geometry rebuild.
+   *
+   * Eased from what is on screen over `STYLE_TRANSITION_MS`, except the first
+   * call on a new scene, which paints flat (a scene is built on open and on a
+   * project switch, and neither is a change the user made).
+   *
+   * `animate: false` is for changes that answer the pointer (hover, selection),
+   * which must feel immediate: they snap, or join a transition already running
+   * rather than cutting it short.
+   */
+  setNodeStyles(styles: ReadonlyArray<SceneNodeStyle>, options?: { animate?: boolean }): void;
   /** Global link opacity, so "Links" can be toggled without touching geometry. */
   setEdgeOpacity(opacity: number): void;
   /** Nearest node under normalized device coords, or null. */
   pick(ndcX: number, ndcY: number): number | null;
-  renderFrame(): void;
+  /** Draw one frame. True while a style change is still easing, so the host
+   *  keeps its loop running until the picture settles. */
+  renderFrame(): boolean;
   dispose(): void;
 }
 
@@ -848,6 +886,18 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
   const nodeSizes = new Float32Array(nodeCount);
   const nodeAlphas = new Float32Array(nodeCount);
   const nodeRings = new Float32Array(nodeCount);
+  // What the current transition eases FROM and TO. The four arrays above are
+  // what is drawn; these hold the two ends while a change is in flight.
+  const fromColors = new Float32Array(nodeCount * 3);
+  const fromSizes = new Float32Array(nodeCount);
+  const fromAlphas = new Float32Array(nodeCount);
+  const fromRings = new Float32Array(nodeCount);
+  const targetColors = new Float32Array(nodeCount * 3);
+  const targetSizes = new Float32Array(nodeCount);
+  const targetAlphas = new Float32Array(nodeCount).fill(1);
+  const targetRings = new Float32Array(nodeCount);
+  let transitionStartMs: number | null = null;
+  let stylesApplied = false;
   const worldPositions: Vector3[] = [];
 
   for (let index = 0; index < nodeCount; index += 1) {
@@ -991,6 +1041,53 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
   lines.frustumCulled = false;
   scene.add(lines);
 
+  /**
+   * Write the drawn node styles at `progress` (0..1) between the transition's
+   * two ends, and the link alphas that follow from them. At 1 it is the target.
+   */
+  function writeDrawnStyles(progress: number): void {
+    const eased = easeOut(progress);
+    if (progress >= 1) {
+      nodeColors.set(targetColors);
+      nodeSizes.set(targetSizes);
+      nodeAlphas.set(targetAlphas);
+      nodeRings.set(targetRings);
+    } else {
+      for (let index = 0; index < nodeColors.length; index += 1) {
+        nodeColors[index] = fromColors[index] + (targetColors[index] - fromColors[index]) * eased;
+      }
+      for (let index = 0; index < nodeCount; index += 1) {
+        nodeSizes[index] = fromSizes[index] + (targetSizes[index] - fromSizes[index]) * eased;
+        nodeAlphas[index] = fromAlphas[index] + (targetAlphas[index] - fromAlphas[index]) * eased;
+        nodeRings[index] = fromRings[index] + (targetRings[index] - fromRings[index]) * eased;
+      }
+    }
+    (nodeGeometry.getAttribute('nodeColor') as BufferAttribute).needsUpdate = true;
+    (nodeGeometry.getAttribute('nodeSize') as BufferAttribute).needsUpdate = true;
+    (nodeGeometry.getAttribute('nodeAlpha') as BufferAttribute).needsUpdate = true;
+    (nodeGeometry.getAttribute('nodeRing') as BufferAttribute).needsUpdate = true;
+
+    // Link visibility is DERIVED here rather than exposed as a second API: an
+    // edge is only meaningful when both of its endpoints are on screen, and
+    // making that an invariant of the style write means a caller cannot leave a
+    // link dangling into hidden space. It follows the DRAWN alphas, so links
+    // fade with their nodes.
+    //
+    // Multiplied by the edge's own STRENGTH so the mesh has texture instead of
+    // being one flat wash. A strong link and a marginal one drew identically
+    // before, which is what made a dense area read as noise rather than as
+    // structure.
+    for (let index = 0; index < edges.length; index += 1) {
+      const from = nodeAlphas[edges[index].source] ?? 0;
+      const to = nodeAlphas[edges[index].target] ?? 0;
+      const visible = from > HIDDEN_ALPHA && to > HIDDEN_ALPHA ? Math.min(from, to) : 0;
+      const alpha = visible * edgeStrengths[index];
+      edgeAlphas[index * 2] = alpha;
+      edgeAlphas[index * 2 + 1] = alpha;
+    }
+    (edgeGeometry.getAttribute('edgeAlpha') as BufferAttribute).needsUpdate = true;
+  }
+
   // ---- picking -------------------------------------------------------------
   const raycaster = new Raycaster();
   // Points have no area to hit, so the threshold IS the hit radius (world units).
@@ -1020,44 +1117,36 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
       return applyViewport(camera, width, height, insets);
     },
 
-    setNodeStyles(styles) {
-      const colorAttribute = nodeGeometry.getAttribute('nodeColor') as BufferAttribute;
-      const sizeAttribute = nodeGeometry.getAttribute('nodeSize') as BufferAttribute;
-      const alphaAttribute = nodeGeometry.getAttribute('nodeAlpha') as BufferAttribute;
-      const ringAttribute = nodeGeometry.getAttribute('nodeRing') as BufferAttribute;
+    setNodeStyles(styles, options = {}) {
+      const animate = options.animate ?? true;
       const count = Math.min(styles.length, nodeCount);
       for (let index = 0; index < count; index += 1) {
         const style = styles[index];
-        nodeColors[index * 3] = style.color[0];
-        nodeColors[index * 3 + 1] = style.color[1];
-        nodeColors[index * 3 + 2] = style.color[2];
-        nodeSizes[index] = BASE_POINT_SIZE * style.scale;
-        nodeAlphas[index] = style.alpha;
-        nodeRings[index] = style.ring ?? 0;
+        targetColors[index * 3] = style.color[0];
+        targetColors[index * 3 + 1] = style.color[1];
+        targetColors[index * 3 + 2] = style.color[2];
+        targetSizes[index] = BASE_POINT_SIZE * style.scale;
+        targetAlphas[index] = style.alpha;
+        targetRings[index] = style.ring ?? 0;
       }
-      colorAttribute.needsUpdate = true;
-      sizeAttribute.needsUpdate = true;
-      alphaAttribute.needsUpdate = true;
-      ringAttribute.needsUpdate = true;
 
-      // Link visibility is DERIVED here rather than exposed as a second API: an
-      // edge is only meaningful when both of its endpoints are on screen, and
-      // making that an invariant of this one call means a caller cannot leave a
-      // link dangling into hidden space.
-      //
-      // Multiplied by the edge's own STRENGTH so the mesh has texture instead of
-      // being one flat wash. A strong link and a marginal one drew identically
-      // before, which is what made a dense area read as noise rather than as
-      // structure.
-      for (let index = 0; index < edges.length; index += 1) {
-        const from = nodeAlphas[edges[index].source] ?? 0;
-        const to = nodeAlphas[edges[index].target] ?? 0;
-        const visible = from > HIDDEN_ALPHA && to > HIDDEN_ALPHA ? Math.min(from, to) : 0;
-        const alpha = visible * edgeStrengths[index];
-        edgeAlphas[index * 2] = alpha;
-        edgeAlphas[index * 2 + 1] = alpha;
+      if (!stylesApplied || motionReduced() || (!animate && transitionStartMs === null)) {
+        stylesApplied = true;
+        transitionStartMs = null;
+        writeDrawnStyles(1);
+        return;
       }
-      (edgeGeometry.getAttribute('edgeAlpha') as BufferAttribute).needsUpdate = true;
+      // A pointer change while a transition runs: the new targets are already
+      // written, and the running transition now eases toward them.
+      if (!animate) return;
+      // Ease from what is on screen NOW, so a change arriving mid-transition
+      // (a streamed answer re-lighting the map) continues from where the last
+      // one had got to rather than jumping back to its start.
+      fromColors.set(nodeColors);
+      fromSizes.set(nodeSizes);
+      fromAlphas.set(nodeAlphas);
+      fromRings.set(nodeRings);
+      transitionStartMs = performance.now();
     },
 
     setEdgeOpacity(opacity) {
@@ -1077,13 +1166,23 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
       for (const hit of hits) {
         const index = hit.index ?? null;
         if (index === null) continue;
-        if (nodeAlphas[index] <= HIDDEN_ALPHA) continue;
+        // The TARGET, not what is drawn: a node fading out is already gone as
+        // far as the user's intent is concerned, and one fading in is there.
+        if (targetAlphas[index] <= HIDDEN_ALPHA) continue;
         return index;
       }
       return null;
     },
 
     renderFrame() {
+      let easing = false;
+      if (transitionStartMs !== null) {
+        const progress = Math.min((performance.now() - transitionStartMs) / STYLE_TRANSITION_MS, 1);
+        writeDrawnStyles(progress);
+        if (progress < 1) easing = true;
+        else transitionStartMs = null;
+      }
+
       // Recomputed per frame, which is a handful of arithmetic and no allocation.
       // Anchored on the camera's distance to the content so the nearest node
       // sits at full strength and the farthest at the floor, at any zoom.
@@ -1095,6 +1194,7 @@ export function createMemoryGraphScene(options: MemoryGraphSceneOptions): Memory
       edgeMaterial.uniforms.fogNear.value = near;
       edgeMaterial.uniforms.fogFar.value = far;
       renderer.render(scene, camera);
+      return easing;
     },
 
     dispose() {

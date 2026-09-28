@@ -921,10 +921,11 @@ about, so the map reads as a topic atlas of the project rather than an anonymous
 
 **Flying it.** Drag to orbit, right-drag to pan, scroll to zoom in and out. Click the map and use
 **W** / **S** to fly forward and back, **A** / **D** to slide left and right, and **Q** / **E** to
-rise and drop - you can fly right into a cluster and out the other side. **Reset view** (bottom
-right) frames the whole map again, so it is always possible to get un-lost. With regions switched
-off it frames what is left rather than the regions you hid, so resetting a scoped map fills the
-view instead of pulling it back out.
+rise and drop - you can fly right into a cluster and out the other side. The camera toolbar at the
+bottom centre of the map holds **Reset view**, which frames the whole map again so it is always
+possible to get un-lost, and **Controls**, which shows these keys. With regions switched off, Reset
+view frames what is left rather than the regions you hid, so resetting a scoped map fills the view
+instead of pulling it back out.
 
 **Clicking around.** Hover a point for its title and size; click it for a detail panel. With a
 chat open, the panel's **Back** control returns to it.
@@ -939,7 +940,9 @@ graph - the same when the graph is detached into its own window. **Explore from 
 the map to that conversation and everything it links to, with a breadcrumb at the top of the map to
 take it back.
 
-The **Display** panel (top left) collapses out of the way and holds the groups below.
+The left panel holds four cards, and each one collapses: **Filter** (projects, time and status),
+**Regions** (detail and the region list), **Display** (colour and what shows), and **Index**, which
+opens beside the panel.
 
 **Colour** switches what the points encode:
 
@@ -977,6 +980,21 @@ inside the shortest window, and a status appears only if something in the index 
 colour mode, this row survives a lopsided board, which is the point of it - scoping to the handful
 still open is exactly the question a green map cannot answer.
 
+**Projects.** The graph opens on the project you have open, and the header names it. With two or
+more projects indexed, the Filter card's first row picks which projects the map shows: any of them,
+or **All**. **None** goes back to the open project alone, since an empty map would leave nothing to
+pick from. Each project draws as its own island, labelled with its name and sized by how much it
+holds, and the Regions list groups each project's regions under its name. A project with nothing
+indexed is listed but cannot be picked. One the graph has never shown builds its map the first time
+it is picked, which takes about a minute on a large project, and its island appears when that
+finishes.
+
+Asking follows the same scope. The box reads "Ask across 3 projects", every project's tasks go into
+one table and one search, and the agent's own searches can reach each project. Ticket numbers repeat
+between projects, so the reply names another project's task with its project, like **Mobile #88**,
+and every row names its project. A row opens its conversation from its own project, and **Open
+task** switches to that project to show it.
+
 The **Regions** section below it lists every region with its colour and how many conversations it
 holds, each independently switchable, plus **All** and **None**. A large index can carry dozens of
 regions, so past a dozen the list gains a **Find a region** box. That narrows the LIST only - All
@@ -996,25 +1014,29 @@ the chat and brings the box back. The chat is not saved, and it also ends when y
 for the question, locally and in under a second, and rolls the matches up per task. The map lights
 that related set at once, brighter where a task matches more strongly, and the chat reads "Reading
 14 related tasks" while the agent works. When the answer lands, the tasks it is about stay bright
-and titled, and the rest of the related set dims to unlabelled dots. A line at the top of the map
-says which is which ("Lit: the 3 tasks the answer is about, with 25 more related tasks dimmed").
-The filters in the left panel are the scope of the question: a filtered map means a filtered table
-and a filtered search, so the chat never repeats them.
+and titled, the rest of the related set dims to unlabelled dots, and the map eases from one picture
+to the next rather than snapping. An answer that names no task, such as "nothing here covers that",
+lights nothing and leaves the plain map. The filters in the left panel are the scope of the
+question: a filtered map means a filtered table and a filtered search, so the chat never repeats
+them.
 
 **How it answers.** The agent is handed the related tasks with their strongest passages and facts,
 a complete table of every task in scope, and the chat so far. The table holds every task on the
 board, including ones with no indexed conversation, and settles factual questions exactly: what
-each task cost, how long it ran, how many sessions it took, when it was last active, which region
-it sits in, and what agent and model ran it, with the totals computed before the agent sees them.
+each task cost, how long it ran, its tokens, how many sessions it took, how many files and lines
+its branch changed, which pull request it opened and whether that merged, when it was last active,
+which region it sits in, and what agent and model ran it, with the totals computed before the agent
+sees them.
 A task with no indexed conversation has nothing to open over the map, so its row opens the task on
 the board instead. An agent that can use a tool also gets ONE: the same `kangentic_search` every agent gets,
-scoped to this project, for when the related work misses something. Each search shows as a step in
+scoped to this project (or to each project in a scope that spans several), for when the related
+work misses something. Each search shows as a step in
 the chat, and the conversations it found get a white ring on the map. Nothing else loads: no other
 tool, none of your other MCP servers, and not the project's own instructions.
 
 **The reply** is a few sentences that name tasks by their board ticket, drawn as small **#561**
 marks. Under it are rows of one kind, a ticket and a title for each task the reply is about: five,
-then **Show all**. A row or a mark opens that task's most relevant conversation over the map,
+then **Show all**, which folds back with **Show fewer**. A row or a mark opens that task's most relevant conversation over the map,
 scrolled to the passage the answer used, and that window's **Open task** closes the graph and opens
 the task on the board. When you ask a follow-up, the earlier reply's rows fold into **Show N
 tasks**. Asked something neither the table nor the conversations cover, it says so rather than

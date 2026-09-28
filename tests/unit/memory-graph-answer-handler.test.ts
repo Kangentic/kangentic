@@ -18,7 +18,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { MemoryAnswerContext, MemoryGraphAnswerResult } from '../../src/shared/types';
 import type { AnswerFromContextOptions } from '../../src/main/agent/agent-adapter';
-import type { RelatedWork, RelatedWorkTask, SearchRelatedWorkInput } from '../../src/main/retrieval/related-work';
+import type {
+  ProjectRelatedWork,
+  RelatedWork,
+  RelatedWorkTask,
+  SearchRelatedWorkAcrossInput,
+  SearchRelatedWorkInput,
+} from '../../src/main/retrieval/related-work';
 
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -80,11 +86,14 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 
 let mockRelated: RelatedWork;
 const relatedSpy = vi.fn(async (_input: SearchRelatedWorkInput): Promise<RelatedWork> => mockRelated);
+let mockRelatedAcross: ProjectRelatedWork;
+const relatedAcrossSpy = vi.fn(async (_input: SearchRelatedWorkAcrossInput): Promise<ProjectRelatedWork> => mockRelatedAcross);
 vi.mock('../../src/main/retrieval/related-work', async (importActual) => {
   const actual = await importActual<typeof import('../../src/main/retrieval/related-work')>();
   return {
     ...actual,
     searchRelatedWork: (input: SearchRelatedWorkInput) => relatedSpy(input),
+    searchRelatedWorkAcross: (input: SearchRelatedWorkAcrossInput) => relatedAcrossSpy(input),
   };
 });
 
@@ -650,6 +659,123 @@ describe('the Ask handler', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe('the agent timed out');
+  });
+
+  describe('asked across projects', () => {
+    // A second project whose only task carries the SAME ticket as the open
+    // project's #561, which is exactly what the prefix exists for.
+    const OTHER_PROJECTION = {
+      nodes: [graphNode('conversation::m-1', 'task-9', 561, 'Relay pairing', 7)],
+      edges: [],
+      clusterings: [{ granularity: 'balanced', regions: [{ label: 'relay', size: 1, x: 0, y: 0, z: 0 }] }],
+    };
+
+    function twoProjectContext() {
+      const context = makeContext();
+      context.projectRepo.list = vi.fn(() => [
+        { id: 'project-1', name: 'Kangentic', default_agent: 'claude', path: '/repo' },
+        { id: 'project-2', name: 'Mobile App', default_agent: 'claude', path: '/mobile' },
+      ]);
+      return context;
+    }
+
+    beforeEach(() => {
+      relatedAcrossSpy.mockClear();
+      vi.mocked(graphService.getSnapshot).mockImplementation((projectId: string) => ({
+        projectId,
+        projection: projectId === 'project-2' ? OTHER_PROJECTION : MOCK_PROJECTION,
+        coverage: {}, building: false, stale: false, semanticAvailable: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrow test double
+      }) as any);
+      mockRelatedAcross = {
+        ranked: [],
+        handed: [{
+          ...relatedTask({
+            key: 'task-9', taskId: 'task-9', displayId: 561, title: 'Relay pairing',
+            docKeys: ['conversation::m-1'], sessionId: 'session-conversation::m-1',
+          }),
+          projectId: 'project-2',
+        }],
+        passages: new Map([['project-2:42', 'the relay pairs over a QR code']]),
+        semantic: true,
+        elapsedMs: 5,
+      };
+    });
+
+    it('merges the tables with prefixed tickets and returns rows naming their project', async () => {
+      const answerSpy = vi.fn(async () => 'Mostly mobile-app#561, then #564.\nSELECTED: mobile-app#561, #564');
+      mockAdapters = [claudeAdapter(answerSpy)];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(twoProjectContext() as any);
+
+      const result = await ask('what touched pairing?', 'req-x', { projectIds: ['project-1', 'project-2'] });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // Embedded once and searched in each project, never the one-project path.
+      expect(relatedSpy).not.toHaveBeenCalled();
+      const across = relatedAcrossSpy.mock.calls[0][0];
+      expect(across.projects.map((project) => [project.projectId, project.nodes.length])).toEqual([
+        ['project-1', 3],
+        ['project-2', 1],
+      ]);
+
+      const [prompt, , , , options] = answerSpy.mock.calls[0] as unknown as AnswerCall;
+      // Two tasks share ticket 561, and the table keeps them apart.
+      expect(prompt).toMatch(/\n#561\|Sphere fit framing\|/);
+      expect(prompt).toMatch(/\nmobile-app#561\|Relay pairing\|/);
+      expect(prompt).toMatch(/projects: Kangentic 2 tasks[^;\n]*written #N; Mobile App 1 tasks[^\n]*written mobile-app#N/);
+      expect(prompt).toContain('written mobile-app#88');
+      // The search reaches every project in scope, by name.
+      expect(prompt).toContain('The question spans 2 projects: Kangentic, Mobile App');
+      // The other project's passage, found by its project-qualified key.
+      expect(prompt).toContain('the relay pairs over a QR code');
+      // A search covers the open project unless told otherwise.
+      expect(options?.retrieval?.url).toBe('http://127.0.0.1:4321/mcp/project-1/answer-req-x');
+
+      expect(result.rows).toEqual([
+        expect.objectContaining({ key: 'task-9', ref: 'mobile-app#561', projectId: 'project-2', projectName: 'Mobile App' }),
+        expect.objectContaining({ key: 'task-2', ref: '#564', projectId: 'project-1', projectName: 'Kangentic' }),
+      ]);
+      expect(result.answer).toBe('Mostly mobile-app#561, then #564.');
+    });
+
+    it('never reads a bare ticket as another project\'s task', async () => {
+      // The open project's #561 is task-1; mobile-app#561 is task-9. A bare
+      // #561 in the answer must stay task-1.
+      const answerSpy = vi.fn(async () => '#561 was first.\nSELECTED: #561');
+      mockAdapters = [baseAdapter(answerSpy)];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(twoProjectContext() as any);
+
+      const result = await ask('which came first?', 'req-y', { projectIds: ['project-1', 'project-2'] });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.rows.map((row) => row.key)).toEqual(['task-1']);
+    });
+
+    it('asks one other project on the one-project path, in that project', async () => {
+      const answerSpy = vi.fn(async () => '#561.\nSELECTED: #561');
+      mockAdapters = [claudeAdapter(answerSpy)];
+      mockRelated = relatedWork([relatedTask({
+        key: 'task-9', taskId: 'task-9', displayId: 561, title: 'Relay pairing', docKeys: ['conversation::m-1'],
+      })]);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(twoProjectContext() as any);
+
+      const result = await ask('what is here?', 'req-z', { projectIds: ['project-2'] });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(relatedAcrossSpy).not.toHaveBeenCalled();
+      expect(relatedSpy.mock.calls[0][0].projectId).toBe('project-2');
+      const [prompt, , , , options] = answerSpy.mock.calls[0] as unknown as AnswerCall;
+      // One project, so its tickets stand bare and no row names a project.
+      expect(prompt).toMatch(/\n#561\|Relay pairing\|/);
+      expect(prompt).not.toContain('Sphere fit framing');
+      expect(options?.retrieval?.url).toBe('http://127.0.0.1:4321/mcp/project-2/answer-req-z');
+      expect(result.rows[0]).toMatchObject({ key: 'task-9', projectId: 'project-2', ref: '#561' });
+      expect(result.rows[0].projectName).toBeUndefined();
+    });
   });
 
   it('refuses an empty question before doing anything at all', async () => {

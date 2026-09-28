@@ -204,6 +204,7 @@ describe('the prompt is built for its own length', () => {
     facts: {
       displayId: 529, sessions: 3, costUsd: 136.74, durationMs: 280_740_000, tokens: null,
       outcome: 'active' as const, lastActivityMs: null, region: null, agent: null, model: null,
+      filesChanged: 42, linesAdded: 3100, linesRemoved: 870, prNumber: 417, prState: 'open',
     },
   }];
 
@@ -256,8 +257,13 @@ describe('the prompt is built for its own length', () => {
     // related to X" is a read down one column rather than a table lookup per
     // task, which Haiku got wrong when it had to do it.
     const lines = formatRelatedWork(related).split('\n');
-    expect(lines[1]).toBe('ref|task|strength|matches|first|last|cost_usd|duration|tokens|sessions|outcome|passage');
-    expect(lines[2]).toBe('#529|Memory graph|1.00|12|2026-08-01|2026-09-20|136.74|77h 59m||3|active|"we lit the related set"');
+    expect(lines[1]).toBe(
+      'ref|task|strength|matches|first|last|cost_usd|duration|tokens|sessions|files|lines_added|lines_removed|outcome|pr|passage',
+    );
+    // A pull request is written "PR 417", never "#417", which would read as a task.
+    expect(lines[2]).toBe(
+      '#529|Memory graph|1.00|12|2026-08-01|2026-09-20|136.74|77h 59m||3|42|3100|870|active|PR 417 open|"we lit the related set"',
+    );
     expect(formatRelatedWork([])).toMatch(/Nothing/);
   });
 
@@ -272,5 +278,25 @@ describe('the prompt is built for its own length', () => {
     expect(reminder).toBeLessThan(prompt.indexOf('Question:'));
     expect(prompt).toMatch(/never with their titles/);
     expect(prompt).toMatch(/never correct yourself in the reply/);
+  });
+
+  it('asks for one committed answer: a count first, one reading of "biggest"', () => {
+    // Seen on Sonnet at low effort: thirteen refs listed, then "that's actually
+    // more than nine", and "the biggest" answered by cost AND by duration.
+    const prompt = promptFor('What was the biggest change?');
+    expect(prompt).toMatch(/pick the reading that fits best, name its measure/);
+    expect(prompt).toMatch(/state it once, as a number,\s+before naming any task/);
+    const reminder = prompt.slice(prompt.indexOf('Reply in two to four plain sentences'));
+    expect(reminder).toMatch(/for a count, the number first/);
+    // Named outright: with only the general rule, Sonnet still closed on "If
+    // instead you mean tasks that are literally review passes...".
+    expect(reminder).toMatch(/never an "if instead you mean" second answer/);
+  });
+
+  it('tells an agent with the search tool to search rather than say it would need to', () => {
+    // "I'd need to search the conversation directly" came from an agent holding the tool.
+    expect(promptFor('How many files changed?', true)).toMatch(/Never tell the reader you would need to search: search/);
+    expect(promptFor('How many files changed?', true)).toMatch(/search before saying so/);
+    expect(promptFor('How many files changed?', false)).not.toMatch(/search before saying so/);
   });
 });

@@ -348,17 +348,18 @@ test.describe('memory graph', () => {
       await openMemoryGraph(page);
       await expect(page.locator('[data-testid="memory-graph-canvas"]')).toBeVisible();
 
-      // The counts and the honesty line live in the left panel's Index section,
-      // collapsed by default because they are reference rather than a control.
+      // The counts and the honesty line live in the Index flyout, closed by
+      // default because they are reference rather than a control.
       await page.locator('[data-testid="memory-graph-index-toggle"]').click();
-      await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('Conversations');
-      await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('638');
+      const index = page.locator('[data-testid="memory-graph-index-panel"]');
+      await expect(index).toContainText('Conversations');
+      await expect(index).toContainText('638');
       // Size beside the count, because a chunk total only means something to a
       // reader who already knows what a chunk is.
-      await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('Size on disk');
-      await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('3.00 GB');
+      await expect(index).toContainText('Size on disk');
+      await expect(index).toContainText('3.00 GB');
       // Position is a ~33%-faithful reduction of 1024 dimensions; edges are exact.
-      await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('Links are exact');
+      await expect(index).toContainText('Links are exact');
     } finally {
       await browser.close();
     }
@@ -494,7 +495,10 @@ test.describe('memory graph', () => {
     };
   }
 
-  function answeredScript(answer: string, rows: ReturnType<typeof chatRow>[], extra = ''): string {
+  /** A row of an answer asked across projects carries its project and ref too. */
+  type ChatRow = ReturnType<typeof chatRow> & { projectId?: string; projectName?: string; ref?: string };
+
+  function answeredScript(answer: string, rows: ReadonlyArray<ChatRow>, extra = ''): string {
     const result = {
       ok: true,
       agentName: 'Claude Code',
@@ -641,11 +645,12 @@ test.describe('memory graph', () => {
       await openMemoryGraph(page);
       await askInBox(page, 'what fixed the relay?');
 
-      // The box goes and the question is the first bubble of the chat, headed
-      // by the agent that answers it.
+      // The box goes and the question is the first bubble of the chat, titled
+      // for what it is rather than who answers (the agent is a Settings choice).
       const chat = page.locator('[data-testid="memory-chat"]');
       await expect(chat).toBeVisible();
-      await expect(chat).toContainText('Claude Code');
+      await expect(page.locator('[data-testid="memory-chat-title"]')).toHaveText('Chat');
+      await expect(chat).not.toContainText('Claude Code');
       await expect(page.locator('[data-testid="memory-graph-search-input"]')).toHaveCount(0);
       await expect(page.locator('[data-testid="memory-chat-question"]')).toHaveText('what fixed the relay?');
       await expect(page.locator('[data-testid="memory-chat-pending"]')).toContainText('Finding related work');
@@ -657,9 +662,6 @@ test.describe('memory graph', () => {
       // and the turn says how much of it the agent is reading.
       await fireStream(page, { requestId, kind: 'set', related: [chatRow(3), chatRow(4, 0.5)], handedCount: 2 });
       await expect(page.locator('[data-testid="memory-chat-reading"]')).toHaveText('Reading 2 related tasks');
-      // And the map says what it is lighting, in words.
-      const caption = page.locator('[data-testid="memory-graph-lit-caption"]');
-      await expect(caption).toHaveText('Lit: 2 tasks related to the question, brighter where they match more');
       expect(await page.evaluate(() => (window as unknown as {
         __zustandStores: { memoryGraph: { getState: () => { thread: Array<{ related: unknown[] | null }> } } };
       }).__zustandStores.memoryGraph.getState().thread[0].related?.length)).toBe(2);
@@ -683,8 +685,6 @@ test.describe('memory graph', () => {
       await page.evaluate(() => (window as unknown as { __mockReleaseAnswer: () => void }).__mockReleaseAnswer());
       await expect(page.locator('[data-testid="memory-chat-answer"]')).toContainText('The settled answer');
       await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
-      // Once the answer lands, the map is about its tasks.
-      await expect(caption).toContainText('Lit: the 1 task the answer is about');
     } finally {
       await browser.close();
     }
@@ -712,6 +712,12 @@ test.describe('memory graph', () => {
       await expect(more).toHaveText('Show all 6');
       await more.click();
       await expect(rows).toHaveCount(6);
+
+      // And it folds back. Reported: after "Show all 32" there was no way to
+      // shrink the list again short of ending the chat.
+      await page.locator('[data-testid="memory-chat-rows-fewer"]').click();
+      await expect(rows).toHaveCount(5);
+      await expect(more).toHaveText('Show all 6');
     } finally {
       await browser.close();
     }
@@ -763,7 +769,7 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('dims the related tasks the answer is not about, and says how many', async () => {
+  test('dims the related tasks the answer is not about', async () => {
     const answered = {
       ok: true, agentName: 'Claude Code', answer: 'It was #103.', rows: [chatRow(3)],
       related: [chatRow(3), chatRow(4, 0.9), chatRow(5, 0.8)], handedCount: 3, promptTokens: 1,
@@ -774,33 +780,8 @@ test.describe('memory graph', () => {
     try {
       await openMemoryGraph(page);
       await askInBox(page, 'what fixed the relay?');
-      await expect(page.locator('[data-testid="memory-graph-lit-caption"]'))
-        .toHaveText('Lit: the 1 task the answer is about, with 2 more related tasks dimmed');
       // Only the answer's task is titled; the dimmed related ones stay dots.
       await expect.poll(async () => visibleNodeTitles(page)).toEqual(['Conversation 3']);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('counts an answer task with no recorded conversation as one the map cannot light', async () => {
-    const unlitTask = {
-      key: 'task-old', taskId: 'task-old', displayId: 14, title: 'Add support for OpenCode agent',
-      strength: 1, docKeys: [], passage: null,
-    };
-    const answered = {
-      ok: true, agentName: 'Claude Code', answer: 'Two: #103 and #14.', rows: [chatRow(3), unlitTask],
-      related: [chatRow(3), chatRow(4, 0.9), chatRow(5, 0.8)], handedCount: 3, promptTokens: 1,
-    };
-    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
-      window.__mockPreConfigure(function () { return { memoryGraphAnswerResult: ${JSON.stringify(answered)} }; });`;
-    const { browser, page } = await launchWithState(preConfig);
-    try {
-      await openMemoryGraph(page);
-      await askInBox(page, 'which tasks added an agent?');
-      await expect(page.locator('[data-testid="memory-graph-lit-caption"]')).toHaveText(
-        'Lit: 1 of the 2 tasks the answer is about (1 has no recorded conversation), with 2 more related tasks dimmed',
-      );
     } finally {
       await browser.close();
     }
@@ -825,8 +806,6 @@ test.describe('memory graph', () => {
       await askInBox(inApp.page, 'which task added OpenCode?');
       const row = inApp.page.locator('[data-testid="memory-chat-row"]');
       await expect(row).toBeEnabled();
-      // Nothing of it can light, and the caption does not pretend otherwise.
-      await expect(inApp.page.locator('[data-testid="memory-graph-lit-caption"]')).toHaveCount(0);
       await row.click();
       // The graph closes and the board is asked to open the task.
       await expect(inApp.page.locator('[data-testid="memory-graph-page"]')).toHaveCount(0);
@@ -907,10 +886,33 @@ test.describe('memory graph', () => {
       await expect(page.locator('[data-testid="memory-chat-row"]')).toHaveCount(1);
 
       // The answer's conversation is titled; the neighbours around it are dim
-      // context dots, and the caption says so.
+      // context dots.
       await expect.poll(async () => (await visibleNodeTitles(page)).sort()).toEqual(['Conversation 10']);
-      await expect(page.locator('[data-testid="memory-graph-lit-caption"]'))
-        .toHaveText('Lit: the 1 task the answer is about, with its nearest conversations dimmed around it');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('an answer that names no tasks lights nothing', async () => {
+    // Retrieval always hands over its closest matches, so a question about
+    // something that is not here still had a related set, and the map lit it
+    // under an answer saying nothing matched. The mockup's Empty board draws
+    // the plain map. While a highlight is on, only lit nodes are titled, so a
+    // title outside the related set proves nothing is lit.
+    const answered = {
+      ok: true, agentName: 'Claude Code', answer: 'Nothing here covers Kubernetes autoscaling.', rows: [],
+      related: [chatRow(3), chatRow(4, 0.9), chatRow(5, 0.8)], handedCount: 3, promptTokens: 1,
+    };
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30) })}
+      window.__mockPreConfigure(function () { return { memoryGraphAnswerResult: ${JSON.stringify(answered)} }; });`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      await askInBox(page, 'How did we set up Kubernetes autoscaling?');
+      await expect(page.locator('[data-testid="memory-chat-answer"]')).toContainText('Nothing here covers');
+      const related = ['Conversation 3', 'Conversation 4', 'Conversation 5'];
+      await expect.poll(async () => (await visibleNodeTitles(page)).some((title) => !related.includes(title)))
+        .toBe(true);
     } finally {
       await browser.close();
     }
@@ -1470,11 +1472,13 @@ test.describe('memory graph', () => {
       await detail.getByRole('radio', { name: 'Fine' }).click();
       await expect(regionRows).toHaveCount(3);
 
-      // Coarse merges the fixture into ONE region, and the panel then hides
-      // itself - the same rule every other filter follows, since a picker that
-      // can only return everything is worse than no picker.
+      // Coarse merges the fixture into ONE region, and the region list then
+      // hides itself - the same rule every other filter follows, since a picker
+      // that can only return everything is worse than no picker. The card stays,
+      // because Detail lives in it: hiding it would strand the map at Coarse.
       await detail.getByRole('radio', { name: 'Coarse' }).click();
-      await expect(page.locator('[data-testid="memory-graph-regions-toggle"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-graph-region-list"]')).toHaveCount(0);
+      await expect(detail).toBeVisible();
 
       // No rebuild was asked for: the whole point of shipping all three.
       const refreshes = await page.evaluate(
@@ -1682,6 +1686,32 @@ test.describe('memory graph', () => {
   });
 
   /**
+   * Found driving the preview: one Escape closed the focused conversation window
+   * AND the graph under it. The graph unmounted the window mid-exit, so it stayed
+   * in the store and came back on the next open. Escape closes the top thing only.
+   */
+  test('Escape closes a conversation over the map before the graph', async () => {
+    const { browser, page } = await launchWithState(conversationFixture());
+    try {
+      await openMemoryGraph(page);
+      await page.locator('[data-testid="memory-graph-canvas"]').waitFor({ state: 'visible' });
+      await openConversationFromChat(page);
+
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-testid="conversation-window"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-graph-page"]')).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await page.locator('[data-testid="memory-graph-page"]').waitFor({ state: 'hidden', timeout: 5000 });
+
+      await openMemoryGraph(page);
+      await expect(page.locator('[data-testid="conversation-window"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
    * The reported bug: "Open conversation" opened the transcript on the BOARD's
    * window layer at z-40, underneath this surface's z-42 overlay, so it looked
    * like the click did nothing.
@@ -1809,16 +1839,20 @@ test.describe('memory graph', () => {
 
   test('prints the camera controls as a key legend', async () => {
     // Nothing else in the app is navigated by flying, so none of these gestures
-    // transfer from the rest of the UI. Undiscoverable controls on a spatial
-    // view mean orbiting by accident and then not knowing how to undo it, so
-    // every input is PRINTED - what each one does arrives on hover, since the
-    // keys are the part you cannot deduce and the verbs are the part you only
-    // read once.
+    // transfer from the rest of the UI. Every input is PRINTED, one labelled
+    // click away rather than on the map at every open - what each one does
+    // arrives on hover, since the keys are the part you cannot deduce and the
+    // verbs are the part you only read once.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12) }));
     try {
       await openMemoryGraph(page);
       const legend = page.locator('[data-testid="memory-graph-camera-hint"]');
+      await expect(legend).toHaveCount(0);
+      const toggle = page.locator('[data-testid="memory-graph-camera-toggle"]');
+      await expect(toggle).toHaveText('Controls');
+      await toggle.click();
       await expect(legend).toBeVisible();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       // Keys as keys, not as prose: the shape a game uses, because that is what
       // this is. `kbd` carries the meaning; the styling only makes it look
       // pressable.
@@ -1895,15 +1929,20 @@ test.describe('memory graph', () => {
       expect(drag!.x).toBeLessThan(rightDrag!.x);
       expect(rightDrag!.x).toBeLessThan(scroll!.x);
 
-      // Reference bottom-left, action bottom-right: Reset view is something you
-      // DO, so it does not sit inside the legend.
-      const canvas = await page.locator('[data-testid="memory-graph-canvas"]').boundingBox();
-      const legendBox = await legend.boundingBox();
-      const reset = await page.locator('[data-testid="memory-graph-reset-view"]').boundingBox();
-      expect(legendBox!.x).toBeLessThan(canvas!.x + canvas!.width / 2);
-      expect(legendBox!.y).toBeGreaterThan(canvas!.y + canvas!.height / 2);
-      expect(reset!.x).toBeGreaterThan(canvas!.x + canvas!.width / 2);
-      expect(reset!.y).toBeGreaterThan(canvas!.y + canvas!.height / 2);
+      // One toolbar at the bottom centre of the map, where no rail reaches, with
+      // the legend opening above it, over the map.
+      const canvas = (await page.locator('[data-testid="memory-graph-canvas"]').boundingBox())!;
+      const toolbar = (await page.locator('[data-testid="memory-graph-camera-controls"]').boundingBox())!;
+      const legendBox = (await legend.boundingBox())!;
+      const toolbarCentre = toolbar.x + toolbar.width / 2;
+      expect(Math.abs(toolbarCentre - (canvas.x + canvas.width / 2))).toBeLessThan(canvas.width * 0.05);
+      expect(toolbar.y).toBeGreaterThan(canvas.y + canvas.height / 2);
+      expect(legendBox.y + legendBox.height).toBeLessThanOrEqual(toolbar.y);
+
+      // Escape closes the legend first and leaves the graph open.
+      await page.keyboard.press('Escape');
+      await expect(legend).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-graph-page"]')).toBeVisible();
     } finally {
       await browser.close();
     }
@@ -1975,6 +2014,60 @@ test.describe('memory graph', () => {
       // metrics, which differ on the headless Linux runner. Measured here: 19
       // against the whole map's 15 with the fit scoped, 6 without it.
       expect(scoped.count).toBeGreaterThan(whole.count * 0.6);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the camera toolbar holds its place when the chat opens', async () => {
+    // Reported: centred on the pane between the rails, it slid sideways every
+    // time the chat opened. It holds the surface's centre instead.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('#103 fixed it.', [chatRow(3)])}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openMemoryGraph(page);
+      const toolbar = page.locator('[data-testid="memory-graph-camera-controls"]');
+      const before = (await toolbar.boundingBox())!;
+      await askInBox(page, 'what fixed the relay?');
+      await expect(page.locator('[data-testid="memory-chat"]')).toBeVisible();
+      // Past the panel's own slide-in, which is when the rails are re-measured.
+      // Not its subtree: the chat's loading shimmer loops forever. And by play
+      // state, since a forwards-filled animation stays listed once it ends.
+      await page.waitForFunction(() => {
+        const panel = document.querySelector('[data-graph-chrome="right"]');
+        return panel !== null && panel.getAnimations().every((animation) => animation.playState === 'finished');
+      });
+      const after = (await toolbar.boundingBox())!;
+      expect(Math.abs(after.x - before.x)).toBeLessThan(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the camera toolbar stays clear of both panels at the smallest window', async () => {
+    // At the 900x600 floor with the chat open, the gap between the rails is
+    // about 200px. The toolbar compacts (Controls becomes an icon that keeps its
+    // name) so it fits there, rather than sliding under the chat and taking
+    // Reset view with it.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('#103 fixed it.', [chatRow(3)])}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await page.setViewportSize({ width: 900, height: 600 });
+      await openMemoryGraph(page);
+      await askInBox(page, 'what fixed the relay?');
+      await expect(page.locator('[data-testid="memory-chat"]')).toBeVisible();
+      await page.waitForFunction(() => {
+        const panel = document.querySelector('[data-graph-chrome="right"]');
+        return panel !== null && panel.getAnimations().every((animation) => animation.playState === 'finished');
+      });
+      const toolbar = (await page.locator('[data-testid="memory-graph-camera-controls"]').boundingBox())!;
+      const chat = (await page.locator('[data-graph-chrome="right"]').boundingBox())!;
+      const rail = (await page.locator('[data-graph-chrome="left"]').boundingBox())!;
+      expect(toolbar.x + toolbar.width).toBeLessThanOrEqual(chat.x);
+      expect(toolbar.x).toBeGreaterThanOrEqual(rail.x + rail.width);
+      await expect(page.locator('[data-testid="memory-graph-camera-toggle"]')).toHaveAccessibleName('Controls');
     } finally {
       await browser.close();
     }
@@ -2102,9 +2195,9 @@ test.describe('memory graph', () => {
   });
 
   test('the index section is collapsed by default and opens on demand', async () => {
-    // One left panel, two sections: Display is what you touch, Index is
-    // reference. It used to be a second floating slab pinned to the bottom of
-    // the left edge with a screen-height void between them.
+    // One left panel, four cards: Filter, Regions and Display are what you
+    // touch, Index is reference. It used to be a second floating slab pinned to
+    // the bottom of the left edge with a screen-height void between them.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openMemoryGraph(page);
@@ -2114,12 +2207,13 @@ test.describe('memory graph', () => {
       // Reference numbers, so the section rests collapsed. The full-width
       // coverage strip is NOT what opens here - that shape is for the states
       // with no map to draw; this panel renders its own aligned row list.
-      await expect(page.locator('[data-testid="memory-graph-controls"]')).not.toContainText('Size on disk');
+      const indexPanel = page.locator('[data-testid="memory-graph-index-panel"]');
+      await expect(indexPanel).toHaveCount(0);
       await expect(page.locator('[data-testid="memory-coverage-strip"]')).toHaveCount(0);
 
       await page.locator('[data-testid="memory-graph-index-toggle"]').click();
-      await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('Size on disk');
-      await expect(page.locator('[data-testid="memory-graph-controls"]')).toContainText('Chunks');
+      await expect(indexPanel).toContainText('Size on disk');
+      await expect(indexPanel).toContainText('Chunks');
       await expect(page.locator('[data-testid="memory-coverage-strip"]')).toHaveCount(0);
 
       // It opens to the SIDE, and that is not cosmetic: Index is the last thing
@@ -2131,6 +2225,267 @@ test.describe('memory graph', () => {
       const indexBox = (await page.locator('[data-testid="memory-graph-index-panel"]').boundingBox())!;
       expect(indexBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 2);
       expect(indexBox.y + indexBox.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the panel scrolls at the smallest window, and Index still opens in full', async () => {
+    // At 900x600 the three open cards are taller than the space the panel has.
+    // The panel caps itself and scrolls, and the Index flyout renders outside it
+    // so the scrolling box cannot clip it.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
+    try {
+      await page.setViewportSize({ width: 900, height: 600 });
+      await openMemoryGraph(page);
+      const panel = page.locator('[data-testid="memory-graph-controls"]');
+      const scrolls = await panel.evaluate((element) => element.scrollHeight > element.clientHeight);
+      expect(scrolls).toBe(true);
+      const surface = (await page.locator('[data-testid="memory-graph-body"]').boundingBox())!;
+      const panelBox = (await panel.boundingBox())!;
+      expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(surface.y + surface.height + 1);
+
+      const toggle = page.locator('[data-testid="memory-graph-index-toggle"]');
+      await toggle.scrollIntoViewIfNeeded();
+      await toggle.click();
+      const indexBox = (await page.locator('[data-testid="memory-graph-index-panel"]').boundingBox())!;
+      expect(indexBox.y).toBeGreaterThanOrEqual(0);
+      expect(indexBox.y + indexBox.height).toBeLessThanOrEqual(600);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
+   * The Projects filter: which projects the map shows and a question spans.
+   *
+   * Three projects: the open one, a second indexed one with conversations and
+   * tickets of its own, and one with nothing indexed, which the picker lists
+   * but cannot select.
+   */
+  function projectsScript(options: { otherBuilding?: boolean } = {}): string {
+    const other = options.otherBuilding ? 'null' : projectionLiteral(10)
+      .replace("docKey: 'conversation::doc-' + i", "docKey: 'conversation::m-' + i")
+      .replace("title: 'Conversation ' + i", "title: 'Mobile ' + i")
+      .replace("sessionId: 'session-' + i", "sessionId: 'm-session-' + i")
+      .replace("taskId: 'task-' + i", "taskId: 'm-task-' + i")
+      .replace("signature: 'sig-1'", "signature: 'sig-m'");
+    return `${snapshotScript({ projection: projectionLiteral(20) })}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphProjects: [
+            { id: 'project-1', name: 'Kangentic', conversations: 20, lastActivityMs: 1700000100000 },
+            { id: 'project-2', name: 'Mobile App', conversations: 10, lastActivityMs: 1700000050000 },
+            { id: 'project-3', name: 'Website', conversations: 0, lastActivityMs: null },
+          ],
+          memoryGraphSnapshotsByProject: {
+            'project-2': {
+              projectId: 'project-2',
+              projection: ${other},
+              building: ${options.otherBuilding === true},
+              stale: false,
+              semanticAvailable: true,
+              coverage: {
+                indexed: ${bucket(10, 900, 'ok')},
+                sourceMissingButSearchable: ${bucket(0, 0, 'neutral')},
+                empty: ${bucket(0, 0, 'neutral')},
+                failed: ${bucket(0, 0, 'ok')},
+                notYetIndexed: ${bucket(0, 0, 'ok')},
+                totalDocumentsWithChunks: 10,
+                totalChunks: 900,
+                totalEmbeddedChunks: 900,
+                embeddedFraction: 1,
+                knownDocumentIdsMatched: 10,
+              },
+            },
+          },
+        };
+      });`;
+  }
+
+  /** Add the second project to the map through the picker, and close it. */
+  async function addMobileProject(page: Page): Promise<void> {
+    await page.locator('[data-testid="memory-graph-projects"]').click();
+    const menu = page.locator('[data-testid="memory-graph-projects-menu"]');
+    await menu.locator('[data-testid="memory-graph-projects-row"][data-project-id="project-2"]').click();
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+  }
+
+  test('offers the Projects filter only once two projects are indexed', async () => {
+    // A one-option scope is a dead control.
+    const { browser, page } = await launchWithState(`${snapshotScript({ projection: projectionLiteral(12) })}
+      window.__mockPreConfigure(function () {
+        return {
+          memoryGraphProjects: [
+            { id: 'project-1', name: 'Kangentic', conversations: 12, lastActivityMs: 1700000100000 },
+            { id: 'project-3', name: 'Website', conversations: 0, lastActivityMs: null },
+          ],
+        };
+      });`);
+    try {
+      await openMemoryGraph(page);
+      // The header names the project even with no picker, and waiting on it
+      // proves the project list has loaded before the absence is asserted.
+      await expect(page.locator('[data-testid="memory-graph-scope"]')).toHaveText('Kangentic');
+      await expect(page.locator('[data-testid="memory-graph-projects"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a second project joins the map as its own labelled island, and the header and regions say so', async () => {
+    const { browser, page } = await launchWithState(projectsScript());
+    try {
+      await openMemoryGraph(page);
+      const scope = page.locator('[data-testid="memory-graph-scope"]');
+      await expect(scope).toHaveText('Kangentic');
+      const picker = page.locator('[data-testid="memory-graph-projects"]');
+      // The project with nothing indexed is not counted as one to show.
+      await expect(picker).toContainText('1 of 2');
+      await expect(page.locator('[data-testid="memory-graph-island-label"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="memory-graph-region-row"]')).toHaveCount(2);
+
+      await picker.click();
+      const menu = page.locator('[data-testid="memory-graph-projects-menu"]');
+      const unindexed = menu.locator('[data-testid="memory-graph-projects-row-unindexed"]');
+      await expect(unindexed).toContainText('Website');
+      await expect(unindexed).toBeDisabled();
+      await menu.locator('[data-testid="memory-graph-projects-row"][data-project-id="project-2"]').click();
+
+      // Escape closes the picker first, and the graph stays.
+      await page.keyboard.press('Escape');
+      await expect(menu).toBeHidden();
+      await expect(page.locator('[data-testid="memory-graph-page"]')).toBeVisible();
+
+      // Every indexed project is on, so the header says so.
+      await expect(scope).toHaveText('All projects');
+      // One island per project, the open one first, each named.
+      await expect(page.locator('[data-testid="memory-graph-island-label"]')).toHaveText(['Kangentic', 'Mobile App']);
+      // Both projects' regions, grouped under their project.
+      await expect(page.locator('[data-testid="memory-graph-region-row"]')).toHaveCount(4);
+      await expect(page.locator('[data-testid="memory-graph-region-group"]')).toHaveText(['Kangentic', 'Mobile App']);
+      // The box says a question now spans both.
+      await expect(page.locator('[data-testid="memory-graph-search-input"]'))
+        .toHaveAttribute('placeholder', 'Ask across 2 projects');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the picker finds a project by name, and All and None set the scope', async () => {
+    const { browser, page } = await launchWithState(projectsScript());
+    try {
+      await openMemoryGraph(page);
+      const scope = page.locator('[data-testid="memory-graph-scope"]');
+      await expect(scope).toHaveText('Kangentic');
+      await page.locator('[data-testid="memory-graph-projects"]').click();
+      const menu = page.locator('[data-testid="memory-graph-projects-menu"]');
+      const rows = menu.locator('[data-testid="memory-graph-projects-row"]');
+      const search = page.locator('[data-testid="memory-graph-projects-search"]');
+
+      await search.fill('mob');
+      await expect(rows).toHaveCount(1);
+      await expect(rows).toContainText('Mobile App');
+      await expect(menu.locator('[data-testid="memory-graph-projects-row-unindexed"]')).toHaveCount(0);
+      await search.fill('');
+
+      await page.locator('[data-testid="memory-graph-projects-all"]').click();
+      await expect(scope).toHaveText('All projects');
+      // None is never an empty map: it is the open project alone.
+      await page.locator('[data-testid="memory-graph-projects-none"]').click();
+      await expect(scope).toHaveText('Kangentic');
+      // And the last project on cannot be switched off.
+      const openRow = menu.locator('[data-testid="memory-graph-projects-row"][data-project-id="project-1"]');
+      await openRow.click();
+      await expect(openRow).toHaveAttribute('aria-selected', 'true');
+      await expect(scope).toHaveText('Kangentic');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a scope whose map is still building keeps the picker, so the scope can be changed back', async () => {
+    // A never-shown project builds its map once, which takes about a minute on
+    // a large one. Without the picker on that screen, closing the graph was
+    // the only way back.
+    const { browser, page } = await launchWithState(projectsScript({ otherBuilding: true }));
+    try {
+      await openMemoryGraph(page);
+      await expect(page.locator('[data-testid="memory-graph-scope"]')).toHaveText('Kangentic');
+      await page.locator('[data-testid="memory-graph-projects"]').click();
+      const menu = page.locator('[data-testid="memory-graph-projects-menu"]');
+      await menu.locator('[data-testid="memory-graph-projects-row"][data-project-id="project-2"]').click();
+      // Leave only the building project.
+      await menu.locator('[data-testid="memory-graph-projects-row"][data-project-id="project-1"]').click();
+
+      await expect(page.locator('[data-testid="memory-graph-body"]')).toContainText('Building the map');
+      const pendingPicker = page.locator('[data-testid="memory-graph-pending-scope"] [data-testid="memory-graph-projects"]');
+      await expect(pendingPicker).toBeVisible();
+
+      // The picker moved onto the building screen, so it opens afresh there.
+      await expect(menu).toBeHidden();
+      await pendingPicker.click();
+      await menu.locator('[data-testid="memory-graph-projects-row"][data-project-id="project-1"]').click();
+      await expect(page.locator('[data-testid="memory-graph-region-row"]')).toHaveCount(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('an answer across projects names each task\'s project and opens its conversation there', async () => {
+    const rows: ChatRow[] = [
+      {
+        ...chatRow(1),
+        key: 'm-task-1',
+        taskId: 'm-task-1',
+        title: 'Mobile 1',
+        docKeys: ['conversation::m-1'],
+        passage: { sessionId: 'm-session-1', turnUuid: 'u-1' },
+        projectId: 'project-2',
+        projectName: 'Mobile App',
+        ref: 'mobile-app#101',
+      },
+      { ...chatRow(0, 0.8), projectId: 'project-1', projectName: 'Kangentic', ref: '#100' },
+    ];
+    const { browser, page } = await launchWithState(
+      `${projectsScript()}${answeredScript('Mostly mobile-app#101, then #100.', rows)}`,
+    );
+    try {
+      await openMemoryGraph(page);
+      await expect(page.locator('[data-testid="memory-graph-scope"]')).toHaveText('Kangentic');
+      await addMobileProject(page);
+      await expect(page.locator('[data-testid="memory-graph-island-label"]')).toHaveCount(2);
+      await askInBox(page, 'what touched pairing?');
+
+      // The question goes out naming both projects.
+      await expect.poll(async () => (await answerCalls(page)).length).toBe(1);
+      const [call] = await answerCalls(page);
+      expect((call.context as { projectIds?: string[] } | null)?.projectIds).toEqual(['project-1', 'project-2']);
+
+      // Another project's ticket names its project; the open project's stays bare.
+      await expect(page.locator('[data-testid="memory-chat-ticket"]')).toHaveText(['Mobile App #101', '#100']);
+      await expect(page.locator('[data-testid="memory-chat-row-project"]')).toHaveText(['Mobile App', 'Kangentic']);
+
+      // The row opens its conversation in ITS project, not the open one.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __transcriptProjects: Array<string | null>;
+          __mockTranscriptsGetOverride: (input: { projectId?: string | null }) => undefined;
+        };
+        host.__transcriptProjects = [];
+        host.__mockTranscriptsGetOverride = (input) => {
+          host.__transcriptProjects.push(input.projectId ?? null);
+          return undefined;
+        };
+      });
+      await page.locator('[data-testid="memory-chat-row"]').first().click();
+      await page.locator('[data-testid="conversation-window"]').waitFor({ state: 'visible', timeout: 10000 });
+      await expect
+        .poll(async () => page.evaluate(
+          () => (window as unknown as { __transcriptProjects: Array<string | null> }).__transcriptProjects,
+        ))
+        .toContain('project-2');
     } finally {
       await browser.close();
     }

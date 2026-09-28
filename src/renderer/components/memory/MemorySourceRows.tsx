@@ -1,5 +1,6 @@
 /**
- * The tasks an answer is about, as ONE kind of row: `#561` and the title.
+ * The tasks an answer is about, as ONE kind of row: `#561` and the title, led
+ * by the project's name in an answer asked across projects.
  *
  * The same row everywhere, whatever was asked. Rows used to carry a
  * right-hand fact chosen per question (a cost, a date), which made two answers
@@ -7,9 +8,9 @@
  * lives in the prose instead. A row opens that task's most relevant
  * conversation over the map, at the passage the answer used.
  *
- * Five rows, then "Show all N". An earlier turn collapses to one "Show N tasks"
- * line, so the thread stays readable as it grows. Opening a turn's rows puts
- * that turn's tasks back on the map.
+ * Five rows, then "Show all N", which folds back with "Show fewer". An earlier
+ * turn collapses to one "Show N tasks" line, so the thread stays readable as it
+ * grows. Opening a turn's rows puts that turn's tasks back on the map.
  */
 
 import { useState } from 'react';
@@ -68,6 +69,13 @@ export function MemorySourceRows({
           data-testid="memory-chat-row"
           data-task-key={task.key}
         >
+          {/* An answer across projects names each row's project, since a
+              ticket number alone repeats between them. */}
+          {task.projectName ? (
+            <span className="max-w-[8rem] flex-shrink-0 truncate text-fg-muted" data-testid="memory-chat-row-project">
+              {task.projectName}
+            </span>
+          ) : null}
           {task.displayId != null ? (
             <span className="flex-shrink-0 font-semibold text-fg">#{task.displayId}</span>
           ) : null}
@@ -82,6 +90,18 @@ export function MemorySourceRows({
           data-testid="memory-chat-rows-more"
         >
           Show all {rows.length}
+        </button>
+      ) : null}
+      {/* Every expansion folds back. Reported: after "Show all 32" there was no
+          way to shrink the list again short of ending the chat. */}
+      {expanded && (collapsed || rows.length > SOURCE_ROWS_SHOWN) ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="self-start py-0.5 text-[11.5px] text-fg-muted hover:text-fg cursor-pointer"
+          data-testid="memory-chat-rows-fewer"
+        >
+          {collapsed ? 'Hide tasks' : 'Show fewer'}
         </button>
       ) : null}
     </div>

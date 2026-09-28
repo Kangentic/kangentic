@@ -112,7 +112,10 @@ export function ConversationWindow({
   titleBarPointerDown,
   requestClose,
 }: ConversationWindowProps) {
-  const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  const openProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  // A window the Knowledge Graph opened from another project's island reads its
+  // transcript from THAT project; every other window reads the open one.
+  const currentProjectId = managedWindow.projectId ?? openProjectId;
   const scrollToTurnUuid = useSessionStore((state) => state.scrollToTurnUuid);
   const setScrollToTurnUuid = useSessionStore((state) => state.setScrollToTurnUuid);
   const conversationSessionId = useSessionStore((state) => state.conversationSessionId);
@@ -242,8 +245,10 @@ export function ConversationWindow({
   }, [response]);
 
   const handleOpenTask = useCallback(() => {
-    if (taskId) revealTaskDetail?.(taskId);
-  }, [taskId, revealTaskDetail]);
+    // A window opened from another project's island names that project, so the
+    // task opens there rather than being looked up on the open board.
+    if (taskId) revealTaskDetail?.(taskId, managedWindow.projectId);
+  }, [taskId, revealTaskDetail, managedWindow.projectId]);
 
   /** Both "Open task" affordances gate on this: a real task AND a layer that can
    *  actually show it. */

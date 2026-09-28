@@ -786,6 +786,7 @@ const api: ElectronAPI = {
     prewarm: () => ipcRenderer.send(IPC.MEMORY_PREWARM),
     rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
     graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_SNAPSHOT, projectId),
+    graphProjects: () => ipcRenderer.invoke(IPC.MEMORY_GRAPH_PROJECTS),
     refreshGraph: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_REFRESH, projectId),
     queryGraph: (query: string, projectId?: string | null) =>
       ipcRenderer.invoke(IPC.MEMORY_GRAPH_QUERY, query, projectId),
@@ -842,7 +843,7 @@ if (__KANGENTIC_DEV__) {
     seedUsageData: (days: number) => ipcRenderer.invoke(IPC.DEV_SEED_USAGE_DATA, days),
     seedMemoryGraph: (options: { documentCount?: number; chunksPerDocument?: number }) =>
       ipcRenderer.invoke(IPC.DEV_SEED_MEMORY_GRAPH, options),
-    seedMemoryGraphReal: (options: { documentLimit?: number }) =>
+    seedMemoryGraphReal: (options: { documentLimit?: number; sourceProject?: string }) =>
       ipcRenderer.invoke(IPC.DEV_SEED_MEMORY_GRAPH_REAL, options),
     isEphemeralPreview,
     previewTaskTitle,

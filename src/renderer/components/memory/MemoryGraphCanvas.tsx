@@ -31,7 +31,7 @@ import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { Keyboard, RotateCcw } from 'lucide-react';
 import { Color, Vector3 } from 'three';
 import { useMemoryGraphScene } from './useMemoryGraphScene';
 import {
@@ -103,10 +103,28 @@ export interface MemoryGraphCanvasProps {
   strengths?: ReadonlyMap<number, number>;
   /** Nodes the agent's own searches found, drawn with a white ring. */
   ringed?: ReadonlySet<number>;
+  /**
+   * While a question lights the map: the in-scope nodes it did NOT light stay
+   * on screen as small, faint grey context instead of vanishing, so the lit set
+   * reads against the map it came from. `scope` is the filtered set, or null
+   * when no filter is on (every node is in scope); a node outside it stays
+   * hidden, since the filters redefine what the map is.
+   */
+  context?: { scope: ReadonlySet<number> | null };
+  /**
+   * The islands, when several projects' maps are composed: each project's name
+   * and its node range. Their labels sit above each island, placed before the
+   * region pills so a region name never covers a project's.
+   */
+  islands?: ReadonlyArray<{ name: string; start: number; end: number }>;
 }
 
 /** The dimmest a lit node draws: a weak relation, still readable as lit. */
 const WEAKEST_LIT_ALPHA = 0.3;
+/** How brightly an unlit node draws as context behind a question's lit set. */
+const CONTEXT_ALPHA = 0.18;
+/** Size multiplier for a context node: present, but clearly not part of the answer. */
+const CONTEXT_SCALE = 0.7;
 /** Size multiplier for a ringed node. */
 const RINGED_SCALE = 1.35;
 /** Below this strength a lit node draws as a dot, without a title or a region pill. */
@@ -188,6 +206,12 @@ const REGION_LABEL_HEIGHT = 30;
  * way a map prints a place name beside its dot rather than over it.
  */
 const REGION_LABEL_LIFT = 30;
+/** World units an island's name sits above its highest node. */
+const ISLAND_LABEL_LIFT = 4;
+/** Estimated width of an island label: per character at text-xs semibold, plus padding. */
+const ISLAND_LABEL_CHAR_WIDTH = 7.2;
+const ISLAND_LABEL_PADDING = 22;
+const ISLAND_LABEL_HEIGHT = 26;
 /**
  * Visible nodes a region needs before its pill is drawn.
  *
@@ -322,6 +346,8 @@ export function MemoryGraphCanvas({
   framingIndices = null,
   strengths,
   ringed,
+  context,
+  islands,
 }: MemoryGraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -351,6 +377,9 @@ export function MemoryGraphCanvas({
   // Cluster label elements, positioned imperatively each frame. Refs rather than
   // state for the same reason the scene is imperative.
   const labelRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
+  /** One label per island, and where each is anchored in the world. */
+  const islandLabelRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const islandAnchorsRef = useRef<Vector3[]>([]);
   /**
    * Where each region's pill sits, recomputed from the nodes STILL ON SCREEN.
    *
@@ -448,6 +477,35 @@ export function MemoryGraphCanvas({
     // function whose whole job is to be cheap.
     scene.camera.getWorldDirection(scratchForward);
 
+    // Island names first, and into the same box list, so the region pills
+    // placed next step around them. Their width is estimated from the name
+    // rather than measured: a layout read per label per frame is the cost this
+    // loop exists to avoid.
+    const islandAnchors = islandAnchorsRef.current;
+    for (let slot = 0; slot < islandAnchors.length; slot += 1) {
+      const element = islandLabelRefs.current[slot];
+      if (!element) continue;
+      const world = islandAnchors[slot];
+      scratchToLabel.copy(world).sub(cameraPosition);
+      if (scratchToLabel.dot(scratchForward) <= 0) {
+        element.style.opacity = '0';
+        continue;
+      }
+      scratchProjected.copy(world).project(scene.camera);
+      const x = (scratchProjected.x * 0.5 + 0.5) * width;
+      const y = (-scratchProjected.y * 0.5 + 0.5) * height;
+      element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -100%)`;
+      element.style.opacity = '1';
+      const halfWidth = ((islands?.[slot]?.name.length ?? 0) * ISLAND_LABEL_CHAR_WIDTH + ISLAND_LABEL_PADDING) / 2;
+      regionBoxes.push({
+        id: -1 - slot,
+        left: x - halfWidth - NODE_LABEL_GAP,
+        right: x + halfWidth + NODE_LABEL_GAP,
+        top: y - ISLAND_LABEL_HEIGHT - NODE_LABEL_GAP,
+        bottom: y + NODE_LABEL_GAP,
+      });
+    }
+
     // Gather first, then place NEAREST FIRST - region pills collide with each
     // other, not just with titles. Two clusters whose centroids project close
     // together stacked their labels directly on top of one another, which is the
@@ -514,7 +572,7 @@ export function MemoryGraphCanvas({
       const element = labelRefs.current.get(cluster.id);
       if (element) element.style.opacity = '0';
     }
-  }, [regions]);
+  }, [regions, islands]);
 
   /**
    * Place the node titles for this frame.
@@ -718,11 +776,14 @@ export function MemoryGraphCanvas({
   // styles need it, and a memo that reached for the container during render
   // could only ever see the fallback on the first pass.
   const [accentColor, setAccentColor] = useState('#4ade80');
+  // The grey a context node draws in, from the theme like the two above.
+  const [contextColor, setContextColor] = useState('#71717a');
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     setEdgeColor(normalizeCssColor(readCssColor(container, '--color-fg-muted', '#8b949e')));
     setAccentColor(readCssColor(container, '--kng-active', '#4ade80'));
+    setContextColor(readCssColor(container, '--kng-fg-faint', '#71717a'));
   }, []);
 
   const framingInsets = useMemo(
@@ -743,6 +804,76 @@ export function MemoryGraphCanvas({
     framingIndices,
   });
   const { requestRender, resetView, frameNodes, setOrbitAnchor } = graph;
+
+  // Each island's label anchor: above its highest node, over its centre.
+  // Recomputed only when the scene or the islands change, never per frame.
+  useEffect(() => {
+    const scene = graph.scene;
+    if (!scene || !islands || islands.length === 0) {
+      islandAnchorsRef.current = [];
+      return;
+    }
+    islandAnchorsRef.current = islands.map((island) => {
+      let sumX = 0;
+      let sumZ = 0;
+      let highest = -Infinity;
+      let count = 0;
+      for (let index = island.start; index < island.end; index += 1) {
+        const position = scene.positions[index];
+        if (!position) continue;
+        sumX += position.x;
+        sumZ += position.z;
+        if (position.y > highest) highest = position.y;
+        count += 1;
+      }
+      return count > 0 ? new Vector3(sumX / count, highest + ISLAND_LABEL_LIFT, sumZ / count) : new Vector3();
+    });
+    requestRender();
+  }, [graph.scene, islands, requestRender]);
+
+  /**
+   * The camera legend opens from a button instead of standing on the map. The
+   * keys are learned once, and a card read on every open cost the corner the
+   * chat now runs down into.
+   *
+   * While open it takes Escape first (the open-menu shape in
+   * `keybindings-registry.md`: capture phase, registered only while open), so
+   * Escape closes the legend and not the graph under it. A press anywhere
+   * outside the legend and its button closes it too.
+   */
+  // The hover and selection the last style write saw, so that write can tell a
+  // pointer change (snap) from an emphasis change (ease).
+  const pointerStateRef = useRef<{ hovered: number | null; selected: number | null }>({ hovered: null, selected: null });
+  const paneInsets = chromeInsets ?? NO_VIEWPORT_INSETS;
+  // Half the toolbar's width, so the clamp below can keep its edges clear of
+  // the rails. Its content never changes, so one measurement is enough.
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [toolbarHalfWidth, setToolbarHalfWidth] = useState(0);
+  useLayoutEffect(() => {
+    if (toolbarRef.current) setToolbarHalfWidth(toolbarRef.current.offsetWidth / 2);
+  }, []);
+  const [legendOpen, setLegendOpen] = useState(false);
+  const legendRef = useRef<HTMLDivElement | null>(null);
+  const legendButtonRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!legendOpen) return;
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setLegendOpen(false);
+    };
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target as Node | null;
+      if (target && (legendRef.current?.contains(target) || legendButtonRef.current?.contains(target))) return;
+      setLegendOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [legendOpen]);
 
   /**
    * A selected node becomes the pivot.
@@ -849,15 +980,25 @@ export function MemoryGraphCanvas({
   const styles = useMemo<SceneNodeStyle[]>(() => {
     const hasHighlight = highlighted !== undefined && highlighted.size > 0;
     const accentTriplet = toLinearTriplet(accentColor);
+    const contextTriplet = toLinearTriplet(contextColor);
 
     return projection.nodes.map((node, index) => {
       const isSelected = index === selectedIndex;
       const isHovered = index === hoveredIndex;
       const isLit = hasHighlight && highlighted.has(index);
+      // An unlit node a question leaves in scope: grey context, not hidden.
+      const isContext = hasHighlight && !isLit && !isSelected && context !== undefined
+        && (context.scope === null || context.scope.has(index));
 
+      // A lit node KEEPS its colour mode's colour: the answer's tasks read in
+      // their topic's colour against grey context, the way the Ask mockup draws
+      // them. Painting every lit node the one accent green hid which topics the
+      // answer came from, and made a filter alone recolour the whole map.
       let color: [number, number, number];
-      if (isLit || isSelected) {
+      if (isSelected) {
         color = accentTriplet;
+      } else if (isContext) {
+        color = contextTriplet;
       } else if (colorMode === 'cluster') {
         color = toLinearTriplet(`hsl(${clusterHue(regionOf(node))} 62% 62%)`);
       } else if (colorMode === 'recency') {
@@ -910,6 +1051,7 @@ export function MemoryGraphCanvas({
       let scale = MIN_NODE_SCALE + connectedness * DEGREE_SCALE_RANGE + lengthNudge;
       if (isSelected) scale *= SELECTED_SCALE;
       else if (isHovered) scale *= HOVERED_SCALE;
+      else if (isContext) scale *= CONTEXT_SCALE;
 
       // A conversation linked to nothing draws quieter than one that anchors a
       // region. They are the noisiest part of the wide view - scattered specks
@@ -923,7 +1065,8 @@ export function MemoryGraphCanvas({
       // related set reads as a gradient toward the tasks the answer is about.
       const strength = isLit ? strengths?.get(index) : undefined;
       let alpha: number;
-      if (hasHighlight && !isLit && !isSelected) alpha = HIDDEN_ALPHA;
+      if (isContext) alpha = CONTEXT_ALPHA;
+      else if (hasHighlight && !isLit && !isSelected) alpha = HIDDEN_ALPHA;
       else if (strength !== undefined && !isSelected && !isHovered) {
         alpha = WEAKEST_LIT_ALPHA + (1 - WEAKEST_LIT_ALPHA) * Math.max(0, Math.min(1, strength));
       } else alpha = isolated ? ISOLATED_ALPHA : 1;
@@ -934,15 +1077,21 @@ export function MemoryGraphCanvas({
   }, [
     projection.nodes, highlighted, selectedIndex, hoveredIndex, colorMode,
     recencyRank, lengthRank, durationRank, costRank, degrees, maxDegree, regionOf,
-    accentColor, strengths, ringed,
+    accentColor, contextColor, strengths, ringed, context,
   ]);
 
   useEffect(() => {
     // Recomputed alongside the styles, from the same alphas the scene gets, so a
     // label can never disagree with whether its region is drawn.
     const drawn: number[] = [];
+    const hasHighlight = highlighted !== undefined && highlighted.size > 0;
     for (let index = 0; index < styles.length; index += 1) {
-      if (styles[index].alpha > 0) drawn.push(index);
+      if (styles[index].alpha <= 0) continue;
+      // Grey context behind a question draws but never labels: only what the
+      // question lit names a region or carries a title, or every region on the
+      // map would get its pill back the moment context stopped being hidden.
+      if (hasHighlight && !highlighted.has(index) && index !== selectedIndex) continue;
+      drawn.push(index);
     }
     // A weakly related node is context: a dot, with no title and no say in
     // which regions get a pill. Every lit node used to label itself and its
@@ -989,9 +1138,15 @@ export function MemoryGraphCanvas({
     // conversation cannot leave its name floating over the map.
     visibleNodesRef.current = visibleNodes;
 
-    graph.scene?.setNodeStyles(styles);
+    // Hover and selection answer the pointer, so they snap; a change of what the
+    // map emphasises (a turn, a filter, a colour mode) eases. Easing a hover made
+    // every pointer move lag by the transition.
+    const pointerMoved = pointerStateRef.current.hovered !== hoveredIndex
+      || pointerStateRef.current.selected !== selectedIndex;
+    pointerStateRef.current = { hovered: hoveredIndex, selected: selectedIndex };
+    graph.scene?.setNodeStyles(styles, { animate: !pointerMoved });
     requestRender();
-  }, [styles, projection.nodes, graph.scene, requestRender, regionOf, strengths, selectedIndex]);
+  }, [styles, projection.nodes, graph.scene, requestRender, regionOf, strengths, selectedIndex, hoveredIndex, highlighted]);
 
   useEffect(() => {
     graph.scene?.setEdgeOpacity(showEdges ? 0.14 : 0);
@@ -1050,7 +1205,8 @@ export function MemoryGraphCanvas({
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0 overflow-hidden"
+      // A size container so the camera toolbar can compact on a narrow surface.
+      className="@container absolute inset-0 overflow-hidden"
       // The camera cursor is `grab`/`grabbing`, which is NOT `pointer`, so light
       // dismiss classifies it as dead space and a drag here would close the
       // user's open windows. See .claude/rules/light-dismiss-denylist.md.
@@ -1171,6 +1327,25 @@ export function MemoryGraphCanvas({
         ))}
       </div>
 
+      {/* Island names: the projects, over each one's island. Always shown,
+          since they name where you are, not a topic; positioned by
+          `positionLabels`. */}
+      {islands && islands.length > 0 ? (
+        <div className="pointer-events-none absolute inset-0">
+          {islands.map((island, slot) => (
+            <div
+              key={`${island.name}:${island.start}`}
+              ref={(element) => { islandLabelRefs.current[slot] = element; }}
+              className="absolute left-0 top-0 whitespace-nowrap rounded-md border border-edge bg-surface-raised/90 px-2.5 py-1 text-xs font-semibold text-fg shadow-sm will-change-transform"
+              style={{ opacity: 0 }}
+              data-testid="memory-graph-island-label"
+            >
+              {island.name}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {/* A fixed POOL of title chips, reassigned each frame rather than one
           element per node: the map can hold hundreds of conversations and only
           a few dozen can ever be legible at once, so the DOM stays small and
@@ -1220,91 +1395,130 @@ export function MemoryGraphCanvas({
         />
       ) : null}
 
-      {/* A control LEGEND, in the shape games use: the keys, and nothing else
-          until you point at one.
+      {/* The camera toolbar: Reset view, and the key legend behind a labelled
+          button, centred at the bottom of the map where design tools keep
+          their canvas controls.
 
-          Three earlier forms were wrong, each for its own reason. A SENTENCE
-          with a help icon reads as prose to be parsed rather than a mapping to
-          be glanced at. Keys with their verbs permanently beside them fixed
-          that and spent a third of the card on words nobody re-reads. A shared
-          caption line under the keys fixed THAT and still reserved a whole row
-          of the panel to say nothing most of the time. What earns permanent
-          space is the part you cannot deduce - which keys do anything at all -
-          so the verb is a tooltip and the card is the keys.
+          Both used to sit in corners that panels own. Reset view held the
+          bottom right, which cut the chat short, and a bottom-left cluster
+          slid under the left rail on a tall window, since that rail grows with
+          its region list. Reset view is the control reached for most while
+          navigating, so it is a full-size labelled button, not a chip.
 
-          Bottom-left, and marked as chrome so the framing keeps the map clear
-          of it. This is the only surface in the app navigated by flying, so
-          none of these gestures transfer from the rest of the UI. */}
+          It holds the surface's centre and does not move when the chat opens:
+          centring on the pane between the rails slid it sideways on every
+          open. The clamp only moves it on a window too narrow for the centre
+          to clear a rail, where overlapping the chat would be worse.
+
+          Marked as chrome so the framing keeps the map clear of it. */}
       <div
+        ref={toolbarRef}
         data-graph-chrome="bottom"
-        data-testid="memory-graph-camera-hint"
-        className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 backdrop-blur"
+        data-testid="memory-graph-camera-controls"
+        className="absolute bottom-3 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-edge bg-surface-raised/90 p-1 shadow-xl backdrop-blur-md"
+        style={{
+          left: `clamp(${paneInsets.left + toolbarHalfWidth}px, 50%, calc(100% - ${paneInsets.right + toolbarHalfWidth}px))`,
+        }}
       >
-        {/* KEYBOARD, in the physical arrangement - W over A S D, with Q and E
-            beside them where they sit on the board. A flat row of the same
-            letters is a list of letters; this is a picture of where your
-            fingers go, and it is recognised rather than read. */}
-        <LegendGroup binding="move" label="Fly Forward and Sideways">
-          <KeyCap>W</KeyCap>
-          <div className="flex gap-[3px]">
-            <KeyCap>A</KeyCap>
-            <KeyCap>S</KeyCap>
-            <KeyCap>D</KeyCap>
+        <button
+          type="button"
+          onClick={resetView}
+          onPointerDown={(event) => event.stopPropagation()}
+          title="Fly back to the opening view"
+          data-testid="memory-graph-reset-view"
+          className="flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
+        >
+          <RotateCcw size={14} aria-hidden />
+          Reset view
+        </button>
+        <span className="h-5 w-px bg-edge" aria-hidden />
+        <button
+          ref={legendButtonRef}
+          type="button"
+          onClick={() => setLegendOpen((open) => !open)}
+          onPointerDown={(event) => event.stopPropagation()}
+          title="Show the camera keys"
+          aria-label="Controls"
+          aria-expanded={legendOpen}
+          data-testid="memory-graph-camera-toggle"
+          className={`flex h-8 items-center gap-2 rounded-md px-3 text-xs transition-colors hover:bg-surface-hover hover:text-fg cursor-pointer ${legendOpen ? 'bg-surface-hover text-fg' : 'text-fg-muted'}`}
+        >
+          <Keyboard size={14} aria-hidden />
+          {/* Dropped on a narrow surface: at the 900px floor with the chat open,
+              the gap between the rails is about 200px, and the labelled
+              toolbar is wider than that. Reset view keeps its label. */}
+          <span className="hidden @[1100px]:inline">Controls</span>
+        </button>
+
+        {/* A control LEGEND, in the shape games use: the keys, and nothing else
+            until you point at one.
+
+            Three earlier forms were wrong, each for its own reason. A SENTENCE
+            with a help icon reads as prose to be parsed rather than a mapping to
+            be glanced at. Keys with their verbs permanently beside them fixed
+            that and spent a third of the card on words nobody re-reads. A shared
+            caption line under the keys fixed THAT and still reserved a whole row
+            of the panel to say nothing most of the time. What earns space is the
+            part you cannot deduce - which keys do anything at all - so the verb
+            is a tooltip and the card is the keys. This is the only surface in the
+            app navigated by flying, so none of these gestures transfer from the
+            rest of the UI.
+
+            It opens above the toolbar, over the map. Absolutely positioned, so
+            it adds nothing to the toolbar's measured chrome and opening it does
+            not re-aim the camera. */}
+        {legendOpen ? (
+          <div
+            ref={legendRef}
+            data-testid="memory-graph-camera-hint"
+            className="pointer-events-none absolute bottom-full left-1/2 mb-2 flex w-max -translate-x-1/2 items-center gap-3 rounded-md border border-edge bg-surface-raised/95 px-3 py-2 shadow-xl backdrop-blur"
+          >
+            {/* KEYBOARD, in the physical arrangement - W over A S D, with Q and E
+                beside them where they sit on the board. A flat row of the same
+                letters is a list of letters; this is a picture of where your
+                fingers go, and it is recognised rather than read. */}
+            <LegendGroup binding="move" label="Fly Forward and Sideways">
+              <KeyCap>W</KeyCap>
+              <div className="flex gap-[3px]">
+                <KeyCap>A</KeyCap>
+                <KeyCap>S</KeyCap>
+                <KeyCap>D</KeyCap>
+              </div>
+            </LegendGroup>
+
+            {/* A SHORTER, quieter rule inside the keyboard group. W A S D and Q E do
+                different jobs and were reading as one run of keys, but they are
+                still the same hand - so the separation has to be visibly weaker
+                than the one dividing keyboard from mouse, or the hierarchy flattens
+                and the panel becomes five equal things. */}
+            <span className="h-4 w-px bg-edge/60" aria-hidden />
+
+            <LegendGroup binding="up-and-down" label="Fly Up and Down">
+              <div className="flex gap-[3px]">
+                <KeyCap>Q</KeyCap>
+                <KeyCap>E</KeyCap>
+              </div>
+            </LegendGroup>
+
+            <span className="h-7 w-px bg-edge" aria-hidden />
+
+            {/* MOUSE. `Right Drag`, not `Shift + Drag`: camera-controls binds
+                actions to left / middle / right / wheel and has no shift-modified
+                button at all, so the gesture the legend used to advertise did
+                nothing whatsoever. A legend that names a control the app does not
+                have is worse than no legend. */}
+            <LegendGroup binding="orbit" label="Orbit the Map">
+              <KeyCap>Drag</KeyCap>
+            </LegendGroup>
+            <LegendGroup binding="pan" label="Pan the View">
+              <KeyCap>Right Drag</KeyCap>
+            </LegendGroup>
+            <LegendGroup binding="zoom" label="Zoom In and Out">
+              <KeyCap>Scroll</KeyCap>
+            </LegendGroup>
           </div>
-        </LegendGroup>
-
-        {/* A SHORTER, quieter rule inside the keyboard group. W A S D and Q E do
-            different jobs and were reading as one run of keys, but they are
-            still the same hand - so the separation has to be visibly weaker
-            than the one dividing keyboard from mouse, or the hierarchy flattens
-            and the panel becomes five equal things. */}
-        <span className="h-4 w-px bg-edge/60" aria-hidden />
-
-        <LegendGroup binding="up-and-down" label="Fly Up and Down">
-          <div className="flex gap-[3px]">
-            <KeyCap>Q</KeyCap>
-            <KeyCap>E</KeyCap>
-          </div>
-        </LegendGroup>
-
-        <span className="h-7 w-px bg-edge" aria-hidden />
-
-        {/* MOUSE. `Right Drag`, not `Shift + Drag`: camera-controls binds
-            actions to left / middle / right / wheel and has no shift-modified
-            button at all, so the gesture the legend used to advertise did
-            nothing whatsoever. A legend that names a control the app does not
-            have is worse than no legend. */}
-        <LegendGroup binding="orbit" label="Orbit the Map">
-          <KeyCap>Drag</KeyCap>
-        </LegendGroup>
-        <LegendGroup binding="pan" label="Pan the View">
-          <KeyCap>Right Drag</KeyCap>
-        </LegendGroup>
-        <LegendGroup binding="zoom" label="Zoom In and Out">
-          <KeyCap>Scroll</KeyCap>
-        </LegendGroup>
+        ) : null}
       </div>
-
-      {/* Reset view is an ACTION, not reference, so it does not live in the
-          legend - it sits opposite, in the corner actions belong in. And it
-          STAYS there: the rails stop short of the bottom to leave it this
-          corner, rather than the button sliding left by whatever the rail is
-          currently taking. It moved on every panel open, and when the chrome
-          measurement read a mid-animation rail it slid under the rail instead
-          of clear of it - which is the worst outcome for the one control that
-          exists to get you un-lost. */}
-      <button
-        type="button"
-        onClick={resetView}
-        onPointerDown={(event) => event.stopPropagation()}
-        title="Fly back to the opening view"
-        aria-label="Reset view"
-        data-testid="memory-graph-reset-view"
-        className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised/80 px-2 py-1 text-[11px] text-fg-muted backdrop-blur transition-colors hover:bg-surface-hover hover:text-fg cursor-pointer"
-      >
-        <RotateCcw size={11} aria-hidden />
-        Reset view
-      </button>
     </div>
   );
 }

@@ -46,6 +46,8 @@ import type { MemoryGraphGranularity, MemoryRelatedTask } from '../../../shared/
 import { useChromeInsets } from './useChromeInsets';
 import { MemoryNodeDetail, openConversationForNode } from './MemoryNodeDetail';
 import { openMemoryConversation } from './open-memory-conversation';
+import { useGraphView } from './use-graph-view';
+import { MemoryProjectsPicker } from './MemoryProjectsPicker';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -78,11 +80,16 @@ interface MemoryGraphBodyProps {
   /** See `LazyMemoryGraph`: where a question goes before an agent is chosen. */
   onChooseAnswerAgent?: () => void;
   /** See `LazyMemoryGraph`: how a row with no conversation reaches its task. */
-  onRevealTask?: (taskId: string) => void;
+  onRevealTask?: (taskId: string, projectId?: string) => void;
 }
 
 export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGraphBodyProps) {
-  const snapshot = useMemoryGraphStore((state) => state.snapshot);
+  // The open project's snapshot, or several projects composed into islands.
+  const graphView = useGraphView();
+  const snapshot = graphView.snapshot;
+  const projects = useMemoryGraphStore((state) => state.projects);
+  const scopeProjectIds = useMemoryGraphStore((state) => state.scopeProjectIds);
+  const setScope = useMemoryGraphStore((state) => state.setScope);
   const loaded = useMemoryGraphStore((state) => state.loaded);
   const projectId = useMemoryGraphStore((state) => state.projectId);
   const thread = useMemoryGraphStore((state) => state.thread);
@@ -322,12 +329,15 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
       const region = clustering.regionOf(node);
       counts.set(region, (counts.get(region) ?? 0) + 1);
     }
+    // Named by project when the map holds several, so the list groups.
+    const projectNames = graphView.regionProjectNames?.[granularity];
     return clustering.regions.map((cluster) => ({
       id: cluster.id,
       label: cluster.label,
       count: counts.get(cluster.id) ?? 0,
+      ...(projectNames?.[cluster.id] ? { group: projectNames[cluster.id] } : {}),
     }));
-  }, [clustering, nodes]);
+  }, [clustering, nodes, graphView.regionProjectNames, granularity]);
 
   /** Node indices surviving the facet rows, or null when nothing is scoped. */
   const facetIndices = useMemo(() => {
@@ -379,6 +389,11 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
    */
   const turnStrengths = useMemo(() => {
     if (!activeTurn || (!activeTurn.related && activeTurn.rows.length === 0)) return null;
+    // An answer that names no tasks lights nothing: the map goes back to how it
+    // looked before the question. Retrieval always hands over its closest
+    // matches, so a question about something that is not here still has a
+    // related set, and lighting it contradicted an answer saying nothing matched.
+    if (activeTurn.status === 'done' && activeTurn.rows.length === 0) return null;
     const strengths = new Map<number, number>();
     const light = (docKeys: ReadonlyArray<string>, strength: number): void => {
       for (const docKey of docKeys) {
@@ -392,7 +407,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
     // of the related set recedes to context. Reported: with 28 related tasks at
     // similar brightness, nothing said why those nodes were lit, and most of
     // them were not what the answer was about.
-    const answered = activeTurn.status === 'done' && activeTurn.rows.length > 0;
+    const answered = activeTurn.status === 'done';
     for (const task of activeTurn.related ?? []) {
       light(task.docKeys, answered ? task.strength * RELATED_AFTER_ANSWER : task.strength);
     }
@@ -413,37 +428,6 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
     }
     return strengths;
   }, [activeTurn, indexByDocKey, snapshot]);
-
-  /**
-   * What the map is showing for the chat, in words.
-   *
-   * Reported: the map lit 28 tasks across a dozen regions and nothing on screen
-   * said why. The lit set follows a rule, so the rule is stated, counted in
-   * tasks that are actually on the map.
-   */
-  const litCaption = useMemo(() => {
-    if (!activeTurn || exploreIndices || !turnStrengths) return null;
-    const onMap = (task: MemoryRelatedTask): boolean => task.docKeys.some((docKey) => indexByDocKey.has(docKey));
-    const answeredKeys = new Set(activeTurn.rows.filter(onMap).map((row) => row.key));
-    const relatedCount = (activeTurn.related ?? []).filter((task) => onMap(task) && !answeredKeys.has(task.key)).length;
-    const tasksWord = (count: number): string => (count === 1 ? 'task' : 'tasks');
-    if (activeTurn.status === 'done' && answeredKeys.size > 0) {
-      // A task with no recorded conversation is a row with nothing to light, so
-      // the count says how many of the answer's tasks the map can show.
-      const unlit = new Set(activeTurn.rows.map((row) => row.key)).size - answeredKeys.size;
-      const lead = unlit > 0
-        ? `Lit: ${answeredKeys.size} of the ${answeredKeys.size + unlit} tasks the answer is about`
-          + ` (${unlit} ${unlit === 1 ? 'has' : 'have'} no recorded conversation)`
-        : `Lit: the ${answeredKeys.size} ${tasksWord(answeredKeys.size)} the answer is about`;
-      if (relatedCount > 0) return `${lead}, with ${relatedCount} more related ${tasksWord(relatedCount)} dimmed`;
-      const withContext = [...turnStrengths.values()].some((strength) => strength === CONTEXT_STRENGTH);
-      return withContext ? `${lead}, with its nearest conversations dimmed around it` : lead;
-    }
-    if (relatedCount > 0) {
-      return `Lit: ${relatedCount} ${tasksWord(relatedCount)} related to the question, brighter where they match more`;
-    }
-    return null;
-  }, [activeTurn, exploreIndices, turnStrengths, indexByDocKey]);
 
   /**
    * Nodes drawn with the white ring: what the agent's own searches found, and
@@ -485,11 +469,32 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
     return both;
   }, [exploreIndices, turnStrengths, ringed, facetIndices]);
 
+  /**
+   * While a question lights the map, the rest of its scope stays on screen as
+   * grey context. Memoised so the canvas's style pass only reruns when the
+   * scope or the question changes.
+   */
+  const chatContext = useMemo(
+    () => (turnStrengths && !exploreIndices ? { scope: facetIndices ?? null } : undefined),
+    [turnStrengths, exploreIndices, facetIndices],
+  );
+
   /** The conversations inside the map's filters: a question's scope. */
   const scopeDocKeys = useMemo(() => {
     if (!facetIndices || !nodes) return null;
     return [...facetIndices].map((index) => nodes[index]?.docKey).filter((docKey): docKey is string => Boolean(docKey));
   }, [facetIndices, nodes]);
+
+  /** The project each conversation belongs to, when a scope is set. */
+  const projectBySession = useMemo(() => {
+    const map = new Map<string, string>();
+    const owners = graphView.nodeProjectIds;
+    if (!owners || !nodes) return map;
+    nodes.forEach((node, index) => {
+      if (node.sessionId && owners[index]) map.set(node.sessionId, owners[index]);
+    });
+    return map;
+  }, [graphView.nodeProjectIds, nodes]);
 
   /** The conversation a task opens at: its best passage's, else its newest. */
   const conversationFor = useCallback((task: MemoryRelatedTask): string | null => {
@@ -514,11 +519,16 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
   const openTask = useCallback((task: MemoryRelatedTask) => {
     const sessionId = conversationFor(task);
     if (sessionId) {
-      openMemoryConversation(sessionId, projectId, task.passage?.sessionId === sessionId ? task.passage.turnUuid : null);
+      openMemoryConversation(
+        sessionId,
+        projectId,
+        task.passage?.sessionId === sessionId ? task.passage.turnUuid : null,
+        task.projectId ?? projectBySession.get(sessionId) ?? null,
+      );
       return;
     }
-    if (task.taskId && onRevealTask) onRevealTask(task.taskId);
-  }, [conversationFor, projectId, onRevealTask]);
+    if (task.taskId && onRevealTask) onRevealTask(task.taskId, task.projectId);
+  }, [conversationFor, projectId, onRevealTask, projectBySession]);
 
   /** Whether a row or mark can lead anywhere in this host. */
   const canOpenTask = useCallback(
@@ -596,6 +606,25 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
       .map((entry) => ({ index: entry.index, node: nodes[entry.index], similarity: entry.similarity }));
   }, [selectedIndex, snapshot, nodes]);
 
+  // The box says when a question will be asked across several projects, since
+  // the answer then names each task's project.
+  const askPlaceholder = scopeProjectIds && scopeProjectIds.length > 1
+    ? `Ask across ${scopeProjectIds.length} projects`
+    : 'Ask about your tasks, conversations and code';
+
+  // Only offered with two or more indexed projects: a one-option scope is a
+  // dead control.
+  const indexedProjectCount = projects.filter((project) => project.conversations > 0).length;
+  const projectsPicker = indexedProjectCount >= 2 ? (
+    <MemoryProjectsPicker
+      projects={projects}
+      openProjectId={projectId}
+      selectedIds={scopeProjectIds ?? (projectId ? [projectId] : [])}
+      pendingIds={graphView.pendingProjectIds}
+      onChange={setScope}
+    />
+  ) : undefined;
+
   if (!loaded) {
     return (
       <CenteredNotice
@@ -636,6 +665,11 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
     return (
       <div className="flex-1 min-h-0 flex flex-col" data-testid="memory-graph-body">
         <MemoryCoverageStrip coverage={snapshot.coverage} semanticAvailable />
+        {/* A scope whose maps are all still building keeps its picker, or the
+            only way back to a drawable map would be closing the graph. */}
+        {scopeProjectIds && projectsPicker ? (
+          <div className="w-72 px-4 pt-3" data-testid="memory-graph-pending-scope">{projectsPicker}</div>
+        ) : null}
         <CenteredNotice
           icon={<Loader2 size={22} className={snapshot.building ? 'animate-spin' : ''} />}
           title={snapshot.building ? 'Building the map' : 'No map yet'}
@@ -659,12 +693,14 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
         highlighted={highlighted}
         strengths={exploreIndices ? undefined : turnStrengths ?? undefined}
         ringed={exploreIndices ? undefined : ringed}
+        context={chatContext}
+        islands={graphView.islands ?? undefined}
         framingIndices={framingIndices}
         selectedIndex={selectedIndex}
         onSelect={selectNode}
         onActivate={(index) => {
           const node = projection.nodes[index];
-          if (node) openConversationForNode(node);
+          if (node) openConversationForNode(node, graphView.nodeProjectIds?.[index] ?? null);
         }}
         showEdges={showEdges}
         showLabels={showLabels}
@@ -696,8 +732,8 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
               <input
                 value={queryText}
                 onChange={(event) => { setQueryText(event.target.value); setShowSetupHint(false); }}
-                placeholder="Ask about your tasks, conversations and code"
-                aria-label="Ask about your tasks, conversations and code"
+                placeholder={askPlaceholder}
+                aria-label={askPlaceholder}
                 data-testid="memory-graph-search-input"
                 className="min-w-0 flex-1 bg-transparent text-sm text-fg placeholder:text-fg-muted outline-none"
               />
@@ -733,15 +769,6 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
             Choose the Knowledge Graph agent and model in Settings &gt; Search, in the main window.
           </div>
         ) : null}
-        {chatOpen && litCaption ? (
-          <div
-            className="mx-auto flex max-w-[34rem] items-center gap-2 rounded-md border border-edge bg-surface-raised/85 px-2.5 py-1 text-xs text-fg-muted backdrop-blur"
-            data-testid="memory-graph-lit-caption"
-          >
-            <Sparkles size={12} className="flex-shrink-0 text-accent-fg" aria-hidden />
-            <span className="min-w-0 flex-1 truncate" title={litCaption}>{litCaption}</span>
-          </div>
-        ) : null}
         {/* Says what the map is currently scoped to, and takes it back. Without
             this the explored neighbourhood is an unexplained narrowing the user
             cannot undo except by ending the chat. */}
@@ -767,7 +794,10 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
         ) : null}
       </div>
 
-      <div data-graph-chrome="left" className="absolute left-3 top-3 z-10">
+      {/* Full height so the panel can cap itself at the space it has and scroll
+          past it; clicks pass through the empty part below the panel to the map. */}
+      <div data-graph-chrome="left" className="pointer-events-none absolute bottom-3 left-3 top-3 z-10 flex flex-col">
+
         <MemoryGraphControls
           colorMode={colorMode}
           onColorModeChange={setColorMode}
@@ -790,20 +820,18 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
           edgeCount={projection.edges.length}
           storageBytes={projection.storageBytes}
           building={snapshot.building}
+          projectsPicker={projectsPicker}
         />
       </div>
 
       {/* The detail panel wins the right slot when a node is selected: it is the
           more specific view, and its Back returns to the chat.
 
-          Both panels stop short of the bottom (`bottom-14`) so Reset view keeps
-          its corner. Reset view used to slide left by the panel's width instead,
-          which meant the one control that gets you un-lost moved every time a
-          panel opened - and when the chrome measurement was wrong it vanished
-          underneath the panel entirely. A control that does not move is easier
-          to find than one that is correctly placed. */}
+          Both panels run the full height. Reset view used to hold the bottom
+          right corner, which cut them short; it now sits in the camera toolbar
+          centred at the bottom of the map, between the panels. */}
       {selectedNode ? (
-        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-[26rem]">
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-3 right-3 top-3 z-10 w-[26rem]">
           <div className="h-full overflow-hidden rounded-lg border border-edge bg-surface-raised/85 shadow-xl backdrop-blur-md">
             <MemoryNodeDetail
               node={selectedNode}
@@ -815,11 +843,12 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask }: MemoryGra
               onExploreFrom={selectedIndex === null ? undefined : () => setExploreFromIndex(selectedIndex)}
               onBack={detailBack?.run}
               backLabel={detailBack?.label}
+              nodeProjectId={selectedIndex !== null ? graphView.nodeProjectIds?.[selectedIndex] ?? null : null}
             />
           </div>
         </div>
       ) : chatOpen ? (
-        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-14 right-3 top-3 z-10 w-[25.25rem]">
+        <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-3 right-3 top-3 z-10 w-[25.25rem]">
           <MemoryChat
             thread={thread}
             agentName={askAgentLabel}

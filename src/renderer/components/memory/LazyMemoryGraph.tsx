@@ -63,7 +63,7 @@ interface LazyMemoryGraphProps {
    * conversation to open instead. Absent in the detached window, which has no
    * board, so such a row shows but cannot be opened there.
    */
-  onRevealTask?: (taskId: string) => void;
+  onRevealTask?: (taskId: string, projectId?: string) => void;
 }
 
 export function LazyMemoryGraph({ onChooseAnswerAgent, onRevealTask }: LazyMemoryGraphProps = {}) {

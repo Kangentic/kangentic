@@ -12,8 +12,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildAnswerTaskTable,
+  formatTaskFieldGlossary,
   formatTaskTable,
+  mergeAnswerTaskTables,
   MAX_TASK_ROWS,
+  refPrefixFor,
+  summarizeTaskTable,
   taskRef,
 } from '../../src/main/retrieval/answer-tasks';
 import { parseAnswerRefs } from '../../src/main/retrieval/answer-prompt';
@@ -171,8 +175,33 @@ describe('board tasks with no indexed conversation', () => {
       taskId, displayId, title, costUsd,
       sessions: 2, durationMs: null, tokens: null, outcome: 'done' as const,
       lastActivityMs: Date.UTC(2025, 1, 1), agent: 'claude', model: null,
+      filesChanged: null, linesAdded: null, linesRemoved: null, prNumber: null, prState: null,
     };
   }
+
+  it('gives every row its task\'s git churn and pull request, scoped or not', () => {
+    // Churn and the PR are recorded per TASK, so a conversation-derived row
+    // takes them from the board. Asked "how many files changed in that PR?",
+    // the agent had nothing to read them from.
+    const withChurn = {
+      ...boardTask('t-indexed', 659, 'Review PR 417'),
+      filesChanged: 12, linesAdded: 480, linesRemoved: 95, prNumber: 417, prState: 'merged',
+    };
+    for (const scope of [null, new Set(['a'])]) {
+      const table = buildAnswerTaskTable(projection([
+        node({ docKey: 'a', taskId: 't-indexed', displayId: 659 }),
+      ]), 'balanced', scope, [withChurn]);
+      expect(table.rows[0]).toMatchObject({
+        filesChanged: 12, linesAdded: 480, linesRemoved: 95, prNumber: 417, prState: 'merged',
+      });
+    }
+    const [header, row] = formatTaskTable(buildAnswerTaskTable(projection([
+      node({ docKey: 'a', taskId: 't-indexed', displayId: 659 }),
+      node({ docKey: 'b', taskId: 't-other', displayId: 660 }),
+    ]), 'balanced', null, [withChurn])).split('\n');
+    const cells = Object.fromEntries(header.split('|').map((column, index) => [column, row.split('|')[index]]));
+    expect(cells).toMatchObject({ files: '12', lines_added: '480', lines_removed: '95', pr: 'PR 417 merged' });
+  });
 
   it('still gets a row, so the table the prompt calls complete is complete', () => {
     // The reported case: "how many adapters did we add?" answered two, because
@@ -272,5 +301,86 @@ describe('reading the tasks an answer is about', () => {
   it('returns the answer untouched when there is no selection line', () => {
     const answer = 'We dropped it because a sphere circumscribes.';
     expect(parseAnswerRefs(answer, resolvable, related)).toEqual({ selected: [], mentioned: [], text: answer });
+  });
+
+  it('keeps reading a bare ticket after a dash', () => {
+    const { mentioned } = parseAnswerRefs('Two tasks-#378 and #377.', resolvable, related);
+    expect(mentioned).toEqual(['task:378', 'task:377']);
+  });
+});
+
+describe('an answer asked across projects', () => {
+  // The open project's #88 and another project's #88 are different tasks.
+  const resolvable = new Map([
+    ['#88', 'task:open-88'],
+    ['mobile-app#88', 'task:mobile-88'],
+  ]);
+  const related = new Set(['task:open-88', 'task:mobile-88']);
+
+  it('reads another project\'s ref whole, its prefix case-blind', () => {
+    const { selected, mentioned } = parseAnswerRefs(
+      'Mostly Mobile-App#88, then #88.\nSELECTED: mobile-app#88, #88',
+      resolvable,
+      related,
+    );
+    expect(mentioned).toEqual(['task:mobile-88', 'task:open-88']);
+    expect(selected).toEqual(['task:mobile-88', 'task:open-88']);
+  });
+
+  it('never falls back from an unknown prefix to the open project\'s ticket', () => {
+    const { selected } = parseAnswerRefs('website#88.\nSELECTED: website#88', resolvable, related);
+    expect(selected).toEqual([]);
+  });
+});
+
+describe('merging projects into one table', () => {
+  it('gives each project a short prefix, distinct even when names reduce alike', () => {
+    const taken = new Set<string>();
+    const first = refPrefixFor('Mobile App', taken);
+    taken.add(first);
+    expect(first).toBe('mobile-app');
+    expect(refPrefixFor('mobile_app!', taken)).toBe('mobile-app-2');
+    // Never a trailing dash, which the ref parser depends on.
+    expect(refPrefixFor('Relay (v2) ', new Set())).toBe('relay-v2');
+    expect(refPrefixFor('***', new Set())).toBe('project');
+  });
+
+  it('prefixes every ticket outside the open project and keeps each project\'s facts', () => {
+    const open = buildAnswerTaskTable(projection([
+      node({ docKey: 'a', taskId: 't1', displayId: 88, title: 'Open task', costUsd: 5 }),
+    ]), 'balanced');
+    const other = buildAnswerTaskTable(projection([
+      node({ docKey: 'b', taskId: 't2', displayId: 88, title: 'Mobile task', costUsd: 9 }),
+    ]), 'balanced');
+    const merged = mergeAnswerTaskTables([
+      { table: open, projectId: 'p1', name: 'Kangentic', refPrefix: null },
+      { table: other, projectId: 'p2', name: 'Mobile App', refPrefix: 'mobile-app' },
+    ]);
+
+    // Cheapest last, across both projects.
+    expect(merged.rows.map((row, index) => taskRef(row, index))).toEqual(['mobile-app#88', '#88']);
+    expect(merged.rows.map((row) => row.projectId)).toEqual(['p2', 'p1']);
+    expect(merged.conversationCount).toBe(2);
+    const text = formatTaskTable(merged);
+    expect(text).toContain('\nmobile-app#88|Mobile task|');
+    expect(text).toContain('\n#88|Open task|');
+    expect(summarizeTaskTable(merged)).toMatch(/projects: Kangentic 1 tasks cost_usd 5\.00, written #N; Mobile App 1 tasks cost_usd 9\.00, written mobile-app#N/);
+    expect(formatTaskFieldGlossary(merged)).toContain('written mobile-app#88');
+  });
+
+  it('truncates the union at the row cap, cheapest first, and says so', () => {
+    const many = (prefix: string, count: number, cost: number) => buildAnswerTaskTable(projection(
+      Array.from({ length: count }, (_unused, index) => node({
+        docKey: `${prefix}-${index}`, taskId: `${prefix}-${index}`, displayId: index + 1, costUsd: cost,
+      })),
+    ), 'balanced');
+    const merged = mergeAnswerTaskTables([
+      { table: many('cheap', MAX_TASK_ROWS / 2 + 10, 1), projectId: 'p1', name: 'One', refPrefix: null },
+      { table: many('dear', MAX_TASK_ROWS / 2 + 10, 50), projectId: 'p2', name: 'Two', refPrefix: 'two' },
+    ]);
+    expect(merged.rows).toHaveLength(MAX_TASK_ROWS);
+    expect(merged.droppedTasks).toBe(20);
+    expect(merged.rows.every((row) => row.projectId === 'p2' || row.costUsd === 1)).toBe(true);
+    expect(merged.rows.filter((row) => row.projectId === 'p2')).toHaveLength(MAX_TASK_ROWS / 2 + 10);
   });
 });

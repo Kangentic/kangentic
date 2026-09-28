@@ -53,6 +53,12 @@ export function openMemoryConversation(
   projectId: string | null,
   /** Open at this turn: the passage a chat answer used. */
   turnUuid?: string | null,
+  /**
+   * The project this conversation belongs to, when the map shows several and
+   * it is not the open one. Stamped on the window, so it reads the transcript
+   * from its own project.
+   */
+  conversationProjectId?: string | null,
 ): void {
   const store = memoryWindowManager.store.getState();
   windowsProjectId = projectId;
@@ -65,6 +71,7 @@ export function openMemoryConversation(
     sessionId,
     title: 'Conversation',
     ...(turnUuid ? { scrollToTurnUuid: turnUuid } : {}),
+    ...(conversationProjectId && conversationProjectId !== projectId ? { projectId: conversationProjectId } : {}),
   });
 }
 

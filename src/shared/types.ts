@@ -5612,7 +5612,7 @@ export interface ElectronAPI {
      * against actual work rather than synthetic word salad. A copy, not a
      * re-embed - the source embeddings already exist.
      */
-    seedMemoryGraphReal: (options: { documentLimit?: number }) => Promise<DevSeedMemoryGraphRealResult>;
+    seedMemoryGraphReal: (options: { documentLimit?: number; sourceProject?: string }) => Promise<DevSeedMemoryGraphRealResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**
@@ -6598,6 +6598,9 @@ export interface ElectronAPI {
     /** Cheap read of the cached Memory Graph projection plus its coverage
      *  strip. Never triggers the projection pass. */
     graphSnapshot: (projectId?: string | null) => Promise<MemoryGraphSnapshot | null>;
+    /** Every project with its indexed conversation count and last indexing
+     *  time, for the Projects picker. Cheap: an index-only count per project. */
+    graphProjects: () => Promise<MemoryGraphProjectSummary[]>;
     /** Ask for a background projection refresh. Resolves immediately;
      *  completion arrives on `onGraphChanged`. */
     refreshGraph: (projectId?: string | null) => Promise<void>;
@@ -7001,6 +7004,19 @@ export interface MemoryRelatedTask {
   /** Where a source row opens: the conversation and turn of the passage that
    *  matched best, or null when no passage did (then the newest conversation). */
   passage: { sessionId: string; turnUuid: string | null } | null;
+  /**
+   * The project the task belongs to. Set on every task of a question asked
+   * across projects, so a row opens its conversation in the right project and
+   * names it; absent on a single-project answer, where it is the open one.
+   */
+  projectId?: string;
+  projectName?: string;
+  /**
+   * The ref the answer uses for this task, exactly as written: \`#561\`, or
+   * \`mobile#88\` for a task outside the open project in a question asked across
+   * projects, since ticket numbers repeat between projects. Absent means \`#N\`.
+   */
+  ref?: string;
 }
 
 /** One earlier turn of a Memory Graph chat, as a follow-up carries it. */
@@ -7024,6 +7040,12 @@ export interface MemoryAnswerContext {
    * table see only these.
    */
   scopeDocKeys?: string[] | null;
+  /**
+   * The projects a question is asked across, when the map shows more than one
+   * (or one that is not the open project). Absent means the single project the
+   * call names. `scopeDocKeys` then spans every one of them.
+   */
+  projectIds?: string[];
 }
 
 export type MemoryGraphAnswerResult =
@@ -7088,6 +7110,18 @@ export type MemoryAnswerStreamEvent =
 
 /** A stream event as pushed, tagged with the question it belongs to. */
 export type MemoryAnswerStreamPush = MemoryAnswerStreamEvent & { requestId: string };
+
+/** One project as the Knowledge Graph's Projects picker lists it. */
+export interface MemoryGraphProjectSummary {
+  id: string;
+  name: string;
+  /** Indexed conversations, which is what its map draws. 0 means there is
+   *  nothing to draw, and the picker lists it as not indexed. */
+  conversations: number;
+  /** When its index last took in a conversation, epoch ms, so the picker can
+   *  list projects by recent work. Null when nothing is indexed. */
+  lastActivityMs: number | null;
+}
 
 export interface MemoryGraphSnapshot {
   projectId: string;

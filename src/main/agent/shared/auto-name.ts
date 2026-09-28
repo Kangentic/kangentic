@@ -327,6 +327,18 @@ export function createAnswerStreamReducer(): (rawLine: string) => AnswerStreamEv
 }
 
 /**
+ * A run the CLI itself reports as failed is not an answer. Claude-compatible
+ * CLIs end a failed run (an unknown model, an API error, an exhausted quota)
+ * with a `result` line carrying `is_error: true`, and its `result` text is the
+ * error message. Returned as text, that message reads as the agent's reply;
+ * thrown, the runner rejects and the chat shows its failed turn, with the
+ * message as the reason and a Try again button.
+ */
+function throwIfErrorResult(record: Record<string, unknown>, resultText: string | null): void {
+  if (record.is_error === true) throw new Error(resultText || 'the agent reported an error');
+}
+
+/**
  * The final answer text out of a complete stream-json transcript.
  *
  * In stream mode the CLI emits an `assistant` line per turn. A tool-calling
@@ -350,6 +362,7 @@ export function extractStreamedAnswer(stdout: string): string {
     if (record.type === 'result') {
       sawResult = true;
       const result = pickStringField(record, 'result');
+      throwIfErrorResult(record, result);
       if (result) return result;
       continue;
     }
@@ -385,7 +398,9 @@ export function extractLastTurnAnswer(stdout: string): string {
     const record = parseJsonLine(line);
     if (!record) continue;
     if (record.type === 'result') {
-      resultText = pickStringField(record, 'result') ?? resultText;
+      const result = pickStringField(record, 'result');
+      throwIfErrorResult(record, result);
+      resultText = result ?? resultText;
       continue;
     }
     if (record.type !== 'assistant') continue;

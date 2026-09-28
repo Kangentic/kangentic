@@ -63,6 +63,21 @@ export interface AnswerTaskRow extends MemoryTaskFacts {
   key: string;
   /** The task's conversations in scope, so an answer row can light and open them. */
   docKeys: string[];
+  /** Set on every row of a table merged across projects. */
+  projectId?: string;
+  /**
+   * The short project name a ticket from another project leads with, so
+   * `mobile#88` and the open project's `#88` stay two tasks. Absent on the open
+   * project's rows, and on every row of a single-project table.
+   */
+  refPrefix?: string;
+}
+
+/** One project of a table merged across projects, as the summary names it. */
+export interface AnswerTableProject {
+  name: string;
+  /** What its tickets lead with, or null when they stand bare. */
+  refPrefix: string | null;
 }
 
 export interface AnswerTaskTable {
@@ -76,6 +91,8 @@ export interface AnswerTaskTable {
   /** Oldest and newest activity, so a relative window has an anchor. */
   earliestMs: number | null;
   latestMs: number | null;
+  /** The projects behind a merged table. Absent on a single-project one. */
+  projects?: ReadonlyArray<AnswerTableProject>;
 }
 
 /**
@@ -113,7 +130,7 @@ function addMetric(current: number | null, next: number | null): number | null {
  * question. Display order now comes from the answer's own view spec.
  */
 export function buildAnswerTaskTable(
-  projection: MemoryGraphProjection,
+  projection: Pick<MemoryGraphProjection, 'nodes' | 'clusterings'>,
   granularity: string,
   /**
    * The conversations inside the map's filters, or null for all of them. The
@@ -168,6 +185,12 @@ export function buildAnswerTaskTable(
         region: regionLabel(node),
         agent: node.agent,
         model: node.model,
+        // Task-level facts, filled from the board below.
+        filesChanged: null,
+        linesAdded: null,
+        linesRemoved: null,
+        prNumber: null,
+        prState: null,
       });
       continue;
     }
@@ -190,6 +213,20 @@ export function buildAnswerTaskTable(
     if (existing.outcome === null) existing.outcome = node.outcome;
     if (existing.displayId === null) existing.displayId = node.displayId;
     if (existing.region === null) existing.region = regionLabel(node);
+  }
+
+  // Churn and the linked pull request belong to the TASK, not to any one
+  // conversation, so every row takes them from the board's own record, scoped
+  // or not.
+  const boardByTask = new Map(boardTasks.map((task) => [task.taskId, task]));
+  for (const row of byTask.values()) {
+    const board = row.taskId ? boardByTask.get(row.taskId) : undefined;
+    if (!board) continue;
+    row.filesChanged = board.filesChanged;
+    row.linesAdded = board.linesAdded;
+    row.linesRemoved = board.linesRemoved;
+    row.prNumber = board.prNumber;
+    row.prState = board.prState;
   }
 
   if (!scopeDocKeys) {
@@ -228,8 +265,70 @@ export function buildAnswerTaskTable(
  * shown, and a `T14` quoted in prose was a different number from the `#561`
  * on the row beneath it.
  */
-export function taskRef(row: Pick<AnswerTaskRow, 'displayId'>, index: number): string {
-  return row.displayId != null ? `#${row.displayId}` : `C${index + 1}`;
+export function taskRef(row: Pick<AnswerTaskRow, 'displayId' | 'refPrefix'>, index: number): string {
+  return row.displayId != null ? `${row.refPrefix ?? ''}#${row.displayId}` : `C${index + 1}`;
+}
+
+/**
+ * The short name a project's tickets lead with in a question asked across
+ * projects: its name lowercased, with every run of other characters one dash.
+ * `taken` holds the prefixes already given out, so two projects whose names
+ * reduce alike still get distinct ones.
+ *
+ * Never ends in a dash, which `parseAnswerRefs` relies on: "tasks-#561" stays
+ * the bare ticket it always was.
+ */
+export function refPrefixFor(name: string, taken: ReadonlySet<string>): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/, '')
+    || 'project';
+  if (!taken.has(base)) return base;
+  let suffix = 2;
+  while (taken.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+/** One project's table, and what its tickets lead with in the merged one. */
+export interface AnswerTablePart {
+  table: AnswerTaskTable;
+  projectId: string;
+  name: string;
+  refPrefix: string | null;
+}
+
+/**
+ * One table from several projects' tables, for a question asked across them.
+ *
+ * Every row keeps its own project's facts and gets its project's prefix, so a
+ * ticket number that repeats between projects names one task. The truncation
+ * rule is the single-project one, applied to the union: cheapest dropped first,
+ * and the count stated.
+ */
+export function mergeAnswerTaskTables(parts: ReadonlyArray<AnswerTablePart>): AnswerTaskTable {
+  const rows: AnswerTaskRow[] = [];
+  let droppedTasks = 0;
+  let conversationCount = 0;
+  let earliestMs: number | null = null;
+  let latestMs: number | null = null;
+  for (const part of parts) {
+    for (const row of part.table.rows) {
+      rows.push({ ...row, projectId: part.projectId, ...(part.refPrefix ? { refPrefix: part.refPrefix } : {}) });
+    }
+    droppedTasks += part.table.droppedTasks;
+    conversationCount += part.table.conversationCount;
+    const { earliestMs: partEarliest, latestMs: partLatest } = part.table;
+    if (partEarliest !== null && (earliestMs === null || partEarliest < earliestMs)) earliestMs = partEarliest;
+    if (partLatest !== null && (latestMs === null || partLatest > latestMs)) latestMs = partLatest;
+  }
+  rows.sort((left, right) => (right.costUsd ?? 0) - (left.costUsd ?? 0));
+  return {
+    rows: rows.slice(0, MAX_TASK_ROWS),
+    droppedTasks: droppedTasks + Math.max(0, rows.length - MAX_TASK_ROWS),
+    conversationCount,
+    scoped: parts.some((part) => part.table.scoped),
+    earliestMs,
+    latestMs,
+    projects: parts.map((part) => ({ name: part.name, refPrefix: part.refPrefix })),
+  };
 }
 
 /**
@@ -310,6 +409,8 @@ export function summarizeTaskTable(table: AnswerTaskTable): string {
   if (rows.length === 0) return 'No tasks are indexed for this project.';
 
   const lines: string[] = [`tasks: ${rows.length}`];
+  const projectsLine = summarizeProjects(table);
+  if (projectsLine) lines.push(projectsLine);
   const collapsed = new Set(constantFields(rows).map((field) => field.key));
 
   for (const field of MEMORY_TASK_FIELDS) {
@@ -357,6 +458,33 @@ export function summarizeTaskTable(table: AnswerTaskTable): string {
   return lines.join('\n');
 }
 
+/**
+ * Each project of a merged table: how many tasks and what they cost, and how
+ * its tickets are written. So "which project cost the most" is a read, and the
+ * agent learns each prefix before it meets one in the table.
+ */
+function summarizeProjects(table: AnswerTaskTable): string | null {
+  const projects = table.projects;
+  if (!projects || projects.length < 2) return null;
+  const costField = MEMORY_TASK_FIELDS.find((field) => field.key === 'cost_usd');
+  const byPrefix = new Map<string, { tasks: number; cost: number | null }>();
+  for (const row of table.rows) {
+    const prefix = row.refPrefix ?? '';
+    const entry = byPrefix.get(prefix) ?? { tasks: 0, cost: null };
+    entry.tasks += 1;
+    entry.cost = addMetric(entry.cost, row.costUsd);
+    byPrefix.set(prefix, entry);
+  }
+  const parts = projects.map((project) => {
+    const entry = byPrefix.get(project.refPrefix ?? '');
+    const cost = entry?.cost != null && costField && table.rows[0]
+      ? ` cost_usd ${costField.cell({ ...table.rows[0], costUsd: entry.cost })}`
+      : '';
+    return `${project.name} ${entry?.tasks ?? 0} tasks${cost}, written ${project.refPrefix ?? ''}#N`;
+  });
+  return `projects: ${parts.join('; ')}`;
+}
+
 /** Renders a computed total through the field's own formatter. */
 function totalAs(field: MemoryTaskField, total: number): Partial<MemoryTaskFacts> {
   switch (field.key) {
@@ -364,6 +492,9 @@ function totalAs(field: MemoryTaskField, total: number): Partial<MemoryTaskFacts
     case 'duration': return { durationMs: total };
     case 'tokens': return { tokens: total };
     case 'sessions': return { sessions: total };
+    case 'files': return { filesChanged: total };
+    case 'lines_added': return { linesAdded: total };
+    case 'lines_removed': return { linesRemoved: total };
     default: return {};
   }
 }
@@ -375,13 +506,23 @@ function totalAs(field: MemoryTaskField, total: number): Partial<MemoryTaskFacts
  * its docs name as the thing that decides answer quality. Generated, so a new
  * column cannot arrive undocumented.
  */
-export function formatTaskFieldGlossary(): string {
+export function formatTaskFieldGlossary(table?: AnswerTaskTable): string {
   // The ticket is the ref column now, so it is described as the ref.
   return [
-    'ref - the task\'s board ticket, written #529, which is how to name a task in the answer. '
+    `ref - ${describeRef(table)} `
       + 'C1, C2 and so on are conversations with no board task.',
     ...MEMORY_TASK_FIELDS
       .filter((field) => field.key !== 'ticket')
       .map((field) => `${field.key} - ${field.describe}`),
   ].join('\n');
+}
+
+/** The ref column's line: bare tickets, and the project prefix when the table spans projects. */
+function describeRef(table: AnswerTaskTable | undefined): string {
+  const prefixed = table?.projects?.find((project) => project.refPrefix)?.refPrefix;
+  if (!prefixed) return 'the task\'s board ticket, written #529, which is how to name a task in the answer.';
+  const hasBare = table?.projects?.some((project) => !project.refPrefix) ?? false;
+  return (hasBare ? 'the task\'s board ticket, written #529 for the open project. A task from another project' : 'the task\'s board ticket. Every task')
+    + ` leads with its project's short name, written ${prefixed}#88. Ticket numbers repeat between projects,`
+    + ' so always write the ref whole: it is how to name a task in the answer.';
 }

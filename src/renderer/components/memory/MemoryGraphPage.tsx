@@ -21,10 +21,13 @@ import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useMemoryGraphStore } from '../../stores/memory-graph-store';
 import { useSessionStore } from '../../stores/session-store';
+import { useProjectStore } from '../../stores/project-store';
 import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
+import { memoryWindowManager } from '../../window-manager';
 import { LazyMemoryGraph } from './LazyMemoryGraph';
 import { MemoryDetailLayer } from './MemoryDetailLayer';
 import { openAnswerSettings } from './open-answer-settings';
+import { scopeLabel } from './MemoryProjectsPicker';
 
 export function MemoryGraphPage() {
   const close = useMemoryGraphStore((state) => state.close);
@@ -35,10 +38,17 @@ export function MemoryGraphPage() {
   // Structural Escape (the documented dialog-Escape exception to the keybindings
   // registry). Bubble phase so popovers' capture-phase Escape wins first; gated
   // so a Settings drawer stacked above keeps its own.
+  //
+  // Also gated while a conversation window is open over the map. The layer
+  // always keeps one of its windows focused, and that window closes itself on
+  // Escape, so the same keystroke used to close the graph too. The graph
+  // unmounted the window mid-exit, it stayed in the store, and it came back on
+  // the next open.
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       if (useConfigStore.getState().settingsOpen) return;
+      if (Object.keys(memoryWindowManager.store.getState().windows).length > 0) return;
       overlay.requestClose();
     }
     document.addEventListener('keydown', handleEscape);
@@ -77,6 +87,7 @@ export function MemoryGraphPage() {
               than naming the surface. */}
           <Network size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
           <h1 className="text-sm font-semibold text-fg">Knowledge Graph</h1>
+          <ScopeLabel />
         </DetachableSurfaceHeader>
 
         <LazyMemoryGraph onChooseAnswerAgent={openAnswerSettings} onRevealTask={revealTaskOnBoard} />
@@ -93,13 +104,42 @@ export function MemoryGraphPage() {
 }
 
 /**
+ * What the map shows, beside the title: the open project, "3 projects", or
+ * "All projects". The graph opens from the title bar, which belongs to no
+ * project, so without this nothing on screen said which project it was.
+ */
+function ScopeLabel() {
+  const projects = useMemoryGraphStore((state) => state.projects);
+  const scope = useMemoryGraphStore((state) => state.scopeProjectIds);
+  const openProjectId = useMemoryGraphStore((state) => state.projectId);
+  const label = scope
+    ? scopeLabel(scope, projects.filter((project) => project.conversations > 0))
+    : projects.find((project) => project.id === openProjectId)?.name;
+  if (!label) return null;
+  return (
+    <span className="min-w-0 truncate text-sm text-fg-muted" data-testid="memory-graph-scope">{label}</span>
+  );
+}
+
+/**
  * "Open task" from a conversation on the graph: close the graph, then open the
  * task on the board, where task details live. Closing first matters, since a
  * task detail opened behind the graph's overlay would be invisible. Most of what
  * the graph shows is finished work; the detail bridge loads an older finished
  * task before mounting it (`useTaskDetailWindowBridge`).
  */
-function revealTaskOnBoard(taskId: string): void {
+function revealTaskOnBoard(taskId: string, taskProjectId?: string): void {
   useMemoryGraphStore.getState().close();
+  const projectStore = useProjectStore.getState();
+  if (taskProjectId && taskProjectId !== projectStore.currentProject?.id) {
+    // A task on another project's island: open that project, then the task,
+    // through the same pending-open path Quick Find uses across projects.
+    const sessionStore = useSessionStore.getState();
+    sessionStore.setPendingOpenTaskId(taskId);
+    void projectStore.openProject(taskProjectId).then((outcome) => {
+      if (outcome !== 'opened') sessionStore.setPendingOpenTaskId(null);
+    });
+    return;
+  }
   useSessionStore.getState().setDetailTaskId(taskId);
 }

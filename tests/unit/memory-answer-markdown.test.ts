@@ -54,6 +54,20 @@ describe('linkifying tickets in an answer', () => {
     expect(linkifyTickets(answer)).toBe(answer);
   });
 
+  it('leaves a pull request number alone', () => {
+    // "#659 was reviewing PR #417": #417 there is a pull request, not task 417.
+    expect(linkifyTickets('#659 was reviewing PR #417.'))
+      .toBe('[#659](#kng-ticket-659) was reviewing PR #417.');
+    expect(linkifyTickets('see pull request #12')).toBe('see pull request #12');
+  });
+
+  it('marks every ticket in a slash-joined run, not only the first', () => {
+    // Seen in a real answer: "#413/#503/#494 (relay config and presentation)"
+    // drew one mark and two plain numbers.
+    expect(linkifyTickets('#413/#503/#494 (relay config)'))
+      .toBe('[#413](#kng-ticket-413)/[#503](#kng-ticket-503)/[#494](#kng-ticket-494) (relay config)');
+  });
+
   it('drops bold around nothing but tickets, and keeps bold around words', () => {
     expect(linkifyTickets('**#377, #378, and #381** form the core.'))
       .toBe('[#377](#kng-ticket-377), [#378](#kng-ticket-378), and [#381](#kng-ticket-381) form the core.');
@@ -63,6 +77,15 @@ describe('linkifying tickets in an answer', () => {
 
   it('ignores a # that is part of a longer token or an entity', () => {
     expect(linkifyTickets('Color a#12 and &#12; and ##3.')).toBe('Color a#12 and &#12; and ##3.');
+  });
+
+  it('marks another project\'s ticket with its prefix, for the prefixes the answer carries', () => {
+    // An answer across projects: mobile-app#88 is not the open project's #88.
+    const prefixes = new Set(['mobile-app', 'mobile']);
+    expect(linkifyTickets('Mostly Mobile-App#88, mobile#3 and #88; not web#4.', prefixes))
+      .toBe('Mostly [Mobile-App#88](#kng-ticket-88-mobile-app), [mobile#3](#kng-ticket-3-mobile) and [#88](#kng-ticket-88); not web#4.');
+    expect(linkifyTickets('**mobile#3 and #4** matter.', prefixes))
+      .toBe('[mobile#3](#kng-ticket-3-mobile) and [#4](#kng-ticket-4) matter.');
   });
 });
 

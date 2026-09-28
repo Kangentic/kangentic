@@ -42,6 +42,9 @@ export interface MemoryNodeDetailProps {
   onBack?: () => void;
   /** Names the destination, because after a few hops a bare arrow is a guess. */
   backLabel?: string;
+  /** The node's own project, when the map shows several, so "Open conversation"
+   *  reads the transcript from the project it belongs to. */
+  nodeProjectId?: string | null;
 }
 
 /**
@@ -54,7 +57,11 @@ export interface MemoryNodeDetailProps {
  * looked like the click did nothing - and in a detached graph that signal has no
  * layer to reach at all. See `MemoryDetailLayer`.
  */
-export function openConversationForNode(node: MemoryGraphNode): void {
+export function openConversationForNode(
+  node: MemoryGraphNode,
+  /** The node's own project, when the map shows several. */
+  nodeProjectId?: string | null,
+): void {
   if (!node.sessionId) {
     useToastStore.getState().addToast({
       message: 'This conversation has no session record to open',
@@ -65,7 +72,7 @@ export function openConversationForNode(node: MemoryGraphNode): void {
   // The project MAIN resolved for this snapshot, not the renderer's ambient one: a
   // detached graph follows main and has no populated project store, so reading it
   // here would stamp every pop-out window `null` and defeat the switch cleanup.
-  openMemoryConversation(node.sessionId, useMemoryGraphStore.getState().snapshot?.projectId ?? null);
+  openMemoryConversation(node.sessionId, useMemoryGraphStore.getState().snapshot?.projectId ?? null, null, nodeProjectId);
 }
 
 const ACTION_CLASS =
@@ -79,6 +86,7 @@ export function MemoryNodeDetail({
   onExploreFrom,
   onBack,
   backLabel,
+  nodeProjectId,
 }: MemoryNodeDetailProps) {
   return (
     <aside
@@ -155,7 +163,7 @@ export function MemoryNodeDetail({
         <div className="mt-3 space-y-1.5">
           <button
             type="button"
-            onClick={() => openConversationForNode(node)}
+            onClick={() => openConversationForNode(node, nodeProjectId)}
             disabled={!node.sessionId}
             className={ACTION_CLASS}
             data-testid="memory-graph-open-conversation"

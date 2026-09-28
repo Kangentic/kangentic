@@ -39,7 +39,9 @@ export interface RelatedPromptTask {
  * Haiku had to find each related task's cost in a 360-row table and named one
  * that three others outspent. Stated on the related row, the ranking is a read.
  */
-const RELATED_FACT_KEYS: ReadonlyArray<MemoryTaskFieldKey> = ['cost_usd', 'duration', 'tokens', 'sessions', 'outcome'];
+const RELATED_FACT_KEYS: ReadonlyArray<MemoryTaskFieldKey> = [
+  'cost_usd', 'duration', 'tokens', 'sessions', 'files', 'lines_added', 'lines_removed', 'outcome', 'pr',
+];
 const RELATED_FACT_FIELDS = MEMORY_TASK_FIELDS.filter((field) => RELATED_FACT_KEYS.includes(field.key));
 
 /** One earlier turn of the chat. */
@@ -60,12 +62,21 @@ export interface AnswerPromptContext {
   history?: ReadonlyArray<AnswerHistoryTurn>;
   /** Whether the agent holds the search tool this run. */
   canSearch: boolean;
+  /**
+   * Set when the question spans several projects: their names, and the one a
+   * search covers when it names none. The search tool takes one project per
+   * call, so the agent is told how to reach the others.
+   */
+  projects?: { names: ReadonlyArray<string>; searchDefault: string };
 }
 
 /** Characters of an earlier answer carried into a follow-up. */
 const HISTORY_ANSWER_CHARS = 1_200;
 
-function rules(canSearch: boolean): string {
+function rules(context: AnswerPromptContext): string {
+  const { canSearch, projects } = context;
+  // A real prefix from this table, so the example is one the agent will meet.
+  const prefix = context.tasks.projects?.find((project) => project.refPrefix)?.refPrefix ?? null;
   const sources = canSearch
     ? '<related_work>, <task_table>, <conversation_so_far> and what kangentic_search returns'
     : '<related_work>, <task_table> and <conversation_so_far>';
@@ -81,11 +92,27 @@ function rules(canSearch: boolean): string {
         'If <related_work> does not cover what the question needs, search the recorded conversations with the'
           + ' kangentic_search tool (listed to you as mcp__kangentic__kangentic_search, the only tool you may use),'
           + ' with mode "hybrid" and a query describing what you are looking for. If it misses, search again with'
-          + ' different words before concluding the conversations do not cover it.',
+          + ' different words before concluding the conversations do not cover it. Never tell the reader you would'
+          + ' need to search: search.',
+        ...(projects
+          ? [
+            `The question spans ${projects.names.length} projects: ${projects.names.join(', ')}. A search covers`
+              + ` ${projects.searchDefault} unless you pass project with another one's name, so search each project`
+              + ' the question needs.',
+          ]
+          : []),
       ]
       : []),
     'Never say the conversations do not mention something unless <related_work> and any search came back without it.',
-    'Name every task by its ref exactly as the table writes it, like #561. Never invent a ref.',
+    'Commit to one answer. If the question can be read more than one way ("biggest" by cost, by duration or by'
+      + ' conversations), pick the reading that fits best, name its measure in a few words, and answer that one.'
+      + ' Never answer every reading and leave the reader to choose.',
+    'For a count, work the number out from the table and the related work first, then state it once, as a number,'
+      + ' before naming any task. Never list tasks in the reply as a way of counting them.',
+    prefix
+      ? `Name every task by its ref exactly as the table writes it, like #561 or ${prefix}#88, project name`
+        + ' included. Never invent a ref.'
+      : 'Name every task by its ref exactly as the table writes it, like #561. Never invent a ref.',
     'Answer the way you would in a chat: a few direct sentences, no preamble, no restating the question, no'
       + ' headings, no bold, and no list or table. The interface lists every task on your SELECTED line as a'
       + ' row under your answer, so even when the question asks which tasks, do not list them or recite their'
@@ -97,7 +124,7 @@ function rules(canSearch: boolean): string {
       + ' from anything you know outside these sources - not about this codebase, and not about the world.',
     'End with one final line of exactly this form, naming every task your answer is about. For a count or a'
       + ' "which tasks" question, name all of them, not a sample:',
-    'SELECTED: #564, #561, #573',
+    prefix ? `SELECTED: #564, ${prefix}#88, #573` : 'SELECTED: #564, #561, #573',
     'Write "SELECTED: none" when the answer is not about particular tasks.',
   ].join('\n');
 }
@@ -173,16 +200,16 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
     `<task_summary>\n${formatSpan(context.tasks, context.nowMs)}\n\n`
       + `${summarizeTaskTable(context.tasks)}\n</task_summary>`,
     '',
-    `<column_glossary>\n${formatTaskFieldGlossary()}\n</column_glossary>`,
+    `<column_glossary>\n${formatTaskFieldGlossary(context.tasks)}\n</column_glossary>`,
     '',
     `<task_table>\n${formatTaskTable(context.tasks)}\n</task_table>`,
     '',
-    rules(context.canSearch),
+    rules(context),
     '',
     `<related_work>\n${formatRelatedWork(context.related)}\n</related_work>`,
     ...(history.length > 0 ? ['', `<conversation_so_far>\n${formatHistory(history)}\n</conversation_so_far>`] : []),
     '',
-    FINAL_REMINDER,
+    finalReminder(context.canSearch),
     '',
     `Question: ${question.trim()}`,
   ].join('\n');
@@ -196,10 +223,21 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
  * table", and corrected itself mid-reply ("Wait, let me correct that") in text
  * the reader watches arrive. After ~17k tokens of data the early rules lose to
  * habit; a short restatement next to the question does not.
+ *
+ * Seen again on Sonnet at low effort, which has no thinking to work in: a count
+ * question listed thirteen refs, then "that's actually more than nine", and
+ * "the biggest" was answered twice, by cost and by duration, so the reader had
+ * to ask again. Hence the count-first and one-reading lines.
  */
-const FINAL_REMINDER = 'Reply in two to four plain sentences. Name at most three tasks, by ref alone and never with'
-  + ' their titles. Work the answer out before you write it: every word appears to the reader as you write it, so'
-  + ' never correct yourself in the reply. End with the SELECTED line.';
+function finalReminder(canSearch: boolean): string {
+  return 'Reply in two to four plain sentences. Commit to one answer: for a count, the number first; for a'
+    + ' "biggest" or "most", one measure you name, and never an "if instead you mean" second answer. Name at most'
+    + ' three tasks, by ref alone and never with their'
+    + ' titles. Work the answer out before you write it: every word appears to the reader as you write it, so'
+    + ' never correct yourself in the reply.'
+    + (canSearch ? ' If what you need is not here, search before saying so.' : '')
+    + ' End with the SELECTED line.';
+}
 
 /**
  * The refs an answer names and selects, and the answer without its protocol line.
@@ -212,17 +250,25 @@ const FINAL_REMINDER = 'Reply in two to four plain sentences. Name at most three
  *
  * Mentions keep first-mention order, which is the order the reader has already
  * seen in the prose, so it is the one order the rows can never contradict.
+ *
+ * A ref from another project (`mobile#88`, in a question asked across projects)
+ * is read whole, its prefix matched case-blind. It never falls back to the bare
+ * `#88`, which is a different task in the open project.
  */
 export function parseAnswerRefs(
   answer: string,
   resolvable: ReadonlyMap<string, string>,
   trusted: ReadonlySet<string>,
 ): { selected: string[]; mentioned: string[]; text: string } {
-  const refPattern = /(?<![\w#])(#\d{1,6}|C\d{1,4})\b/g;
+  // The prefix never ends in a dash (`refPrefixFor`), so "tasks-#561" is still
+  // the bare ticket after the dash.
+  const refPattern = /(?<![\w#])((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}[A-Za-z0-9])?)?#\d{1,6}|C\d{1,4})\b/g;
   const keysIn = (text: string): string[] => {
     const keys: string[] = [];
     for (const match of text.matchAll(refPattern)) {
-      const key = resolvable.get(match[1]);
+      const hash = match[1].indexOf('#');
+      const ref = hash > 0 ? `${match[1].slice(0, hash).toLowerCase()}${match[1].slice(hash)}` : match[1];
+      const key = resolvable.get(ref);
       if (key && !keys.includes(key)) keys.push(key);
     }
     return keys;

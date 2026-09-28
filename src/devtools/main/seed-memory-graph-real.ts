@@ -60,10 +60,11 @@ function samePath(first: string, second: string): boolean {
   }
 }
 
-/** The real (non-ephemeral) project this preview was cloned from, if resolvable.
+/** The real (non-ephemeral) project this preview was cloned from, if resolvable,
+ *  or the real project `selector` names (by id, or by name ignoring case).
  *  `getPlatformConfigDir()` deliberately ignores KANGENTIC_DATA_DIR, so it still
  *  points at the real config dir from inside a preview. */
-function resolveSourceProject(): { id: string; name: string; dbPath: string } | null {
+function resolveSourceProject(selector?: string): { id: string; name: string; dbPath: string } | null {
   const normalizedCwd = toForwardSlash(path.resolve(process.cwd()));
   const markerIndex = normalizedCwd.indexOf(WORKTREE_MARKER);
   const parentRoot = markerIndex === -1 ? normalizedCwd : normalizedCwd.slice(0, markerIndex);
@@ -79,7 +80,10 @@ function resolveSourceProject(): { id: string; name: string; dbPath: string } | 
       name: string;
       path: string;
     }>;
-    const match = rows.find((row) => samePath(row.path, parentRoot));
+    const wanted = selector?.trim().toLowerCase();
+    const match = wanted
+      ? rows.find((row) => row.id === selector || row.name.toLowerCase() === wanted)
+      : rows.find((row) => samePath(row.path, parentRoot));
     if (!match) return null;
     const dbPath = path.join(configDir, 'projects', `${match.id}.db`);
     return fs.existsSync(dbPath) ? { id: match.id, name: match.name, dbPath } : null;
@@ -100,6 +104,13 @@ interface SourceDocument {
 
 export interface SeedMemoryGraphRealOptions {
   documentLimit?: number;
+  /**
+   * Mirror a different real project (its id, or its name) instead of the one
+   * this preview was cloned from, into whichever preview project is open. How a
+   * second project is seeded to check the Knowledge Graph across projects.
+   * Passed at run time, so no real project's name is written into the repo.
+   */
+  sourceProject?: string;
 }
 
 /**
@@ -132,9 +143,11 @@ export function seedMemoryGraphFromRealIndex(
   const projectPath = context.currentProjectPath;
   if (!projectId || !projectPath) throw new Error('Open a project first to mirror the real index');
 
-  const source = resolveSourceProject();
+  const source = resolveSourceProject(options.sourceProject);
   if (!source) {
-    throw new Error('Could not resolve the real parent project for this preview (no matching project in the real index.db)');
+    throw new Error(options.sourceProject
+      ? `No real project matches "${options.sourceProject}" (by id or name) in the real index.db`
+      : 'Could not resolve the real parent project for this preview (no matching project in the real index.db)');
   }
 
   const documentLimit = options.documentLimit ?? DEFAULT_DOCUMENT_LIMIT;
@@ -429,6 +442,40 @@ export function seedMemoryGraphFromRealIndex(
         mirrorSession(previewTaskId, facts, null);
       }
     }
+
+    // Each task's git churn and linked pull request, so Ask can answer "how
+    // many files changed" in a preview. Churn is recorded on ONE session per
+    // task, which the mirror may not have copied, so it is rolled up per source
+    // task (lines summed, files by their largest capture, as the task summary
+    // does) and written onto one mirrored session of the preview task.
+    const sourceChurn = sourceDb
+      .prepare(
+        `SELECT task_id AS taskId, SUM(lines_added) AS linesAdded,
+                SUM(lines_removed) AS linesRemoved, MAX(files_changed) AS filesChanged
+         FROM sessions WHERE task_id IS NOT NULL GROUP BY task_id`,
+      )
+      .all() as Array<{ taskId: string; linesAdded: number | null; linesRemoved: number | null; filesChanged: number | null }>;
+    const sourcePullRequests = sourceDb
+      .prepare('SELECT id, pr_number AS prNumber, pr_state AS prState FROM tasks WHERE pr_number IS NOT NULL')
+      .all() as Array<{ id: string; prNumber: number; prState: string | null }>;
+    const writeChurn = targetDb.prepare(
+      `UPDATE sessions SET lines_added = ?, lines_removed = ?, files_changed = ?
+       WHERE id = (SELECT id FROM sessions WHERE task_id = ? ORDER BY started_at LIMIT 1)`,
+    );
+    const writePullRequest = targetDb.prepare('UPDATE tasks SET pr_number = ?, pr_state = ? WHERE id = ?');
+    const copyTaskFacts = targetDb.transaction(() => {
+      for (const churn of sourceChurn) {
+        const previewTaskId = previewTaskIdBySourceTaskId.get(churn.taskId);
+        if (!previewTaskId) continue;
+        if (churn.linesAdded === null && churn.linesRemoved === null && churn.filesChanged === null) continue;
+        writeChurn.run(churn.linesAdded, churn.linesRemoved, churn.filesChanged, previewTaskId);
+      }
+      for (const pullRequest of sourcePullRequests) {
+        const previewTaskId = previewTaskIdBySourceTaskId.get(pullRequest.id);
+        if (previewTaskId) writePullRequest.run(pullRequest.prNumber, pullRequest.prState, previewTaskId);
+      }
+    });
+    copyTaskFacts();
 
     // Re-stamp the mirrored tasks with the SOURCE board's ticket numbers.
     //

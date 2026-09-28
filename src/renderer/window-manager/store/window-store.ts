@@ -214,6 +214,8 @@ interface OpenWindowInput {
   /** Open a `conversation` window at this turn (see `ManagedWindow.scrollToTurnUuid`).
    *  An already-open window for the anchor is re-aimed at it. */
   scrollToTurnUuid?: string;
+  /** The project the conversation belongs to (see `ManagedWindow.projectId`). */
+  projectId?: string;
 }
 
 export interface WindowStoreState {
@@ -422,6 +424,7 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // user path can never inherit an agent stamp by forgetting to clear it.
         ...(input.openedByAgent ? { openedByAgent: true as const } : {}),
         ...(input.scrollToTurnUuid ? { scrollToTurnUuid: input.scrollToTurnUuid } : {}),
+        ...(input.projectId ? { projectId: input.projectId } : {}),
       };
 
       set((current) => ({

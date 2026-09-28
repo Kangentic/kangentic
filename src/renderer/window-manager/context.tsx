@@ -59,7 +59,7 @@ export interface WindowManagerLayerOptions {
    * Hiding a control that cannot work beats shipping one that silently does
    * nothing.
    */
-  revealTaskDetail?: (taskId: string) => void;
+  revealTaskDetail?: (taskId: string, projectId?: string) => void;
 }
 
 /** What a layer's `renderTaskDetail` receives. Mirrors WindowContent's props. */

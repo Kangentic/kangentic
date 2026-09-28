@@ -28,13 +28,30 @@ export function stripProtocolLine(text: string): string {
   return (isProtocol ? text.slice(0, Math.max(lastBreak, 0)) : text).trimEnd();
 }
 
+/** The ref an answer writes for a task: `#561`, or `mobile#88` from another project. */
+export function ticketRef(task: Pick<MemoryRelatedTask, 'ref' | 'displayId'>): string | null {
+  return task.ref ?? (task.displayId != null ? `#${task.displayId}` : null);
+}
+
+/** A ticket's link fragment: `#kng-ticket-561`, or `#kng-ticket-88-mobile` with its project prefix. */
+const TICKET_FRAGMENT = /^#kng-ticket-(\d+)(?:-([a-z0-9-]+))?$/;
+
 /**
  * Rewrite `#561` into a markdown link with a private hash fragment, so the
  * markdown parser does the parsing and the `a` component decides what a ticket
  * renders as. A fragment rather than a custom scheme because react-markdown
  * sanitizes unknown schemes to an empty href. Code is left alone.
+ *
+ * A ticket from another project (`mobile#88`, in an answer across projects)
+ * links the same way with its prefix in the fragment, for the `prefixes` the
+ * answer's tasks carry only, so an unrelated `a#12` stays text.
  */
-export function linkifyTickets(text: string): string {
+export function linkifyTickets(text: string, prefixes: ReadonlySet<string> = new Set()): string {
+  // Prefixes are lowercase letters, digits and dashes (`refPrefixFor`), so they
+  // need no escaping. Longest first, so `mobile-app` wins over `mobile`.
+  const prefixPattern = prefixes.size > 0
+    ? new RegExp(`(^|[^\\w#&[/-])(${[...prefixes].sort((left, right) => right.length - left.length).join('|')})#(\\d{1,6})\\b`, 'gi')
+    : null;
   let inFence = false;
   return text.split('\n').map((line) => {
     if (/^\s*(```|~~~)/.test(line)) {
@@ -44,12 +61,26 @@ export function linkifyTickets(text: string): string {
     if (inFence) return line;
     return line.split(/(`[^`]*`)/g).map((part) => {
       if (part.startsWith('`')) return part;
-      return part
+      const unbolded = part
         // Bold around nothing but tickets ("**#377, #378 and #381**") is
         // dropped: a mark already stands out, and bold marks read as shouting.
-        .replace(/\*\*((?:\s|,|and|&|#\d{1,6})*#\d{1,6}(?:\s|,|and|&|#\d{1,6})*)\*\*/g, '$1')
-        // Not after a word, `&` (an entity), `[` (already link text) or `/` (a URL).
-        .replace(/(^|[^\w#&[/])#(\d{1,6})\b/g, (_whole, before: string, ticket: string) => `${before}[#${ticket}](#kng-ticket-${ticket})`);
+        .replace(/\*\*((?:\s|,|and|&|[\w-]*#\d{1,6})*[\w-]*#\d{1,6}(?:\s|,|and|&|[\w-]*#\d{1,6})*)\*\*/g, '$1');
+      // Another project's ticket, before the bare form: its `#` follows a word
+      // character, which the bare pattern below never matches.
+      const prefixed = prefixPattern
+        ? unbolded.replace(prefixPattern, (_whole, before: string, prefix: string, ticket: string) => (
+          `${before}[${prefix}#${ticket}](#kng-ticket-${ticket}-${prefix.toLowerCase()})`
+        ))
+        : unbolded;
+      return prefixed
+        // Not after a word, `&` (an entity), `[` (already link text) or `/` (a URL),
+        // except a `/` that follows another ticket: "#413/#503/#494" is three.
+        // Never after "PR": "PR #417" is a pull request, and many task titles
+        // quote one, so a mark there would open an unrelated task #417.
+        .replace(
+          /(?<!\b(?:PR|pr|[Pp]ull request))(^|[^\w#&[/]|(?<=#\d{1,6})\/)#(\d{1,6})\b/g,
+          (_whole, before: string, ticket: string) => `${before}[#${ticket}](#kng-ticket-${ticket})`,
+        );
     }).join('');
   }).join('\n');
 }
@@ -61,18 +92,27 @@ export function MemoryChatText({
   canOpenTask,
 }: {
   text: string;
-  /** Tasks the answer can name, by board ticket. A ticket not here stays plain text. */
-  tasksByTicket: ReadonlyMap<number, MemoryRelatedTask>;
+  /** Tasks the answer can name, by the ref it writes (`ticketRef`). A ticket not here stays plain text. */
+  tasksByTicket: ReadonlyMap<string, MemoryRelatedTask>;
   onOpenTask: (task: MemoryRelatedTask) => void;
   /** A mark for a task that cannot be opened here draws as a mark but is not a control. */
   canOpenTask: (task: MemoryRelatedTask) => boolean;
 }) {
   const components: Components = {
     a: ({ href, children, ...rest }) => {
-      const match = /^#kng-ticket-(\d+)$/.exec(href ?? '');
+      const match = TICKET_FRAGMENT.exec(href ?? '');
       if (match) {
-        const task = tasksByTicket.get(Number(match[1]));
-        if (!task) return <span>#{match[1]}</span>;
+        const [, ticket, prefix] = match;
+        const task = tasksByTicket.get(prefix ? `${prefix}#${ticket}` : `#${ticket}`);
+        if (!task) return <span>{children}</span>;
+        // Another project's ticket names its project, muted, the way its row
+        // does. The open project's stay bare, as the answer writes them.
+        const label = (
+          <>
+            {prefix ? <span className="font-normal text-fg-muted">{task.projectName ?? prefix} </span> : null}
+            #{task.displayId}
+          </>
+        );
         if (!canOpenTask(task)) {
           return (
             <span
@@ -80,7 +120,7 @@ export function MemoryChatText({
               data-testid="memory-chat-ticket"
               className="mx-px inline-block rounded bg-surface-control px-[5px] align-baseline text-[11.5px] font-semibold text-fg-muted"
             >
-              #{task.displayId}
+              {label}
             </span>
           );
         }
@@ -92,7 +132,7 @@ export function MemoryChatText({
             data-testid="memory-chat-ticket"
             className="mx-px inline-block rounded bg-surface-control px-[5px] align-baseline text-[11.5px] font-semibold text-fg hover:bg-surface-hover cursor-pointer"
           >
-            #{task.displayId}
+            {label}
           </button>
         );
       }
@@ -113,10 +153,17 @@ export function MemoryChatText({
     },
   };
 
+  // The project prefixes this answer's tasks carry (`mobile#88` has `mobile`).
+  const prefixes = new Set<string>();
+  for (const ref of tasksByTicket.keys()) {
+    const hash = ref.indexOf('#');
+    if (hash > 0) prefixes.add(ref.slice(0, hash));
+  }
+
   return (
     <div className="markdown-body memory-answer-body text-[13px] leading-[1.6] text-fg" data-testid="memory-chat-answer">
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
-        {linkifyTickets(stripProtocolLine(text))}
+        {linkifyTickets(stripProtocolLine(text), prefixes)}
       </ReactMarkdown>
     </div>
   );

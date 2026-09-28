@@ -236,12 +236,12 @@ export function useMemoryGraphScene(options: UseMemoryGraphSceneOptions): Memory
       const cameraMoved = controls.update(delta);
 
       onFrameRef.current?.(scene);
-      scene.renderFrame();
+      const easing = scene.renderFrame();
 
-      // Keep going only while something is still moving. When the camera settles
-      // this stops, and the surface goes back to costing nothing until the next
-      // interaction or data change.
-      if (cameraMoved || flying) {
+      // Keep going only while something is still moving: the camera, or a style
+      // change easing in. When both settle this stops, and the surface goes back
+      // to costing nothing until the next interaction or data change.
+      if (cameraMoved || flying || easing) {
         frameRef.current = requestAnimationFrame(step);
         return;
       }

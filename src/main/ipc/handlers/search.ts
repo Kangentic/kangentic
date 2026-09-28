@@ -10,15 +10,20 @@ import { graphService } from '../../retrieval/graph/graph-service';
 import { buildAnswerPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
 import {
   buildAnswerTaskTable,
+  mergeAnswerTaskTables,
+  refPrefixFor,
   taskRef,
   type AnswerTaskRow,
   type BoardTaskFacts,
 } from '../../retrieval/answer-tasks';
 import {
   PASSAGES_SHOWN,
+  passageKey,
   searchRelatedWork,
-  type RelatedWork,
-  type RelatedWorkTask,
+  searchRelatedWorkAcross,
+  toProjectRelatedWork,
+  type ProjectRelatedWork,
+  type ProjectRelatedWorkTask,
 } from '../../retrieval/related-work';
 import { watchAnswerSearches } from '../../agent/mcp-http/answer-search-trace';
 import { estimateTokens } from '../../retrieval/token-estimate';
@@ -32,6 +37,7 @@ import type {
   SearchRequest,
   MemoryStatus,
   MemoryGraphSnapshot,
+  MemoryGraphProjectSummary,
   MemoryGraphQueryResult,
   MemoryGraphQueryHit,
   MemoryGraphAnswerResult,
@@ -46,6 +52,9 @@ import type {
 const HISTORY_TURNS = 3;
 /** How long a question waits for its embedding before searching by keyword alone. */
 const RELATED_EMBED_WAIT_MS = 5_000;
+/** A project in a question's scope whose map has not been built yet: it brings
+ *  its board tasks and no conversations. */
+const EMPTY_PROJECTION = { nodes: [], clusterings: [] };
 
 /** Conversations a graph query may match. See the call site for why it is high. */
 const GRAPH_QUERY_LIMIT = 300;
@@ -80,6 +89,11 @@ function readBoardTasks(projectId: string): BoardTaskFacts[] {
         lastActivityMs: Number.isNaN(lastActivityMs) ? null : lastActivityMs,
         agent: task.agent,
         model: task.model,
+        filesChanged: task.filesChanged,
+        linesAdded: task.linesAdded,
+        linesRemoved: task.linesRemoved,
+        prNumber: task.prNumber,
+        prState: task.prState,
       };
     });
   } catch {
@@ -257,10 +271,22 @@ export function registerSearchHandlers(context: IpcContext): void {
         const trimmed = (question ?? '').trim();
         if (!trimmed) return { ok: false, reason: 'ask a question first' };
 
-        const resolvedProjectId = projectId ?? context.currentProjectId;
-        if (!resolvedProjectId) return { ok: false, reason: 'no project open' };
-        const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
-        if (!project) return { ok: false, reason: 'no project open' };
+        // The projects the question is asked across: the map's Projects filter
+        // when the renderer sends one, else the one project the call names.
+        const openProjectId = projectId ?? context.currentProjectId;
+        const requestedIds = answerContext.projectIds && answerContext.projectIds.length > 0
+          ? answerContext.projectIds
+          : (openProjectId ? [openProjectId] : []);
+        const registered = context.projectRepo.list();
+        const scopeProjects = requestedIds.flatMap((id) => {
+          const entry = registered.find((candidate) => candidate.id === id);
+          return entry ? [entry] : [];
+        });
+        if (scopeProjects.length === 0) return { ok: false, reason: 'no project open' };
+        const acrossProjects = scopeProjects.length > 1;
+        // Whose tickets stand bare, and whose index a search covers by default:
+        // the open project when it is in scope.
+        const homeProject = scopeProjects.find((entry) => entry.id === openProjectId) ?? scopeProjects[0];
 
         const { agentRegistry } = await import('../../agent/agent-registry');
         const config = context.configManager.load();
@@ -307,12 +333,39 @@ export function registerSearchHandlers(context: IpcContext): void {
         // subset. This is what makes "what was the most expensive" answerable at
         // all - an agent shown 24 of 347 tasks answers confidently about 24.
         // Read from the cached projection, which is a cheap read by contract.
+        //
+        // Across projects, each project's table is built on its own (its own
+        // regions, its own board) and the tables merged, every ticket outside
+        // the open project carrying its project's prefix: ticket numbers repeat
+        // between projects. A project whose map has not been built yet still
+        // brings its board tasks.
         const model = resolveEmbeddingModel(config.memory?.embeddingModel);
-        const snapshot = graphService.getSnapshot(resolvedProjectId, model.modelTag);
-        const projection = snapshot.projection;
-        if (!projection) return { ok: false, reason: 'the map is still building' };
         const scope = answerContext.scopeDocKeys ? new Set(answerContext.scopeDocKeys) : null;
-        const taskTable = buildAnswerTaskTable(projection, granularity, scope, readBoardTasks(resolvedProjectId));
+        const takenPrefixes = new Set<string>();
+        const parts = scopeProjects.map((entry) => {
+          const projection = graphService.getSnapshot(entry.id, model.modelTag).projection;
+          const refPrefix = acrossProjects && entry.id !== openProjectId ? refPrefixFor(entry.name, takenPrefixes) : null;
+          if (refPrefix) takenPrefixes.add(refPrefix);
+          const table = buildAnswerTaskTable(projection ?? EMPTY_PROJECTION, granularity, scope, readBoardTasks(entry.id));
+          return { project: entry, projection, refPrefix, table };
+        });
+        if (parts.every((part) => !part.projection)) return { ok: false, reason: 'the map is still building' };
+        const taskTable = acrossProjects
+          ? mergeAnswerTaskTables(parts.map((part) => ({
+            table: part.table,
+            projectId: part.project.id,
+            name: part.project.name,
+            refPrefix: part.refPrefix,
+          })))
+          : parts[0].table;
+        const projectNameById = new Map(scopeProjects.map((entry) => [entry.id, entry.name]));
+        /** The project fields a wire task carries. The name only across projects,
+         *  where it is what a row shows. */
+        const projectFields = (taskProjectId: string | undefined): Pick<MemoryRelatedTask, 'projectId' | 'projectName'> => {
+          const id = taskProjectId ?? homeProject.id;
+          const name = acrossProjects ? projectNameById.get(id) : undefined;
+          return { projectId: id, ...(name ? { projectName: name } : {}) };
+        };
 
         // Answered WITHOUT spawning when there is genuinely nothing to answer
         // from. Nothing was sent, so zero tokens is the truth, not a gap.
@@ -349,25 +402,33 @@ export function registerSearchHandlers(context: IpcContext): void {
         // tasks the turn before was about, or "of those" has no referent.
         const history = (answerContext.history ?? []).slice(-HISTORY_TURNS);
         const previousTurn = history[history.length - 1];
-        const nodesInScope = projection.nodes.filter((node) => !scope || scope.has(node.docKey));
+        const projectNodes = parts.map((part) => ({
+          projectId: part.project.id,
+          nodes: (part.projection?.nodes ?? []).filter((node) => !scope || scope.has(node.docKey)),
+        }));
+        const nodesInScope = projectNodes.flatMap((entry) => entry.nodes);
         // A failed search costs the related work, not the answer: the table
         // still settles every board question, and the agent can still search.
-        let related: RelatedWork;
+        let related: ProjectRelatedWork;
         try {
-          related = await searchRelatedWork({
+          const searchInput = {
             question: trimmed,
             anchorQuestions: history.map((turn) => turn.question),
-            projectId: resolvedProjectId,
-            nodes: nodesInScope,
             embedder: retrievalService.getEmbedder(context),
             pinnedKeys: new Set(previousTurn?.taskKeys ?? []),
             embedWaitMs: RELATED_EMBED_WAIT_MS,
-          });
+          };
+          related = acrossProjects
+            ? await searchRelatedWorkAcross({ ...searchInput, projects: projectNodes })
+            : toProjectRelatedWork(
+              await searchRelatedWork({ ...searchInput, projectId: homeProject.id, nodes: nodesInScope }),
+              homeProject.id,
+            );
         } catch (error) {
           console.warn('[memory-graph] related work search failed, answering from the table:', error);
           related = { ranked: [], handed: [], passages: new Map(), semantic: false, elapsedMs: 0 };
         }
-        const toWire = (task: RelatedWorkTask): MemoryRelatedTask => ({
+        const toWire = (task: ProjectRelatedWorkTask): MemoryRelatedTask => ({
           key: task.key,
           taskId: task.taskId,
           displayId: task.displayId,
@@ -375,6 +436,8 @@ export function registerSearchHandlers(context: IpcContext): void {
           strength: task.strength,
           docKeys: task.docKeys,
           passage: task.sessionId ? { sessionId: task.sessionId, turnUuid: task.turnUuid } : null,
+          ...projectFields(task.projectId),
+          ...(refByKey.has(task.key) ? { ref: refByKey.get(task.key) } : {}),
         });
         const handedWire = related.handed.map(toWire);
         emit({ kind: 'set', related: handedWire, handedCount: related.handed.length });
@@ -402,7 +465,7 @@ export function registerSearchHandlers(context: IpcContext): void {
         const callerChat = answerContext.chatId || requestId || 'oneshot';
         const retrieval = context.mcpServerHandle && capabilities?.search
           ? {
-            url: appendAnswerCaller(context.mcpServerHandle.urlForProject(resolvedProjectId), callerChat),
+            url: appendAnswerCaller(context.mcpServerHandle.urlForProject(homeProject.id), callerChat),
             token: context.mcpServerHandle.token,
           }
           : undefined;
@@ -421,7 +484,7 @@ export function registerSearchHandlers(context: IpcContext): void {
               firstMs: task.firstMs,
               lastMs: task.lastMs,
               passage: index < PASSAGES_SHOWN && task.bestChunkId !== null
-                ? related.passages.get(task.bestChunkId) ?? null
+                ? related.passages.get(passageKey(task.projectId, task.bestChunkId)) ?? null
                 : null,
               facts: rowByKey.get(task.key) ?? null,
             }];
@@ -435,6 +498,9 @@ export function registerSearchHandlers(context: IpcContext): void {
             }),
           })),
           canSearch: retrieval !== undefined,
+          ...(acrossProjects
+            ? { projects: { names: scopeProjects.map((entry) => entry.name), searchDefault: homeProject.name } }
+            : {}),
         });
         // What this question cost to ask, reported rather than estimated after
         // the fact, with the same estimator the chunker sizes text with.
@@ -515,6 +581,8 @@ export function registerSearchHandlers(context: IpcContext): void {
             strength: 1,
             docKeys: row.docKeys,
             passage: null,
+            ...projectFields(row.projectId),
+            ...(refByKey.has(row.key) ? { ref: refByKey.get(row.key) } : {}),
           }];
         });
 
@@ -611,6 +679,32 @@ export function registerSearchHandlers(context: IpcContext): void {
         });
     },
   );
+
+  /**
+   * Every project, for the Knowledge Graph's Projects picker: its name, how many
+   * conversations its map would draw, and when its index last took one in.
+   *
+   * Opens each project's database, which Quick Find's cross-project search
+   * already does, and reads an index-only count from each (12ms across 19 real
+   * projects, warm). A project whose database cannot be read lists as having
+   * nothing indexed rather than failing the whole list.
+   */
+  ipcMain.handle(IPC.MEMORY_GRAPH_PROJECTS, (): MemoryGraphProjectSummary[] => {
+    return context.projectRepo.list().map((project) => {
+      try {
+        const summary = new RetrievalStore(getProjectDb(project.id)).conversationSummary();
+        const lastActivityMs = summary.lastIndexedAt ? Date.parse(summary.lastIndexedAt) : Number.NaN;
+        return {
+          id: project.id,
+          name: project.name,
+          conversations: summary.conversations,
+          lastActivityMs: Number.isNaN(lastActivityMs) ? null : lastActivityMs,
+        };
+      } catch {
+        return { id: project.id, name: project.name, conversations: 0, lastActivityMs: null };
+      }
+    });
+  });
 
   ipcMain.handle(
     IPC.MEMORY_GRAPH_REFRESH,

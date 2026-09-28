@@ -1,17 +1,20 @@
 /**
- * The Memory Graph's left panel: how the map is drawn, and what is in the index.
+ * The Memory Graph's left panel: what is on the map, how it is divided, how it
+ * is drawn, and what is in the index.
  *
- * TWO cards in one stack: Display, then Regions and Index. Display is open by
- * default because it is what you touch; Index is closed because it is reference
- * you consult.
+ * FOUR cards in one stack, in the order a question is scoped: Filter (Projects,
+ * then time and status), Regions (Detail, then the list it recuts), Display
+ * (Color by, Show), then Index. The first three are open by default because they
+ * are what you touch; Index is closed because it is reference you consult, and
+ * it opens to the side. Filter comes first because it is also the scope a
+ * question is asked in, and the time and status rows used to sit inside Display,
+ * where they read as drawing options rather than scope.
  *
- * The card split and the gap between them are both deliberate, and so is how
- * SMALL the gap is. This started as two floating panels pinned to the top and
- * bottom of the left edge with a screen-height void between them, which read as
- * two unrelated things and spent the whole edge to say it; pulling them into one
- * continuous slab then went too far the other way, since a variable-height
- * region list growing straight out of the Detail control made the panel read as
- * one endless column. A small gap states the seam without scattering the panel.
+ * The gap between cards is deliberate, and so is how SMALL it is. This started
+ * as two floating panels pinned to the top and bottom of the left edge with a
+ * screen-height void between them, which read as two unrelated things; pulling
+ * them into one continuous slab then went too far the other way. A small gap
+ * states the seam without scattering the panel.
  *
  * The old horizontal strip this replaced put counts, a view switch, a colour
  * switch, two raw checkboxes and a filter in one undifferentiated row, which
@@ -28,11 +31,10 @@
  * as part of the control rather than as help.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Database, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, Database, Filter, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
 import { SegmentedControl } from '../SegmentedControl';
 import { OverlayPopover } from '../OverlayPopover';
-import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { Select } from '../settings/shared';
 import type { MemoryGraphColorMode } from './MemoryGraphCanvas';
 import { clusterHue } from './memory-graph-scene';
@@ -223,8 +225,10 @@ export interface MemoryGraphControlsProps {
   onFacetsChange: (facets: MemoryGraphFacets) => void;
   /** Rows with nothing to offer on this corpus are not rendered at all. */
   facetAvailability: FacetAvailability;
-  /** One entry per region, in cluster order, for the Regions section. */
-  regions: ReadonlyArray<{ id: number; label: string; count: number }>;
+  /** One entry per region, in cluster order, for the Regions section. `group`
+   *  names the project a region belongs to when the map holds several; the list
+   *  groups under it. */
+  regions: ReadonlyArray<{ id: number; label: string; count: number; group?: string }>;
   granularity: MemoryGraphGranularity;
   /** Only those that cut the map differently - see `availableGranularities`. */
   availableGranularities: MemoryGraphGranularity[];
@@ -236,6 +240,9 @@ export interface MemoryGraphControlsProps {
    *  with the map rather than being measured on every panel open. */
   storageBytes: number;
   building: boolean;
+  /** The Projects picker, rendered at the top of Filter. Absent when fewer than
+   *  two projects have an index, since a one-option scope is a dead control. */
+  projectsPicker?: ReactNode;
 }
 
 /**
@@ -358,6 +365,14 @@ function SectionHeader({
   );
 }
 
+/** Card chrome shared by the panel's four sections. No `overflow` here: the
+ *  panel scrolls as a whole, and nothing inside a card may clip. */
+const CARD_CLASS = 'flex-shrink-0 rounded-lg border border-edge bg-surface-raised/80 backdrop-blur-md shadow-xl';
+
+/** Air kept between the Index flyout and the viewport's bottom edge, which
+ *  clears the app's status bar showing through beneath this surface. */
+const FLYOUT_VIEWPORT_PADDING = 40;
+
 export function MemoryGraphControls({
   colorMode,
   onColorModeChange,
@@ -380,35 +395,42 @@ export function MemoryGraphControls({
   edgeCount,
   storageBytes,
   building,
+  projectsPicker,
 }: MemoryGraphControlsProps) {
+  // Open by default: these three are controls the user acts on.
+  const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [regionsCollapsed, setRegionsCollapsed] = useState(false);
   const [displayCollapsed, setDisplayCollapsed] = useState(false);
   // Closed by default: the numbers are reference, not a control.
   const [indexCollapsed, setIndexCollapsed] = useState(true);
-  // Open by default, unlike Index: these are a control the user acts on, not
-  // reference they consult.
-  const [regionsCollapsed, setRegionsCollapsed] = useState(false);
   const [regionQuery, setRegionQuery] = useState('');
+
   /**
-   * Index opens to the SIDE, not downward.
+   * Index opens to the SIDE, not downward, and outside the panel.
    *
-   * It is the last thing in a column whose middle section is a list of every
-   * region the index holds - forty of them on a large project - so by the time
-   * the reader reaches Index there is no room left beneath it and its rows ran
-   * off the bottom of the window. A flyout leaves the region list where it is
-   * instead of squeezing it, which is right for a section that is reference
-   * rather than a control.
+   * To the side because it is the last card in a column whose middle is a list
+   * of every region the index holds, forty on a large project, so a section
+   * opening downward ran off the bottom of the window. Outside the panel because
+   * the panel scrolls as a whole in a short window, and a scrolling box clips
+   * anything positioned inside it. It is portaled to the body and placed beside
+   * its header, pushed up to stay clear of the bottom edge.
    */
   const indexTriggerRef = useRef<HTMLDivElement>(null);
   const indexPopoverRef = useRef<HTMLDivElement>(null);
-  const { style: indexPopoverStyle } = usePopoverPosition(
-    indexTriggerRef,
-    indexPopoverRef,
-    !indexCollapsed,
-    // Enough padding to clear the app's status bar, which shows through beneath
-    // this surface: the hook's default 8 is measured against `innerHeight` and
-    // would let the flyout rest on top of it.
-    { mode: 'flyout', viewportPadding: 40 },
-  );
+  const [indexFlyoutPosition, setIndexFlyoutPosition] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    if (indexCollapsed) return;
+    const trigger = indexTriggerRef.current;
+    const popover = indexPopoverRef.current;
+    if (!trigger || !popover) return;
+    const triggerBox = trigger.getBoundingClientRect();
+    const height = popover.offsetHeight;
+    const lowest = window.innerHeight - FLYOUT_VIEWPORT_PADDING - height;
+    setIndexFlyoutPosition({
+      left: triggerBox.right + 8,
+      top: Math.max(8, Math.min(triggerBox.top, lowest)),
+    });
+  }, [indexCollapsed]);
   useEffect(() => {
     if (indexCollapsed) return;
     const closeOnOutsideClick = (event: MouseEvent) => {
@@ -422,6 +444,7 @@ export function MemoryGraphControls({
     document.addEventListener('mousedown', closeOnOutsideClick, true);
     return () => document.removeEventListener('mousedown', closeOnOutsideClick, true);
   }, [indexCollapsed]);
+
   const shownRegionCount = regions.filter((region) => !facets.hiddenRegions.has(region.id)).length;
   const regionFilterable = regions.length >= REGION_FILTER_MIN;
   const listedRegions = useMemo(
@@ -430,115 +453,65 @@ export function MemoryGraphControls({
       : regions),
     [regions, regionQuery, regionFilterable],
   );
-  const anyFacetAvailable =
-    facetAvailability.since || facetAvailability.outcomes.length > 1;
+  // Grouped by project only when the map holds more than one.
+  const regionGroups = useMemo(() => {
+    const groups: Array<{ name: string | null; regions: Array<(typeof listedRegions)[number]> }> = [];
+    for (const region of listedRegions) {
+      const name = region.group ?? null;
+      const last = groups[groups.length - 1];
+      if (last && last.name === name) last.regions.push(region);
+      else groups.push({ name, regions: [region] });
+    }
+    return groups;
+  }, [listedRegions]);
+  const grouped = regionGroups.some((group) => group.name !== null) && regionGroups.length > 1;
+
+  const anyFacetAvailable = facetAvailability.since || facetAvailability.outcomes.length > 1;
+  const showFilter = projectsPicker != null || anyFacetAvailable;
+  const showRegionList = regions.length > 1;
+  const showDetail = availableGranularities.length > 1;
+
+  const toggleRegion = (regionId: number): void => {
+    const next = new Set(facets.hiddenRegions);
+    if (next.has(regionId)) next.delete(regionId);
+    else next.add(regionId);
+    onFacetsChange({ ...facets, hiddenRegions: next });
+  };
 
   return (
-    <div className="flex w-64 flex-col gap-3" data-testid="memory-graph-controls">
-      {/* TWO cards, not one slab, and `gap-3` matches the panel's own
-          `left-3 top-3` inset so the seam between them reads as the same
-          measure as the space around them. Display is fixed-height chrome about how the
-          map is DRAWN; below it sits a variable-height list of what the map
-          CONTAINS, and merged into one surface the panel read as an endless
-          column with the region list growing out of the Detail control. The gap
-          is small on purpose - Round 9 pulled two panels together because a
-          screen-height void between them made them read as unrelated things.
-          This keeps one stack and just states the seam. */}
-      <div className="rounded-lg border border-edge bg-surface-raised/80 backdrop-blur-md shadow-xl">
-        <SectionHeader
-          icon={<SlidersHorizontal size={13} aria-hidden />}
-          label="Display"
-          collapsed={displayCollapsed}
-          onToggle={() => setDisplayCollapsed((current) => !current)}
-          testId="memory-graph-controls-toggle"
-        />
-
-        {!displayCollapsed ? (
-          <div className="space-y-3 px-3 pb-3">
-            <div>
-              <GroupLabel hint={COLOR_OPTIONS.find((option) => option.value === colorMode)?.hint}>
-                Color by
-              </GroupLabel>
-              {/* A Select, not a SegmentedControl. The segmented control exists
-                  "for a small, flat set of mutually exclusive choices where showing
-                  the alternatives is worth the width" - and here the width is not
-                  there: four labels overflowed the panel at every width tried,
-                  cutting the last option in half. */}
-              <Select
-                value={colorMode}
-                onChange={(event) => onColorModeChange(event.target.value as MemoryGraphColorMode)}
-                aria-label="Color conversations by"
-                data-testid="memory-graph-color-mode"
-              >
-                {/* Only the modes this corpus can actually express. An option
-                    that paints every node identically is the same dead control
-                    the outcome facet rows already prune. */}
-                {COLOR_OPTIONS.filter(
-                  (option) => availableColorModes.includes(option.value),
-                ).map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </Select>
-            </div>
-
-            <div>
-              <GroupLabel>Show</GroupLabel>
-              <div className="space-y-1.5">
-                {/* "Regions", not "Labels": there are two kinds of label on this
-                    map now, and the generic word stopped saying which one this
-                    row governs. */}
-                <SegmentedControl
-                  options={[
-                    { value: 'on', label: 'Regions' },
-                    { value: 'off', label: 'Hidden' },
-                  ]}
-                  value={showLabels ? 'on' : 'off'}
-                  onChange={(value) => onShowLabelsChange(value === 'on')}
-                  ariaLabel="Region labels"
-                  testId="memory-graph-toggle-labels"
-                  fullWidth
-                />
-                {/* On by default. Titles are the map's main source of context
-                    clues - without them a scoped view is a handful of anonymous
-                    points - so this is an OFF switch for a map the user finds
-                    busy, not an opt-in they have to find. */}
-                <SegmentedControl
-                  options={[
-                    { value: 'on', label: 'Titles' },
-                    { value: 'off', label: 'Hidden' },
-                  ]}
-                  value={showTitles ? 'on' : 'off'}
-                  onChange={(value) => onShowTitlesChange(value === 'on')}
-                  ariaLabel="Conversation titles"
-                  testId="memory-graph-toggle-titles"
-                  fullWidth
-                />
-                <SegmentedControl
-                  options={[
-                    { value: 'on', label: 'Links' },
-                    { value: 'off', label: 'Hidden' },
-                  ]}
-                  value={showEdges ? 'on' : 'off'}
-                  onChange={(value) => onShowEdgesChange(value === 'on')}
-                  ariaLabel="Similarity links"
-                  testId="memory-graph-toggle-edges"
-                  fullWidth
-                />
-              </div>
-            </div>
-
-            {anyFacetAvailable ? (
-              <div>
-                <GroupLabel hint="Scope the map to part of the index. Filters combine with each other and with search, so each one narrows what the others left.">
-                  Filter
-                </GroupLabel>
-
-                {/* A STACK of rows rather than one control, because these are four
-                    independent questions. Each option is written to be
-                    self-describing ("Last 30 days", not "30d"), so the rows need no
-                    labels of their own and the panel stays narrow. Selects rather
-                    than segmented controls throughout: the Colour row already
-                    proved four labels overflow this width. */}
+    // Capped at the height it is given and scrolling as a whole past it: at the
+    // 900x600 floor the three open cards are taller than the window. Four cards,
+    // in the order a question is scoped: what is on the map, how it is divided,
+    // how it is drawn, then reference.
+    <div
+      className="pointer-events-auto flex max-h-full w-64 flex-col gap-3 overflow-y-auto"
+      data-testid="memory-graph-controls"
+    >
+      {showFilter ? (
+        <div className={CARD_CLASS} data-testid="memory-graph-filter-card">
+          <SectionHeader
+            icon={<Filter size={13} aria-hidden />}
+            label="Filter"
+            collapsed={filterCollapsed}
+            onToggle={() => setFilterCollapsed((current) => !current)}
+            testId="memory-graph-filter-toggle"
+          />
+          {!filterCollapsed ? (
+            // The scope of the map, and of any question asked of it.
+            <div className="space-y-3 px-3 pb-3">
+              {projectsPicker != null ? (
+                <div>
+                  <GroupLabel hint="Which projects the map shows and a question is asked across. Starts on the open project.">
+                    Projects
+                  </GroupLabel>
+                  {projectsPicker}
+                </div>
+              ) : null}
+              {anyFacetAvailable ? (
+                // A STACK of rows rather than one control, because these are
+                // independent questions. Each option is written to be
+                // self-describing ("Last 30 days", not "30d"), so the rows need no
+                // labels of their own and the panel stays narrow.
                 <div className="space-y-1.5">
                   {facetAvailability.since ? (
                     <Select
@@ -578,242 +551,314 @@ export function MemoryGraphControls({
                     </Select>
                   ) : null}
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
-            {/* Only the granularities that produce a DIFFERENT map. On a small
-                index every band clamps to the same region count, so the other
-                chips would repaint the identical picture. */}
-            {availableGranularities.length > 1 ? (
-              <div>
-                <GroupLabel hint="How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read.">
-                  Detail
-                </GroupLabel>
+      {showRegionList || showDetail ? (
+        <div className={CARD_CLASS}>
+          <SectionHeader
+            icon={<Shapes size={13} aria-hidden />}
+            label="Regions"
+            collapsed={regionsCollapsed}
+            onToggle={() => setRegionsCollapsed((current) => !current)}
+            testId="memory-graph-regions-toggle"
+          />
+          {!regionsCollapsed ? (
+            <div className="px-3 pb-3">
+              {/* Detail sits directly above the list it recuts. Only the
+                  granularities that produce a DIFFERENT map: on a small index
+                  every band clamps to the same region count, so the other chips
+                  would repaint the identical picture. */}
+              {showDetail ? (
+                <div className={showRegionList ? 'mb-3' : ''}>
+                  <GroupLabel hint="How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read.">
+                    Detail
+                  </GroupLabel>
+                  <SegmentedControl
+                    options={availableGranularities.map((value) => GRANULARITY_OPTIONS[value])}
+                    value={granularity}
+                    onChange={onGranularityChange}
+                    ariaLabel="Region detail"
+                    testId="memory-graph-granularity"
+                    fullWidth
+                  />
+                </div>
+              ) : null}
+
+              {showRegionList ? (
+                <>
+                  {/* The map's domains, each independently switchable. All on by
+                      default: the map means the whole index until the user says
+                      otherwise. */}
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="text-[11px] text-fg-muted">
+                      {shownRegionCount} of {regions.length} shown
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onFacetsChange({ ...facets, hiddenRegions: new Set() })}
+                        disabled={facets.hiddenRegions.size === 0}
+                        className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
+                        data-testid="memory-graph-regions-all"
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onFacetsChange({ ...facets, hiddenRegions: new Set(regions.map((region) => region.id)) })
+                        }
+                        disabled={shownRegionCount === 0}
+                        className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
+                        data-testid="memory-graph-regions-none"
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                  {/* Narrows the LIST, never the map. All and None stay scoped to
+                      every region, which is what the "N of M shown" line above
+                      them names; re-scoping them off a text box would be a hidden
+                      mode, and hiding regions the user cannot see is the one
+                      mistake this list can make. */}
+                  {regionFilterable ? (
+                    <div className="relative mb-1.5">
+                      <Search
+                        size={12}
+                        className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-muted"
+                        aria-hidden
+                      />
+                      <input
+                        value={regionQuery}
+                        onChange={(event) => setRegionQuery(event.target.value)}
+                        placeholder="Find a region"
+                        aria-label="Find a region"
+                        data-testid="memory-graph-region-filter"
+                        className="w-full rounded border border-edge/60 bg-surface-control/60 py-1 pl-7 pr-6 text-[11px] text-fg placeholder:text-fg-muted outline-none focus:border-edge-input"
+                      />
+                      {regionQuery ? (
+                        <button
+                          type="button"
+                          onClick={() => setRegionQuery('')}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
+                          aria-label="Clear region filter"
+                          data-testid="memory-graph-region-filter-clear"
+                        >
+                          <X size={12} />
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {/* Capped and scrollable: the region count reaches forty on a
+                      large index, and an uncapped list would push Display and
+                      Index a long way down. The count and the bulk actions stay
+                      OUTSIDE the scroller, since they are how you recover from a
+                      long list rather than part of it. */}
+                  <div className="max-h-[42vh] space-y-0.5 overflow-y-auto pr-0.5" data-testid="memory-graph-region-list">
+                    {listedRegions.length === 0 ? (
+                      <p
+                        className="px-1.5 py-2 text-[11px] text-fg-muted"
+                        data-testid="memory-graph-region-filter-empty"
+                      >
+                        No region matches that.
+                      </p>
+                    ) : regionGroups.map((group) => (
+                      <div key={group.name ?? 'regions'}>
+                        {grouped && group.name ? (
+                          <div
+                            className="px-1.5 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted"
+                            data-testid="memory-graph-region-group"
+                          >
+                            {group.name}
+                          </div>
+                        ) : null}
+                        {group.regions.map((region) => (
+                          <RegionRow
+                            key={region.id}
+                            label={region.label}
+                            count={region.count}
+                            hue={clusterHue(region.id)}
+                            on={!facets.hiddenRegions.has(region.id)}
+                            onToggle={() => toggleRegion(region.id)}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className={CARD_CLASS}>
+        <SectionHeader
+          icon={<SlidersHorizontal size={13} aria-hidden />}
+          label="Display"
+          collapsed={displayCollapsed}
+          onToggle={() => setDisplayCollapsed((current) => !current)}
+          testId="memory-graph-controls-toggle"
+        />
+
+        {!displayCollapsed ? (
+          <div className="space-y-3 px-3 pb-3">
+            <div>
+              <GroupLabel hint={COLOR_OPTIONS.find((option) => option.value === colorMode)?.hint}>
+                Color by
+              </GroupLabel>
+              {/* A Select, not a SegmentedControl: four labels overflowed the
+                  panel at every width tried, cutting the last option in half. */}
+              <Select
+                value={colorMode}
+                onChange={(event) => onColorModeChange(event.target.value as MemoryGraphColorMode)}
+                aria-label="Color conversations by"
+                data-testid="memory-graph-color-mode"
+              >
+                {/* Only the modes this corpus can actually express. An option
+                    that paints every node identically is a dead control. */}
+                {COLOR_OPTIONS.filter(
+                  (option) => availableColorModes.includes(option.value),
+                ).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </Select>
+            </div>
+
+            <div>
+              <GroupLabel>Show</GroupLabel>
+              <div className="space-y-1.5">
+                {/* "Regions", not "Labels": there are two kinds of label on this
+                    map, and the generic word stopped saying which one this row
+                    governs. */}
                 <SegmentedControl
-                  options={availableGranularities.map((value) => GRANULARITY_OPTIONS[value])}
-                  value={granularity}
-                  onChange={onGranularityChange}
-                  ariaLabel="Region detail"
-                  testId="memory-graph-granularity"
+                  options={[
+                    { value: 'on', label: 'Regions' },
+                    { value: 'off', label: 'Hidden' },
+                  ]}
+                  value={showLabels ? 'on' : 'off'}
+                  onChange={(value) => onShowLabelsChange(value === 'on')}
+                  ariaLabel="Region labels"
+                  testId="memory-graph-toggle-labels"
+                  fullWidth
+                />
+                {/* On by default. Titles are the map's main source of context
+                    clues, so this is an OFF switch for a map the user finds busy,
+                    not an opt-in they have to find. */}
+                <SegmentedControl
+                  options={[
+                    { value: 'on', label: 'Titles' },
+                    { value: 'off', label: 'Hidden' },
+                  ]}
+                  value={showTitles ? 'on' : 'off'}
+                  onChange={(value) => onShowTitlesChange(value === 'on')}
+                  ariaLabel="Conversation titles"
+                  testId="memory-graph-toggle-titles"
+                  fullWidth
+                />
+                <SegmentedControl
+                  options={[
+                    { value: 'on', label: 'Links' },
+                    { value: 'off', label: 'Hidden' },
+                  ]}
+                  value={showEdges ? 'on' : 'off'}
+                  onChange={(value) => onShowEdgesChange(value === 'on')}
+                  ariaLabel="Similarity links"
+                  testId="memory-graph-toggle-edges"
                   fullWidth
                 />
               </div>
-            ) : null}
-
-          </div>
-        ) : null}
-      </div>
-
-      <div className="rounded-lg border border-edge bg-surface-raised/80 backdrop-blur-md shadow-xl">
-        {regions.length > 1 ? (
-          <div>
-            <SectionHeader
-              icon={<Shapes size={13} aria-hidden />}
-              label="Regions"
-              collapsed={regionsCollapsed}
-              onToggle={() => setRegionsCollapsed((current) => !current)}
-              testId="memory-graph-regions-toggle"
-            />
-            {!regionsCollapsed ? (
-              <div className="px-3 pb-3">
-                {/* The map's domains, each independently switchable. All on by
-                    default: the map means the whole index until the user says
-                    otherwise. */}
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="text-[11px] text-fg-muted">
-                    {shownRegionCount} of {regions.length} shown
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onFacetsChange({ ...facets, hiddenRegions: new Set() })}
-                      disabled={facets.hiddenRegions.size === 0}
-                      className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
-                      data-testid="memory-graph-regions-all"
-                    >
-                      All
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onFacetsChange({ ...facets, hiddenRegions: new Set(regions.map((region) => region.id)) })
-                      }
-                      disabled={shownRegionCount === 0}
-                      className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
-                      data-testid="memory-graph-regions-none"
-                    >
-                      None
-                    </button>
-                  </div>
-                </div>
-                {/* Narrows the LIST, never the map. It sits below the count and
-                    the bulk actions and directly above the rows, so each control
-                    is next to what it acts on: All and None are scoped to every
-                    region, which is what the "N of M shown" line immediately above
-                    them names. Re-scoping those two off a text box would be a
-                    hidden mode - and hiding regions the user cannot see is the one
-                    mistake this list can make. */}
-                {regionFilterable ? (
-                  <div className="relative mb-1.5">
-                    <Search
-                      size={12}
-                      className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-muted"
-                      aria-hidden
-                    />
-                    <input
-                      value={regionQuery}
-                      onChange={(event) => setRegionQuery(event.target.value)}
-                      placeholder="Find a region"
-                      aria-label="Find a region"
-                      data-testid="memory-graph-region-filter"
-                      className="w-full rounded border border-edge/60 bg-surface-control/60 py-1 pl-7 pr-6 text-[11px] text-fg placeholder:text-fg-muted outline-none focus:border-edge-input"
-                    />
-                    {regionQuery ? (
-                      <button
-                        type="button"
-                        onClick={() => setRegionQuery('')}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
-                        aria-label="Clear region filter"
-                        data-testid="memory-graph-region-filter-clear"
-                      >
-                        <X size={12} />
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {/* Capped and scrollable: the region count is chosen from the data
-                    now and reaches forty on a large index, so an uncapped list
-                    would push Index off the bottom of a short window. The count and
-                    the bulk actions stay OUTSIDE the scroller, since they are how
-                    you recover from a long list rather than part of it. */}
-                <div className="max-h-[42vh] space-y-0.5 overflow-y-auto pr-0.5">
-                  {listedRegions.length === 0 ? (
-                    <p
-                      className="px-1.5 py-2 text-[11px] text-fg-muted"
-                      data-testid="memory-graph-region-filter-empty"
-                    >
-                      No region matches that.
-                    </p>
-                  ) : listedRegions.map((region) => (
-                    <RegionRow
-                      key={region.id}
-                      label={region.label}
-                      count={region.count}
-                      hue={clusterHue(region.id)}
-                      on={!facets.hiddenRegions.has(region.id)}
-                      onToggle={() => {
-                        const next = new Set(facets.hiddenRegions);
-                        if (next.has(region.id)) next.delete(region.id);
-                        else next.add(region.id);
-                        onFacetsChange({ ...facets, hiddenRegions: next });
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {/* The rule separates Index from Regions INSIDE this card, so it is drawn
-            only when there is a Regions section above it to separate from. */}
-        <div
-          ref={indexTriggerRef}
-          className={`relative ${regions.length > 1 ? 'border-t border-edge' : ''}`}
-        >
-          <SectionHeader
-            icon={<Database size={13} aria-hidden />}
-            label="Index"
-            collapsed={indexCollapsed}
-            onToggle={() => setIndexCollapsed((current) => !current)}
-            testId="memory-graph-index-toggle"
-            opens="side"
-          />
-          <OverlayPopover
-            open={!indexCollapsed}
-            popoverRef={indexPopoverRef}
-            style={indexPopoverStyle}
-            transformOrigin="left top"
-            // Its own card rather than a section of the panel's, because it now
-            // floats beside the panel rather than continuing it.
-            //
-            // popover-inflow-ok: flyout mode is positioned against its own
-            // `relative` parent, and this panel's ancestors up to the surface
-            // root set no overflow - the canvas that does is a SIBLING. Checked
-            // in both hosts: `MemoryGraphPage` and `PopOutMemoryRoot` mount the
-            // same body.
-            className="absolute z-30 w-64 rounded-lg border border-edge bg-surface-raised/95 backdrop-blur-md shadow-xl"
-            data-testid="memory-graph-index-panel"
-          >
-            <div className="px-3 py-3">
-              {/* A definition list, not the coverage STRIP. The strip is a
-                  full-width horizontal bar - icon, big number, two-line caption -
-                  and squeezing that into a 256px column produced a loose pile of
-                  glyphs and text that also printed 150 twice under two different
-                  labels. Aligned label/value rows are what a narrow column of
-                  reference numbers wants. */}
-              <dl className="divide-y divide-edge/60">
-                <IndexRow
-                  label="Conversations"
-                  value={coverage.totalDocumentsWithChunks}
-                  // Attached to the row it qualifies rather than trailing the list
-                  // as a second paragraph: it is about what "Conversations" counts.
-                  hint="Conversations this project has indexed. Says nothing about how much of the repository is indexed."
-                />
-                <IndexRow
-                  label="Chunks"
-                  value={coverage.totalChunks}
-                  hint="Passages the conversations were split into. Search matches a chunk, not a whole conversation."
-                />
-                {storageBytes > 0 ? (
-                  <IndexRow
-                    label="Size on disk"
-                    value={formatBytes(storageBytes)}
-                    hint="The indexed text plus its embedding vectors."
-                  />
-                ) : null}
-                <IndexRow label="Links" value={edgeCount} />
-                <IndexRow
-                  label="Embedded"
-                  value={`${Math.round(coverage.embeddedFraction * 100)}%`}
-                  tone={semanticAvailable ? 'ok' : 'problem'}
-                  hint={semanticAvailable ? undefined : 'The semantic layer is unavailable, so search is matching text only'}
-                />
-                {coverage.sourceMissingButSearchable.documents > 0 ? (
-                  <IndexRow
-                    label="Transcript deleted"
-                    value={coverage.sourceMissingButSearchable.documents}
-                    // Said plainly because it is NOT a problem: the text and the
-                    // embeddings are still indexed and still answer queries. On a
-                    // mature project this is most of the corpus.
-                    hint="The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable"
-                  />
-                ) : null}
-                {coverage.notYetIndexed.documents > 0 ? (
-                  <IndexRow
-                    label="Not yet indexed"
-                    value={coverage.notYetIndexed.documents}
-                    hint="The background sweep has not reached these conversations yet"
-                  />
-                ) : null}
-                {coverage.failed.documents > 0 ? (
-                  <IndexRow label="Failed to index" value={coverage.failed.documents} tone="problem" />
-                ) : null}
-                {building ? (
-                  <IndexRow label="Status" value="updating" />
-                ) : null}
-              </dl>
-
-              <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-snug text-fg-faint">
-                {/* Stated rather than implied. Position is a ~33%-faithful
-                    reduction of 1024 dimensions; the links are exact. */}
-                <span>Links are exact; position is approximate.</span>
-                <InfoHint text="Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee." />
-              </p>
             </div>
-          </OverlayPopover>
-        </div>
+          </div>
+        ) : null}
       </div>
+
+      <div ref={indexTriggerRef} className={CARD_CLASS}>
+        <SectionHeader
+          icon={<Database size={13} aria-hidden />}
+          label="Index"
+          collapsed={indexCollapsed}
+          onToggle={() => setIndexCollapsed((current) => !current)}
+          testId="memory-graph-index-toggle"
+          opens="side"
+        />
+      </div>
+      <OverlayPopover
+        open={!indexCollapsed}
+        popoverRef={indexPopoverRef}
+        portal
+        style={indexFlyoutPosition
+          ? { left: indexFlyoutPosition.left, top: indexFlyoutPosition.top }
+          // Measured before it is placed, so the first frame is invisible.
+          : { left: 0, top: 0, visibility: 'hidden' }}
+        transformOrigin="left top"
+        className="fixed z-[2147483646] w-64 rounded-lg border border-edge bg-surface-raised/95 backdrop-blur-md shadow-xl"
+        data-testid="memory-graph-index-panel"
+      >
+        <div className="px-3 py-3">
+          {/* A definition list, not the coverage STRIP: aligned label and value
+              rows are what a narrow column of reference numbers wants. */}
+          <dl className="divide-y divide-edge/60">
+            <IndexRow
+              label="Conversations"
+              value={coverage.totalDocumentsWithChunks}
+              hint="Conversations indexed for the projects on the map. Says nothing about how much of a repository is indexed."
+            />
+            <IndexRow
+              label="Chunks"
+              value={coverage.totalChunks}
+              hint="Passages the conversations were split into. Search matches a chunk, not a whole conversation."
+            />
+            {storageBytes > 0 ? (
+              <IndexRow
+                label="Size on disk"
+                value={formatBytes(storageBytes)}
+                hint="The indexed text plus its embedding vectors."
+              />
+            ) : null}
+            <IndexRow label="Links" value={edgeCount} />
+            <IndexRow
+              label="Embedded"
+              value={`${Math.round(coverage.embeddedFraction * 100)}%`}
+              tone={semanticAvailable ? 'ok' : 'problem'}
+              hint={semanticAvailable ? undefined : 'The semantic layer is unavailable, so search is matching text only'}
+            />
+            {coverage.sourceMissingButSearchable.documents > 0 ? (
+              <IndexRow
+                label="Transcript deleted"
+                value={coverage.sourceMissingButSearchable.documents}
+                // Said plainly because it is NOT a problem: the text and the
+                // embeddings are still indexed and still answer queries.
+                hint="The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable"
+              />
+            ) : null}
+            {coverage.notYetIndexed.documents > 0 ? (
+              <IndexRow
+                label="Not yet indexed"
+                value={coverage.notYetIndexed.documents}
+                hint="The background sweep has not reached these conversations yet"
+              />
+            ) : null}
+            {coverage.failed.documents > 0 ? (
+              <IndexRow label="Failed to index" value={coverage.failed.documents} tone="problem" />
+            ) : null}
+            {building ? (
+              <IndexRow label="Status" value="updating" />
+            ) : null}
+          </dl>
+
+          <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-snug text-fg-faint">
+            {/* Stated rather than implied. Position is a ~33%-faithful
+                reduction of 1024 dimensions; the links are exact. */}
+            <span>Links are exact; position is approximate.</span>
+            <InfoHint text="Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee." />
+          </p>
+        </div>
+      </OverlayPopover>
     </div>
   );
 }

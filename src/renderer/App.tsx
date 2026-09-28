@@ -1184,8 +1184,12 @@ if (import.meta.hot) {
     }
     // Memory graph Pattern B: re-read the cached projection + coverage from
     // main-process truth (no-ops while the surface is closed).
+    // The Projects list and every project in a scope are main-process truth too.
     if (useMemoryGraphStore.getState().graphOpen) {
-      void useMemoryGraphStore.getState().loadSnapshot();
+      const memoryGraph = useMemoryGraphStore.getState();
+      void memoryGraph.loadSnapshot();
+      void memoryGraph.loadProjects();
+      for (const scopedProjectId of memoryGraph.scopeProjectIds ?? []) void memoryGraph.loadScopeSnapshot(scopedProjectId);
     }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();

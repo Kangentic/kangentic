@@ -24,6 +24,7 @@
 import { create } from 'zustand';
 import type {
   MemoryAnswerHistoryTurn,
+  MemoryGraphProjectSummary,
   MemoryGraphSnapshot,
   MemoryRelatedTask,
 } from '../../shared/types';
@@ -124,6 +125,27 @@ interface MemoryGraphState {
   /** Point the surface at a different project without a rebuild: the cached
    *  projection for that project is served immediately if it exists. */
   pointAt: (projectId: string | null) => Promise<void>;
+
+  /** Every project the Projects picker can offer. Loaded when the graph opens. */
+  projects: MemoryGraphProjectSummary[];
+  loadProjects: () => Promise<void>;
+  /**
+   * Which projects the map shows and a question is asked across, or null to
+   * follow the open project, which is the default and the single-project path.
+   *
+   * Changing it keeps the chat: the scope behaves like a filter, so a follow-up
+   * is asked across the new scope. It resets when the graph closes.
+   */
+  scopeProjectIds: string[] | null;
+  setScope: (projectIds: string[] | null) => void;
+  /**
+   * The scoped projects' snapshots, by project id, when the scope is set. Kept
+   * apart from `snapshot` on purpose: that one is the open project's, served by
+   * the single-project loader, whose in-flight guard and project-switch handling
+   * would collapse several parallel loads into one.
+   */
+  scopeSnapshots: Record<string, MemoryGraphSnapshot | null>;
+  loadScopeSnapshot: (projectId: string) => Promise<void>;
 }
 
 // Pattern A: module-scope state preserved across HMR. These must round-trip as
@@ -146,6 +168,13 @@ let activeRequestId: string | null = import.meta.hot?.data?.memoryGraphActiveReq
 // The chat's id, which keys the agent's MCP URL so its searches reach this chat.
 // @ts-expect-error -- Vite handles import.meta.hot
 let chatId: string | null = import.meta.hot?.data?.memoryGraphChatId ?? null;
+// Scoped projects with a snapshot read in flight, and those asked for again
+// while it was: one more read runs when the first lands, so a completion push
+// that arrives mid-read is never lost.
+// hmr-safe: a read in flight across a Fast Refresh finishes into the pinned store, and at worst one completion push re-reads once more
+const scopeReadsInFlight = new Set<string>();
+// hmr-safe: pairs with scopeReadsInFlight above
+const scopeReadsPending = new Set<string>();
 
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
@@ -187,7 +216,7 @@ function createMemoryGraphStore() {
           get().projectId,
           options.granularity,
           turn.id,
-          { chatId, history, scopeDocKeys: options.scopeDocKeys ?? null },
+          { chatId, history, scopeDocKeys: options.scopeDocKeys ?? null, projectIds: get().scopeProjectIds ?? undefined },
         );
         if (!get().thread.some((entry) => entry.id === turn.id)) return;
         if (result.ok) {
@@ -232,6 +261,9 @@ function createMemoryGraphStore() {
       graphOpen: false,
       snapshot: null,
       projectId: null,
+      projects: [],
+      scopeProjectIds: null,
+      scopeSnapshots: {},
       followsCurrentProject: true,
       loading: false,
       loaded: false,
@@ -297,6 +329,7 @@ function createMemoryGraphStore() {
         set({ graphOpen: true, followsCurrentProject: projectId === null });
         get().attach();
         void get().loadSnapshot(projectId);
+        void get().loadProjects();
         // Start the embedding worker now, so the first question does not pay
         // its cold start before the related work can light the map. Embeds
         // nothing and takes no hold.
@@ -304,8 +337,68 @@ function createMemoryGraphStore() {
       },
 
       close: () => {
-        set({ graphOpen: false });
+        // The scope is a view choice for this visit; the next open starts on the
+        // open project again.
+        set({ graphOpen: false, scopeProjectIds: null, scopeSnapshots: {} });
         get().detach();
+      },
+
+      loadProjects: async () => {
+        try {
+          const projects = await window.electronAPI.memory.graphProjects();
+          set({ projects });
+        } catch {
+          // The picker stays hidden, and the map shows the open project.
+        }
+      },
+
+      setScope: (projectIds) => {
+        const openProjectId = get().projectId;
+        const unique = projectIds ? [...new Set(projectIds)] : null;
+        // Just the open project is the default path, not a scope.
+        const scope = unique && !(unique.length === 1 && unique[0] === openProjectId) ? unique : null;
+        if (!scope) {
+          set({ scopeProjectIds: null });
+          return;
+        }
+        // The open project's map is already here, so it is seeded rather than
+        // read again. Waiting on a read left the view with nothing to draw for
+        // a moment, which blanked the map and unmounted the picker mid-choice.
+        const own = get().snapshot;
+        const cached = get().scopeSnapshots;
+        const seeded = openProjectId && own && scope.includes(openProjectId) && !(openProjectId in cached)
+          ? { ...cached, [openProjectId]: own }
+          : cached;
+        set({ scopeProjectIds: scope, scopeSnapshots: seeded });
+        for (const id of scope) {
+          if (!(id in seeded)) void get().loadScopeSnapshot(id);
+        }
+      },
+
+      loadScopeSnapshot: async (projectId) => {
+        if (scopeReadsInFlight.has(projectId)) {
+          scopeReadsPending.add(projectId);
+          return;
+        }
+        scopeReadsInFlight.add(projectId);
+        try {
+          const snapshot = await window.electronAPI.memory.graphSnapshot(projectId);
+          // Dropped once the project has left the scope, or the graph closed.
+          if (!get().scopeProjectIds?.includes(projectId)) return;
+          set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: snapshot } }));
+          // Only a SELECTED project is ever asked to build, never one merely
+          // listed in the picker.
+          if (snapshot && (snapshot.stale || snapshot.projection === null) && !snapshot.building) {
+            void window.electronAPI.memory.refreshGraph(projectId);
+          }
+        } catch {
+          if (get().scopeProjectIds?.includes(projectId)) {
+            set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: null } }));
+          }
+        } finally {
+          scopeReadsInFlight.delete(projectId);
+          if (scopeReadsPending.delete(projectId)) void get().loadScopeSnapshot(projectId);
+        }
       },
 
       toggle: (projectId) => (get().graphOpen ? get().close() : get().open(projectId)),
@@ -331,6 +424,7 @@ function createMemoryGraphStore() {
           unsubscribeConfig = window.electronAPI.config.onChanged(() => {
             if (!get().graphOpen) return;
             void get().loadSnapshot(get().followsCurrentProject ? null : get().projectId);
+            for (const id of get().scopeProjectIds ?? []) void get().loadScopeSnapshot(id);
           });
         }
         // Progress on the turn in flight. Gated on the request id, so an event
@@ -353,6 +447,8 @@ function createMemoryGraphStore() {
         }
         if (unsubscribeChanged) return;
         unsubscribeChanged = window.electronAPI.memory.onGraphChanged((changedProjectId) => {
+          // A scoped project's map finished: re-read just that one.
+          if (get().scopeProjectIds?.includes(changedProjectId)) void get().loadScopeSnapshot(changedProjectId);
           const { projectId, followsCurrentProject } = get();
           if (followsCurrentProject) {
             // Following main: re-read with null so main re-resolves. A push for

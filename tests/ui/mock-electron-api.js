@@ -71,6 +71,12 @@
   // first-open state the surface must handle without looking broken. Seeded via
   // __mockPreConfigure (mirrors searchHits).
   let memoryGraphSnapshot = null;
+  // The Projects picker's list. Empty by default, which hides the picker (it
+  // needs two indexed projects); seeded via __mockPreConfigure.
+  let memoryGraphProjects = [];
+  // Per-project snapshots for a multi-project scope, keyed by project id.
+  // A project missing here falls back to memoryGraphSnapshot.
+  let memoryGraphSnapshotsByProject = {};
   // Memory Graph retrieval fixture; null yields an empty result set.
   let memoryGraphQueryResult = null;
   let memoryGraphAnswerResult = null;
@@ -4560,7 +4566,15 @@
           if (!window.__mockGraphSnapshotCalls) window.__mockGraphSnapshotCalls = [];
           window.__mockGraphSnapshotCalls.push({ projectId: projectId === undefined ? null : projectId });
         }
-        return Promise.resolve(memoryGraphSnapshot ? JSON.parse(JSON.stringify(memoryGraphSnapshot)) : null);
+        var keyed = projectId ? memoryGraphSnapshotsByProject[projectId] : undefined;
+        var source = keyed || memoryGraphSnapshot;
+        return Promise.resolve(source ? JSON.parse(JSON.stringify(source)) : null);
+      },
+      graphProjects: function () {
+        if (typeof window !== 'undefined') {
+          window.__mockGraphProjectsCalls = (window.__mockGraphProjectsCalls || 0) + 1;
+        }
+        return Promise.resolve(JSON.parse(JSON.stringify(memoryGraphProjects)));
       },
       refreshGraph: function (projectId) {
         if (typeof window !== 'undefined') {
@@ -5139,6 +5153,12 @@
     }
     if (result && result.memoryGraphSnapshot && typeof result.memoryGraphSnapshot === 'object') {
       memoryGraphSnapshot = result.memoryGraphSnapshot;
+    }
+    if (result && Array.isArray(result.memoryGraphProjects)) {
+      memoryGraphProjects = result.memoryGraphProjects;
+    }
+    if (result && result.memoryGraphSnapshotsByProject && typeof result.memoryGraphSnapshotsByProject === 'object') {
+      memoryGraphSnapshotsByProject = result.memoryGraphSnapshotsByProject;
     }
     if (result && result.memoryGraphQueryResult && typeof result.memoryGraphQueryResult === 'object') {
       memoryGraphQueryResult = result.memoryGraphQueryResult;

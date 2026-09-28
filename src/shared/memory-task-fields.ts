@@ -80,6 +80,17 @@ export interface MemoryTaskFacts {
   region: string | null;
   agent: string | null;
   model: string | null;
+  /**
+   * What the task's branch changed against its base, from git when the task
+   * last finalized (`captureGitChurn`). Recorded per TASK, not per conversation,
+   * so these come from the board's own rows.
+   */
+  filesChanged: number | null;
+  linesAdded: number | null;
+  linesRemoved: number | null;
+  /** The pull request linked to the task, and its state as last resolved. */
+  prNumber: number | null;
+  prState: string | null;
 }
 
 /**
@@ -95,8 +106,12 @@ export type MemoryTaskFieldKey =
   | 'duration'
   | 'tokens'
   | 'sessions'
+  | 'files'
+  | 'lines_added'
+  | 'lines_removed'
   | 'last_active'
   | 'outcome'
+  | 'pr'
   | 'region'
   | 'agent'
   | 'model';
@@ -260,6 +275,37 @@ export const MEMORY_TASK_FIELDS: ReadonlyArray<MemoryTaskField> = [
     sortValue: (facts) => facts.sessions ?? null,
   },
   {
+    key: 'files',
+    label: 'Files',
+    kind: 'measure',
+    selectable: true,
+    describe: 'how many files the task\'s branch changed against its base, from git. '
+      + 'Blank when the task never recorded it.',
+    cell: (facts) => (facts.filesChanged == null ? '' : String(facts.filesChanged)),
+    display: (facts) => (facts.filesChanged == null ? null : String(facts.filesChanged)),
+    sortValue: (facts) => facts.filesChanged ?? null,
+  },
+  {
+    key: 'lines_added',
+    label: 'Lines added',
+    kind: 'measure',
+    selectable: true,
+    describe: 'lines of code the task\'s branch added against its base, from git.',
+    cell: (facts) => (facts.linesAdded == null ? '' : String(facts.linesAdded)),
+    display: (facts) => (facts.linesAdded == null ? null : `+${facts.linesAdded}`),
+    sortValue: (facts) => facts.linesAdded ?? null,
+  },
+  {
+    key: 'lines_removed',
+    label: 'Lines removed',
+    kind: 'measure',
+    selectable: true,
+    describe: 'lines of code the task\'s branch removed against its base, from git.',
+    cell: (facts) => (facts.linesRemoved == null ? '' : String(facts.linesRemoved)),
+    display: (facts) => (facts.linesRemoved == null ? null : `-${facts.linesRemoved}`),
+    sortValue: (facts) => facts.linesRemoved ?? null,
+  },
+  {
     key: 'last_active',
     label: 'Last active',
     kind: 'time',
@@ -280,6 +326,19 @@ export const MEMORY_TASK_FIELDS: ReadonlyArray<MemoryTaskField> = [
       + 'was dropped without ever finishing.',
     cell: (facts) => facts.outcome ?? '',
     display: (facts) => (facts.outcome ? TASK_OUTCOME_LABELS[facts.outcome] : null),
+    sortValue: () => null,
+  },
+  {
+    key: 'pr',
+    label: 'Pull request',
+    kind: 'dimension',
+    selectable: true,
+    // Written "PR 417", never "#417": `#N` names a TASK everywhere in the chat,
+    // and a PR number in that form would render as a mark for a different task.
+    describe: 'the pull request linked to the task and its state, like "PR 417 merged". '
+      + 'Write a pull request as PR 417, never #417, since #N always names a task.',
+    cell: (facts) => (facts.prNumber == null ? '' : `PR ${facts.prNumber}${facts.prState ? ` ${facts.prState}` : ''}`),
+    display: (facts) => (facts.prNumber == null ? null : `PR ${facts.prNumber}${facts.prState ? ` ${facts.prState}` : ''}`),
     sortValue: () => null,
   },
   {

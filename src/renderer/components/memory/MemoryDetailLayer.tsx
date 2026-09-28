@@ -74,8 +74,9 @@ interface MemoryDetailLayerProps {
    * status bar, so its layer runs to the frame's bottom edge.
    */
   bottomInsetClass: string;
-  /** How "Open task" reaches the board, or absent where there is no board. */
-  onRevealTask?: (taskId: string) => void;
+  /** How "Open task" reaches the board, or absent where there is no board. The
+   *  project is set for a task outside the open one. */
+  onRevealTask?: (taskId: string, projectId?: string) => void;
 }
 
 export function MemoryDetailLayer({ bottomInsetClass, onRevealTask }: MemoryDetailLayerProps) {

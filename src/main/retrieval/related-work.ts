@@ -244,10 +244,10 @@ export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
  * `MIN_HANDED`..`MAX_HANDED`, with any pinned task added (a follow-up keeps the
  * tasks the earlier answer was about, or "of those" has nothing to refer to).
  */
-export function selectHandedTasks(
-  ranked: ReadonlyArray<RelatedWorkTask>,
+export function selectHandedTasks<Task extends RelatedWorkTask>(
+  ranked: ReadonlyArray<Task>,
   pinnedKeys: ReadonlySet<string> = new Set(),
-): RelatedWorkTask[] {
+): Task[] {
   const top = ranked[0]?.score ?? 0;
   let count = ranked.filter((task) => task.score >= RELATED_FLOOR * top).length;
   count = Math.min(MAX_HANDED, Math.max(MIN_HANDED, count), ranked.length);
@@ -271,6 +271,12 @@ export interface SearchRelatedWorkInput {
   pinnedKeys?: ReadonlySet<string>;
   embedWaitMs?: number;
   getDb?: (projectId: string) => Database.Database;
+  /**
+   * The question's vectors, already embedded from `relatedQueryTexts`. A search
+   * across projects embeds once and passes them to each project's search; the
+   * embedder is still passed, for its noise floor.
+   */
+  queryVectors?: ReadonlyArray<Float32Array>;
 }
 
 export interface RelatedWork {
@@ -283,6 +289,29 @@ export interface RelatedWork {
   /** False when no query vector was available, so only keywords ran. */
   semantic: boolean;
   elapsedMs: number;
+}
+
+/**
+ * What the question is embedded as: the question itself, and its content words
+ * with the earlier questions' (so a follow-up searches the same subject).
+ */
+export function relatedQueryTexts(question: string, anchorQuestions: ReadonlyArray<string>): string[] {
+  const topic = contentWords(`${question} ${anchorQuestions.join(' ')}`).join(' ');
+  return [question.trim(), topic].filter((text, index, all) => text && all.indexOf(text) === index);
+}
+
+/** The query vectors, or none when there is no embedder or it does not answer in time. */
+async function embedQuery(
+  embedder: Embedder | null,
+  queryTexts: ReadonlyArray<string>,
+  embedWaitMs: number | undefined,
+): Promise<ReadonlyArray<Float32Array>> {
+  if (!embedder || queryTexts.length === 0) return [];
+  try {
+    return (await embedder.embed([...queryTexts], { timeoutMs: embedWaitMs, isQuery: true })) ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /** A passage as the prompt shows it: one line, bounded. */
@@ -314,17 +343,8 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
   }
 
   const anchors = (input.anchorQuestions ?? []).join(' ');
-  const topic = contentWords(`${input.question} ${anchors}`).join(' ');
-  const queryTexts = [input.question.trim(), topic].filter((text, index, all) => text && all.indexOf(text) === index);
-
-  let vectors: Float32Array[] = [];
-  if (input.embedder && queryTexts.length > 0) {
-    try {
-      vectors = (await input.embedder.embed(queryTexts, { timeoutMs: input.embedWaitMs, isQuery: true })) ?? [];
-    } catch {
-      vectors = [];
-    }
-  }
+  const vectors = input.queryVectors
+    ?? await embedQuery(input.embedder, relatedQueryTexts(input.question, input.anchorQuestions ?? []), input.embedWaitMs);
 
   // Best relevance per chunk across both query vectors.
   const noiseFloor = input.embedder?.noiseFloor ?? 0;
@@ -382,6 +402,103 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
   }
 
   return { ranked, handed, passages, semantic: vectors.length > 0, elapsedMs: Date.now() - started };
+}
+
+/** A related task, and the project it was found in. */
+export interface ProjectRelatedWorkTask extends RelatedWorkTask {
+  projectId: string;
+}
+
+/**
+ * Related work that may span projects. Passages are keyed by `passageKey`,
+ * not by chunk id, because chunk ids repeat between project databases.
+ */
+export interface ProjectRelatedWork {
+  ranked: ProjectRelatedWorkTask[];
+  handed: ProjectRelatedWorkTask[];
+  passages: Map<string, string>;
+  semantic: boolean;
+  elapsedMs: number;
+}
+
+/** Where a task's best passage is kept in `ProjectRelatedWork.passages`. */
+export function passageKey(projectId: string, chunkId: number): string {
+  return `${projectId}:${chunkId}`;
+}
+
+/** One project's related work, stamped with that project. */
+export function toProjectRelatedWork(work: RelatedWork, projectId: string): ProjectRelatedWork {
+  const stamp = (task: RelatedWorkTask): ProjectRelatedWorkTask => ({ ...task, projectId });
+  return {
+    ranked: work.ranked.map(stamp),
+    handed: work.handed.map(stamp),
+    passages: new Map([...work.passages].map(([chunkId, text]) => [passageKey(projectId, chunkId), text])),
+    semantic: work.semantic,
+    elapsedMs: work.elapsedMs,
+  };
+}
+
+export interface SearchRelatedWorkAcrossInput extends Omit<SearchRelatedWorkInput, 'projectId' | 'nodes' | 'queryVectors'> {
+  /** Each project in the question's scope, with its nodes inside the map's filters. */
+  projects: ReadonlyArray<{ projectId: string; nodes: ReadonlyArray<RelatedWorkNode> }>;
+}
+
+/**
+ * Find the related work for a question across several projects.
+ *
+ * The question is embedded ONCE, and each project's index searched with those
+ * vectors, so the cost of a second project is its own search and not another
+ * model call. The ranked lists merge by raw score, which compares across
+ * projects because every project is embedded by the same model and scored
+ * against the same vectors; strength is recomputed against the merged best,
+ * and the handed set chosen from the merged ranking by the single-project rule.
+ * A project that fails to search drops out rather than failing the question.
+ */
+export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInput): Promise<ProjectRelatedWork> {
+  const started = Date.now();
+  const anchorQuestions = input.anchorQuestions ?? [];
+  const vectors = await embedQuery(input.embedder, relatedQueryTexts(input.question, anchorQuestions), input.embedWaitMs);
+
+  const ranked: ProjectRelatedWorkTask[] = [];
+  const passages = new Map<string, string>();
+  for (const project of input.projects) {
+    if (project.nodes.length === 0) continue;
+    // Each search is synchronous SQLite (a KNN over the whole project, about
+    // 350 ms on the largest index), and with the vectors already in hand
+    // nothing in it awaits. Yielding between projects lets terminal output and
+    // IPC through, so asking across every project freezes main for one
+    // project's search at a time, never all of them back to back.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    let work: RelatedWork;
+    try {
+      work = await searchRelatedWork({
+        question: input.question,
+        anchorQuestions,
+        projectId: project.projectId,
+        nodes: project.nodes,
+        embedder: input.embedder,
+        queryVectors: vectors,
+        embedWaitMs: input.embedWaitMs,
+        getDb: input.getDb,
+      });
+    } catch {
+      continue;
+    }
+    const stamped = toProjectRelatedWork(work, project.projectId);
+    ranked.push(...stamped.ranked);
+    for (const [key, text] of stamped.passages) passages.set(key, text);
+  }
+
+  ranked.sort((left, right) => right.score - left.score);
+  const top = ranked[0]?.score ?? 0;
+  const rescored = ranked.map((task) => ({ ...task, strength: top > 0 ? task.score / top : 0 }));
+  return {
+    ranked: rescored,
+    handed: selectHandedTasks(rescored, input.pinnedKeys),
+    passages,
+    semantic: vectors.length > 0,
+    elapsedMs: Date.now() - started,
+  };
 }
 
 /** A rollup node, plus the session that opens it. */

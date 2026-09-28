@@ -7,12 +7,17 @@
  * turn's text: a tool-calling answer narrates its own search first ("Let me
  * look that up"), the live stream shows that as progress, and repeating it
  * under the real answer is the bug the extractor guards against.
+ *
+ * The one deliberate throw: a run the CLI itself reports as FAILED
+ * (`is_error: true` on its result line). That is not a stream to degrade, it is
+ * an error message, and returned as text it read as the agent's reply.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   parseAnswerStreamLine,
   extractStreamedAnswer,
+  extractLastTurnAnswer,
   createAnswerStreamReducer,
 } from '../../src/main/agent/shared/auto-name';
 
@@ -165,6 +170,32 @@ describe('extractStreamedAnswer', () => {
 
   it('returns nothing for an empty stream', () => {
     expect(extractStreamedAnswer('')).toBe('');
+  });
+
+  it('throws the CLI\'s own message when it reports the run as failed', () => {
+    // Captured shape from an unknown model: the run ends on a result line with
+    // `is_error: true` whose text is the error. Returned, it read as the agent's
+    // reply, "Run --model to pick a different model" and all; thrown, the chat
+    // shows its failed turn with this message as the reason and Try again.
+    const failedRun = [
+      JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({
+        type: 'result', subtype: 'success', is_error: true,
+        result: 'There\'s an issue with the selected model (claude-no-such-model-9).',
+      }),
+    ].join('\n');
+    expect(() => extractStreamedAnswer(failedRun)).toThrow(/issue with the selected model/);
+    expect(() => extractLastTurnAnswer(failedRun)).toThrow(/issue with the selected model/);
+  });
+
+  it('still fails, with a generic message, when a failed result carries no text', () => {
+    const failedRun = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true });
+    expect(() => extractStreamedAnswer(failedRun)).toThrow('the agent reported an error');
+  });
+
+  it('treats is_error: false as an ordinary answer', () => {
+    const stdout = JSON.stringify({ type: 'result', is_error: false, result: 'Fine.' });
+    expect(extractStreamedAnswer(stdout)).toBe('Fine.');
   });
 
   it('reads complete turns only, never the deltas that spelled them', () => {

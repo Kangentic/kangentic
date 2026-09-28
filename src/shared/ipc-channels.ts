@@ -556,6 +556,10 @@ export const IPC = {
   /** Cheap read of the cached Memory Graph projection plus its coverage strip.
    *  Never runs the projection pass - see graph-service. */
   MEMORY_GRAPH_SNAPSHOT: 'memory:graphSnapshot',
+  /** Every project with its indexed conversation count, for the Knowledge
+   *  Graph's Projects picker. An index-only count per project, so it stays in
+   *  single-digit milliseconds across a machine's projects. */
+  MEMORY_GRAPH_PROJECTS: 'memory:graphProjects',
   /** Ask for a background refresh of one project's projection. Returns
    *  immediately; completion arrives via MEMORY_GRAPH_CHANGED. */
   MEMORY_GRAPH_REFRESH: 'memory:graphRefresh',
