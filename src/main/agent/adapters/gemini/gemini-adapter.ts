@@ -7,9 +7,11 @@ import { parseGeminiTranscript, locateGeminiTranscriptFile } from './transcript-
 import { migrateGeminiProjectData } from './project-relocation';
 import { GeminiStatusParser } from './status-parser';
 import { discoverGeminiCapabilities } from './capability-discovery';
+import { randomUUID } from 'node:crypto';
 import { runCliPrintSummarize,
-  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+  runCliPrintAnswer, buildSummarizePrompt, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/auto-name';
+import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -256,16 +258,28 @@ export class GeminiAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+  /**
+   * Streams (measured on 0.61.0: `stream-json` writes assistant text as
+   * `message` deltas), but does not search. A headless plan-mode run never
+   * offers an MCP tool, not even from a trusted folder with the server marked
+   * `trust: true` (probed: the server connected and the tool was "not
+   * registered"), and asked to search, the model handed the question to its
+   * own `codebase_investigator` subagent.
+   */
+  readonly answerCapabilities = { streaming: true, search: false, model: true, effort: false };
 
   /**
    * Answer a question from retrieved conversation passages (Memory Graph Ask).
    *
    * Gemini's `plan` approval mode is its read-only research mode.
    *
-   * `--skip-trust`, because the answer runs in a fresh directory Gemini has
-   * never seen, and without it the headless run stops at the folder-trust check
-   * instead of answering (measured: it answered once the flag was added).
+   * `--skip-trust`, because the answer runs in a directory Gemini has never
+   * been asked to trust, and without it the headless run stops at the
+   * folder-trust check instead of answering (measured: it answered once the
+   * flag was added).
+   *
+   * `--session-id` names the chat Gemini saves, so it can be removed after:
+   * Gemini keeps every chat for 30 days with no switch to turn that off.
    *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
@@ -275,15 +289,33 @@ export class GeminiAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
-    return runCliPrintAnswer({
-      cliPath,
-      // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error.
-      args: ['--skip-trust', '--output-format', 'text', '--approval-mode', 'plan', ...(model ? ['--model', model] : [])],
-      prompt,
-      cwd,
-    });
+    const onEvent = options?.onEvent;
+    const sessionId = randomUUID();
+    try {
+      return await runCliPrintAnswer({
+        cliPath,
+        // The model flag is OMITTED when none is chosen: passing an
+        // empty value is an error.
+        args: [
+          '--skip-trust',
+          '--output-format', 'stream-json',
+          '--approval-mode', 'plan',
+          '--session-id', sessionId,
+          ...(model ? ['--model', model] : []),
+        ],
+        prompt,
+        cwd,
+        extractRaw: extractGeminiAnswer,
+        outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+        ...(onEvent
+          ? { onChunk: forwardStreamLines((line) => { for (const event of geminiAnswerEvents(line)) onEvent(event); }) }
+          : {}),
+      });
+    } finally {
+      await removeGeminiChat(cwd, sessionId);
+    }
   }
 
   /**

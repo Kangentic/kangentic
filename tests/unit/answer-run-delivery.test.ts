@@ -211,9 +211,13 @@ describe('answer run flags and prompt delivery', () => {
     expect(options.args).toEqual(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'some-model']);
   });
 
-  it('Gemini skips the folder-trust check the scratch directory would otherwise hit', async () => {
+  it('Gemini streams in plan mode, past the folder-trust check, under a session id it can remove', async () => {
     const options = await optionsFor(new GeminiAdapter());
-    expect(options.args).toEqual(['--skip-trust', '--output-format', 'text', '--approval-mode', 'plan', '--model', 'some-model']);
+    const sessionIdIndex = options.args.indexOf('--session-id');
+    expect(options.args.slice(0, 5)).toEqual(['--skip-trust', '--output-format', 'stream-json', '--approval-mode', 'plan']);
+    expect(options.args[sessionIdIndex + 1]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(options.args.slice(-2)).toEqual(['--model', 'some-model']);
+    expect(options.promptVia ?? 'stdin').toBe('stdin');
   });
 
   it('Qwen answers in plan mode without saving the question as a chat', async () => {
