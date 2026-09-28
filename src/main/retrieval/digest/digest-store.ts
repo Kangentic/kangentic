@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { DigestChoiceCount } from '../../../shared/types';
 
 /** The `memory_task_digests` table: one digest per finished task. */
 export class DigestStore {
@@ -32,19 +33,74 @@ export class DigestStore {
     return new Map(rows.map((row) => [row.taskId, { digest: row.digest, createdAt: row.createdAt }]));
   }
 
-  write(entry: { taskId: string; digest: string; inputHash: string; agent: string; model: string | null; createdAt: string }): void {
+  write(entry: {
+    taskId: string;
+    digest: string;
+    inputHash: string;
+    agent: string;
+    model: string | null;
+    effort: string | null;
+    createdAt: string;
+  }): void {
     this.db
       .prepare(
-        `INSERT INTO memory_task_digests (task_id, digest, input_hash, agent, model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO memory_task_digests (task_id, digest, input_hash, agent, model, effort, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(task_id) DO UPDATE SET
            digest = excluded.digest,
            input_hash = excluded.input_hash,
            agent = excluded.agent,
            model = excluded.model,
+           effort = excluded.effort,
            created_at = excluded.created_at`,
       )
-      .run(entry.taskId, entry.digest, entry.inputHash, entry.agent, entry.model, entry.createdAt);
+      .run(entry.taskId, entry.digest, entry.inputHash, entry.agent, entry.model, entry.effort, entry.createdAt);
+  }
+
+  /**
+   * The finished tasks' digests counted by what wrote them (agent, model,
+   * effort), most first. What Settings names in "written with", and what a
+   * rewrite compares against. A digest outlives its task leaving Done, so only
+   * tasks back in a Done column count.
+   */
+  writtenWith(): DigestChoiceCount[] {
+    return this.db
+      .prepare(
+        `SELECT d.agent AS agent, d.model AS model, d.effort AS effort, COUNT(*) AS count
+         FROM memory_task_digests d
+         JOIN tasks t ON t.id = d.task_id JOIN swimlanes w ON w.id = t.swimlane_id
+         WHERE w.role = 'done'
+         GROUP BY d.agent, d.model, d.effort
+         ORDER BY count DESC`,
+      )
+      .all() as DigestChoiceCount[];
+  }
+
+  /**
+   * Mark every finished task's digest NOT written with `choice` for rewriting,
+   * by clearing what it was written from, so the next pass takes it as out of
+   * date. The digest itself stays, and stays searchable, until its new one is
+   * written over it. Returns how many were marked.
+   */
+  markForRewrite(choice: { agent: string; model: string | null; effort: string | null }): number {
+    return this.db
+      .prepare(
+        `UPDATE memory_task_digests SET input_hash = ''
+         WHERE task_id IN (SELECT t.id FROM tasks t JOIN swimlanes w ON w.id = t.swimlane_id WHERE w.role = 'done')
+           AND NOT (agent = ? AND model IS ? AND effort IS ?)`,
+      )
+      .run(choice.agent, choice.model, choice.effort).changes;
+  }
+
+  /** Finished tasks' digests marked for rewriting and not rewritten yet. */
+  awaitingRewrite(): number {
+    return (this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM memory_task_digests d
+         JOIN tasks t ON t.id = d.task_id JOIN swimlanes w ON w.id = t.swimlane_id
+         WHERE w.role = 'done' AND d.input_hash = ''`,
+      )
+      .get() as { count: number }).count;
   }
 
   /** Remove the digests of tasks that no longer exist. */

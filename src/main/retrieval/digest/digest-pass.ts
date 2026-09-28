@@ -4,10 +4,12 @@ import { buildDigestPrompt, DIGEST_BATCH_SIZE, parseDigestReply } from './digest
 import { readDigestCandidates } from './digest-sources';
 import { DigestStore } from './digest-store';
 
-/** Writes one batch's digests: the answering agent's read-only answer run. */
+/** Writes one batch's digests: the digest agent's read-only answer run. */
 export interface DigestWriter {
   agent: string;
   model: string | null;
+  /** The effort level the run passes, recorded with each digest. */
+  effort: string | null;
   write: (prompt: string) => Promise<string>;
 }
 
@@ -111,6 +113,7 @@ export async function runDigestPass(
           inputHash: candidate.hash,
           agent: writer.agent,
           model: writer.model,
+          effort: writer.effort,
           createdAt: deps.now(),
         });
         result.written += 1;

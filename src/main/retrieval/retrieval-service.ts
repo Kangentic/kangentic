@@ -35,6 +35,7 @@ import { sweepChangeRecords } from './change/change-indexer';
 import { graphService } from './graph/graph-service';
 import { createDigestScheduler } from './digest/digest-scheduler';
 import { readDigestFingerprint } from './digest/digest-sources';
+import { DigestStore } from './digest/digest-store';
 import { resolveAnswerRun } from './answer-run';
 import { taskDigestsOn } from '../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
@@ -44,7 +45,7 @@ import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embe
 import { requiresUserInteraction } from '../../shared/activity-state';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
-import type { MemoryStatus, MemorySemanticState, MemoryModelState, MemoryDigestStatus, Project, ActivityState } from '../../shared/types';
+import type { MemoryStatus, MemorySemanticState, MemoryModelState, MemoryDigestStatus, DigestChoice, Project, ActivityState } from '../../shared/types';
 
 /** Grace period after a finalize event before indexing, so the agent CLI has
  *  flushed its native history file.
@@ -288,11 +289,13 @@ const digestScheduler = createDigestScheduler<IpcContext>({
   readFingerprint: (_context, projectId) => readDigestFingerprint(getProjectDb(projectId)),
   resolveWriter: async (context, projectId) => {
     const resolved = await resolveAnswerRun(context, projectId, 'digest', { withSearch: false, job: 'digest' });
+    digestChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
     if (!resolved.ok) return null;
     const run = resolved.run;
     return {
       agent: run.agentName,
       model: run.model,
+      effort: run.effort,
       write: (prompt) => withAnswerRunDirectory((runDirectory) => (
         run.answerFromContext(prompt, run.cliPath, run.answerHome, run.model, { effort: run.effort, runDirectory })
       )),
@@ -309,21 +312,59 @@ const digestScheduler = createDigestScheduler<IpcContext>({
 });
 
 /**
- * The open project's digests for the Task digests card's status line: two
- * index reads (under 0.1 ms measured) and the scheduler's own state. Read on
- * the Search tab's status poll, only while digests are on.
+ * What a digest would be written with now: the digest agent, its model and the
+ * effort main resolves for it, or null while digests wait for a choice. Kept
+ * here because a caught-up board never resolves a writer (the fingerprint skip),
+ * so a settings change refreshes it (`refreshDigestChoice`) rather than waiting
+ * for a pass. The status poll reads it without resolving anything.
+ */
+let digestChoice: DigestChoice | null = null;
+let digestChoiceRefresh: Promise<void> | null = null;
+
+/** Re-resolve `digestChoice` from the current settings. One at a time. */
+function refreshDigestChoice(context: IpcContext): void {
+  if (disposed || digestChoiceRefresh) return;
+  const projectId = context.currentProjectId;
+  if (!projectId || !digestsEnabled(context)) {
+    digestChoice = null;
+    return;
+  }
+  digestChoiceRefresh = resolveAnswerRun(context, projectId, 'digest', { withSearch: false, job: 'digest' })
+    .then((resolved) => {
+      digestChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
+    })
+    .catch(() => {
+      digestChoice = null;
+    })
+    .finally(() => {
+      digestChoiceRefresh = null;
+    });
+}
+
+/**
+ * The open project's digests for the Task digests card's status and rewrite
+ * lines: a few index reads (under 0.1 ms each measured) and the scheduler's
+ * own state. Read on the Search tab's status poll, only while digests are on.
  */
 function digestStatusFor(context: IpcContext): MemoryDigestStatus | undefined {
   const projectId = context.currentProjectId;
   if (!projectId || !digestsEnabled(context)) return undefined;
   try {
-    const counts = new RetrievalStore(getProjectDb(projectId)).digestCounts();
+    const db = getProjectDb(projectId);
+    const counts = new RetrievalStore(db).digestCounts();
+    const digests = new DigestStore(db);
     const scheduler = digestScheduler.status(projectId);
+    // Never resolved yet this run (or waiting on a choice): resolve it for the
+    // next poll. A settings change refreshes it too.
+    if (digestChoice === null) refreshDigestChoice(context);
     return {
       ...counts,
       skipped: digestScheduler.skipped(projectId),
       state: scheduler.state,
       retryInMs: scheduler.retryAtMs === null ? null : Math.max(0, scheduler.retryAtMs - Date.now()),
+      writtenWith: digests.writtenWith(),
+      choice: digestChoice,
+      awaitingRewrite: digests.awaitingRewrite(),
     };
   } catch {
     return undefined;
@@ -480,10 +521,37 @@ export const retrievalService = {
    *  piggyback the gate on. */
   reconcileEmbedWorker(context: IpcContext): void {
     embedEngine.reconcile(context);
-    // The same memory settings decide digests: choosing an answering agent,
-    // or turning digests back on, starts the backfill without a re-open.
+    // The same memory settings decide digests: choosing a digest agent, or
+    // turning digests back on, starts the backfill without a re-open, and
+    // what a digest is written with may have changed.
     const projectId = context.currentProjectId;
+    digestChoice = null;
+    refreshDigestChoice(context);
     if (projectId) digestScheduler.request(context, projectId);
+  },
+
+  /**
+   * The Task digests card's Rewrite: mark the project's finished-task digests
+   * written with anything but what a digest would be written with now, and
+   * start the pass that rewrites them. The choice is resolved here, not taken
+   * from the renderer, so what is marked is exactly what the writer will not
+   * match. Each marked digest keeps its text, and stays searchable, until its
+   * new one lands.
+   */
+  async rewriteDigests(context: IpcContext, projectId: string): Promise<{ marked: number }> {
+    if (disposed || !digestsEnabled(context)) return { marked: 0 };
+    const resolved = await resolveAnswerRun(context, projectId, 'digest', { withSearch: false, job: 'digest' });
+    if (!resolved.ok) return { marked: 0 };
+    const choice = { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort };
+    digestChoice = choice;
+    const marked = new DigestStore(getProjectDb(projectId)).markForRewrite(choice);
+    console.log(`[retrieval] digests project=${projectId} marked for rewrite=${marked}`);
+    if (marked > 0) {
+      // Nothing on the board moved, so the fingerprint would call it caught up.
+      digestScheduler.invalidate(projectId);
+      digestScheduler.request(context, projectId);
+    }
+    return { marked };
   },
 
   /** Spawn + init the embed worker ahead of a question (Knowledge Graph open),

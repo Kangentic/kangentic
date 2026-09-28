@@ -62,6 +62,12 @@ export interface DigestScheduler<Context> {
   skipped: (projectId: string) => number;
   /** What the scheduler is doing for a project, for the Task digests card. */
   status: (projectId: string) => DigestSchedulerStatus;
+  /**
+   * Forget that a project is caught up, so its next request runs a pass even
+   * though nothing on the board moved. For a change the fingerprint cannot
+   * see: digests marked for rewriting.
+   */
+  invalidate: (projectId: string) => void;
   dispose: () => void;
   /** True while a pass is running (for tests). */
   readonly busy: boolean;
@@ -179,6 +185,9 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
       if (running && runningProjectId === projectId) return { state: 'writing', retryAtMs: null };
       const retryAtMs = retryAtByProject.get(projectId);
       return retryAtMs === undefined ? { state: 'idle', retryAtMs: null } : { state: 'retrying', retryAtMs };
+    },
+    invalidate: (projectId) => {
+      caughtUpAt.delete(projectId);
     },
     dispose: () => {
       disposed = true;

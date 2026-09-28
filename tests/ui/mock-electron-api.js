@@ -4605,6 +4605,23 @@
         }
         return Promise.resolve();
       },
+      rewriteDigests: function (projectId) {
+        // Recorded for the rewrite spec; the answer is the digests written some
+        // other way in the seeded status, which is what main would mark.
+        if (typeof window !== 'undefined') {
+          if (!window.__mockRewriteDigestsCalls) window.__mockRewriteDigestsCalls = [];
+          window.__mockRewriteDigestsCalls.push({ projectId: projectId });
+        }
+        var digests = memoryStatus && memoryStatus.digests;
+        var marked = 0;
+        if (digests && digests.choice && digests.writtenWith) {
+          digests.writtenWith.forEach(function (entry) {
+            var same = entry.agent === digests.choice.agent && entry.model === digests.choice.model && entry.effort === digests.choice.effort;
+            if (!same) marked += entry.count;
+          });
+        }
+        return Promise.resolve({ marked: marked });
+      },
       graphSnapshot: function (projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockGraphSnapshotCalls) window.__mockGraphSnapshotCalls = [];

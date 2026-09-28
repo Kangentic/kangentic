@@ -220,6 +220,16 @@ export function registerSearchHandlers(context: IpcContext): void {
     },
   );
 
+  // The Task digests card's Rewrite: mark the project's digests written with
+  // anything but the current choice, and start the pass that rewrites them.
+  ipcMain.handle(
+    IPC.MEMORY_REWRITE_DIGESTS,
+    async (_event, projectId: string): Promise<{ marked: number }> => {
+      if (typeof projectId !== 'string' || !context.projectRepo.list().some((entry) => entry.id === projectId)) return { marked: 0 };
+      return retrievalService.rewriteDigests(context, projectId);
+    },
+  );
+
   // A projection pass finishing is pushed rather than polled: the pass can take
   // a minute on a cold corpus, and MemoryTab already polls memory status on an
   // interval - a second poller for the same subsystem is what this avoids.

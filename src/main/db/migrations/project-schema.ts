@@ -894,11 +894,13 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec('CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 
   // Task digests: one or two sentences per finished task, written by the
-  // answering agent (`src/main/retrieval/digest/`). `input_hash` is what the
-  // digest was written from, so a task whose input moved is rewritten.
-  // Keyed by task and removed with it by the digest sweep; a digest is text an
-  // agent wrote, not something the index can re-derive, so nothing else
-  // deletes it.
+  // digest agent (`src/main/retrieval/digest/`). `input_hash` is what the
+  // digest was written from, so a task whose input moved is rewritten; an
+  // empty one marks a digest the user asked to rewrite. `agent`, `model` and
+  // `effort` record what wrote it, so Settings can say so and a rewrite with a
+  // new choice skips the ones already written with it. Keyed by task and
+  // removed with it by the digest sweep; a digest is text an agent wrote, not
+  // something the index can re-derive, so nothing else deletes it.
   db.exec(`
     CREATE TABLE IF NOT EXISTS memory_task_digests (
       task_id TEXT PRIMARY KEY,
@@ -906,9 +908,16 @@ export function runProjectMigrations(db: Database.Database): void {
       input_hash TEXT NOT NULL,
       agent TEXT NOT NULL,
       model TEXT,
+      effort TEXT,
       created_at TEXT NOT NULL
     )
   `);
+  // Migration: the effort a digest was written at, for a table made before it.
+  const hasDigestEffortColumn = (db.pragma('table_info(memory_task_digests)') as Array<{ name: string }>)
+    .some((col) => col.name === 'effort');
+  if (!hasDigestEffortColumn) {
+    db.exec('ALTER TABLE memory_task_digests ADD COLUMN effort TEXT DEFAULT NULL');
+  }
 
   // Durable per-turn token-usage ledger. Each assistant turn that reported usage
   // gets one row, keyed by the turn's own uuid. This is the long-lived record that

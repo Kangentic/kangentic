@@ -10,11 +10,13 @@ import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityR
 import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
+import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
+import { humanizeModelId } from '../../../../shared/model-id';
 import { agentJobChoice, answerSetupGap, resolveAnswerAgent, taskDigestsOn, type AgentJob } from '../../../../shared/answer-agent';
 import { DIGEST_BATCH_SIZE } from '../../../../shared/task-digests';
 import { EMBEDDING_MODELS } from '../../../../shared/embedding-models';
 import type {
-  AgentDetectionInfo, AnswerSetupGap, AppConfig, DeepPartial, MemoryDigestStatus, MemoryStatus, MemoryAcceleration,
+  AgentDetectionInfo, AnswerSetupGap, AppConfig, DeepPartial, DigestChoice, MemoryDigestStatus, MemoryStatus, MemoryAcceleration,
 } from '../../../../shared/types';
 
 /**
@@ -127,6 +129,17 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
   }, [currentProjectId]);
 
   const semanticReady = indexingEnabled && semanticEnabled;
+
+  // The Rewrite confirm, raised from the Task digests card and rendered at the
+  // tab's top level like every settings dialog.
+  const [rewriteAsk, setRewriteAsk] = useState<RewriteAsk | null>(null);
+  const confirmRewrite = useCallback(() => {
+    if (!currentProjectId) return;
+    window.electronAPI.memory
+      .rewriteDigests(currentProjectId)
+      .catch(() => undefined)
+      .finally(() => setRewriteAsk(null));
+  }, [currentProjectId]);
 
   return (
     <div className="space-y-4">
@@ -263,10 +276,24 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
         {semanticReady && answerCapableAgents.length > 0 && digestsOn ? (
           <>
             <AgentJobRows job="digest" memory={globalConfig.memory} agents={agentList} capableAgents={answerCapableAgents} onChange={updateMemory} />
-            <DigestStatusTile digests={status?.digests ?? null} setup={digestSetup} />
+            <DigestStatusTile digests={status?.digests ?? null} setup={digestSetup} agents={agentList} />
+            <RewriteDigestsTile digests={status?.digests ?? null} agents={agentList} onRewrite={setRewriteAsk} />
           </>
         ) : null}
       </SettingsCard>
+
+      {rewriteAsk !== null && (
+        <ConfirmDialog
+          testId="rewrite-digests-confirm"
+          // A rewrite, not a warning, so not the default warning triangle.
+          icon={<RotateCcw size={16} className="text-accent-fg" />}
+          title={`Rewrite ${rewriteAsk.count.toLocaleString()} digests with ${rewriteAsk.label}?`}
+          message={`About ${Math.ceil(rewriteAsk.count / DIGEST_BATCH_SIZE).toLocaleString()} calls, three at a time, in the background. Each digest stays searchable until its new one is written.`}
+          confirmLabel="Rewrite"
+          onConfirm={confirmRewrite}
+          onCancel={() => setRewriteAsk(null)}
+        />
+      )}
     </div>
   );
 }
@@ -388,16 +415,122 @@ function AgentJobRows({ job, memory, agents, capableAgents, onChange }: AgentJob
   );
 }
 
+/** What the Rewrite confirm names: how many digests, and what they are rewritten with. */
+interface RewriteAsk {
+  count: number;
+  label: string;
+}
+
+function sameChoice(first: DigestChoice, second: DigestChoice): boolean {
+  return first.agent === second.agent && first.model === second.model && first.effort === second.effort;
+}
+
+/**
+ * How a digest's writer reads in a sentence: "Sonnet 5.5 at low effort". The
+ * agent is named only when it differs from `relativeTo` (the current choice)
+ * or there is no model to name.
+ */
+function choiceLabel(choice: DigestChoice, agents: ReadonlyArray<AgentDetectionInfo>, relativeTo?: DigestChoice | null): string {
+  const model = choice.model ? humanizeModelId(choice.model) ?? choice.model : null;
+  const agent = agents.find((entry) => entry.name === choice.agent)?.displayName ?? choice.agent;
+  const writer = model && (!relativeTo || relativeTo.agent === choice.agent) ? model : model ? `${agent}, ${model}` : agent;
+  return choice.effort ? `${writer} at ${choice.effort} effort` : writer;
+}
+
+/**
+ * Rewrite this project's digests with the current choice, in the shape of
+ * Rebuild this project's index: what they were written with on the left, the
+ * action on the right. The button is always here; with nothing to rewrite it
+ * is disabled and says why. It rewrites only the digests written some other
+ * way, so none is paid for twice.
+ */
+function RewriteDigestsTile({ digests, agents, onRewrite }: {
+  digests: MemoryDigestStatus | null;
+  agents: ReadonlyArray<AgentDetectionInfo>;
+  onRewrite: (ask: RewriteAsk) => void;
+}) {
+  if (!digests) return null;
+  const written = digests.writtenWith.reduce((sum, entry) => sum + entry.count, 0);
+  const choice = digests.choice;
+  const others = choice ? digests.writtenWith.filter((entry) => !sameChoice(entry, choice)) : digests.writtenWith;
+  const othersCount = others.reduce((sum, entry) => sum + entry.count, 0);
+  const rewriting = digests.awaitingRewrite > 0;
+  const busy = rewriting || digests.state === 'writing';
+
+  let line: string;
+  let reason: string;
+  if (written === 0) {
+    line = 'No digests written yet.';
+    reason = 'Nothing to rewrite yet.';
+  } else if (!choice) {
+    line = digests.writtenWith.length === 1
+      ? `All ${written.toLocaleString()} written with ${choiceLabel(digests.writtenWith[0], agents)}.`
+      : `${written.toLocaleString()} written with ${digests.writtenWith.length} settings.`;
+    reason = 'Choose an agent and model first.';
+  } else if (othersCount === 0) {
+    line = `All ${written.toLocaleString()} written with ${choiceLabel(choice, agents)}.`;
+    reason = 'Every digest was written with the chosen agent, model and effort.';
+  } else {
+    const still = rewriting ? 'still ' : '';
+    line = others.length === 1
+      ? `${othersCount.toLocaleString()} ${still}written with ${choiceLabel(others[0], agents, choice)}.`
+      : `${othersCount.toLocaleString()} ${still}written another way.`;
+    reason = busy ? 'Digests are being written.' : `Rewrite the ${othersCount.toLocaleString()} with ${choiceLabel(choice, agents)}.`;
+  }
+  const enabled = choice !== null && othersCount > 0 && !busy;
+
+  return (
+    <CardTile className="flex items-center justify-between gap-3" testId="rewrite-digests-row">
+      <div className="min-w-0">
+        <div className={SETTING_LABEL_CLASS}>Rewrite this project&apos;s digests</div>
+        <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5`} data-testid="rewrite-digests-line">{line}</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => { if (enabled && choice) onRewrite({ count: othersCount, label: choiceLabel(choice, agents) }); }}
+        disabled={!enabled}
+        title={reason}
+        data-testid="rewrite-digests"
+        className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge-input bg-surface-control px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg disabled:opacity-50 disabled:hover:border-edge-input disabled:hover:bg-surface-control disabled:hover:text-fg-secondary"
+      >
+        <RotateCcw size={13} className={rewriting ? 'animate-spin' : undefined} />
+        {rewriting ? 'Rewriting...' : 'Rewrite'}
+      </button>
+    </CardTile>
+  );
+}
+
 /**
  * What the open project's digests are doing, as one line under the Task
  * digests card's rows. Before an agent (or model) is chosen it shows the size
  * of the backfill, in tasks and calls, so the cost is visible before anything
  * runs. Calls, not dollars: no adapter reports a price.
  */
-function DigestStatusTile({ digests, setup }: { digests: MemoryDigestStatus | null; setup: AnswerSetupGap | null }) {
+function DigestStatusTile({ digests, setup, agents }: {
+  digests: MemoryDigestStatus | null;
+  setup: AnswerSetupGap | null;
+  agents: ReadonlyArray<AgentDetectionInfo>;
+}) {
   if (!digests) return null;
   const toWrite = Math.max(0, digests.finishedTasks - digests.written);
   const calls = Math.ceil(toWrite / DIGEST_BATCH_SIZE);
+  if (digests.awaitingRewrite > 0 && digests.choice && !setup) {
+    // Every digest written some other way was marked, so what is left
+    // unmarked is what the new choice has written.
+    const total = digests.writtenWith.reduce((sum, entry) => sum + entry.count, 0);
+    const done = Math.max(0, total - digests.awaitingRewrite);
+    return (
+      <CardTile className="text-xs text-fg-muted" testId="digest-status">
+        <div className="flex items-center gap-1.5">
+          <RefreshCw size={13} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
+          <span data-testid="digest-status-text">
+            Rewriting with {choiceLabel(digests.choice, agents)}: {done.toLocaleString()} of {total.toLocaleString()}.
+          </span>
+        </div>
+        <DownloadProgressBar percent={total > 0 ? (done / total) * 100 : 0} />
+      </CardTile>
+    );
+  }
   if (setup) {
     const waitingFor = setup === 'model' ? 'a model' : 'an agent';
     return (

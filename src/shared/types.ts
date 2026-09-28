@@ -6637,6 +6637,12 @@ export interface ElectronAPI {
      *  (recovery from a corrupt/stale index). Resolves when the purge is done;
      *  the rebuild sweep continues in the background. */
     rebuildIndex: (projectId?: string | null) => Promise<void>;
+    /**
+     * Rewrite a project's task digests that were not written with the current
+     * digest agent, model and effort, in the background. Resolves with how
+     * many were marked; each keeps its old text until its new one is written.
+     */
+    rewriteDigests: (projectId: string) => Promise<{ marked: number }>;
     /** Cheap read of the cached Memory Graph projection plus its coverage
      *  strip. Never triggers the projection pass. */
     graphSnapshot: (projectId?: string | null) => Promise<MemoryGraphSnapshot | null>;
@@ -7267,6 +7273,27 @@ export interface MemoryDigestStatus {
   /** How long until a failed call is tried again, as of this read. Set only
    *  while `retrying`; main measures it so the renderer never reads a clock. */
   retryInMs: number | null;
+  /** The finished tasks' digests by what wrote them, most first. */
+  writtenWith: DigestChoiceCount[];
+  /**
+   * What a digest would be written with now: the digest agent, its model, and
+   * the effort main resolves for it. Null while digests wait for a choice. A
+   * rewrite rewrites the digests written any other way.
+   */
+  choice: DigestChoice | null;
+  /** Digests marked for rewriting and not rewritten yet. */
+  awaitingRewrite: number;
+}
+
+/** What wrote a digest: an adapter name, its model id, and the effort level it ran at. */
+export interface DigestChoice {
+  agent: string;
+  model: string | null;
+  effort: string | null;
+}
+
+export interface DigestChoiceCount extends DigestChoice {
+  count: number;
 }
 
 interface SearchHitBase {

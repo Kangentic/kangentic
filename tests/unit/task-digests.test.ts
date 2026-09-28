@@ -142,13 +142,14 @@ describe('a digest pass', () => {
       return Array.from({ length: count }, (_unused, index) => `D${index + 1}: Digest ${index + 1}.`).join('\n');
     });
 
-    const result = await runDigestPass('project', { agent: 'claude', model: 'sonnet', write }, { maxBatches: 5, shouldContinue: () => true }, passDeps(db));
+    const result = await runDigestPass('project', { agent: 'claude', model: 'sonnet', effort: 'low', write }, { maxBatches: 5, shouldContinue: () => true }, passDeps(db));
 
     expect(write).toHaveBeenCalledTimes(2);
     expect((write.mock.calls[0][0].match(/<task label=/g) ?? []).length).toBe(DIGEST_BATCH_SIZE);
     expect(result).toMatchObject({ written: 12, remaining: 0, failed: false, unanswered: [] });
-    // task_id, digest, input_hash, agent, model, created_at
-    expect(digestWrites(calls)[0].args.slice(1, 5)).toEqual(['Digest 1.', expect.any(String), 'claude', 'sonnet']);
+    // task_id, digest, input_hash, agent, model, effort, created_at: what wrote
+    // each digest is recorded, so a rewrite can skip the ones already current.
+    expect(digestWrites(calls)[0].args.slice(1, 6)).toEqual(['Digest 1.', expect.any(String), 'claude', 'sonnet', 'low']);
   });
 
   it('leaves a task whose digest is current, and one the skip list holds', async () => {
@@ -361,6 +362,18 @@ describe('the digest scheduler', () => {
       board.scheduler.request('context', 'project');
       await settle();
       board.move('board-2');
+      board.scheduler.request('context', 'project');
+      await settle();
+      expect(board.runPass).toHaveBeenCalledTimes(2);
+    });
+
+    it('runs a pass after digests are marked for rewriting, though nothing on the board moved', async () => {
+      const board = fingerprinted([{ written: 3, remaining: 0 }, { written: 3, remaining: 0 }]);
+      board.scheduler.request('context', 'project');
+      await settle();
+      // The rewrite mark lives in the digest table, which the fingerprint does
+      // not read, so without this the request would be skipped as caught up.
+      board.scheduler.invalidate('project');
       board.scheduler.request('context', 'project');
       await settle();
       expect(board.runPass).toHaveBeenCalledTimes(2);

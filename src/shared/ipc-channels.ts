@@ -561,6 +561,9 @@ export const IPC = {
   // Re-parse and re-sweep the current project's conversation index, keeping
   // its chunks (the Search tab's "Rebuild this project's index").
   MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',
+  // Rewrite a project's task digests written with anything but the current
+  // digest agent, model and effort (the Task digests card's Rewrite).
+  MEMORY_REWRITE_DIGESTS: 'memory:rewriteDigests',
   /** Cheap read of the cached Memory Graph projection plus its coverage strip.
    *  Never runs the projection pass - see graph-service. */
   MEMORY_GRAPH_SNAPSHOT: 'memory:graphSnapshot',

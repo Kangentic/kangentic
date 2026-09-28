@@ -695,9 +695,10 @@ One digest per finished task: a sentence or two the digest agent (the Task diges
 | input_hash | TEXT | NOT NULL | |
 | agent | TEXT | NOT NULL | |
 | model | TEXT | | |
+| effort | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
 
-`input_hash` is a hash of what the digest was written from (title, the start of the description, the files the task's sessions changed, and how its latest sessions ended), so a task whose input moved is rewritten. A digest is text an agent wrote and cannot be re-derived, so only the digest pass (for a task that no longer exists) and the Privacy "clear index" remove rows; switching digests off keeps them. `agent` and `model` record who wrote each one, since a new digest agent or model applies only to new and changed tasks.
+`input_hash` is a hash of what the digest was written from (title, the start of the description, the files the task's sessions changed, and how its latest sessions ended), so a task whose input moved is rewritten. A digest is text an agent wrote and cannot be re-derived, so only the digest pass (for a task that no longer exists) and the Privacy "clear index" remove rows; switching digests off keeps them. `agent`, `model` and `effort` record what wrote each one, since a new digest agent, model or effort applies only to new and changed tasks until the Task digests card's Rewrite, which empties `input_hash` on the finished tasks' digests written any other way so the next pass rewrites them; each keeps its text until then. `effort` is added by migration to a table made before it.
 
 ### memory_meta table
 

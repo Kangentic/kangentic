@@ -1093,6 +1093,15 @@ on the next launch), and when a failed call will be tried again. Switching diges
 calls and keeps the digests already written, so they go on helping search. A new model applies to
 new and changed tasks.
 
+**Rewrite this project's digests** says what the digests were written with ("674 written with
+Sonnet 5.5 at low effort"). After you choose a different agent, model or effort, Rewrite asks first,
+then rewrites the digests written some other way, three calls at a time in the background, and each
+old digest stays searchable until its new one is written. With every digest already written the
+chosen way, the button is disabled and says so. Measured on this project's own tasks, a mid-size
+model at low effort (Sonnet) wrote as well as a larger one and higher effort changed nothing; the
+larger models (Opus, Fable) add a little detail at two to seven times the cost, and the smallest
+(Haiku) invented details.
+
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:
 

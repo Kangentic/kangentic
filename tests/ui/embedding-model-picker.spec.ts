@@ -287,7 +287,7 @@ test.describe('Answering agent card', () => {
 });
 
 test.describe('Task digests card', () => {
-  const DIGESTS = { written: 0, finishedTasks: 412, skipped: 0, state: 'idle', retryInMs: null };
+  const DIGESTS = { written: 0, finishedTasks: 412, skipped: 0, state: 'idle', retryInMs: null, writtenWith: [], choice: null, awaitingRewrite: 0 };
 
   test('is off by default, and switched on it waits for its own agent, showing the backfill first', async () => {
     // Opt-in: digests spend a call per ten tasks, so nothing runs until the
@@ -319,6 +319,70 @@ test.describe('Task digests card', () => {
       await expect(page.getByTestId('digest-status-text')).toHaveText('Writing: 0 of 412 finished tasks in this project.');
       // Its own choice: the answering agent's model is untouched.
       await expect(page.getByTestId('memory-answer-model')).toHaveValue(/sonnet|Sonnet/);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Rewrite names what the digests were written with, and rewrites only the ones written another way', async () => {
+    const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
+    const opus = { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' };
+    const cases = [
+      {
+        // Every digest matches the chosen setting: the button stays, disabled.
+        digests: { ...DIGESTS, written: 674, finishedTasks: 674, choice: sonnet, writtenWith: [{ ...sonnet, count: 674 }] },
+        line: /^All 674 written with .*Sonnet.* at low effort\.$/,
+        enabled: false,
+      },
+      {
+        // The model changed: the old digests stay until rewritten.
+        digests: { ...DIGESTS, written: 674, finishedTasks: 674, choice: opus, writtenWith: [{ ...sonnet, count: 674 }] },
+        line: /^674 written with .*Sonnet.* at low effort\.$/,
+        enabled: true,
+      },
+    ];
+    for (const { digests, line, enabled } of cases) {
+      const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests));
+      try {
+        await setMemory(page, { taskDigests: true, digestAgent: 'claude', digestModel: digests.choice.model });
+        await openMemoryTab(page);
+        await expect(page.getByTestId('rewrite-digests-line')).toHaveText(line);
+        const button = page.getByTestId('rewrite-digests');
+        await expect(button).toHaveText('Rewrite');
+        if (!enabled) {
+          await expect(button).toBeDisabled();
+          await expect(button).toHaveAttribute('title', 'Every digest was written with the chosen agent, model and effort.');
+          continue;
+        }
+        await button.click();
+        const confirm = page.getByTestId('rewrite-digests-confirm');
+        await expect(confirm).toContainText(/Rewrite 674 digests with .*Opus.* at low effort\?/);
+        await expect(confirm).toContainText('About 68 calls, three at a time, in the background.');
+        await confirm.getByRole('button', { name: 'Rewrite' }).click();
+        await expect(confirm).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRewriteDigestsCalls?: Array<{ projectId: string }> }).__mockRewriteDigestsCalls ?? []))
+          .toEqual([{ projectId: PROJECT_ID }]);
+      } finally {
+        await browser.close();
+      }
+    }
+  });
+
+  test('while rewriting, the status counts the new ones and the old ones stay named', async () => {
+    const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
+    const opus = { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' };
+    const digests = {
+      ...DIGESTS, written: 674, finishedTasks: 674, choice: opus, awaitingRewrite: 554,
+      writtenWith: [{ ...sonnet, count: 554 }, { ...opus, count: 120 }],
+    };
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests));
+    try {
+      await setMemory(page, { taskDigests: true, digestAgent: 'claude', digestModel: 'claude-opus-5-5' });
+      await openMemoryTab(page);
+      await expect(page.getByTestId('digest-status-text')).toHaveText(/^Rewriting with .*Opus.* at low effort: 120 of 674\.$/);
+      await expect(page.getByTestId('rewrite-digests-line')).toHaveText(/^554 still written with .*Sonnet.* at low effort\.$/);
+      await expect(page.getByTestId('rewrite-digests')).toHaveText('Rewriting...');
+      await expect(page.getByTestId('rewrite-digests')).toBeDisabled();
     } finally {
       await browser.close();
     }
