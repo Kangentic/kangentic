@@ -165,6 +165,19 @@ export function seedMemoryGraphFromRealIndex(
     if (!sourceHasVec || !dimensions) {
       throw new Error('The real project has no embedded index to mirror (semantic search may never have run there)');
     }
+    // The copies keep the source's own model tag. A made-up tag reads to the
+    // embedding drain as another model's rows, so every preview re-embedded the
+    // whole mirror in the background (89k chunks, hours at the duty cycle), and a
+    // drain that never finishes hid the Index's caught-up push. Where the source
+    // is itself mid-switch, its most common tag wins, as the real index would.
+    const sourceTagRow = sourceDb
+      .prepare(
+        `SELECT embedded_model AS tag FROM memory_chunks
+         WHERE embedded_model IS NOT NULL AND corpus = 'conversation'
+         GROUP BY embedded_model ORDER BY COUNT(*) DESC LIMIT 1`,
+      )
+      .get() as { tag: string } | undefined;
+    const mirroredTag = sourceTagRow?.tag ?? `mirrored@${dimensions}`;
 
     // Most RECENT conversations, so the mirror reflects what you have been
     // working on lately rather than an arbitrary slice.
@@ -423,7 +436,7 @@ export function seedMemoryGraphFromRealIndex(
         vector.set(new Float32Array(embedding.buffer, embedding.byteOffset, embedding.byteLength / 4));
         writes.push({ chunkId: stored.id, vector, contentHash: stored.contentHash });
       }
-      store.writeEmbeddings(writes, `mirrored@${dimensions}`);
+      store.writeEmbeddings(writes, mirroredTag);
       copiedChunks += writes.length;
 
       store.setIndexState({
@@ -553,8 +566,8 @@ export function registerSeedMemoryGraphRealDevIpc(getContext: () => IpcContext |
       if (context.currentProjectId) {
         await buildMemoryGraphNow(context.currentProjectId);
         // The mirrored tasks' own records, the `task` corpus, indexed now so a
-        // first question searches them; the embedding drain picks them up
-        // ahead of any conversation re-embed.
+        // first question searches them; the embedding drain picks them up in
+        // the background, as it would on a real install.
         await sweepTaskRecords(context.currentProjectId);
         embedEngine.markDirty(context.currentProjectId);
       }
