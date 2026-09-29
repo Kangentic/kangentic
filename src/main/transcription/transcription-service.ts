@@ -402,7 +402,7 @@ export class TranscriptionService extends EventEmitter {
       ...buildDictationInfo(await detectHardware(), config, listInstalledModels()),
       // The dictation worker gave up after repeated crashes: name why, so the
       // settings panel can say so instead of leaving push-to-talk a silent
-      // dead end. Mirrors EmbedClient.crashReason surfaced in the Search tab.
+      // dead end. Mirrors EmbedClient.crashReason surfaced in the Knowledge Graph tab.
       workerUnavailable: this.client.crashed,
       workerError: this.client.crashReason ?? undefined,
     };

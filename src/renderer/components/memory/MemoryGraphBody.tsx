@@ -43,7 +43,7 @@ import {
 import { availableGranularities, DEFAULT_GRANULARITY, resolveClustering } from './active-clustering';
 import { availableColorModes } from './color-mode-availability';
 import { answerFocusIndices } from './answer-focus';
-import { answerSetupGap, resolveAnswerAgent } from '../../../shared/answer-agent';
+import { answerSetupGap, codeIndexOn, resolveAnswerAgent } from '../../../shared/answer-agent';
 import { HoverTip } from '../HoverTip';
 import type { MemoryGraphGranularity, MemoryRelatedTask } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
@@ -81,7 +81,7 @@ interface MemoryGraphBodyProps {
   onChooseAnswerAgent?: () => void;
   /** See `LazyMemoryGraph`: how a row with no conversation reaches its task. */
   onRevealTask?: (taskId: string, projectId?: string) => void;
-  /** See `LazyMemoryGraph`: the Index flyout's way to Settings > Search. */
+  /** See `LazyMemoryGraph`: the Index flyout's way to Settings > Knowledge Graph. */
   onOpenSettings?: () => void;
 }
 
@@ -122,6 +122,8 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
   const agentList = useConfigStore((state) => state.agentList);
   const configuredAnswerAgent = useConfigStore((state) => state.config.memory?.answerAgent ?? null);
   const configuredAnswerModel = useConfigStore((state) => state.config.memory?.answerModel ?? null);
+  // Whether a question can reach the code: the box only offers what Ask reads.
+  const codeIndexed = useConfigStore((state) => codeIndexOn(state.config.memory));
   const setupGap = useMemo(
     () => answerSetupGap({
       agents: agentList,
@@ -618,7 +620,9 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
   // the answer then names each task's project.
   const askPlaceholder = scopeProjectIds && scopeProjectIds.length > 1
     ? `Ask across ${scopeProjectIds.length} projects`
-    : 'Ask about your tasks, conversations and code';
+    : codeIndexed
+      ? 'Ask about your tasks, conversations and code'
+      : 'Ask about your tasks and conversations';
 
   // Offered however many projects are indexed, once the list has loaded. With
   // one it names the scope, and the projects with nothing indexed sit in its
@@ -663,8 +667,8 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
         <MemoryCoverageStrip coverage={snapshot.coverage} semanticAvailable={false} />
         <CenteredNotice
           icon={<Sparkles size={22} />}
-          title="Semantic search is off"
-          body="The map places conversations by meaning, which needs embeddings. Turn on semantic search in Settings > Search to build it. The coverage above is accurate either way."
+          title="The Knowledge Graph is off"
+          body="The map places conversations by meaning, which needs its local model. Turn the Knowledge Graph on in Settings > Knowledge Graph to build it. The coverage above is accurate either way."
         />
       </div>
     );
@@ -758,7 +762,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
               {queryText.trim() ? (
                 <HoverTip
                   label={setupGap
-                    ? 'Choose the Knowledge Graph agent and model in Settings > Search.'
+                    ? 'Choose an agent and model in Settings > Knowledge Graph.'
                     : `Ask ${askAgentLabel}. It reads the related work and can search your conversations.`}
                   testId="memory-graph-ask-tip"
                 >
@@ -780,7 +784,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
             className="mt-1.5 rounded-md border border-edge bg-surface-raised/85 px-2 py-1 text-xs text-fg-muted backdrop-blur"
             data-testid="memory-graph-setup-hint"
           >
-            Choose the Knowledge Graph agent and model in Settings &gt; Search, in the main window.
+            Choose an agent and model in Settings &gt; Knowledge Graph, in the main window.
           </div>
         ) : null}
         {/* Says what the map is currently scoped to, and takes it back. Without

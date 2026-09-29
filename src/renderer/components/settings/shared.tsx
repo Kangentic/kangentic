@@ -285,28 +285,6 @@ export function Select({
   );
 }
 
-/* ── Download progress bar ── */
-
-/** Thin filled progress bar for a model/asset download. Shared by the Dictation
- *  and Memory model-status cards so the two download indicators read identically. */
-export function DownloadProgressBar({ percent }: { percent: number }) {
-  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
-  return (
-    <div
-      className="mt-1 h-1 w-full overflow-hidden rounded-full bg-edge/40"
-      role="progressbar"
-      aria-valuenow={clamped}
-      aria-valuemin={0}
-      aria-valuemax={100}
-    >
-      <div
-        className="h-full rounded-full bg-accent transition-[width] duration-300"
-        style={{ width: `${clamped}%` }}
-      />
-    </div>
-  );
-}
-
 /* ── Toggle Switch ── */
 
 export function ToggleSwitch({

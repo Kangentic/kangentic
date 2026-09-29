@@ -86,7 +86,8 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
           }
           // Task-scoped lexical: the FTS MATCH joined against memory_chunks.task_id.
           if (sql.includes('memory_chunks_fts') && sql.includes('MATCH') && sql.includes('task_id')) {
-            const taskId = args[1] as string;
+            // Bound as the match, the corpora, the task id, then the limit.
+            const taskId = args[args.length - 2] as string;
             return config.lexicalForTask[taskId] ?? [];
           }
           if (sql.includes('memory_chunks_vec')) return [];

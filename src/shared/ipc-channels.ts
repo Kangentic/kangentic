@@ -558,12 +558,12 @@ export const IPC = {
   MEMORY_PREWARM: 'memory:prewarm',
   /** Fire-and-forget: a chat's warm answering session is no longer needed. */
   MEMORY_GRAPH_END_CHAT: 'memory:graphEndChat',
-  // Re-parse and re-sweep the current project's conversation index, keeping
-  // its chunks (the Search tab's "Rebuild this project's index").
+  // The Index card's Rebuild: read every source again in every project,
+  // keeping what is indexed, and rewrite the task summaries written with
+  // another agent or model.
   MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',
-  // Rewrite a project's task digests written with anything but the current
-  // digest agent, model and effort (the Task digests card's Rewrite).
-  MEMORY_REWRITE_DIGESTS: 'memory:rewriteDigests',
+  // What that Rebuild would spend (summaries to rewrite), read before it asks.
+  MEMORY_REBUILD_PLAN: 'memory:rebuildPlan',
   // One task's digest, for the Knowledge Graph's selected conversation. Null
   // while digests are switched off or the task has none.
   MEMORY_TASK_DIGEST: 'memory:taskDigest',

@@ -81,11 +81,11 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   { id: 'notifications', label: 'Notifications', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   // -- Shared settings: Advanced tier --
   { id: 'dictation', label: 'Dictation', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
-  // Labelled Search, id kept as `memory`: the id is what tests, deep links
-  // (`open-answer-settings.ts`) and saved last-tab state address. The tooltip
-  // names the Knowledge Graph because its settings live here too, and the
-  // label alone does not say so.
-  { id: 'memory', label: 'Search', category: 'system', tier: 'advanced', tooltip: 'Conversation search and the Knowledge Graph. Applies to all projects' },
+  // Labelled Knowledge Graph, id kept as `memory`: the id is what tests, deep
+  // links (`open-answer-settings.ts`) and saved last-tab state address. Every
+  // card here serves the Knowledge Graph; the index also feeds Quick Find and
+  // `kangentic_search`, which the Index card's description says.
+  { id: 'memory', label: 'Knowledge Graph', category: 'system', tier: 'advanced', tooltip: 'The Knowledge Graph and the index it reads. Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'mobile', label: 'Mobile Devices', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },

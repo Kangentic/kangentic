@@ -648,7 +648,7 @@ describe('EmbedClient', () => {
   it('setWarmHold(false) with no hold taken leaves the running idle countdown untouched', async () => {
     // The getStatus poll shape: a "nothing to drain" pass releases a hold it
     // never took. If that restarted the countdown, the worker could never
-    // expire while the Search tab (which polls every 1.5 s) was open.
+    // expire while the Knowledge Graph tab (which polls every 1.5 s) was open.
     vi.useFakeTimers();
     try {
       const client = new EmbedClient(TEST_MODEL);

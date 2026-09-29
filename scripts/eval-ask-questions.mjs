@@ -7,9 +7,9 @@
  * from it. That is the whole reason this harness is cheap to keep - there is
  * no file anyone has to update when the board moves.
  *
- * The corpus field is not decoration. When the repo corpus lands, a code
- * question declares `corpus: 'file'` and supplies its own provider; the runner,
- * the grading and the report are unchanged.
+ * The corpus field is not decoration. A code question declares
+ * `corpus: 'code'`, whose provider says whether the default branch's code is
+ * indexed and embedded; the runner, the grading and the report are unchanged.
  *
  * DELIBERATELY EXCLUDED: reasoning questions ("why did we drop the sphere
  * fit?"). They have no computable answer, so this harness measures the
@@ -304,4 +304,43 @@ export const QUESTIONS = [
     // or naming a task, which would mean it invented one.
     truth: () => expect([], ['#'], DECLINES, { searched: true }),
   },
+
+  // ---- Source code. Answerable only from the code passages, so each runs only
+  // while the code is indexed and fully embedded. The truth is a fact of this
+  // repository, the one the preview mirrors, checked against its source when
+  // the question was written; a question whose answer moves must move with it.
+  {
+    id: 'code-grace-period',
+    corpus: 'code',
+    question: 'How long does a young agent get before its PTY is force-killed?',
+    // `KILL_GRACE_MS` in src/main/pty/lifecycle/deferred-kill.ts.
+    truth: (code) => codeReady(code) && expect([], [], ['1500', '1,500', '1.5 s', '1.5 seconds', '1.5-second', '1.5 second']),
+  },
+  {
+    id: 'code-drain-pacing',
+    corpus: 'code',
+    question: 'How does the embedding drain pace itself so it does not peg the GPU?',
+    // `computeEmbedSleepMs` in src/main/retrieval/embedder/embed-engine.ts:
+    // it sleeps in proportion to each batch's time, holding a duty cycle.
+    truth: (code) => codeReady(code) && expect([], [], ['duty cycle', 'duty-cycle', 'computeEmbedSleepMs', 'EMBED_DUTY_CYCLE']),
+  },
+  {
+    id: 'code-task-lock',
+    corpus: 'code',
+    question: 'What does withTaskLock do?',
+    // src/main/ipc/task-lifecycle-lock.ts: a per-task queue that runs one
+    // operation at a time for the same task.
+    truth: (code) => codeReady(code) && expect([], [], ['one at a time', 'serializ', 'serialis', 'concurrency 1', 'concurrency of 1', 'queue']),
+  },
+  {
+    id: 'code-where-defined',
+    corpus: 'code',
+    question: 'Where is useKeybinding defined?',
+    truth: (code) => codeReady(code) && expect([], [], ['hooks/useKeybinding.ts', 'useKeybinding.ts']),
+  },
 ];
+
+/** Whether the code corpus can answer: indexed, with every passage embedded. */
+function codeReady(code) {
+  return code.files > 0 && code.embedded >= code.chunks;
+}

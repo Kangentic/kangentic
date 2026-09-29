@@ -18,31 +18,48 @@ interface MockIndex {
   semantic: SemanticHit[];
   placements: ChunkPlacement[];
   texts: Record<number, string>;
+  /** The code corpus: its nearest chunks, and each one's file and text. */
+  code?: { hits: SemanticHit[]; chunks: Record<number, { docId: string; text: string }> };
 }
 let mockIndexes: Record<string, MockIndex> = {};
+/** The project of every code search the fake store served, in order. */
+let codeSearches: string[] = [];
 
 vi.mock('../../src/main/retrieval/retrieval-store', () => ({
   RetrievalStore: class {
     private readonly index: MockIndex;
+    private readonly projectId: string;
     constructor(db: { projectId: string }) {
       const index = mockIndexes[db.projectId];
       if (!index) throw new Error(`no database for ${db.projectId}`);
       this.index = index;
+      this.projectId = db.projectId;
     }
-    searchSemantic(): SemanticHit[] { return this.index.semantic; }
+    searchSemantic(_query: Float32Array, _limit: number, corpora: ReadonlyArray<string>): SemanticHit[] {
+      if (!corpora.includes('code')) return this.index.semantic;
+      codeSearches.push(this.projectId);
+      return this.index.code?.hits ?? [];
+    }
     searchLexical(): [] { return []; }
     getChunkPlacements(ids: number[]): ChunkPlacement[] {
       return this.index.placements.filter((placement) => ids.includes(placement.id));
     }
-    getChunks(ids: number[]): Array<{ id: number; text: string }> {
-      return ids.flatMap((id) => (this.index.texts[id] ? [{ id, text: this.index.texts[id] }] : []));
+    getChunks(ids: number[]): Array<{ id: number; docId?: string; text: string }> {
+      return ids.flatMap((id) => {
+        const codeChunk = this.index.code?.chunks[id];
+        if (codeChunk) return [{ id, docId: codeChunk.docId, text: codeChunk.text }];
+        return this.index.texts[id] ? [{ id, text: this.index.texts[id] }] : [];
+      });
     }
   },
 }));
 
 import {
+  CODE_PASSAGES,
   passageKey,
+  searchRelatedWork,
   searchRelatedWorkAcross,
+  selectCodePassages,
   type RelatedWorkNode,
   type SearchRelatedWorkAcrossInput,
 } from '../../src/main/retrieval/related-work';
@@ -139,5 +156,134 @@ describe('related work across projects', () => {
     // No vectors, so the semantic hits are never asked for.
     expect(work.semantic).toBe(false);
     expect(work.ranked).toEqual([]);
+  });
+});
+
+/** A code chunk as `codeChunks` writes it: the path, a blank line, the code. */
+function codeText(path: string, body: string): string {
+  return `${path}\n\n${body}\n`;
+}
+
+/** One project's index with a task and the given code chunks. */
+function indexWithCode(chunks: Array<{ id: number; path: string; cosine: number }>): MockIndex {
+  return {
+    semantic: [hit(1, 0.7)],
+    placements: [placement(1, 'a1')],
+    texts: { 1: 'a conversation passage' },
+    code: {
+      hits: chunks.map((chunk) => hit(chunk.id, chunk.cosine)),
+      chunks: Object.fromEntries(chunks.map((chunk) => [chunk.id, { docId: chunk.path, text: codeText(chunk.path, `code ${chunk.id}`) }])),
+    },
+  };
+}
+
+describe('source code passages', () => {
+  it('hands the closest chunks above the floor, two to a file, without the path line', async () => {
+    mockIndexes = {
+      a: indexWithCode([
+        { id: 101, path: 'src/pacer.ts', cosine: 0.66 },
+        { id: 102, path: 'src/pacer.ts', cosine: 0.64 },
+        { id: 103, path: 'src/pacer.ts', cosine: 0.62 },
+        { id: 104, path: 'docs/pacing.md', cosine: 0.5 },
+        { id: 105, path: 'src/unrelated.ts', cosine: 0.44 },
+      ]),
+    };
+    codeSearches = [];
+    const work = await searchRelatedWork({
+      question: 'How does the embedding drain pace itself?',
+      projectId: 'a',
+      nodes: [node('a1', 'task-a1', 5)],
+      embedder: embedder(),
+      getDb,
+      code: true,
+    });
+
+    expect(codeSearches).toEqual(['a']);
+    // The third pacer chunk is over the per-file cap; 0.44 is under the 0.45 floor.
+    expect(work.code.map((passage) => [passage.path, passage.text])).toEqual([
+      ['src/pacer.ts', 'code 101'],
+      ['src/pacer.ts', 'code 102'],
+      ['docs/pacing.md', 'code 104'],
+    ]);
+    // The tasks are ranked exactly as without code.
+    expect(work.handed.map((task) => task.key)).toEqual(['task-a1']);
+  });
+
+  it('never searches code unless asked', async () => {
+    mockIndexes = { a: indexWithCode([{ id: 101, path: 'src/pacer.ts', cosine: 0.9 }]) };
+    codeSearches = [];
+    const work = await searchRelatedWork({
+      question: 'How does the embedding drain pace itself?',
+      projectId: 'a',
+      nodes: [node('a1', 'task-a1', 5)],
+      embedder: embedder(),
+      getDb,
+    });
+    expect(codeSearches).toEqual([]);
+    expect(work.code).toEqual([]);
+  });
+
+  it('lowers the floor for a question that names an identifier', async () => {
+    mockIndexes = { a: indexWithCode([{ id: 101, path: 'src/embed-engine.ts', cosine: 0.4 }]) };
+    const ask = (question: string) => searchRelatedWork({
+      question, projectId: 'a', nodes: [node('a1', 'task-a1', 5)], embedder: embedder(), getDb, code: true,
+    });
+    expect((await ask('Where is computeEmbedSleepMs?')).code.map((passage) => passage.path)).toEqual(['src/embed-engine.ts']);
+    expect((await ask('Where is the sleep between batches computed?')).code).toEqual([]);
+  });
+
+  it('across projects, hands the best of them all and keeps one path in two projects apart', async () => {
+    mockIndexes = {
+      a: indexWithCode([
+        { id: 101, path: 'src/shared.ts', cosine: 0.6 },
+        { id: 102, path: 'src/shared.ts', cosine: 0.58 },
+      ]),
+      b: indexWithCode([
+        { id: 101, path: 'src/shared.ts', cosine: 0.7 },
+        { id: 102, path: 'src/shared.ts', cosine: 0.52 },
+        { id: 103, path: 'src/shared.ts', cosine: 0.51 },
+      ]),
+    };
+    const work = await searchRelatedWorkAcross({
+      question: 'How is the shared state kept?',
+      projects: [
+        { projectId: 'a', nodes: [node('a1', 'task-a1', 5)] },
+        { projectId: 'b', nodes: [node('b1', 'task-b1', 5)] },
+      ],
+      embedder: embedder(),
+      getDb,
+      code: true,
+    });
+    expect(work.code.map((passage) => [passage.projectId, passage.text])).toEqual([
+      ['b', 'code 101'],
+      ['a', 'code 101'],
+      ['a', 'code 102'],
+      ['b', 'code 102'],
+    ]);
+  });
+});
+
+describe('choosing code passages', () => {
+  const candidate = (path: string, relevance: number) => ({ path, relevance });
+
+  it('stops at the cap, best first', () => {
+    const many = Array.from({ length: 12 }, (_, index) => candidate(`file-${index}.ts`, 0.9 - index * 0.01));
+    const chosen = selectCodePassages(many, 0.45);
+    expect(chosen).toHaveLength(CODE_PASSAGES);
+    expect(chosen[0].path).toBe('file-0.ts');
+  });
+
+  it('keys files by the key it is given', () => {
+    const chosen = selectCodePassages(
+      [
+        { path: 'same.ts', relevance: 0.9, projectId: 'a' },
+        { path: 'same.ts', relevance: 0.8, projectId: 'a' },
+        { path: 'same.ts', relevance: 0.7, projectId: 'a' },
+        { path: 'same.ts', relevance: 0.6, projectId: 'b' },
+      ],
+      0.45,
+      (passage) => `${passage.projectId}:${passage.path}`,
+    );
+    expect(chosen.map((passage) => [passage.projectId, passage.relevance])).toEqual([['a', 0.9], ['a', 0.8], ['b', 0.6]]);
   });
 });

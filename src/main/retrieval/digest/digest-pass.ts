@@ -5,7 +5,7 @@ import { readDigestCandidates } from './digest-sources';
 import { DigestStore } from './digest-store';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 
-/** Writes one batch's digests: the digest agent's read-only answer run. */
+/** Writes one batch's digests: the search agent's read-only answer run. */
 export interface DigestWriter {
   agent: string;
   model: string | null;

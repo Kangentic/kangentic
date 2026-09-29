@@ -10,8 +10,9 @@ import { DIGEST_BATCH_SIZE } from '../../../shared/task-digests';
  * to say.
  *
  * The input is compact on purpose: the title, the start of the description,
- * the files the task's sessions changed, and how each of its last sessions
- * ended. About ten tasks share one call.
+ * the files the task's sessions changed, the subjects of the commits it landed
+ * on the default branch, and how each of its last sessions ended. About ten
+ * tasks share one call.
  */
 
 /** Tasks per call, shared with the Task digests card's call estimate. */
@@ -25,6 +26,8 @@ export const DIGEST_MAX_CHARS = 360;
 const DESCRIPTION_CHARS = 600;
 const CLOSING_MESSAGE_CHARS = 300;
 const CHANGED_FILES_SHOWN = 8;
+const COMMITS_SHOWN = 8;
+const COMMIT_SUBJECT_CHARS = 120;
 
 export interface DigestInput {
   taskId: string;
@@ -32,6 +35,8 @@ export interface DigestInput {
   description: string;
   /** Repository paths the task's sessions changed, most-changed first. */
   changedFiles: ReadonlyArray<string>;
+  /** Subjects of the commits it landed on the default branch, newest first. */
+  commits: ReadonlyArray<string>;
   /** How each of its latest sessions ended, newest first. */
   closingMessages: ReadonlyArray<string>;
 }
@@ -47,6 +52,11 @@ export function digestInputBlock(input: DigestInput): string {
   const description = clip(input.description, DESCRIPTION_CHARS);
   if (description) lines.push(`Description: ${description}`);
   if (input.changedFiles.length > 0) lines.push(`Files changed: ${input.changedFiles.slice(0, CHANGED_FILES_SHOWN).join(', ')}`);
+  // Only when there are any, so a task with no commits keeps the hash (and
+  // the digest) it had before commits were part of the input.
+  if (input.commits.length > 0) {
+    lines.push(`Commits: ${input.commits.slice(0, COMMITS_SHOWN).map((subject) => clip(subject, COMMIT_SUBJECT_CHARS)).join('; ')}`);
+  }
   for (const message of input.closingMessages) lines.push(`A session ended: ${clip(message, CLOSING_MESSAGE_CHARS)}`);
   return lines.join('\n');
 }

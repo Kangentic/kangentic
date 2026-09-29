@@ -841,6 +841,10 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec('DROP INDEX IF EXISTS idx_memory_chunks_doc');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_doc_embedded ON memory_chunks(corpus, doc_id, embedded_model)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_session ON memory_chunks(session_id)');
+  // A search scoped to one task narrows its semantic hits to that task's chunk
+  // ids. Without this the read scanned every chunk: 184 ms to 0.5 ms on 99k
+  // chunks, and no other chunk read changed plan (built once, about 200 ms).
+  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_task ON memory_chunks(task_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_embedded ON memory_chunks(embedded_model)');
   // Per-corpus reads (conversations, task records, session changes). SQLite
   // appends rowid to every index, so `(corpus)` answers MAX(id) and an id-range
@@ -863,18 +867,32 @@ export function runProjectMigrations(db: Database.Database): void {
       tokenize='unicode61 remove_diacritics 2'
     )
   `);
+  // Source code stays out of the full-text index. Code is found by meaning:
+  // over 17 code questions keyword search put the answer file in the top five
+  // 12 times against 16 by meaning, even for questions naming an identifier.
+  // And the FTS table is shared, so every keyword search walks every corpus's
+  // matches before filtering: 12k code chunks full of common identifiers would
+  // slow every conversation search. All three triggers skip code alike; a
+  // 'delete' for a row the index never held would corrupt an external-content
+  // index. The old unconditional triggers are replaced under new names.
+  db.exec('DROP TRIGGER IF EXISTS trg_memory_chunks_ai');
+  db.exec('DROP TRIGGER IF EXISTS trg_memory_chunks_ad');
+  db.exec('DROP TRIGGER IF EXISTS trg_memory_chunks_au');
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_ai AFTER INSERT ON memory_chunks BEGIN
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_fts_ai AFTER INSERT ON memory_chunks
+    WHEN new.corpus <> 'code' BEGIN
       INSERT INTO memory_chunks_fts(rowid, text) VALUES (new.id, new.text);
     END
   `);
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_ad AFTER DELETE ON memory_chunks BEGIN
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_fts_ad AFTER DELETE ON memory_chunks
+    WHEN old.corpus <> 'code' BEGIN
       INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
     END
   `);
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_au AFTER UPDATE OF text ON memory_chunks BEGIN
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_fts_au AFTER UPDATE OF text ON memory_chunks
+    WHEN old.corpus <> 'code' BEGIN
       INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
       INSERT INTO memory_chunks_fts(rowid, text) VALUES (new.id, new.text);
     END

@@ -28,7 +28,7 @@ interface SqliteVecModule {
 }
 
 /** The reason sqlite-vec failed to load on the most recent attempt, surfaced in
- *  the memory status so the Search tab can explain a lexical-only degrade instead
+ *  the memory status so the Knowledge Graph tab can explain a lexical-only degrade instead
  *  of a generic "unavailable". Null once a connection loads it successfully. */
 let lastLoadError: string | null = null;
 

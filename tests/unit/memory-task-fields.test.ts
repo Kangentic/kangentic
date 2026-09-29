@@ -12,7 +12,7 @@ import {
   MEMORY_TASK_FIELDS,
   type MemoryTaskFacts,
 } from '../../src/shared/memory-task-fields';
-import { buildAnswerPrompt, formatRelatedWork } from '../../src/main/retrieval/answer-prompt';
+import { buildAnswerPrompt, buildFollowUpPrompt, formatCodePassages, formatRelatedWork } from '../../src/main/retrieval/answer-prompt';
 import {
   buildAnswerTaskTable,
   formatTaskFieldGlossary,
@@ -303,5 +303,77 @@ describe('the prompt is built for its own length', () => {
     expect(promptFor('How many files changed?', true)).toMatch(/Never tell the reader you would need to search: search/);
     expect(promptFor('How many files changed?', true)).toMatch(/search before saying so/);
     expect(promptFor('How many files changed?', false)).not.toMatch(/search before saying so/);
+  });
+});
+
+describe('source code in the prompt', () => {
+  const table = buildAnswerTaskTable(projection([node({ docKey: 'a', taskId: 't1', displayId: 529, costUsd: 10 })]), 'balanced');
+  const pacer = { path: 'src/main/retrieval/embedder/embed-engine.ts', text: 'export function computeEmbedSleepMs() {}' };
+  const docs = { path: 'docs/architecture.md', text: 'The drain sleeps between batches.' };
+
+  function promptWith(question: string, code: Parameters<typeof buildAnswerPrompt>[1]['code']) {
+    return buildAnswerPrompt(question, {
+      tasks: table,
+      nowMs: Date.UTC(2026, 8, 25),
+      related: [],
+      canSearch: true,
+      history: [{ question: 'What is the drain?', answer: 'The embedding loop.', refs: [] }],
+      code,
+    });
+  }
+
+  it('says nothing about code when it is not indexed', () => {
+    const prompt = promptWith('How does the drain pace itself?', undefined);
+    expect(prompt).not.toContain('source_code');
+    expect(prompt).not.toMatch(/Name a file by its path/);
+  });
+
+  it('puts the passages after the related work, in the part that changes per question', () => {
+    const prompt = promptWith('How does the drain pace itself?', [pacer, docs]);
+    // The block, a tag on its own line; the rules name the tag mid-sentence.
+    const relatedWork = prompt.indexOf('</related_work>');
+    const code = prompt.indexOf('\n<source_code>\n');
+    expect(code).toBeGreaterThan(relatedWork);
+    expect(code).toBeLessThan(prompt.indexOf('\n<conversation_so_far>\n'));
+    expect(prompt.indexOf('</source_code>')).toBeLessThan(prompt.indexOf('Reply in two to four plain sentences'));
+    expect(prompt).toContain(`--- ${pacer.path}\n${pacer.text}\n\n--- ${docs.path}\n${docs.text}`);
+  });
+
+  it('keeps the cached prefix the same whatever code a question finds', () => {
+    // The rules follow the setting, never the passages, so a question that
+    // found no code does not change the prefix a question that did has cached.
+    const prefixOf = (prompt: string) => prompt.slice(0, prompt.indexOf('\n<related_work>\n'));
+    const withPassages = promptWith('How does the drain pace itself?', [pacer]);
+    const withNone = promptWith('Which task took the longest?', []);
+    expect(prefixOf(withPassages)).toBe(prefixOf(withNone));
+    expect(prefixOf(withPassages)).toMatch(/<source_code> holds the passages of the source code/);
+    expect(prefixOf(withPassages)).toMatch(/Never mention <task_table>, <related_work>, <source_code> or any tag/);
+    expect(withNone).toContain('<source_code>\nNo source code matched this question.\n</source_code>');
+  });
+
+  it('lets a code answer name files and select no task', () => {
+    const prompt = promptWith('How does the drain pace itself?', [pacer]);
+    expect(prompt).toMatch(/an answer from the code alone ends "SELECTED: none"/);
+    const reminder = prompt.slice(prompt.indexOf('Reply in two to four plain sentences'));
+    expect(reminder).toMatch(/Name a file by its path/);
+    // Measured: a code answer ran to seven sentences and 20 s with the length
+    // stated only once, above the passages, and "the same few sentences" still
+    // gave 8 and 9 on the how-does-it-work questions, which walked each step.
+    expect(reminder).toMatch(/An answer about code is four sentences at most: what it does and where, never each step/);
+    expect(prompt).toMatch(/Quote a constant only when the question asks for it, and never walk through the steps one by one/);
+    // Outside knowledge is still out; the code passages are in.
+    expect(prompt).toMatch(/do not add anything you know from outside these sources, about this code or about the world/);
+    expect(prompt).not.toMatch(/not about this codebase/);
+  });
+
+  it('names the project of a passage across projects', () => {
+    expect(formatCodePassages([{ ...pacer, project: 'Mobile' }])).toBe(`--- Mobile: ${pacer.path}\n${pacer.text}`);
+  });
+
+  it('carries the passages into a follow-up, and nothing when code is not indexed', () => {
+    const followUp = buildFollowUpPrompt('And where is it called?', { related: [], canSearch: true, code: [pacer] });
+    expect(followUp.indexOf('\n<source_code>\n')).toBeGreaterThan(followUp.indexOf('</related_work>'));
+    expect(followUp).toMatch(/the related work and source code below replace those of earlier questions/);
+    expect(buildFollowUpPrompt('And where is it called?', { related: [], canSearch: true })).not.toContain('source_code');
   });
 });

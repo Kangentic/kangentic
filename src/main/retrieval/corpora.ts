@@ -16,8 +16,10 @@
  *   thousand conversation chunks for its top k.
  */
 
-/** Every corpus, in the order the embedding drain serves them. */
-export const MEMORY_CORPORA = ['conversation', 'task', 'change'] as const;
+/** Every corpus, in the order the embedding drain serves them. Source code is
+ *  last: its first fill is about 12k chunks (half an hour on a GPU), and
+ *  conversations and task records must never wait behind it. */
+export const MEMORY_CORPORA = ['conversation', 'task', 'change', 'commit', 'code'] as const;
 
 export type MemoryCorpus = typeof MEMORY_CORPORA[number];
 
@@ -32,8 +34,19 @@ export const CONVERSATION_CORPUS: ReadonlyArray<MemoryCorpus> = ['conversation']
  * changed a file, because nearly every session changes many files. They stay
  * indexed as text, which is what the task digests read, and embedding them
  * would buy nothing a search uses.
+ *
+ * Commits on the default branch do not either. Measured the same way (seven
+ * questions, 96 title-named tasks, 1,422 linked commits): searched by keyword
+ * beside the task records they lifted recall from 66 to 67 and grew the handed
+ * set by 1.9 tasks; embedded as well, the same 67 for 4.1 more tasks and 1,426
+ * embeddings. So they are searched by keyword only (`related-work.ts`).
+ *
+ * Source code is the opposite: searched by meaning only, and kept out of the
+ * full-text index. Over 17 code questions whose answer file the project's own
+ * rules name (12,186 chunks), meaning put that file first 7 times and in the
+ * top five 16 times; keywords, 4 and 12; the two fused, 6 and 15.
  */
-export const EMBEDDED_CORPORA: ReadonlyArray<MemoryCorpus> = ['conversation', 'task'];
+export const EMBEDDED_CORPORA: ReadonlyArray<MemoryCorpus> = ['conversation', 'task', 'code'];
 
 export function isEmbeddedCorpus(corpus: MemoryCorpus): boolean {
   return EMBEDDED_CORPORA.includes(corpus);

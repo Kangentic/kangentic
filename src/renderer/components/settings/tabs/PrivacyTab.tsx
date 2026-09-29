@@ -57,14 +57,14 @@ export function PrivacyTab() {
       <SettingsCard
         icon={<HardDrive size={16} />}
         label="Conversation search"
-        description="Indexing and semantic search run on this device."
+        description="Indexing and the Knowledge Graph's local model run on this device."
         searchIds={['privacy.info']}
       >
         <CardTile>
           <p className="text-sm text-fg-muted leading-relaxed">
-            Local conversation indexing and semantic search settings live in the{' '}
-            <span className="text-fg-secondary">Search</span> tab. All of it runs on your device with no
-            API key; nothing leaves your machine.
+            Indexing and the local model that finds by meaning live in the{' '}
+            <span className="text-fg-secondary">Knowledge Graph</span> tab, and run on your device with
+            no API key. Only a question you ask, or a task summary, goes to the agent you choose there.
           </p>
         </CardTile>
       </SettingsCard>

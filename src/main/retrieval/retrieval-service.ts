@@ -32,20 +32,29 @@ import { lastVecLoadError } from './vec-extension';
 import { ConversationIndexer } from './conversation/conversation-indexer';
 import { sweepTaskRecords } from './task/task-indexer';
 import { sweepChangeRecords } from './change/change-indexer';
+import { sweepCommitRecords, type CommitSweepResult } from './commit/commit-indexer';
+import { indexedCodeBranch, purgeCodeRecords, sweepCodeRecords, type CodeSweepResult } from './code/code-indexer';
+import { codeStatus, createBranchSizes } from './code/code-status';
+import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { graphService } from './graph/graph-service';
 import { createDigestScheduler } from './digest/digest-scheduler';
 import { readDigestFingerprint } from './digest/digest-sources';
 import { DigestStore } from './digest/digest-store';
 import { resolveAnswerRun } from './answer-run';
-import { taskDigestsOn } from '../../shared/answer-agent';
+import { codeSweepPlan, taskDigestsOn, type CodeSweepPlan } from '../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
 import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
 import { requiresUserInteraction } from '../../shared/activity-state';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
+import { isEmbeddedCorpus, type MemoryCorpus } from './corpora';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
-import type { MemoryStatus, MemorySemanticState, MemoryModelState, MemoryDigestStatus, DigestChoice, Project, ActivityState } from '../../shared/types';
+import type {
+  MemoryStatus, MemorySemanticState, MemoryModelState, MemoryDigestStatus, MemoryCodeStatus, DigestChoice, Project, ActivityState,
+  MemoryRebuildPlan, MemorySourceStatus, MemorySourcesStatus,
+} from '../../shared/types';
 
 /** Grace period after a finalize event before indexing, so the agent CLI has
  *  flushed its native history file.
@@ -66,6 +75,13 @@ const LIVE_INDEX_DEBOUNCE_MS = 1500;
 /** Grace after a board change before its task records are re-read, so a drag
  *  or a burst of agent edits settles into one sweep. */
 const TASK_RECORD_DEBOUNCE_MS = 2000;
+/** How long after launch a read of a project's WHOLE default branch waits
+ *  (`CommitSweepOptions.allowFullRead`, and a first code fill): past the
+ *  startup's own disk and CPU load, where the same commit read stalled main
+ *  for up to 1.5 s. */
+const BRANCH_FULL_READ_DELAY_MS = 60_000;
+/** When whole-branch reads may start. This module loads at launch. */
+const branchFullReadsFrom = Date.now() + BRANCH_FULL_READ_DELAY_MS;
 
 const indexer = new ConversationIndexer();
 
@@ -82,6 +98,8 @@ const liveIndexTimers = new Map<string, NodeJS.Timeout>();
 const finalizeIndexTimers = new Map<string, NodeJS.Timeout>();
 /** Per-project trailing-debounce timers for task-record re-reads. */
 const taskRecordTimers = new Map<string, NodeJS.Timeout>();
+/** Per-project timers for a whole-branch commit read put off past startup. */
+const deferredBranchTimers = new Map<string, NodeJS.Timeout>();
 
 // Model-file download state (downloading the local embedding model to disk).
 // The embed WORKER and its warm-hold / crash / device state live in
@@ -248,18 +266,111 @@ function projectPathFor(context: IpcContext, projectId: string): string | null {
 }
 
 /**
- * Re-read a project's task records and session changes on the serial job
- * chain, and flag the project for the embedding drain when anything changed.
- * A sweep with nothing to do reads a few small tables and writes nothing, so
- * this is safe to ask for whenever the board or a conversation may have moved.
+ * A project's commits on its default branch, brought up to date. The branch is
+ * the one a task's worktree branches from (board default, config default,
+ * `main`). One `git rev-parse` when the branch has not moved. A read of the
+ * whole branch waits until a minute after launch, then runs on its own.
+ */
+async function sweepProjectCommits(
+  context: IpcContext,
+  projectId: string,
+  projectPath: string | null,
+  shouldContinue: () => boolean,
+): Promise<CommitSweepResult> {
+  if (!projectPath) return { indexed: 0, removed: 0, relinked: 0, deferred: false };
+  const result = await sweepCommitRecords(projectId, projectPath, baseBranchFor(context, projectPath), {
+    shouldContinue,
+    allowFullRead: Date.now() >= branchFullReadsFrom,
+  });
+  if (result.deferred) sweepAgainAfterStartup(context, projectId);
+  return result;
+}
+
+/** What a sweep does with the source code index (`codeSweepPlan`). */
+function codePlan(context: IpcContext): CodeSweepPlan {
+  return codeSweepPlan(() => context.configManager.load().memory);
+}
+
+/**
+ * A project's source code, brought up to date with its default branch while
+ * source code is switched on, and cleared when it is switched off. One
+ * `git rev-parse` when the branch has not moved; the first fill waits until a
+ * minute after launch, like a whole-branch commit read.
+ */
+async function sweepProjectCode(
+  context: IpcContext,
+  projectId: string,
+  projectPath: string | null,
+  shouldContinue: () => boolean,
+): Promise<CodeSweepResult> {
+  const none: CodeSweepResult = { indexed: 0, removed: 0, deferred: false };
+  const plan = codePlan(context);
+  if (plan === 'clear') return purgeCodeRecords(projectId) ? { ...none, removed: 1 } : none;
+  if (plan === 'keep' || !projectPath) return none;
+  const result = await sweepCodeRecords(projectId, projectPath, baseBranchFor(context, projectPath), {
+    shouldContinue,
+    allowFullRead: Date.now() >= branchFullReadsFrom,
+  });
+  if (result.deferred) sweepAgainAfterStartup(context, projectId);
+  return result;
+}
+
+/** The branch a project's commits and code are read from: the one a task's
+ *  worktree branches from (board default, config default, `main`). */
+function baseBranchFor(context: IpcContext, projectPath: string): string {
+  try {
+    return resolveProjectDefaultBaseBranch(context, projectPath);
+  } catch {
+    // An unreadable config keeps the `main` default, as a worktree would.
+    return 'main';
+  }
+}
+
+/** Queue the record sweeps again once whole-branch reads may run: a read put
+ *  off at startup then happens on its own. */
+function sweepAgainAfterStartup(context: IpcContext, projectId: string): void {
+  if (deferredBranchTimers.has(projectId) || disposed) return;
+  const timer = setTimeout(() => {
+    pendingTimers.delete(timer);
+    deferredBranchTimers.delete(projectId);
+    queueRecordSweeps(context, projectId);
+  }, Math.max(0, branchFullReadsFrom - Date.now()));
+  timer.unref();
+  pendingTimers.add(timer);
+  deferredBranchTimers.set(projectId, timer);
+}
+
+/** Resolves once whole-branch reads may run. The digest pass waits on it, so
+ *  the first digests after launch are written with their commits rather than
+ *  written without and rewritten a minute later. */
+function untilBranchFullReads(): Promise<void> {
+  const waitMs = branchFullReadsFrom - Date.now();
+  if (waitMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, waitMs);
+    timer.unref();
+  });
+}
+
+/**
+ * Re-read a project's task records, session changes, commits and source code
+ * on the serial job chain, and flag the project for the embedding drain when
+ * anything changed. A sweep with nothing to do reads a few small tables and
+ * writes nothing (the commits and code cost a `git rev-parse` each), so this
+ * is safe to ask for whenever the board or a conversation may have moved.
  */
 function queueRecordSweeps(context: IpcContext, projectId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;
   chain(async () => {
+    const projectPath = projectPathFor(context, projectId);
     const tasks = await sweepTaskRecords(projectId, () => !disposed);
-    const changes = await sweepChangeRecords(projectId, projectPathFor(context, projectId), () => !disposed);
-    if (tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0) {
-      embedEngine.markDirty(projectId);
+    const changes = await sweepChangeRecords(projectId, projectPath, () => !disposed);
+    const commits = await sweepProjectCommits(context, projectId, projectPath, () => !disposed);
+    const code = await sweepProjectCode(context, projectId, projectPath, () => !disposed);
+    if (tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0 || code.indexed > 0) embedEngine.markDirty(projectId);
+    if (tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0
+      || commits.indexed > 0 || commits.removed > 0 || commits.relinked > 0
+      || code.indexed > 0 || code.removed > 0) {
       // An open Knowledge Graph re-reads its snapshot, so the Index panel
       // counts what was just indexed. The map itself does not move.
       graphService.notifyChanged(projectId);
@@ -279,10 +390,10 @@ function digestsEnabled(context: IpcContext): boolean {
 }
 
 /**
- * Writes task digests in the background with the digest agent, the Task
- * digests card's own choice. With none chosen it resolves no writer and does
- * nothing; it never borrows the answering agent. A digest batch runs with no
- * tool at all; it summarizes what it is handed.
+ * Writes task digests in the background with the search agent and its model,
+ * at the adapter's recommended effort whatever the chosen one (`agentJobChoice`).
+ * With no agent chosen it resolves no writer and does nothing. A digest batch
+ * runs with no tool at all; it summarizes what it is handed.
  */
 const digestScheduler = createDigestScheduler<IpcContext>({
   isEnabled: digestsEnabled,
@@ -308,23 +419,44 @@ const digestScheduler = createDigestScheduler<IpcContext>({
     queueRecordSweeps(context, projectId);
     graphService.requestRegionNames(projectId, caughtUp);
   },
-  // The files a task changed are part of what its digest is written from.
-  // Cheap once caught up; on a cold start (which skips the project-open sweep)
-  // it is what keeps the first digests from being written without them.
+  // The files a task changed and its commits are part of what its digest is
+  // written from. Cheap once caught up; on a cold start (which skips the
+  // project-open sweep) it is what keeps the first digests from being written
+  // without them.
   beforePass: async (context, projectId) => {
-    await sweepChangeRecords(projectId, projectPathFor(context, projectId), () => !disposed);
+    const projectPath = projectPathFor(context, projectId);
+    await sweepChangeRecords(projectId, projectPath, () => !disposed);
+    await untilBranchFullReads();
+    await sweepProjectCommits(context, projectId, projectPath, () => !disposed);
   },
 });
 
 /**
- * What a digest would be written with now: the digest agent, its model and the
- * effort main resolves for it, or null while digests wait for a choice. Kept
+ * What a digest would be written with now: the search agent, its model and the
+ * recommended effort main resolves for a digest, or null while digests are off
+ * or wait for a choice. Kept
  * here because a caught-up board never resolves a writer (the fingerprint skip),
  * so a settings change refreshes it (`refreshDigestChoice`) rather than waiting
  * for a pass. The status poll reads it without resolving anything.
  */
 let digestChoice: DigestChoice | null = null;
 let digestChoiceRefresh: Promise<void> | null = null;
+
+/**
+ * What a summary would be written with now, for Rebuild and its plan, or null
+ * while summaries are off or wait for a choice (nothing to rewrite then).
+ * Resolved through the writer's own rule so the two can never disagree.
+ */
+async function resolveRewriteChoice(context: IpcContext): Promise<DigestChoice | null> {
+  if (disposed || !digestsEnabled(context)) return null;
+  const homeProjectId = context.currentProjectId ?? context.projectRepo.list()[0]?.id;
+  if (!homeProjectId) return null;
+  const resolved = await resolveAnswerRun(context, homeProjectId, 'digest', { withSearch: false, job: 'digest' }).catch(() => null);
+  if (!resolved?.ok) return null;
+  const choice = { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort };
+  digestChoice = choice;
+  return choice;
+}
 
 /** Re-resolve `digestChoice` from the current settings. One at a time. */
 function refreshDigestChoice(context: IpcContext): void {
@@ -347,13 +479,15 @@ function refreshDigestChoice(context: IpcContext): void {
 }
 
 /**
- * The open project's digests for the Task digests card's status and rewrite
- * lines: a few index reads (under 0.1 ms each measured) and the scheduler's
- * own state. Read on the Search tab's status poll, only while digests are on.
+ * The open project's digests for the Task digests card's status row and
+ * Rewrite: a few index reads (under 0.1 ms each measured) and the scheduler's
+ * own state. Read on the Knowledge Graph tab's status poll while semantic search is on,
+ * with the switch off too: switching digests on starts writing at once, so the
+ * card gives the backfill's size before it is on.
  */
 function digestStatusFor(context: IpcContext): MemoryDigestStatus | undefined {
   const projectId = context.currentProjectId;
-  if (!projectId || !digestsEnabled(context)) return undefined;
+  if (!projectId || !isIndexingEnabled(context) || !isSemanticEnabled(context)) return undefined;
   try {
     const db = getProjectDb(projectId);
     const counts = new RetrievalStore(db).digestCounts();
@@ -362,15 +496,114 @@ function digestStatusFor(context: IpcContext): MemoryDigestStatus | undefined {
     // Never resolved yet this run (or waiting on a choice): resolve it for the
     // next poll. A settings change refreshes it too.
     if (digestChoice === null) refreshDigestChoice(context);
+    const skipped = digestScheduler.skipped(projectId);
+    const awaitingRewrite = digests.awaitingRewrite();
+    // What is left to write at the run's own rate: unwritten tasks the agent
+    // has not passed over, and digests marked for rewriting.
+    const remaining = Math.max(0, counts.finishedTasks - counts.written - skipped) + awaitingRewrite;
+    const perMinute = digestScheduler.writtenPerMinute(projectId);
     return {
       ...counts,
-      skipped: digestScheduler.skipped(projectId),
+      skipped,
       state: scheduler.state,
       retryInMs: scheduler.retryAtMs === null ? null : Math.max(0, scheduler.retryAtMs - Date.now()),
+      minutesLeft: perMinute && remaining > 0 ? remaining / perMinute : null,
       writtenWith: digests.writtenWith(),
       choice: digestChoice,
-      awaitingRewrite: digests.awaitingRewrite(),
+      awaitingRewrite,
     };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * How long the Index card keeps a project's corpus totals before reading them
+ * again. The totals are the Index panel's own read (`corpusTotals`, so the two
+ * show the same counts), about 15 ms on a 94k-chunk index, and they move only
+ * as documents are indexed. Keyed on the index's size instead, as the Index
+ * panel is, they were read again after every embedding batch: 51 to 71 ms on
+ * main on nearly every 1.5 s poll while embedding ran (the size check alone is
+ * two full index counts). What moves by the second, the passages still
+ * waiting, is read on every poll by a query that costs what is waiting.
+ */
+const SOURCE_TOTALS_TTL_MS = 30_000;
+const sourceTotalsCache = new Map<string, { readAt: number; totals: ReturnType<RetrievalStore['corpusTotals']> }>();
+
+/**
+ * The open project's always-indexed sources for their lines in the Index card:
+ * conversations, tasks, commits. "Caught up" is decided here: an embedded
+ * source waits while any passage lacks a vector for the current model, a
+ * keyword-only one never does.
+ */
+function sourcesStatusFor(context: IpcContext): MemorySourcesStatus | undefined {
+  const projectId = context.currentProjectId;
+  if (!projectId || !isIndexingEnabled(context)) return undefined;
+  try {
+    const store = new RetrievalStore(getProjectDb(projectId));
+    const now = Date.now();
+    let cached = sourceTotalsCache.get(projectId);
+    if (!cached || now - cached.readAt > SOURCE_TOTALS_TTL_MS) {
+      cached = { readAt: now, totals: timeSyncWork('status:source-totals', () => store.corpusTotals()) };
+      sourceTotalsCache.set(projectId, cached);
+    }
+    const totals = cached.totals;
+    const semanticOn = isSemanticEnabled(context);
+    const waitingByCorpus = semanticOn
+      ? timeSyncWork('status:source-waiting', () => store.countChunksNeedingEmbedding(selectedModel(context).modelTag))
+      : new Map<string, number>();
+    const perMinute = embedEngine.chunksPerMinute;
+    const sourceOf = (corpus: MemoryCorpus): MemorySourceStatus => {
+      const row = totals.find((entry) => entry.corpus === corpus);
+      const count = row?.documents ?? 0;
+      const waiting = isEmbeddedCorpus(corpus) ? waitingByCorpus.get(corpus) ?? 0 : 0;
+      if (waiting === 0) return { count, percent: null, minutesLeft: null };
+      // The totals can trail a fresh index by up to the cache's age, so the
+      // share is held under 100 while anything still waits.
+      const chunks = Math.max(row?.chunks ?? 0, waiting);
+      return {
+        count,
+        percent: Math.min(99, Math.floor(((chunks - waiting) / chunks) * 100)),
+        minutesLeft: perMinute ? waiting / perMinute : null,
+      };
+    };
+    return { conversations: sourceOf('conversation'), tasks: sourceOf('task'), commits: sourceOf('commit') };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Default branch sizes for the Source code card, read in the background. */
+const codeBranchSizes = createBranchSizes();
+
+/**
+ * The open project's source code for the Source code card's status line. Off,
+ * the size of its default branch and how long embedding it would take here;
+ * on, how far the index has got. Three index counts, plus a background branch
+ * reading at most once a minute while nothing is indexed. Read on the Search
+ * tab's status poll, only while semantic search is on.
+ */
+function codeStatusFor(context: IpcContext): MemoryCodeStatus | undefined {
+  const projectId = context.currentProjectId;
+  if (!projectId || !isIndexingEnabled(context) || !isSemanticEnabled(context)) return undefined;
+  try {
+    const on = codePlan(context) === 'index';
+    const store = new RetrievalStore(getProjectDb(projectId));
+    const progress = on
+      ? store.corpusProgress('code', selectedModel(context).modelTag)
+      : { documents: 0, chunks: 0, embedded: 0 };
+    const projectPath = projectPathFor(context, projectId);
+    // Git only while nothing is indexed: the index knows its own size after.
+    const branchSize = progress.documents === 0 && projectPath
+      ? codeBranchSizes.get(projectId, projectPath, baseBranchFor(context, projectPath))
+      : undefined;
+    return codeStatus({
+      on,
+      progress,
+      indexedBranch: indexedCodeBranch(store),
+      branchSize: projectPath ? branchSize : null,
+      chunksPerMinute: embedEngine.chunksPerMinute,
+    });
   } catch {
     return undefined;
   }
@@ -497,10 +730,13 @@ export const retrievalService = {
         const stillThisProject = (): boolean =>
           !disposed && context.currentProjectId === project.id && activeSweepProjectId === project.id;
         await indexer.sweepProject(project.id, stillThisProject);
-        // The board's own records, and the files each conversation changed:
-        // both cheap once caught up, and complete on the first open.
+        // The board's own records, the files each conversation changed, and
+        // the default branch's commits: each cheap once caught up, and
+        // complete on the first open.
         await sweepTaskRecords(project.id, stillThisProject);
         await sweepChangeRecords(project.id, project.path, stillThisProject);
+        await sweepProjectCommits(context, project.id, project.path, stillThisProject);
+        await sweepProjectCode(context, project.id, project.path, stillThisProject);
         // Covers project open, the startup backlog, AND crash-resume: the
         // sweep re-indexed whatever changed, and this flags it for the
         // background drain regardless of whether anything actually changed
@@ -535,37 +771,73 @@ export const retrievalService = {
    *  piggyback the gate on. */
   reconcileEmbedWorker(context: IpcContext): void {
     embedEngine.reconcile(context);
-    // The same memory settings decide digests: choosing a digest agent, or
-    // turning digests back on, starts the backfill without a re-open, and
-    // what a digest is written with may have changed.
+    // The same memory settings decide digests: choosing the search agent, or
+    // turning digests on, starts the backfill without a re-open, and what a
+    // digest is written with may have changed.
     const projectId = context.currentProjectId;
     digestChoice = null;
     refreshDigestChoice(context);
     if (projectId) digestScheduler.request(context, projectId);
+    // Switching source code on fills the code index, and off clears it.
+    if (projectId) queueRecordSweeps(context, projectId);
   },
 
   /**
-   * The Task digests card's Rewrite: mark the project's finished-task digests
-   * written with anything but what a digest would be written with now, and
-   * start the pass that rewrites them. The choice is resolved here, not taken
-   * from the renderer, so what is marked is exactly what the writer will not
-   * match. Each marked digest keeps its text, and stays searchable, until its
-   * new one lands.
+   * What the Index card's Rebuild would spend: the task summaries in every
+   * project written with anything but what a summary would be written with
+   * now. Resolved here, as Rebuild resolves it, so the count the confirm names
+   * is exactly what Rebuild marks. One small read per project.
    */
-  async rewriteDigests(context: IpcContext, projectId: string): Promise<{ marked: number }> {
-    if (disposed || !digestsEnabled(context)) return { marked: 0 };
-    const resolved = await resolveAnswerRun(context, projectId, 'digest', { withSearch: false, job: 'digest' });
-    if (!resolved.ok) return { marked: 0 };
-    const choice = { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort };
-    digestChoice = choice;
-    const marked = new DigestStore(getProjectDb(projectId)).markForRewrite(choice);
-    console.log(`[retrieval] digests project=${projectId} marked for rewrite=${marked}`);
-    if (marked > 0) {
-      // Nothing on the board moved, so the fingerprint would call it caught up.
-      digestScheduler.invalidate(projectId);
-      digestScheduler.request(context, projectId);
+  async rebuildPlan(context: IpcContext): Promise<MemoryRebuildPlan> {
+    const choice = await resolveRewriteChoice(context);
+    if (!choice) return { summariesToRewrite: 0 };
+    let summariesToRewrite = 0;
+    for (const project of context.projectRepo.list()) {
+      try {
+        summariesToRewrite += new DigestStore(getProjectDb(project.id)).countNotWrittenWith(choice);
+      } catch (error) {
+        console.warn(`[retrieval] rebuild plan could not read project=${project.id}:`, error);
+      }
     }
-    return { marked };
+    return { summariesToRewrite };
+  },
+
+  /**
+   * The Index card's Rebuild: everything, in every project. Each project
+   * forgets what its sources were read from (`resetIndexState`: never the
+   * chunks or their vectors, so nothing indexed is lost and unchanged text
+   * keeps its vector), and its summaries written with another agent or model
+   * are marked for rewriting, each keeping its text until the new one lands.
+   *
+   * Only the open project is read again now. A sweep runs for the open project
+   * alone (`startForProject` stops any other), so the rest are read again on
+   * their next open, from the state cleared here. The same holds for their
+   * rewrites, which their next digest pass picks up.
+   */
+  async rebuildEverything(context: IpcContext): Promise<MemoryRebuildPlan> {
+    if (disposed) return { summariesToRewrite: 0 };
+    const choice = await resolveRewriteChoice(context);
+    let summariesToRewrite = 0;
+    for (const project of context.projectRepo.list()) {
+      try {
+        const db = getProjectDb(project.id);
+        new RetrievalStore(db).resetIndexState();
+        if (choice) summariesToRewrite += new DigestStore(db).markForRewrite(choice);
+        // Nothing on the board moved, so the fingerprint would call it caught up.
+        digestScheduler.invalidate(project.id);
+      } catch (error) {
+        console.warn(`[retrieval] rebuild could not reset project=${project.id}:`, error);
+      }
+    }
+    console.log(`[retrieval] rebuild projects=${context.projectRepo.list().length} summaries marked for rewrite=${summariesToRewrite}`);
+    const openProjectId = context.currentProjectId;
+    const openProject = openProjectId ? context.projectRepo.getById(openProjectId) : null;
+    if (openProject) {
+      this.stop(openProject.id);
+      this.startForProject(context, openProject);
+      digestScheduler.request(context, openProject.id);
+    }
+    return { summariesToRewrite };
   },
 
   /**
@@ -599,7 +871,7 @@ export const retrievalService = {
 
     // Self-heal: when semantic is enabled but the model isn't present, make sure
     // its download is running. This is what actually kicks the download after
-    // the user flips the toggle, since the Search tab polls getStatus. Skipped while already downloading (guarded inside) and after an
+    // the user flips the toggle, since the Knowledge Graph tab polls getStatus. Skipped while already downloading (guarded inside) and after an
     // error (no retry spam - the user re-toggles to retry).
     if (indexingEnabled && semanticOn && !isEmbeddingModelPresent(model) && modelDownloadState !== 'error') {
       ensureModelDownload(context);
@@ -628,7 +900,7 @@ export const retrievalService = {
       // Enabled, but the model is still downloading / not ready yet.
       semantic = 'downloading';
     } else if (embedEngine.workerCrashed) {
-      // The restart policy gave up. Carry its reason so the Search tab can say
+      // The restart policy gave up. Carry its reason so the Knowledge Graph tab can say
       // why instead of only that it failed.
       semantic = 'error';
       workerError = embedEngine.workerCrashReason ?? undefined;
@@ -662,6 +934,8 @@ export const retrievalService = {
         progress: showProgress ? modelDownloadProgress : undefined,
       },
       digests: digestStatusFor(context),
+      code: codeStatusFor(context),
+      sources: sourcesStatusFor(context),
     };
   },
 
@@ -681,25 +955,6 @@ export const retrievalService = {
     }
   },
 
-  /** Non-destructively rebuild a project's index (the Search settings "Rebuild
-   *  this project's index" recovery action). Clears ONLY the per-session index-state signatures -
-   *  never the chunks - so the fresh sweep re-indexes every session from its
-   *  transcript while keeping the existing chunks as a fallback. A session whose
-   *  transcript is gone or unparseable keeps its chunks (indexSession replaces a
-   *  session's chunks only on a successful parse), so a rebuild can never drop a
-   *  past conversation. The re-sweep runs via `startForProject`, which flags the
-   *  project dirty so embedEngine's background drain embeds it afterward. */
-  rebuildProjectIndex(context: IpcContext, project: Project): void {
-    if (disposed) return;
-    this.stop(project.id);
-    try {
-      new RetrievalStore(getProjectDb(project.id)).resetIndexState();
-    } catch (error) {
-      console.warn('[retrieval] rebuild index-state reset failed:', error);
-    }
-    this.startForProject(context, project);
-  },
-
   /** Synchronous shutdown: stop scheduling, drop pending timers, dispose the
    *  embedding engine (which synchronously kills the embed worker), mark
    *  disposed. In-flight work is abandoned; the next open recovers it. */
@@ -714,6 +969,7 @@ export const retrievalService = {
     finalizeIndexTimers.clear();
     for (const timer of taskRecordTimers.values()) clearTimeout(timer);
     taskRecordTimers.clear();
+    deferredBranchTimers.clear();
     digestScheduler.dispose();
     embedEngine.dispose();
   },

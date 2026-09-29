@@ -378,7 +378,13 @@ export class RetrievalStore {
    *  conversation turns. `taskId`, when given, restricts the FTS match itself to
    *  that task's chunks (a JOIN against memory_chunks, not a post-filter) so
    *  ranking and `limit` apply within the task instead of discarding most of a
-   *  small result set after the fact. */
+   *  small result set after the fact.
+   *
+   *  CROSS JOIN pins the full-text match first. The app's SQLite (3.53) already
+   *  plans it that way, but an older one tried here (Node 24's) walks the
+   *  `(corpus)` index and runs the match once per chunk row instead: 2 to 29 s
+   *  on 93k chunks, against 20 to 200 ms. The order is the whole cost, so it is
+   *  not left to a planner version. */
   searchLexical(
     matchQuery: string,
     limit: number,
@@ -396,7 +402,7 @@ export class RetrievalStore {
                 snippet(memory_chunks_fts, 0, '', '', '…', 12) AS snip,
                 bm25(memory_chunks_fts) AS score
          FROM memory_chunks_fts
-         JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid
+         CROSS JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid
          WHERE memory_chunks_fts MATCH ? AND memory_chunks.corpus IN (${corpusPlaceholders(corpora)}) ${taskFilter}
          ORDER BY score
          LIMIT ?`,
@@ -408,6 +414,74 @@ export class RetrievalStore {
       bm25: row.score,
       snippet: row.snip,
     }));
+  }
+
+  /**
+   * Keyword matches in several corpora from ONE full-text scan, ranked within
+   * each corpus (rank 1 = its best bm25), at most `limits.get(corpus)` each.
+   *
+   * The FTS table covers every corpus, so a query per corpus scans the whole
+   * index and only then keeps its own rows: the task records' and the commits'
+   * pools cost 18 to 93 ms each on about 100k chunks. One scan over both costs
+   * what one of them did (17 to 92 ms), split here, and each corpus's ranks
+   * equal its own query's exactly. No LIMIT, because a limit across corpora
+   * would let one crowd out another, and the side corpora hold only a few
+   * thousand chunks between them; never give it the conversations. No snippet:
+   * the related-work rollup reads ranks only.
+   */
+  searchLexicalPerCorpus(
+    matchQuery: string,
+    limits: ReadonlyMap<MemoryCorpus, number>,
+  ): Map<MemoryCorpus, Array<{ chunkId: number; rank: number }>> {
+    const byCorpus = new Map<MemoryCorpus, Array<{ chunkId: number; rank: number }>>();
+    const corpora = [...limits.keys()];
+    if (corpora.length === 0) return byCorpus;
+    const rows = this.db
+      .prepare(
+        `SELECT memory_chunks_fts.rowid AS id, memory_chunks.corpus AS corpus, bm25(memory_chunks_fts) AS score
+         FROM memory_chunks_fts
+         CROSS JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid
+         WHERE memory_chunks_fts MATCH ? AND memory_chunks.corpus IN (${corpusPlaceholders(corpora)})
+         ORDER BY score`,
+      )
+      .all(matchQuery, ...corpora) as Array<{ id: number; corpus: string; score: number }>;
+    for (const row of rows) {
+      if (!isMemoryCorpus(row.corpus)) continue;
+      const list = byCorpus.get(row.corpus) ?? [];
+      if (list.length >= (limits.get(row.corpus) ?? 0)) continue;
+      list.push({ chunkId: row.id, rank: list.length + 1 });
+      byCorpus.set(row.corpus, list);
+    }
+    return byCorpus;
+  }
+
+  /**
+   * The task whose conversation first mentions `phrase` (an FTS5 phrase), at or
+   * before `atOrBeforeMs`, or null. How a commit finds the task that wrote it
+   * (`commit-record.ts`). CROSS JOIN pins the full-text match first, as in
+   * `searchLexical`: planned the other way it ran 28 to 168 s a subject.
+   */
+  firstTaskMentioning(phrase: string, atOrBeforeMs: number): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT memory_chunks.task_id AS taskId, MIN(COALESCE(memory_chunks.ts_start, memory_chunks.ts_end)) AS firstMs
+         FROM memory_chunks_fts
+         CROSS JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid
+         WHERE memory_chunks_fts MATCH ? AND memory_chunks.corpus = 'conversation' AND memory_chunks.task_id IS NOT NULL
+         GROUP BY memory_chunks.task_id
+         HAVING firstMs IS NOT NULL AND firstMs <= ?
+         ORDER BY firstMs ASC
+         LIMIT 1`,
+      )
+      .get(phrase, atOrBeforeMs) as { taskId: string; firstMs: number } | undefined;
+    return row?.taskId ?? null;
+  }
+
+  /** Point one document's chunks at a task, text and embeddings untouched. */
+  setDocumentTask(corpus: MemoryCorpus, docId: string, taskId: string | null): void {
+    this.db
+      .prepare('UPDATE memory_chunks SET task_id = ? WHERE corpus = ? AND doc_id = ?')
+      .run(taskId, corpus, docId);
   }
 
   /** Every chunk id belonging to one task, for scoping a semantic (vec0) search
@@ -647,19 +721,27 @@ export class RetrievalStore {
     return rows.map(toStoredChunk);
   }
 
-  /** Cheap count of chunks still pending embedding for `modelTag` (the same
-   *  rows `chunksNeedingEmbedding` serves, as index seeks). Not yet wired to a
-   *  caller: exposed for a future embedding status/telemetry surface that needs
-   *  a pending count without fetching full rows. */
-  countChunksNeedingEmbedding(modelTag: string): number {
-    if (this.vecTables.size === 0) return 0;
-    const row = this.db
+  /**
+   * Chunks still waiting for a `modelTag` vector, by corpus: the same rows
+   * `chunksNeedingEmbedding` serves, counted. For Settings > Knowledge Graph's Index
+   * card, read on every status poll, so it has to stay cheap while the index is
+   * large: three ranges of `(embedded_model, corpus)`, never-embedded and
+   * either side of the tag, so the cost follows what is waiting rather than
+   * the index's size (nothing to read once caught up). `+corpus` keeps the
+   * planner off the `(corpus)` index, which would read every chunk row.
+   */
+  countChunksNeedingEmbedding(modelTag: string): Map<string, number> {
+    const waiting = new Map<string, number>();
+    if (this.vecTables.size === 0) return waiting;
+    const rows = this.db
       .prepare(
-        `SELECT COUNT(*) AS count FROM memory_chunks
-         WHERE embedded_model IS NULL OR embedded_model < ? OR embedded_model > ?`,
+        `SELECT corpus, COUNT(*) AS count FROM memory_chunks
+         WHERE embedded_model IS NULL OR embedded_model < ? OR embedded_model > ?
+         GROUP BY +corpus`,
       )
-      .get(modelTag, modelTag) as { count: number };
-    return row.count;
+      .all(modelTag, modelTag) as Array<{ corpus: string; count: number }>;
+    for (const row of rows) waiting.set(row.corpus, row.count);
+    return waiting;
   }
 
   /**
@@ -990,6 +1072,25 @@ export class RetrievalStore {
       chunks: countOf(chunks, row.corpus),
       embeddedChunks: countOf(embedded, row.corpus),
     }));
+  }
+
+  /**
+   * One corpus's files, passages, and passages embedded by `modelTag`: three
+   * index range counts, for a status line polled while Settings is open. The
+   * embedded count reads `(embedded_model, corpus)` for exactly this model, so
+   * passages still carrying another model's vectors count as waiting.
+   */
+  corpusProgress(corpus: MemoryCorpus, modelTag: string): { documents: number; chunks: number; embedded: number } {
+    const documents = (this.db
+      .prepare('SELECT COUNT(*) AS count FROM memory_index_state WHERE corpus = ?')
+      .get(corpus) as { count: number }).count;
+    const chunks = (this.db
+      .prepare('SELECT COUNT(*) AS count FROM memory_chunks WHERE corpus = ?')
+      .get(corpus) as { count: number }).count;
+    const embedded = (this.db
+      .prepare('SELECT COUNT(*) AS count FROM memory_chunks WHERE embedded_model = ? AND corpus = ?')
+      .get(modelTag, corpus) as { count: number }).count;
+    return { documents, chunks, embedded };
   }
 
   /** Characters of text held in some corpora. For the small ones: the

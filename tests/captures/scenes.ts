@@ -376,7 +376,7 @@ const ANNOUNCEMENT_HISTORY = ANNOUNCEMENTS.map((announcement) => ({ announcement
  */
 // The settings panel docks to the right of the frame rather than centring, so each alt opens with
 // the tab and then reads the panel top to bottom. Every line below was checked against the
-// rendered tab in both themes; a row that only shows once a switch is on (the Search tab's model
+// rendered tab in both themes; a row that only shows once a switch is on (the Knowledge Graph tab's model
 // picker, the Mobile tab's connection test) is left out rather than described. An entry may carry
 // `config` to show its tab in use: Dictation is switched on, because off it greys out every row
 // below the switch and reads as a feature that is not there.
@@ -403,11 +403,11 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
   // never shot on the empty model selects of the first render.
   dictation: {
     ready: '[data-testid="dictation-model-ready"]',
-    alt: 'Settings on the Dictation tab with voice dictation on: the push-to-talk key, release buffer, and auto-submit, then a Transcription card with English, the Best accuracy mode, its two models marked Ready, and punctuation.',
+    alt: 'Settings on the Dictation tab with voice dictation on: the push-to-talk key, release buffer, and auto-submit, then a Transcription card with English, the Best accuracy mode, a Models row naming its two models with a check, and punctuation.',
     config: { dictation: DICTATION_ON },
     note: 'Dictation is switched on, with every other setting at its default, so the models are the ones the dataset\'s getInfo answer selects (DEMO_DICTATION_INFO).',
   },
-  memory: { ready: '[data-testid="setting-row-memory.indexingEnabled"]', alt: 'Settings on the Search tab: an Index conversations card with a control to rebuild this project\'s index, and a Semantic search card.' },
+  memory: { ready: '[data-testid="setting-row-memory.indexingEnabled"]', alt: 'Settings on the Knowledge Graph tab: the Knowledge Graph card with its switch, then an Index card with one line per source, conversations, tasks and commits always on and task summaries and source code as switches, and a Rebuild control.' },
   mcpServer: { ready: '[data-testid="setting-row-mcpServer.enabled"]', alt: 'Settings on the MCP Server tab: one card with the server switch and, inside it, the available tools as pills grouped by area: tasks, board, sessions, and more.' },
   browserAutomation: { ready: '[data-testid="setting-row-browserAutomation.enabled"]', alt: 'Settings on the Agent Browser tab: one card with the browser automation switch and the actions agents get: interaction, navigation with a localhost restriction under it, and eval.' },
   mobile: { ready: '[data-testid="setting-row-mobileBridge.enabled"]', alt: 'Settings on the Mobile Devices tab: the Mobile bridge switch, off here, with links to how the relay works and how to install and pair.' },

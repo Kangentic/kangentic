@@ -115,8 +115,11 @@ describe('graph service coverage cache', () => {
     expect(first.index.corpora).toEqual([
       { corpus: 'conversation', documents: 1, chunks: 4, embeddedChunks: 4, embeds: true },
       { corpus: 'task', documents: 2, chunks: 3, embeddedChunks: 1, embeds: true },
-      // Kept as text only, so it has no embedded share to report.
+      // Kept as text only, so they have no embedded share to report.
       { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
+      { corpus: 'commit', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
+      // Opt-in, and embedded once on: its row carries an embedded share.
+      { corpus: 'code', documents: 0, chunks: 0, embeddedChunks: 0, embeds: true },
     ]);
     // No projection yet and no stored width: the size is the other corpora's text.
     expect(first.index.storageBytes).toBe(300);

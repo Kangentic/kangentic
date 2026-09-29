@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, Check, Mic, Pencil } from 'lucide-react';
+import { AudioLines, Mic, Pencil } from 'lucide-react';
 import { useDictationStore } from '../../../stores/dictation-store';
 import type {
   AppConfig,
   DictationConfig,
   DictationInfo,
 } from '../../../../shared/types';
-import { Select, DownloadProgressBar, SettingTextInput, useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow, CardTile, InfoTip } from '../settings-card';
+import { Select, SettingTextInput, useScopedUpdate } from '../shared';
+import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow, CardTile, CardStatusRow, InfoTip } from '../settings-card';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { effectiveCombo } from '../../../../shared/keybindings';
@@ -38,6 +38,32 @@ function accuracyLabel(modelId: string): string {
 
 function accuracyRank(modelId: string): number {
   return MODEL_ACCURACY[modelId]?.rank ?? 0;
+}
+
+type DictationModelState = 'ready' | 'downloading' | 'failed';
+
+/**
+ * The picked models' state, as the same status row every Settings status uses.
+ * Switching dictation on starts the download (prewarm on enable), so a model
+ * not on disk yet reads as Downloading, never as a separate waiting state.
+ * Every state names the same models.
+ */
+function DictationModelStatus({ names, state, percent }: { names: string; state: DictationModelState; percent: number }) {
+  if (state === 'failed') {
+    return <CardStatusRow label="Download failed" value={names} tone="failure" testId="dictation-model-download" />;
+  }
+  if (state === 'ready') {
+    return <CardStatusRow label="Models" value={names} tone="ready" testId="dictation-model-download" valueTestId="dictation-model-ready" />;
+  }
+  return (
+    <CardStatusRow
+      label="Downloading"
+      value={`${Math.min(100, Math.floor(percent))}%, ${names}`}
+      percent={percent}
+      progressLabel="Dictation models downloaded"
+      testId="dictation-model-download"
+    />
+  );
 }
 
 /**
@@ -235,28 +261,10 @@ export function DictationTab({
     ? (modelProgress.downloadedBytes / modelProgress.totalBytes) * 100
     : 0;
 
-  // Read-only status. The models download on their own (prewarm on enable) and
-  // live progress shows in the dictation popup, so there is no manual button
-  // here: which models this setup runs, and whether they are ready.
-  const modelStatusLine = pickedModelIds.length > 0 ? (
-    <div className="text-xs text-fg-muted" data-testid="dictation-model-download">
-      {modelProgress?.status === 'error' ? (
-        <span className="text-red-400">{modelProgress.error ?? `${pickedModelNames} failed to download.`}</span>
-      ) : allModelsInstalled || (modelInstalled && pickedModelIds.length === 1) ? (
-        <span className="flex items-center gap-1.5" data-testid="dictation-model-ready">
-          <Check size={13} className="flex-shrink-0 text-emerald-500" aria-hidden="true" />
-          Ready: {pickedModelNames}
-        </span>
-      ) : isDownloading ? (
-        <>
-          Downloading {pickedModelNames}, {Math.min(100, Math.round(downloadPercent))}%
-          <DownloadProgressBar percent={downloadPercent} />
-        </>
-      ) : (
-        <span>{pickedModelNames} download on their own.</span>
-      )}
-    </div>
-  ) : null;
+  const modelsReady = allModelsInstalled || (modelInstalled && pickedModelIds.length === 1);
+  const modelState: DictationModelState = modelProgress?.status === 'error'
+    ? 'failed'
+    : modelsReady ? 'ready' : 'downloading';
 
   const pushToTalkDescription = 'Hold to record; release to insert the transcription. Rebind it in Hotkeys.';
   const modeDescription = 'A preset picks the live and refinement models for you. Custom lets you pick them.';
@@ -364,11 +372,7 @@ export function DictationTab({
                 value={mode}
                 onChange={(next) => applyMode(next)}
                 testId="dictation-preset-choice"
-              >
-                {/* A preset names its models on this one line; Custom shows the
-                    two pickers instead of locked ones. */}
-                {modelsLocked ? modelStatusLine : null}
-              </CardChoiceRow>
+              />
               {modelsLocked ? null : (
                 <>
                   <CardRow
@@ -443,12 +447,19 @@ export function DictationTab({
                         />
                       </div>
                     ) : null}
-                    {/* The line naming both picked models sits in the tile of the
-                        last picker, as the preset's sits in the Mode tile. */}
-                    {modelStatusLine}
                   </CardRow>
                 </>
               )}
+              {/* The models this setup runs and whether they are on disk, under
+                  the rows that pick them: Mode for a preset, the two pickers in
+                  Custom. A cloud-only setup has none to show. */}
+              {pickedModelIds.length > 0 ? (
+                <DictationModelStatus
+                  names={pickedModelNames}
+                  state={modelState}
+                  percent={isDownloading ? downloadPercent : 0}
+                />
+              ) : null}
             </>
           ) : null}
           <CardToggleRow

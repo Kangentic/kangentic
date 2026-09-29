@@ -98,7 +98,7 @@ describe('answerFromContext parity', () => {
   });
 
   it('takes the model as its fourth parameter everywhere', () => {
-    // The signature is what lets the Search tab pick a cheaper model. An
+    // The signature is what lets the Knowledge Graph tab pick a cheaper model. An
     // adapter that ignores it silently answers at the CLI default, and the
     // setting appears to do nothing.
     const offenders: string[] = [];
@@ -126,7 +126,7 @@ describe('answerFromContext parity', () => {
 
   it('declares answerCapabilities beside every answerFromContext', () => {
     // What the run can do beyond the base (streaming, search, a model) is read
-    // generically by the handler and by Settings > Search. An adapter that
+    // generically by the handler and by Settings > Knowledge Graph. An adapter that
     // answers without declaring it would read as "takes no model", and the
     // Answering model row would stop being required for it.
     const answerers = agentsDeclaring('answerFromContext');

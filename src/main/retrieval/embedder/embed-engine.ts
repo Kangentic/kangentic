@@ -130,6 +130,10 @@ export interface EmbedEngineDeps {
  */
 export const RECORD_PROGRESS_INTERVAL_MS = 30_000;
 
+/** Batches a run embeds before its rate is taken as this machine's: the first
+ *  batch pays the worker's warm-up. */
+export const RATE_MIN_BATCHES = 3;
+
 const defaultDeps: EmbedEngineDeps = {
   getDb: getProjectDb,
   createStore: (db) => new RetrievalStore(db),
@@ -229,6 +233,14 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
    * that coverage cached.
    */
   let onRecordsEmbedded: ((projectId: string) => void) | undefined;
+  /**
+   * Chunks this machine embeds a minute in the background, measured over the
+   * latest drain run on wall time, duty-cycle sleeps and all. What a "minutes
+   * left" estimate divides by, so it holds for this machine's device and
+   * load, not a figure taken elsewhere. Null until a run has embedded
+   * `RATE_MIN_BATCHES` batches this launch.
+   */
+  let measuredChunksPerMinute: number | null = null;
 
   function wake(): void {
     if (wakeResolve) {
@@ -387,7 +399,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     // There is a batch, so hold the worker resident until the dirty set is
     // empty again (runLoop releases it). Taken only now, AFTER the empty
     // check: getStatus re-marks the current project on every poll (the
-    // Search tab polls every 1.5 s), and a hold taken on every such pass
+    // Knowledge Graph tab polls every 1.5 s), and a hold taken on every such pass
     // would clear and re-arm the worker's idle countdown each time, so it
     // could never expire while that tab was open. Still ahead of the first
     // await, so no timer can fire between the wake and the hold.
@@ -446,6 +458,10 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     });
 
     await deps.delay(sleepMs);
+    // Taken after the sleep, so the rate counts the pacing a real drain pays.
+    if (run && run.batches >= RATE_MIN_BATCHES) {
+      measuredChunksPerMinute = (run.chunks / Math.max(1, Date.now() - run.startedAt)) * 60_000;
+    }
     return 'more-pending';
   }
 
@@ -529,6 +545,11 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
 
     get activeDevice(): string | null {
       return client?.activeDevice ?? null;
+    },
+
+    /** Background chunks a minute on this machine, or null before a run has measured it. */
+    get chunksPerMinute(): number | null {
+      return measuredChunksPerMinute;
     },
 
     get workerCrashed(): boolean {

@@ -233,6 +233,38 @@ describe('task records in the rollup', () => {
     });
     expect(ranked).toEqual([]);
   });
+
+  /** A commit on the default branch (the `commit` corpus), found by keyword. */
+  function commitPlacement(id: number, taskId: string | null): ChunkPlacement {
+    return { id, corpus: 'commit', docId: `sha-${id}`, sessionId: null, taskId, tsStart: 60, turnUuidStart: null };
+  }
+
+  it('counts a keyword-matched commit toward the task that wrote it', () => {
+    const ranked = rollUpRelatedWork({
+      semantic: [{ chunkId: 1, relevance: 0.5 }],
+      lexical: [{ chunkId: 90, rank: 1 }],
+      placements: new Map([
+        [1, { ...placement(1, 'a'), taskId: 't1' }],
+        [90, commitPlacement(90, 't1')],
+      ]),
+      nodesByDocKey: nodes(['a', 't1', 561]),
+    });
+
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0].matches).toBe(2);
+    expect(ranked[0].docKeys).toEqual(['conversation::a']);
+  });
+
+  it('never makes a row of an unlinked commit', () => {
+    const ranked = rollUpRelatedWork({
+      semantic: [],
+      lexical: [{ chunkId: 91, rank: 1 }],
+      placements: new Map([[91, commitPlacement(91, null)]]),
+      nodesByDocKey: nodes(['a', 't1', 1]),
+      recordOnlyTasks: new Map([['t1', { taskId: 't1', displayId: 1, title: 'One' }]]),
+    });
+    expect(ranked).toEqual([]);
+  });
 });
 
 describe('choosing the handed set', () => {

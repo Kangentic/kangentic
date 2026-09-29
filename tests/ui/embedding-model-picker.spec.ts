@@ -1,8 +1,8 @@
 /**
- * UI tests for the embedding-model picker + status line in the Search tab
- * (the tiered semantic-search model selection). Verifies the dropdown lists the
- * tiers, the model card reflects the download state, and selecting a model
- * persists memory.embeddingModel to config.
+ * UI tests for the Knowledge Graph tab's two cards: the Knowledge Graph (one
+ * switch; the local model's tiered picker and status row, then the agent), and
+ * the Index (one line per source and one Rebuild). Every line state is pinned by
+ * `tests/unit/index-sources.test.ts`; these check the wiring.
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -16,8 +16,10 @@ const PROJECT_ID = 'proj-embed-picker';
 
 /** Seed a project and the polled model status (config for semanticEnabled is set
  *  post-launch via the config store, which is the mechanism the store honors). */
-function makePreConfig(modelState: string, progress?: number, digests?: object): string {
+function makePreConfig(modelState: string, progress?: number, digests?: object, code?: object, sources?: object): string {
   const memoryStatus = {
+    code,
+    sources,
     indexingEnabled: true,
     semantic: modelState === 'ready' ? 'hybrid' : 'downloading',
     activeBackend: modelState === 'ready' ? 'DirectML (GPU)' : undefined,
@@ -95,7 +97,7 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   await page.goto(VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
-  // Enable semantic search in config (the dropdown + card are gated on it) via
+  // Turn the Knowledge Graph on in config (the dropdown + rows are gated on it) via
   // the same config.set + store-reload path the settings UI uses.
   await page.evaluate(() =>
     window.electronAPI.config.set({ memory: { indexingEnabled: true, semanticEnabled: true, embeddingModel: 'bge-small' } }),
@@ -112,7 +114,7 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 async function openMemoryTab(page: Page) {
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
-  // By id: the tab is labelled Search, and that word also names a settings search box.
+  // By id: the id is what deep links and saved last-tab state address.
   await page.getByTestId('settings-tab-memory').click();
 }
 
@@ -139,12 +141,11 @@ test.describe('Embedding model picker', () => {
       // model name is NOT in the label.
       await expect(select.locator('option')).toHaveText(['Best accuracy', 'Accurate', 'Balanced']);
 
-      // The status line carries the concrete model name + size + readiness.
-      const card = page.getByTestId('embedding-model-card');
-      await expect(card).toBeVisible();
-      await expect(card).toContainText('Ready: bge small');
-      await expect(card).toContainText('34 MB');
-      await expect(page.getByTestId('embedding-model-ready')).toBeVisible();
+      // The status row carries the concrete model name, its size and where it runs.
+      // "Local model", never "Model": the agent's Model row sits below it.
+      await expect(page.getByTestId('embedding-model-card-label')).toHaveText('Local model');
+      await expect(page.getByTestId('embedding-model-ready')).toHaveText('bge small, 34 MB, DirectML (GPU)');
+      await expect(page.getByTestId('embedding-model-card').getByRole('progressbar')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -155,9 +156,35 @@ test.describe('Embedding model picker', () => {
     try {
       await openMemoryTab(page);
       const card = page.getByTestId('embedding-model-card');
-      await expect(card).toBeVisible();
-      await expect(card).toContainText('Downloading');
+      await expect(page.getByTestId('embedding-model-card-label')).toHaveText('Downloading');
+      await expect(page.getByTestId('embedding-model-card-text')).toHaveText('42%, bge small');
+      await expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '42');
       await expect(page.getByTestId('embedding-model-ready')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a model not on disk yet reads as Downloading at 0%, never as waiting', async () => {
+    const { browser, page } = await launchWithState(makePreConfig('absent'));
+    try {
+      await openMemoryTab(page);
+      await expect(page.getByTestId('embedding-model-card-label')).toHaveText('Downloading');
+      await expect(page.getByTestId('embedding-model-card-text')).toHaveText('0%, bge small');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a failed download tints the label and keeps the model name neutral', async () => {
+    const { browser, page } = await launchWithState(makePreConfig('error'));
+    try {
+      await openMemoryTab(page);
+      const label = page.getByTestId('embedding-model-card-label');
+      await expect(label).toHaveText('Download failed');
+      await expect(label).toHaveClass(/text-danger/);
+      await expect(page.getByTestId('embedding-model-card-text')).toHaveText('bge small');
+      await expect(page.getByTestId('embedding-model-card-text')).not.toHaveClass(/text-danger/);
     } finally {
       await browser.close();
     }
@@ -195,7 +222,7 @@ test.describe('Embedding model picker', () => {
       await expect(choice.getByRole('radio')).toHaveText(['Auto', 'GPU', 'CPU']);
       await expect(page.getByTestId('memory-acceleration-auto')).toHaveAttribute('aria-checked', 'true');
       // The status line names the execution provider the worker actually initialized on.
-      await expect(page.getByTestId('embedding-model-card')).toContainText('running on DirectML (GPU)');
+      await expect(page.getByTestId('embedding-model-ready')).toContainText('DirectML (GPU)');
     } finally {
       await browser.close();
     }
@@ -221,201 +248,229 @@ test.describe('Embedding model picker', () => {
     }
   });
 
-  test('Rebuild index invokes memory.rebuildIndex for the current project', async () => {
-    const { browser, page } = await launchWithState(makePreConfig('ready'));
-    try {
-      await openMemoryTab(page);
-      await page.getByTestId('memory-rebuild-index').click();
-      await expect
-        .poll(async () =>
-          page.evaluate(() => {
-            const calls = (window as unknown as {
-              __mockRebuildIndexCalls?: Array<{ projectId: string | null }>;
-            }).__mockRebuildIndexCalls;
-            return calls && calls.length > 0 ? calls[calls.length - 1].projectId : null;
-          }),
-        )
-        .toBe(PROJECT_ID);
-    } finally {
-      await browser.close();
-    }
-  });
 });
 
-test.describe('Answering agent card', () => {
-  test('stays visible with its description, tagged with its prerequisite, until it can be set up', async () => {
-    // It used to be hidden until semantic search was on, which left the
-    // feature invisible to anyone who had not already found it. It now shows
-    // like the Semantic search card does while indexing is off: dimmed, its
-    // description unchanged, a tag naming what it needs, with its rows
-    // appearing once nothing is missing. The Task digests card dims with it.
+test.describe('Knowledge Graph card', () => {
+  test('one switch holds the local model and the agent, and stays visible with its prerequisite', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
       await openMemoryTab(page);
-      const card = page.getByTestId('answering-agent-card');
-      const digestsCard = page.getByTestId('task-digests-card');
+      const card = page.getByTestId('knowledge-graph-card');
       const agentRow = page.getByTestId('memory-answer-agent');
+      const qualityRow = page.getByTestId('embedding-model-select');
 
-      const description = 'Answers the questions you ask in the Knowledge Graph.';
-      // Everything on: the card holds its rows and names no prerequisite. It
-      // answers questions only: digests have their own card.
-      await expect(agentRow).toBeVisible();
-      await expect(card).toContainText('Answering agent');
+      const description = 'Finds your work by meaning and answers questions.';
+      // On: the local model's rows, then the agent's, in setup order. One agent
+      // answers and writes the summaries: no second set of rows.
+      await expect(card).toContainText('Knowledge Graph');
       await expect(card).toContainText(description);
       await expect(card).not.toContainText('Needs ');
-      await expect(card).not.toContainText('Task digests');
+      await expect(qualityRow).toBeVisible();
+      await expect(agentRow).toBeVisible();
+      const qualityBox = await qualityRow.boundingBox();
+      const agentBox = await agentRow.boundingBox();
+      expect(qualityBox && agentBox && qualityBox.y < agentBox.y).toBe(true);
+      await expect(page.getByTestId('memory-digest-agent')).toHaveCount(0);
+      // The first card on the tab: the feature, then the index it reads.
+      const indexBox = await page.getByTestId('index-card').boundingBox();
+      const cardBox = await card.boundingBox();
+      expect(cardBox && indexBox && cardBox.y < indexBox.y).toBe(true);
 
-      // Semantic search off: the card stays, keeps its description, tags what
-      // it needs, and hides its rows.
+      // Off: the card stays, keeps its description, and hides both models' rows.
       await setMemory(page, { semanticEnabled: false });
       await expect(card).toBeVisible();
       await expect(card).toContainText(description);
-      await expect(card).toContainText('Needs semantic search');
-      await expect(digestsCard).toContainText('Needs semantic search');
-      await expect(page.getByTestId('setting-row-memory.taskDigests')).toBeDisabled();
+      await expect(page.getByRole('switch', { name: 'Knowledge Graph' })).toHaveAttribute('aria-checked', 'false');
       await expect(agentRow).toHaveCount(0);
+      await expect(qualityRow).toHaveCount(0);
 
-      // Indexing off too: each card names only its own direct prerequisite.
+      // Indexing off: it names its own prerequisite.
       await setMemory(page, { indexingEnabled: false });
-      await expect(card).toContainText('Needs semantic search');
-      await expect(page.locator('section[aria-label="Semantic search"]')).toContainText('Needs indexing');
-      await expect(agentRow).toHaveCount(0);
+      await expect(card).toContainText('Needs indexing');
     } finally {
       await browser.close();
     }
   });
 });
 
-test.describe('Task digests card', () => {
-  const DIGESTS = { written: 0, finishedTasks: 412, skipped: 0, state: 'idle', retryInMs: null, writtenWith: [], choice: null, awaitingRewrite: 0 };
+test.describe('Index card', () => {
+  const SOURCES = {
+    conversations: { count: 1002, percent: null, minutesLeft: null },
+    tasks: { count: 684, percent: null, minutesLeft: null },
+    commits: { count: 2419, percent: null, minutesLeft: null },
+  };
+  const DIGESTS = { written: 0, finishedTasks: 674, skipped: 0, state: 'idle', retryInMs: null, minutesLeft: null, writtenWith: [], choice: null, awaitingRewrite: 0 };
+  const CODE = { state: 'estimate', branch: 'origin/main', files: 1488, passages: 12186, embedded: 0, minutesLeft: 28 };
+  const AGENT = { answerAgent: 'claude', answerModel: 'sonnet' };
 
-  test('is off by default, and switched on it waits for its own agent, showing the backfill first', async () => {
-    // Opt-in: digests spend a call per ten tasks, so nothing runs until the
-    // switch is on AND an agent is chosen. The answering agent is set here and
-    // must not be borrowed: the digest agent row starts empty.
-    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, DIGESTS));
+  const valueOf = (page: Page, source: string) => page.getByTestId(`index-source-${source}-value`);
+
+  test('lists every source on one line: the counts with a check, and the opt-in two on by default', async () => {
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, DIGESTS, CODE, SOURCES));
     try {
-      await setMemory(page, { answerAgent: 'claude', answerModel: 'sonnet' });
+      await setMemory(page, AGENT);
       await openMemoryTab(page);
-      const card = page.getByTestId('task-digests-card');
-      const toggle = page.getByTestId('setting-row-memory.taskDigests');
-      await expect(card).toContainText('A sentence or two per Done task, so questions find it.');
-      await expect(toggle).toHaveAttribute('aria-checked', 'false');
-      await expect(page.getByTestId('memory-digest-agent')).toHaveCount(0);
+      const card = page.getByTestId('index-card');
+      await expect(card).toContainText('Index');
+      await expect(card).toContainText('What Quick Find and the Knowledge Graph search.');
+      // Session changes only feed the summaries, so they are not a line.
+      await expect(page.getByTestId('index-sources')).not.toContainText('Session changes');
 
-      await toggle.click();
-      await expect(toggle).toHaveAttribute('aria-checked', 'true');
-      await expect(page.getByTestId('memory-digest-agent')).toHaveValue('');
-      await expect(page.getByTestId('memory-digest-model')).toHaveCount(0);
-      // 412 tasks at ten a call: the size of the backfill before anything runs.
-      await expect(page.getByTestId('digest-status-text')).toHaveText('Waiting for an agent: 412 tasks here, about 42 calls.');
+      // Always on: the count and a check, on a locked switch.
+      for (const [source, count] of [['conversations', '1,002'], ['tasks', '684'], ['commits', '2,419']]) {
+        await expect(valueOf(page, source)).toHaveText(count);
+        await expect(valueOf(page, source).locator('svg')).toHaveCount(1);
+        const locked = page.getByTestId(`index-source-${source}-locked`);
+        await expect(locked).toHaveAttribute('aria-checked', 'true');
+        await expect(locked).toBeDisabled();
+      }
 
-      // An agent whose run takes a model waits for the model too.
-      await setMemory(page, { digestAgent: 'claude' });
-      await expect(page.getByTestId('memory-digest-model')).toBeVisible();
-      await expect(page.getByTestId('digest-status-text')).toHaveText('Waiting for a model: 412 tasks here, about 42 calls.');
+      // On by default: nothing is spent until an agent is chosen.
+      await expect(page.getByTestId('setting-row-memory.taskDigests')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.getByTestId('setting-row-memory.codeIndex')).toHaveAttribute('aria-checked', 'true');
 
-      await setMemory(page, { digestModel: 'haiku' });
-      await expect(page.getByTestId('digest-status-text')).toHaveText('Writing: 0 of 412 Done tasks in this project.');
-      // Its own choice: the answering agent's model is untouched.
-      await expect(page.getByTestId('memory-answer-model')).toHaveValue(/sonnet|Sonnet/);
+      // Switched off: only what they would cover, muted, with no call count or time.
+      await setMemory(page, { taskDigests: false, codeIndex: false });
+      await expect(page.getByTestId('setting-row-memory.taskDigests')).toHaveAttribute('aria-checked', 'false');
+      await expect(valueOf(page, 'summaries')).toHaveText('674 tasks');
+      await expect(valueOf(page, 'code')).toHaveText('1,488 files');
+      await expect(valueOf(page, 'code')).toHaveClass(/text-fg-muted/);
+
+      await page.getByTestId('setting-row-memory.codeIndex').click();
+      await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.get()).memory?.codeIndex)).toBe(true);
     } finally {
       await browser.close();
     }
   });
 
-  test('Rewrite names what the digests were written with, and rewrites only the ones written another way', async () => {
-    const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
-    const opus = { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' };
-    const cases = [
-      {
-        // Every digest matches the chosen setting: the button stays, disabled.
-        digests: { ...DIGESTS, written: 674, finishedTasks: 674, choice: sonnet, writtenWith: [{ ...sonnet, count: 674 }] },
-        line: /^All 674 written with .*Sonnet.* at low effort\.$/,
-        enabled: false,
-      },
-      {
-        // The model changed: the old digests stay until rewritten.
-        digests: { ...DIGESTS, written: 674, finishedTasks: 674, choice: opus, writtenWith: [{ ...sonnet, count: 674 }] },
-        line: /^674 written with .*Sonnet.* at low effort\.$/,
-        enabled: true,
-      },
-    ];
-    for (const { digests, line, enabled } of cases) {
-      const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests));
-      try {
-        await setMemory(page, { taskDigests: true, digestAgent: 'claude', digestModel: digests.choice.model });
-        await openMemoryTab(page);
-        await expect(page.getByTestId('rewrite-digests-line')).toHaveText(line);
-        const button = page.getByTestId('rewrite-digests');
-        await expect(button).toHaveText('Rewrite');
-        if (!enabled) {
-          await expect(button).toBeDisabled();
-          await expect(button).toHaveAttribute('title', 'Every digest was written with the chosen agent, model and effort.');
-          continue;
-        }
-        await button.click();
-        const confirm = page.getByTestId('rewrite-digests-confirm');
-        await expect(confirm).toContainText(/Rewrite 674 digests with .*Opus.* at low effort\?/);
-        await expect(confirm).toContainText('About 68 calls, three at a time, in the background.');
-        await confirm.getByRole('button', { name: 'Rewrite' }).click();
-        await expect(confirm).toHaveCount(0);
-        await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRewriteDigestsCalls?: Array<{ projectId: string }> }).__mockRewriteDigestsCalls ?? []))
-          .toEqual([{ projectId: PROJECT_ID }]);
-      } finally {
-        await browser.close();
+  test('the opt-in two wait on the Knowledge Graph, then an agent, and can be switched off while they wait', async () => {
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, DIGESTS, CODE, SOURCES));
+    try {
+      await openMemoryTab(page);
+      // No agent chosen: the agent writes the summaries, and only its answers
+      // read the code index, so both wait. The always-on three do not.
+      for (const source of ['summaries', 'code']) {
+        await expect(page.getByTestId(`index-source-${source}`)).toContainText('Needs an agent');
       }
+      await expect(valueOf(page, 'conversations')).toHaveText('1,002');
+      // On by default, so waiting they stay switchable: turned off here, the
+      // agent chosen next never starts them.
+      const summariesSwitch = page.getByTestId('setting-row-memory.taskDigests');
+      await expect(summariesSwitch).toBeEnabled();
+      await expect(summariesSwitch).toHaveAttribute('aria-checked', 'true');
+      await summariesSwitch.click();
+      await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.get()).memory?.taskDigests)).toBe(false);
+      await expect(page.getByTestId('setting-row-memory.codeIndex')).toBeEnabled();
+      await setMemory(page, { taskDigests: true });
+
+      // An agent whose run takes a model: the summaries wait for the model too.
+      await setMemory(page, { answerAgent: 'claude' });
+      await expect(page.getByTestId('index-source-summaries')).toContainText('Needs a model');
+      await expect(page.getByTestId('setting-row-memory.codeIndex')).toBeEnabled();
+
+      // The Knowledge Graph off: both are found by meaning.
+      await setMemory(page, { ...AGENT, semanticEnabled: false });
+      for (const source of ['summaries', 'code']) {
+        await expect(page.getByTestId(`index-source-${source}`)).toContainText('Needs the Knowledge Graph');
+      }
+    } finally {
+      await browser.close();
     }
   });
 
-  test('while rewriting, the status counts the new ones and the old ones stay named', async () => {
-    const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
-    const opus = { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' };
-    const digests = {
-      ...DIGESTS, written: 674, finishedTasks: 674, choice: opus, awaitingRewrite: 554,
-      writtenWith: [{ ...sonnet, count: 554 }, { ...opus, count: 120 }],
+  test('a running source keeps its line, with the share, the time left and a track', async () => {
+    const running = {
+      ...SOURCES,
+      conversations: { count: 1002, percent: 40, minutesLeft: 5 },
     };
-    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests));
+    const digests = { ...DIGESTS, written: 148, state: 'writing', minutesLeft: 3 };
+    const code = { ...CODE, state: 'indexing', embedded: 4210, minutesLeft: 150 };
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests, code, running));
     try {
-      await setMemory(page, { taskDigests: true, digestAgent: 'claude', digestModel: 'claude-opus-5-5' });
+      await setMemory(page, { ...AGENT, taskDigests: true, codeIndex: true });
       await openMemoryTab(page);
-      await expect(page.getByTestId('digest-status-text')).toHaveText(/^Rewriting with .*Opus.* at low effort: 120 of 674\.$/);
-      await expect(page.getByTestId('rewrite-digests-line')).toHaveText(/^554 still written with .*Sonnet.* at low effort\.$/);
-      await expect(page.getByTestId('rewrite-digests')).toHaveText('Rewriting...');
-      await expect(page.getByTestId('rewrite-digests')).toBeDisabled();
+      await expect(valueOf(page, 'conversations')).toHaveText('40%, 5 min left');
+      await expect(page.getByRole('progressbar', { name: 'Conversations embedded' })).toHaveAttribute('aria-valuenow', '40');
+      // 148 of 674 is 21.9%, and 4,210 of 12,186 is 34.5%: rounded down.
+      await expect(valueOf(page, 'summaries')).toHaveText('21%, 3 min left');
+      await expect(valueOf(page, 'code')).toHaveText('34%, 2.5 hr left');
+      await expect(page.getByRole('progressbar', { name: 'Source code embedded' })).toHaveAttribute('aria-valuenow', '34');
+      // No verb: the line's name says what runs.
+      await expect(page.getByTestId('index-sources')).not.toContainText(/Writing|Indexing/);
     } finally {
       await browser.close();
     }
   });
 
-  test('says when it is caught up, what the agent passed over, and when a failed call is retried', async () => {
-    const cases: Array<{ digests: object; text: string }> = [
-      { digests: { ...DIGESTS, written: 412 }, text: 'All 412 Done tasks in this project have one.' },
-      { digests: { ...DIGESTS, written: 409, skipped: 3 }, text: '409 of 412 written, 3 skipped until the next launch.' },
-      { digests: { ...DIGESTS, written: 200, state: 'retrying', retryInMs: 5 * 60_000 }, text: 'A call failed. Trying again in 5 minutes.' },
-    ];
-    for (const { digests, text } of cases) {
-      const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests));
-      try {
-        await setMemory(page, { taskDigests: true, digestAgent: 'claude', digestModel: 'haiku' });
-        await openMemoryTab(page);
-        await expect(page.getByTestId('digest-status-text')).toHaveText(text);
-      } finally {
-        await browser.close();
-      }
+  test('a failed call tints its state word and puts the warning in the gutter; the rest stays neutral', async () => {
+    const digests = { ...DIGESTS, written: 200, state: 'retrying', retryInMs: 5 * 60_000 };
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests, CODE, SOURCES));
+    try {
+      await setMemory(page, { ...AGENT, taskDigests: true });
+      await openMemoryTab(page);
+      const value = valueOf(page, 'summaries');
+      await expect(value).toHaveText('A call failed, retrying in 5 min');
+      await expect(value.locator('.text-warning')).toHaveText('A call failed');
+      await expect(page.getByTestId('index-source-summaries').locator('svg.text-warning')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Rebuild runs at once when it would spend nothing', async () => {
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, DIGESTS, CODE, SOURCES));
+    try {
+      await openMemoryTab(page);
+      await expect(page.getByTestId('memory-rebuild-row')).toContainText('Reads every source again, in every project.');
+      await page.getByTestId('memory-rebuild-index').click();
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0))
+        .toBe(1);
+      await expect(page.getByTestId('rebuild-confirm')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Rebuild asks first when summaries were written with another model, naming none', async () => {
+    const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
+    const opus = { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' };
+    const digests = { ...DIGESTS, written: 674, choice: opus, writtenWith: [{ ...sonnet, count: 674 }] };
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests, CODE, SOURCES));
+    try {
+      await setMemory(page, { answerAgent: 'claude', answerModel: 'claude-opus-5-5', taskDigests: true });
+      await openMemoryTab(page);
+      // Written with another model: the count, and no check until rewritten.
+      await expect(valueOf(page, 'summaries')).toHaveText('674');
+      await expect(valueOf(page, 'summaries').locator('svg')).toHaveCount(0);
+
+      await page.getByTestId('memory-rebuild-index').click();
+      const confirm = page.getByTestId('rebuild-confirm');
+      await expect(confirm).toContainText('Rebuild everything?');
+      await expect(confirm).toContainText('Conversations, tasks, commits, summaries and source code are all rebuilt, in every project.');
+      await expect(confirm).toContainText('The 674 summaries written with an earlier model are rewritten, about 68 calls in the background.');
+      await expect(confirm).not.toContainText(/Sonnet|Opus/);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0))
+        .toBe(0);
+
+      await confirm.getByRole('button', { name: 'Rebuild' }).click();
+      await expect(confirm).toHaveCount(0);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0))
+        .toBe(1);
+    } finally {
+      await browser.close();
     }
   });
 });
 
-test.describe('Semantic search error state', () => {
-  test('shows the worker error detail when semantic search fails to start', async () => {
+test.describe('Local model error state', () => {
+  test('shows the worker error detail when the local model fails to start', async () => {
     const { browser, page } = await launchWithState(makeErrorPreConfig('exit 1: Cannot find module sharp'));
     try {
       await openMemoryTab(page);
       const status = page.getByTestId('semantic-status');
       await expect(status).toBeVisible();
       await expect(status).toHaveText(
-        'Semantic search failed to start - showing keyword matches. (exit 1: Cannot find module sharp)',
+        'The local model failed to start - showing keyword matches. (exit 1: Cannot find module sharp)',
       );
     } finally {
       await browser.close();
@@ -428,7 +483,7 @@ test.describe('Semantic search error state', () => {
       await openMemoryTab(page);
       const status = page.getByTestId('semantic-status');
       await expect(status).toBeVisible();
-      await expect(status).toHaveText('Semantic search failed to start - showing keyword matches.');
+      await expect(status).toHaveText('The local model failed to start - showing keyword matches.');
     } finally {
       await browser.close();
     }

@@ -203,6 +203,14 @@ const ROLLUPS = {
     if (!nodes) throw new Error('The preview has no projection yet. Let the map finish building.');
     return rollUpConversations(nodes, readBoardTasks(projectId));
   },
+  // What the code corpus holds. A code question's truth is a fact of the
+  // repository, written with the question; this says only whether the code is
+  // indexed and embedded, so a run without it skips them rather than failing.
+  code: async (port) => {
+    const snapshot = await evaluate(port, 'window.electronAPI.memory.graphSnapshot(null)');
+    const code = snapshot?.index?.corpora?.find((entry) => entry.corpus === 'code');
+    return { files: code?.documents ?? 0, chunks: code?.chunks ?? 0, embedded: code?.embeddedChunks ?? 0 };
+  },
 };
 
 /**

@@ -92,6 +92,20 @@ export class DigestStore {
       .run(choice.agent, choice.model, choice.effort).changes;
   }
 
+  /**
+   * How many finished tasks' digests `markForRewrite(choice)` would mark: the
+   * same match, counted. What Rebuild's confirm names before it spends a call.
+   */
+  countNotWrittenWith(choice: { agent: string; model: string | null; effort: string | null }): number {
+    return (this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM memory_task_digests
+         WHERE task_id IN (SELECT t.id FROM tasks t JOIN swimlanes w ON w.id = t.swimlane_id WHERE w.role = 'done')
+           AND NOT (agent = ? AND model IS ? AND effort IS ?)`,
+      )
+      .get(choice.agent, choice.model, choice.effort) as { count: number }).count;
+  }
+
   /** Finished tasks' digests marked for rewriting and not rewritten yet. */
   awaitingRewrite(): number {
     return (this.db

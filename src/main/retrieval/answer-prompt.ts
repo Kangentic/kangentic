@@ -47,6 +47,14 @@ const RELATED_FACT_KEYS: ReadonlyArray<MemoryTaskFieldKey> = [
 ];
 const RELATED_FACT_FIELDS = MEMORY_TASK_FIELDS.filter((field) => RELATED_FACT_KEYS.includes(field.key));
 
+/** A passage of source code, as the prompt shows it. */
+export interface CodePromptPassage {
+  path: string;
+  text: string;
+  /** The project whose code it is, named only across projects. */
+  project?: string;
+}
+
 /** One earlier turn of the chat. */
 export interface AnswerHistoryTurn {
   question: string;
@@ -71,6 +79,13 @@ export interface AnswerPromptContext {
    * call, so the agent is told how to reach the others.
    */
   projects?: { names: ReadonlyArray<string>; searchDefault: string };
+  /**
+   * Set whenever source code is indexed, to the passages found for this
+   * question, possibly none; left out when it is not indexed. Keyed on the
+   * setting rather than on what a question found, so the rules above the
+   * related work stay the same from question to question and stay cached.
+   */
+  code?: ReadonlyArray<CodePromptPassage>;
 }
 
 /** Characters of an earlier answer carried into a follow-up. */
@@ -78,18 +93,31 @@ const HISTORY_ANSWER_CHARS = 1_200;
 
 function rules(context: AnswerPromptContext): string {
   const { canSearch, projects } = context;
+  const withCode = context.code !== undefined;
   // Real prefixes from this table, so the examples are refs the agent will meet.
   const prefixes = (context.tasks.projects ?? []).flatMap((project) => (project.refPrefix ? [project.refPrefix] : []));
   const [firstPrefix, secondPrefix = firstPrefix] = prefixes;
+  const sourceTags = ['<related_work>', '<task_table>', ...(withCode ? ['<source_code>'] : []), '<conversation_so_far>'];
   const sources = canSearch
-    ? '<related_work>, <task_table>, <conversation_so_far> and what kangentic_search returns'
-    : '<related_work>, <task_table> and <conversation_so_far>';
+    ? `${sourceTags.join(', ')} and what kangentic_search returns`
+    : `${sourceTags.slice(0, -1).join(', ')} and ${sourceTags[sourceTags.length - 1]}`;
   return [
     `Answer only from ${sources}. Together they are the whole of what you know here.`,
     '<related_work> is what a search of every recorded conversation and task description found for this question,'
       + ' strongest first. Decide which of those tasks the question is really about by their titles, digests and'
       + ' passages, keep those,'
       + ' and ignore the ones that only share a word. Count and rank from them together with the table.',
+    ...(withCode
+      ? [
+        '<source_code> holds the passages of the source code, as committed on the default branch, that read closest'
+          + ' to the question, each under its file\'s path. Use them to say how something works or where it lives,'
+          + ' and name a file by its path. A passage is part of a file, so never say the code lacks something'
+          + ' because no passage shows it, and ignore passages that only share a word with the question. A file is'
+          + ' not a task: an answer from the code alone ends "SELECTED: none". An answer about code is four sentences'
+          + ' at most: what it does, and where it lives. Quote a constant only when the question asks for it, and'
+          + ' never walk through the steps one by one.',
+      ]
+      : []),
     '<task_table> is complete and its numbers are exact: every task in scope is listed, and costs, durations'
       + ' and totals are already computed. Use it for anything factual. A question the table answers needs no search.',
     ...(canSearch
@@ -126,10 +154,13 @@ function rules(context: AnswerPromptContext): string {
       + ' row under your answer, so even when the question asks which tasks, do not list them or recite their'
       + ' titles. Name at most three tasks in the prose, the ones that matter most, and say what connects them'
       + ' or sets them apart. The rows show the rest.',
-    'Never mention <task_table>, <related_work> or any tag here, and never open with "Based on": the reader'
-      + ' cannot see them, so start with the answer itself.',
-    'If nothing in these sources answers the question, say so in one sentence. Do not guess, and do not answer'
-      + ' from anything you know outside these sources - not about this codebase, and not about the world.',
+    `Never mention <task_table>, <related_work>${withCode ? ', <source_code>' : ''} or any tag here, and never`
+      + ' open with "Based on": the reader cannot see them, so start with the answer itself.',
+    withCode
+      ? 'If nothing in these sources answers the question, say so in one sentence. Do not guess, and do not add'
+        + ' anything you know from outside these sources, about this code or about the world.'
+      : 'If nothing in these sources answers the question, say so in one sentence. Do not guess, and do not answer'
+        + ' from anything you know outside these sources - not about this codebase, and not about the world.',
     'End with one final line of exactly this form, naming every task your answer is about. For a count or a'
       + ' "which tasks" question, name all of them, not a sample:',
     firstPrefix
@@ -184,6 +215,15 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
   ].join('\n');
 }
 
+/** The code passages, each under its path. Says so when none matched, so an
+ *  empty block is never read as the code having nothing on the subject. */
+export function formatCodePassages(passages: ReadonlyArray<CodePromptPassage>): string {
+  if (passages.length === 0) return 'No source code matched this question.';
+  return passages
+    .map((passage) => `--- ${passage.project ? `${passage.project}: ` : ''}${passage.path}\n${passage.text}`)
+    .join('\n\n');
+}
+
 function formatHistory(history: ReadonlyArray<AnswerHistoryTurn>): string {
   return history.map((turn) => {
     const answer = turn.answer.length > HISTORY_ANSWER_CHARS
@@ -207,8 +247,12 @@ function formatHistory(history: ReadonlyArray<AnswerHistoryTurn>): string {
 export function buildAnswerPrompt(question: string, context: AnswerPromptContext): string {
   const history = context.history ?? [];
   return [
-    'You are answering a question about a developer\'s own past work, from a complete table of their tasks,'
-      + ' the work a search found related to the question, and the chat so far.',
+    context.code
+      ? 'You are answering a question about a developer\'s own work, from a complete table of their tasks, the'
+        + ' work a search found related to the question, the passages of their source code closest to it, and the'
+        + ' chat so far.'
+      : 'You are answering a question about a developer\'s own past work, from a complete table of their tasks,'
+        + ' the work a search found related to the question, and the chat so far.',
     '',
     `<task_summary>\n${formatSpan(context.tasks, context.nowMs)}\n\n`
       + `${summarizeTaskTable(context.tasks)}\n</task_summary>`,
@@ -220,12 +264,19 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
     rules(context),
     '',
     `<related_work>\n${formatRelatedWork(context.related)}\n</related_work>`,
+    ...codeBlock(context.code),
     ...(history.length > 0 ? ['', `<conversation_so_far>\n${formatHistory(history)}\n</conversation_so_far>`] : []),
     '',
-    finalReminder(context.canSearch),
+    finalReminder(context.canSearch, context.code !== undefined),
     '',
     `Question: ${question.trim()}`,
   ].join('\n');
+}
+
+/** The source code block, after the related work: it changes per question, so
+ *  it rides in the uncached tail. Nothing when code is not indexed. */
+function codeBlock(code: ReadonlyArray<CodePromptPassage> | undefined): string[] {
+  return code ? ['', `<source_code>\n${formatCodePassages(code)}\n</source_code>`] : [];
 }
 
 /**
@@ -239,15 +290,19 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
  */
 export function buildFollowUpPrompt(
   question: string,
-  context: Pick<AnswerPromptContext, 'related' | 'canSearch'>,
+  context: Pick<AnswerPromptContext, 'related' | 'canSearch' | 'code'>,
 ): string {
   return [
-    'A follow-up question in the same chat. The task table, the glossary and the rules above still apply,'
-      + ' and the related work below replaces the related work of earlier questions.',
+    context.code
+      ? 'A follow-up question in the same chat. The task table, the glossary and the rules above still apply,'
+        + ' and the related work and source code below replace those of earlier questions.'
+      : 'A follow-up question in the same chat. The task table, the glossary and the rules above still apply,'
+        + ' and the related work below replaces the related work of earlier questions.',
     '',
     `<related_work>\n${formatRelatedWork(context.related)}\n</related_work>`,
+    ...codeBlock(context.code),
     '',
-    finalReminder(context.canSearch),
+    finalReminder(context.canSearch, context.code !== undefined),
     '',
     `Question: ${question.trim()}`,
   ].join('\n');
@@ -267,11 +322,13 @@ export function buildFollowUpPrompt(
  * "the biggest" was answered twice, by cost and by duration, so the reader had
  * to ask again. Hence the count-first and one-reading lines.
  */
-function finalReminder(canSearch: boolean): string {
+function finalReminder(canSearch: boolean, withCode: boolean): string {
   return 'Reply in two to four plain sentences. Commit to one answer: for a count, the number first; for a'
     + ' "biggest" or "most", one measure you name, and never an "if instead you mean" second answer. Name at most'
     + ' three tasks, by ref alone and never with their'
-    + ' titles. Work the answer out before you write it: every word appears to the reader as you write it, so'
+    + ' titles.'
+    + (withCode ? ' Name a file by its path. An answer about code is four sentences at most: what it does and where, never each step.' : '')
+    + ' Work the answer out before you write it: every word appears to the reader as you write it, so'
     + ' never correct yourself in the reply.'
     + (canSearch ? ' If what you need is not here, search before saying so.' : '')
     + ' End with the SELECTED line.';

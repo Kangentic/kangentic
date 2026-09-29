@@ -3379,15 +3379,18 @@ export interface AppConfig {
   /**
    * Conversation memory: local index over agent conversation transcripts for
    * search and recall. GLOBAL/shared scope (below the settings separator, in
-   * the Search tab). Works offline with no API key.
+   * the Knowledge Graph tab). Works offline with no API key.
    */
   memory?: {
     /** Index agent conversation transcripts locally for search/recall.
      *  Default true. Off: no indexing, no conversation search results, and the
      *  embed worker never runs. */
     indexingEnabled?: boolean;
-    /** Semantic (embedding) layer on top of lexical search. Default false;
-     *  turning it on triggers the one-time local model download. */
+    /** The Knowledge Graph switch: the semantic (embedding) layer on top of
+     *  lexical search, which the map, Ask, task summaries and source code all
+     *  need. Default false; turning it on triggers the one-time download of the
+     *  local model that finds by meaning. The key keeps its old name, since
+     *  configs already carry it. */
     semanticEnabled?: boolean;
     /** Selected embedding model id (see src/shared/embedding-models.ts). Default
      *  'bge-base'. Switching re-embeds the index in the background. */
@@ -3399,7 +3402,9 @@ export interface AppConfig {
      *  for the agents when many run at once. */
     acceleration?: MemoryAcceleration;
     /**
-     * Which agent answers a question from the index (the Memory Graph's Ask).
+     * The search agent: which agent answers a question from the index (the
+     * Knowledge Graph's Ask) and writes task digests. One choice for both jobs,
+     * made in the Search agent card (`agentJobChoice`).
      *
      * GLOBAL, and deliberately separate from the project's default agent: which
      * agent RUNS YOUR TASKS and which agent READS YOUR HISTORY are different
@@ -3407,16 +3412,18 @@ export interface AppConfig {
      *
      * Explicit, with no fallback. It used to follow the project's default agent
      * and then any capable agent, which meant a question could spend tokens on
-     * an agent and model nobody chose. Unset now means Ask and the prewarmed
-     * process wait, and asking opens Settings > Search at this row. Task digests
-     * have their own agent (`digestAgent`) and never fall back to this one.
+     * an agent and model nobody chose. Unset now means Ask, the prewarmed
+     * process and task digests wait, and asking opens Settings > Knowledge Graph at this
+     * row.
      *
      * An adapter NAME (`claude`, `codex`), never a display name - the name is
      * the registry key and the display name is copy that can change.
      */
     answerAgent?: string | null;
     /**
-     * Which MODEL the answering agent runs at.
+     * Which MODEL the search agent runs at, for answers and digests alike. A new
+     * model applies to new and changed digests; those already written stay as
+     * written until the Task digests card's Rewrite.
      *
      * The reason this exists is cost. Ask is a read-only summarize over your own
      * local index, and running it at the same frontier model that writes your
@@ -3432,44 +3439,42 @@ export interface AppConfig {
      */
     answerModel?: string | null;
     /**
-     * Which effort level the answering agent runs at, from the levels its CLI
+     * Which effort level the search agent ANSWERS at, from the levels its CLI
      * reports. Optional, unlike the model: unset runs at the adapter's
-     * recommended level (`AnswerCapabilities.defaultEffort`). Cleared with the
-     * model whenever `answerAgent` changes, since levels are per CLI (Claude's
-     * `max` is not Grok's).
+     * recommended level (`AnswerCapabilities.defaultEffort`). Digests ignore it
+     * and always run at that recommended level (`agentJobChoice`). Cleared with
+     * the model whenever `answerAgent` changes, since levels are per CLI
+     * (Claude's `max` is not Grok's).
      */
     answerEffort?: string | null;
     /**
-     * Whether an agent writes a short digest of each finished task (what it set
-     * out to do, what it ended up doing), searched with the task's own record and
-     * shown to the answering agent beside it.
+     * Whether the Knowledge Graph's agent writes a short digest (a task summary
+     * in the UI) of each finished task (what it set out to do, what it ended up
+     * doing), searched with the task's own record and shown to the agent beside
+     * it when it answers.
      *
-     * OFF unless switched on: it spends about one call per ten tasks, in the
-     * background, so it is opt-in. Read through `taskDigestsOn`
-     * (`src/shared/answer-agent.ts`) so main and the renderer agree that an
-     * unset value is off. Switching it off keeps the digests already written.
+     * ON unless switched off. It spends about one call per ten tasks, in the
+     * background, but only once the Knowledge Graph has an agent, and its
+     * switch stays usable while it waits, so it can be turned off before a call
+     * is made. Read through `taskDigestsOn` (`src/shared/answer-agent.ts`) so
+     * main and the renderer agree that an unset value is on. Switching it off
+     * keeps the digests already written.
      */
     taskDigests?: boolean;
     /**
-     * Which agent writes task digests. Its own explicit choice, like
-     * `answerAgent`, with no fallback to it: a background job that spends on
-     * every finished task must never ride on a model chosen for another job.
-     * While unset, digests wait. An adapter NAME, never a display name.
+     * Whether the project's source code (its default branch, as committed:
+     * source files and docs, not tests, fixtures or data files) is indexed and
+     * embedded, so Ask can answer questions about how the code works.
+     *
+     * ON unless switched off. The first fill embeds every passage in the
+     * background (about 12k for this repository: half an hour on a GPU, a
+     * couple of hours on a CPU) and keeps about 4 KB of vectors per passage, so
+     * it waits for the Knowledge Graph (`semanticEnabled`) and a Knowledge Graph
+     * agent, the only reader of the code index. Read through `codeIndexOn`
+     * (`src/shared/answer-agent.ts`). Switching it off clears the code index,
+     * which the branch can always rebuild.
      */
-    digestAgent?: string | null;
-    /**
-     * Which model the digest agent runs at. Adapter-specific, so it is cleared
-     * whenever `digestAgent` changes, and required when that agent's run takes a
-     * model (`AnswerCapabilities.model`). A new model applies to new and changed
-     * tasks; digests already written stay as written.
-     */
-    digestModel?: string | null;
-    /**
-     * Which effort level the digest agent runs at. Optional: unset runs at the
-     * adapter's recommended level. Cleared with the model when `digestAgent`
-     * changes.
-     */
-    digestEffort?: string | null;
+    codeIndex?: boolean;
   };
 
   /**
@@ -6652,16 +6657,22 @@ export interface ElectronAPI {
     /** The chat's warm answering session is no longer needed (the chat ended,
      *  or its graph closed). Fire-and-forget. */
     endChat: (chatId: string) => void;
-    /** Purge the project's conversation index and re-run the backfill sweep
-     *  (recovery from a corrupt/stale index). Resolves when the purge is done;
-     *  the rebuild sweep continues in the background. */
-    rebuildIndex: (projectId?: string | null) => Promise<void>;
     /**
-     * Rewrite a project's task digests that were not written with the current
-     * digest agent, model and effort, in the background. Resolves with how
-     * many were marked; each keeps its old text until its new one is written.
+     * What Rebuild would spend: how many task summaries (digests) in every
+     * project were written with another agent or model and would be rewritten.
+     * Zero while summaries are off or the search agent is not chosen. Read when
+     * Rebuild is pressed, so it asks first only when it will spend calls.
      */
-    rewriteDigests: (projectId: string) => Promise<{ marked: number }>;
+    rebuildPlan: () => Promise<MemoryRebuildPlan>;
+    /**
+     * Rebuild everything, in every project: forget what every source was read
+     * from (conversations, tasks, commits, session changes, source code) so each
+     * is read again, never dropping what is indexed, and mark the task
+     * summaries written with another agent or model for rewriting. The open
+     * project is read again at once; another project on its next open. Resolves
+     * when the marks are made; the reading continues in the background.
+     */
+    rebuildIndex: () => Promise<MemoryRebuildPlan>;
     /**
      * One task's digest in a project, for the Knowledge Graph's selected
      * conversation: null while task digests are switched off, or when the task
@@ -7028,18 +7039,19 @@ export interface MemoryGraphProjection {
 }
 
 /** A corpus of the memory index, as the Index panel lists it. */
-export type MemoryIndexCorpus = 'conversation' | 'task' | 'change';
+export type MemoryIndexCorpus = 'conversation' | 'task' | 'change' | 'commit' | 'code';
 
 /** What one corpus holds. */
 export interface MemoryIndexCorpusSummary {
   corpus: MemoryIndexCorpus;
-  /** Conversations, task records, or sessions with changes: the corpus's documents. */
+  /** Conversations, task records, sessions with changes, commits on the
+   *  default branch, or source files: the corpus's documents. */
   documents: number;
   chunks: number;
   /** Chunks with a vector; `chunks` minus these are still to be embedded. */
   embeddedChunks: number;
-  /** False for a corpus kept as text only (session changes), which is never
-   *  embedded and so has no embedded share to show. */
+  /** False for a corpus kept as text only (session changes, commits), which is
+   *  never embedded and so has no embedded share to show. */
   embeds: boolean;
 }
 
@@ -7055,7 +7067,7 @@ export interface MemoryIndexSummary {
   corpora: MemoryIndexCorpusSummary[];
   /**
    * Task digests written, of the finished tasks that can have one, and how many
-   * the digest agent passed over this run of the app (asked, and no digest
+   * the search agent passed over this run of the app (asked, and no digest
    * came back; tried again on the next launch).
    */
   digests: { written: number; finishedTasks: number; skipped?: number };
@@ -7273,11 +7285,74 @@ export interface MemoryStatus {
   vecError?: string;
   /** When `semantic === 'error'` because the embedding worker crashed past its
    *  restart cap: its exit code plus the first error line of its stderr (home
-   *  directory redacted), so the Search tab can say why. Undefined otherwise. */
+   *  directory redacted), so the Knowledge Graph tab can say why. Undefined otherwise. */
   workerError?: string;
-  /** Task digests for the open project, for the Task digests card's status
-   *  line. Absent with no project open, or while digests are off. */
+  /** Task summaries (digests) for the open project, for their line in the
+   *  Index card. Absent with no project open, or while semantic search is off. */
   digests?: MemoryDigestStatus;
+  /** Source code for the open project, for its line in the Index card. Absent
+   *  with no project open, or before its branch has been read. */
+  code?: MemoryCodeStatus;
+  /** The open project's always-indexed sources, for their lines in the Index
+   *  card. Absent with no project open or with indexing off. */
+  sources?: MemorySourcesStatus;
+}
+
+/** What a Rebuild spends: the task summaries it rewrites, in every project. */
+export interface MemoryRebuildPlan {
+  summariesToRewrite: number;
+}
+
+/**
+ * The sources the index always holds, for one project: conversations and task
+ * records (searched by meaning too while semantic search is on) and commits
+ * (by keyword only). Session changes are not listed: nothing searches them,
+ * they only feed the task summaries.
+ */
+export interface MemorySourcesStatus {
+  conversations: MemorySourceStatus;
+  tasks: MemorySourceStatus;
+  commits: MemorySourceStatus;
+}
+
+/** One always-indexed source, as its Index card line reads it. */
+export interface MemorySourceStatus {
+  /** Documents held: conversations, tasks, commits. The Index panel's count. */
+  count: number;
+  /**
+   * Share of its passages with a vector, 0..100 and rounded down, while some
+   * still wait for one. Null when nothing waits: caught up, keyword-only, or
+   * semantic search off.
+   */
+  percent: number | null;
+  /** Minutes the waiting passages take at the measured background rate, or
+   *  null while nothing waits or before a rate has been measured. */
+  minutesLeft: number | null;
+}
+
+/**
+ * The open project's source code, as the Source code card's status line reads it.
+ *
+ * - `estimate`: code is not indexed, and `files` and `passages` are what
+ *   switching it on would read: the files counted on the branch, the passages
+ *   estimated from their sizes.
+ * - `reading`: switched on, and the branch has not been read yet.
+ * - `indexing`: passages are still waiting for their vectors.
+ * - `ready`: every passage has its vector.
+ * - `nothing-committed`: the project has no commit to read (a folder just
+ *   given `git init`), or no repository at all. Any branch works otherwise.
+ */
+export interface MemoryCodeStatus {
+  state: 'estimate' | 'reading' | 'indexing' | 'ready' | 'nothing-committed';
+  /** The branch read, like `origin/main`, or null when there is none. */
+  branch: string | null;
+  files: number;
+  passages: number;
+  /** Passages with their vector: `passages` when ready, 0 in an estimate. */
+  embedded: number;
+  /** Minutes the passages without a vector take at this machine's measured
+   *  background rate, or null before a rate has been measured this launch. */
+  minutesLeft: number | null;
 }
 
 /** Task digests for one project, as the Task digests card's status line reads them. */
@@ -7285,7 +7360,7 @@ export interface MemoryDigestStatus {
   /** Digests written, of the finished tasks (in a Done column) that can have one. */
   written: number;
   finishedTasks: number;
-  /** Tasks the digest agent passed over this run of the app; tried again next launch. */
+  /** Tasks the search agent passed over this run of the app; tried again next launch. */
   skipped: number;
   /**
    * What the scheduler is doing for this project. Waiting for an agent is not a
@@ -7296,12 +7371,16 @@ export interface MemoryDigestStatus {
   /** How long until a failed call is tried again, as of this read. Set only
    *  while `retrying`; main measures it so the renderer never reads a clock. */
   retryInMs: number | null;
+  /** Minutes the digests still to write (and to rewrite) take at the current
+   *  run's measured rate, or null before a pass of the run has written any. */
+  minutesLeft: number | null;
   /** The finished tasks' digests by what wrote them, most first. */
   writtenWith: DigestChoiceCount[];
   /**
-   * What a digest would be written with now: the digest agent, its model, and
-   * the effort main resolves for it. Null while digests wait for a choice. A
-   * rewrite rewrites the digests written any other way.
+   * What a digest would be written with now: the search agent, its model, and
+   * the recommended effort main resolves for a digest. Null while digests are
+   * off or wait for a choice. A rewrite rewrites the digests written any other
+   * way.
    */
   choice: DigestChoice | null;
   /** Digests marked for rewriting and not rewritten yet. */

@@ -35,13 +35,18 @@ function snapshotScript(options: {
   semanticAvailable?: boolean;
   stale?: boolean;
   /** Whether the answering agent and model are chosen. They have no fallback,
-   *  so a question with neither goes to Settings > Search instead of running. */
+   *  so a question with neither goes to Settings > Knowledge Graph instead of
+   *  running. */
   answerAgentChosen?: boolean;
-  /** Task digests: off (the default), switched on with no digest agent, or on
-   *  with one. They never borrow the answering agent. */
-  digestSetting?: 'off' | 'waiting' | 'on';
+  /** Task summaries (digests): on in the app by default, so this fixture
+   *  switches them off explicitly unless asked for 'on'. They are written by
+   *  the Knowledge Graph's agent, so on with `answerAgentChosen: false` waits. */
+  digestSetting?: 'off' | 'on';
   /** Digests the index holds, of 412 finished tasks. */
   digestsWritten?: number;
+  /** Source code indexed: on in the app by default, so switched off here
+   *  unless asked for, and on it comes with the Knowledge Graph it needs. */
+  codeIndexed?: boolean;
 } = {}): string {
   const {
     projection = 'null',
@@ -51,14 +56,18 @@ function snapshotScript(options: {
     answerAgentChosen = true,
     digestSetting = 'off',
     digestsWritten = 300,
+    codeIndexed = false,
   } = options;
   return `window.__mockPreConfigure(function (state) {
     ${answerAgentChosen
       ? "state.config.memory = Object.assign({}, state.config.memory, { answerAgent: 'claude', answerModel: 'haiku' });"
       : ''}
+    ${codeIndexed
+      ? 'state.config.memory = Object.assign({}, state.config.memory, { codeIndex: true, indexingEnabled: true, semanticEnabled: true });'
+      : 'state.config.memory = Object.assign({}, state.config.memory, { codeIndex: false });'}
     ${digestSetting === 'off'
-      ? ''
-      : `state.config.memory = Object.assign({}, state.config.memory, { taskDigests: true${digestSetting === 'on' ? ", digestAgent: 'claude', digestModel: 'haiku'" : ''} });`}
+      ? 'state.config.memory = Object.assign({}, state.config.memory, { taskDigests: false });'
+      : 'state.config.memory = Object.assign({}, state.config.memory, { taskDigests: true });'}
     return {
       memoryGraphSnapshot: {
         projectId: 'project-1',
@@ -79,12 +88,17 @@ function snapshotScript(options: {
           knownDocumentIdsMatched: 638,
         },
         // Every corpus the store holds: conversations drawn and fully
-        // embedded, task records still embedding, session changes not reached.
+        // embedded, task records still embedding, session changes not reached,
+        // commits kept as text.
         index: {
           corpora: [
             { corpus: 'conversation', documents: 638, chunks: 51365, embeddedChunks: 51365, embeds: true },
             { corpus: 'task', documents: 412, chunks: 1400, embeddedChunks: 700, embeds: true },
             { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
+            { corpus: 'commit', documents: 1422, chunks: 1422, embeddedChunks: 0, embeds: false },
+            ${codeIndexed
+              ? "{ corpus: 'code', documents: 1488, chunks: 12186, embeddedChunks: 4210, embeds: true },"
+              : "{ corpus: 'code', documents: 0, chunks: 0, embeddedChunks: 0, embeds: true },"}
           ],
           digests: { written: ${digestsWritten}, finishedTasks: 412, skipped: 1 },
           storageBytes: 3221225472,
@@ -346,7 +360,7 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(snapshotScript({ semanticAvailable: false }));
     try {
       await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-body"]')).toContainText('Semantic search is off');
+      await expect(page.locator('[data-testid="memory-graph-body"]')).toContainText('The Knowledge Graph is off');
       // The coverage numbers are still accurate and still shown.
       await expect(page.locator('[data-testid="memory-coverage-strip"]')).toContainText('638');
     } finally {
@@ -401,10 +415,20 @@ test.describe('memory graph', () => {
       await expect(conversations).toContainText('Conversations');
       await expect(conversations).toContainText('638');
       await expect(conversations).not.toContainText('embedded');
-      await expect(tasks).toContainText('Task records');
+      // The same name the Settings Index card uses.
+      await expect(tasks).toContainText('Tasks');
+      await expect(tasks).not.toContainText('Task records');
       await expect(tasks).toContainText('412, 50% embedded');
       await expect(changes).toContainText('Session changes');
       await expect(changes).toContainText('Not yet indexed');
+      // Kept as text, so the count alone: no embedded share, ever.
+      const commits = page.locator('[data-testid="memory-graph-index-corpus-commit"]');
+      await expect(commits).toContainText('Commits');
+      await expect(commits).toContainText('1,422');
+      await expect(commits).not.toContainText('embedded');
+      // Source code is opt-in: off and empty, it has no row, since "Not yet
+      // indexed" would promise a fill that never comes.
+      await expect(page.locator('[data-testid="memory-graph-index-corpus-code"]')).toHaveCount(0);
       // Digests are written in the background, so the row counts toward the
       // finished tasks. The count alone: why it falls short (off here, and one
       // task skipped) is Settings' to say, not a suffix's.
@@ -427,17 +451,17 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('the Index shows digests while they are on or exist, and names a missing digest agent', async () => {
-    // Opt-in: with digests off and none written, the row is absent. Switched
-    // on with no digest agent chosen, it says so rather than showing a count
-    // that is not moving; the answering agent is chosen and is not borrowed.
-    const states: Array<{ digestSetting: 'off' | 'waiting' | 'on'; digestsWritten: number; expected: string | null }> = [
-      { digestSetting: 'off', digestsWritten: 0, expected: null },
-      { digestSetting: 'waiting', digestsWritten: 0, expected: 'Needs an agent' },
-      { digestSetting: 'on', digestsWritten: 0, expected: '0 of 412' },
+  test('the Index shows task summaries while they are on or exist, and names a missing agent', async () => {
+    // Opt-in: with summaries off and none written, the row is absent. Switched
+    // on with no agent chosen, it says so rather than showing a
+    // count that is not moving.
+    const states: Array<{ digestSetting: 'off' | 'on'; answerAgentChosen: boolean; digestsWritten: number; expected: string | null }> = [
+      { digestSetting: 'off', answerAgentChosen: true, digestsWritten: 0, expected: null },
+      { digestSetting: 'on', answerAgentChosen: false, digestsWritten: 0, expected: 'Needs an agent' },
+      { digestSetting: 'on', answerAgentChosen: true, digestsWritten: 0, expected: '0 of 412' },
     ];
-    for (const { digestSetting, digestsWritten, expected } of states) {
-      const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20), digestSetting, digestsWritten }));
+    for (const { digestSetting, answerAgentChosen, digestsWritten, expected } of states) {
+      const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20), digestSetting, answerAgentChosen, digestsWritten }));
       try {
         await openMemoryGraph(page);
         await page.locator('[data-testid="memory-graph-index-toggle"]').click();
@@ -445,6 +469,7 @@ test.describe('memory graph', () => {
         const row = page.locator('[data-testid="memory-graph-index-digests"]');
         if (expected === null) await expect(row).toHaveCount(0);
         else await expect(row).toContainText(expected);
+        if (expected !== null) await expect(row).toContainText('Task summaries');
       } finally {
         await browser.close();
       }
@@ -481,7 +506,7 @@ test.describe('memory graph', () => {
 
   test('re-reads the snapshot when settings change, without being reopened', async () => {
     // Turning semantic search on changes what this surface renders - the
-    // "Semantic search is off" notice comes from the snapshot - but starts no
+    // "The Knowledge Graph is off" notice comes from the snapshot - but starts no
     // projection pass. The only push was pass COMPLETION, so the notice stayed
     // over a working index until the surface was closed and reopened, which
     // reads as the setting not taking effect.
@@ -489,7 +514,7 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openMemoryGraph(page);
-      await expect(page.getByText('Semantic search is off')).toBeVisible();
+      await expect(page.getByText('The Knowledge Graph is off')).toBeVisible();
 
       // Re-point the mock at a snapshot reporting a working semantic layer, as
       // it would once the setting persisted, then announce the config change.
@@ -506,7 +531,7 @@ test.describe('memory graph', () => {
       });
 
       // No reopen, no reload: the notice clears on its own.
-      await expect(page.getByText('Semantic search is off')).toHaveCount(0);
+      await expect(page.getByText('The Knowledge Graph is off')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -764,7 +789,8 @@ test.describe('memory graph', () => {
     try {
       await openMemoryGraph(page);
       const input = page.locator('[data-testid="memory-graph-search-input"]');
-      await expect(input).toHaveAttribute('placeholder', 'Ask about your tasks, conversations and code');
+      // Code is not indexed here, so the box does not offer it.
+      await expect(input).toHaveAttribute('placeholder', 'Ask about your tasks and conversations');
 
       await input.fill('sphere fit');
       await input.fill('What was the most expensive task?');
@@ -786,6 +812,21 @@ test.describe('memory graph', () => {
       expect(call.context?.history).toEqual([]);
       // No filter is set, so nothing narrows the question.
       expect(call.context?.scopeDocKeys).toBeNull();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the box offers code only when source code is indexed, and the Index counts its files', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12), codeIndexed: true }));
+    try {
+      await openMemoryGraph(page);
+      await expect(page.locator('[data-testid="memory-graph-search-input"]'))
+        .toHaveAttribute('placeholder', 'Ask about your tasks, conversations and code');
+      await page.locator('[data-testid="memory-graph-index-toggle"]').click();
+      const code = page.locator('[data-testid="memory-graph-index-corpus-code"]');
+      await expect(code).toContainText('Source code');
+      await expect(code).toContainText('1,488, 34% embedded');
     } finally {
       await browser.close();
     }
@@ -1138,7 +1179,7 @@ test.describe('memory graph', () => {
     );
     try {
       await askInBox(page, 'what fixed the relay?');
-      await expect(page.locator('[data-testid="memory-graph-setup-hint"]')).toContainText('Settings > Search');
+      await expect(page.locator('[data-testid="memory-graph-setup-hint"]')).toContainText('Settings > Knowledge Graph');
       await expect(page.locator('[data-testid="memory-chat"]')).toHaveCount(0);
       expect(await answerCalls(page)).toHaveLength(0);
     } finally {
@@ -1253,7 +1294,7 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('sends a question to Settings > Search when no answering agent is chosen, and keeps it', async () => {
+  test('sends a question to Settings > Knowledge Graph when no answering agent is chosen, and keeps it', async () => {
     // The agent and model are one explicit global choice with no fallback, so
     // a question asked before they are set runs nothing. It goes to the place
     // the choice is made, and the typed question waits in the box.

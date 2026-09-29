@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Info } from 'lucide-react';
+import { Check, Info, TriangleAlert } from 'lucide-react';
 import { useAnySettingVisible, useSettingVisible } from './settings-search';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 import { ToggleSwitch } from './shared';
@@ -300,6 +300,187 @@ export function CardTileGutter({ children }: { children: React.ReactNode }) {
       style={{ left: TILE_GUTTER_OFFSET_PX, width: HEADER_ICON_COLUMN_PX }}
     >
       {children}
+    </div>
+  );
+}
+
+/** What a status row is saying: nothing to flag, done, worth a look, or broken. */
+export type CardStatusTone = 'neutral' | 'ready' | 'caution' | 'failure';
+
+interface CardStatusRowProps {
+  /** What the feature is doing now: "Indexing", "Download failed". */
+  label: string;
+  /** Its figure, at the switch's edge: "58%, about 12 min left". */
+  value: string;
+  tone?: CardStatusTone;
+  /** 0 to 100 draws the progress track under the row; null draws none. */
+  percent?: number | null;
+  /** The track's accessible name, e.g. "Source code embedded". */
+  progressLabel?: string;
+  /** The tile's test id; the label and value take `-label` and `-text` after it. */
+  testId?: string;
+  /** Replaces the value's `-text` id, e.g. a ready marker a demo scene waits on. */
+  valueTestId?: string;
+}
+
+/**
+ * One status row: what a feature is doing on the label's line, its figure at
+ * the switch's edge, and a track while it runs. A card's own status takes this
+ * shape (Search quality's model, Dictation's models), so two downloads read the
+ * same way. A card's list of sources takes `CardSourceList`, which keeps the
+ * same value, check, tone and track on one line per source.
+ *
+ * A problem (caution, failure) tints the state word and puts its icon in the
+ * gutter under the card's own icon, so the word stays on the title's line; the
+ * value stays neutral. Ready puts a green check by the value. The track is the
+ * edge token, lighter than the tile, so its unfilled part shows.
+ */
+export function CardStatusRow({ label, value, tone = 'neutral', percent = null, progressLabel, testId, valueTestId }: CardStatusRowProps) {
+  const labelTone = tone === 'caution' ? 'text-warning' : tone === 'failure' ? 'text-danger' : 'text-fg';
+  const width = percent === null ? 0 : Math.max(0, Math.min(100, percent));
+  return (
+    <CardTile className="flex flex-col gap-2" testId={testId}>
+      <div className="relative flex items-center justify-between gap-3">
+        {tone === 'caution' || tone === 'failure' ? (
+          <CardTileGutter>
+            <TriangleAlert size={14} className={labelTone} aria-hidden="true" />
+          </CardTileGutter>
+        ) : null}
+        <span className={`text-sm font-medium ${labelTone}`} data-testid={testId ? `${testId}-label` : undefined}>{label}</span>
+        <span
+          className="flex items-center gap-1.5 whitespace-nowrap text-[13px] tabular-nums text-fg-secondary"
+          data-testid={valueTestId ?? (testId ? `${testId}-text` : undefined)}
+        >
+          {tone === 'ready' ? <Check size={14} className="flex-shrink-0 text-emerald-500" aria-hidden="true" /> : null}
+          {value}
+        </span>
+      </div>
+      {percent !== null ? <ProgressTrack percent={width} label={progressLabel} /> : null}
+    </CardTile>
+  );
+}
+
+/**
+ * The progress track every status in a card draws: the edge token, lighter
+ * than the tile, so its unfilled part shows, and the accent fill.
+ */
+function ProgressTrack({ percent, label }: { percent: number; label?: string }) {
+  const width = Math.max(0, Math.min(100, percent));
+  return (
+    <div
+      className="h-1.5 overflow-hidden rounded-full bg-edge"
+      role="progressbar"
+      aria-label={label}
+      aria-valuenow={Math.round(width)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div className="h-full rounded-full bg-accent transition-[width] duration-300" style={{ width: `${width}%` }} />
+    </div>
+  );
+}
+
+/** One line of a `CardSourceList`: a source, its state, and its switch. */
+export interface CardSourceLineProps {
+  label: string;
+  /** Behind an info icon after the label. Omit for none. */
+  info?: string;
+  /** Its state or size, at the switch's edge: "1,002", "22%, 3 min left". */
+  value?: string;
+  /**
+   * `ready` puts a green check by the value; `muted` reads it as what the
+   * source would cover while it is off; `caution` tints `problem` before the
+   * value and puts its icon in the gutter, the rest staying neutral.
+   */
+  tone?: 'neutral' | 'ready' | 'muted' | 'caution';
+  /** With `caution`: the state word ("A call failed"). */
+  problem?: string;
+  /** 0 to 100 draws the progress track under the line; null draws none. */
+  percent?: number | null;
+  progressLabel?: string;
+  /**
+   * The prerequisite still missing, as a tag in place of the value. Dims the
+   * line's name, but its switch stays usable: a source that is on by default
+   * waits here, and has to be switchable off before it ever runs.
+   */
+  requirement?: string;
+  /** The line's switch. Omit for a source that is always on while its card is:
+   *  it shows a locked switch, on. */
+  toggle?: { checked: boolean; onChange: (value: boolean) => void; testId?: string };
+  testId?: string;
+}
+
+/**
+ * A card's sources as one list tile, one line each: the name, its state or
+ * size at the switch's edge, and the switch. Lines are divided by a hairline,
+ * and a running source keeps its line and gains a track under it. The Index
+ * card lists everything the index holds this way, so a source is one line
+ * however much it has to say, and the detail lives in the Knowledge Graph's
+ * Index panel.
+ */
+export function CardSourceList({ lines, testId }: { lines: ReadonlyArray<CardSourceLineProps>; testId?: string }) {
+  return (
+    <CardTile testId={testId}>
+      {/* The lines carry their own vertical padding, so the tile's is taken
+          back and a line's hairline runs the tile's full height apart. */}
+      <div className="-my-3 flex flex-col divide-y divide-edge/60">
+        {lines.map((line) => <CardSourceLine key={line.label} {...line} />)}
+      </div>
+    </CardTile>
+  );
+}
+
+function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent = null, progressLabel, requirement, toggle, testId }: CardSourceLineProps) {
+  const unavailable = requirement !== undefined;
+  const dimmed = unavailable ? 'opacity-50' : '';
+  const valueTone = tone === 'muted' ? 'text-fg-muted' : 'text-fg-secondary';
+  return (
+    <div className="flex flex-col gap-2 py-3" data-testid={testId}>
+      <div className="relative flex items-center gap-3">
+        {tone === 'caution' && !unavailable ? (
+          <CardTileGutter>
+            <TriangleAlert size={14} className="text-warning" aria-hidden="true" />
+          </CardTileGutter>
+        ) : null}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span className={`${SETTING_LABEL_CLASS} ${dimmed}`}>{label}</span>
+          {info ? <InfoTip label={label} text={info} /> : null}
+        </div>
+        {unavailable ? (
+          <SettingTag>{requirement}</SettingTag>
+        ) : (
+          <span
+            className={`flex items-center gap-1.5 whitespace-nowrap text-[13px] tabular-nums ${valueTone}`}
+            data-testid={testId ? `${testId}-value` : undefined}
+          >
+            {tone === 'ready' ? <Check size={14} className="flex-shrink-0 text-emerald-500" aria-hidden="true" /> : null}
+            {tone === 'caution' && problem ? (
+              <span><span className="text-warning">{problem}</span>{value ? `, ${value}` : ''}</span>
+            ) : value}
+          </span>
+        )}
+        {toggle ? (
+          <ToggleSwitch
+            checked={toggle.checked}
+            onChange={toggle.onChange}
+            ariaLabel={label}
+            testId={toggle.testId}
+          />
+        ) : (
+          // On for as long as its card is: shown, so every source reads the
+          // same way, and locked, so it is never mistaken for a choice.
+          <ToggleSwitch
+            checked
+            onChange={() => undefined}
+            disabled
+            readOnly
+            ariaLabel={`${label}, always on`}
+            title="Always on while the index is on"
+            testId={testId ? `${testId}-locked` : undefined}
+          />
+        )}
+      </div>
+      {percent !== null && !unavailable ? <ProgressTrack percent={percent} label={progressLabel} /> : null}
     </div>
   );
 }

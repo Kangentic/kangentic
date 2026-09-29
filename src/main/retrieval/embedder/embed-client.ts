@@ -122,7 +122,7 @@ export class EmbedClient implements Embedder {
     return this.restartPolicy.exhausted;
   }
 
-  /** Why the worker is off, for the Search tab: the newest crash's exit code
+  /** Why the worker is off, for the Knowledge Graph tab: the newest crash's exit code
    *  and first error line. Null while nothing has crashed in the window. */
   get crashReason(): string | null {
     return this.restartPolicy.lastCrashDescription;

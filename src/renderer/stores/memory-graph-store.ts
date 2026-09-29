@@ -96,7 +96,7 @@ interface MemoryGraphState {
    *
    * In the store rather than the component because a question can outlive the
    * box's own render: pressing Enter before an answering agent is chosen sends
-   * the user to Settings > Search, and the question they typed has to be there,
+   * the user to Settings > Knowledge Graph, and the question they typed has to be there,
    * unchanged, when they come back and press Enter again.
    */
   draftQuestion: string;

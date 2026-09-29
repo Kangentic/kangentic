@@ -30,6 +30,7 @@ import { RetrievalStore } from '../../main/retrieval/retrieval-store';
 import { parseLabels } from '../../main/retrieval/task/task-record';
 import { sweepTaskRecords } from '../../main/retrieval/task/task-indexer';
 import { embedEngine } from '../../main/retrieval/embedder/embed-engine';
+import { retrievalService } from '../../main/retrieval/retrieval-service';
 import { TaskRepository } from '../../main/db/repositories/task-repository';
 import { SessionRepository } from '../../main/db/repositories/session-repository';
 import { SwimlaneRepository } from '../../main/db/repositories/swimlane-repository';
@@ -570,6 +571,12 @@ export function registerSeedMemoryGraphRealDevIpc(getContext: () => IpcContext |
         // the background, as it would on a real install.
         await sweepTaskRecords(context.currentProjectId);
         embedEngine.markDirty(context.currentProjectId);
+        // The project-open sweep read the branch's commits against an index
+        // with no conversations yet, so none found its task. Read them again
+        // now that the mirrored conversations are here (a real install indexes
+        // conversations first, on the same chain).
+        new RetrievalStore(getProjectDb(context.currentProjectId)).purgeCorpora(['commit']);
+        retrievalService.refreshRecords(context, context.currentProjectId);
       }
       return seeded;
     },

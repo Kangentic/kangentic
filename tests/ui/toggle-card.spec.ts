@@ -316,14 +316,14 @@ test.describe('Settings card header', () => {
 
   test('a header whose prerequisite is off does not flip on a click', async () => {
     await setGlobalConfigAndSync({ memory: { indexingEnabled: false, semanticEnabled: false } });
-    await openTab('Search');
+    await openTab('Knowledge Graph');
 
-    const card = page.locator('section[aria-label="Semantic search"]');
+    const card = page.locator('section[aria-label="Knowledge Graph"]');
     // The description stays; a tag after the title names the prerequisite.
     await expect(card).toContainText('Needs indexing');
-    await expect(card).toContainText('Finds conversations by meaning, not just exact words.');
+    await expect(card).toContainText('Finds your work by meaning and answers questions.');
     await card.locator('h3').click();
-    await expect(page.getByRole('switch', { name: 'Semantic search' })).toHaveAttribute('aria-checked', 'false');
+    await expect(page.getByRole('switch', { name: 'Knowledge Graph' })).toHaveAttribute('aria-checked', 'false');
 
     await setGlobalConfigAndSync({ memory: { indexingEnabled: true, semanticEnabled: false } });
     await closeSettings();

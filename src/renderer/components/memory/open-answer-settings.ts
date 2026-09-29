@@ -1,5 +1,5 @@
 /**
- * Take the user to Settings > Search, at the Answering agent card's Agent row.
+ * Take the user to Settings > Knowledge Graph, at the Agent row.
  *
  * Where a question goes when the Memory Graph cannot answer it yet: no agent is
  * chosen, or the chosen agent takes a model and none is. The rule is that this
@@ -17,7 +17,7 @@ import { useConfigStore } from '../../stores/config-store';
 const ANSWER_AGENT_ROW_SELECTOR = '[data-testid="setting-row-memory.answerAgent"]';
 const REVEAL_FRAME_BUDGET = 30;
 
-/** Take the user to Settings > Search, where the index is managed: the Index
+/** Take the user to Settings > Knowledge Graph, where the index is managed: the Index
  *  flyout's Settings button. */
 export function openSearchSettings(): void {
   const store = useConfigStore.getState();

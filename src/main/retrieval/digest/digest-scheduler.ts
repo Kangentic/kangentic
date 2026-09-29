@@ -32,7 +32,7 @@ export interface DigestSchedulerDeps<Context> {
    * change sweep, no input read. Omitted, every request runs a pass.
    */
   readFingerprint?: (context: Context, projectId: string) => string | null;
-  /** The digest agent's read-only run, or null while none is chosen. */
+  /** The search agent's read-only digest run, or null while none is chosen. */
   resolveWriter: (context: Context, projectId: string) => Promise<DigestWriter | null>;
   /**
    * After a pass that wrote digests: re-read the task records that carry them,
@@ -65,6 +65,12 @@ export interface DigestScheduler<Context> {
   skipped: (projectId: string) => number;
   /** What the scheduler is doing for a project, for the Task digests card. */
   status: (projectId: string) => DigestSchedulerStatus;
+  /**
+   * Digests this project's current run writes a minute, on wall time from its
+   * first pass (the gaps between passes included), or null before a pass of
+   * the run has written any. A run ends when it catches up or a call fails.
+   */
+  writtenPerMinute: (projectId: string) => number | null;
   /**
    * Forget that a project is caught up, so its next request runs a pass even
    * though nothing on the board moved. For a change the fingerprint cannot
@@ -101,6 +107,9 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
    * always runs a pass.
    */
   const caughtUpAt = new Map<string, string>();
+  /** Each project's run of passes toward catching up: when its first pass
+   *  started, and how many digests it has written. */
+  const runs = new Map<string, { startedAt: number; written: number }>();
 
   const fingerprintOf = (context: Context, projectId: string): string | null => {
     if (!deps.readFingerprint) return null;
@@ -125,6 +134,7 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
   const run = async (context: Context, projectId: string): Promise<void> => {
     running = true;
     runningProjectId = projectId;
+    const passStartedAt = now();
     let result: DigestPassResult | null = null;
     try {
       // Nothing a digest reads has changed since this project last caught up:
@@ -153,6 +163,13 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
         if (result.written > 0) deps.onWritten(context, projectId, !result.failed && result.remaining === 0);
         if (!result.failed && result.remaining === 0 && passFingerprint !== null) caughtUpAt.set(projectId, passFingerprint);
         else caughtUpAt.delete(projectId);
+        if (result.failed || result.remaining === 0) {
+          runs.delete(projectId);
+        } else if (result.written > 0) {
+          const current = runs.get(projectId) ?? { startedAt: passStartedAt, written: 0 };
+          current.written += result.written;
+          runs.set(projectId, current);
+        }
       }
     } catch (error) {
       caughtUpAt.delete(projectId);
@@ -189,6 +206,11 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
       const retryAtMs = retryAtByProject.get(projectId);
       return retryAtMs === undefined ? { state: 'idle', retryAtMs: null } : { state: 'retrying', retryAtMs };
     },
+    writtenPerMinute: (projectId) => {
+      const current = runs.get(projectId);
+      if (!current || current.written === 0) return null;
+      return (current.written / Math.max(1, now() - current.startedAt)) * 60_000;
+    },
     invalidate: (projectId) => {
       caughtUpAt.delete(projectId);
     },
@@ -198,6 +220,7 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
       timers.clear();
       retryAtByProject.clear();
       pending.clear();
+      runs.clear();
     },
     get busy() {
       return running;

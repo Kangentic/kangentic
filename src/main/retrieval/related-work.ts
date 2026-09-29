@@ -59,6 +59,22 @@
  *   of them about which tasks changed a file: nearly every session changes
  *   many files, so the set only grew. They are indexed as text for the task
  *   digests, and searched by nothing here (`EMBEDDED_CORPORA`).
+ * - COMMITS, BY KEYWORD ONLY. The default branch's commits, each counted
+ *   toward the task that wrote it, lifted recall from 66 of 96 to 67 over the
+ *   same seven questions (the PTY session manager one) and grew the handed set
+ *   by 1.9 tasks. Embedded as well they found the same 67 for 4.1 more tasks,
+ *   so they get no vectors and no semantic pool.
+ * - SOURCE CODE, BY MEANING, AS PASSAGES. When the default branch's code is
+ *   indexed, its closest chunks go to the agent beside the tasks, never as
+ *   tasks: a file belongs to no task, and the rows stay tasks. Only the
+ *   question as asked is searched, the vector the floors were measured on. The
+ *   floor keeps code out of board questions: on bge-large, seven board and
+ *   topic questions peaked at 0.32 to 0.43 against 0.48 to 0.67 for questions
+ *   about code. A question naming an identifier ("Who calls
+ *   requiresUserInteraction?") reads less like its code: two of seven peaked at
+ *   0.41 to 0.42 with the answer file at 0.37 to 0.38, so it gets a lower floor.
+ *   bge-base and bge-small calibrate to their own noise floors, but these
+ *   floors were not measured on them.
  */
 
 import type Database from 'better-sqlite3';
@@ -66,6 +82,7 @@ import { getProjectDb } from '../db/database';
 import { RetrievalStore } from './retrieval-store';
 import { CONVERSATION_CORPUS, type MemoryCorpus } from './corpora';
 import { SEMANTIC_RELEVANCE_CUTOFF } from './memory-search';
+import { namesCodeIdentifier } from './code/code-record';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import type { ChunkPlacement, Embedder } from './types';
 
@@ -77,10 +94,13 @@ const LEXICAL_POOL = 500;
  * The corpora searched beside the conversations, each in pools of its own so
  * they never push a conversation chunk out of the deep one, and each rescaled
  * to the conversations' relevance (see the header). A project holds a few
- * thousand chunks of each at most.
+ * thousand chunks of each at most. Every one of them reaches a row through its
+ * chunks' task, so a chunk with none (a backlog item, an unlinked commit)
+ * counts toward nothing. A `semanticPool` of 0 means keywords only.
  */
 const SIDE_CORPORA: ReadonlyArray<{ corpus: MemoryCorpus; semanticPool: number; lexicalPool: number }> = [
   { corpus: 'task', semanticPool: 500, lexicalPool: 200 },
+  { corpus: 'commit', semanticPool: 0, lexicalPool: 200 },
 ];
 /** Bounds on the factor that puts a side corpus on the conversation scale. */
 const SIDE_SCALE_MIN = 0.5;
@@ -98,6 +118,16 @@ export const MAX_HANDED = 80;
 export const PASSAGES_SHOWN = 12;
 /** Characters of a passage, enough to judge relevance by. */
 const PASSAGE_CHARS = 220;
+/** Nearest code chunks read for the question: enough to fill the passages two to a file. */
+const CODE_POOL = 60;
+/** The least relevance a code passage is handed at (see the header). */
+export const CODE_FLOOR = 0.45;
+/** The same, for a question that names a code identifier. */
+export const CODE_IDENTIFIER_FLOOR = 0.35;
+/** Code passages handed at most: about 2,400 tokens, whole chunks. */
+export const CODE_PASSAGES = 6;
+/** From any one file, so one long file cannot fill them all. */
+const CODE_PASSAGES_PER_FILE = 2;
 
 /**
  * Words that shape a question without saying what it is about. Removed before
@@ -228,10 +258,10 @@ export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
   /** The node a chunk counts toward, or null when it is out of scope. */
   const nodeFor = (placement: ChunkPlacement): RelatedWorkNode | null => {
     if (placement.corpus === 'conversation') return input.nodesByDocKey.get(`${placement.corpus}::${placement.docId}`) ?? null;
-    // A task record: its task's own conversations when one is in scope, else
-    // the board's task when the question is unscoped. A backlog item has no
-    // board task, so it never reaches a row.
-    if (placement.corpus !== 'task' || !placement.taskId) return null;
+    // A task record or a commit: its task's own conversations when one is in
+    // scope, else the board's task when the question is unscoped. A backlog
+    // item and an unlinked commit have no board task, so they never reach a row.
+    if (!placement.taskId) return null;
     const conversationNode = nodeByTask.get(placement.taskId);
     if (conversationNode) return conversationNode;
     const recordTask = input.recordOnlyTasks?.get(placement.taskId);
@@ -339,6 +369,49 @@ export function selectHandedTasks<Task extends RelatedWorkTask>(
   return handed;
 }
 
+/** One passage of source code handed with the related work. */
+export interface CodePassage {
+  /** The file, repository-relative. */
+  path: string;
+  /** The chunk without the path line it opens with. */
+  text: string;
+  relevance: number;
+}
+
+/** The least relevance a code passage needs for this question. */
+export function codeFloorFor(question: string): number {
+  return namesCodeIdentifier(question) ? CODE_IDENTIFIER_FLOOR : CODE_FLOOR;
+}
+
+/**
+ * The code passages handed: at or above `floor`, best first, at most
+ * `CODE_PASSAGES_PER_FILE` from one file (keyed by `fileKey`, which across
+ * projects must name the project too) and `CODE_PASSAGES` in all.
+ */
+export function selectCodePassages<Passage extends { path: string; relevance: number }>(
+  candidates: ReadonlyArray<Passage>,
+  floor: number,
+  fileKey: (passage: Passage) => string = (passage) => passage.path,
+): Passage[] {
+  const perFile = new Map<string, number>();
+  const chosen: Passage[] = [];
+  for (const passage of [...candidates].sort((left, right) => right.relevance - left.relevance)) {
+    if (passage.relevance < floor || chosen.length === CODE_PASSAGES) break;
+    const key = fileKey(passage);
+    const taken = perFile.get(key) ?? 0;
+    if (taken === CODE_PASSAGES_PER_FILE) continue;
+    perFile.set(key, taken + 1);
+    chosen.push(passage);
+  }
+  return chosen;
+}
+
+/** A code chunk's text without the path line `codeChunks` opens it with. */
+function codeBody(path: string, text: string): string {
+  const body = text.startsWith(`${path}\n`) ? text.slice(path.length + 1) : text;
+  return body.replace(/^\n+/, '').trimEnd();
+}
+
 export interface SearchRelatedWorkInput {
   question: string;
   /** Earlier questions in the chat, so a follow-up searches the same subject. */
@@ -361,6 +434,8 @@ export interface SearchRelatedWorkInput {
    * embedder is still passed, for its noise floor.
    */
   queryVectors?: ReadonlyArray<Float32Array>;
+  /** Whether source code is indexed (`codeIndexOn`), so code passages are searched. */
+  code?: boolean;
 }
 
 export interface RelatedWork {
@@ -370,6 +445,8 @@ export interface RelatedWork {
   handed: RelatedWorkTask[];
   /** Passage text by chunk id, for the handed tasks that show one. */
   passages: Map<number, string>;
+  /** Source code passages, best first. Empty unless `code` was asked for. */
+  code: CodePassage[];
   /** False when no query vector was available, so only keywords ran. */
   semantic: boolean;
   elapsedMs: number;
@@ -418,7 +495,7 @@ function passageLine(text: string): string {
 export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<RelatedWork> {
   const started = Date.now();
   const getDb = input.getDb ?? getProjectDb;
-  const empty: RelatedWork = { ranked: [], handed: [], passages: new Map(), semantic: false, elapsedMs: 0 };
+  const empty: RelatedWork = { ranked: [], handed: [], passages: new Map(), code: [], semantic: false, elapsedMs: 0 };
 
   const nodesByDocKey = new Map<string, RelatedWorkNode>();
   for (const node of input.nodes) nodesByDocKey.set(node.docKey, node);
@@ -473,12 +550,33 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
   // best conversation chunk does (see the header), within bounds.
   const conversationBest = Math.max(0, ...conversationRelevance.values());
   for (const side of SIDE_CORPORA) {
+    if (side.semanticPool === 0) continue;
     const sideRelevance = await semanticPool([side.corpus], side.semanticPool);
     const sideBest = Math.max(0, ...sideRelevance.values());
     const scale = conversationBest > 0 && sideBest > 0
       ? Math.min(SIDE_SCALE_MAX, Math.max(SIDE_SCALE_MIN, conversationBest / sideBest))
       : 1;
     for (const [chunkId, relevance] of sideRelevance) relevanceByChunk.set(chunkId, relevance * scale);
+  }
+
+  // Source code: its own pool on the question as asked, handed as passages
+  // beside the tasks (see the header). Nothing here ranks a task.
+  let code: CodePassage[] = [];
+  if (input.code && vectors.length > 0) {
+    await yieldToEventLoop();
+    try {
+      const floor = codeFloorFor(input.question);
+      const hits = timeSyncWork('related:code', () => store.searchSemantic(vectors[0], CODE_POOL, ['code']))
+        .map((hit) => ({ chunkId: hit.chunkId, relevance: relevanceOf(hit.distance) }))
+        .filter((hit) => hit.relevance >= floor);
+      const chunks = new Map(store.getChunks(hits.map((hit) => hit.chunkId)).map((chunk) => [chunk.id, chunk]));
+      code = selectCodePassages(hits.flatMap((hit) => {
+        const chunk = chunks.get(hit.chunkId);
+        return chunk ? [{ path: chunk.docId, text: codeBody(chunk.docId, chunk.text), relevance: hit.relevance }] : [];
+      }), floor);
+    } catch {
+      // The answer stands on the tasks alone.
+    }
   }
 
   // Keyword matches, each corpus ranked on its own so a record's rank 1 earns
@@ -495,10 +593,18 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
         return [];
       }
     };
-    lexical = [
-      ...keywordPool(CONVERSATION_CORPUS, LEXICAL_POOL),
-      ...SIDE_CORPORA.flatMap((side) => keywordPool([side.corpus], side.lexicalPool)),
-    ];
+    const conversationKeywords = keywordPool(CONVERSATION_CORPUS, LEXICAL_POOL);
+    // Each scan is 20 to 140 ms on main: a turn for everything else between them.
+    await yieldToEventLoop();
+    // The side corpora in one full-text scan, each still ranked on its own.
+    let side: Array<{ chunkId: number; rank: number }>;
+    try {
+      const limits = new Map(SIDE_CORPORA.map((entry) => [entry.corpus, entry.lexicalPool]));
+      side = [...timeSyncWork('related:lexical-side', () => store.searchLexicalPerCorpus(keywordQuery, limits)).values()].flat();
+    } catch {
+      side = [];
+    }
+    lexical = [...conversationKeywords, ...side];
   }
 
   const chunkIds = [...new Set([...relevanceByChunk.keys(), ...lexical.map((hit) => hit.chunkId)])];
@@ -509,7 +615,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
       placements.set(placement.id, placement);
     }
   } catch {
-    return { ...empty, elapsedMs: Date.now() - started };
+    return { ...empty, code, elapsedMs: Date.now() - started };
   }
 
   const ranked = rollUpRelatedWork({
@@ -532,7 +638,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     // The ranking stands without its passages.
   }
 
-  return { ranked, handed, passages, semantic: vectors.length > 0, elapsedMs: Date.now() - started };
+  return { ranked, handed, passages, code, semantic: vectors.length > 0, elapsedMs: Date.now() - started };
 }
 
 /** A related task, and the project it was found in. */
@@ -544,10 +650,16 @@ export interface ProjectRelatedWorkTask extends RelatedWorkTask {
  * Related work that may span projects. Passages are keyed by `passageKey`,
  * not by chunk id, because chunk ids repeat between project databases.
  */
+/** A code passage, and the project whose code it is. */
+export interface ProjectCodePassage extends CodePassage {
+  projectId: string;
+}
+
 export interface ProjectRelatedWork {
   ranked: ProjectRelatedWorkTask[];
   handed: ProjectRelatedWorkTask[];
   passages: Map<string, string>;
+  code: ProjectCodePassage[];
   semantic: boolean;
   elapsedMs: number;
 }
@@ -564,6 +676,7 @@ export function toProjectRelatedWork(work: RelatedWork, projectId: string): Proj
     ranked: work.ranked.map(stamp),
     handed: work.handed.map(stamp),
     passages: new Map([...work.passages].map(([chunkId, text]) => [passageKey(projectId, chunkId), text])),
+    code: work.code.map((passage) => ({ ...passage, projectId })),
     semantic: work.semantic,
     elapsedMs: work.elapsedMs,
   };
@@ -597,6 +710,7 @@ export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInpu
 
   const ranked: ProjectRelatedWorkTask[] = [];
   const passages = new Map<string, string>();
+  const code: ProjectCodePassage[] = [];
   for (const project of input.projects) {
     if (project.nodes.length === 0 && (project.recordOnlyTasks ?? []).length === 0) continue;
     let work: RelatedWork;
@@ -611,6 +725,7 @@ export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInpu
         queryVectors: vectors,
         embedWaitMs: input.embedWaitMs,
         getDb: input.getDb,
+        code: input.code,
       });
     } catch {
       continue;
@@ -618,6 +733,7 @@ export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInpu
     const stamped = toProjectRelatedWork(work, project.projectId);
     ranked.push(...stamped.ranked);
     for (const [key, text] of stamped.passages) passages.set(key, text);
+    code.push(...stamped.code);
   }
 
   ranked.sort((left, right) => right.score - left.score);
@@ -627,6 +743,9 @@ export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInpu
     ranked: rescored,
     handed: selectHandedTasks(rescored, input.pinnedKeys),
     passages,
+    // Every project scored its code against the same vectors, so the best of
+    // them all are handed, under the same caps.
+    code: selectCodePassages(code, codeFloorFor(input.question), (passage) => `${passage.projectId}:${passage.path}`),
     semantic: vectors.length > 0,
     elapsedMs: Date.now() - started,
   };

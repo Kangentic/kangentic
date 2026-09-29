@@ -12,6 +12,7 @@ vi.mock('../../src/main/retrieval/embedder/embedding-model', () => ({
 import {
   createEmbedEngine,
   computeEmbedSleepMs,
+  RATE_MIN_BATCHES,
   RECORD_PROGRESS_INTERVAL_MS,
   type EmbedStore,
   type EmbedWorkerClient,
@@ -212,6 +213,29 @@ describe('createEmbedEngine drain loop', () => {
     engine.dispose();
   });
 
+  it('takes this machine\'s rate only once a run has embedded enough batches to be past the warm-up', async () => {
+    const drain = async (chunkCount: number): Promise<number | null> => {
+      const store = new FakeStore('proj-rate', Array.from({ length: chunkCount }, (_, index) => makeChunk(index + 1)), []);
+      const db = { name: `proj-rate-${chunkCount}` } as unknown as Database.Database;
+      markVecCapable(db);
+      const engine = createEmbedEngine({
+        getDb: () => db,
+        createStore: () => store,
+        createClient: () => makeFakeClient(),
+        delay: immediateDelay,
+        drainBatchSize: 1,
+      });
+      engine.attach(makeContext({ currentProjectId: 'proj-rate' }));
+      engine.markDirty('proj-rate');
+      await vi.waitFor(() => expect(store.remaining).toBe(0));
+      const rate = engine.chunksPerMinute;
+      engine.dispose();
+      return rate;
+    };
+    expect(await drain(RATE_MIN_BATCHES - 1)).toBeNull();
+    expect(await drain(RATE_MIN_BATCHES)).toBeGreaterThan(0);
+  });
+
   it('keeps a project dirty and retries after a transient embed failure, then finishes draining (crash-resume)', async () => {
     const store = new FakeStore('proj-c', [makeChunk(10), makeChunk(11)], []);
     const db = { name: 'proj-c' } as unknown as Database.Database;
@@ -387,7 +411,7 @@ describe('createEmbedEngine drain loop', () => {
     });
     await vi.waitFor(() => expect(drained).toEqual(['proj-drains']));
 
-    // The Search tab's poll re-marks a caught-up project: no second call.
+    // The Knowledge Graph tab's poll re-marks a caught-up project: no second call.
     engine.markDirty('proj-drains');
     engine.markDirty('proj-idle');
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -583,7 +607,7 @@ describe('createEmbedEngine workerCrashReason', () => {
   // embed-engine module, so it never runs this getter's own body either. A
   // regression here (e.g. forwarding `client.crashed` instead of
   // `client.crashReason`, or dropping the `?? null` fallback) would leave
-  // every existing test green while the Search tab's worker-error note
+  // every existing test green while the Knowledge Graph tab's worker-error note
   // silently went blank.
   it('is null before any client has been resolved', () => {
     const engine = createEmbedEngine({

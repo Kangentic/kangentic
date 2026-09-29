@@ -48,7 +48,7 @@ import type {
 import { PanelRow, InfoHint, formatBytes } from './PanelRow';
 import { formatRelativeTime } from '../../lib/datetime';
 import { useConfigStore } from '../../stores/config-store';
-import { agentJobChoice, answerSetupGap, taskDigestsOn } from '../../../shared/answer-agent';
+import { agentJobChoice, answerSetupGap, codeIndexOn, taskDigestsOn } from '../../../shared/answer-agent';
 import { TASK_OUTCOME_LABELS, type MemoryTaskOutcome } from '../../../shared/memory-task-fields';
 
 /**
@@ -248,7 +248,7 @@ export interface MemoryGraphControlsProps {
   /** The Projects picker, rendered at the top of Filter. Absent when fewer than
    *  two projects have an index, since a one-option scope is a dead control. */
   projectsPicker?: ReactNode;
-  /** Opens Settings > Search, where the index is rebuilt and its model and
+  /** Opens Settings > Knowledge Graph, where the index is rebuilt and its model and
    *  digests are set. Absent in the detached window, which has no settings. */
   onOpenSettings?: () => void;
 }
@@ -340,12 +340,20 @@ const CORPUS_ROWS: Record<MemoryIndexCorpus, { label: string; hint: string }> = 
     hint: 'Agent conversations indexed for the projects on the map. These are what the map draws.',
   },
   task: {
-    label: 'Task records',
+    label: 'Tasks',
     hint: 'Each task and backlog item: its title, labels and description. Searched when you ask, never drawn.',
   },
   change: {
     label: 'Session changes',
-    hint: 'The files each session changed, read from its conversation. Kept as text, never drawn.',
+    hint: 'The files each session changed, read from its conversation. Kept as text for the task summaries, never searched or drawn.',
+  },
+  commit: {
+    label: 'Commits',
+    hint: 'Commits on the default branch, each tied to the task whose conversation wrote it. Kept as text, never drawn.',
+  },
+  code: {
+    label: 'Source code',
+    hint: 'Source files and docs on the default branch, as committed, counted in files. Found by meaning when you ask, never drawn.',
   },
 };
 
@@ -449,16 +457,17 @@ export function MemoryGraphControls({
   const [indexCollapsed, setIndexCollapsed] = useState(true);
   const [regionQuery, setRegionQuery] = useState('');
 
-  // Whether digests are on and still wait for their agent, through the rule
-  // main and the Task digests card use. Read here, not from the snapshot, so the
-  // row follows a settings change at once.
+  // Whether task summaries are on and still wait for the Knowledge Graph
+  // agent, through the rule main and the Settings Index card use. Read here, not from the snapshot,
+  // so the row follows a settings change at once.
   const digestsOn = useConfigStore((state) => taskDigestsOn(state.config.memory));
-  const digestAgent = useConfigStore((state) => agentJobChoice(state.config.memory, 'digest').agent);
-  const digestModel = useConfigStore((state) => agentJobChoice(state.config.memory, 'digest').model);
+  const codeOn = useConfigStore((state) => codeIndexOn(state.config.memory));
+  const searchAgent = useConfigStore((state) => agentJobChoice(state.config.memory, 'digest').agent);
+  const searchModel = useConfigStore((state) => agentJobChoice(state.config.memory, 'digest').model);
   const agentList = useConfigStore((state) => state.agentList);
   const digestsNeedAgent = useMemo(
-    () => digestsOn && answerSetupGap({ agents: agentList, configured: digestAgent, configuredModel: digestModel, requireFound: true }) !== null,
-    [digestsOn, agentList, digestAgent, digestModel],
+    () => digestsOn && answerSetupGap({ agents: agentList, configured: searchAgent, configuredModel: searchModel, requireFound: true }) !== null,
+    [digestsOn, agentList, searchAgent, searchModel],
   );
 
   /**
@@ -871,8 +880,12 @@ export function MemoryGraphControls({
               rows are what a narrow column of reference numbers wants. */}
           <dl className="divide-y divide-edge/60" data-testid="memory-graph-index-rows">
             {/* One row per corpus the index holds, conversations first. A
-                corpus not indexed yet says so rather than showing a zero. */}
-            {index.corpora.map((entry) => (
+                corpus not indexed yet says so rather than showing a zero.
+                Source code is opt-in, so its row shows the way the digests
+                row does: while switched on, or while any is still held. Off
+                and empty, "Not yet indexed" would promise a fill that never
+                comes. */}
+            {index.corpora.filter((entry) => entry.corpus !== 'code' || codeOn || entry.documents > 0).map((entry) => (
               <div key={entry.corpus} data-testid={`memory-graph-index-corpus-${entry.corpus}`}>
                 <IndexRow
                   label={CORPUS_ROWS[entry.corpus].label}
@@ -885,17 +898,17 @@ export function MemoryGraphControls({
                 background, so the count climbs toward the Done tasks. The
                 count alone, with no suffix: a count short of the total already
                 says digests stopped (switched off, a failed call, a task the
-                agent passed over), and Settings > Search says which. */}
+                agent passed over), and Settings > Knowledge Graph says which. */}
             {digestsOn || index.digests.written > 0 ? (
               <div data-testid="memory-graph-index-digests">
                 <IndexRow
-                  label="Task digests"
+                  label="Task summaries"
                   value={digestsNeedAgent
                     ? <span className="text-fg-muted">Needs an agent</span>
                     : `${index.digests.written.toLocaleString()} of ${index.digests.finishedTasks.toLocaleString()}`}
                   hint={digestsNeedAgent
-                    ? 'Choose the digest agent in Settings > Search.'
-                    : 'A sentence or two per Done task, searched with its record. Settings > Search says why a count stops short.'}
+                    ? 'Choose an agent in Settings > Knowledge Graph.'
+                    : 'A sentence or two per Done task, searched with its record. Settings > Knowledge Graph says why a count stops short.'}
                 />
               </div>
             ) : null}
@@ -953,7 +966,7 @@ export function MemoryGraphControls({
               <button
                 type="button"
                 onClick={onOpenSettings}
-                title="Rebuild the index, or change its model and digests, in Settings > Search"
+                title="Rebuild the index, or change its sources, model and agent, in Settings > Knowledge Graph"
                 // The camera toolbar's button, so the graph's actions read alike.
                 className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
                 data-testid="memory-graph-index-settings"

@@ -491,7 +491,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ### Moving a project
 
@@ -844,12 +844,12 @@ or a shutdown, not a failure. When the graphics process could not be started at 
 there is no such record: Chromium never reports a failed start to the app, and only the fallback
 itself is recorded.
 
-Unrelated, despite the similar name: **Model acceleration** in Settings > Search controls where the
-semantic search model runs, not app rendering. The two are independent.
+Unrelated, despite the similar name: **Model acceleration** in Settings > Knowledge Graph controls where
+the local search model runs, not app rendering. The two are independent.
 
 ## Conversation Memory
 
-Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Search.
+Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Knowledge Graph.
 
 ### What Gets Indexed
 
@@ -857,7 +857,7 @@ The structured transcript of each session: user turns, assistant replies, thinki
 
 ### Keyword and Semantic Search
 
-Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Search downloads a small embedding model once (three quality tiers from the `bge` family, the **Search quality** row) and then runs fully offline. It powers the [Knowledge Graph](#knowledge-graph) and hybrid `kangentic_search` for agents; Quick Find stays keyword-only. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU). Changing Search quality re-indexes in the background by itself. **Rebuild this project's index**, under Index conversations, is only needed if search misses a conversation you know exists: it re-parses the project's conversations without deleting anything. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+Keyword (full-text) search is always available while indexing is on. Turning on the **Knowledge Graph** in Settings > Knowledge Graph downloads a small embedding model once (three quality tiers from the `bge` family, the **Search quality** row) and then runs fully offline. The status row under it reads **Downloading** over a progress track, then **Local model** with the model's name, size and where it runs, or **Download failed** in red. It powers the [Knowledge Graph](#knowledge-graph) and hybrid `kangentic_search` for agents; Quick Find stays keyword-only. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU). Changing Search quality re-indexes in the background by itself. **Rebuild the index**, in the Index card, reads every source again in every project without deleting anything: the open project now, every other one the next time you open it. It is only needed if search misses something you know is there, or after a new agent or model, when it also rewrites the task summaries written the old way. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
 
 ### Where It Surfaces
 
@@ -925,11 +925,11 @@ can answer.
 embeddings, so conversations about the same thing cluster together. Links join each conversation to
 its nearest neighbours. Regions are named automatically from what the conversations in them are
 about, so the map reads as a topic atlas of the project rather than an anonymous scatter. The names
-come from the conversations' task titles, and with **Task digests** on, from each task's digest too,
+come from the conversations' task titles, and with **Task summaries** on, from each task's summary too,
 counted a little lower than its title: a region then reads as what its work touched ("alt screen /
-wheel scroll") rather than how its titles happened to be worded ("code / quit / exit"). As digests
+wheel scroll") rather than how its titles happened to be worded ("code / quit / exit"). As summaries
 are written the regions are renamed in place, at most every few minutes and once more when the
-digests have caught up; no conversation moves. Switching digests off puts the title-only names back.
+summaries have caught up; no conversation moves. Switching summaries off puts the title-only names back.
 
 **Flying it.** Drag to orbit, right-drag to pan, scroll to zoom in and out. Click the map and use
 **W** / **S** to fly forward and back, **A** / **D** to slide left and right, and **Q** / **E** to
@@ -946,8 +946,8 @@ reframe at once: resizing the window (a fly would fight the drag), opening the g
 the open project.
 
 **Clicking around.** Hover a point for its title and size; click it for a detail panel. With a
-chat open, the panel's **Back** control returns to it. With **Task digests** on, the panel shows the
-conversation's task digest under its title: what the task set out to do and did, in a sentence or
+chat open, the panel's **Back** control returns to it. With **Task summaries** on, the panel shows the
+conversation's task summary under its title: what the task set out to do and did, in a sentence or
 two.
 
 The panel lists **Closest conversations**, its strongest links, ordered rather than scored: the
@@ -1071,48 +1071,71 @@ the task on the board. When you ask a follow-up, the earlier reply's rows fold i
 tasks**. Asked something neither the table nor the conversations cover, it says so rather than
 guessing. If the agent fails, its reason is shown as it came, with **Try again**.
 
-It knows what the board and the conversations recorded, not the code. "Which tasks added an agent?"
-is answerable; "how many agents does the app support?" is a question about the repository, which
-is not indexed yet, and work done outside a board task leaves nothing here to find.
+It knows what the board and the conversations recorded, and, with **Source code** on, the code on
+the project's default branch. With it on, the passages of code that read closest to a question go to
+the agent beside the related tasks, so "how does the embedding drain pace itself?" is answered from
+the code, naming the files, and the reply's rows stay tasks. A board question gets no code: code is
+handed only when it reads close enough to the question. With it off, "how many agents does the app
+support?" is a question about the repository that nothing here holds. Work done outside a board task
+leaves nothing to find either way, and the box's placeholder says "tasks, conversations and code" only
+while code is indexed.
 
 Each question costs one agent call, and the glyph at the end of the box names the agent before you
 press Enter.
 
 **Which agent answers** is its own setting, because the agent that runs your tasks and the agent
-that reads their history are different choices. The **Answering agent** card in Settings > Search
-holds its **Agent** and **Model**, one choice for the whole app, and nothing picks them for you:
-until both are set, pressing Enter in the box opens Settings > Search at that row and keeps your
-question typed, so you can come back and press Enter again. Reading the index is lighter work than
-writing code, so a cheaper model is usually enough. Every agent that has a headless read-only mode
-can answer; Warp cannot, since it has none. **Effort** appears when the agent's CLI reports
-effort levels, and starts at `low`, which answers fastest. Pick a higher level for questions that
-need counting or comparing across many tasks: at Claude's `max`, a count that `low` got wrong came
-out right, at about ten times the wait.
+that reads their history are different choices. The **Knowledge Graph** card in Settings >
+Knowledge Graph holds the switch that turns the feature on, then the local model that finds work by
+meaning, then the agent that answers: its **Agent** and **Model**, one choice for the whole app.
+Nothing picks them for you: until both are set, pressing Enter in the box opens Settings > Knowledge
+Graph at that row and keeps your question typed, so you can come back and press Enter again. The same agent and model write the
+task summaries, so it is chosen once. Reading the index is lighter work than writing code, so a
+cheaper model is usually enough. Every agent that has a headless read-only mode can answer; Warp
+cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels, and starts
+at `low`, which answers fastest. Pick a higher level for questions that need counting or comparing
+across many tasks: at Claude's `max`, a count that `low` got wrong came out right, at about ten
+times the wait. Effort is for answers only: summaries always write at the recommended level, where
+a higher one changed nothing.
 
-**Task digests** are off until you switch them on in the **Task digests** card in Settings >
-Search. An agent then writes a sentence or two about each Done task: what it set out to do and
-what it ended up doing, from the task's title and description, the files its sessions changed, and
-how its last sessions ended. A digest is searched with the task and handed to the answering agent
-beside it, so a question finds a task by what it did, not only by what its title says.
+The **Index** card below it lists what the index searches, one line per source:
+**Conversations**, **Tasks** and **Commits** are always indexed while the index is on, on switches
+that cannot be turned off, each with its count and a check once caught up. **Task summaries** and
+**Source code** have their own switches and are on by default. A running source keeps its line and
+shows the share done and the time left over a progress track ("22%, 3 min left"). Switched off, a
+line shows what switching it on would cover ("674 tasks", "1,488 files"). The figures are the open
+project's. Both wait for the Knowledge Graph and its agent, spending nothing until then, and say
+so ("Needs the Knowledge Graph", "Needs an agent"): the agent writes the summaries, and only its
+answers read the code. Their switches still work while they wait, so you can turn one off before
+choosing the agent that would start it.
 
-The card has its own **Agent**, **Model** and **Effort**, separate from the answering agent's, and
-they start empty, so switching digests on spends nothing until you choose. Until then its status
-line shows what the first run will take ("Waiting for an agent: 412 tasks here, about 42 calls").
-Digests are written in the background, ten tasks to a call, three calls at a time (at Sonnet, about
-$0.02 per ten tasks, and about three minutes for 700 tasks), and a task that reaches Done gets one on the next pass. The status line then
-says how far along it is, when it has caught up, how many tasks the agent passed over (tried again
-on the next launch), and when a failed call will be tried again. Switching digests off stops new
-calls and keeps the digests already written, so they go on helping search. A new model applies to
-new and changed tasks.
+**Task summaries** start once the Knowledge Graph has an agent and a model. The agent writes a
+sentence or two about each Done task: what it set out to do and what it ended up doing, from the
+task's title and description, the files its sessions changed, the commits it landed on the default
+branch, and how its last sessions ended. A summary is searched with the task and handed to the
+agent beside it, so a question finds a task by what it did, not only by what its title says.
+Summaries are written in the background, ten tasks to a call, three calls at a time (at Sonnet,
+about $0.02 per ten tasks, and about three minutes for 700 tasks), and a task that reaches Done
+gets one on the next pass. Caught up, the line shows the count with a check, or how many the agent
+passed over ("670 of 673, 3 skipped", tried again on the next launch). A failed call reads **A call
+failed** in yellow, with when it is retried. Switching summaries off stops new calls and keeps the
+summaries already written, so they go on helping search. A new model applies to new and changed
+tasks, and the line loses its check until **Rebuild** rewrites the rest; Rebuild asks first when it
+will rewrite summaries, and says how many and about how many calls. Measured on this project's own
+tasks, a mid-size model at low effort (Sonnet) wrote as well as a larger one and higher effort
+changed nothing; the larger models (Opus, Fable) add a little detail at two to seven times the
+cost, and the smallest (Haiku) invented details.
 
-**Rewrite this project's digests** says what the digests were written with ("674 written with
-Sonnet 5.5 at low effort"). After you choose a different agent, model or effort, Rewrite asks first,
-then rewrites the digests written some other way, three calls at a time in the background, and each
-old digest stays searchable until its new one is written. With every digest already written the
-chosen way, the button is disabled and says so. Measured on this project's own tasks, a mid-size
-model at low effort (Sonnet) wrote as well as a larger one and higher effort changed nothing; the
-larger models (Opus, Fable) add a little detail at two to seven times the cost, and the smallest
-(Haiku) invented details.
+**Source code** starts once the Knowledge Graph has an agent. It reads the project's default branch as committed:
+`origin/main` (or whatever the project's base branch is), else the local branch of that name, else
+the remote's own default, else the branch you have checked out. Any branch works; it reads source
+files and docs, not tests, fixtures, data files, lock files, build output or anything over 256 KB.
+Each file is split into passages at its top-level declarations and embedded in the background by
+the Knowledge Graph's local model. Off, its line shows the files it would read, or "Nothing committed yet"
+in a repository with no commit. This repository took about half an hour on a GPU and would take a
+couple of hours on a CPU. When the branch moves, only the files whose content changed are read
+again. Switching it off clears the open project's code index at once and another project's the
+next time you open it; switching it back on reads the branch again. Switching the Knowledge Graph
+off, or clearing its agent, keeps the code index as it is, so turning it back on costs nothing.
 
 **The coverage strip** across the top reports what is actually indexed. Two entries are worth
 understanding:
@@ -1123,17 +1146,20 @@ understanding:
 - **not yet indexed** - conversations the background sweep has not reached yet.
 
 The **Index** card lists everything the index holds, one row per kind: **Conversations** (what the
-map draws), **Task records** (each task's and backlog item's own text) and **Session changes** (the
-files each session changed, kept as text). Each shows its count and, while it is still being
-embedded, how much of it is; a kind with nothing in it yet says **Not yet indexed**. **Task
-digests** appears while digests are on or any exist, as how many of the Done tasks have one, or
-**Needs an agent** while they are on with no digest agent chosen. A count short of the total needs
-no explanation there; the Task digests card says why. Size on disk covers all of them. **Source file gone** counts conversations whose transcript file was
-deleted but whose indexed text is still searchable. The card's footer says when the index last took
-anything in ("Updated 3 minutes ago"), and its **Settings** button opens Settings > Search, where
-the index is rebuilt and its model and digests are set.
+map draws), **Tasks** (each task's and backlog item's own text), **Session changes** (the files each
+session changed, kept as text for the task summaries and never searched), **Commits** (the commits
+on the project's default branch, each tied to the task whose conversation wrote it, kept as text)
+and **Source code** (the default branch's files, counted in files, while Source code is on). Each
+shows its count and, while it is still being embedded, how much of it is; a kind with nothing in it
+yet says **Not yet indexed**. **Task summaries** appears while summaries are on or any exist, as how
+many of the Done tasks have one, or **Needs an agent** while they are on with no agent chosen. A count short of the total needs no explanation there; the Settings Index card says
+why. Size on disk covers all of them. **Source file gone** counts conversations whose transcript
+file was deleted but whose indexed text is still searchable. The card's footer says when the index
+last took anything in ("Updated 3 minutes ago"), and its **Settings** button opens Settings >
+Knowledge Graph, where the index is rebuilt and its sources, model and agent are set.
 
-The index holds what the board and its conversations recorded, not your repository's files.
+The index holds what the board and its conversations recorded, plus your repository's committed
+files while Source code is on.
 
 The map is drawn on the GPU. On a machine that cannot provide a 3D drawing context (a blocklisted
 driver, some remote sessions) it says so, and the coverage numbers and Ask keep working.
@@ -1141,8 +1167,8 @@ driver, some remote sessions) it says so, and the coverage numbers and Ask keep 
 **Building the map.** The first time a project opens the graph, Kangentic reads every embedding in
 the index to place the dots. On a large project that takes a few minutes, runs in the background,
 and only happens once - after that it updates in about a second as new conversations are indexed.
-The surface shows its progress rather than an empty map. It needs semantic search on (Settings >
-Memory); without embeddings there is no meaningful notion of "near", so it shows the coverage and
+The surface shows its progress rather than an empty map. It needs the Knowledge Graph switched on (Settings >
+Knowledge Graph); without embeddings there is no meaningful notion of "near", so it shows the coverage and
 asks you to enable it rather than drawing a map that would imply meaning it does not have.
 
 Like the Agent Monitor and Usage Stats, it detaches into its own window from the pop-out control in

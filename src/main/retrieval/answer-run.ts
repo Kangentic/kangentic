@@ -26,15 +26,15 @@ export type AnswerRunResolution =
   | { ok: false; failure: { ok: false; reason: string; setup?: 'agent' | 'model' } };
 
 /**
- * Resolve the answering agent for a question, a prewarm, or a digest batch,
+ * Resolve the search agent for a question, a prewarm, or a digest batch,
  * through the SHARED rule the renderer uses to decide whether a question runs
  * or goes to Settings first, so the two can never disagree. The rule is
  * explicit: the configured agent and model, with no fallback to the project's
  * agent or to any capable one.
  *
- * `job` picks whose choice is read: the Answering agent card's for a question
- * or a prewarm, the Task digests card's for a digest batch. Neither falls back
- * to the other.
+ * Both jobs read the Knowledge Graph card's one choice. `job` only decides the
+ * effort: a question runs at the chosen level, a digest batch always at the
+ * adapter's recommended one (`agentJobChoice`).
  *
  * `withSearch: false` resolves a run with no tool at all, which is what a
  * digest batch needs: it summarizes what it is handed.
@@ -64,13 +64,12 @@ export async function resolveAnswerRun(
   const configuredModel = choice.model;
   const setup = answerSetupGap({ agents, configured: configuredAgent, configuredModel });
   if (setup) {
-    const card = job === 'digest' ? 'the Task digests card' : 'the Answering agent card';
     return {
       ok: false,
       failure: {
         ok: false,
         setup,
-        reason: `choose ${setup === 'agent' ? 'an agent' : 'a model'} in ${card} in Settings > Search`,
+        reason: `choose ${setup === 'agent' ? 'an agent' : 'a model'} in Settings > Knowledge Graph`,
       },
     };
   }

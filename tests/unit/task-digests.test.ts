@@ -10,6 +10,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import {
   buildDigestPrompt,
+  digestInputBlock,
   digestInputHash,
   parseDigestReply,
   DIGEST_BATCH_SIZE,
@@ -18,12 +19,14 @@ import {
 import { changedFilesOf, lastAssistantMessage } from '../../src/main/retrieval/digest/digest-sources';
 import { runDigestPass } from '../../src/main/retrieval/digest/digest-pass';
 import { createDigestScheduler } from '../../src/main/retrieval/digest/digest-scheduler';
+import { DigestStore } from '../../src/main/retrieval/digest/digest-store';
 
 const input = (taskId: string, title = `Task ${taskId}`): DigestInput => ({
   taskId,
   title,
   description: 'Make the relay reconnect after the router restarts.',
   changedFiles: ['src/main/mobile-bridge/relay-client.ts'],
+  commits: [],
   closingMessages: ['The relay now reconnects with backoff.'],
 });
 
@@ -74,6 +77,22 @@ describe('the digest prompt', () => {
   it('hashes what the digest was written from, so a change to it rewrites the digest', () => {
     expect(digestInputHash(input('a'))).toBe(digestInputHash(input('a')));
     expect(digestInputHash({ ...input('a'), closingMessages: ['It ended differently.'] })).not.toBe(digestInputHash(input('a')));
+  });
+
+  it('carries the commits a task landed, and a task without any keeps the hash it had before', () => {
+    const withCommits = { ...input('a'), commits: ['feat(mobile-bridge): reconnect the relay with backoff', 'test(mobile-bridge): pin the reconnect'] };
+    expect(buildDigestPrompt([withCommits])).toContain(
+      'Commits: feat(mobile-bridge): reconnect the relay with backoff; test(mobile-bridge): pin the reconnect',
+    );
+    expect(digestInputHash(withCommits)).not.toBe(digestInputHash(input('a')));
+    // No Commits line at all for a task with none, so the input block, and so
+    // every existing digest's hash, is exactly what it was before commits.
+    expect(digestInputBlock(input('a'))).toBe([
+      'Title: Task a',
+      'Description: Make the relay reconnect after the router restarts.',
+      'Files changed: src/main/mobile-bridge/relay-client.ts',
+      'A session ended: The relay now reconnects with backoff.',
+    ].join('\n'));
   });
 });
 
@@ -215,6 +234,31 @@ describe('a digest pass', () => {
     // The failed call's ten stay for a later pass; the other ten are written.
     expect(result).toMatchObject({ written: 10, remaining: 10, failed: true });
     expect(digestWrites(calls)).toHaveLength(10);
+  });
+});
+
+describe('what Rebuild rewrites', () => {
+  it('counts exactly the digests it marks: the same match, the same choice', () => {
+    // Rebuild's confirm names the count before anything is marked, so the two
+    // statements must select the same rows or the confirm names a wrong cost.
+    const statements: Array<{ sql: string; args: unknown[] }> = [];
+    const db = {
+      prepare: (sql: string) => ({
+        get: (...args: unknown[]) => { statements.push({ sql, args }); return { count: 3 }; },
+        run: (...args: unknown[]) => { statements.push({ sql, args }); return { changes: 3 }; },
+      }),
+    } as unknown as Database.Database;
+    const store = new DigestStore(db);
+    const choice = { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' };
+
+    expect(store.countNotWrittenWith(choice)).toBe(3);
+    expect(store.markForRewrite(choice)).toBe(3);
+
+    const whereOf = (sql: string) => sql.slice(sql.indexOf('WHERE')).replace(/\s+/g, ' ').trim();
+    expect(whereOf(statements[0].sql)).toBe(whereOf(statements[1].sql));
+    expect(statements[0].args).toEqual(statements[1].args);
+    expect(statements[0].sql).toMatch(/^\s*SELECT COUNT\(\*\)/);
+    expect(statements[1].sql).toMatch(/UPDATE memory_task_digests SET input_hash = ''/);
   });
 });
 
@@ -427,5 +471,79 @@ describe('the digest scheduler', () => {
     // The retry fires: no longer waiting.
     timers[0]();
     expect(scheduler.status('project').state).not.toBe('retrying');
+  });
+
+  it('measures digests a minute over the whole run, the gaps between passes included, for the time left', async () => {
+    let clock = 0;
+    const results = [
+      { written: 30, remaining: 60 },
+      { written: 30, remaining: 30 },
+      { written: 30, remaining: 0 },
+    ];
+    const runPass = vi.fn(async () => {
+      // Each pass takes 30 s of wall time.
+      clock += 30_000;
+      return { unanswered: [], failed: false, ...(results.shift() ?? { written: 0, remaining: 0 }) };
+    });
+    const timers: Array<() => void> = [];
+    const scheduler = createDigestScheduler<string>({
+      isEnabled: () => true,
+      resolveWriter: async () => ({ agent: 'claude', model: null, write: async () => '' }),
+      onWritten: () => undefined,
+      runPass: runPass as never,
+      setTimer: (fire) => {
+        timers.push(fire);
+        return { cancel: () => undefined };
+      },
+      now: () => clock,
+    });
+    // No pass yet: no rate, so the card gives no time rather than a guess.
+    expect(scheduler.writtenPerMinute('project')).toBeNull();
+
+    scheduler.request('context', 'project');
+    await settle();
+    // 30 in the first 30 s.
+    expect(scheduler.writtenPerMinute('project')).toBe(60);
+
+    // A 30 s gap before the next pass counts against the rate.
+    clock += 30_000;
+    timers[0]();
+    await settle();
+    // 60 over 90 s of wall time.
+    expect(scheduler.writtenPerMinute('project')).toBe(40);
+    expect(scheduler.writtenPerMinute('another project')).toBeNull();
+
+    // Caught up: the run ends, and so does its rate.
+    timers[1]();
+    await settle();
+    expect(scheduler.writtenPerMinute('project')).toBeNull();
+  });
+
+  it('ends the run on a failed call, so a retry starts its rate afresh', async () => {
+    let clock = 0;
+    const results = [{ written: 30, remaining: 60 }, { written: 0, remaining: 60, failed: true }];
+    const runPass = vi.fn(async () => {
+      clock += 30_000;
+      return { unanswered: [], failed: false, ...(results.shift() ?? { written: 0, remaining: 0 }) };
+    });
+    const timers: Array<() => void> = [];
+    const scheduler = createDigestScheduler<string>({
+      isEnabled: () => true,
+      resolveWriter: async () => ({ agent: 'claude', model: null, write: async () => '' }),
+      onWritten: () => undefined,
+      runPass: runPass as never,
+      setTimer: (fire) => {
+        timers.push(fire);
+        return { cancel: () => undefined };
+      },
+      now: () => clock,
+    });
+    scheduler.request('context', 'project');
+    await settle();
+    expect(scheduler.writtenPerMinute('project')).toBe(60);
+    timers[0]();
+    await settle();
+    // The 5 minute backoff would otherwise read as a crawl.
+    expect(scheduler.writtenPerMinute('project')).toBeNull();
   });
 });

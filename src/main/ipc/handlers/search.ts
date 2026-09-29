@@ -36,6 +36,7 @@ import { estimateTokens } from '../../retrieval/token-estimate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
+import { codeIndexOn } from '../../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
 import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
 import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
@@ -46,6 +47,7 @@ import type {
   MemoryStatus,
   MemoryGraphSnapshot,
   MemoryGraphProjectSummary,
+  MemoryRebuildPlan,
   MemoryGraphQueryResult,
   MemoryGraphQueryHit,
   MemoryGraphAnswerResult,
@@ -119,9 +121,17 @@ function takeAnswerSession(chatId: string, run: AnswerRun, endGeneration?: numbe
  * scope, whose tickets stand bare, the region granularity, and the map filter.
  * A follow-up under the same signature reuses its session's table.
  */
-function answerScopeSignature(projectIds: string[], homeProjectId: string, granularity: string, scopeDocKeys: string[] | null): string {
+function answerScopeSignature(
+  projectIds: string[],
+  homeProjectId: string,
+  granularity: string,
+  scopeDocKeys: string[] | null,
+  codeIndexed: boolean,
+): string {
   const filter = scopeDocKeys ? createHash('sha1').update([...scopeDocKeys].sort().join('\n')).digest('hex') : null;
-  return JSON.stringify([projectIds, homeProjectId, granularity, filter]);
+  // Whether code is indexed changes the rules the first turn sent, which a
+  // follow-up does not resend.
+  return JSON.stringify([projectIds, homeProjectId, granularity, filter, codeIndexed]);
 }
 
 /**
@@ -190,26 +200,10 @@ export function registerSearchHandlers(context: IpcContext): void {
     if (typeof chatId === 'string' && chatId) answerSessionPool.end(chatId);
   });
 
-  ipcMain.handle(
-    IPC.MEMORY_REBUILD_INDEX,
-    async (_event, projectId?: string | null): Promise<void> => {
-      const resolvedProjectId = projectId ?? context.currentProjectId;
-      if (!resolvedProjectId) return;
-      const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
-      if (!project) return;
-      retrievalService.rebuildProjectIndex(context, project);
-    },
-  );
-
-  // The Task digests card's Rewrite: mark the project's digests written with
-  // anything but the current choice, and start the pass that rewrites them.
-  ipcMain.handle(
-    IPC.MEMORY_REWRITE_DIGESTS,
-    async (_event, projectId: string): Promise<{ marked: number }> => {
-      if (typeof projectId !== 'string' || !context.projectRepo.list().some((entry) => entry.id === projectId)) return { marked: 0 };
-      return retrievalService.rewriteDigests(context, projectId);
-    },
-  );
+  // The Index card's Rebuild, for every source in every project. Global, like
+  // the tab it lives in, so it takes no project.
+  ipcMain.handle(IPC.MEMORY_REBUILD_PLAN, (): Promise<MemoryRebuildPlan> => retrievalService.rebuildPlan(context));
+  ipcMain.handle(IPC.MEMORY_REBUILD_INDEX, (): Promise<MemoryRebuildPlan> => retrievalService.rebuildEverything(context));
 
   // The selected conversation's task digest, read from the node's OWN project
   // (the map may show several), and only while digests are switched on.
@@ -376,7 +370,16 @@ export function registerSearchHandlers(context: IpcContext): void {
         // first turn was asked in, a follow-up reuses that turn's table (the
         // session already holds it) and sends only what is new; any other
         // scope, or no primed turn yet, sends the whole prompt.
-        const scopeSignature = answerScopeSignature(scopeProjects.map((entry) => entry.id), homeProject.id, granularity, answerContext.scopeDocKeys ?? null);
+        // Source code, when indexed, is searched beside the tasks and handed as
+        // passages; the setting, not what a question finds, decides the rules.
+        const codeIndexed = codeIndexOn(context.configManager.load().memory);
+        const scopeSignature = answerScopeSignature(
+          scopeProjects.map((entry) => entry.id),
+          homeProject.id,
+          granularity,
+          answerContext.scopeDocKeys ?? null,
+          codeIndexed,
+        );
         let pooled = answerContext.chatId ? takeAnswerSession(answerContext.chatId, resolvedRun.run) : null;
         // A session primed under another scope holds another table. Sending this
         // one after it would leave two in its context, so it starts over.
@@ -488,6 +491,7 @@ export function registerSearchHandlers(context: IpcContext): void {
             embedder: retrievalService.getEmbedder(context),
             pinnedKeys: new Set(previousTurn?.taskKeys ?? []),
             embedWaitMs: RELATED_EMBED_WAIT_MS,
+            code: codeIndexed,
           };
           related = acrossProjects
             ? await searchRelatedWorkAcross({ ...searchInput, projects: projectNodes })
@@ -502,7 +506,7 @@ export function registerSearchHandlers(context: IpcContext): void {
             );
         } catch (error) {
           console.warn('[memory-graph] related work search failed, answering from the table:', error);
-          related = { ranked: [], handed: [], passages: new Map(), semantic: false, elapsedMs: 0 };
+          related = { ranked: [], handed: [], passages: new Map(), code: [], semantic: false, elapsedMs: 0 };
         }
         const toWire = (task: ProjectRelatedWorkTask): MemoryRelatedTask => ({
           key: task.key,
@@ -557,12 +561,19 @@ export function registerSearchHandlers(context: IpcContext): void {
           }];
         });
         const canSearch = retrieval !== undefined;
+        const codeForPrompt = codeIndexed
+          ? related.code.map((passage) => {
+            const project = acrossProjects ? projectNameById.get(passage.projectId) : undefined;
+            return { path: passage.path, text: passage.text, ...(project ? { project } : {}) };
+          })
+          : undefined;
         // The whole prompt: table, rules, related work and the chat so far. What
         // a fresh run gets, and what a session's first turn gets.
         const buildFullPrompt = (): string => timeSyncWork('answer:prompt', () => buildAnswerPrompt(trimmed, {
           tasks: taskTable,
           nowMs: Date.now(),
           related: relatedForPrompt,
+          code: codeForPrompt,
           history: history.map((turn) => ({
             question: turn.question,
             answer: turn.answer,
@@ -577,7 +588,7 @@ export function registerSearchHandlers(context: IpcContext): void {
             : {}),
         }));
         const prompt = primedTable
-          ? buildFollowUpPrompt(trimmed, { related: relatedForPrompt, canSearch })
+          ? buildFollowUpPrompt(trimmed, { related: relatedForPrompt, canSearch, code: codeForPrompt })
           : buildFullPrompt();
         // What this question cost to ask, reported rather than estimated after
         // the fact, with the same estimator the chunker sizes text with.

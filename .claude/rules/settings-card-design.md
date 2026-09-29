@@ -28,12 +28,25 @@ stated here and held by the components.
   settings registry.
 - **Every child of a card body is a tile.** Use `CardRow` for a control under its label,
   `CardToggleRow` for a label with a switch, `CardChoiceRow` for a choice between two named
-  options, and `CardTile` for anything custom: an action row, a
-  group of controls, a status line, a sortable list item. A component of your own may sit in a
+  options, `CardStatusRow` for a status, `CardSourceList` for a list of sources, and `CardTile`
+  for anything custom: an action row, a group of controls, a sortable list item. A component of your own may sit in a
   body when every one of its returns is a tile (`NotifyChannelRow`, `HotkeyRow`). Never put a raw
   element in a body, and never give a `CardTile` its own fill or padding (its `className` is for
   layout only). The one exception is `wideBody`, for a grid with no label column (MCP Server's
   tool list).
+- **A status is one `CardStatusRow`, whatever it reports.** The state is the label ("Model",
+  "Downloading", "Download failed"), the figure sits at the switches' right edge, and a running
+  state passes `percent` for the track. `tone` is the only styling: `ready` puts a check beside the
+  value, `caution` and `failure` tint the label and put a warning icon in the tile's gutter, and
+  the value stays neutral. Do not hand-roll a status line or a progress bar; the Knowledge
+  Graph and Dictation tabs read the same way because they share this row.
+- **A list of sources is one `CardSourceList`, one line per source.** Each line is the source's
+  name, its value at the switches' edge, and its switch (a locked one, on, for a source that is
+  always on). The value follows one pattern: the count with a check once caught up, the share and
+  the time left over a track while it runs (no verb: the name says what runs), what it would cover
+  while off (muted), and a tag in place of the value while a prerequisite is missing. A problem
+  tints its state word and puts the icon in the gutter, as the status row does. The Knowledge
+  Graph tab's Index card is the one that exists; its line states are pure (`tabs/index-sources.ts`).
 - **The old row components are gone.** `SectionHeader`, `SettingRow`, `SettingToggleRow` and
   `CompactToggleList` were removed from `settings/shared.tsx` when every tab moved to cards. Do not
   bring them back. A card's title replaces a section heading.
@@ -67,7 +80,7 @@ stated here and held by the components.
   row's `InfoTip`, which has no budget. See `ui-conventions.md` for the rest of the copy
   conventions.
 - **Labels are plain nouns in sentence case, and the card supplies the context.** Inside the
-  Answering agent card the rows are Agent, Model and Effort, not "Answering model". Keep the longer
+  Knowledge Graph card the agent's rows are Agent, Model and Effort, not "Answering model". Keep the longer
   phrase as a search keyword and put the card's name in the registry entry's `section`.
 
 ## Enforcement (self-maintaining)

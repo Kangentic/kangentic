@@ -4602,29 +4602,26 @@
           window.__mockEndChatCalls.push(chatId);
         }
       },
-      rebuildIndex: function (projectId) {
-        if (typeof window !== 'undefined') {
-          if (!window.__mockRebuildIndexCalls) window.__mockRebuildIndexCalls = [];
-          window.__mockRebuildIndexCalls.push({ projectId: projectId === undefined ? null : projectId });
-        }
-        return Promise.resolve();
-      },
-      rewriteDigests: function (projectId) {
-        // Recorded for the rewrite spec; the answer is the digests written some
-        // other way in the seeded status, which is what main would mark.
-        if (typeof window !== 'undefined') {
-          if (!window.__mockRewriteDigestsCalls) window.__mockRewriteDigestsCalls = [];
-          window.__mockRewriteDigestsCalls.push({ projectId: projectId });
-        }
+      // The summaries Rebuild would rewrite: those in the seeded status written
+      // some other way, which is what main would count and mark.
+      rebuildPlan: function () {
         var digests = memoryStatus && memoryStatus.digests;
-        var marked = 0;
+        var summariesToRewrite = 0;
         if (digests && digests.choice && digests.writtenWith) {
           digests.writtenWith.forEach(function (entry) {
             var same = entry.agent === digests.choice.agent && entry.model === digests.choice.model && entry.effort === digests.choice.effort;
-            if (!same) marked += entry.count;
+            if (!same) summariesToRewrite += entry.count;
           });
         }
-        return Promise.resolve({ marked: marked });
+        return Promise.resolve({ summariesToRewrite: summariesToRewrite });
+      },
+      // Recorded for the Rebuild spec. Global, so it carries no project.
+      rebuildIndex: function () {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockRebuildIndexCalls) window.__mockRebuildIndexCalls = [];
+          window.__mockRebuildIndexCalls.push(Date.now());
+        }
+        return this.rebuildPlan();
       },
       taskDigest: function (projectId, taskId) {
         // Seeded per task id via __mockPreConfigure's memoryTaskDigests; null

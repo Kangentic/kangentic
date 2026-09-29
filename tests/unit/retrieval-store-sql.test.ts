@@ -308,29 +308,27 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
 });
 
 describe('RetrievalStore.countChunksNeedingEmbedding', () => {
-  it('counts never-embedded chunks and chunks under another tag, as index ranges', () => {
+  it('counts never-embedded chunks and chunks under another tag, by corpus, as index ranges', () => {
     const { db, calls } = makeRecordingDb({
-      get: (sql) =>
-        sql.includes('sqlite_master')
-          ? { name: 'memory_chunks_vec' }
-          : sql.includes('COUNT(*)')
-            ? { count: 3 }
-            : undefined,
+      get: (sql) => (sql.includes('sqlite_master') ? { name: 'memory_chunks_vec' } : undefined),
+      all: (sql) => (sql.includes('COUNT(*)') ? [{ corpus: 'conversation', count: 3 }, { corpus: 'code', count: 40 }] : []),
     });
     markVecCapable(db);
 
-    const count = new RetrievalStore(db).countChunksNeedingEmbedding('bge-base@q8');
+    const waiting = new RetrievalStore(db).countChunksNeedingEmbedding('bge-base@q8');
 
-    expect(count).toBe(3);
-    const countCall = calls.find((call) => call.method === 'get' && call.sql.includes('COUNT(*)'));
-    // `!=` is not an index range; `<` and `>` are.
+    expect(Object.fromEntries(waiting)).toEqual({ conversation: 3, code: 40 });
+    const countCall = calls.find((call) => call.method === 'all' && call.sql.includes('COUNT(*)'));
+    // `!=` is not an index range; `<` and `>` are. It runs on every Settings
+    // status poll, so a bare `corpus` group would read every chunk row.
     expect(countCall?.sql).toContain('embedded_model IS NULL OR embedded_model < ? OR embedded_model > ?');
+    expect(countCall?.sql).toContain('GROUP BY +corpus');
     expect(countCall?.args).toEqual(['bge-base@q8', 'bge-base@q8']);
   });
 
-  it('returns 0 when the vec table is not ready', () => {
+  it('counts nothing when the vec table is not ready', () => {
     const { db } = makeRecordingDb({});
-    expect(new RetrievalStore(db).countChunksNeedingEmbedding('bge-base@q8')).toBe(0);
+    expect(new RetrievalStore(db).countChunksNeedingEmbedding('bge-base@q8').size).toBe(0);
   });
 });
 
@@ -378,6 +376,17 @@ describe('RetrievalStore.searchLexical', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('runs the full-text match first, whatever the planner would choose', () => {
+    // Planned the other way (corpus index first, the match once per chunk row)
+    // the same search took 2 to 29 s on 93k chunks under an older SQLite.
+    const { db, calls } = makeRecordingDb({ all: () => [] });
+
+    new RetrievalStore(db).searchLexical('"foo"*', 32, ['conversation']);
+
+    const matchCall = calls.find((call) => call.sql.includes('MATCH'));
+    expect(matchCall?.sql).toMatch(/FROM memory_chunks_fts\s+CROSS JOIN memory_chunks/);
+  });
+
   it('joins against memory_chunks and binds taskId when scoping to one task', () => {
     const { db, calls } = makeRecordingDb({
       all: () => [{ id: 9, snip: 'delta', score: -2.0 }],
@@ -390,6 +399,57 @@ describe('RetrievalStore.searchLexical', () => {
     expect(matchCall?.sql).toContain('JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid');
     expect(matchCall?.sql).toContain('memory_chunks.task_id = ?');
     expect(matchCall?.args).toEqual(['"foo"*', 'conversation', 'task-42', 32]);
+  });
+});
+
+describe('RetrievalStore.searchLexicalPerCorpus', () => {
+  it('scans once for every corpus named and ranks each within itself, up to its own limit', () => {
+    const { db, calls } = makeRecordingDb({
+      all: () => [
+        { id: 1, corpus: 'task', score: -9 },
+        { id: 2, corpus: 'commit', score: -8 },
+        { id: 3, corpus: 'task', score: -7 },
+        { id: 4, corpus: 'task', score: -6 },
+        { id: 5, corpus: 'commit', score: -5 },
+      ],
+    });
+
+    const byCorpus = new RetrievalStore(db).searchLexicalPerCorpus('"relay"', new Map([['task', 2], ['commit', 5]]));
+
+    expect(byCorpus.get('task')).toEqual([{ chunkId: 1, rank: 1 }, { chunkId: 3, rank: 2 }]);
+    expect(byCorpus.get('commit')).toEqual([{ chunkId: 2, rank: 1 }, { chunkId: 5, rank: 2 }]);
+    const matchCalls = calls.filter((call) => call.sql.includes('MATCH'));
+    expect(matchCalls).toHaveLength(1);
+    expect(matchCalls[0].sql).toMatch(/FROM memory_chunks_fts\s+CROSS JOIN memory_chunks/);
+    expect(matchCalls[0].sql).toContain('memory_chunks.corpus IN (?,?)');
+    // No LIMIT (one corpus must not crowd out another) and no snippet (ranks only).
+    expect(matchCalls[0].sql).not.toMatch(/LIMIT|snippet/);
+    expect(matchCalls[0].args).toEqual(['"relay"', 'task', 'commit']);
+  });
+
+  it('asks nothing of the database for no corpora', () => {
+    const { db, calls } = makeRecordingDb({ all: () => [] });
+    expect(new RetrievalStore(db).searchLexicalPerCorpus('"relay"', new Map()).size).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('RetrievalStore.firstTaskMentioning', () => {
+  it('finds the earliest conversation mention at or before a time, full-text match first', () => {
+    const { db, calls } = makeRecordingDb({ get: () => ({ taskId: 'task-7', firstMs: 100 }) });
+
+    expect(new RetrievalStore(db).firstTaskMentioning('"feat pty keep the resize"', 5_000)).toBe('task-7');
+
+    const call = calls.find((entry) => entry.sql.includes('MATCH'));
+    expect(call?.sql).toMatch(/FROM memory_chunks_fts\s+CROSS JOIN memory_chunks/);
+    expect(call?.sql).toContain("memory_chunks.corpus = 'conversation'");
+    expect(call?.sql).toMatch(/HAVING firstMs IS NOT NULL AND firstMs <= \?\s+ORDER BY firstMs ASC/);
+    expect(call?.args).toEqual(['"feat pty keep the resize"', 5_000]);
+  });
+
+  it('is null when no conversation mentions it', () => {
+    const { db } = makeRecordingDb({ get: () => undefined });
+    expect(new RetrievalStore(db).firstTaskMentioning('"nothing like it"', 5_000)).toBeNull();
   });
 });
 
@@ -423,22 +483,24 @@ describe('RetrievalStore corpus reads', () => {
     expect(calls.filter((call) => call.sql.includes('MATCH')).map((call) => call.args[1])).toEqual([2, 2]);
   });
 
-  it('serves never-embedded conversations before task records, each as an index seek', () => {
+  it('serves never-embedded conversations before task records, and source code last, each as an index seek', () => {
     const conversationRow = { ...storedRow, id: 3 };
     const taskRow = { ...storedRow, id: 90, corpus: 'task' };
+    const codeRow = { ...storedRow, id: 400, corpus: 'code' };
     const { store, calls } = vecStore({
       all: (sql, args) => {
-        if (sql.includes('embedded_model IS NULL AND corpus = ?')) return args[0] === 'conversation' ? [conversationRow] : args[0] === 'task' ? [taskRow] : [];
-        return [];
+        if (!sql.includes('embedded_model IS NULL AND corpus = ?')) return [];
+        return args[0] === 'conversation' ? [conversationRow] : args[0] === 'task' ? [taskRow] : args[0] === 'code' ? [codeRow] : [];
       },
     });
 
     const pending = store.chunksNeedingEmbedding('bge-base@q8', 5);
 
-    expect(pending.map((chunk) => chunk.id)).toEqual([3, 90]);
+    expect(pending.map((chunk) => chunk.id)).toEqual([3, 90, 400]);
     const seeks = calls.filter((call) => call.sql.includes('embedded_model IS NULL AND corpus = ?'));
-    // Session changes are text only (`EMBEDDED_CORPORA`), so they are never served.
-    expect(seeks.map((call) => call.args)).toEqual([['conversation', 5], ['task', 4]]);
+    // Session changes and commits are text only (`EMBEDDED_CORPORA`), so they
+    // are never served; code waits behind everything a question already uses.
+    expect(seeks.map((call) => call.args)).toEqual([['conversation', 5], ['task', 4], ['code', 3]]);
     // The whole-table `!=` scan is gone.
     expect(calls.some((call) => call.sql.includes('embedded_model != ?'))).toBe(false);
   });

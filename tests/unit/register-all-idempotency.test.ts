@@ -147,7 +147,8 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
     getEmbedder: vi.fn(),
     stop: vi.fn(),
     purgeProjectIndex: vi.fn(),
-    rebuildProjectIndex: vi.fn(),
+    rebuildPlan: vi.fn(),
+    rebuildEverything: vi.fn(),
     dispose: vi.fn(),
   },
 }));

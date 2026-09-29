@@ -4,14 +4,14 @@
  *
  * SHARED, because two places need the same answer and a disagreement between
  * them is invisible: the renderer decides whether a question can run or must
- * first go to Settings > Search, and the main process decides who actually
+ * first go to Settings > Knowledge Graph, and the main process decides who actually
  * runs. If those drifted, the box would send the user to settings for an agent
  * main would have run, or run an agent the settings row does not show.
  *
  * EXPLICIT, with no fallback. The chain used to fall through to the project's
  * default agent and then to any capable agent, so a question could run on an
  * agent and model nobody chose, and spend their tokens doing it. The user's
- * rule: this is one global choice, made in Settings > Search, never inferred
+ * rule: this is one global choice, made in Settings > Knowledge Graph, never inferred
  * from a project. So a configured agent that cannot answer, or is not
  * installed, resolves to nothing, and the surface asks for a choice.
  */
@@ -19,36 +19,83 @@
 import type { AnswerCapabilities, AnswerSetupGap, AppConfig } from './types';
 
 /**
- * The two jobs an agent does over the index: answering questions, and writing
- * task digests. Each has its own agent, model and effort, chosen in its own
- * Settings > Search card, and neither falls back to the other.
+ * The two jobs the search agent does over the index: answering questions, and
+ * writing task digests. Both run on the one agent and model chosen in the
+ * Search agent card. They differ only in effort, below.
  */
 export type AgentJob = 'answer' | 'digest';
 
 export interface AgentJobChoice {
   agent: string | null;
   model: string | null;
+  /** The configured level, or null for the adapter's recommended one. */
   effort: string | null;
 }
 
 type MemoryConfig = NonNullable<AppConfig['memory']>;
 
-/** The agent, model and effort configured for one job. */
+/**
+ * The agent, model and effort one job runs at. The chosen effort is for
+ * answers: a digest always runs at the adapter's recommended level. Measured on
+ * this project's tasks, digests at high effort read the same as at low and took
+ * twice as long, while answers at the highest level got counts right that low
+ * got wrong. So raising effort for a hard question neither slows the digests
+ * nor marks every one of them as written another way.
+ */
 export function agentJobChoice(memory: MemoryConfig | undefined, job: AgentJob): AgentJobChoice {
-  if (job === 'digest') {
-    return { agent: memory?.digestAgent ?? null, model: memory?.digestModel ?? null, effort: memory?.digestEffort ?? null };
-  }
-  return { agent: memory?.answerAgent ?? null, model: memory?.answerModel ?? null, effort: memory?.answerEffort ?? null };
+  return {
+    agent: memory?.answerAgent ?? null,
+    model: memory?.answerModel ?? null,
+    effort: job === 'answer' ? memory?.answerEffort ?? null : null,
+  };
 }
 
 /**
- * Whether task digests are switched on. Off unless set: digests spend a call
- * per ten tasks in the background, so they are opt-in. The one test main, the
- * Settings card and the Index row all read, so none of them can default it the
- * other way.
+ * Whether task summaries (digests) are switched on. On unless switched off:
+ * they are part of what the Knowledge Graph reads, and nothing is spent until
+ * the Knowledge Graph has an agent, since the agent writes them. Their switch
+ * stays usable while they wait, so they can be turned off before a call is
+ * made. The one test main, the Settings card and the Index row all read, so
+ * none of them can default it the other way.
  */
 export function taskDigestsOn(memory: MemoryConfig | undefined): boolean {
-  return memory?.taskDigests === true;
+  return memory?.taskDigests !== false;
+}
+
+/**
+ * Whether source code is indexed: switched on (the default), with indexing
+ * and the Knowledge Graph (`semanticEnabled`) on too, since code is found by
+ * meaning only, and an agent chosen, since only its answers read
+ * the code index (no other search does). Waiting for the agent keeps the first
+ * fill, real background work, from running for nothing. The one test main,
+ * the Settings card, the Index row and the Ask box all read.
+ */
+export function codeIndexOn(memory: MemoryConfig | undefined): boolean {
+  return memory?.codeIndex !== false
+    && memory?.indexingEnabled !== false
+    && memory?.semanticEnabled === true
+    && Boolean(memory?.answerAgent);
+}
+
+/** What a sweep does with the source code index: see `codeSweepPlan`. */
+export type CodeSweepPlan = 'index' | 'clear' | 'keep';
+
+/**
+ * What a sweep does with the source code index. It is indexed while on
+ * (`codeIndexOn`), and cleared only when its own switch is off. While it waits
+ * for the Knowledge Graph or an agent it is kept as it is, so switching either
+ * off and on again never costs a full re-embed, and a config that cannot be
+ * read never clears it.
+ */
+export function codeSweepPlan(loadMemory: () => MemoryConfig | undefined): CodeSweepPlan {
+  let memory: MemoryConfig | undefined;
+  try {
+    memory = loadMemory();
+  } catch {
+    return 'keep';
+  }
+  if (codeIndexOn(memory)) return 'index';
+  return memory?.codeIndex === false ? 'clear' : 'keep';
 }
 
 export interface AnswerAgentCandidate {
@@ -62,8 +109,8 @@ export interface AnswerAgentCandidate {
 
 export interface ResolveAnswerAgentInput<T extends AnswerAgentCandidate> {
   agents: ReadonlyArray<T>;
-  /** The job's configured agent (`memory.answerAgent` or `memory.digestAgent`),
-   *  or null/undefined when none has been chosen. */
+  /** The configured agent (`memory.answerAgent`), or null/undefined when none
+   *  has been chosen. */
   configured?: string | null;
   /**
    * Whether a candidate must be detected on disk.
@@ -87,7 +134,7 @@ export function resolveAnswerAgent<T extends AnswerAgentCandidate>(
 }
 
 export interface AnswerSetupGapInput<T extends AnswerAgentCandidate> extends ResolveAnswerAgentInput<T> {
-  /** The job's configured model, or null/undefined when none has been chosen. */
+  /** The configured model, or null/undefined when none has been chosen. */
   configuredModel?: string | null;
 }
 

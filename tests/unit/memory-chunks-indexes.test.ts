@@ -104,6 +104,18 @@ describeWithSqlite('memory_chunks indexes', () => {
     expect(planOf(database, totalsSql!, ['conversation'])).toContain('COVERING INDEX idx_memory_chunks_doc_embedded');
   });
 
+  it('reads one task\'s chunk ids from an index, never the whole table', () => {
+    const { database, adapted, prepared } = migrated();
+
+    new RetrievalStore(adapted).getChunkIdsForTask('task-1');
+
+    const taskSql = prepared.find((sql) => sql.includes('WHERE task_id = ?'));
+    expect(taskSql).toBeDefined();
+    const plan = planOf(database, taskSql!, ['task-1']);
+    expect(plan).toContain('idx_memory_chunks_task');
+    expect(plan).not.toMatch(/SCAN memory_chunks\b(?! USING)/);
+  });
+
   it('still reads a document\'s chunks in seq order as an index seek, with no sort', () => {
     const { database, adapted, prepared } = migrated();
 

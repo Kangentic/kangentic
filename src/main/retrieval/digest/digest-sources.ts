@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { digestInputHash, type DigestInput } from './digest-prompt';
+import { commitSubjectOf } from '../commit/commit-record';
 
 /**
  * What each finished task's digest is written from, read from the project
@@ -57,7 +58,8 @@ export function changedFilesOf(changeText: string): string[] {
  * (the count, and `move()` stamps the task it moves); when a finished task's
  * title or description is edited (its `updated_at`); and when a conversation
  * or session-changes document of a finished task is indexed again (the closing
- * messages and changed files a digest reads). Indexing a RUNNING task's
+ * messages and changed files a digest reads); and when a commit is indexed or
+ * tied to its task (the commit subjects it reads). Indexing a RUNNING task's
  * conversation does not move it, since that task is not in Done, which is what
  * keeps a busy board's turn-by-turn indexing from waking the digest pass.
  *
@@ -67,15 +69,38 @@ export function changedFilesOf(changeText: string): string[] {
 export function readDigestFingerprint(db: Database.Database): string {
   const row = db
     .prepare(
-      `SELECT COUNT(DISTINCT t.id) AS tasks, MAX(t.updated_at) AS taskEdit, MAX(m.indexed_at) AS docIndexed
+      `SELECT COUNT(DISTINCT t.id) AS tasks, MAX(t.updated_at) AS taskEdit, MAX(m.indexed_at) AS docIndexed,
+              (SELECT MAX(indexed_at) FROM memory_index_state WHERE corpus = 'commit') AS commitIndexed
        FROM tasks t
        JOIN swimlanes w ON w.id = t.swimlane_id
        LEFT JOIN sessions s ON s.task_id = t.id AND s.agent_session_id IS NOT NULL
        LEFT JOIN memory_index_state m ON m.doc_id = s.agent_session_id AND m.corpus IN ('conversation', 'change')
        WHERE w.role = 'done'`,
     )
-    .get() as { tasks: number; taskEdit: string | null; docIndexed: string | null };
-  return `${row.tasks}|${row.taskEdit ?? ''}|${row.docIndexed ?? ''}`;
+    .get() as { tasks: number; taskEdit: string | null; docIndexed: string | null; commitIndexed: string | null };
+  return `${row.tasks}|${row.taskEdit ?? ''}|${row.docIndexed ?? ''}|${row.commitIndexed ?? ''}`;
+}
+
+/** Each task's commit subjects on the default branch, newest first. One read
+ *  of the commit corpus for a whole pass: it has no task index, so a read per
+ *  task would walk every commit once per task. */
+function readCommitSubjectsByTask(db: Database.Database): Map<string, string[]> {
+  const byTask = new Map<string, string[]>();
+  const rows = db
+    .prepare(
+      `SELECT task_id AS taskId, text FROM memory_chunks
+       WHERE corpus = 'commit' AND seq = 0 AND task_id IS NOT NULL
+       ORDER BY ts_start DESC`,
+    )
+    .all() as Array<{ taskId: string; text: string }>;
+  for (const row of rows) {
+    const subject = commitSubjectOf(row.text);
+    if (!subject) continue;
+    const list = byTask.get(row.taskId) ?? [];
+    list.push(subject);
+    byTask.set(row.taskId, list);
+  }
+  return byTask;
 }
 
 /** Every finished task's digest input, with its hash. */
@@ -97,6 +122,7 @@ export async function readDigestCandidates(
   );
   const changeTextOf = db.prepare("SELECT text FROM memory_chunks WHERE corpus = 'change' AND doc_id = ? ORDER BY seq");
   const lastChunksOf = db.prepare("SELECT text FROM memory_chunks WHERE corpus = 'conversation' AND doc_id = ? ORDER BY seq DESC LIMIT 2");
+  const commitsByTask = readCommitSubjectsByTask(db);
 
   const candidates: DigestCandidate[] = [];
   for (let start = 0; start < tasks.length; start += TASKS_PER_SLICE) {
@@ -132,6 +158,7 @@ export async function readDigestCandidates(
         title: task.title,
         description: task.description ?? '',
         changedFiles,
+        commits: commitsByTask.get(task.taskId) ?? [],
         closingMessages,
       };
       candidates.push({ input, hash: digestInputHash(input), lastActivityMs });

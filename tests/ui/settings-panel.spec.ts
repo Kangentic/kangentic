@@ -834,7 +834,7 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Delete Task')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Board', exact: true })).toBeVisible();
     await expect(page.getByText('List Backlog')).toBeVisible();
-    // Scoped to the tool list: the sidebar has a Search tab too.
+    // Scoped to the tool list: "Search" also appears elsewhere in the panel.
     await expect(page.getByTestId('mcp-tool-list').getByText('Search', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible();
     await expect(page.getByText('Session History')).toBeVisible();

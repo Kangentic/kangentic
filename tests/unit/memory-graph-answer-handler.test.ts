@@ -206,6 +206,7 @@ function relatedWork(handed: RelatedWorkTask[]): RelatedWork {
     ranked: handed,
     handed,
     passages: new Map([[42, 'we dropped the sphere fit because it circumscribes']]),
+    code: [],
     semantic: true,
     elapsedMs: 5,
   };
@@ -548,6 +549,28 @@ describe('the Ask handler', () => {
     expect(prompt).toMatch(/filtered the map/);
   });
 
+  it('hands the agent the code passages when source code is indexed, and no code block when it is not', async () => {
+    const answerSpy = vi.fn(async () => 'fitSphere in src/sphere.ts does it.\nSELECTED: none');
+    mockAdapters = [claudeAdapter(answerSpy)];
+    mockRelated = {
+      ...relatedWork([relatedTask()]),
+      code: [{ path: 'src/sphere.ts', text: 'export function fitSphere() {}', relevance: 0.6 }],
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+
+    memoryConfig = { answerAgent: 'claude', answerModel: 'haiku', codeIndex: true, semanticEnabled: true };
+    await ask('where is the sphere fitted?');
+    expect(relatedSpy.mock.calls[0][0].code).toBe(true);
+    expect(answerSpy.mock.calls[0][0]).toContain('<source_code>\n--- src/sphere.ts\nexport function fitSphere() {}\n</source_code>');
+
+    // Code is found by meaning only, so the switch alone does not turn it on.
+    memoryConfig = { answerAgent: 'claude', answerModel: 'haiku', codeIndex: true, semanticEnabled: false };
+    await ask('where is the sphere fitted?');
+    expect(relatedSpy.mock.calls[1][0].code).toBe(false);
+    expect(answerSpy.mock.calls[1][0]).not.toContain('source_code');
+  });
+
   it('runs the answer at the configured model', async () => {
     const answerSpy = vi.fn(async () => 'Answered.');
     mockAdapters = [claudeAdapter(answerSpy)];
@@ -744,6 +767,7 @@ describe('the Ask handler', () => {
           projectId: 'project-2',
         }],
         passages: new Map([['project-2:42', 'the relay pairs over a QR code']]),
+        code: [],
         semantic: true,
         elapsedMs: 5,
       };
@@ -948,6 +972,21 @@ describe('the Ask handler', () => {
       expect(sessions[0].disposed).toBe(true);
       expect(sessions[1].prompts[0]).toMatch(/<task_table>\n/);
       expect(sessions[1].prompts[0]).toContain('<conversation_so_far>');
+    });
+
+    it('starts a fresh session when source code is switched on mid-chat, so the rules name it', async () => {
+      // A follow-up does not resend the rules, and the first turn's never
+      // mentioned code.
+      mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'))];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      await ask('first', 'req-1', { chatId: 'chat-1' });
+      memoryConfig = { ...memoryConfig, codeIndex: true, semanticEnabled: true };
+      await ask('second', 'req-2', { chatId: 'chat-1', history: [{ question: 'first', answer: 'Answered.', taskKeys: [] }] });
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0].disposed).toBe(true);
+      expect(sessions[1].prompts[0]).toMatch(/<source_code> holds the passages/);
     });
 
     it('retries quietly as a fresh run when the session died before writing anything', async () => {

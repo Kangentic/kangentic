@@ -54,7 +54,7 @@ function MemoryGraphSkeleton() {
 interface LazyMemoryGraphProps {
   /**
    * Where a question goes when no answering agent or model is chosen yet. The
-   * in-app host opens Settings > Search; the detached window has no settings
+   * in-app host opens Settings > Knowledge Graph; the detached window has no settings
    * panel, so it passes nothing and the box names the place instead.
    */
   onChooseAnswerAgent?: () => void;
@@ -64,7 +64,7 @@ interface LazyMemoryGraphProps {
    * board, so such a row shows but cannot be opened there.
    */
   onRevealTask?: (taskId: string, projectId?: string) => void;
-  /** Opens Settings > Search from the Index flyout. Absent in the detached
+  /** Opens Settings > Knowledge Graph from the Index flyout. Absent in the detached
    *  window, which has no settings panel, so the flyout shows no button there. */
   onOpenSettings?: () => void;
 }
