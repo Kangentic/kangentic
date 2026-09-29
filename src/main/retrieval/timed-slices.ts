@@ -18,7 +18,10 @@ export interface TimedSliceDeps {
 /**
  * Write `items` a slice at a time, each slice one transaction of about
  * `SLICE_BUDGET_MS`, yielding between slices. One transaction a slice because
- * every commit syncs the WAL to disk, about 1 ms each on main.
+ * each commit appends every page it touched (the row, each index, the FTS
+ * index) to the WAL, and a page touched by many items is written once in one
+ * transaction. Thirty task records of three chunks took 17.6 ms as separate
+ * commits and 2.7 ms as one, at the synchronous NORMAL the app runs under.
  *
  * `writeOne` catches its own item's errors, so a throw here is the commit
  * failing: that ends the run, and the next sweep starts from what the index

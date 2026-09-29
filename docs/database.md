@@ -29,6 +29,16 @@ All database connections are opened with three pragmas, in this order:
 - `journal_mode = WAL` -- concurrent reads without blocking writers
 - `foreign_keys = ON` -- enforce referential integrity on all foreign key constraints
 
+`synchronous` is left unset on purpose. better-sqlite3 compiles SQLite with
+`SQLITE_DEFAULT_WAL_SYNCHRONOUS=1`, so a connection in WAL mode already runs at NORMAL: a commit
+appends to the WAL without syncing it to disk, and the sync happens at checkpoint. Measured with
+the app's build, thirty commits take 0.4 ms at that default and 26 ms at FULL. NORMAL in WAL mode
+keeps the database consistent and gives up only the last few commits on a power cut or OS crash.
+The switch to WAL fails silently where the filesystem cannot support it (the pragma returns the old
+mode rather than throwing), and such a database keeps the FULL default, which is the safe setting
+for a rollback journal. Setting NORMAL explicitly would take that fallback away, which is why
+`tests/unit/global-db-degradation.test.ts` pins the exact three.
+
 The order matters. `busy_timeout` is a connection setting that covers only the statements after
 it, and `journal_mode = WAL` takes a lock: it creates the `-wal` and `-shm` sidecars. Setting the
 timeout second would leave the WAL switch, the one statement most likely to collide, with no retry
@@ -657,7 +667,7 @@ Memory index: a per-project retrieval store. The `corpus` column says what a row
 | meta_json | TEXT | | |
 | created_at | TEXT | NOT NULL | |
 
-Constraint: `UNIQUE(corpus, doc_id, seq)`. Indices: `idx_memory_chunks_doc` (corpus, doc_id, seq), `idx_memory_chunks_session` (session_id), `idx_memory_chunks_embedded` (embedded_model), `idx_memory_chunks_corpus` (corpus), and `idx_memory_chunks_pending` (embedded_model, corpus). SQLite appends rowid to every index, so the last two answer per-corpus reads as seeks in id order: the map's scan and signature (a projection page measured 142 ms without them and 0.2 ms with, on 92k chunks) and the embedding drain's next never-embedded chunks of one corpus (214 ms against 0.01 ms). Cascade cleanup via the `trg_sessions_delete_memory` DELETE trigger on `sessions`.
+Constraint: `UNIQUE(corpus, doc_id, seq)`, whose own index serves a document's chunks in seq order. Indices: `idx_memory_chunks_doc_embedded` (corpus, doc_id, embedded_model), `idx_memory_chunks_session` (session_id), `idx_memory_chunks_embedded` (embedded_model), `idx_memory_chunks_corpus` (corpus), and `idx_memory_chunks_pending` (embedded_model, corpus). SQLite appends rowid to every index, so the last two answer per-corpus reads as seeks in id order: the map's scan and signature (a projection page measured 142 ms without them and 0.2 ms with, on 92k chunks) and the embedding drain's next never-embedded chunks of one corpus (214 ms against 0.01 ms). `idx_memory_chunks_doc_embedded` covers the per-document chunk and embedded totals the Knowledge Graph's coverage groups by, so that count never reads the table (266 ms to 10 ms on 93k chunks). It replaced `idx_memory_chunks_doc` (corpus, doc_id, seq), which duplicated the unique constraint's index and is dropped on open. Cascade cleanup via the `trg_sessions_delete_memory` DELETE trigger on `sessions`.
 
 ### memory_chunks_fts (FTS5)
 

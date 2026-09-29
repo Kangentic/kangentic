@@ -94,8 +94,9 @@ export async function runDigestPass(
   }));
 
   let attempted = 0;
-  // The pass's writes in ONE transaction. Thirty separate commits each sync the
-  // WAL to disk: measured 27.5 ms on main, against 1.2 ms for one commit.
+  // The pass's writes in ONE transaction. Each commit appends every page it
+  // touched to the WAL, so thirty separate ones write the same table and index
+  // pages thirty times over (see timed-slices.ts for the measured cost).
   const writeReplies = db.transaction(() => {
     for (const { batch, reply } of replies) {
       if (reply === null) {

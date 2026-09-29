@@ -61,6 +61,14 @@ export function getGlobalDb(): Database.Database {
       // Kangentic instances sharing a config dir (the main checkout plus a
       // non-ephemeral worktree dev run) now both open this file eagerly at
       // boot, so the WAL switch is exactly where they can collide.
+      //
+      // `synchronous` is deliberately NOT set, here or below. better-sqlite3
+      // compiles SQLite with SQLITE_DEFAULT_WAL_SYNCHRONOUS=1, so a connection
+      // in WAL mode already runs at NORMAL (thirty commits 0.4 ms, against 26 ms
+      // at FULL). The switch to WAL fails silently where the filesystem cannot
+      // support it (it returns the old mode, it does not throw), and such a
+      // database keeps the FULL default, the safe setting for a rollback
+      // journal. An explicit NORMAL would take that fallback away.
       db.pragma('busy_timeout = 5000');
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');

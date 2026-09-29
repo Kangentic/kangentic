@@ -239,6 +239,9 @@ describe('getGlobalDb caching', () => {
     getGlobalDb();
     getProjectDb('project-1');
 
+    // Exactly these three. `synchronous` is left to better-sqlite3's build
+    // default (NORMAL in WAL, FULL if the WAL switch did not take); see the
+    // comment in getGlobalDb for why an explicit NORMAL is worse.
     const expectedOrder = ['busy_timeout = 5000', 'journal_mode = WAL', 'foreign_keys = ON'];
     expect(globalHealthy.pragma.mock.calls.map(([sql]) => sql)).toEqual(expectedOrder);
     expect(projectHealthy.pragma.mock.calls.map(([sql]) => sql)).toEqual(expectedOrder);
