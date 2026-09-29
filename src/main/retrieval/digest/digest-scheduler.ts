@@ -34,8 +34,11 @@ export interface DigestSchedulerDeps<Context> {
   readFingerprint?: (context: Context, projectId: string) => string | null;
   /** The digest agent's read-only run, or null while none is chosen. */
   resolveWriter: (context: Context, projectId: string) => Promise<DigestWriter | null>;
-  /** After a pass that wrote digests: re-read the task records that carry them. */
-  onWritten: (context: Context, projectId: string) => void;
+  /**
+   * After a pass that wrote digests: re-read the task records that carry them,
+   * and rename the map's regions. `caughtUp` when nothing remains to write.
+   */
+  onWritten: (context: Context, projectId: string, caughtUp: boolean) => void;
   /**
    * Before a pass reads its tasks: bring what a digest is written from up to
    * date. A digest's hash covers the files its task changed, so a pass that
@@ -147,7 +150,7 @@ export function createDigestScheduler<Context>(deps: DigestSchedulerDeps<Context
         // One line a pass, so a backfill's progress and any task the agent
         // passed over can be read back from the log.
         console.log(`[retrieval] digests project=${projectId} written=${result.written} remaining=${result.remaining} unanswered=${result.unanswered.length}${result.failed ? ' failed' : ''}`);
-        if (result.written > 0) deps.onWritten(context, projectId);
+        if (result.written > 0) deps.onWritten(context, projectId, !result.failed && result.remaining === 0);
         if (!result.failed && result.remaining === 0 && passFingerprint !== null) caughtUpAt.set(projectId, passFingerprint);
         else caughtUpAt.delete(projectId);
       }

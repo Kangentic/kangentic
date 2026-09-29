@@ -564,6 +564,9 @@ export const IPC = {
   // Rewrite a project's task digests written with anything but the current
   // digest agent, model and effort (the Task digests card's Rewrite).
   MEMORY_REWRITE_DIGESTS: 'memory:rewriteDigests',
+  // One task's digest, for the Knowledge Graph's selected conversation. Null
+  // while digests are switched off or the task has none.
+  MEMORY_TASK_DIGEST: 'memory:taskDigest',
   /** Cheap read of the cached Memory Graph projection plus its coverage strip.
    *  Never runs the projection pass - see graph-service. */
   MEMORY_GRAPH_SNAPSHOT: 'memory:graphSnapshot',

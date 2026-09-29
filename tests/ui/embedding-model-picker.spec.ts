@@ -299,7 +299,7 @@ test.describe('Task digests card', () => {
       await openMemoryTab(page);
       const card = page.getByTestId('task-digests-card');
       const toggle = page.getByTestId('setting-row-memory.taskDigests');
-      await expect(card).toContainText('A sentence or two per finished task, so questions find it.');
+      await expect(card).toContainText('A sentence or two per Done task, so questions find it.');
       await expect(toggle).toHaveAttribute('aria-checked', 'false');
       await expect(page.getByTestId('memory-digest-agent')).toHaveCount(0);
 
@@ -316,7 +316,7 @@ test.describe('Task digests card', () => {
       await expect(page.getByTestId('digest-status-text')).toHaveText('Waiting for a model: 412 tasks here, about 42 calls.');
 
       await setMemory(page, { digestModel: 'haiku' });
-      await expect(page.getByTestId('digest-status-text')).toHaveText('Writing: 0 of 412 finished tasks in this project.');
+      await expect(page.getByTestId('digest-status-text')).toHaveText('Writing: 0 of 412 Done tasks in this project.');
       // Its own choice: the answering agent's model is untouched.
       await expect(page.getByTestId('memory-answer-model')).toHaveValue(/sonnet|Sonnet/);
     } finally {
@@ -390,7 +390,7 @@ test.describe('Task digests card', () => {
 
   test('says when it is caught up, what the agent passed over, and when a failed call is retried', async () => {
     const cases: Array<{ digests: object; text: string }> = [
-      { digests: { ...DIGESTS, written: 412 }, text: 'All 412 finished tasks in this project have one.' },
+      { digests: { ...DIGESTS, written: 412 }, text: 'All 412 Done tasks in this project have one.' },
       { digests: { ...DIGESTS, written: 409, skipped: 3 }, text: '409 of 412 written, 3 skipped until the next launch.' },
       { digests: { ...DIGESTS, written: 200, state: 'retrying', retryInMs: 5 * 60_000 }, text: 'A call failed. Trying again in 5 minutes.' },
     ];

@@ -211,6 +211,17 @@ export function registerSearchHandlers(context: IpcContext): void {
     },
   );
 
+  // The selected conversation's task digest, read from the node's OWN project
+  // (the map may show several), and only while digests are switched on.
+  ipcMain.handle(
+    IPC.MEMORY_TASK_DIGEST,
+    (_event, projectId: string, taskId: string): string | null => {
+      if (typeof projectId !== 'string' || typeof taskId !== 'string') return null;
+      if (!context.projectRepo.list().some((entry) => entry.id === projectId)) return null;
+      return retrievalService.taskDigest(context, projectId, taskId);
+    },
+  );
+
   // A projection pass finishing is pushed rather than polled: the pass can take
   // a minute on a cold corpus, and MemoryTab already polls memory status on an
   // interval - a second poller for the same subsystem is what this avoids.
@@ -226,8 +237,9 @@ export function registerSearchHandlers(context: IpcContext): void {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!resolvedProjectId) return null;
       const model = resolveEmbeddingModel(context.configManager.load().memory?.embeddingModel);
-      // Cheap by construction: reads the cache, never runs the pass.
-      return graphService.getSnapshot(resolvedProjectId, model.modelTag);
+      // Cheap by construction: reads the cache, never runs the pass. Timed as a
+      // whole, since an open graph re-reads it on every push.
+      return timeSyncWork('ipc:graph-snapshot', () => graphService.getSnapshot(resolvedProjectId, model.modelTag));
     },
   );
 

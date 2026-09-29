@@ -262,7 +262,7 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
       <SettingsCard
         icon={<ScrollText size={16} />}
         {...settingProps('memory.taskDigests')}
-        info="The agent reads each finished task's title, description, changed files and how its sessions ended, about ten tasks a call, in the background."
+        info="The agent reads each Done task's title, description, changed files and how its sessions ended, about ten tasks a call, in the background."
         searchIds={['memory.digestAgent', 'memory.digestModel', 'memory.digestEffort']}
         checked={digestsOn}
         onChange={(value) => updateMemory({ taskDigests: value })}
@@ -563,7 +563,7 @@ function DigestStatusTile({ digests, setup, agents }: {
         <Check size={13} className="flex-shrink-0 text-emerald-500" aria-hidden="true" />
         <span data-testid="digest-status-text">
           {toWrite === 0
-            ? `All ${digests.finishedTasks.toLocaleString()} finished tasks in this project have one.`
+            ? `All ${digests.finishedTasks.toLocaleString()} Done tasks in this project have one.`
             : `${digests.written.toLocaleString()} of ${digests.finishedTasks.toLocaleString()} written, ${digests.skipped.toLocaleString()} skipped until the next launch.`}
         </span>
       </CardTile>
@@ -575,7 +575,7 @@ function DigestStatusTile({ digests, setup, agents }: {
       <div className="flex items-center gap-1.5">
         <RefreshCw size={13} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
         <span data-testid="digest-status-text">
-          Writing: {digests.written.toLocaleString()} of {digests.finishedTasks.toLocaleString()} finished tasks in this project.
+          Writing: {digests.written.toLocaleString()} of {digests.finishedTasks.toLocaleString()} Done tasks in this project.
         </span>
       </div>
       <DownloadProgressBar percent={percent} />

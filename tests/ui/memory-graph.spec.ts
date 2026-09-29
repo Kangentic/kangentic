@@ -710,6 +710,43 @@ test.describe('memory graph', () => {
     }
   });
 
+  test('the selected conversation shows its task\'s digest under its title, and nothing without one', async () => {
+    // Read on select, from the node's own project, rather than shipped in
+    // every snapshot. With digests off main answers null, and the panel is as
+    // it was before digests.
+    const digests = `window.__mockPreConfigure(function () {
+      var memoryTaskDigests = {};
+      for (var i = 0; i < 12; i++) memoryTaskDigests['task-' + i] = 'Fixed the wheel scroll for task ' + i + '.';
+      return { memoryTaskDigests: memoryTaskDigests };
+    });`;
+    const withDigests = await launchWithState(`${snapshotScript({ projection: projectionLiteral(12) })}${digests}`);
+    try {
+      await openMemoryGraph(withDigests.page);
+      const index = await selectVisibleNode(withDigests.page);
+      const digest = withDigests.page.locator('[data-testid="memory-graph-detail-digest"]');
+      await expect(digest).toHaveText(`Fixed the wheel scroll for task ${index}.`);
+      const calls = await withDigests.page.evaluate(
+        () => (window as unknown as { __mockTaskDigestCalls?: Array<{ projectId: string; taskId: string }> }).__mockTaskDigestCalls ?? [],
+      );
+      expect(calls.at(-1)).toEqual({ projectId: 'project-1', taskId: `task-${index}` });
+    } finally {
+      await withDigests.browser.close();
+    }
+
+    const without = await launchWithState(snapshotScript({ projection: projectionLiteral(12) }));
+    try {
+      await openMemoryGraph(without.page);
+      await selectVisibleNode(without.page);
+      await expect(without.page.locator('[data-testid="memory-graph-detail-title"]')).toBeVisible();
+      await expect.poll(() => without.page.evaluate(
+        () => (window as unknown as { __mockTaskDigestCalls?: unknown[] }).__mockTaskDigestCalls?.length ?? 0,
+      )).toBeGreaterThan(0);
+      await expect(without.page.locator('[data-testid="memory-graph-detail-digest"]')).toHaveCount(0);
+    } finally {
+      await without.browser.close();
+    }
+  });
+
   /**
    * Ask, which is the whole of what the box does.
    *
@@ -1411,6 +1448,54 @@ test.describe('memory graph', () => {
 
       await page.locator('[data-testid="memory-graph-region-row"]').nth(1).click();
       await expect(dropped).not.toHaveCSS('opacity', '0');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('renames regions in place when a push brings new names for the same map', async () => {
+    // Digests rename regions without rebuilding the map: same signature, same
+    // ids and positions, new label text. The pills and the panel take the new
+    // names, the regions switched off stay off, and nothing asks for a rebuild.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
+    try {
+      await openMemoryGraph(page);
+      const first = page.locator('[data-testid="memory-graph-cluster-label"][data-cluster="0"]');
+      const second = page.locator('[data-testid="memory-graph-cluster-label"][data-cluster="1"]');
+      await expect(first).toHaveText('terminal / pty');
+      await page.locator('[data-testid="memory-graph-region-row"]').nth(1).click();
+      await expect(second).toHaveCSS('opacity', '0');
+
+      await page.evaluate(() => {
+        const api = (window as unknown as { electronAPI: { memory: { graphSnapshot: (...args: unknown[]) => Promise<unknown> } } }).electronAPI;
+        const previous = api.memory.graphSnapshot.bind(api.memory);
+        api.memory.graphSnapshot = async (...args: unknown[]) => {
+          const snapshot = await previous(...args) as { projection: { clusterings: Array<{ regions: Array<{ id: number; label: string }> }> } | null } | null;
+          if (!snapshot?.projection) return snapshot;
+          const renamed = { 0: 'alt screen / wheel scroll', 1: 'schema migration / sqlite' } as Record<number, string>;
+          return {
+            ...snapshot,
+            projection: {
+              ...snapshot.projection,
+              clusterings: snapshot.projection.clusterings.map((clustering) => ({
+                ...clustering,
+                regions: clustering.regions.map((region) => ({ ...region, label: renamed[region.id] ?? region.label })),
+              })),
+            },
+          };
+        };
+        (window as unknown as { __mockFireGraphChanged: (id: string) => void }).__mockFireGraphChanged('project-1');
+      });
+
+      await expect(first).toHaveText('alt screen / wheel scroll');
+      await expect(page.locator('[data-testid="memory-graph-region-row"]').first()).toContainText('alt screen / wheel scroll');
+      // The switched-off region is still off: same map, same exclusions.
+      await expect(second).toHaveCSS('opacity', '0');
+      await expect(first).not.toHaveCSS('opacity', '0');
+      const refreshes = await page.evaluate(
+        () => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0,
+      );
+      expect(refreshes).toBe(0);
     } finally {
       await browser.close();
     }
@@ -2602,10 +2687,11 @@ test.describe('memory graph', () => {
       });`);
     try {
       await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-scope"]')).toHaveText('Kangentic');
       const picker = page.locator('[data-testid="memory-graph-projects"]');
       await expect(picker).toContainText('Kangentic');
       await expect(picker).toContainText('1 of 1');
+      // The row names the scope, so the header does not repeat it.
+      await expect(page.locator('[data-testid="memory-graph-scope"]')).toHaveCount(0);
 
       await picker.click();
       const menu = page.locator('[data-testid="memory-graph-projects-menu"]');
@@ -2621,13 +2707,12 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('a second project joins the map as its own labelled island, and the header and regions say so', async () => {
+  test('a second project joins the map as its own labelled island, and the Projects row and regions say so', async () => {
     const { browser, page } = await launchWithState(projectsScript());
     try {
       await openMemoryGraph(page);
-      const scope = page.locator('[data-testid="memory-graph-scope"]');
-      await expect(scope).toHaveText('Kangentic');
       const picker = page.locator('[data-testid="memory-graph-projects"]');
+      await expect(picker).toContainText('Kangentic');
       // The project with nothing indexed is not counted as one to show.
       await expect(picker).toContainText('1 of 2');
       await expect(page.locator('[data-testid="memory-graph-island-label"]')).toHaveCount(0);
@@ -2645,8 +2730,8 @@ test.describe('memory graph', () => {
       await expect(menu).toBeHidden();
       await expect(page.locator('[data-testid="memory-graph-page"]')).toBeVisible();
 
-      // Every indexed project is on, so the header says so.
-      await expect(scope).toHaveText('All projects');
+      // Every indexed project is on, so the Projects row says so.
+      await expect(picker).toContainText('All projects');
       // One island per project, the open one first, each named.
       await expect(page.locator('[data-testid="memory-graph-island-label"]')).toHaveText(['Kangentic', 'Mobile App']);
       // Both projects' regions, grouped under their project.
@@ -2664,9 +2749,9 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(projectsScript());
     try {
       await openMemoryGraph(page);
-      const scope = page.locator('[data-testid="memory-graph-scope"]');
-      await expect(scope).toHaveText('Kangentic');
-      await page.locator('[data-testid="memory-graph-projects"]').click();
+      const picker = page.locator('[data-testid="memory-graph-projects"]');
+      await expect(picker).toContainText('Kangentic');
+      await picker.click();
       const menu = page.locator('[data-testid="memory-graph-projects-menu"]');
       const rows = menu.locator('[data-testid="memory-graph-projects-row"]');
       const search = page.locator('[data-testid="memory-graph-projects-search"]');
@@ -2678,15 +2763,16 @@ test.describe('memory graph', () => {
       await search.fill('');
 
       await page.locator('[data-testid="memory-graph-projects-all"]').click();
-      await expect(scope).toHaveText('All projects');
+      await expect(picker).toContainText('All projects');
       // None is never an empty map: it is the open project alone.
       await page.locator('[data-testid="memory-graph-projects-none"]').click();
-      await expect(scope).toHaveText('Kangentic');
+      await expect(picker).toContainText('Kangentic');
+      await expect(picker).toContainText('1 of 2');
       // And the last project on cannot be switched off.
       const openRow = menu.locator('[data-testid="memory-graph-projects-row"][data-project-id="project-1"]');
       await openRow.click();
       await expect(openRow).toHaveAttribute('aria-selected', 'true');
-      await expect(scope).toHaveText('Kangentic');
+      await expect(picker).toContainText('1 of 2');
     } finally {
       await browser.close();
     }
@@ -2796,7 +2882,7 @@ test.describe('memory graph', () => {
     const { browser, page } = await launchWithState(projectsScript({ otherBuilding: true }));
     try {
       await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-scope"]')).toHaveText('Kangentic');
+      await expect(page.locator('[data-testid="memory-graph-projects"]')).toContainText('Kangentic');
       await page.locator('[data-testid="memory-graph-projects"]').click();
       const menu = page.locator('[data-testid="memory-graph-projects-menu"]');
       await menu.locator('[data-testid="memory-graph-projects-row"][data-project-id="project-2"]').click();
@@ -2838,7 +2924,7 @@ test.describe('memory graph', () => {
     );
     try {
       await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-scope"]')).toHaveText('Kangentic');
+      await expect(page.locator('[data-testid="memory-graph-projects"]')).toContainText('Kangentic');
       await addMobileProject(page);
       await expect(page.locator('[data-testid="memory-graph-island-label"]')).toHaveCount(2);
       await askInBox(page, 'what touched pairing?');

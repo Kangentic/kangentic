@@ -922,7 +922,12 @@ can answer.
 **The map.** Every indexed conversation is a point in 3D space, placed by the meaning of its
 embeddings, so conversations about the same thing cluster together. Links join each conversation to
 its nearest neighbours. Regions are named automatically from what the conversations in them are
-about, so the map reads as a topic atlas of the project rather than an anonymous scatter.
+about, so the map reads as a topic atlas of the project rather than an anonymous scatter. The names
+come from the conversations' task titles, and with **Task digests** on, from each task's digest too,
+counted a little lower than its title: a region then reads as what its work touched ("alt screen /
+wheel scroll") rather than how its titles happened to be worded ("code / quit / exit"). As digests
+are written the regions are renamed in place, at most every few minutes and once more when the
+digests have caught up; no conversation moves. Switching digests off puts the title-only names back.
 
 **Flying it.** Drag to orbit, right-drag to pan, scroll to zoom in and out. Click the map and use
 **W** / **S** to fly forward and back, **A** / **D** to slide left and right, and **Q** / **E** to
@@ -939,7 +944,9 @@ reframe at once: resizing the window (a fly would fight the drag), opening the g
 the open project.
 
 **Clicking around.** Hover a point for its title and size; click it for a detail panel. With a
-chat open, the panel's **Back** control returns to it.
+chat open, the panel's **Back** control returns to it. With **Task digests** on, the panel shows the
+conversation's task digest under its title: what the task set out to do and did, in a sentence or
+two.
 
 The panel lists **Closest conversations**, its strongest links, ordered rather than scored: the
 embeddings sit in a narrow similarity band where a percentage reads "99%" on every row and tells
@@ -995,9 +1002,9 @@ when nothing is older than 30 days, a status no task has, and the one status eve
 Unlike the colour mode, the status row survives a lopsided board, which is the point of it -
 scoping to the handful still open is exactly the question a green map cannot answer.
 
-**Projects.** The graph opens on the project you have open, and the header names it. The Filter
-card's first row picks which projects the map shows: any of them, or **All**. It is there however
-many projects are indexed, so it never comes and goes. **None** goes back to the open project
+**Projects.** The graph opens on the project you have open. The Filter card's first row names the
+scope and picks which projects the map shows: any of them, or **All**. It is there however many
+projects are indexed, so it never comes and goes, and the header does not repeat it. **None** goes back to the open project
 alone, since an empty map would leave nothing to pick from. Each project draws as its own island, labelled with its name and sized by how much it
 holds, and the Regions list groups each project's regions under its name. A project with nothing
 indexed is listed but cannot be picked. One the graph has never shown builds its map the first time
@@ -1081,7 +1088,7 @@ need counting or comparing across many tasks: at Claude's `max`, a count that `l
 out right, at about ten times the wait.
 
 **Task digests** are off until you switch them on in the **Task digests** card in Settings >
-Search. An agent then writes a sentence or two about each finished task: what it set out to do and
+Search. An agent then writes a sentence or two about each Done task: what it set out to do and
 what it ended up doing, from the task's title and description, the files its sessions changed, and
 how its last sessions ended. A digest is searched with the task and handed to the answering agent
 beside it, so a question finds a task by what it did, not only by what its title says.
@@ -1117,7 +1124,7 @@ The **Index** card lists everything the index holds, one row per kind: **Convers
 map draws), **Task records** (each task's and backlog item's own text) and **Session changes** (the
 files each session changed, kept as text). Each shows its count and, while it is still being
 embedded, how much of it is; a kind with nothing in it yet says **Not yet indexed**. **Task
-digests** appears while digests are on or any exist, as how many of the finished tasks have one, or
+digests** appears while digests are on or any exist, as how many of the Done tasks have one, or
 **Needs an agent** while they are on with no digest agent chosen. A count short of the total needs
 no explanation there; the Task digests card says why. Size on disk covers all of them. **Source file gone** counts conversations whose transcript file was
 deleted but whose indexed text is still searchable. The card's footer says when the index last took

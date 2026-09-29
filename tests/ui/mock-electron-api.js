@@ -75,6 +75,9 @@
   // loaded and leaves the picker out (the real app always lists at least the
   // open project); seeded via __mockPreConfigure.
   let memoryGraphProjects = [];
+  // Task digests by task id, for the selected conversation's panel. Empty by
+  // default, the same as digests switched off.
+  let memoryTaskDigests = {};
   // Per-project snapshots for a multi-project scope, keyed by project id.
   // A project missing here falls back to memoryGraphSnapshot.
   let memoryGraphSnapshotsByProject = {};
@@ -4623,6 +4626,15 @@
         }
         return Promise.resolve({ marked: marked });
       },
+      taskDigest: function (projectId, taskId) {
+        // Seeded per task id via __mockPreConfigure's memoryTaskDigests; null
+        // otherwise, which is what main answers with digests switched off.
+        if (typeof window !== 'undefined') {
+          if (!window.__mockTaskDigestCalls) window.__mockTaskDigestCalls = [];
+          window.__mockTaskDigestCalls.push({ projectId: projectId, taskId: taskId });
+        }
+        return Promise.resolve(Object.prototype.hasOwnProperty.call(memoryTaskDigests, taskId) ? memoryTaskDigests[taskId] : null);
+      },
       graphSnapshot: function (projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockGraphSnapshotCalls) window.__mockGraphSnapshotCalls = [];
@@ -5218,6 +5230,9 @@
     }
     if (result && Array.isArray(result.memoryGraphProjects)) {
       memoryGraphProjects = result.memoryGraphProjects;
+    }
+    if (result && result.memoryTaskDigests && typeof result.memoryTaskDigests === 'object') {
+      memoryTaskDigests = result.memoryTaskDigests;
     }
     if (result && result.memoryGraphSnapshotsByProject && typeof result.memoryGraphSnapshotsByProject === 'object') {
       memoryGraphSnapshotsByProject = result.memoryGraphSnapshotsByProject;

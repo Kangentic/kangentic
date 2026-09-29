@@ -27,7 +27,6 @@ import { memoryWindowManager } from '../../window-manager';
 import { LazyMemoryGraph } from './LazyMemoryGraph';
 import { MemoryDetailLayer } from './MemoryDetailLayer';
 import { openAnswerSettings, openSearchSettings } from './open-answer-settings';
-import { scopeLabel } from './MemoryProjectsPicker';
 
 export function MemoryGraphPage() {
   const close = useMemoryGraphStore((state) => state.close);
@@ -86,8 +85,10 @@ export function MemoryGraphPage() {
               a STATE, so one here would read as "the memory is idle" rather
               than naming the surface. */}
           <Brain size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
+          {/* No project name beside the title: the Filter card's Projects row
+              always shows and names the scope, so a second label only
+              repeated it. */}
           <h1 className="text-sm font-semibold text-fg">Knowledge Graph</h1>
-          <ScopeLabel />
         </DetachableSurfaceHeader>
 
         <LazyMemoryGraph
@@ -104,24 +105,6 @@ export function MemoryGraphPage() {
         onRevealTask={revealTaskOnBoard}
       />
     </div>
-  );
-}
-
-/**
- * What the map shows, beside the title: the open project, "3 projects", or
- * "All projects". The graph opens from the title bar, which belongs to no
- * project, so without this nothing on screen said which project it was.
- */
-function ScopeLabel() {
-  const projects = useMemoryGraphStore((state) => state.projects);
-  const scope = useMemoryGraphStore((state) => state.scopeProjectIds);
-  const openProjectId = useMemoryGraphStore((state) => state.projectId);
-  const label = scope
-    ? scopeLabel(scope, projects.filter((project) => project.conversations > 0))
-    : projects.find((project) => project.id === openProjectId)?.name;
-  if (!label) return null;
-  return (
-    <span className="min-w-0 truncate text-sm text-fg-muted" data-testid="memory-graph-scope">{label}</span>
   );
 }
 

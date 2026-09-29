@@ -105,6 +105,63 @@ const MAX_LABEL_CHARS = 34;
 const PHRASE_WEIGHT = 1.6;
 const KMEANS_ITERATIONS = 24;
 
+/**
+ * How labels are made, as a number. Region names are laid over a built map
+ * (`region-names.ts`) and stored against this, so a change to how a name is
+ * made renames every map on its next read, with no rebuild. Bump it with any
+ * change to the terms, weights or lists below.
+ *
+ * 2: product names kept whole, and each task's digest read beside its title.
+ * 3: a digest saying its task has nothing to say is narration too.
+ */
+export const LABELLER_VERSION = 3;
+
+/**
+ * Product names that are one word whatever their capitals say. The camelCase
+ * split below cut "GitHub" into "git hub", and that pair named a real region.
+ */
+const PRODUCT_NAMES = /\b(GitHub|OpenCode|TypeScript|JavaScript|WebGL|WebGPU|DirectML)\b/g;
+
+/**
+ * How much a word from a task's digest counts against the same word in a title.
+ *
+ * Measured on the real 998-conversation map at the balanced setting, against
+ * titles alone: at 0.75, 21 of 40 region names read better, 12 the same, 2
+ * worse and 5 did not change. Weighted equally, the digests' narration took
+ * over ("two bugs / session manager", "tests covering / column manager").
+ */
+export const DIGEST_LABEL_WEIGHT = 0.75;
+
+/**
+ * Words a digest uses to narrate the work rather than to name the product part
+ * it touched. A title rarely says "added" or "covering"; a digest nearly always
+ * does, so these would otherwise name regions by how the work was described.
+ * Applied to digest text only: in a title these words are the author's choice.
+ */
+export const DIGEST_FILLER: ReadonlySet<string> = new Set([
+  'adding', 'added', 'adds', 'covering', 'covers', 'tests', 'test', 'testing', 'two', 'three', 'bugs', 'bug',
+  'shipped', 'ships', 'ship', 'landed', 'merged', 'app', 'code', 'files', 'file', 'ended', 'end', 'ending',
+  'set', 'out', 'instead', 'making', 'using', 'replacing', 'replaced', 'moving', 'fixing', 'several',
+  'existing', 'new', 'now', 'also', 'plus', 'along', 'kangentic', 'task', 'tasks', 'feature', 'features',
+  'first', 'second', 'one', 'both', 'all', 'multiple', 'various', 'across', 'renderer', 'main', 'process',
+  // A task with an empty description gets a digest that says so ("the task
+  // description gives no further detail"). On the real map three release
+  // tasks' digests named a 36-conversation region "release / further detail".
+  'further', 'beyond', 'nothing', 'known', 'description', 'released',
+]);
+
+/**
+ * A second text per row, counted at a lower weight: each task's digest.
+ *
+ * A term the row's title already has is not counted twice, and a term with a
+ * `stopWords` half is not counted at all.
+ */
+export interface SecondaryLabelSources {
+  readonly texts: ReadonlyArray<string>;
+  readonly weight: number;
+  readonly stopWords: ReadonlySet<string>;
+}
+
 export interface ClusterAssignment {
   /** Cluster index per row, parallel to the projection's nodes. */
   readonly clusterOf: Int32Array;
@@ -446,7 +503,8 @@ function wordSegments(text: string): string[][] {
     current = [];
   };
 
-  const pieces = text.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/\s+/);
+  const named = text.replace(PRODUCT_NAMES, (name) => name.toLowerCase());
+  const pieces = named.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/\s+/);
   for (const piece of pieces) {
     // Trailing punctuation ends the phrase: "monitor:" cannot pair rightward.
     const endsClause = /[^a-z0-9]$/.test(piece);
@@ -569,12 +627,16 @@ export function selectLabelTerms(scored: ReadonlyArray<{ term: string; score: nu
  * title where there is one. Titles are used rather than chunk text because they
  * are already human-written summaries, and reading 50k chunk bodies to build a
  * label would cost more than the entire projection.
+ *
+ * `secondary` adds each task's digest at a lower weight, which names a region
+ * by what its work touched rather than by how its titles happened to be worded.
  */
 export function labelClusters(
   assignment: ClusterAssignment,
   labelSources: ReadonlyArray<string>,
   points: Float32Array,
   components = DEFAULT_COMPONENTS,
+  secondary?: SecondaryLabelSources,
 ): ClusterSummary[] {
   const { clusterOf, clusterCount } = assignment;
   const rowCount = clusterOf.length;
@@ -596,11 +658,22 @@ export function labelClusters(
 
     // Deduped per document: a title repeating a word should not outvote a
     // document that mentions it once.
-    for (const term of new Set(candidateTerms(labelSources[row] ?? ''))) {
+    const primary = new Set(candidateTerms(labelSources[row] ?? ''));
+    for (const term of primary) {
       corpusCounts.set(term, (corpusCounts.get(term) ?? 0) + 1);
       const counts = clusterCounts[cluster];
       counts.set(term, (counts.get(term) ?? 0) + 1);
       clusterTotals[cluster] += 1;
+    }
+    if (secondary) {
+      for (const term of new Set(candidateTerms(secondary.texts[row] ?? ''))) {
+        if (primary.has(term)) continue;
+        if (term.split(' ').some((part) => secondary.stopWords.has(part))) continue;
+        corpusCounts.set(term, (corpusCounts.get(term) ?? 0) + 1);
+        const counts = clusterCounts[cluster];
+        counts.set(term, (counts.get(term) ?? 0) + secondary.weight);
+        clusterTotals[cluster] += 1;
+      }
     }
   }
 

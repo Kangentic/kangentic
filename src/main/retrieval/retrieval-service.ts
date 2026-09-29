@@ -301,8 +301,13 @@ const digestScheduler = createDigestScheduler<IpcContext>({
       )),
     };
   },
-  // A digest is part of its task's record, so the record re-reads.
-  onWritten: (context, projectId) => queueRecordSweeps(context, projectId),
+  // A digest is part of its task's record, so the record re-reads, and the
+  // map's region names read digests. Renamed at once when the backfill has
+  // caught up, and otherwise at most every few minutes.
+  onWritten: (context, projectId, caughtUp) => {
+    queueRecordSweeps(context, projectId);
+    graphService.requestRegionNames(projectId, caughtUp);
+  },
   // The files a task changed are part of what its digest is written from.
   // Cheap once caught up; on a cold start (which skips the project-open sweep)
   // it is what keeps the first digests from being written without them.
@@ -432,6 +437,15 @@ export const retrievalService = {
     // The Index says how many finished tasks the agent passed over, which only
     // the scheduler knows.
     graphService.setDigestsSkipped((projectId) => digestScheduler.skipped(projectId));
+    // Region names read digests only while they are switched on; off, the
+    // map's names are its titles' alone.
+    graphService.setDigestNamesOn(() => {
+      try {
+        return taskDigestsOn(context.configManager.load().memory);
+      } catch {
+        return false;
+      }
+    });
     if (attached) return;
     attached = true;
     context.sessionManager.on('exit', (sessionId: string) => {
@@ -552,6 +566,20 @@ export const retrievalService = {
       digestScheduler.request(context, projectId);
     }
     return { marked };
+  },
+
+  /**
+   * One task's digest, for the Knowledge Graph's selected conversation. Null
+   * while task digests are switched off, so the panel reads as it did before
+   * digests, and null when the task has none. One indexed read.
+   */
+  taskDigest(context: IpcContext, projectId: string, taskId: string): string | null {
+    try {
+      if (!taskDigestsOn(context.configManager.load().memory)) return null;
+      return new DigestStore(getProjectDb(projectId)).digestsFor([taskId]).get(taskId) ?? null;
+    } catch {
+      return null;
+    }
   },
 
   /** Spawn + init the embed worker ahead of a question (Knowledge Graph open),

@@ -674,9 +674,11 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
     return (
       <div className="flex-1 min-h-0 flex flex-col" data-testid="memory-graph-body">
         <MemoryCoverageStrip coverage={snapshot.coverage} semanticAvailable />
-        {/* A scope whose maps are all still building keeps its picker, or the
-            only way back to a drawable map would be closing the graph. */}
-        {scopeProjectIds && projectsPicker ? (
+        {/* The picker stays while the map builds. It names the project, which
+            nothing else on this screen does, and a scope whose maps are all
+            still building needs it, or the only way back to a drawable map
+            would be closing the graph. */}
+        {projectsPicker ? (
           <div className="w-72 px-4 pt-3" data-testid="memory-graph-pending-scope">{projectsPicker}</div>
         ) : null}
         <CenteredNotice

@@ -20,16 +20,28 @@
 
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
+import { DigestStore } from '../digest/digest-store';
 import { CONVERSATION_CORPUS, isEmbeddedCorpus, MEMORY_CORPORA } from '../corpora';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import type { MemoryGraphSnapshot, MemoryIndexSummary } from '../../../shared/types';
+import type { MemoryGraphGranularity, MemoryGraphProjection, MemoryGraphSnapshot, MemoryIndexSummary } from '../../../shared/types';
 import {
   runProjectionPass,
   readCachedProjection,
   writeProjectionCache,
   isProjectionFresh,
 } from './projection-engine';
+import { LABELLER_VERSION } from './cluster-labels';
+import {
+  DIGESTS_OFF,
+  REGION_NAMES_KEY,
+  nameRegions,
+  parseStoredRegionNames,
+  regionNamesCurrent,
+  regionNamesUsable,
+  withRegionNames,
+  type StoredRegionNames,
+} from './region-names';
 
 /**
  * The snapshot IS the IPC payload (`MemoryGraphSnapshot` in shared/types), one
@@ -49,14 +61,46 @@ export type GraphSnapshot = MemoryGraphSnapshot;
  */
 const FIRST_BUILD_DUTY_CYCLE = 0.45;
 
+/**
+ * The most often a project's region names are made again while its digests are
+ * still being written, unless a pass says it has caught up. A backfill writes
+ * thirty digests every few seconds, and renaming on each would move the names
+ * under the reader about twenty times in three minutes.
+ */
+const REGION_NAMES_INTERVAL_MS = 5 * 60_000;
+
 interface RunningPass {
   readonly signal: { aborted: boolean };
   readonly promise: Promise<void>;
 }
 
+/** What region names read from a project's digests. */
+interface DigestSource {
+  fingerprint(): string;
+  all(): Map<string, { digest: string }>;
+}
+
 export interface GraphServiceDeps {
   readonly getDb?: (projectId: string) => ReturnType<typeof getProjectDb>;
   readonly onChanged?: (projectId: string) => void;
+  /** A project's digests. Injected for tests. */
+  readonly digests?: (projectId: string) => DigestSource;
+  /** Epoch ms. Injected for tests. */
+  readonly now?: () => number;
+}
+
+/** A project's region naming: when it last ran, and what is waiting. */
+interface NamingState {
+  lastRunAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  running: boolean;
+  again: boolean;
+  againUrgent: boolean;
+}
+
+/** One event-loop turn, so a long job never holds main in one piece. */
+function yieldTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 export function createGraphService(deps: GraphServiceDeps = {}) {
@@ -79,12 +123,121 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   // Settable rather than constructor-only: the singleton is created at import
   // time but the push target (the main window) only exists once IPC registers.
   let onChanged: ((projectId: string) => void) | undefined = deps.onChanged;
-  /** How many finished tasks the digest scheduler passed over, by project. Set
+  /** How many Done tasks the digest scheduler passed over, by project. Set
    *  by the retrieval service, which owns the scheduler and imports this module. */
   let digestsSkipped: ((projectId: string) => number) | undefined;
+  /** Whether region names read digests: task digests switched on. Set by the
+   *  retrieval service, which reads the config. */
+  let digestNamesOn: () => boolean = () => false;
+  const digestsFor = deps.digests ?? ((projectId: string): DigestSource => new DigestStore(getDb(projectId)));
+  const now = deps.now ?? Date.now;
+  const naming = new Map<string, NamingState>();
 
   function storeFor(projectId: string): RetrievalStore {
     return new RetrievalStore(getDb(projectId));
+  }
+
+  /** What a project's region names read now: `DIGESTS_OFF`, or its digests'
+   *  fingerprint (one small read). */
+  function digestKeyFor(projectId: string): string {
+    if (!digestNamesOn()) return DIGESTS_OFF;
+    try {
+      return digestsFor(projectId).fingerprint();
+    } catch {
+      return DIGESTS_OFF;
+    }
+  }
+
+  /**
+   * The cached map with its stored region names over it. Names made for
+   * another map, another labeller or the other digest setting are not shown,
+   * and new ones are asked for at once; names a few digests behind are shown
+   * while new ones wait their turn.
+   */
+  function named(projectId: string, store: RetrievalStore, projection: MemoryGraphProjection | null): MemoryGraphProjection | null {
+    if (!projection) return projection;
+    const digests = digestKeyFor(projectId);
+    const stored = parseStoredRegionNames(store.getMeta(REGION_NAMES_KEY));
+    if (!regionNamesCurrent(stored, projection.signature, digests)) {
+      scheduleRegionNames(projectId, !regionNamesUsable(stored, projection.signature, digests));
+    }
+    return withRegionNames(projection, stored, digests);
+  }
+
+  /**
+   * Make a project's region names and store them. One granularity per turn:
+   * all three together held main for about 63 ms on 998 conversations. Returns
+   * whether anything changed.
+   */
+  async function makeRegionNames(projectId: string): Promise<boolean> {
+    const store = storeFor(projectId);
+    const projection = readCachedProjection(store);
+    if (!projection) return false;
+    const digests = digestKeyFor(projectId);
+    if (regionNamesCurrent(parseStoredRegionNames(store.getMeta(REGION_NAMES_KEY)), projection.signature, digests)) return false;
+    let digestByTask: Map<string, string> | null = null;
+    if (digests !== DIGESTS_OFF) {
+      digestByTask = new Map([...digestsFor(projectId).all()].map(([taskId, entry]) => [taskId, entry.digest]));
+    }
+    const names: Partial<Record<MemoryGraphGranularity, Record<number, string>>> = {};
+    for (const clustering of projection.clusterings) {
+      names[clustering.granularity] = timeSyncWork('graph:region-names', () => nameRegions(projection, clustering.granularity, digestByTask));
+      await yieldTurn();
+    }
+    // A map rebuilt meanwhile has other regions, so these names are not for it.
+    const latest = readCachedProjection(store);
+    if (!latest || latest.signature !== projection.signature) return false;
+    const stored: StoredRegionNames = { signature: projection.signature, labellerVersion: LABELLER_VERSION, digests, names };
+    store.setMeta(REGION_NAMES_KEY, JSON.stringify(stored));
+    return true;
+  }
+
+  /**
+   * Ask for a project's region names. Urgent runs now; otherwise it waits out
+   * `REGION_NAMES_INTERVAL_MS` since the last run, and one already waiting
+   * covers it.
+   */
+  function scheduleRegionNames(projectId: string, urgent: boolean): void {
+    let state = naming.get(projectId);
+    if (!state) {
+      state = { lastRunAt: 0, timer: null, running: false, again: false, againUrgent: false };
+      naming.set(projectId, state);
+    }
+    if (state.running) {
+      state.again = true;
+      state.againUrgent = state.againUrgent || urgent;
+      return;
+    }
+    if (state.timer) {
+      if (!urgent) return;
+      clearTimeout(state.timer);
+    }
+    const waitMs = urgent ? 0 : Math.max(0, state.lastRunAt + REGION_NAMES_INTERVAL_MS - now());
+    const owner = state;
+    const timer = setTimeout(() => {
+      owner.timer = null;
+      void runRegionNames(projectId, owner);
+    }, waitMs);
+    timer.unref?.();
+    state.timer = timer;
+  }
+
+  async function runRegionNames(projectId: string, state: NamingState): Promise<void> {
+    state.running = true;
+    try {
+      if (await makeRegionNames(projectId)) onChanged?.(projectId);
+    } catch (error) {
+      console.error('[memory-graph] region names failed:', error);
+    } finally {
+      state.running = false;
+      state.lastRunAt = now();
+      if (state.again) {
+        const urgent = state.againUrgent;
+        state.again = false;
+        state.againUrgent = false;
+        scheduleRegionNames(projectId, urgent);
+      }
+    }
   }
 
   function buildCoverage(store: RetrievalStore, knownDocumentIds: string[]): CoverageSummary {
@@ -205,6 +358,20 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       digestsSkipped = provider;
     },
 
+    /** Register whether region names read digests (task digests switched on). */
+    setDigestNamesOn(provider: () => boolean): void {
+      digestNamesOn = provider;
+    },
+
+    /**
+     * Digests were written: make the region names again. `urgent` when the
+     * backfill has caught up, so the last names land at once; otherwise at
+     * most once every `REGION_NAMES_INTERVAL_MS`.
+     */
+    requestRegionNames(projectId: string, urgent: boolean): void {
+      scheduleRegionNames(projectId, urgent);
+    },
+
     /**
      * Announce that this project's cached projection changed.
      *
@@ -225,14 +392,16 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
      * map per project in scope on every question.
      */
     getProjection(projectId: string): GraphSnapshot['projection'] {
-      return timeSyncWork('graph:projection', () => readCachedProjection(storeFor(projectId)));
+      const store = storeFor(projectId);
+      // Named as the map is, so an answer names a region the way the map does.
+      return named(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
     },
 
     /** Cheap read. Never runs the pass. */
     getSnapshot(projectId: string, modelTag: string): GraphSnapshot {
       const store = storeFor(projectId);
       const coverage = coverageFor(projectId, store);
-      const projection = timeSyncWork('graph:projection', () => readCachedProjection(store));
+      const projection = named(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
       const embedding = resolveEmbedding(store, modelTag, 0);
       return {
         projectId,
@@ -281,6 +450,15 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
           });
           if (!result || signal.aborted) return;
           writeProjectionCache(store, result.projection, result.sums);
+          // The new map's names in the same pass, so it never shows its
+          // build-time names first and then renames under the reader.
+          try {
+            await makeRegionNames(projectId);
+            const state = naming.get(projectId);
+            if (state) state.lastRunAt = now();
+          } catch (error) {
+            console.error('[memory-graph] region names failed:', error);
+          }
           onChanged?.(projectId);
         } catch (error) {
           console.error('[memory-graph] projection pass failed:', error);

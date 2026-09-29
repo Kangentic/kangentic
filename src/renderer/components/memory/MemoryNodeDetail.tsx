@@ -21,6 +21,7 @@
  * wants it).
  */
 
+import { useEffect, useState } from 'react';
 import { ArrowLeft, ChevronRight, Compass, MessageSquareText } from 'lucide-react';
 import { PanelRow } from './PanelRow';
 import { humanizeModelId } from '../../../shared/model-id';
@@ -75,6 +76,31 @@ export function openConversationForNode(
   openMemoryConversation(node.sessionId, useMemoryGraphStore.getState().snapshot?.projectId ?? null, null, nodeProjectId);
 }
 
+/**
+ * The selected conversation's task digest, read when it is selected rather
+ * than shipped in every snapshot (about 170 KB on a large map). Read from the
+ * node's OWN project, since the map may show several, falling back to the
+ * project the snapshot is for. A reply for an earlier selection is dropped.
+ */
+function useTaskDigest(taskId: string | null, nodeProjectId: string | null | undefined): string | null {
+  const snapshotProjectId = useMemoryGraphStore((state) => state.snapshot?.projectId ?? null);
+  const projectId = nodeProjectId ?? snapshotProjectId;
+  const [read, setRead] = useState<{ projectId: string; taskId: string; text: string | null } | null>(null);
+  useEffect(() => {
+    if (!taskId || !projectId) return;
+    let current = true;
+    window.electronAPI.memory.taskDigest(projectId, taskId)
+      .then((text) => {
+        if (current) setRead({ projectId, taskId, text });
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [taskId, projectId]);
+  return read && read.taskId === taskId && read.projectId === projectId ? read.text : null;
+}
+
 const ACTION_CLASS =
   'w-full flex items-center justify-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:bg-surface-hover disabled:opacity-50 disabled:cursor-default transition-colors cursor-pointer';
 
@@ -88,6 +114,7 @@ export function MemoryNodeDetail({
   backLabel,
   nodeProjectId,
 }: MemoryNodeDetailProps) {
+  const digestText = useTaskDigest(node.taskId, nodeProjectId);
   return (
     <aside
       className="w-full h-full overflow-y-auto flex flex-col"
@@ -126,6 +153,15 @@ export function MemoryNodeDetail({
         >
           {node.title ?? 'Untitled conversation'}
         </h2>
+
+        {/* What the task set out to do and did, in a sentence or two, right
+            under what it was called. Absent with digests off or none written,
+            so the panel is then exactly as before. */}
+        {digestText ? (
+          <p className="mx-0.5 mt-2 text-xs leading-[18px] text-fg-secondary" data-testid="memory-graph-detail-digest">
+            {digestText}
+          </p>
+        ) : null}
 
         {/* Named fields, not bare icon + value. This block used to print a `#`
             in front of `drains / pending / bytes` and leave the reader to work

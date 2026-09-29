@@ -788,6 +788,7 @@ const api: ElectronAPI = {
     endChat: (chatId) => ipcRenderer.send(IPC.MEMORY_GRAPH_END_CHAT, chatId),
     rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
     rewriteDigests: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REWRITE_DIGESTS, projectId),
+    taskDigest: (projectId, taskId) => ipcRenderer.invoke(IPC.MEMORY_TASK_DIGEST, projectId, taskId),
     graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_SNAPSHOT, projectId),
     graphProjects: () => ipcRenderer.invoke(IPC.MEMORY_GRAPH_PROJECTS),
     refreshGraph: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_REFRESH, projectId),

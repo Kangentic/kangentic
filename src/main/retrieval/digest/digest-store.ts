@@ -113,4 +113,17 @@ export class DigestStore {
   count(): number {
     return (this.db.prepare('SELECT COUNT(*) AS count FROM memory_task_digests').get() as { count: number }).count;
   }
+
+  /**
+   * What the digests are, in a few characters: how many, and the latest write.
+   * A new digest, a rewrite (which stamps `created_at`) and a removal each move
+   * it. The map's region names are kept against it, so they are made again
+   * only when a digest they read has changed.
+   */
+  fingerprint(): string {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS count, MAX(created_at) AS latest FROM memory_task_digests')
+      .get() as { count: number; latest: string | null };
+    return `${row.count}:${row.latest ?? ''}`;
+  }
 }

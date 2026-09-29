@@ -882,7 +882,7 @@ export function MemoryGraphControls({
               </div>
             ))}
             {/* While digests are on, or any exist: they are written in the
-                background, so the count climbs toward the finished tasks. The
+                background, so the count climbs toward the Done tasks. The
                 count alone, with no suffix: a count short of the total already
                 says digests stopped (switched off, a failed call, a task the
                 agent passed over), and Settings > Search says which. */}
@@ -895,7 +895,7 @@ export function MemoryGraphControls({
                     : `${index.digests.written.toLocaleString()} of ${index.digests.finishedTasks.toLocaleString()}`}
                   hint={digestsNeedAgent
                     ? 'Choose the digest agent in Settings > Search.'
-                    : 'A sentence or two per finished task, searched with its record. Settings > Search says why a count stops short.'}
+                    : 'A sentence or two per Done task, searched with its record. Settings > Search says why a count stops short.'}
                 />
               </div>
             ) : null}

@@ -251,7 +251,8 @@ describe('the digest scheduler', () => {
     scheduler.request('context', 'project');
     await settle();
     expect(runPass).toHaveBeenCalledTimes(1);
-    expect(onWritten).toHaveBeenCalledWith('context', 'project');
+    // Not caught up yet: the map renames at its own pace, not after every pass.
+    expect(onWritten).toHaveBeenCalledWith('context', 'project', false);
     // A yield, not pacing: a backfill is meant to finish.
     expect(timers.map((timer) => timer.delayMs)).toEqual([1_000]);
 
@@ -259,6 +260,8 @@ describe('the digest scheduler', () => {
     await settle();
     expect(runPass).toHaveBeenCalledTimes(2);
     expect(timers).toHaveLength(1);
+    // The pass that catches up says so, so the last names land at once.
+    expect(onWritten).toHaveBeenLastCalledWith('context', 'project', true);
   });
 
   it('brings what a digest is written from up to date before each pass reads its tasks', async () => {

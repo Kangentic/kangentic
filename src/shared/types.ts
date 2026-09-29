@@ -6643,6 +6643,12 @@ export interface ElectronAPI {
      * many were marked; each keeps its old text until its new one is written.
      */
     rewriteDigests: (projectId: string) => Promise<{ marked: number }>;
+    /**
+     * One task's digest in a project, for the Knowledge Graph's selected
+     * conversation: null while task digests are switched off, or when the task
+     * has none. Read on select rather than shipped in every snapshot.
+     */
+    taskDigest: (projectId: string, taskId: string) => Promise<string | null>;
     /** Cheap read of the cached Memory Graph projection plus its coverage
      *  strip. Never triggers the projection pass. */
     graphSnapshot: (projectId?: string | null) => Promise<MemoryGraphSnapshot | null>;
