@@ -960,10 +960,11 @@ opens beside the panel.
 - **Topic** - the region each conversation belongs to.
 - **Recency** - warm is recent, cool is old. Shows where your attention has moved, and which
   areas have gone quiet.
-- **Outcome** - green finished, amber still open, grey dropped without finishing. Offered only when
-  the second-commonest status covers at least a twentieth of the index: on a healthy board almost
-  everything finishes (642 of 648 on a real one), and a map that is uniformly green with six specks
-  in it is a question for the Outcome FILTER rather than a thing colour can show.
+- **Status** - green is Done, amber is still open on the board, grey is a conversation with no
+  task. Offered only when the less common status covers at least a twentieth of the index: on a
+  healthy board almost everything gets done (642 of 648 on a real one), and a map that is uniformly
+  green with six specks in it is a question for the status FILTER rather than a thing colour can
+  show.
 - **Length** - how much transcript the conversation holds, from deep indigo for the shortest through
   blue and teal to a warm yellow for the longest.
 - **Duration** - how long it ran in wall time, on the same ramp.
@@ -985,18 +986,19 @@ you want to read. How finely the map CAN be cut is bounded by the index: on a sm
 setting produces the same regions, and the control hides itself rather than offering choices that
 repaint the identical picture.
 
-**Filter** scopes the map by time (Any, 7 days, 30 days, 90 days) and by status (Any, Finished,
-Open, Dropped), each a row of buttons so every choice shows and takes one click. Both rows always
-show all four choices, so changing the scope never moves the panel. A choice that cannot narrow
-this index is disabled, and its tooltip says why: every time window when nothing is older than 7
-days, a status no task has, and the one status every task has. Unlike the
-colour mode, this row survives a lopsided board, which is the point of it - scoping to the handful
-still open is exactly the question a green map cannot answer.
+**Filter** scopes the map by time (Any, 30 days, 90 days) and by status (Any, Done, Open), each a
+row of buttons so every choice shows and takes one click. Done is a task in the Done column (or
+archived, which only moving to Done does), and Open is every other task on the board. Both rows
+always show their three choices, lined up in columns, so changing the scope never moves the panel.
+A choice that cannot narrow this index is disabled, and its tooltip says why: both time windows
+when nothing is older than 30 days, a status no task has, and the one status every task has.
+Unlike the colour mode, the status row survives a lopsided board, which is the point of it -
+scoping to the handful still open is exactly the question a green map cannot answer.
 
-**Projects.** The graph opens on the project you have open, and the header names it. With two or
-more projects indexed, the Filter card's first row picks which projects the map shows: any of them,
-or **All**. **None** goes back to the open project alone, since an empty map would leave nothing to
-pick from. Each project draws as its own island, labelled with its name and sized by how much it
+**Projects.** The graph opens on the project you have open, and the header names it. The Filter
+card's first row picks which projects the map shows: any of them, or **All**. It is there however
+many projects are indexed, so it never comes and goes. **None** goes back to the open project
+alone, since an empty map would leave nothing to pick from. Each project draws as its own island, labelled with its name and sized by how much it
 holds, and the Regions list groups each project's regions under its name. A project with nothing
 indexed is listed but cannot be picked. One the graph has never shown builds its map the first time
 it is picked, which takes about a minute on a large project, and its island appears when that

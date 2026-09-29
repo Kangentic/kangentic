@@ -12,7 +12,8 @@
 import type { BoardTaskFacts } from './answer-tasks';
 
 /**
- * The outcome rule is the same lane-first CASE `documentMetadata` uses.
+ * The outcome rule is the same CASE `documentMetadata` uses: a Done lane or an
+ * archived task is done, since only the move into Done archives.
  *
  * Git churn is branch-cumulative and written to ONE session record per task,
  * with the task's other records zeroed (setTaskGitStats). It is rolled up the
@@ -23,8 +24,7 @@ export const BOARD_TASK_FACTS_SQL = `SELECT t.id AS taskId,
        t.display_id AS displayId,
        t.title AS title,
        CASE
-         WHEN w.role = 'done' THEN 'done'
-         WHEN t.archived_at IS NOT NULL THEN 'abandoned'
+         WHEN w.role = 'done' OR t.archived_at IS NOT NULL THEN 'done'
          ELSE 'active'
        END AS outcome,
        COUNT(s.id) AS sessions,
@@ -53,7 +53,7 @@ export interface BoardTaskFactsRow {
   taskId: string;
   displayId: number | null;
   title: string;
-  outcome: 'done' | 'abandoned' | 'active';
+  outcome: 'done' | 'active';
   sessions: number;
   costUsd: number | null;
   durationMs: number | null;

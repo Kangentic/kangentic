@@ -165,18 +165,12 @@ export const QUESTIONS = [
     id: 'selection-outcome',
     corpus: 'conversation',
     question: 'Which tasks were dropped without ever finishing?',
-    truth: (rollup) => {
-      const dropped = rollup.filter((row) => row.outcome === 'abandoned');
-      if (dropped.length === 0) {
-        // On a board with none - which is most boards, measured: work gets
-        // archived after Done, so archived-without-Done barely exists - the
-        // only thing worth asserting is that it does not INVENT one. Naming no
-        // ticket is the whole test; which words it declines with is its own
-        // business, and requiring a specific phrasing would grade wording.
-        return expect([], ['#']);
-      }
-      return expect(dropped.slice(0, 3).map((row) => `#${row.displayId}`));
-    },
+    // A state the app never produces: only the move into Done archives a task,
+    // so the table has Done and Open and nothing else. The only thing worth
+    // asserting is that the answer does not INVENT one. Naming no ticket is the
+    // whole test; which words it declines with is its own business, and
+    // requiring a specific phrasing would grade wording.
+    truth: () => expect([], ['#']),
   },
   {
     id: 'total-spend',

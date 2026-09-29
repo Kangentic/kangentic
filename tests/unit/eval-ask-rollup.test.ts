@@ -91,7 +91,7 @@ describe('the Ask harness rollup matches the shipped one', () => {
       node({ docKey: 'b', taskId: 't1', displayId: null, costUsd: 15, durationMs: null, tokens: null, outcome: null, lastActivityMs: 2_000 }),
       node({ docKey: 'c', taskId: 't2', displayId: 44, costUsd: null, durationMs: 30_000, tokens: 500, outcome: 'active', lastActivityMs: 3_000 }),
       node({ docKey: 'd', taskId: null, displayId: null, costUsd: 7, durationMs: 1_000, tokens: 90, outcome: null, lastActivityMs: 4_000 }),
-      node({ docKey: 'e', taskId: 't3', displayId: 100, costUsd: 0, durationMs: 0, tokens: 0, outcome: 'abandoned', lastActivityMs: 5_000 }),
+      node({ docKey: 'e', taskId: 't3', displayId: 100, costUsd: 0, durationMs: 0, tokens: 0, outcome: 'done', lastActivityMs: 5_000 }),
     ];
 
     const shipped = buildAnswerTaskTable(projection(nodes), 'balanced').rows;

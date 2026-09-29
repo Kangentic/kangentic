@@ -28,32 +28,34 @@
  */
 
 /**
- * Where a task's work ended up.
+ * Where a task's work ended up: done (in a Done lane, or archived, which only
+ * moving to Done does) or active (still open on the board).
  *
- * The lane decides and archiving does not override it: finished work gets
- * archived once it leaves Done, so letting `archived_at` win reported 485 of
- * this board's 496 tasks as abandoned and painted the whole Outcome map one
- * grey. See the CASE in `documentMetadata`.
+ * There is no third value. An "abandoned" one (archived without reaching Done)
+ * shipped first, but `archive()` has exactly one caller, the move into Done, so
+ * it matched no task on any real board (0 of 673 here, 0 of 73 on another) and
+ * named a state the app never reaches. See the CASE in `documentMetadata`.
  */
-export type MemoryTaskOutcome = 'done' | 'abandoned' | 'active';
+export type MemoryTaskOutcome = 'done' | 'active';
 
 /**
- * How an outcome reads to a person.
+ * How a status reads to a person: the board's own words.
  *
- * These name the WORK, not the board. "Reached Done" described a board mechanic
- * and left the reader translating; on a board measuring 485 archived-and-Done
- * against 6 To Do it also made the distinction it drew invisible.
+ * "Done" is the Done column's name, and "Open" is everything still on the board.
+ * The Knowledge Graph once said "Finished" and "Still open" on the map,
+ * "Completed" and "In Progress" in an answer's rows, and "Dropped" for a state
+ * that never happens, three vocabularies for one field. The map, its filter and
+ * the rows all read these.
  *
- * `active` is "In Progress" rather than "Active" deliberately: `Active` already
- * means "an agent is running right now" everywhere else in this app (the
- * activity marks, the Monitor's Active tile, the sidebar counts, the
- * `--kng-active` token). A task last touched three weeks ago is not active in
- * that sense, but it is unfinished, which is what this field means.
+ * `active` is "Open" rather than "Active" deliberately: `Active` already means
+ * "an agent is running right now" everywhere else in this app (the activity
+ * marks, the Monitor's Active tile, the sidebar counts, the `--kng-active`
+ * token). A task last touched three weeks ago is not active in that sense, but
+ * it is open, which is what this field means.
  */
 export const TASK_OUTCOME_LABELS: Record<MemoryTaskOutcome, string> = {
-  done: 'Completed',
-  active: 'In Progress',
-  abandoned: 'Dropped',
+  done: 'Done',
+  active: 'Open',
 };
 
 /**
@@ -322,8 +324,7 @@ export const MEMORY_TASK_FIELDS: ReadonlyArray<MemoryTaskField> = [
     kind: 'dimension',
     selectable: true,
     describe: 'where the work ended up: done means it reached a Done column, '
-      + 'active means it is still unfinished on the board, abandoned means it '
-      + 'was dropped without ever finishing.',
+      + 'active means it is still open on the board.',
     cell: (facts) => facts.outcome ?? '',
     display: (facts) => (facts.outcome ? TASK_OUTCOME_LABELS[facts.outcome] : null),
     sortValue: () => null,

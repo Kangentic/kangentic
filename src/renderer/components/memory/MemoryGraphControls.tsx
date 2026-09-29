@@ -49,26 +49,32 @@ import { PanelRow, InfoHint, formatBytes } from './PanelRow';
 import { formatRelativeTime } from '../../lib/datetime';
 import { useConfigStore } from '../../stores/config-store';
 import { agentJobChoice, answerSetupGap, taskDigestsOn } from '../../../shared/answer-agent';
+import { TASK_OUTCOME_LABELS, type MemoryTaskOutcome } from '../../../shared/memory-task-fields';
 
-/** How far back a conversation's last activity may be. */
-export type MemoryGraphTimeWindow = 'any' | '7d' | '30d' | '90d';
+/**
+ * How far back a conversation's last activity may be. Three choices, to line up
+ * in columns with the status row's three (Any, Done, Open).
+ */
+export type MemoryGraphTimeWindow = 'any' | '30d' | '90d';
 
 export const TIME_WINDOW_DAYS: Readonly<Record<Exclude<MemoryGraphTimeWindow, 'any'>, number>> = {
-  '7d': 7,
   '30d': 30,
   '90d': 90,
 };
+
+/** The narrowest time window, which decides whether the time row can narrow the map. */
+export const NARROWEST_WINDOW_DAYS = TIME_WINDOW_DAYS['30d'];
 
 /**
  * The facets the map can be scoped by.
  *
  * These are the SAME dimensions the colour modes encode, which is the point:
- * before this you could colour by Outcome and see that some work was abandoned,
+ * before this you could colour by status and see which work was still open,
  * but you could not scope the map to it. Anything the map can show you, it can
  * now show you only.
  *
  * They INTERSECT with each other and with search rather than replacing it, so
- * "pairing" + Abandoned is abandoned pairing work, not one or the other.
+ * "pairing" + Open is open pairing work, not one or the other.
  */
 export interface MemoryGraphFacets {
   /**
@@ -103,72 +109,44 @@ export function facetsAreEmpty(facets: MemoryGraphFacets): boolean {
 /**
  * Which filter segments can narrow THIS corpus.
  *
- * Both rows always show all four segments, so a scope change never adds or
+ * Both rows always show all three segments, so a scope change never adds or
  * removes a row or a segment. A segment that could only return what "Any"
  * returns stays in place, disabled, and its tooltip says why. Time is the
- * subtle one: if every conversation is inside the narrowest window then all
- * three windows and "Any time" select identically, even though the timestamps
- * exist.
+ * subtle one: if every conversation is inside the narrowest window then both
+ * windows and "Any time" select identically, even though the timestamps exist.
  */
 export interface FacetAvailability {
   since: boolean;
   /**
    * The statuses a segment can select, in display order: on the map, and not
    * on every node of it (selecting the only status there is selects everything).
-   *
-   * On a real board archiving happens after Done essentially always, so
-   * "Dropped" (archived without ever reaching Done) often matches nothing.
    */
   outcomes: ReadonlyArray<MemoryGraphOutcome>;
   /** The statuses on the map at all, which picks a disabled segment's reason. */
   presentOutcomes: ReadonlyArray<MemoryGraphOutcome>;
 }
 
-export type MemoryGraphOutcome = 'done' | 'active' | 'abandoned';
-
 /**
- * Phrased as what HAPPENED, not as a lane name: these read beside each other in
- * a list, where a bare "Done" next to "Active" reads as a column picker rather
- * than a history.
- *
- * They were "Reached Done" / "Still on the board" / "Abandoned", which got the
- * intent right and the words wrong: a clause, a clause and an adjective, with a
- * column name inside the first. These are three plain states of the same kind,
- * and no lane is named. The internal values keep the word `outcome` - the code's
- * vocabulary and the reader's do not have to be the same word, and renaming the
- * wire field would cost a projection rebuild to change a label.
+ * A task's status, read by its lane: Done or Open. The internal values keep the
+ * word `outcome`, and the labels are the board's own (`TASK_OUTCOME_LABELS`), so
+ * the map, its filter and an answer's rows all say the same thing.
  */
-export const OUTCOME_LABELS: Readonly<Record<MemoryGraphOutcome, string>> = {
-  done: 'Finished',
-  active: 'Still open',
-  // "Dropped" rather than "Archived" because archiving is how a FINISHED task
-  // leaves the board, so it is not the opposite of finishing - dropping is.
-  abandoned: 'Dropped',
-};
-
-/** The status filter's segment labels: `OUTCOME_LABELS` cut to fit four
- *  segments in the panel, the full label kept as each one's name and tooltip. */
-const OUTCOME_SHORT_LABELS: Readonly<Record<MemoryGraphOutcome, string>> = {
-  done: 'Finished',
-  active: 'Open',
-  abandoned: 'Dropped',
-};
+export type MemoryGraphOutcome = MemoryTaskOutcome;
 
 /** The time filter's segments, the full window as each one's name and tooltip. */
 const TIME_OPTIONS: ReadonlyArray<SegmentedControlOption<MemoryGraphTimeWindow>> = [
   { value: 'any', label: 'Any', ariaLabel: 'Any time', title: 'Any time', testId: 'memory-graph-filter-since-any' },
-  { value: '7d', label: '7 days', ariaLabel: 'Last 7 days', title: 'Last 7 days', testId: 'memory-graph-filter-since-7d' },
   { value: '30d', label: '30 days', ariaLabel: 'Last 30 days', title: 'Last 30 days', testId: 'memory-graph-filter-since-30d' },
   { value: '90d', label: '90 days', ariaLabel: 'Last 90 days', title: 'Last 90 days', testId: 'memory-graph-filter-since-90d' },
 ];
 
 /** Display order, independent of whatever order the corpus happened to yield. */
-export const OUTCOME_ORDER: ReadonlyArray<MemoryGraphOutcome> = ['done', 'active', 'abandoned'];
+export const OUTCOME_ORDER: ReadonlyArray<MemoryGraphOutcome> = ['done', 'active'];
 
 export const NO_FACETS_AVAILABLE: FacetAvailability = { since: false, outcomes: [], presentOutcomes: [] };
 
 /** A time window's tooltip when nothing on the map is older than the narrowest one. */
-const NO_OLDER_WORK_TITLE = 'Nothing on this map is older than 7 days';
+const NO_OLDER_WORK_TITLE = `Nothing on this map is older than ${NARROWEST_WINDOW_DAYS} days`;
 
 /**
  * Every colour mode, in display order. What is OFFERED is filtered from this by
@@ -186,7 +164,7 @@ const NO_OLDER_WORK_TITLE = 'Nothing on this map is older than 7 days';
 const COLOR_OPTIONS: ReadonlyArray<{ value: MemoryGraphColorMode; label: string; hint: string }> = [
   { value: 'cluster', label: 'Topic', hint: 'Color by the region of the map each conversation sits in' },
   { value: 'recency', label: 'Recency', hint: 'Warm is recent, cool is old - shows where your attention has moved' },
-  { value: 'outcome', label: 'Outcome', hint: 'Green finished, amber still open, grey dropped without finishing' },
+  { value: 'outcome', label: 'Status', hint: 'Green is done, amber is still open on the board, grey has no task' },
   {
     value: 'size',
     label: 'Length',
@@ -590,8 +568,8 @@ export function MemoryGraphControls({
                 labels, which would add 40px and bring the panel's scrollbar
                 back sooner; each row's options say what they are (days,
                 statuses), and each option's full name is its accessible name
-                and tooltip. Quiet and tight, because four options have 224px.
-                Both rows always show, four segments each, so a scope change
+                and tooltip. Quiet and tight, to match the rest of the panel.
+                Both rows always show, three segments each, so a scope change
                 never moves the panel: a segment that cannot narrow this map
                 stays in place, disabled, and says why. */}
             <div className="space-y-1.5">
@@ -612,20 +590,18 @@ export function MemoryGraphControls({
 
               <SegmentedControl
                 options={[
-                  // "Any status", not "Any outcome": one of the values is
-                  // "Still open", which is not an outcome at all - it is the
-                  // absence of one.
                   { value: 'any' as const, label: 'Any', ariaLabel: 'Any status', title: 'Any status', testId: 'memory-graph-filter-outcome-any' },
                   ...OUTCOME_ORDER.map((outcome) => {
                     const selectable = facetAvailability.outcomes.includes(outcome);
                     const present = facetAvailability.presentOutcomes.includes(outcome);
-                    let title = OUTCOME_LABELS[outcome];
-                    if (!present) title = `No ${OUTCOME_SHORT_LABELS[outcome].toLowerCase()} tasks on this map`;
-                    else if (!selectable) title = `Everything on this map is ${OUTCOME_LABELS[outcome].toLowerCase()}`;
+                    const label = TASK_OUTCOME_LABELS[outcome];
+                    let title = label;
+                    if (!present) title = `No ${label.toLowerCase()} tasks on this map`;
+                    else if (!selectable) title = `Every task on this map is ${label.toLowerCase()}`;
                     return {
                       value: outcome,
-                      label: OUTCOME_SHORT_LABELS[outcome],
-                      ariaLabel: OUTCOME_LABELS[outcome],
+                      label,
+                      ariaLabel: label,
                       title,
                       disabled: !selectable,
                       testId: `memory-graph-filter-outcome-${outcome}`,

@@ -71,8 +71,9 @@
   // first-open state the surface must handle without looking broken. Seeded via
   // __mockPreConfigure (mirrors searchHits).
   let memoryGraphSnapshot = null;
-  // The Projects picker's list. Empty by default, which hides the picker (it
-  // needs two indexed projects); seeded via __mockPreConfigure.
+  // The Projects picker's list. Empty by default, which reads as a list not yet
+  // loaded and leaves the picker out (the real app always lists at least the
+  // open project); seeded via __mockPreConfigure.
   let memoryGraphProjects = [];
   // Per-project snapshots for a multi-project scope, keyed by project id.
   // A project missing here falls back to memoryGraphSnapshot.

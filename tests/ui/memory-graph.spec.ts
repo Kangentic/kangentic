@@ -1210,7 +1210,7 @@ test.describe('memory graph', () => {
       // The fixture marks every node whose index is not 1 more than a multiple of 3 as done.
       const expected = [0, 2, 3, 5, 6, 8, 9, 11].map((index) => `conversation::doc-${index}`);
       expect([...(call.context?.scopeDocKeys ?? [])].sort()).toEqual(expected.sort());
-      await expect(page.locator('[data-testid="memory-chat"]')).not.toContainText('Finished');
+      await expect(page.locator('[data-testid="memory-chat"]')).not.toContainText('Done');
     } finally {
       await browser.close();
     }
@@ -1346,8 +1346,8 @@ test.describe('memory graph', () => {
 
   test('offers region, time and outcome filters', async () => {
     // The same dimensions the colour modes encode. Before this you could colour
-    // by Outcome and SEE that some work was abandoned, but could not scope the
-    // map to it.
+    // by status and SEE which work was still open, but could not scope the map
+    // to it.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openMemoryGraph(page);
@@ -1358,10 +1358,10 @@ test.describe('memory graph', () => {
       // Segmented, so every option shows: a row of days and a row of statuses,
       // each option's full meaning kept as its accessible name.
       await expect(since.getByRole('radio', { name: 'Last 30 days' })).toHaveText('30 days');
-      await expect(outcome.getByRole('radio', { name: 'Finished' })).toBeVisible();
-      await page.locator('[data-testid="memory-graph-filter-since-7d"]').click();
-      await expect(page.locator('[data-testid="memory-graph-filter-since-7d"]')).toHaveAttribute('aria-checked', 'true');
-      // Four options in a narrow panel: none of them may be cut off.
+      await expect(outcome.getByRole('radio', { name: 'Done' })).toBeVisible();
+      await page.locator('[data-testid="memory-graph-filter-since-90d"]').click();
+      await expect(page.locator('[data-testid="memory-graph-filter-since-90d"]')).toHaveAttribute('aria-checked', 'true');
+      // A narrow panel: none of the options may be cut off.
       const clipped = await page.evaluate(() => Array.from(
         document.querySelectorAll<HTMLElement>('[data-testid="memory-graph-filter-since"] [role="radio"], [data-testid="memory-graph-filter-outcome"] [role="radio"]'),
       ).filter((option) => option.scrollWidth > option.clientWidth + 1 || option.getBoundingClientRect().right > option.closest('[role="radiogroup"]')!.getBoundingClientRect().right + 1)
@@ -1458,55 +1458,28 @@ test.describe('memory graph', () => {
     }
   });
 
-  test('keeps an outcome nothing in the index has, disabled, so both rows have four columns', async () => {
-    // Archiving happens after Done essentially always, so "Dropped" (archived
-    // without ever reaching Done) often matches nothing. It stays in the row,
-    // disabled with the reason, rather than leaving: the status row keeps the
-    // time row's four segments, and a scope change never adds or removes one.
+  test('reads Any, Done and Open in three columns under the time row\'s three', async () => {
+    // The board's own words: Done is the Done column, Open is everything still
+    // on the board. There is no third status, since only the move into Done
+    // archives a task. Same count, same width, so the segments stack in columns.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openMemoryGraph(page);
+      const since = page.locator('[data-testid="memory-graph-filter-since"]');
       const outcome = page.locator('[data-testid="memory-graph-filter-outcome"]');
-      await expect(outcome).toContainText('Finished');
-      await expect(outcome.getByRole('radio', { name: 'Still open' })).toHaveText('Open');
-      const dropped = page.locator('[data-testid="memory-graph-filter-outcome-abandoned"]');
-      await expect(dropped).toHaveText('Dropped');
-      await expect(dropped).toBeDisabled();
-      await expect(dropped).toHaveAttribute('title', 'No dropped tasks on this map');
+      await expect(since.getByRole('radio')).toHaveText(['Any', '30 days', '90 days']);
+      await expect(outcome.getByRole('radio')).toHaveText(['Any', 'Done', 'Open']);
       await expect(page.locator('[data-testid="memory-graph-filter-outcome-done"]')).toBeEnabled();
+      await expect(page.locator('[data-testid="memory-graph-filter-outcome-active"]')).toBeEnabled();
 
-      // Same count, same width, so the segments stack in columns. The tolerance
-      // is for font metrics: a missing segment moves a column by a quarter of
-      // the row, about 55px, not a few.
+      // The tolerance is for font metrics: a missing segment moves a column by
+      // a third of the row, about 75px, not a few.
       const columns = await page.evaluate(() => ['since', 'outcome'].map((row) => Array.from(
         document.querySelectorAll<HTMLElement>(`[data-testid="memory-graph-filter-${row}"] [role="radio"]`),
       ).map((option) => option.getBoundingClientRect().left)));
-      expect(columns[0]).toHaveLength(4);
-      expect(columns[1]).toHaveLength(4);
+      expect(columns[0]).toHaveLength(3);
+      expect(columns[1]).toHaveLength(3);
       columns[0].forEach((left, index) => expect(Math.abs(left - columns[1][index])).toBeLessThanOrEqual(3));
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('enables an outcome once something in the index has it', async () => {
-    // The other half of the rule: a board where work really was dropped can pick
-    // it, so this is availability rather than removal.
-    const withAbandoned = `(function () {
-      var base = ${projectionLiteral(6)};
-      base.nodes[1].outcome = 'abandoned';
-      return base;
-    })()`;
-    const { browser, page } = await launchWithState(snapshotScript({ projection: withAbandoned }));
-    try {
-      await openMemoryGraph(page);
-      await expect(page.locator('[data-testid="memory-graph-filter-outcome-abandoned"]')).toBeEnabled();
-      // Four statuses is the widest this row gets: none may be cut off.
-      const clipped = await page.evaluate(() => Array.from(
-        document.querySelectorAll<HTMLElement>('[data-testid="memory-graph-filter-outcome"] [role="radio"]'),
-      ).filter((option) => option.scrollWidth > option.clientWidth + 1 || option.getBoundingClientRect().right > option.closest('[role="radiogroup"]')!.getBoundingClientRect().right + 1)
-        .map((option) => option.textContent));
-      expect(clipped).toEqual([]);
     } finally {
       await browser.close();
     }
@@ -1662,16 +1635,16 @@ test.describe('memory graph', () => {
 
       await expect(page.locator('[data-testid="memory-graph-filter-outcome"]')).toBeVisible();
       await expect(page.locator('[data-testid="memory-graph-filter-outcome-any"]')).toBeEnabled();
-      const finished = page.locator('[data-testid="memory-graph-filter-outcome-done"]');
-      await expect(finished).toBeDisabled();
-      await expect(finished).toHaveAttribute('title', 'Everything on this map is finished');
+      const done = page.locator('[data-testid="memory-graph-filter-outcome-done"]');
+      await expect(done).toBeDisabled();
+      await expect(done).toHaveAttribute('title', 'Every task on this map is done');
       const open = page.locator('[data-testid="memory-graph-filter-outcome-active"]');
       await expect(open).toBeDisabled();
       await expect(open).toHaveAttribute('title', 'No open tasks on this map');
 
       // Time stays live: the fixture's timestamps are years old, so the
       // windows still select different sets.
-      await expect(page.locator('[data-testid="memory-graph-filter-since-7d"]')).toBeEnabled();
+      await expect(page.locator('[data-testid="memory-graph-filter-since-30d"]')).toBeEnabled();
     } finally {
       await browser.close();
     }
@@ -1691,10 +1664,10 @@ test.describe('memory graph', () => {
       await openMemoryGraph(page);
       await expect(page.locator('[data-testid="memory-graph-filter-since"]')).toBeVisible();
       await expect(page.locator('[data-testid="memory-graph-filter-since-any"]')).toBeEnabled();
-      for (const timeWindow of ['7d', '30d', '90d']) {
+      for (const timeWindow of ['30d', '90d']) {
         const option = page.locator(`[data-testid="memory-graph-filter-since-${timeWindow}"]`);
         await expect(option).toBeDisabled();
-        await expect(option).toHaveAttribute('title', 'Nothing on this map is older than 7 days');
+        await expect(option).toHaveAttribute('title', 'Nothing on this map is older than 30 days');
       }
     } finally {
       await browser.close();
@@ -2614,8 +2587,10 @@ test.describe('memory graph', () => {
     await expect(menu).toBeHidden();
   }
 
-  test('offers the Projects filter only once two projects are indexed', async () => {
-    // A one-option scope is a dead control.
+  test('offers the Projects filter with one project indexed, the rest listed but not pickable', async () => {
+    // The row never comes and goes with the index count, which moved the whole
+    // panel. With one indexed project it names the scope, and a project with
+    // nothing indexed is in its list, disabled.
     const { browser, page } = await launchWithState(`${snapshotScript({ projection: projectionLiteral(12) })}
       window.__mockPreConfigure(function () {
         return {
@@ -2627,10 +2602,20 @@ test.describe('memory graph', () => {
       });`);
     try {
       await openMemoryGraph(page);
-      // The header names the project even with no picker, and waiting on it
-      // proves the project list has loaded before the absence is asserted.
       await expect(page.locator('[data-testid="memory-graph-scope"]')).toHaveText('Kangentic');
-      await expect(page.locator('[data-testid="memory-graph-projects"]')).toHaveCount(0);
+      const picker = page.locator('[data-testid="memory-graph-projects"]');
+      await expect(picker).toContainText('Kangentic');
+      await expect(picker).toContainText('1 of 1');
+
+      await picker.click();
+      const menu = page.locator('[data-testid="memory-graph-projects-menu"]');
+      await expect(menu.locator('[data-testid="memory-graph-projects-row"]')).toHaveCount(1);
+      const unindexed = menu.locator('[data-testid="memory-graph-projects-row-unindexed"]');
+      await expect(unindexed).toHaveText(/Website/);
+      await expect(unindexed).toBeDisabled();
+      // The scope is never empty, so with one project there is nothing to add or drop.
+      await expect(menu.locator('[data-testid="memory-graph-projects-all"]')).toBeDisabled();
+      await expect(menu.locator('[data-testid="memory-graph-projects-none"]')).toBeDisabled();
     } finally {
       await browser.close();
     }

@@ -135,7 +135,7 @@ export function buildAnswerTaskTable(
   /**
    * The conversations inside the map's filters, or null for all of them. The
    * filters are the scope of a question, so "the most expensive task" under an
-   * Abandoned filter ranks only the abandoned ones.
+   * Open filter ranks only the open ones.
    */
   scopeDocKeys: ReadonlySet<string> | null = null,
   /**

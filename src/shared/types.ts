@@ -6883,12 +6883,10 @@ export interface MemoryGraphNode {
   tokens: number | null;
   /** Epoch ms of the last indexed turn, for recency colouring. */
   lastActivityMs: number | null;
-  /** Where the owning task ended up: `'done'` (reached a Done lane, whether or
-   *  not it was later archived), `'abandoned'` (archived without ever reaching
-   *  one), `'active'` (still on the board), or null for a conversation with no
-   *  task. Archiving is board tidiness and does not decide this - see the CASE
-   *  in `documentMetadata` for the measurement that settled it. */
-  outcome: 'done' | 'abandoned' | 'active' | null;
+  /** Where the owning task ended up: `'done'` (in a Done lane, or archived,
+   *  which only a move into Done does), `'active'` (still open on the board), or
+   *  null for a conversation with no task. See the CASE in `documentMetadata`. */
+  outcome: 'done' | 'active' | null;
   /**
    * Which labelled region this node sits in, at each granularity.
    *

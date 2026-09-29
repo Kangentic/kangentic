@@ -32,6 +32,7 @@ import {
   MemoryGraphControls,
   EMPTY_FACETS,
   NO_FACETS_AVAILABLE,
+  NARROWEST_WINDOW_DAYS,
   TIME_WINDOW_DAYS,
   OUTCOME_ORDER,
   facetsAreEmpty,
@@ -260,12 +261,12 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
    * A segment that could only return what "Any" returns is disabled with its
    * reason, so each one is measured rather than assumed. Time is the one that
    * is not simply "is the field populated": if every conversation falls inside
-   * the NARROWEST window then all four options select identically, despite
-   * every timestamp being present. A status is the same when every node has it.
+   * the NARROWEST window then every option selects identically, despite every
+   * timestamp being present. A status is the same when every node has it.
    */
   const facetAvailability = useMemo<FacetAvailability>(() => {
     if (!nodes || nodes.length === 0) return NO_FACETS_AVAILABLE;
-    const narrowestCutoff = nowMs - TIME_WINDOW_DAYS['7d'] * DAY_MS;
+    const narrowestCutoff = nowMs - NARROWEST_WINDOW_DAYS * DAY_MS;
     const outcomeCounts = new Map<string, number>();
     let hasOlderThanNarrowest = false;
     for (const node of nodes) {
@@ -284,7 +285,7 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
   }, [nodes, nowMs]);
 
   // A selection can outlive the option that offered it - switch to a project
-  // where nothing was abandoned and the scope would silently hold at zero on a
+  // where nothing is open and the scope would silently hold at zero on a
   // segment that is now disabled. Healed during render, so no frame ever
   // commits the dead scope.
   if (facets.outcome !== 'any' && !facetAvailability.outcomes.includes(facets.outcome)) {
@@ -619,10 +620,11 @@ export function MemoryGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSetti
     ? `Ask across ${scopeProjectIds.length} projects`
     : 'Ask about your tasks, conversations and code';
 
-  // Only offered with two or more indexed projects: a one-option scope is a
-  // dead control.
-  const indexedProjectCount = projects.filter((project) => project.conversations > 0).length;
-  const projectsPicker = indexedProjectCount >= 2 ? (
+  // Offered however many projects are indexed, once the list has loaded. With
+  // one it names the scope, and the projects with nothing indexed sit in its
+  // list, unpickable. A row that came and went with the index count moved the
+  // whole panel.
+  const projectsPicker = projects.length > 0 ? (
     <MemoryProjectsPicker
       projects={projects}
       openProjectId={projectId}

@@ -12,8 +12,8 @@
  *
  * A CATEGORY mode dies more subtly: it can have every value present and still
  * say nothing, because colour reads as a PATTERN and a pattern needs a visible
- * minority. Measured on the real 648-conversation corpus the outcome split is
- * 642 done, 6 active, 0 abandoned - two values present, and a map that is
+ * minority. Measured on the real 648-conversation corpus the status split is
+ * 642 done and 6 active - both values present, and a map that is
  * uniformly green with six amber specks in it. Six of 648 is not something the
  * eye finds; it is something the outcome FILTER finds, in one click, which is
  * why that row stays while this mode goes.

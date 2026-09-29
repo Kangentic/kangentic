@@ -44,6 +44,7 @@ import {
 } from './memory-graph-scene';
 import { HoverTip } from '../HoverTip';
 import { humanizeModelId } from '../../../shared/model-id';
+import { TASK_OUTCOME_LABELS, type MemoryTaskOutcome } from '../../../shared/memory-task-fields';
 import type {
   MemoryGraphCluster,
   MemoryGraphGranularity,
@@ -1021,14 +1022,10 @@ export function MemoryGraphCanvas({
           `hsl(${28 + rank * 180} ${Math.round(70 - rank * 45)}% ${Math.round(68 - rank * 30)}%)`,
         );
       } else if (colorMode === 'outcome') {
-        // Green shipped, amber still on the board, grey abandoned. These are
-        // genuinely separable now that the lane decides the outcome rather than
-        // `archived_at`; while archiving won, everything finished landed in the
-        // grey bucket and this mode painted a real board one flat colour.
+        // Green done, amber still open, grey for a conversation with no task.
         // Position still carries the topic, so this never relies on colour alone.
         if (node.outcome === 'done') color = toLinearTriplet('hsl(150 58% 55%)');
         else if (node.outcome === 'active') color = toLinearTriplet('hsl(38 75% 58%)');
-        else if (node.outcome === 'abandoned') color = toLinearTriplet('hsl(0 0% 42%)');
         else color = toLinearTriplet('hsl(0 0% 55%)');
       } else {
         // The two MAGNITUDE modes share one ramp, deliberately: they are never
@@ -1654,18 +1651,17 @@ const HOVER_CARD_WIDTH = 260;
 const HOVER_CARD_MAX_HEIGHT = 190;
 
 /**
- * How each outcome presents on the hover card.
+ * How each status presents on the hover card, in the board's own words.
  *
- * A table rather than a chain of ternaries so a new outcome cannot be added
- * without deciding how it reads. Tones match the map's own outcome colouring, so
+ * A table rather than a chain of ternaries so a new status cannot be added
+ * without deciding how it reads. Tones match the map's own status colouring, so
  * the card and the nodes agree.
  */
 const OUTCOME_PRESENTATION: Readonly<
-  Record<'done' | 'active' | 'abandoned' | 'none', { label: string; dot: string } | null>
+  Record<MemoryTaskOutcome | 'none', { label: string; dot: string } | null>
 > = {
-  done: { label: 'Finished', dot: 'bg-active' },
-  active: { label: 'Still open', dot: 'bg-amber-400' },
-  abandoned: { label: 'Dropped', dot: 'bg-fg-faint' },
+  done: { label: TASK_OUTCOME_LABELS.done, dot: 'bg-active' },
+  active: { label: TASK_OUTCOME_LABELS.active, dot: 'bg-amber-400' },
   // A conversation with no task has no outcome to report, and saying so would
   // be noise on every hover in a project that does not link tasks.
   none: null,
@@ -1854,7 +1850,7 @@ function RegionHoverCard({
         <HoverFact label="Conversations" value={summary.count.toLocaleString()} />
         {/* Shipped versus total, because "12 conversations" says nothing about
             whether the area went anywhere. */}
-        <HoverFact label="Finished" value={`${summary.done} of ${summary.count}`} />
+        <HoverFact label={TASK_OUTCOME_LABELS.done} value={`${summary.done} of ${summary.count}`} />
         {summary.durationMs > 0 ? (
           <HoverFact label="Time spent" value={formatDuration(summary.durationMs)} />
         ) : null}

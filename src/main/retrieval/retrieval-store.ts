@@ -858,19 +858,17 @@ export class RetrievalStore {
                 MAX(COALESCE(s.total_input_tokens, 0) + COALESCE(s.total_output_tokens, 0)) AS tokens,
                 MAX(c.ts_end) AS lastActivityMs,
                 -- Where the work ENDED UP, so the map can show which
-                -- explorations shipped and which were abandoned.
+                -- explorations shipped and which are still open.
                 --
-                -- The LANE decides, and archiving does not override it. The
-                -- reverse rule shipped first and is wrong on any real board:
-                -- finished work gets archived once it leaves Done, so on this
-                -- project 485 of 496 tasks are archived AND in a Done lane.
-                -- Letting archived_at win reported every one of them as
-                -- abandoned, which made "reached Done" match nothing at all and
-                -- painted the whole Outcome map one grey. Archiving is board
-                -- tidiness; the column is the verdict.
+                -- A Done lane is done, and so is an archived task wherever its
+                -- lane is now: archive() has exactly one caller, the move into
+                -- Done. Two earlier rules were wrong on the real board. Letting
+                -- archived_at mean "abandoned" reported 485 of 496 finished tasks
+                -- as abandoned; the lane-first fix kept an "abandoned" value for
+                -- archived-outside-Done, which matched 0 of 673 tasks here, since
+                -- the app never produces that state.
                 MAX(CASE
-                  WHEN w.role = 'done' THEN 'done'
-                  WHEN t.archived_at IS NOT NULL THEN 'abandoned'
+                  WHEN w.role = 'done' OR t.archived_at IS NOT NULL THEN 'done'
                   WHEN t.id IS NULL THEN NULL
                   ELSE 'active'
                 END) AS outcome
