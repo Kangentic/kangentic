@@ -1,6 +1,6 @@
 import { listTree, readBranchHead, type BranchHead, type TreeEntry } from '../branch-git';
 import { indexableEntries } from './code-indexer';
-import type { MemoryCodeStatus } from '../../../shared/types';
+import type { KnowledgeGraphCodeStatus } from '../../../shared/types';
 
 /**
  * What the Source code card's status line says: before code is indexed, how
@@ -92,12 +92,12 @@ export interface CodeStatusInput {
 }
 
 /** The status line's facts. Undefined while there is nothing to say yet. */
-export function codeStatus(input: CodeStatusInput): MemoryCodeStatus | undefined {
+export function codeStatus(input: CodeStatusInput): KnowledgeGraphCodeStatus | undefined {
   const minutesFor = (passages: number): number | null => (
     input.chunksPerMinute && input.chunksPerMinute > 0 && passages > 0 ? passages / input.chunksPerMinute : null
   );
   const { progress } = input;
-  const nothingCommitted: MemoryCodeStatus = { state: 'nothing-committed', branch: null, files: 0, passages: 0, embedded: 0, minutesLeft: null };
+  const nothingCommitted: KnowledgeGraphCodeStatus = { state: 'nothing-committed', branch: null, files: 0, passages: 0, embedded: 0, minutesLeft: null };
   if (!input.on || progress.documents === 0) {
     if (input.branchSize === null) return nothingCommitted;
     if (input.branchSize === undefined) {

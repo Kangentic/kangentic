@@ -40,21 +40,21 @@ import { codeIndexOn } from '../../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
 import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
 import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
-import { DigestStore } from '../../retrieval/digest/digest-store';
+import { SummaryStore } from '../../retrieval/summary/summary-store';
 import type {
   SearchHit,
   SearchRequest,
-  MemoryStatus,
-  MemoryGraphSnapshot,
-  MemoryGraphProjectSummary,
-  MemoryRebuildPlan,
-  MemoryGraphQueryResult,
-  MemoryGraphQueryHit,
-  MemoryGraphAnswerResult,
-  MemoryAnswerContext,
-  MemoryAnswerPrewarm,
-  MemoryAnswerStreamEvent,
-  MemoryRelatedTask,
+  KnowledgeGraphStatus,
+  KnowledgeGraphSnapshot,
+  KnowledgeGraphProjectSummary,
+  KnowledgeGraphRebuildPlan,
+  KnowledgeGraphQueryResult,
+  KnowledgeGraphQueryHit,
+  KnowledgeGraphAnswerResult,
+  KnowledgeGraphAnswerContext,
+  KnowledgeGraphAnswerPrewarm,
+  KnowledgeGraphAnswerStreamEvent,
+  KnowledgeGraphRelatedTask,
   Project,
 } from '../../../shared/types';
 
@@ -80,7 +80,7 @@ const RELATED_RESULT_COUNT = 5;
 import type { IpcContext } from '../ipc-context';
 
 /**
- * Every board task with its facts, for the Memory Graph's task table. Empty
+ * Every board task with its facts, for the Knowledge Graph's task table. Empty
  * when the project database cannot be read, which leaves the table to the
  * indexed conversations rather than failing the question.
  */
@@ -111,7 +111,7 @@ function takeAnswerSession(chatId: string, run: AnswerRun, endGeneration?: numbe
     }), { endGeneration });
   } catch (error) {
     // A session that cannot start costs the warm path, not the answer.
-    console.warn('[memory-graph] answer session did not start, answering with a fresh run:', error);
+    console.warn('[knowledge-graph] answer session did not start, answering with a fresh run:', error);
     return null;
   }
 }
@@ -154,8 +154,8 @@ export function registerSearchHandlers(context: IpcContext): void {
       : allProjects.filter((project) => project.id === request.currentProjectId);
     if (projects.length === 0) return [];
 
-    const memoryConfig = context.configManager.load().memory;
-    const indexingEnabled = memoryConfig?.indexingEnabled !== false;
+    const knowledgeGraphConfig = context.configManager.load().knowledgeGraph;
+    const indexingEnabled = knowledgeGraphConfig?.indexingEnabled !== false;
     // Smart mode adds the semantic/hybrid path; the embedder is null when the
     // semantic layer is off or unavailable, so the search stays lexical.
     const embedder = request.mode === 'smart' ? retrievalService.getEmbedder(context) : null;
@@ -169,7 +169,7 @@ export function registerSearchHandlers(context: IpcContext): void {
     });
   });
 
-  ipcMain.handle(IPC.MEMORY_STATUS, async (): Promise<MemoryStatus> => {
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_STATUS, async (): Promise<KnowledgeGraphStatus> => {
     return retrievalService.getStatus(context);
   });
 
@@ -178,7 +178,7 @@ export function registerSearchHandlers(context: IpcContext): void {
   // start. Fire-and-forget; embeds nothing. With a chat, the answering agent's
   // warm session starts too, for an agent that has one. An idle session makes
   // no model call, so this costs a process and nothing else.
-  ipcMain.on(IPC.MEMORY_PREWARM, (_event, chat?: MemoryAnswerPrewarm) => {
+  ipcMain.on(IPC.KNOWLEDGE_GRAPH_PREWARM, (_event, chat?: KnowledgeGraphAnswerPrewarm) => {
     retrievalService.prewarmEmbedWorker(context);
     if (!chat?.chatId) return;
     const homeProjectId = chat.projectId ?? context.currentProjectId;
@@ -190,47 +190,47 @@ export function registerSearchHandlers(context: IpcContext): void {
       .then((resolved) => {
         if (resolved.ok) takeAnswerSession(chat.chatId, resolved.run, endGeneration);
       })
-      .catch((error: unknown) => console.warn('[memory-graph] answer prewarm failed:', error));
+      .catch((error: unknown) => console.warn('[knowledge-graph] answer prewarm failed:', error));
   });
 
   // The chat's warm session is no longer needed: the chat ended, or its graph
   // closed. The next question in a kept chat opens a fresh one carrying the
   // chat so far.
-  ipcMain.on(IPC.MEMORY_GRAPH_END_CHAT, (_event, chatId: string) => {
+  ipcMain.on(IPC.KNOWLEDGE_GRAPH_END_CHAT, (_event, chatId: string) => {
     if (typeof chatId === 'string' && chatId) answerSessionPool.end(chatId);
   });
 
   // The Index card's Rebuild, for every source in every project. Global, like
   // the tab it lives in, so it takes no project.
-  ipcMain.handle(IPC.MEMORY_REBUILD_PLAN, (): Promise<MemoryRebuildPlan> => retrievalService.rebuildPlan(context));
-  ipcMain.handle(IPC.MEMORY_REBUILD_INDEX, (): Promise<MemoryRebuildPlan> => retrievalService.rebuildEverything(context));
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_REBUILD_PLAN, (): Promise<KnowledgeGraphRebuildPlan> => retrievalService.rebuildPlan(context));
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_REBUILD_INDEX, (): Promise<KnowledgeGraphRebuildPlan> => retrievalService.rebuildEverything(context));
 
-  // The selected conversation's task digest, read from the node's OWN project
-  // (the map may show several), and only while digests are switched on.
+  // The selected conversation's task summary, read from the node's OWN project
+  // (the map may show several), and only while summaries are switched on.
   ipcMain.handle(
-    IPC.MEMORY_TASK_DIGEST,
+    IPC.KNOWLEDGE_GRAPH_TASK_SUMMARY,
     (_event, projectId: string, taskId: string): string | null => {
       if (typeof projectId !== 'string' || typeof taskId !== 'string') return null;
       if (!context.projectRepo.list().some((entry) => entry.id === projectId)) return null;
-      return retrievalService.taskDigest(context, projectId, taskId);
+      return retrievalService.taskSummary(context, projectId, taskId);
     },
   );
 
   // A projection pass finishing is pushed rather than polled: the pass can take
-  // a minute on a cold corpus, and MemoryTab already polls memory status on an
+  // a minute on a cold corpus, and KnowledgeGraphTab already polls memory status on an
   // interval - a second poller for the same subsystem is what this avoids.
   // `broadcast`, not webContents.send, or a detached pop-out never updates.
   graphService.setOnChanged((projectId: string) => {
     if (context.mainWindow.isDestroyed()) return;
-    broadcast(context.mainWindow, IPC.MEMORY_GRAPH_CHANGED, projectId);
+    broadcast(context.mainWindow, IPC.KNOWLEDGE_GRAPH_CHANGED, projectId);
   });
 
   ipcMain.handle(
-    IPC.MEMORY_GRAPH_SNAPSHOT,
-    async (_event, projectId?: string | null): Promise<MemoryGraphSnapshot | null> => {
+    IPC.KNOWLEDGE_GRAPH_SNAPSHOT,
+    async (_event, projectId?: string | null): Promise<KnowledgeGraphSnapshot | null> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!resolvedProjectId) return null;
-      const model = resolveEmbeddingModel(context.configManager.load().memory?.embeddingModel);
+      const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
       // Cheap by construction: reads the cache, never runs the pass. Timed as a
       // whole, since an open graph re-reads it on every push.
       return timeSyncWork('ipc:graph-snapshot', () => graphService.getSnapshot(resolvedProjectId, model.modelTag));
@@ -242,8 +242,8 @@ export function registerSearchHandlers(context: IpcContext): void {
   // hit per conversation, which is exactly one graph node. The only work here is
   // translating chunk ids to node keys.
   ipcMain.handle(
-    IPC.MEMORY_GRAPH_QUERY,
-    async (_event, query: string, projectId?: string | null): Promise<MemoryGraphQueryResult> => {
+    IPC.KNOWLEDGE_GRAPH_QUERY,
+    async (_event, query: string, projectId?: string | null): Promise<KnowledgeGraphQueryResult> => {
       const trimmed = (query ?? '').trim();
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!trimmed || !resolvedProjectId) return { query: trimmed, hits: [], semantic: false };
@@ -311,7 +311,7 @@ export function registerSearchHandlers(context: IpcContext): void {
    * entry. It is the auto-name spawn wearing a different output shape.
    */
   ipcMain.handle(
-    IPC.MEMORY_GRAPH_ANSWER,
+    IPC.KNOWLEDGE_GRAPH_ANSWER,
     async (
       _event,
       question: string,
@@ -324,8 +324,8 @@ export function registerSearchHandlers(context: IpcContext): void {
       // moved past are dropped rather than appended to the next one. Defaulted
       // for callers that do not stream (the harness, an older renderer).
       requestId: string = '',
-      answerContext: MemoryAnswerContext = {},
-    ): Promise<MemoryGraphAnswerResult> => {
+      answerContext: KnowledgeGraphAnswerContext = {},
+    ): Promise<KnowledgeGraphAnswerResult> => {
       try {
         const trimmed = (question ?? '').trim();
         if (!trimmed) return { ok: false, reason: 'ask a question first' };
@@ -372,7 +372,7 @@ export function registerSearchHandlers(context: IpcContext): void {
         // scope, or no primed turn yet, sends the whole prompt.
         // Source code, when indexed, is searched beside the tasks and handed as
         // passages; the setting, not what a question finds, decides the rules.
-        const codeIndexed = codeIndexOn(context.configManager.load().memory);
+        const codeIndexed = codeIndexOn(context.configManager.load().knowledgeGraph);
         const scopeSignature = answerScopeSignature(
           scopeProjects.map((entry) => entry.id),
           homeProject.id,
@@ -419,7 +419,7 @@ export function registerSearchHandlers(context: IpcContext): void {
         const projectNameById = new Map(scopeProjects.map((entry) => [entry.id, entry.name]));
         /** The project fields a wire task carries. The name only across projects,
          *  where it is what a row shows. */
-        const projectFields = (taskProjectId: string | undefined): Pick<MemoryRelatedTask, 'projectId' | 'projectName'> => {
+        const projectFields = (taskProjectId: string | undefined): Pick<KnowledgeGraphRelatedTask, 'projectId' | 'projectName'> => {
           const id = taskProjectId ?? homeProject.id;
           const name = acrossProjects ? projectNameById.get(id) : undefined;
           return { projectId: id, ...(name ? { projectName: name } : {}) };
@@ -458,9 +458,9 @@ export function registerSearchHandlers(context: IpcContext): void {
           if (!keyByRef.has(bare)) keyByRef.set(bare, row.key);
         });
 
-        const emit = (event: MemoryAnswerStreamEvent): void => {
+        const emit = (event: KnowledgeGraphAnswerStreamEvent): void => {
           if (context.mainWindow.isDestroyed()) return;
-          broadcast(context.mainWindow, IPC.MEMORY_GRAPH_ANSWER_STREAM, { requestId, ...event });
+          broadcast(context.mainWindow, IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM, { requestId, ...event });
         };
 
         // The related work, found before the agent starts. A follow-up searches
@@ -505,10 +505,10 @@ export function registerSearchHandlers(context: IpcContext): void {
               homeProject.id,
             );
         } catch (error) {
-          console.warn('[memory-graph] related work search failed, answering from the table:', error);
+          console.warn('[knowledge-graph] related work search failed, answering from the table:', error);
           related = { ranked: [], handed: [], passages: new Map(), code: [], semantic: false, elapsedMs: 0 };
         }
-        const toWire = (task: ProjectRelatedWorkTask): MemoryRelatedTask => ({
+        const toWire = (task: ProjectRelatedWorkTask): KnowledgeGraphRelatedTask => ({
           key: task.key,
           taskId: task.taskId,
           displayId: task.displayId,
@@ -522,9 +522,9 @@ export function registerSearchHandlers(context: IpcContext): void {
         const handedWire = related.handed.map(toWire);
         emit({ kind: 'set', related: handedWire, handedCount: related.handed.length });
 
-        // Each handed task's digest, read per project: a task id belongs to one.
-        const digestByTask = timeSyncWork('answer:digests', () => {
-          const digests = new Map<string, string>();
+        // Each handed task's summary, read per project: a task id belongs to one.
+        const summaryByTask = timeSyncWork('answer:summaries', () => {
+          const summaries = new Map<string, string>();
           const taskIdsByProject = new Map<string, string[]>();
           for (const task of related.handed) {
             if (!task.taskId) continue;
@@ -534,14 +534,14 @@ export function registerSearchHandlers(context: IpcContext): void {
           }
           for (const [projectId, taskIds] of taskIdsByProject) {
             try {
-              for (const [taskId, digest] of new DigestStore(getProjectDb(projectId)).digestsFor(taskIds)) {
-                digests.set(`${projectId}:${taskId}`, digest);
+              for (const [taskId, summary] of new SummaryStore(getProjectDb(projectId)).summariesFor(taskIds)) {
+                summaries.set(`${projectId}:${taskId}`, summary);
               }
             } catch {
-              // The related work stands without its digests.
+              // The related work stands without its summaries.
             }
           }
-          return digests;
+          return summaries;
         });
         const relatedForPrompt = related.handed.flatMap((task, index) => {
           const ref = refByKey.get(task.key);
@@ -557,7 +557,7 @@ export function registerSearchHandlers(context: IpcContext): void {
               ? related.passages.get(passageKey(task.projectId, task.bestChunkId)) ?? null
               : null,
             facts: rowByKey.get(task.key) ?? null,
-            digest: task.taskId ? digestByTask.get(`${task.projectId}:${task.taskId}`) ?? null : null,
+            summary: task.taskId ? summaryByTask.get(`${task.projectId}:${task.taskId}`) ?? null : null,
           }];
         });
         const canSearch = retrieval !== undefined;
@@ -667,7 +667,7 @@ export function registerSearchHandlers(context: IpcContext): void {
             .filter((key) => !mentioned.includes(key))
             .sort((left, right) => (relatedByKey.get(right)?.strength ?? 0) - (relatedByKey.get(left)?.strength ?? 0)),
         ];
-        const rows = orderedKeys.flatMap((key): MemoryRelatedTask[] => {
+        const rows = orderedKeys.flatMap((key): KnowledgeGraphRelatedTask[] => {
           const relatedTask = relatedByKey.get(key);
           if (relatedTask) return [toWire(relatedTask)];
           // Selected without the search finding it: a board question ("the
@@ -716,8 +716,8 @@ export function registerSearchHandlers(context: IpcContext): void {
    * work this exists to surface.
    */
   ipcMain.handle(
-    IPC.MEMORY_RELATED_TO_TASK,
-    async (_event, taskId: string, projectId?: string | null): Promise<MemoryGraphQueryHit[]> => {
+    IPC.KNOWLEDGE_GRAPH_RELATED_TO_TASK,
+    async (_event, taskId: string, projectId?: string | null): Promise<KnowledgeGraphQueryHit[]> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!taskId || !resolvedProjectId) return [];
       const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
@@ -790,7 +790,7 @@ export function registerSearchHandlers(context: IpcContext): void {
    * projects, warm). A project whose database cannot be read lists as having
    * nothing indexed rather than failing the whole list.
    */
-  ipcMain.handle(IPC.MEMORY_GRAPH_PROJECTS, (): MemoryGraphProjectSummary[] => {
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_PROJECTS, (): KnowledgeGraphProjectSummary[] => {
     return context.projectRepo.list().map((project) => {
       try {
         const summary = new RetrievalStore(getProjectDb(project.id)).projectIndexSummary();
@@ -809,11 +809,11 @@ export function registerSearchHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(
-    IPC.MEMORY_GRAPH_REFRESH,
+    IPC.KNOWLEDGE_GRAPH_REFRESH,
     async (_event, projectId?: string | null): Promise<void> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!resolvedProjectId) return;
-      const model = resolveEmbeddingModel(context.configManager.load().memory?.embeddingModel);
+      const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
       // Returns immediately. The pass is self-paced in the background, so a
       // handler never performs the scan or the vector math itself.
       graphService.markDirty(resolvedProjectId, model.modelTag, model.dimensions);

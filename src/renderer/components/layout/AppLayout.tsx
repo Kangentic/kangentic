@@ -46,11 +46,11 @@ import { DictationSurface } from '../dictation/DictationSurface';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { StatsPage } from '../stats/StatsPage';
 import { MonitorPage } from '../monitor/MonitorPage';
-import { MemoryGraphPage } from '../memory/MemoryGraphPage';
+import { KnowledgeGraphPage } from '../knowledge-graph/KnowledgeGraphPage';
 import { warmStatsDashboardOnIdle } from '../stats/LazyStatsDashboard';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { useMonitorStore } from '../../stores/monitor-store';
-import { useMemoryGraphStore } from '../../stores/memory-graph-store';
+import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { usePopOut } from '../../pop-out/usePopOut';
 import type { OnboardingStepKey } from '../../../shared/types';
 
@@ -60,8 +60,8 @@ export function AppLayout() {
   const statsPopOut = usePopOut('stats', {});
   const monitorOpen = useMonitorStore((s) => s.monitorOpen);
   const monitorPopOut = usePopOut('monitor', {});
-  const memoryGraphOpen = useMemoryGraphStore((s) => s.graphOpen);
-  const memoryPopOut = usePopOut('memory', {});
+  const knowledgeGraphOpen = useKnowledgeGraphStore((s) => s.graphOpen);
+  const knowledgeGraphPopOut = usePopOut('knowledge-graph', {});
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
   const config = useConfigStore((s) => s.config);
@@ -220,21 +220,21 @@ export function AppLayout() {
     if (statsOpen) useMonitorStore.getState().close();
   }, [statsOpen]);
 
-  // The memory graph is the third full-bleed overlay in the same z-slot, so it
+  // The knowledge graph is the third full-bleed overlay in the same z-slot, so it
   // joins the same mutual-exclusion mesh: its own pop-out closes the overlay,
   // and opening it closes the other two plus the Command Terminal layer (which
   // sits ABOVE at 45 and would otherwise swallow every click).
   useEffect(() => {
-    if (memoryPopOut.isOpen) useMemoryGraphStore.getState().close();
-  }, [memoryPopOut.isOpen]);
+    if (knowledgeGraphPopOut.isOpen) useKnowledgeGraphStore.getState().close();
+  }, [knowledgeGraphPopOut.isOpen]);
   useEffect(() => {
-    if (!memoryGraphOpen) return;
+    if (!knowledgeGraphOpen) return;
     useUsageDashboardStore.getState().close();
     useMonitorStore.getState().close();
     useSessionStore.getState().requestHideCommandBar();
-  }, [memoryGraphOpen]);
+  }, [knowledgeGraphOpen]);
   useEffect(() => {
-    if (statsOpen || monitorOpen) useMemoryGraphStore.getState().close();
+    if (statsOpen || monitorOpen) useKnowledgeGraphStore.getState().close();
   }, [statsOpen, monitorOpen]);
 
   // App-level shortcuts wired here, where the layout owns the relevant state and
@@ -247,10 +247,10 @@ export function AppLayout() {
   });
   useKeybinding('stats.toggle', () => (statsPopOut.isOpen ? statsPopOut.focus() : useUsageDashboardStore.getState().toggle()));
   useKeybinding('monitor.toggle', () => (monitorPopOut.isOpen ? monitorPopOut.focus() : useMonitorStore.getState().toggle()));
-  useKeybinding('memory.toggle', () => (
-    memoryPopOut.isOpen
-      ? memoryPopOut.focus()
-      : useMemoryGraphStore.getState().toggle(currentProject?.id ?? null)
+  useKeybinding('knowledgeGraph.toggle', () => (
+    knowledgeGraphPopOut.isOpen
+      ? knowledgeGraphPopOut.focus()
+      : useKnowledgeGraphStore.getState().toggle(currentProject?.id ?? null)
   ));
   useKeybinding('view.toggleSidebar', () => sidebar.toggle());
   useKeybinding('view.toggleTerminalPanel', () => terminal.onToggleCollapse());
@@ -563,7 +563,7 @@ export function AppLayout() {
       {config.statusBarVisible !== false && <StatusBar />}
       {statsOpen && !statsPopOut.isOpen && <StatsPage />}
       {monitorOpen && !monitorPopOut.isOpen && <MonitorPage />}
-      {memoryGraphOpen && !memoryPopOut.isOpen && <MemoryGraphPage />}
+      {knowledgeGraphOpen && !knowledgeGraphPopOut.isOpen && <KnowledgeGraphPage />}
       {settingsOpen && <SettingsPanel />}
       {commandBar.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}

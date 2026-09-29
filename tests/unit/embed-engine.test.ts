@@ -22,7 +22,7 @@ import { isEmbeddingModelPresent } from '../../src/main/retrieval/embedder/embed
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { StoredChunk } from '../../src/main/retrieval/types';
 import type { EmbeddingModelDef } from '../../src/main/retrieval/embedder/embedding-config';
-import type { MemoryAcceleration } from '../../src/shared/types';
+import type { KnowledgeGraphAcceleration } from '../../src/shared/types';
 
 /**
  * The central embedding engine's scheduling contract: the duty-cycle pacer
@@ -107,10 +107,10 @@ function makeFakeClient(overrides?: Partial<EmbedWorkerClient>): EmbedWorkerClie
   };
 }
 
-function makeContext(overrides?: { currentProjectId?: string | null; semanticEnabled?: boolean }): IpcContext {
+function makeContext(overrides?: { currentProjectId?: string | null; enabled?: boolean }): IpcContext {
   return {
     configManager: {
-      load: () => ({ memory: { semanticEnabled: overrides?.semanticEnabled ?? true } }),
+      load: () => ({ knowledgeGraph: { enabled: overrides?.enabled ?? true } }),
     },
     currentProjectId: overrides?.currentProjectId ?? null,
   } as unknown as IpcContext;
@@ -362,7 +362,7 @@ describe('createEmbedEngine drain loop', () => {
     });
 
     engine.attach(makeContext({ currentProjectId: 'proj-caught-up' }));
-    // The Memory tab re-marks the project on every 1.5 s poll.
+    // The Knowledge Graph tab re-marks the project on every 1.5 s poll.
     engine.markDirty('proj-caught-up');
     engine.markDirty('proj-caught-up');
     engine.markDirty('proj-caught-up');
@@ -499,7 +499,7 @@ describe('createEmbedEngine drain loop', () => {
       delay: immediateDelay,
     });
 
-    engine.attach(makeContext({ currentProjectId: 'proj-e', semanticEnabled: false }));
+    engine.attach(makeContext({ currentProjectId: 'proj-e', enabled: false }));
     engine.markDirty('proj-e');
 
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -519,7 +519,7 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-disabled', semanticEnabled: false });
+    const context = makeContext({ currentProjectId: 'proj-disabled', enabled: false });
     expect(engine.getEmbedder(context)).toBeNull();
   });
 
@@ -533,7 +533,7 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-missing-model', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-missing-model', enabled: true });
     expect(engine.getEmbedder(context)).toBeNull();
   });
 
@@ -546,7 +546,7 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-crashed', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-crashed', enabled: true });
     expect(engine.getEmbedder(context)).toBeNull();
   });
 
@@ -559,7 +559,7 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-healthy', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-healthy', enabled: true });
     expect(engine.getEmbedder(context)).toBe(client);
     // A query never holds the worker; its own embed() re-arms the idle timer.
     expect(client.setWarmHold).not.toHaveBeenCalled();
@@ -576,14 +576,14 @@ describe('createEmbedEngine prewarm', () => {
       delay: immediateDelay,
     });
 
-    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: false }));
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', enabled: false }));
     expect(healthy.prewarm).not.toHaveBeenCalled();
 
     vi.mocked(isEmbeddingModelPresent).mockReturnValueOnce(false);
-    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: true }));
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', enabled: true }));
     expect(healthy.prewarm).not.toHaveBeenCalled();
 
-    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: true }));
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', enabled: true }));
     expect(healthy.prewarm).toHaveBeenCalledTimes(1);
     expect(healthy.embed).not.toHaveBeenCalled();
     expect(healthy.setWarmHold).not.toHaveBeenCalled();
@@ -595,7 +595,7 @@ describe('createEmbedEngine prewarm', () => {
       createClient: () => crashed,
       delay: immediateDelay,
     });
-    crashedEngine.prewarm(makeContext({ currentProjectId: 'proj-prewarm-crashed', semanticEnabled: true }));
+    crashedEngine.prewarm(makeContext({ currentProjectId: 'proj-prewarm-crashed', enabled: true }));
     expect(crashed.prewarm).not.toHaveBeenCalled();
   });
 });
@@ -631,7 +631,7 @@ describe('createEmbedEngine workerCrashReason', () => {
       createClient: () => crashedClient,
       delay: immediateDelay,
     });
-    const context = makeContext({ currentProjectId: 'proj-crashed', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-crashed', enabled: true });
 
     // getEmbedder() is what populates the engine's client reference (it
     // returns null itself, since a crashed client degrades the query path -
@@ -651,7 +651,7 @@ describe('createEmbedEngine reconcile', () => {
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-warm', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-warm', enabled: true });
     // Seed the shared client via the query path first, so there is something
     // for reconcile to keep. attach() is deliberately NOT called here: the
     // dispose branch of reconcile is synchronous and does not depend on the
@@ -677,11 +677,11 @@ describe('createEmbedEngine reconcile', () => {
       delay: immediateDelay,
     });
 
-    const enabledContext = makeContext({ currentProjectId: 'proj-cold', semanticEnabled: true });
+    const enabledContext = makeContext({ currentProjectId: 'proj-cold', enabled: true });
     engine.getEmbedder(enabledContext);
     expect(client.dispose).not.toHaveBeenCalled();
 
-    const disabledContext = makeContext({ currentProjectId: 'proj-cold', semanticEnabled: false });
+    const disabledContext = makeContext({ currentProjectId: 'proj-cold', enabled: false });
     engine.reconcile(disabledContext);
 
     expect(client.dispose).toHaveBeenCalledTimes(1);
@@ -696,11 +696,11 @@ describe('createEmbedEngine reconcile', () => {
       delay: immediateDelay,
     });
 
-    const openContext = makeContext({ currentProjectId: 'proj-none', semanticEnabled: true });
+    const openContext = makeContext({ currentProjectId: 'proj-none', enabled: true });
     engine.getEmbedder(openContext);
     expect(client.dispose).not.toHaveBeenCalled();
 
-    const noProjectContext = makeContext({ currentProjectId: null, semanticEnabled: true });
+    const noProjectContext = makeContext({ currentProjectId: null, enabled: true });
     engine.reconcile(noProjectContext);
 
     expect(client.dispose).toHaveBeenCalledTimes(1);
@@ -720,7 +720,7 @@ describe('createEmbedEngine reconcile', () => {
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-reconcile-dirty', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-reconcile-dirty', enabled: true });
     engine.attach(context);
 
     // No markDirty call here -- reconcile itself is what must flag the project.
@@ -736,17 +736,17 @@ describe('createEmbedEngine reconcile', () => {
 describe('createEmbedEngine getClientFor model/acceleration switch', () => {
   function makeMutableContext(initial: {
     currentProjectId?: string | null;
-    semanticEnabled?: boolean;
-    embeddingModel?: string;
-    acceleration?: MemoryAcceleration;
+    enabled?: boolean;
+    localModel?: string;
+    acceleration?: KnowledgeGraphAcceleration;
   }): { context: IpcContext; state: typeof initial } {
     const state = { ...initial };
     const context = {
       configManager: {
         load: () => ({
-          memory: {
-            semanticEnabled: state.semanticEnabled ?? true,
-            embeddingModel: state.embeddingModel,
+          knowledgeGraph: {
+            enabled: state.enabled ?? true,
+            localModel: state.localModel,
             acceleration: state.acceleration,
           },
         }),
@@ -760,7 +760,7 @@ describe('createEmbedEngine getClientFor model/acceleration switch', () => {
 
   it('disposes the old client and creates a fresh one when the selected model changes', () => {
     const createdClients: EmbedWorkerClient[] = [];
-    const createClient = vi.fn((model: EmbeddingModelDef, _acceleration: MemoryAcceleration): EmbedWorkerClient => {
+    const createClient = vi.fn((model: EmbeddingModelDef, _acceleration: KnowledgeGraphAcceleration): EmbedWorkerClient => {
       const instance = makeFakeClient({ modelTag: model.modelTag, dimensions: model.dimensions });
       createdClients.push(instance);
       return instance;
@@ -775,14 +775,14 @@ describe('createEmbedEngine getClientFor model/acceleration switch', () => {
 
     const { context, state } = makeMutableContext({
       currentProjectId: 'proj-model-switch',
-      embeddingModel: 'bge-small',
+      localModel: 'bge-small',
     });
 
     const first = engine.getEmbedder(context);
     expect(createClient).toHaveBeenCalledTimes(1);
     expect(first).toBe(createdClients[0]);
 
-    state.embeddingModel = 'bge-large';
+    state.localModel = 'bge-large';
     const second = engine.getEmbedder(context);
 
     expect(createdClients[0].dispose).toHaveBeenCalledTimes(1);
@@ -793,7 +793,7 @@ describe('createEmbedEngine getClientFor model/acceleration switch', () => {
 
   it('disposes the old client and creates a fresh one when the acceleration preference changes', () => {
     const createdClients: EmbedWorkerClient[] = [];
-    const createClient = vi.fn((_model: EmbeddingModelDef, _acceleration: MemoryAcceleration): EmbedWorkerClient => {
+    const createClient = vi.fn((_model: EmbeddingModelDef, _acceleration: KnowledgeGraphAcceleration): EmbedWorkerClient => {
       const instance = makeFakeClient();
       createdClients.push(instance);
       return instance;

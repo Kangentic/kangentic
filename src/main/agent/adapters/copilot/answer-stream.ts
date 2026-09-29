@@ -1,5 +1,5 @@
 /**
- * Copilot's `--output-format json` stream, read for a Memory Graph answer.
+ * Copilot's `--output-format json` stream, read for a Knowledge Graph answer.
  *
  * One JSON object per line, each `{ type, data }`. Captured on CLI 1.0.88:
  *

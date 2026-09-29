@@ -1,5 +1,5 @@
 /**
- * How each agent's Memory Graph answer run is invoked: the flags that keep it
+ * How each agent's Knowledge Graph answer run is invoked: the flags that keep it
  * read-only, and a prompt delivery that carries an answer-sized prompt.
  *
  * Every entry here was measured against the real CLI on 2026-09-25 (a

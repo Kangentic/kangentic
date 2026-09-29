@@ -4,7 +4,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useBacklogStore } from '../../stores/backlog-store';
-import { useMemoryGraphStore } from '../../stores/memory-graph-store';
+import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useToastStore } from '../../stores/toast-store';
 import { formatRelativeTime } from '../../lib/datetime';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
@@ -48,7 +48,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
   // numbers, backlog, and conversations. Meaning-based search lives in the
   // Knowledge Graph, which the last row hands a query to. Opening Quick Find
   // starts no embedding model.
-  const memoryPopOut = usePopOut('memory', {});
+  const knowledgeGraphPopOut = usePopOut('knowledge-graph', {});
   // The last search that settled, stamped with the key it ran for. `results`
   // and `isSearching` derive from it against the current key, so a new query
   // reads as searching at once and a cleared one as empty, with no effect
@@ -230,15 +230,15 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
   /** Hand what was typed to the Knowledge Graph, which asks it. */
   const askKnowledgeGraph = useCallback(() => {
     if (!trimmedQuery) return;
-    if (memoryPopOut.isOpen) {
+    if (knowledgeGraphPopOut.isOpen) {
       // The detached graph is its own window with its own store, so the
       // question cannot be handed across; bring that window forward instead.
-      memoryPopOut.focus();
+      knowledgeGraphPopOut.focus();
     } else {
-      useMemoryGraphStore.getState().askInGraph(trimmedQuery, currentProjectId);
+      useKnowledgeGraphStore.getState().askInGraph(trimmedQuery, currentProjectId);
     }
     requestClose();
-  }, [trimmedQuery, memoryPopOut, currentProjectId, requestClose]);
+  }, [trimmedQuery, knowledgeGraphPopOut, currentProjectId, requestClose]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {

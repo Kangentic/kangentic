@@ -38,7 +38,7 @@ export function registerSearchTools(
   server: McpServer,
   resolver: RequestResolver,
   /** The caller segment of the request's URL. An answer caller's searches are
-   *  published to the Memory Graph trace (`answer-search-trace.ts`). */
+   *  published to the Knowledge Graph trace (`answer-search-trace.ts`). */
   callerSessionId?: string,
 ): void {
   server.registerTool(
@@ -145,7 +145,7 @@ export function registerSearchTools(
 
 /**
  * `groupBy: "task"`: the tasks whose conversations are about the query, ranked
- * by the same rollup the Memory Graph's Ask uses (`related-work.ts`), so a
+ * by the same rollup the Knowledge Graph's Ask uses (`related-work.ts`), so a
  * count or a superlative over a topic is a lookup rather than a pile of
  * snippets the agent has to tally itself.
  *

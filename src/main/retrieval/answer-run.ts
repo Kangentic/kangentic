@@ -4,7 +4,7 @@ import { appendAnswerCaller } from '../agent/mcp-http/caller-url';
 import { agentJobChoice, answerSetupGap, resolveAnswerAgent, type AgentJob } from '../../shared/answer-agent';
 import type { IpcContext } from '../ipc/ipc-context';
 
-/** How a question, or a batch of task digests, is answered: which agent, CLI,
+/** How a question, or a batch of task summaries, is answered: which agent, CLI,
  *  model, effort and search URL. A warm session is started under exactly
  *  these, summed up as `sessionKey`. */
 export interface AnswerRun {
@@ -26,18 +26,18 @@ export type AnswerRunResolution =
   | { ok: false; failure: { ok: false; reason: string; setup?: 'agent' | 'model' } };
 
 /**
- * Resolve the search agent for a question, a prewarm, or a digest batch,
+ * Resolve the search agent for a question, a prewarm, or a summary batch,
  * through the SHARED rule the renderer uses to decide whether a question runs
  * or goes to Settings first, so the two can never disagree. The rule is
  * explicit: the configured agent and model, with no fallback to the project's
  * agent or to any capable one.
  *
  * Both jobs read the Knowledge Graph card's one choice. `job` only decides the
- * effort: a question runs at the chosen level, a digest batch always at the
+ * effort: a question runs at the chosen level, a summary batch always at the
  * adapter's recommended one (`agentJobChoice`).
  *
  * `withSearch: false` resolves a run with no tool at all, which is what a
- * digest batch needs: it summarizes what it is handed.
+ * summary batch needs: it summarizes what it is handed.
  */
 export async function resolveAnswerRun(
   context: IpcContext,
@@ -59,7 +59,7 @@ export async function resolveAnswerRun(
       : [];
   });
   const job = options.job ?? 'answer';
-  const choice = agentJobChoice(config.memory, job);
+  const choice = agentJobChoice(config.knowledgeGraph, job);
   const configuredAgent = choice.agent;
   const configuredModel = choice.model;
   const setup = answerSetupGap({ agents, configured: configuredAgent, configuredModel });

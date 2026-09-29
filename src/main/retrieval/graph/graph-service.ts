@@ -1,5 +1,5 @@
 /**
- * Orchestrates the Memory Graph's projection cache for the IPC layer.
+ * Orchestrates the Knowledge Graph's projection cache for the IPC layer.
  *
  * The division of labour matters and is enforced by
  * `.claude/rules/central-embedding-engine.md`'s sibling reasoning: an IPC
@@ -20,11 +20,11 @@
 
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
-import { DigestStore } from '../digest/digest-store';
+import { SummaryStore } from '../summary/summary-store';
 import { CONVERSATION_CORPUS, isEmbeddedCorpus, MEMORY_CORPORA } from '../corpora';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import type { MemoryGraphGranularity, MemoryGraphProjection, MemoryGraphSnapshot, MemoryIndexSummary } from '../../../shared/types';
+import type { KnowledgeGraphGranularity, KnowledgeGraphProjection, KnowledgeGraphSnapshot, KnowledgeGraphIndexSummary } from '../../../shared/types';
 import {
   runProjectionPass,
   readCachedProjection,
@@ -33,7 +33,7 @@ import {
 } from './projection-engine';
 import { LABELLER_VERSION } from './cluster-labels';
 import {
-  DIGESTS_OFF,
+  SUMMARIES_OFF,
   REGION_NAMES_KEY,
   nameRegions,
   parseStoredRegionNames,
@@ -44,14 +44,14 @@ import {
 } from './region-names';
 
 /**
- * The snapshot IS the IPC payload (`MemoryGraphSnapshot` in shared/types), one
+ * The snapshot IS the IPC payload (`KnowledgeGraphSnapshot` in shared/types), one
  * definition rather than an internal shape plus a wire shape. Field meanings
  * are documented there; the notable ones are `stale` (a stale projection is
  * still SERVED, because a slightly old map beats a blank one) and
  * `semanticAvailable` (false when sqlite-vec is missing, so the UI can say the
  * semantic layer is off instead of implying an empty index).
  */
-export type GraphSnapshot = MemoryGraphSnapshot;
+export type GraphSnapshot = KnowledgeGraphSnapshot;
 
 /**
  * Duty cycle for a project's very first projection, where no cached map exists
@@ -62,9 +62,9 @@ export type GraphSnapshot = MemoryGraphSnapshot;
 const FIRST_BUILD_DUTY_CYCLE = 0.45;
 
 /**
- * The most often a project's region names are made again while its digests are
+ * The most often a project's region names are made again while its summaries are
  * still being written, unless a pass says it has caught up. A backfill writes
- * thirty digests every few seconds, and renaming on each would move the names
+ * thirty summaries every few seconds, and renaming on each would move the names
  * under the reader about twenty times in three minutes.
  */
 const REGION_NAMES_INTERVAL_MS = 5 * 60_000;
@@ -74,17 +74,17 @@ interface RunningPass {
   readonly promise: Promise<void>;
 }
 
-/** What region names read from a project's digests. */
-interface DigestSource {
+/** What region names read from a project's summaries. */
+interface SummarySource {
   fingerprint(): string;
-  all(): Map<string, { digest: string }>;
+  all(): Map<string, { summary: string }>;
 }
 
 export interface GraphServiceDeps {
   readonly getDb?: (projectId: string) => ReturnType<typeof getProjectDb>;
   readonly onChanged?: (projectId: string) => void;
-  /** A project's digests. Injected for tests. */
-  readonly digests?: (projectId: string) => DigestSource;
+  /** A project's summaries. Injected for tests. */
+  readonly summaries?: (projectId: string) => SummarySource;
   /** Epoch ms. Injected for tests. */
   readonly now?: () => number;
 }
@@ -123,13 +123,13 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   // Settable rather than constructor-only: the singleton is created at import
   // time but the push target (the main window) only exists once IPC registers.
   let onChanged: ((projectId: string) => void) | undefined = deps.onChanged;
-  /** How many Done tasks the digest scheduler passed over, by project. Set
+  /** How many Done tasks the summary scheduler passed over, by project. Set
    *  by the retrieval service, which owns the scheduler and imports this module. */
-  let digestsSkipped: ((projectId: string) => number) | undefined;
-  /** Whether region names read digests: task digests switched on. Set by the
+  let summariesSkipped: ((projectId: string) => number) | undefined;
+  /** Whether region names read summaries: task summaries switched on. Set by the
    *  retrieval service, which reads the config. */
-  let digestNamesOn: () => boolean = () => false;
-  const digestsFor = deps.digests ?? ((projectId: string): DigestSource => new DigestStore(getDb(projectId)));
+  let summaryNamesOn: () => boolean = () => false;
+  const summariesFor = deps.summaries ?? ((projectId: string): SummarySource => new SummaryStore(getDb(projectId)));
   const now = deps.now ?? Date.now;
   const naming = new Map<string, NamingState>();
 
@@ -137,31 +137,31 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     return new RetrievalStore(getDb(projectId));
   }
 
-  /** What a project's region names read now: `DIGESTS_OFF`, or its digests'
+  /** What a project's region names read now: `SUMMARIES_OFF`, or its summaries'
    *  fingerprint (one small read). */
-  function digestKeyFor(projectId: string): string {
-    if (!digestNamesOn()) return DIGESTS_OFF;
+  function summaryKeyFor(projectId: string): string {
+    if (!summaryNamesOn()) return SUMMARIES_OFF;
     try {
-      return digestsFor(projectId).fingerprint();
+      return summariesFor(projectId).fingerprint();
     } catch {
-      return DIGESTS_OFF;
+      return SUMMARIES_OFF;
     }
   }
 
   /**
    * The cached map with its stored region names over it. Names made for
-   * another map, another labeller or the other digest setting are not shown,
-   * and new ones are asked for at once; names a few digests behind are shown
+   * another map, another labeller or the other summary setting are not shown,
+   * and new ones are asked for at once; names a few summaries behind are shown
    * while new ones wait their turn.
    */
-  function named(projectId: string, store: RetrievalStore, projection: MemoryGraphProjection | null): MemoryGraphProjection | null {
+  function named(projectId: string, store: RetrievalStore, projection: KnowledgeGraphProjection | null): KnowledgeGraphProjection | null {
     if (!projection) return projection;
-    const digests = digestKeyFor(projectId);
+    const summaries = summaryKeyFor(projectId);
     const stored = parseStoredRegionNames(store.getMeta(REGION_NAMES_KEY));
-    if (!regionNamesCurrent(stored, projection.signature, digests)) {
-      scheduleRegionNames(projectId, !regionNamesUsable(stored, projection.signature, digests));
+    if (!regionNamesCurrent(stored, projection.signature, summaries)) {
+      scheduleRegionNames(projectId, !regionNamesUsable(stored, projection.signature, summaries));
     }
-    return withRegionNames(projection, stored, digests);
+    return withRegionNames(projection, stored, summaries);
   }
 
   /**
@@ -173,21 +173,21 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     const store = storeFor(projectId);
     const projection = readCachedProjection(store);
     if (!projection) return false;
-    const digests = digestKeyFor(projectId);
-    if (regionNamesCurrent(parseStoredRegionNames(store.getMeta(REGION_NAMES_KEY)), projection.signature, digests)) return false;
-    let digestByTask: Map<string, string> | null = null;
-    if (digests !== DIGESTS_OFF) {
-      digestByTask = new Map([...digestsFor(projectId).all()].map(([taskId, entry]) => [taskId, entry.digest]));
+    const summaries = summaryKeyFor(projectId);
+    if (regionNamesCurrent(parseStoredRegionNames(store.getMeta(REGION_NAMES_KEY)), projection.signature, summaries)) return false;
+    let summaryByTask: Map<string, string> | null = null;
+    if (summaries !== SUMMARIES_OFF) {
+      summaryByTask = new Map([...summariesFor(projectId).all()].map(([taskId, entry]) => [taskId, entry.summary]));
     }
-    const names: Partial<Record<MemoryGraphGranularity, Record<number, string>>> = {};
+    const names: Partial<Record<KnowledgeGraphGranularity, Record<number, string>>> = {};
     for (const clustering of projection.clusterings) {
-      names[clustering.granularity] = timeSyncWork('graph:region-names', () => nameRegions(projection, clustering.granularity, digestByTask));
+      names[clustering.granularity] = timeSyncWork('graph:region-names', () => nameRegions(projection, clustering.granularity, summaryByTask));
       await yieldTurn();
     }
     // A map rebuilt meanwhile has other regions, so these names are not for it.
     const latest = readCachedProjection(store);
     if (!latest || latest.signature !== projection.signature) return false;
-    const stored: StoredRegionNames = { signature: projection.signature, labellerVersion: LABELLER_VERSION, digests, names };
+    const stored: StoredRegionNames = { signature: projection.signature, labellerVersion: LABELLER_VERSION, summaries, names };
     store.setMeta(REGION_NAMES_KEY, JSON.stringify(stored));
     return true;
   }
@@ -227,7 +227,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     try {
       if (await makeRegionNames(projectId)) onChanged?.(projectId);
     } catch (error) {
-      console.error('[memory-graph] region names failed:', error);
+      console.error('[knowledge-graph] region names failed:', error);
     } finally {
       state.running = false;
       state.lastRunAt = now();
@@ -273,7 +273,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     store: RetrievalStore,
     projection: GraphSnapshot['projection'],
     dimensions: number,
-  ): MemoryIndexSummary {
+  ): KnowledgeGraphIndexSummary {
     const fingerprint = store.corpusFingerprint();
     let cached = corpusCache.get(projectId);
     if (!cached || cached.fingerprint !== fingerprint) {
@@ -300,18 +300,18 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       .reduce((total, entry) => total + entry.embeddedChunks, 0);
     return {
       corpora,
-      digests: digestCounts(projectId, store),
+      summaries: summaryCounts(projectId, store),
       storageBytes: (projection?.storageBytes ?? 0) + cached.otherTextBytes + otherEmbedded * dimensions * 4,
       lastIndexedAt: store.lastIndexedAt(),
     };
   }
 
-  /** Digests written, of the finished tasks: two small reads, never cached, so
+  /** Summaries written, of the finished tasks: two small reads, never cached, so
    *  the row moves as the background backfill writes. */
-  function digestCounts(projectId: string, store: RetrievalStore): MemoryIndexSummary['digests'] {
-    const skipped = digestsSkipped?.(projectId) ?? 0;
+  function summaryCounts(projectId: string, store: RetrievalStore): KnowledgeGraphIndexSummary['summaries'] {
+    const skipped = summariesSkipped?.(projectId) ?? 0;
     try {
-      return { ...store.digestCounts(), skipped };
+      return { ...store.summaryCounts(), skipped };
     } catch {
       return { written: 0, finishedTasks: 0, skipped };
     }
@@ -353,18 +353,18 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       onChanged = listener;
     },
 
-    /** Register where the Index reads how many tasks digests passed over. */
-    setDigestsSkipped(provider: (projectId: string) => number): void {
-      digestsSkipped = provider;
+    /** Register where the Index reads how many tasks summaries passed over. */
+    setSummariesSkipped(provider: (projectId: string) => number): void {
+      summariesSkipped = provider;
     },
 
-    /** Register whether region names read digests (task digests switched on). */
-    setDigestNamesOn(provider: () => boolean): void {
-      digestNamesOn = provider;
+    /** Register whether region names read summaries (task summaries switched on). */
+    setSummaryNamesOn(provider: () => boolean): void {
+      summaryNamesOn = provider;
     },
 
     /**
-     * Digests were written: make the region names again. `urgent` when the
+     * Summaries were written: make the region names again. `urgent` when the
      * backfill has caught up, so the last names land at once; otherwise at
      * most once every `REGION_NAMES_INTERVAL_MS`.
      */
@@ -457,11 +457,11 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
             const state = naming.get(projectId);
             if (state) state.lastRunAt = now();
           } catch (error) {
-            console.error('[memory-graph] region names failed:', error);
+            console.error('[knowledge-graph] region names failed:', error);
           }
           onChanged?.(projectId);
         } catch (error) {
-          console.error('[memory-graph] projection pass failed:', error);
+          console.error('[knowledge-graph] projection pass failed:', error);
         } finally {
           running.delete(projectId);
         }

@@ -18,7 +18,7 @@ import { requestWindowClose } from '../store/window-close-registry';
  * window would this click close", never "does this click close anything". That
  * second question is the denylist's job (see `isDismissibleDeadArea`).
  */
-export type DismissScope = 'board' | 'monitor' | 'memory';
+export type DismissScope = 'board' | 'monitor' | 'knowledge-graph';
 
 /** Pointer travel (px) above which a press is a drag, not a click, so a text
  *  selection or board pan that releases on empty board never dismisses. Matches

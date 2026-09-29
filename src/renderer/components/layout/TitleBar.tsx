@@ -6,11 +6,11 @@ import { useSessionStore } from '../../stores/session-store';
 import { useUpdaterStore } from '../../stores/updater-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { useMonitorStore } from '../../stores/monitor-store';
-import { useMemoryGraphStore } from '../../stores/memory-graph-store';
+import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useAnnouncementsStore, selectUnreadAnnouncementCount } from '../../stores/announcements-store';
 import { CountBadge } from '../CountBadge';
 import { warmStatsDashboard } from '../stats/LazyStatsDashboard';
-import { warmMemoryGraph } from '../memory/LazyMemoryGraph';
+import { warmKnowledgeGraph } from '../knowledge-graph/LazyKnowledgeGraph';
 import { usePopOut } from '../../pop-out/usePopOut';
 import { selectCommandTerminalSummary } from '../../stores/session-store/transient-session-slice';
 import { CommandTerminalIcon } from '../command-bar/CommandTerminalIcon';
@@ -64,7 +64,7 @@ export function TitleBar({
   const settingsCombo = useFormattedCombo('settings.toggle');
   const statsCombo = useFormattedCombo('stats.toggle');
   const monitorCombo = useFormattedCombo('monitor.toggle');
-  const memoryCombo = useFormattedCombo('memory.toggle');
+  const knowledgeGraphCombo = useFormattedCombo('knowledgeGraph.toggle');
 
   // Store-direct like the Settings gear (statsOpen is dashboard-store state).
   const statsOpen = useUsageDashboardStore((state) => state.statsOpen);
@@ -87,15 +87,15 @@ export function TitleBar({
   // toggling the (suppressed) in-app overlay.
   const monitorPopOut = usePopOut('monitor', {});
 
-  const memoryGraphOpen = useMemoryGraphStore((state) => state.graphOpen);
-  const toggleMemoryGraph = useMemoryGraphStore((state) => state.toggle);
-  const memoryPopOut = usePopOut('memory', {});
+  const knowledgeGraphOpen = useKnowledgeGraphStore((state) => state.graphOpen);
+  const toggleKnowledgeGraph = useKnowledgeGraphStore((state) => state.toggle);
+  const knowledgeGraphPopOut = usePopOut('knowledge-graph', {});
   // Only the lazy chunk is warmed, not a payload: unlike stats there is nothing
   // to prefetch here. The snapshot read is already cheap by construction (main
   // never runs the projection pass in a handler), and the expensive part is a
   // background pass that hovering must not kick off.
-  const handleMemoryHover = () => {
-    warmMemoryGraph();
+  const handleKnowledgeGraphHover = () => {
+    warmKnowledgeGraph();
   };
 
   const announcementsOpen = useAnnouncementsStore((state) => state.historyOpen);
@@ -273,14 +273,14 @@ export function TitleBar({
             is fixed by whatever comes AFTER it: appending here instead would
             shift Quick Find, settings, and the OS window controls. */}
         <button
-          onClick={() => (memoryPopOut.isOpen ? memoryPopOut.focus() : toggleMemoryGraph(currentProject?.id ?? null))}
-          onMouseEnter={handleMemoryHover}
+          onClick={() => (knowledgeGraphPopOut.isOpen ? knowledgeGraphPopOut.focus() : toggleKnowledgeGraph(currentProject?.id ?? null))}
+          onMouseEnter={handleKnowledgeGraphHover}
           className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
-            memoryGraphOpen || memoryPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+            knowledgeGraphOpen || knowledgeGraphPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
           }`}
-          title={memoryPopOut.isOpen ? 'Focus Knowledge Graph window' : `Knowledge Graph (${memoryCombo})`}
+          title={knowledgeGraphPopOut.isOpen ? 'Focus Knowledge Graph window' : `Knowledge Graph (${knowledgeGraphCombo})`}
           aria-label="Knowledge Graph"
-          data-testid="memory-graph-button"
+          data-testid="knowledge-graph-button"
         >
           <Brain size={20} />
         </button>

@@ -1035,7 +1035,7 @@ the right and the box goes. Follow-ups go in the chat's own box, and the **X** i
 the chat and brings the box back. The chat is not saved, and it also ends when you switch projects.
 
 **Set first, answer on top.** Before the agent starts, Kangentic searches every indexed conversation
-and every task's own record (its title, labels, description and digest) for the question, locally
+and every task's own record (its title, labels, description and summary) for the question, locally
 and in under a second, and rolls the matches up per task. A task's record can bring it in even when
 none of its conversations was indexed, as long as the map is not filtered. The map lights
 that related set at once, brighter where a task matches more strongly, and the chat reads "Reading
@@ -1050,7 +1050,7 @@ question: a filtered map means a filtered table and a filtered search, so the ch
 them.
 
 **How it answers.** The agent is handed the related tasks with their strongest passages, facts and
-digests, a complete table of every task in scope, and the chat so far. The table holds every task on the
+summaries, a complete table of every task in scope, and the chat so far. The table holds every task on the
 board, including ones with no indexed conversation, and settles factual questions exactly: what
 each task cost, how long it ran, its tokens, how many sessions it took, how many files and lines
 its branch changed, which pull request it opened and whether that merged, when it was last active,

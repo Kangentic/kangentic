@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, MemoryAnswerStreamPush } from '../shared/types';
-import type { MemoryAnswerContext } from '../shared/types';
+import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush } from '../shared/types';
+import type { KnowledgeGraphAnswerContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -782,36 +782,36 @@ const api: ElectronAPI = {
       ipcRenderer.invoke(IPC.TRANSCRIPT_LIST_SESSIONS, taskId, projectId),
   },
 
-  memory: {
-    getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
-    prewarm: (chat) => ipcRenderer.send(IPC.MEMORY_PREWARM, chat),
-    endChat: (chatId) => ipcRenderer.send(IPC.MEMORY_GRAPH_END_CHAT, chatId),
-    rebuildPlan: () => ipcRenderer.invoke(IPC.MEMORY_REBUILD_PLAN),
-    rebuildIndex: () => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX),
-    taskDigest: (projectId, taskId) => ipcRenderer.invoke(IPC.MEMORY_TASK_DIGEST, projectId, taskId),
-    graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_SNAPSHOT, projectId),
-    graphProjects: () => ipcRenderer.invoke(IPC.MEMORY_GRAPH_PROJECTS),
-    refreshGraph: (projectId) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_REFRESH, projectId),
+  knowledgeGraph: {
+    getStatus: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_STATUS),
+    prewarm: (chat) => ipcRenderer.send(IPC.KNOWLEDGE_GRAPH_PREWARM, chat),
+    endChat: (chatId) => ipcRenderer.send(IPC.KNOWLEDGE_GRAPH_END_CHAT, chatId),
+    rebuildPlan: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REBUILD_PLAN),
+    rebuildIndex: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REBUILD_INDEX),
+    taskSummary: (projectId, taskId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_TASK_SUMMARY, projectId, taskId),
+    graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_SNAPSHOT, projectId),
+    graphProjects: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_PROJECTS),
+    refreshGraph: (projectId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REFRESH, projectId),
     queryGraph: (query: string, projectId?: string | null) =>
-      ipcRenderer.invoke(IPC.MEMORY_GRAPH_QUERY, query, projectId),
+      ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_QUERY, query, projectId),
     answerFromGraph: (
       question: string,
       projectId?: string | null,
       granularity?: string,
       requestId?: string,
-      context?: MemoryAnswerContext,
-    ) => ipcRenderer.invoke(IPC.MEMORY_GRAPH_ANSWER, question, projectId, granularity, requestId, context),
+      context?: KnowledgeGraphAnswerContext,
+    ) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_ANSWER, question, projectId, granularity, requestId, context),
     relatedToTask: (taskId: string, projectId?: string | null) =>
-      ipcRenderer.invoke(IPC.MEMORY_RELATED_TO_TASK, taskId, projectId),
+      ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_RELATED_TO_TASK, taskId, projectId),
     onGraphChanged: (callback: (projectId: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
-      ipcRenderer.on(IPC.MEMORY_GRAPH_CHANGED, handler);
-      return () => ipcRenderer.removeListener(IPC.MEMORY_GRAPH_CHANGED, handler);
+      ipcRenderer.on(IPC.KNOWLEDGE_GRAPH_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.KNOWLEDGE_GRAPH_CHANGED, handler);
     },
-    onAnswerStream: (callback: (event: MemoryAnswerStreamPush) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, push: MemoryAnswerStreamPush) => callback(push);
-      ipcRenderer.on(IPC.MEMORY_GRAPH_ANSWER_STREAM, handler);
-      return () => ipcRenderer.removeListener(IPC.MEMORY_GRAPH_ANSWER_STREAM, handler);
+    onAnswerStream: (callback: (event: KnowledgeGraphAnswerStreamPush) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, push: KnowledgeGraphAnswerStreamPush) => callback(push);
+      ipcRenderer.on(IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM, handler);
+      return () => ipcRenderer.removeListener(IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM, handler);
     },
   },
 
@@ -845,10 +845,10 @@ if (__KANGENTIC_DEV__) {
     seedEmbeddingBacklog: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_EMBEDDING_BACKLOG, count),
     seedLargeConversation: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_LARGE_CONVERSATION, count),
     seedUsageData: (days: number) => ipcRenderer.invoke(IPC.DEV_SEED_USAGE_DATA, days),
-    seedMemoryGraph: (options: { documentCount?: number; chunksPerDocument?: number }) =>
-      ipcRenderer.invoke(IPC.DEV_SEED_MEMORY_GRAPH, options),
-    seedMemoryGraphReal: (options: { documentLimit?: number; sourceProject?: string }) =>
-      ipcRenderer.invoke(IPC.DEV_SEED_MEMORY_GRAPH_REAL, options),
+    seedKnowledgeGraph: (options: { documentCount?: number; chunksPerDocument?: number }) =>
+      ipcRenderer.invoke(IPC.DEV_SEED_KNOWLEDGE_GRAPH, options),
+    seedKnowledgeGraphReal: (options: { documentLimit?: number; sourceProject?: string }) =>
+      ipcRenderer.invoke(IPC.DEV_SEED_KNOWLEDGE_GRAPH_REAL, options),
     isEphemeralPreview,
     previewTaskTitle,
   };

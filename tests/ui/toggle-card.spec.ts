@@ -315,7 +315,7 @@ test.describe('Settings card header', () => {
   });
 
   test('a header whose prerequisite is off does not flip on a click', async () => {
-    await setGlobalConfigAndSync({ memory: { indexingEnabled: false, semanticEnabled: false } });
+    await setGlobalConfigAndSync({ knowledgeGraph: { indexingEnabled: false, enabled: false } });
     await openTab('Knowledge Graph');
 
     const card = page.locator('section[aria-label="Knowledge Graph"]');
@@ -325,7 +325,7 @@ test.describe('Settings card header', () => {
     await card.locator('h3').click();
     await expect(page.getByRole('switch', { name: 'Knowledge Graph' })).toHaveAttribute('aria-checked', 'false');
 
-    await setGlobalConfigAndSync({ memory: { indexingEnabled: true, semanticEnabled: false } });
+    await setGlobalConfigAndSync({ knowledgeGraph: { indexingEnabled: true, enabled: false } });
     await closeSettings();
   });
 });

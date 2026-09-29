@@ -13,7 +13,7 @@ import { taskDetailSurfaceFor } from '../../../utils/task-progress';
 import { scheduleWindowTerminalResize } from '../../../window-manager/terminal/resize-coalescer';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
 import { taskHasDescriptionContent } from './description-content';
-import { TaskPriorWork } from '../../memory/TaskPriorWork';
+import { TaskPriorWork } from '../../knowledge-graph/TaskPriorWork';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';
 import { isImageMediaType } from '../attachment-utils';
 import type { AttachmentWithPreview } from './useAttachments';

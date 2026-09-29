@@ -307,7 +307,7 @@ export class AntigravityAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: true, search: false, model: true, effort: true, defaultEffort: 'low' };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * NOT the hidden-PTY runner `summarize` uses. That runner passes the prompt
    * as one argv entry with its newlines collapsed, and an answer prompt runs to

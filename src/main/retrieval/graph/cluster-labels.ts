@@ -111,8 +111,8 @@ const KMEANS_ITERATIONS = 24;
  * made renames every map on its next read, with no rebuild. Bump it with any
  * change to the terms, weights or lists below.
  *
- * 2: product names kept whole, and each task's digest read beside its title.
- * 3: a digest saying its task has nothing to say is narration too.
+ * 2: product names kept whole, and each task's summary read beside its title.
+ * 3: a summary saying its task has nothing to say is narration too.
  */
 export const LABELLER_VERSION = 3;
 
@@ -123,35 +123,35 @@ export const LABELLER_VERSION = 3;
 const PRODUCT_NAMES = /\b(GitHub|OpenCode|TypeScript|JavaScript|WebGL|WebGPU|DirectML)\b/g;
 
 /**
- * How much a word from a task's digest counts against the same word in a title.
+ * How much a word from a task's summary counts against the same word in a title.
  *
  * Measured on the real 998-conversation map at the balanced setting, against
  * titles alone: at 0.75, 21 of 40 region names read better, 12 the same, 2
- * worse and 5 did not change. Weighted equally, the digests' narration took
+ * worse and 5 did not change. Weighted equally, the summaries' narration took
  * over ("two bugs / session manager", "tests covering / column manager").
  */
-export const DIGEST_LABEL_WEIGHT = 0.75;
+export const SUMMARY_LABEL_WEIGHT = 0.75;
 
 /**
- * Words a digest uses to narrate the work rather than to name the product part
- * it touched. A title rarely says "added" or "covering"; a digest nearly always
+ * Words a summary uses to narrate the work rather than to name the product part
+ * it touched. A title rarely says "added" or "covering"; a summary nearly always
  * does, so these would otherwise name regions by how the work was described.
- * Applied to digest text only: in a title these words are the author's choice.
+ * Applied to summary text only: in a title these words are the author's choice.
  */
-export const DIGEST_FILLER: ReadonlySet<string> = new Set([
+export const SUMMARY_FILLER: ReadonlySet<string> = new Set([
   'adding', 'added', 'adds', 'covering', 'covers', 'tests', 'test', 'testing', 'two', 'three', 'bugs', 'bug',
   'shipped', 'ships', 'ship', 'landed', 'merged', 'app', 'code', 'files', 'file', 'ended', 'end', 'ending',
   'set', 'out', 'instead', 'making', 'using', 'replacing', 'replaced', 'moving', 'fixing', 'several',
   'existing', 'new', 'now', 'also', 'plus', 'along', 'kangentic', 'task', 'tasks', 'feature', 'features',
   'first', 'second', 'one', 'both', 'all', 'multiple', 'various', 'across', 'renderer', 'main', 'process',
-  // A task with an empty description gets a digest that says so ("the task
+  // A task with an empty description gets a summary that says so ("the task
   // description gives no further detail"). On the real map three release
-  // tasks' digests named a 36-conversation region "release / further detail".
+  // tasks' summaries named a 36-conversation region "release / further detail".
   'further', 'beyond', 'nothing', 'known', 'description', 'released',
 ]);
 
 /**
- * A second text per row, counted at a lower weight: each task's digest.
+ * A second text per row, counted at a lower weight: each task's summary.
  *
  * A term the row's title already has is not counted twice, and a term with a
  * `stopWords` half is not counted at all.
@@ -628,7 +628,7 @@ export function selectLabelTerms(scored: ReadonlyArray<{ term: string; score: nu
  * are already human-written summaries, and reading 50k chunk bodies to build a
  * label would cost more than the entire projection.
  *
- * `secondary` adds each task's digest at a lower weight, which names a region
+ * `secondary` adds each task's summary at a lower weight, which names a region
  * by what its work touched rather than by how its titles happened to be worded.
  */
 export function labelClusters(

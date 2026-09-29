@@ -352,7 +352,7 @@ export class CursorAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: false };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * Three things the shipped call got wrong, each measured:
    * - Read-only is `--mode ask`. `-p` alone "has access to all tools, including

@@ -53,15 +53,15 @@ interface RecordRow {
   updatedAt: string;
 }
 
-/** Every task and backlog item as a record source, each task with its digest. */
+/** Every task and backlog item as a record source, each task with its summary. */
 export function readTaskRecordSources(db: Database.Database): TaskRecordSource[] {
   const tasks = db
     .prepare(
       `SELECT t.id, t.title, t.description, t.labels, t.created_at AS createdAt, t.updated_at AS updatedAt,
-              d.digest AS digest, d.created_at AS digestAt
-       FROM tasks t LEFT JOIN memory_task_digests d ON d.task_id = t.id`,
+              d.summary AS summary, d.created_at AS summaryAt
+       FROM tasks t LEFT JOIN memory_task_summaries d ON d.task_id = t.id`,
     )
-    .all() as Array<RecordRow & { digest: string | null; digestAt: string | null }>;
+    .all() as Array<RecordRow & { summary: string | null; summaryAt: string | null }>;
   let backlog: RecordRow[] = [];
   try {
     backlog = db
@@ -80,7 +80,7 @@ export function readTaskRecordSources(db: Database.Database): TaskRecordSource[]
     updatedAt: row.updatedAt,
   });
   return [
-    ...tasks.map((row) => ({ ...toSource(row, row.id, row.id), digest: row.digest, digestAt: row.digestAt })),
+    ...tasks.map((row) => ({ ...toSource(row, row.id, row.id), summary: row.summary, summaryAt: row.summaryAt })),
     ...backlog.map((row) => toSource(row, `${BACKLOG_DOC_PREFIX}${row.id}`, null)),
   ];
 }

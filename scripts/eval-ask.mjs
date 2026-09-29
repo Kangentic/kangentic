@@ -196,7 +196,7 @@ const ROLLUPS = {
   conversation: async (port) => {
     const { nodes, projectId } = await evaluate(
       port,
-      '(async () => { const s = await window.electronAPI.memory.graphSnapshot(null);'
+      '(async () => { const s = await window.electronAPI.knowledgeGraph.graphSnapshot(null);'
       + ' const project = await window.electronAPI.projects.getCurrent();'
       + ' return { nodes: s.projection ? s.projection.nodes : null, projectId: project ? project.id : null }; })()',
     );
@@ -207,7 +207,7 @@ const ROLLUPS = {
   // repository, written with the question; this says only whether the code is
   // indexed and embedded, so a run without it skips them rather than failing.
   code: async (port) => {
-    const snapshot = await evaluate(port, 'window.electronAPI.memory.graphSnapshot(null)');
+    const snapshot = await evaluate(port, 'window.electronAPI.knowledgeGraph.graphSnapshot(null)');
     const code = snapshot?.index?.corpora?.find((entry) => entry.corpus === 'code');
     return { files: code?.documents ?? 0, chunks: code?.chunks ?? 0, embedded: code?.embeddedChunks ?? 0 };
   },
@@ -238,14 +238,14 @@ async function ask(port, question) {
         let firstTextMs = null;
         let setMs = null;
         let toolCalls = 0;
-        const off = window.electronAPI.memory.onAnswerStream((event) => {
+        const off = window.electronAPI.knowledgeGraph.onAnswerStream((event) => {
           if (event.requestId !== requestId) return;
           if (event.kind === 'set' && setMs === null) setMs = performance.now() - started;
           if (event.kind === 'text' && firstTextMs === null) firstTextMs = performance.now() - started;
           if (event.kind === 'tool') toolCalls += 1;
         });
         try {
-          const result = await window.electronAPI.memory.answerFromGraph(${JSON.stringify(question)}, null, 'balanced', requestId, { chatId: requestId, history: [], scopeDocKeys: null });
+          const result = await window.electronAPI.knowledgeGraph.answerFromGraph(${JSON.stringify(question)}, null, 'balanced', requestId, { chatId: requestId, history: [], scopeDocKeys: null });
           return { result, firstTextMs, setMs, toolCalls };
         } finally {
           off();
@@ -280,7 +280,7 @@ async function phraseFromTranscript(port, target) {
   const bodies = await evaluate(
     port,
     `(async () => {
-      const snapshot = await window.electronAPI.memory.graphSnapshot(null);
+      const snapshot = await window.electronAPI.knowledgeGraph.graphSnapshot(null);
       const node = (snapshot?.projection?.nodes ?? []).find((entry) => entry.taskId === ${JSON.stringify(target.taskId)});
       if (!node?.sessionId) return [];
       const response = await window.electronAPI.transcripts.get({ sessionId: node.sessionId, projectId: null });

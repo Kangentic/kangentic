@@ -407,7 +407,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     config: { dictation: DICTATION_ON },
     note: 'Dictation is switched on, with every other setting at its default, so the models are the ones the dataset\'s getInfo answer selects (DEMO_DICTATION_INFO).',
   },
-  memory: { ready: '[data-testid="setting-row-memory.indexingEnabled"]', alt: 'Settings on the Knowledge Graph tab: the Knowledge Graph card with its switch, then an Index card with one line per source, conversations, tasks and commits always on and task summaries and source code as switches, and a Rebuild control.' },
+  knowledgeGraph: { ready: '[data-testid="setting-row-knowledgeGraph.indexingEnabled"]', alt: 'Settings on the Knowledge Graph tab: the Knowledge Graph card with its switch, then an Index card with one line per source, conversations, tasks and commits always on and task summaries and source code as switches, and a Rebuild control.' },
   mcpServer: { ready: '[data-testid="setting-row-mcpServer.enabled"]', alt: 'Settings on the MCP Server tab: one card with the server switch and, inside it, the available tools as pills grouped by area: tasks, board, sessions, and more.' },
   browserAutomation: { ready: '[data-testid="setting-row-browserAutomation.enabled"]', alt: 'Settings on the Agent Browser tab: one card with the browser automation switch and the actions agents get: interaction, navigation with a localhost restriction under it, and eval.' },
   mobile: { ready: '[data-testid="setting-row-mobileBridge.enabled"]', alt: 'Settings on the Mobile Devices tab: the Mobile bridge switch, off here, with links to how the relay works and how to install and pair.' },

@@ -43,7 +43,7 @@ export function appendCallerSession(
 }
 
 /**
- * The caller segment prefix that marks a Memory Graph answer run.
+ * The caller segment prefix that marks a Knowledge Graph answer run.
  *
  * An answer run is not a task session: it is a headless agent reading the
  * user's own history to answer a question, and it must be able to change
@@ -57,7 +57,7 @@ export function appendCallerSession(
 export const ANSWER_CALLER_PREFIX = 'answer-';
 
 /**
- * The MCP URL for one Memory Graph chat's answer runs:
+ * The MCP URL for one Knowledge Graph chat's answer runs:
  * `/mcp/<projectId>/answer-<chatId>`.
  *
  * Keyed by the CHAT, not by one question, because a warm answer session's MCP

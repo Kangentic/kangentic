@@ -354,7 +354,7 @@ describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring
     const context = makeContext({ currentProjectPath: '/repo/main' });
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 
-    invokeHandler('config:set', { memory: { semanticEnabled: false } });
+    invokeHandler('config:set', { knowledgeGraph: { enabled: false } });
 
     await vi.waitFor(() => expect(reconcileEmbedWorkerSpy).toHaveBeenCalledTimes(1));
     expect(reconcileEmbedWorkerSpy).toHaveBeenCalledWith(context);
@@ -366,7 +366,7 @@ describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring
 
     invokeHandler('config:set', { terminal: { shell: '/usr/bin/zsh' } });
 
-    // Drain the microtask queue. The dynamic import is behind the `if (config.memory)`
+    // Drain the microtask queue. The dynamic import is behind the `if (config.knowledgeGraph)`
     // branch, so it is never queued when the key is absent.
     // (Intentional fixed budget - we cannot poll for non-occurrence.)
     await Promise.resolve();

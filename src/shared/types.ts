@@ -122,7 +122,7 @@ export interface ModelAliasOption {
 }
 
 /**
- * What an agent's Memory Graph answer run can do beyond the base: a headless,
+ * What an agent's Knowledge Graph answer run can do beyond the base: a headless,
  * read-only run with the prompt in and the reply out, which every answering
  * agent meets.
  *
@@ -173,7 +173,7 @@ export interface AgentDetectionInfo {
   /** True if the adapter exposes a one-shot summarize capability (used by auto-name task title). */
   supportsSummarize?: boolean;
   /** True if the adapter can answer a question over supplied context (used by the
-   *  Memory Graph's Ask). Read instead of the agent's name, per
+   *  Knowledge Graph's Ask). Read instead of the agent's name, per
    *  `.claude/rules/agent-adapters-boundary.md`. */
   supportsAnswerFromContext?: boolean;
   /** What that answer run can do beyond the base, as the adapter declares it.
@@ -3377,11 +3377,11 @@ export interface AppConfig {
   };
 
   /**
-   * Conversation memory: local index over agent conversation transcripts for
+   * Conversation knowledgeGraph: local index over agent conversation transcripts for
    * search and recall. GLOBAL/shared scope (below the settings separator, in
    * the Knowledge Graph tab). Works offline with no API key.
    */
-  memory?: {
+  knowledgeGraph?: {
     /** Index agent conversation transcripts locally for search/recall.
      *  Default true. Off: no indexing, no conversation search results, and the
      *  embed worker never runs. */
@@ -3391,19 +3391,19 @@ export interface AppConfig {
      *  need. Default false; turning it on triggers the one-time download of the
      *  local model that finds by meaning. The key keeps its old name, since
      *  configs already carry it. */
-    semanticEnabled?: boolean;
+    enabled?: boolean;
     /** Selected embedding model id (see src/shared/embedding-models.ts). Default
      *  'bge-base'. Switching re-embeds the index in the background. */
-    embeddingModel?: string;
+    localModel?: string;
     /** Which hardware the embedding model runs on. 'auto' (default) prefers a GPU
      *  execution provider (DirectML on Windows, WebGPU elsewhere) and falls back to
      *  CPU if it fails to initialize; 'gpu' forces the same GPU-first chain; 'cpu'
      *  forces the universal CPU path. Offloading to an idle GPU keeps the CPU free
      *  for the agents when many run at once. */
-    acceleration?: MemoryAcceleration;
+    acceleration?: KnowledgeGraphAcceleration;
     /**
      * The search agent: which agent answers a question from the index (the
-     * Knowledge Graph's Ask) and writes task digests. One choice for both jobs,
+     * Knowledge Graph's Ask) and writes task summaries. One choice for both jobs,
      * made in the Search agent card (`agentJobChoice`).
      *
      * GLOBAL, and deliberately separate from the project's default agent: which
@@ -3413,17 +3413,17 @@ export interface AppConfig {
      * Explicit, with no fallback. It used to follow the project's default agent
      * and then any capable agent, which meant a question could spend tokens on
      * an agent and model nobody chose. Unset now means Ask, the prewarmed
-     * process and task digests wait, and asking opens Settings > Knowledge Graph at this
+     * process and task summaries wait, and asking opens Settings > Knowledge Graph at this
      * row.
      *
      * An adapter NAME (`claude`, `codex`), never a display name - the name is
      * the registry key and the display name is copy that can change.
      */
-    answerAgent?: string | null;
+    agent?: string | null;
     /**
-     * Which MODEL the search agent runs at, for answers and digests alike. A new
-     * model applies to new and changed digests; those already written stay as
-     * written until the Task digests card's Rewrite.
+     * Which MODEL the search agent runs at, for answers and summaries alike. A new
+     * model applies to new and changed summaries; those already written stay as
+     * written until the Task summaries card's Rewrite.
      *
      * The reason this exists is cost. Ask is a read-only summarize over your own
      * local index, and running it at the same frontier model that writes your
@@ -3437,18 +3437,18 @@ export interface AppConfig {
      * (`AnswerCapabilities.model`); there is no "agent default" to fall back on,
      * for the same reason the agent has none.
      */
-    answerModel?: string | null;
+    model?: string | null;
     /**
      * Which effort level the search agent ANSWERS at, from the levels its CLI
      * reports. Optional, unlike the model: unset runs at the adapter's
-     * recommended level (`AnswerCapabilities.defaultEffort`). Digests ignore it
+     * recommended level (`AnswerCapabilities.defaultEffort`). Summaries ignore it
      * and always run at that recommended level (`agentJobChoice`). Cleared with
      * the model whenever `answerAgent` changes, since levels are per CLI
      * (Claude's `max` is not Grok's).
      */
-    answerEffort?: string | null;
+    effort?: string | null;
     /**
-     * Whether the Knowledge Graph's agent writes a short digest (a task summary
+     * Whether the Knowledge Graph's agent writes a short summary (a task summary
      * in the UI) of each finished task (what it set out to do, what it ended up
      * doing), searched with the task's own record and shown to the agent beside
      * it when it answers.
@@ -3456,11 +3456,11 @@ export interface AppConfig {
      * ON unless switched off. It spends about one call per ten tasks, in the
      * background, but only once the Knowledge Graph has an agent, and its
      * switch stays usable while it waits, so it can be turned off before a call
-     * is made. Read through `taskDigestsOn` (`src/shared/answer-agent.ts`) so
+     * is made. Read through `taskSummariesOn` (`src/shared/answer-agent.ts`) so
      * main and the renderer agree that an unset value is on. Switching it off
-     * keeps the digests already written.
+     * keeps the summaries already written.
      */
-    taskDigests?: boolean;
+    taskSummaries?: boolean;
     /**
      * Whether the project's source code (its default branch, as committed:
      * source files and docs, not tests, fixtures or data files) is indexed and
@@ -3474,7 +3474,7 @@ export interface AppConfig {
      * (`src/shared/answer-agent.ts`). Switching it off clears the code index,
      * which the branch can always rebuild.
      */
-    codeIndex?: boolean;
+    sourceCode?: boolean;
   };
 
   /**
@@ -3934,10 +3934,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   discoveredModelsByAgent: {},
   discoveredContextWindowsByAgent: {},
   hotkeyOverrides: {},
-  memory: {
+  knowledgeGraph: {
     indexingEnabled: true,
-    semanticEnabled: false,
-    embeddingModel: 'bge-base',
+    enabled: false,
+    localModel: 'bge-base',
     acceleration: 'auto',
   },
   dictation: {
@@ -5534,13 +5534,13 @@ export interface DevSeedEmbeddingBacklogResult {
   docId: string;
 }
 
-/** Summary of a dev test-harness memory-graph seed (see DEV_SEED_MEMORY_GRAPH). */
-export interface DevSeedMemoryGraphResult {
+/** Summary of a dev test-harness knowledge-graph seed (see DEV_SEED_KNOWLEDGE_GRAPH). */
+export interface DevSeedKnowledgeGraphResult {
   /** Synthetic fully-embedded conversations written. */
   documents: number;
   /** Chunks written and embedded across those conversations. */
   chunks: number;
-  /** Planted topic clusters the documents were drawn from. The Memory Graph
+  /** Planted topic clusters the documents were drawn from. The Knowledge Graph
    *  layout is expected to recover these, which is what makes the seeded
    *  corpus a ground truth rather than just filler. */
   clusters: number;
@@ -5552,8 +5552,8 @@ export interface DevSeedMemoryGraphResult {
   modelTag: string;
 }
 
-/** Summary of a dev test-harness REAL-index mirror (see DEV_SEED_MEMORY_GRAPH_REAL). */
-export interface DevSeedMemoryGraphRealResult {
+/** Summary of a dev test-harness REAL-index mirror (see DEV_SEED_KNOWLEDGE_GRAPH_REAL). */
+export interface DevSeedKnowledgeGraphRealResult {
   /** The real project the slice was copied from. */
   sourceProject: string;
   documents: number;
@@ -5656,19 +5656,19 @@ export interface ElectronAPI {
     seedUsageData: (days: number) => Promise<DevSeedUsageDataResult>;
     /**
      * Seed a fully-embedded, cluster-structured conversation corpus so the
-     * Memory Graph surface has something to render in an ephemeral preview.
+     * Knowledge Graph surface has something to render in an ephemeral preview.
      * Vectors are written directly rather than inferred, because embedding
      * hundreds of documents for real would take minutes before the graph
      * showed anything.
      */
-    seedMemoryGraph: (options: { documentCount?: number; chunksPerDocument?: number }) => Promise<DevSeedMemoryGraphResult>;
+    seedKnowledgeGraph: (options: { documentCount?: number; chunksPerDocument?: number }) => Promise<DevSeedKnowledgeGraphResult>;
     /**
      * Mirror a slice of the REAL parent project's conversation index (chunks,
-     * vectors, titles) into this preview, so the Memory Graph can be judged
+     * vectors, titles) into this preview, so the Knowledge Graph can be judged
      * against actual work rather than synthetic word salad. A copy, not a
      * re-embed - the source embeddings already exist.
      */
-    seedMemoryGraphReal: (options: { documentLimit?: number; sourceProject?: string }) => Promise<DevSeedMemoryGraphRealResult>;
+    seedKnowledgeGraphReal: (options: { documentLimit?: number; sourceProject?: string }) => Promise<DevSeedKnowledgeGraphRealResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**
@@ -6647,23 +6647,23 @@ export interface ElectronAPI {
   };
 
   // Conversation memory (search index) status + proactive surfaces.
-  memory: {
-    getStatus: () => Promise<MemoryStatus>;
+  knowledgeGraph: {
+    getStatus: () => Promise<KnowledgeGraphStatus>;
     /** Spawn + init the embedding worker ahead of the first Smart query, so
      *  Quick Find's typing time covers the cold start. Fire-and-forget. With a
      *  chat (the Knowledge Graph opening), also starts the answering agent's
      *  warm session for it. */
-    prewarm: (chat?: MemoryAnswerPrewarm) => void;
+    prewarm: (chat?: KnowledgeGraphAnswerPrewarm) => void;
     /** The chat's warm answering session is no longer needed (the chat ended,
      *  or its graph closed). Fire-and-forget. */
     endChat: (chatId: string) => void;
     /**
-     * What Rebuild would spend: how many task summaries (digests) in every
+     * What Rebuild would spend: how many task summaries (summaries) in every
      * project were written with another agent or model and would be rewritten.
      * Zero while summaries are off or the search agent is not chosen. Read when
      * Rebuild is pressed, so it asks first only when it will spend calls.
      */
-    rebuildPlan: () => Promise<MemoryRebuildPlan>;
+    rebuildPlan: () => Promise<KnowledgeGraphRebuildPlan>;
     /**
      * Rebuild everything, in every project: forget what every source was read
      * from (conversations, tasks, commits, session changes, source code) so each
@@ -6672,19 +6672,19 @@ export interface ElectronAPI {
      * project is read again at once; another project on its next open. Resolves
      * when the marks are made; the reading continues in the background.
      */
-    rebuildIndex: () => Promise<MemoryRebuildPlan>;
+    rebuildIndex: () => Promise<KnowledgeGraphRebuildPlan>;
     /**
-     * One task's digest in a project, for the Knowledge Graph's selected
-     * conversation: null while task digests are switched off, or when the task
+     * One task's summary in a project, for the Knowledge Graph's selected
+     * conversation: null while task summaries are switched off, or when the task
      * has none. Read on select rather than shipped in every snapshot.
      */
-    taskDigest: (projectId: string, taskId: string) => Promise<string | null>;
-    /** Cheap read of the cached Memory Graph projection plus its coverage
+    taskSummary: (projectId: string, taskId: string) => Promise<string | null>;
+    /** Cheap read of the cached Knowledge Graph projection plus its coverage
      *  strip. Never triggers the projection pass. */
-    graphSnapshot: (projectId?: string | null) => Promise<MemoryGraphSnapshot | null>;
+    graphSnapshot: (projectId?: string | null) => Promise<KnowledgeGraphSnapshot | null>;
     /** Every project with its indexed conversation count and last indexing
      *  time, for the Projects picker. Cheap: an index-only count per project. */
-    graphProjects: () => Promise<MemoryGraphProjectSummary[]>;
+    graphProjects: () => Promise<KnowledgeGraphProjectSummary[]>;
     /** Ask for a background projection refresh. Resolves immediately;
      *  completion arrives on `onGraphChanged`. */
     refreshGraph: (projectId?: string | null) => Promise<void>;
@@ -6693,7 +6693,7 @@ export interface ElectronAPI {
     onGraphChanged: (callback: (projectId: string) => void) => () => void;
     /** Retrieval only: local, free, and instant. Runs the same fusion search
      *  the palette uses and maps each hit onto its graph node. */
-    queryGraph: (query: string, projectId?: string | null) => Promise<MemoryGraphQueryResult>;
+    queryGraph: (query: string, projectId?: string | null) => Promise<KnowledgeGraphQueryResult>;
     /**
      * Ask: the SAME retrieval, read by an agent that answers from it.
      *
@@ -6710,21 +6710,21 @@ export interface ElectronAPI {
        *  a question the user has moved past are dropped, never appended. */
       requestId?: string,
       /** The chat so far and the map's filters. */
-      context?: MemoryAnswerContext,
-    ) => Promise<MemoryGraphAnswerResult>;
+      context?: KnowledgeGraphAnswerContext,
+    ) => Promise<KnowledgeGraphAnswerResult>;
     /**
      * Push subscription: progress on an answer in flight. Text as the agent
      * writes it, a tool call as it starts, and a terminal `done`. The final
-     * `MemoryGraphAnswerResult` still arrives whole from `answerFromGraph`, so
+     * `KnowledgeGraphAnswerResult` still arrives whole from `answerFromGraph`, so
      * nothing structural is ever parsed off a partial stream. Returns an
      * unsubscribe closure.
      */
-    onAnswerStream: (callback: (event: MemoryAnswerStreamPush) => void) => () => void;
+    onAnswerStream: (callback: (event: KnowledgeGraphAnswerStreamPush) => void) => () => void;
     /**
      * Earlier conversations semantically near a task, excluding the task's own.
      * Proactive recall: what have I already figured out about this?
      */
-    relatedToTask: (taskId: string, projectId?: string | null) => Promise<MemoryGraphQueryHit[]>;
+    relatedToTask: (taskId: string, projectId?: string | null) => Promise<KnowledgeGraphQueryHit[]>;
   };
 
   // Platform
@@ -6856,29 +6856,29 @@ export interface SearchRequest {
 
 /** Runtime state of the semantic (embedding) layer, for the Search
  *  settings tab. `lexical` = enabled but sqlite-vec unavailable, so search stays lexical. */
-export type MemorySemanticState = 'disabled' | 'downloading' | 'lexical' | 'hybrid' | 'error';
+export type KnowledgeGraphSemanticState = 'disabled' | 'downloading' | 'lexical' | 'hybrid' | 'error';
 
 /** Download/availability state of the selected embedding model. */
-export type MemoryModelState = 'absent' | 'downloading' | 'ready' | 'error';
+export type KnowledgeGraphModelState = 'absent' | 'downloading' | 'ready' | 'error';
 
 /** The selected embedding model's identity + download state, for the settings
  *  model card (mirrors the dictation model-status card). */
-export interface MemoryModelStatus {
+export interface KnowledgeGraphModelStatus {
   id: string;
   displayName: string;
   tier: 'balanced' | 'accurate' | 'max';
   approxSizeMb: number;
   dimensions: number;
-  state: MemoryModelState;
+  state: KnowledgeGraphModelState;
   /** 0..1 while `state === 'downloading'`. */
   progress?: number;
 }
 
-/** Where the embedding model runs. See `AppConfig.memory.acceleration`. */
-export type MemoryAcceleration = 'auto' | 'gpu' | 'cpu';
+/** Where the embedding model runs. See `AppConfig.knowledgeGraph.acceleration`. */
+export type KnowledgeGraphAcceleration = 'auto' | 'gpu' | 'cpu';
 
-/** One node in the Memory Graph: a document in whatever corpus it came from. */
-export interface MemoryGraphNode {
+/** One node in the Knowledge Graph: a document in whatever corpus it came from. */
+export interface KnowledgeGraphNode {
   /** `${corpus}::${docId}`. The corpus prefix is what keeps the graph open to a
    *  second corpus (repo files) without a node-kind rewrite. */
   docKey: string;
@@ -6926,10 +6926,10 @@ export interface MemoryGraphNode {
   /**
    * Which labelled region this node sits in, at each granularity.
    *
-   * Indexed the same way as `MemoryGraphProjection.clusterings`, so
+   * Indexed the same way as `KnowledgeGraphProjection.clusterings`, so
    * `clusters[g]` is this node's region id within `clusterings[g].regions`.
    */
-  clusters: Record<MemoryGraphGranularity, number>;
+  clusters: Record<KnowledgeGraphGranularity, number>;
 }
 
 /**
@@ -6941,19 +6941,19 @@ export interface MemoryGraphNode {
  * a reader wants, not a fact waiting in the data. All three are computed and
  * shipped together, so switching costs no rebuild.
  */
-export type MemoryGraphGranularity = 'coarse' | 'balanced' | 'fine';
+export type KnowledgeGraphGranularity = 'coarse' | 'balanced' | 'fine';
 
-export const MEMORY_GRAPH_GRANULARITIES: MemoryGraphGranularity[] = ['coarse', 'balanced', 'fine'];
+export const KNOWLEDGE_GRAPH_GRANULARITIES: KnowledgeGraphGranularity[] = ['coarse', 'balanced', 'fine'];
 
 /** One complete carve-up of the map. */
-export interface MemoryGraphClustering {
-  granularity: MemoryGraphGranularity;
-  regions: MemoryGraphCluster[];
+export interface KnowledgeGraphClustering {
+  granularity: KnowledgeGraphGranularity;
+  regions: KnowledgeGraphCluster[];
 }
 
 /** A named region of the map, derived from the layout and labelled from the
  *  terms most over-represented in it. */
-export interface MemoryGraphCluster {
+export interface KnowledgeGraphCluster {
   id: number;
   label: string;
   /** Centroid of this cluster's members, where its label is anchored. */
@@ -6965,7 +6965,7 @@ export interface MemoryGraphCluster {
 
 /** A similarity edge between two node indices. Computed in FULL embedding
  *  dimensionality, so unlike node positions these are exact. */
-export interface MemoryGraphEdge {
+export interface KnowledgeGraphEdge {
   source: number;
   target: number;
   similarity: number;
@@ -6975,18 +6975,18 @@ export interface MemoryGraphEdge {
  *  re-derive which index states are genuinely problems - notably
  *  `missing-source`, which is the steady state for most of a mature corpus and
  *  must never be painted as an error. */
-export interface MemoryCoverageBucket {
+export interface KnowledgeGraphCoverageBucket {
   documents: number;
   chunks: number;
   tone: 'ok' | 'neutral' | 'problem';
 }
 
-export interface MemoryCoverageSummary {
-  indexed: MemoryCoverageBucket;
-  sourceMissingButSearchable: MemoryCoverageBucket;
-  empty: MemoryCoverageBucket;
-  failed: MemoryCoverageBucket;
-  notYetIndexed: MemoryCoverageBucket;
+export interface KnowledgeGraphCoverageSummary {
+  indexed: KnowledgeGraphCoverageBucket;
+  sourceMissingButSearchable: KnowledgeGraphCoverageBucket;
+  empty: KnowledgeGraphCoverageBucket;
+  failed: KnowledgeGraphCoverageBucket;
+  notYetIndexed: KnowledgeGraphCoverageBucket;
   totalDocumentsWithChunks: number;
   totalChunks: number;
   totalEmbeddedChunks: number;
@@ -6994,9 +6994,9 @@ export interface MemoryCoverageSummary {
   knownDocumentIdsMatched: number;
 }
 
-export interface MemoryGraphProjection {
-  nodes: MemoryGraphNode[];
-  edges: MemoryGraphEdge[];
+export interface KnowledgeGraphProjection {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
   /**
    * Every granularity, computed together.
    *
@@ -7005,11 +7005,11 @@ export interface MemoryGraphProjection {
    * extra payload is one integer per node per granularity, and the alternative
    * would put a full projection rebuild behind a display control.
    */
-  clusterings: MemoryGraphClustering[];
+  clusterings: KnowledgeGraphClustering[];
   signature: string;
   modelTag: string;
   /** Width of the EMBEDDINGS this was projected from (384 / 768 / 1024). The
-   *  LAYOUT is always three components; see `MemoryGraphNode`. */
+   *  LAYOUT is always three components; see `KnowledgeGraphNode`. */
   dimensions: number;
   /**
    * Each node's genuinely nearest conversations, most similar first, computed in
@@ -7032,18 +7032,18 @@ export interface MemoryGraphProjection {
    * Computed in the background pass, not on the snapshot read, because the text
    * half is a full scan (~170ms over 52k chunks). It therefore travels with the
    * map and is exactly as fresh as it. The whole index's size, every corpus, is
-   * `MemoryIndexSummary.storageBytes`.
+   * `KnowledgeGraphIndexSummary.storageBytes`.
    */
   storageBytes: number;
   builtAt: string;
 }
 
 /** A corpus of the memory index, as the Index panel lists it. */
-export type MemoryIndexCorpus = 'conversation' | 'task' | 'change' | 'commit' | 'code';
+export type KnowledgeGraphIndexCorpus = 'conversation' | 'task' | 'change' | 'commit' | 'code';
 
 /** What one corpus holds. */
-export interface MemoryIndexCorpusSummary {
-  corpus: MemoryIndexCorpus;
+export interface KnowledgeGraphIndexCorpusSummary {
+  corpus: KnowledgeGraphIndexCorpus;
   /** Conversations, task records, sessions with changes, commits on the
    *  default branch, or source files: the corpus's documents. */
   documents: number;
@@ -7061,16 +7061,16 @@ export interface MemoryIndexCorpusSummary {
  * corpus that is indexed but never drawn (task records, session changes) is
  * still accounted for.
  */
-export interface MemoryIndexSummary {
+export interface KnowledgeGraphIndexSummary {
   /** One entry per corpus the store knows, in `MEMORY_CORPORA` order, present
    *  with zeros when nothing of it is indexed yet. */
-  corpora: MemoryIndexCorpusSummary[];
+  corpora: KnowledgeGraphIndexCorpusSummary[];
   /**
-   * Task digests written, of the finished tasks that can have one, and how many
-   * the search agent passed over this run of the app (asked, and no digest
+   * Task summaries written, of the finished tasks that can have one, and how many
+   * the search agent passed over this run of the app (asked, and no summary
    * came back; tried again on the next launch).
    */
-  digests: { written: number; finishedTasks: number; skipped?: number };
+  summaries: { written: number; finishedTasks: number; skipped?: number };
   /** Bytes every corpus occupies: text plus vectors. */
   storageBytes: number;
   /** When anything was last written to the index, any corpus, ISO; null when
@@ -7078,8 +7078,8 @@ export interface MemoryIndexSummary {
   lastIndexedAt?: string | null;
 }
 
-/** One conversation matched by a Memory Graph query. */
-export interface MemoryGraphQueryHit {
+/** One conversation matched by a Knowledge Graph query. */
+export interface KnowledgeGraphQueryHit {
   /** `${corpus}::${docId}` - the graph node this hit belongs to, so the canvas
    *  can light it without the renderer re-deriving the join. */
   docKey: string;
@@ -7095,22 +7095,22 @@ export interface MemoryGraphQueryHit {
   turnTs: number | null;
 }
 
-export interface MemoryGraphQueryResult {
+export interface KnowledgeGraphQueryResult {
   query: string;
-  hits: MemoryGraphQueryHit[];
+  hits: KnowledgeGraphQueryHit[];
   /** False when the semantic layer was unavailable, so the UI can say the
    *  search was lexical-only rather than silently returning worse results. */
   semantic: boolean;
 }
 
 /**
- * One task a Memory Graph question is about, as the map and the chat see it.
+ * One task a Knowledge Graph question is about, as the map and the chat see it.
  *
  * The same shape serves the related set (what the local search found before the
  * agent ran) and the source rows under an answer (what the agent selected), so
  * a row and a lit node can never disagree about which task they are.
  */
-export interface MemoryRelatedTask {
+export interface KnowledgeGraphRelatedTask {
   /** The task id, or `conversation:<docKey>` for a conversation with no task. */
   key: string;
   taskId: string | null;
@@ -7142,8 +7142,8 @@ export interface MemoryRelatedTask {
   ref?: string;
 }
 
-/** One earlier turn of a Memory Graph chat, as a follow-up carries it. */
-export interface MemoryAnswerHistoryTurn {
+/** One earlier turn of a Knowledge Graph chat, as a follow-up carries it. */
+export interface KnowledgeGraphAnswerHistoryTurn {
   question: string;
   answer: string;
   /** Keys of the tasks that turn was about, so "of those" has a referent. */
@@ -7151,12 +7151,12 @@ export interface MemoryAnswerHistoryTurn {
 }
 
 /** What a question carries besides its text. */
-export interface MemoryAnswerContext {
+export interface KnowledgeGraphAnswerContext {
   /** The chat this question belongs to. Keys the agent's MCP URL, so its
    *  searches reach the right chat's trace. */
   chatId?: string;
   /** Earlier turns of the chat, oldest first. */
-  history?: MemoryAnswerHistoryTurn[];
+  history?: KnowledgeGraphAnswerHistoryTurn[];
   /**
    * The conversations inside the map's filters, or null when nothing is
    * filtered. The filters are the scope of a question: retrieval and the task
@@ -7172,14 +7172,14 @@ export interface MemoryAnswerContext {
 }
 
 /** The chat a Knowledge Graph prewarm starts the answering agent for. */
-export interface MemoryAnswerPrewarm {
+export interface KnowledgeGraphAnswerPrewarm {
   /** The chat the warm session belongs to; the next question carries the same id. */
   chatId: string;
   /** The project the graph opened on, or null for the open project. */
   projectId: string | null;
 }
 
-export type MemoryGraphAnswerResult =
+export type KnowledgeGraphAnswerResult =
   | {
     ok: true;
     /** The agent's prose, with its protocol line removed. Tasks are named in it
@@ -7190,9 +7190,9 @@ export type MemoryGraphAnswerResult =
      * prose names first, in the order named, then the rest of its selection.
      * Empty when the answer is not about particular tasks.
      */
-    rows: MemoryRelatedTask[];
+    rows: KnowledgeGraphRelatedTask[];
     /** What the local search found, strongest first: the set the map lights. */
-    related: MemoryRelatedTask[];
+    related: KnowledgeGraphRelatedTask[];
     /** How many of `related` the agent was handed ("Reading 14 related tasks"). */
     handedCount: number;
     /**
@@ -7214,7 +7214,7 @@ export type MemoryGraphAnswerResult =
     setup?: AnswerSetupGap;
   };
 
-/** What is still missing before the Memory Graph can answer. */
+/** What is still missing before the Knowledge Graph can answer. */
 export type AnswerSetupGap = 'agent' | 'model';
 
 /**
@@ -7232,18 +7232,18 @@ export type AnswerSetupGap = 'agent' | 'model';
  * Structural parsing (the refs and the selection) waits for the whole answer
  * and never runs on these.
  */
-export type MemoryAnswerStreamEvent =
-  | { kind: 'set'; related: MemoryRelatedTask[]; handedCount: number }
+export type KnowledgeGraphAnswerStreamEvent =
+  | { kind: 'set'; related: KnowledgeGraphRelatedTask[]; handedCount: number }
   | { kind: 'search'; query: string; docKeys: string[] }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; name: string }
   | { kind: 'done' };
 
 /** A stream event as pushed, tagged with the question it belongs to. */
-export type MemoryAnswerStreamPush = MemoryAnswerStreamEvent & { requestId: string };
+export type KnowledgeGraphAnswerStreamPush = KnowledgeGraphAnswerStreamEvent & { requestId: string };
 
 /** One project as the Knowledge Graph's Projects picker lists it. */
-export interface MemoryGraphProjectSummary {
+export interface KnowledgeGraphProjectSummary {
   id: string;
   name: string;
   /** Indexed conversations, which is what its map draws. 0 means there is
@@ -7256,22 +7256,22 @@ export interface MemoryGraphProjectSummary {
   lastActivityMs: number | null;
 }
 
-export interface MemoryGraphSnapshot {
+export interface KnowledgeGraphSnapshot {
   projectId: string;
   /** Null until the first projection pass completes. */
-  projection: MemoryGraphProjection | null;
-  coverage: MemoryCoverageSummary;
+  projection: KnowledgeGraphProjection | null;
+  coverage: KnowledgeGraphCoverageSummary;
   /** Every corpus the index holds, for the Index panel. */
-  index: MemoryIndexSummary;
+  index: KnowledgeGraphIndexSummary;
   building: boolean;
   /** Stale projections are still served: a slightly old map beats a blank one. */
   stale: boolean;
   semanticAvailable: boolean;
 }
 
-export interface MemoryStatus {
+export interface KnowledgeGraphStatus {
   indexingEnabled: boolean;
-  semantic: MemorySemanticState;
+  semantic: KnowledgeGraphSemanticState;
   /** Human-readable execution backend the embed worker actually initialized on
    *  (e.g. "DirectML (GPU)", "WebGPU (GPU)", "CPU"), for the settings model card.
    *  Undefined until the worker has embedded at least once this run. */
@@ -7279,27 +7279,27 @@ export interface MemoryStatus {
   /** 0..1 while `semantic === 'downloading'`, else undefined. */
   modelProgress?: number;
   /** The selected model + its download state (present once semantic is on). */
-  model?: MemoryModelStatus;
+  model?: KnowledgeGraphModelStatus;
   /** When `semantic === 'lexical'`, the reason sqlite-vec failed to load (so the
-   *  Memory tab can explain the degrade), or undefined if it simply is not loaded. */
+   *  Knowledge Graph tab can explain the degrade), or undefined if it simply is not loaded. */
   vecError?: string;
   /** When `semantic === 'error'` because the embedding worker crashed past its
    *  restart cap: its exit code plus the first error line of its stderr (home
    *  directory redacted), so the Knowledge Graph tab can say why. Undefined otherwise. */
   workerError?: string;
-  /** Task summaries (digests) for the open project, for their line in the
+  /** Task summaries (summaries) for the open project, for their line in the
    *  Index card. Absent with no project open, or while semantic search is off. */
-  digests?: MemoryDigestStatus;
+  summaries?: KnowledgeGraphSummaryStatus;
   /** Source code for the open project, for its line in the Index card. Absent
    *  with no project open, or before its branch has been read. */
-  code?: MemoryCodeStatus;
+  code?: KnowledgeGraphCodeStatus;
   /** The open project's always-indexed sources, for their lines in the Index
    *  card. Absent with no project open or with indexing off. */
-  sources?: MemorySourcesStatus;
+  sources?: KnowledgeGraphSourcesStatus;
 }
 
 /** What a Rebuild spends: the task summaries it rewrites, in every project. */
-export interface MemoryRebuildPlan {
+export interface KnowledgeGraphRebuildPlan {
   summariesToRewrite: number;
 }
 
@@ -7309,14 +7309,14 @@ export interface MemoryRebuildPlan {
  * (by keyword only). Session changes are not listed: nothing searches them,
  * they only feed the task summaries.
  */
-export interface MemorySourcesStatus {
-  conversations: MemorySourceStatus;
-  tasks: MemorySourceStatus;
-  commits: MemorySourceStatus;
+export interface KnowledgeGraphSourcesStatus {
+  conversations: KnowledgeGraphSourceStatus;
+  tasks: KnowledgeGraphSourceStatus;
+  commits: KnowledgeGraphSourceStatus;
 }
 
 /** One always-indexed source, as its Index card line reads it. */
-export interface MemorySourceStatus {
+export interface KnowledgeGraphSourceStatus {
   /** Documents held: conversations, tasks, commits. The Index panel's count. */
   count: number;
   /**
@@ -7342,7 +7342,7 @@ export interface MemorySourceStatus {
  * - `nothing-committed`: the project has no commit to read (a folder just
  *   given `git init`), or no repository at all. Any branch works otherwise.
  */
-export interface MemoryCodeStatus {
+export interface KnowledgeGraphCodeStatus {
   state: 'estimate' | 'reading' | 'indexing' | 'ready' | 'nothing-committed';
   /** The branch read, like `origin/main`, or null when there is none. */
   branch: string | null;
@@ -7355,9 +7355,9 @@ export interface MemoryCodeStatus {
   minutesLeft: number | null;
 }
 
-/** Task digests for one project, as the Task digests card's status line reads them. */
-export interface MemoryDigestStatus {
-  /** Digests written, of the finished tasks (in a Done column) that can have one. */
+/** Task summaries for one project, as the Task summaries card's status line reads them. */
+export interface KnowledgeGraphSummaryStatus {
+  /** Summaries written, of the finished tasks (in a Done column) that can have one. */
   written: number;
   finishedTasks: number;
   /** Tasks the search agent passed over this run of the app; tried again next launch. */
@@ -7371,30 +7371,30 @@ export interface MemoryDigestStatus {
   /** How long until a failed call is tried again, as of this read. Set only
    *  while `retrying`; main measures it so the renderer never reads a clock. */
   retryInMs: number | null;
-  /** Minutes the digests still to write (and to rewrite) take at the current
+  /** Minutes the summaries still to write (and to rewrite) take at the current
    *  run's measured rate, or null before a pass of the run has written any. */
   minutesLeft: number | null;
-  /** The finished tasks' digests by what wrote them, most first. */
-  writtenWith: DigestChoiceCount[];
+  /** The finished tasks' summaries by what wrote them, most first. */
+  writtenWith: SummaryChoiceCount[];
   /**
-   * What a digest would be written with now: the search agent, its model, and
-   * the recommended effort main resolves for a digest. Null while digests are
-   * off or wait for a choice. A rewrite rewrites the digests written any other
+   * What a summary would be written with now: the search agent, its model, and
+   * the recommended effort main resolves for a summary. Null while summaries are
+   * off or wait for a choice. A rewrite rewrites the summaries written any other
    * way.
    */
-  choice: DigestChoice | null;
-  /** Digests marked for rewriting and not rewritten yet. */
+  choice: SummaryChoice | null;
+  /** Summaries marked for rewriting and not rewritten yet. */
   awaitingRewrite: number;
 }
 
-/** What wrote a digest: an adapter name, its model id, and the effort level it ran at. */
-export interface DigestChoice {
+/** What wrote a summary: an adapter name, its model id, and the effort level it ran at. */
+export interface SummaryChoice {
   agent: string;
   model: string | null;
   effort: string | null;
 }
 
-export interface DigestChoiceCount extends DigestChoice {
+export interface SummaryChoiceCount extends SummaryChoice {
   count: number;
 }
 

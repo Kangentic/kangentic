@@ -1,5 +1,5 @@
 /**
- * The Memory Graph's projection pass: read embeddings, mean-pool per document,
+ * The Knowledge Graph's projection pass: read embeddings, mean-pool per document,
  * lay the documents out, and cache the result.
  *
  * WHY IT IS PACED. `.claude/rules/central-embedding-engine.md` exists because
@@ -28,8 +28,8 @@
 
 import type { RetrievalStore } from '../retrieval-store';
 import { CONVERSATION_CORPUS } from '../corpora';
-import type { MemoryGraphNode, MemoryGraphProjection } from '../../../shared/types';
-import { MEMORY_GRAPH_GRANULARITIES } from '../../../shared/types';
+import type { KnowledgeGraphNode, KnowledgeGraphProjection } from '../../../shared/types';
+import { KNOWLEDGE_GRAPH_GRANULARITIES } from '../../../shared/types';
 import {
   createMeanPoolAccumulator,
   accumulateVector,
@@ -109,8 +109,8 @@ const DETAIL_NEIGHBOR_COUNT = 6;
  * JSON-serialized into `memory_meta` and sent to the renderer unchanged, so a
  * second parallel type would only be an opportunity for the two to drift.
  */
-export type GraphNodePosition = MemoryGraphNode;
-export type GraphProjection = MemoryGraphProjection;
+export type GraphNodePosition = KnowledgeGraphNode;
+export type GraphProjection = KnowledgeGraphProjection;
 
 /** Identity of the corpus a cached projection was built from. A change here
  *  means the cache is stale. `maxChunkId` alone is not enough: a deletion
@@ -272,7 +272,7 @@ export async function runProjectionPass(
   // switching costs nothing: this is milliseconds of k-means over a layout that
   // already exists, against a full projection rebuild behind a display control.
   const labelSources = pooled.docKeys.map((docKey) => metadataByDocKey.get(docKey)?.title ?? '');
-  const clusterings = MEMORY_GRAPH_GRANULARITIES.map((granularity) => {
+  const clusterings = KNOWLEDGE_GRAPH_GRANULARITIES.map((granularity) => {
     const assignment = assignClusters(
       positions,
       pooled.rowCount,
@@ -389,7 +389,7 @@ async function sumIndexedTextBytes(
     if (aborted()) return null;
     const startedAt = Date.now();
     // The map's own corpus. The snapshot adds the other corpora's size, which
-    // is small enough to read live (`MemoryIndexSummary`).
+    // is small enough to read live (`KnowledgeGraphIndexSummary`).
     const page = store.indexedTextBytesPage(cursor, scanBatch, 'conversation');
     if (page.lastChunkId === 0) break;
     bytes += page.bytes;

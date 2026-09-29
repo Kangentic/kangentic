@@ -60,7 +60,7 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
     corpusTextBytes(): number {
       return 300;
     }
-    digestCounts(): { written: number; finishedTasks: number } {
+    summaryCounts(): { written: number; finishedTasks: number } {
       return { written: 5, finishedTasks: 6 };
     }
     lastIndexedAt(): string {
@@ -134,12 +134,12 @@ describe('graph service coverage cache', () => {
     expect(storeState.chunkTotalsCalls).toBe(1);
   });
 
-  it('says when the index last changed, and how many digests the scheduler passed over', () => {
+  it('says when the index last changed, and how many summaries the scheduler passed over', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
-    expect(service.getSnapshot('project-a', 'model').index.digests).toEqual({ written: 5, finishedTasks: 6, skipped: 0 });
-    service.setDigestsSkipped((projectId) => (projectId === 'project-a' ? 1 : 0));
+    expect(service.getSnapshot('project-a', 'model').index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 0 });
+    service.setSummariesSkipped((projectId) => (projectId === 'project-a' ? 1 : 0));
     const snapshot = service.getSnapshot('project-a', 'model');
-    expect(snapshot.index.digests).toEqual({ written: 5, finishedTasks: 6, skipped: 1 });
+    expect(snapshot.index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 1 });
     expect(snapshot.index.lastIndexedAt).toBe('2026-09-28T10:00:00.000Z');
   });
 });

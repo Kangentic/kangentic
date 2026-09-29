@@ -13,9 +13,9 @@ import { IPC } from './ipc-channels';
 // Type-only, so the types.ts -> pop-out.ts import cycle stays erased at runtime.
 import type { GitDiffScope, GitDiffStatus } from './types';
 
-export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'changes-file' | 'memory';
+export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'changes-file' | 'knowledge-graph';
 
-export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'changes-file', 'memory'];
+export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'changes-file', 'knowledge-graph'];
 
 export function isPopOutKind(value: string): value is PopOutKind {
   return (POPOUT_KINDS as readonly string[]).includes(value);
@@ -71,7 +71,7 @@ export interface PopOutParamsByKind {
   browser: PopOutTaskParams;
   monitor: Record<string, never>;
   'changes-file': PopOutChangesFileParams;
-  memory: Record<string, never>;
+  'knowledge-graph': Record<string, never>;
 }
 
 /**
@@ -80,7 +80,7 @@ export interface PopOutParamsByKind {
  * inline `kind === 'stats'` check so adding a global surface cannot silently fall
  * through to the task-params branch and key as `monitor:undefined:undefined`.
  */
-const GLOBAL_KINDS: readonly PopOutKind[] = ['stats', 'monitor', 'memory'];
+const GLOBAL_KINDS: readonly PopOutKind[] = ['stats', 'monitor', 'knowledge-graph'];
 
 /** True for a kind whose params carry no task/project, so a caller must not read
  *  `taskId` / `projectId` off them. Exported so every such branch reads the one
@@ -301,8 +301,8 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       IPC.BROWSER_OFFSCREEN_SURFACES,
     ],
   },
-  memory: {
-    kind: 'memory',
+  'knowledge-graph': {
+    kind: 'knowledge-graph',
     scope: 'global',
     title: 'Knowledge Graph',
     // Wider than tall: the surface is a canvas beside the answer rail, and the
@@ -315,10 +315,10 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // A projection pass can take minutes on a cold corpus and finishes in the
       // background, so a detached window must be told rather than poll. Omitting
       // this leaves the pop-out permanently showing "building".
-      IPC.MEMORY_GRAPH_CHANGED,
+      IPC.KNOWLEDGE_GRAPH_CHANGED,
       // Progress on an answer in flight. Declared here or a detached window
       // sits on a spinner while the main window watches the answer arrive.
-      IPC.MEMORY_GRAPH_ANSWER_STREAM,
+      IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM,
       IPC.CONFIG_CHANGED,
     ],
   },

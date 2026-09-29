@@ -912,7 +912,7 @@ export interface AgentAdapter {
    * Optional one-shot question answering over supplied context.
    *
    * The same non-interactive spawn `summarize` uses, shaped for prose instead of
-   * a title: the Memory Graph's Ask retrieves conversation passages, builds a
+   * a title: the Knowledge Graph's Ask retrieves conversation passages, builds a
    * prompt around them, and hands the whole thing here. The adapter's job is the
    * CLI's flags and output format, nothing else - the prompt, the rules and the
    * retrieval budget all belong upstream, so an adapter can never quietly change
@@ -948,7 +948,7 @@ export interface AgentAdapter {
   ): Promise<string>;
 
   /**
-   * Optional: a warm answering process the Memory Graph starts when it opens
+   * Optional: a warm answering process the Knowledge Graph starts when it opens
    * and keeps for a chat, so a question skips the CLI's start-up and a
    * follow-up skips resending the task table. Present only for a CLI that
    * reads turns from a long-lived process and keeps the same read-only

@@ -52,7 +52,7 @@ export interface WindowManagerLayerOptions {
    * Supplied rather than branched for the same reason `renderTaskDetail` is: what
    * differs is where a layer's host can put a task detail, which is a property of
    * the layer. The board supplies `setDetailTaskId`, whose bridge mounts the
-   * window on the board layer. The Memory Graph's layer omits it deliberately:
+   * window on the board layer. The Knowledge Graph's layer omits it deliberately:
    * in-app, that bridge would mount the detail at z-40, UNDERNEATH the graph's own
    * z-42 overlay (the exact bug this layer exists to fix, one hop deeper); in the
    * detached graph there is no board layer at all, so the button would be inert.

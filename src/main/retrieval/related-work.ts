@@ -1,7 +1,7 @@
 /**
  * Related work: every task a question is about, found before any agent runs.
  *
- * The Memory Graph's Ask used to hand the agent a board table and a search
+ * The Knowledge Graph's Ask used to hand the agent a board table and a search
  * tool and let it find the relevant work itself. On a topic question that went
  * badly, measured on 700 conversations: "How many times did we change the
  * terminal renderer?" took six searches and 25 seconds and answered "0 times",
@@ -22,7 +22,7 @@
  *   "How many tasks touched the terminal renderer?" pulls toward Electron
  *   renderer work; "terminal renderer" does not. Together they found 47 of 76
  *   title-named terminal tasks inside the handed set against 24 for the
- *   question alone, and brought #601 into the memory-graph set.
+ *   question alone, and brought #601 into the knowledge-graph set.
  * - CORROBORATION. A task with many matching passages is more about the
  *   subject than one with a single close passage, so the count adds a log term
  *   to the best passage's calibrated relevance.
@@ -58,7 +58,7 @@
  *   lowered title-named recall from 69 of 96 to 65 over seven questions, one
  *   of them about which tasks changed a file: nearly every session changes
  *   many files, so the set only grew. They are indexed as text for the task
- *   digests, and searched by nothing here (`EMBEDDED_CORPORA`).
+ *   summaries, and searched by nothing here (`EMBEDDED_CORPORA`).
  * - COMMITS, BY KEYWORD ONLY. The default branch's commits, each counted
  *   toward the task that wrote it, lifted recall from 66 of 96 to 67 over the
  *   same seven questions (the PTY session manager one) and grew the handed set
@@ -774,7 +774,7 @@ export interface IndexedConversationNode extends RelatedWorkNode {
 
 /**
  * Every indexed conversation in a project as a rollup node, read off the index
- * itself rather than the Memory Graph's projection, so a caller with no map
+ * itself rather than the Knowledge Graph's projection, so a caller with no map
  * (the `kangentic_search` tool) can rank tasks the same way Ask does. Empty
  * when the project has no index.
  */

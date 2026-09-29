@@ -301,7 +301,7 @@ export class CodexAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * `--sandbox read-only` is Codex's read-only mode, and `exec` never asks for
    * approval, so there is nothing to approve and nothing it may change.

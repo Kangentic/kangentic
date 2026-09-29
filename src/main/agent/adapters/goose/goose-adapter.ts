@@ -233,7 +233,7 @@ export class GooseAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * `goose run -i -` reads its instructions from STDIN (Goose's documented
    * form for piped input), so a prompt of any size stays off the command line.

@@ -5,7 +5,7 @@ import { useBoardStore } from '../../renderer/stores/board-store';
 import { useConfigStore } from '../../renderer/stores/config-store';
 import { useDictationStore } from '../../renderer/stores/dictation-store';
 import { useHostMemoryStore } from '../../renderer/stores/host-memory-store';
-import { useMemoryGraphStore } from '../../renderer/stores/memory-graph-store';
+import { useKnowledgeGraphStore } from '../../renderer/stores/knowledge-graph-store';
 import { useMobileStore } from '../../renderer/stores/mobile-store';
 import { useMonitorStore } from '../../renderer/stores/monitor-store';
 import { usePopOutStore } from '../../renderer/stores/pop-out-store';
@@ -82,9 +82,9 @@ const PREVIEW_STORES: Record<string, ReadableStore> = {
   // Quoted because the file stem is kebab-case (host-memory-store.ts); the
   // completeness test matches the key to the filename stem.
   'host-memory': useHostMemoryStore,
-  // Quoted because the file stem is kebab-case (memory-graph-store.ts); the
+  // Quoted because the file stem is kebab-case (knowledge-graph-store.ts); the
   // completeness test matches the key to the filename stem.
-  'memory-graph': useMemoryGraphStore,
+  'knowledge-graph': useKnowledgeGraphStore,
   mobile: useMobileStore,
   monitor: useMonitorStore,
   // Quoted because the file stem is kebab-case (pop-out-store.ts); the

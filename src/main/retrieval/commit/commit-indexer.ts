@@ -226,7 +226,7 @@ export async function sweepCommitRecords(
  * may be indexed. Only the young ones: an old commit's conversation is either
  * indexed by now or never will be. And only when a conversation was indexed
  * since the last pass, since nothing else can change the answer: a sweep runs
- * after every board burst, question and digest pass, and retrying the same
+ * after every board burst, question and summary pass, and retrying the same
  * handful of commits each time was about 10 ms of lookups for nothing.
  */
 async function relinkYoungCommits(
@@ -261,8 +261,8 @@ async function relinkYoungCommits(
     return 0;
   }
   const subjectOf = db.prepare("SELECT text FROM memory_chunks WHERE corpus = 'commit' AND doc_id = ? AND seq = 0");
-  // `indexed_at` moves too: the task's digest reads its commits, and the
-  // digest pass's fingerprint watches that column.
+  // `indexed_at` moves too: the task's summary reads its commits, and the
+  // summary pass's fingerprint watches that column.
   const markLinked = db.prepare("UPDATE memory_index_state SET entry_count = 1, indexed_at = ? WHERE corpus = 'commit' AND doc_id = ?");
   const relink = (commit: { docId: string; committedMs: number }): void => {
     try {

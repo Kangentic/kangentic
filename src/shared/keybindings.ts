@@ -114,7 +114,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     // detectConflicts must stay empty across every rebindable global/board
     // entry plus the terminal-unsafe set. R and I are avoided deliberately:
     // Chromium claims them for force-reload and DevTools.
-    id: 'memory.toggle',
+    id: 'knowledgeGraph.toggle',
     label: 'Toggle Knowledge Graph',
     description: 'Open or close the map of what the conversation index has learned.',
     group: 'General',

@@ -4,7 +4,7 @@ import { Field, FIELD_CONTROL_CLASS } from '../../Field';
 import { TaskBranchRow } from '../TaskBranchRow';
 import { PriorityLabelsRow } from '../PriorityLabelsRow';
 import { DescriptionEditor } from '../../DescriptionEditor';
-import { TaskPriorWork } from '../../memory/TaskPriorWork';
+import { TaskPriorWork } from '../../knowledge-graph/TaskPriorWork';
 import { NameFromPromptButton } from '../../NameFromPromptButton';
 import { AdvancedOverridesSection } from '../AdvancedOverridesSection';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';

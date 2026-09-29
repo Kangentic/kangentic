@@ -124,7 +124,7 @@ export function ConversationWindow({
   const sessions = useSessionStore((state) => state.sessions);
 
   // Whether THIS layer can put a task detail somewhere the user will see it. The
-  // board supplies the route; the Memory Graph's layer deliberately does not (see
+  // board supplies the route; the Knowledge Graph's layer deliberately does not (see
   // `WindowManagerLayerOptions.revealTaskDetail`), so "Open task" hides there
   // rather than opening a window under the graph or doing nothing at all.
   const { layer } = useWindowManager();
@@ -257,7 +257,7 @@ export function ConversationWindow({
   const clearWindowScrollTarget = layerStore((state) => state.clearWindowScrollTarget);
   const windowScrollTarget = managedWindow.scrollToTurnUuid;
   const consumeScroll = useCallback(() => {
-    // A per-window target (the Memory Graph's source rows) is this window's
+    // A per-window target (the Knowledge Graph's source rows) is this window's
     // own; the session-store one-shot belongs to the board's bridge.
     if (windowScrollTarget) clearWindowScrollTarget(managedWindow.id);
     else setScrollToTurnUuid(null);

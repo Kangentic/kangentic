@@ -15,7 +15,7 @@ import { useHostMemoryStore } from './stores/host-memory-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
-import { useMemoryGraphStore } from './stores/memory-graph-store';
+import { useKnowledgeGraphStore } from './stores/knowledge-graph-store';
 import { usePopOutStore } from './stores/pop-out-store';
 import { receivePopOutOpenSet } from './pop-out/pop-out-changed';
 import { useDictationStore } from './stores/dictation-store';
@@ -33,7 +33,7 @@ import { describeAutomationFailure } from '../shared/automation-describe';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { setRebindCaptureActive } from './utils/rebind-state';
-import { useWindowStore, commandWindowManager, memoryWindowManager } from './window-manager/store/window-store';
+import { useWindowStore, commandWindowManager, knowledgeGraphWindowManager } from './window-manager/store/window-store';
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
@@ -1185,13 +1185,13 @@ if (import.meta.hot) {
     // Memory graph Pattern B: re-read the cached projection + coverage from
     // main-process truth (no-ops while the surface is closed).
     // The Projects list and every project in a scope are main-process truth too.
-    if (useMemoryGraphStore.getState().graphOpen) {
-      const memoryGraph = useMemoryGraphStore.getState();
-      void memoryGraph.loadSnapshot();
-      void memoryGraph.loadProjects();
+    if (useKnowledgeGraphStore.getState().graphOpen) {
+      const knowledgeGraph = useKnowledgeGraphStore.getState();
+      void knowledgeGraph.loadSnapshot();
+      void knowledgeGraph.loadProjects();
       // The open project's island comes from loadSnapshot above.
-      for (const scopedProjectId of memoryGraph.scopeProjectIds ?? []) {
-        if (scopedProjectId !== memoryGraph.projectId) void memoryGraph.loadScopeSnapshot(scopedProjectId);
+      for (const scopedProjectId of knowledgeGraph.scopeProjectIds ?? []) {
+        if (scopedProjectId !== knowledgeGraph.projectId) void knowledgeGraph.loadScopeSnapshot(scopedProjectId);
       }
     }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
@@ -1234,9 +1234,9 @@ if (import.meta.env.DEV) {
     window: useWindowStore,
     monitor: useMonitorStore,
     commandWindow: commandWindowManager.store,
-    memoryWindows: memoryWindowManager.store,
+    knowledgeGraphWindows: knowledgeGraphWindowManager.store,
     usageDashboard: useUsageDashboardStore,
-    memoryGraph: useMemoryGraphStore,
+    knowledgeGraph: useKnowledgeGraphStore,
     popOut: usePopOutStore,
     dictation: useDictationStore,
     announcements: useAnnouncementsStore,

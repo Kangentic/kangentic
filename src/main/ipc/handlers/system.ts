@@ -135,10 +135,10 @@ export function registerSystemHandlers(context: IpcContext): void {
     if (config.mcpServer && context.currentProjectId && context.currentProjectPath) {
       syncProjectMcpConfig(context, context.currentProjectId, context.currentProjectPath);
     }
-    // Re-evaluate the embed-worker warm-hold: toggling memory.semanticEnabled off
+    // Re-evaluate the embed-worker warm-hold: toggling knowledgeGraph.enabled off
     // should release the resident worker promptly rather than waiting for its
     // next idle-recycle window.
-    if (config.memory) {
+    if (config.knowledgeGraph) {
       void import('../../retrieval/retrieval-service').then(({ retrievalService }) => {
         retrievalService.reconcileEmbedWorker(context);
       });
@@ -226,7 +226,7 @@ export function registerSystemHandlers(context: IpcContext): void {
       // import: the scheduler's graph (worktree manager, fetch throttle) is
       // already part of this module's, so there is no runtime to keep out.
       gitFetchScheduler.startForProject(context, project);
-      // Re-run the conversation-memory sweep so toggling memory.indexingEnabled
+      // Re-run the conversation-memory sweep so toggling knowledgeGraph.indexingEnabled
       // on takes effect without reopening the project.
       void import('../../retrieval/retrieval-service').then(({ retrievalService }) => {
         retrievalService.startForProject(context, project);

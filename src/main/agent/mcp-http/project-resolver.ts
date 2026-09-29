@@ -168,7 +168,7 @@ export class RequestResolver {
    *  is enabled in global config. Default true. */
   isMemoryIndexingEnabled(): boolean {
     try {
-      return this.ipcContext.configManager.load().memory?.indexingEnabled !== false;
+      return this.ipcContext.configManager.load().knowledgeGraph?.indexingEnabled !== false;
     } catch {
       return true;
     }

@@ -1,5 +1,5 @@
 /**
- * Antigravity's `--output-format stream-json` events, read for a Memory Graph
+ * Antigravity's `--output-format stream-json` events, read for a Knowledge Graph
  * answer, and the conversation a run leaves behind.
  *
  * Captured on agy 1.2.11:

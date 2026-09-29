@@ -7,6 +7,7 @@ import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 import { safeWriteJson } from '../safe-write';
 import { reportSyncWriteFailure } from './write-failure-notice';
 import { migrateLegacyGitKeys } from './legacy-git-keys';
+import { migrateLegacyMemoryKeys } from './legacy-memory-keys';
 
 /** Dotted paths in AppConfig that must be REPLACED wholesale on a partial update
  *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
@@ -233,6 +234,12 @@ export class ConfigManager {
     const parsedGit = parsed?.git as Record<string, unknown> | undefined;
     if (parsedGit && typeof parsedGit === 'object'
       && migrateLegacyGitKeys(this.config.git as unknown as Record<string, unknown>, parsedGit)) {
+      this.save(this.config);
+    }
+
+    // One-time migration: the `memory` block became `knowledgeGraph`, and two
+    // of its keys took their Settings rows' names (see legacy-memory-keys.ts).
+    if (parsed && migrateLegacyMemoryKeys(this.config as unknown as Record<string, unknown>, parsed)) {
       this.save(this.config);
     }
 

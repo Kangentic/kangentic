@@ -468,7 +468,7 @@ export interface SearchEverythingInput {
    * Conversation-memory (structured transcript) search. Omitted or
    * `enabled: false` skips it entirely - existing callers and tests are
    * unaffected. The IPC handler and MCP tool set `enabled` from
-   * `memory.indexingEnabled`. `embedder` enables the semantic/hybrid path;
+   * `knowledgeGraph.indexingEnabled`. `embedder` enables the semantic/hybrid path;
    * absent = lexical-only. `embedWaitMs` is the query-embed budget: the palette
    * uses a short one (latency-sensitive), the MCP tool a generous one.
    */

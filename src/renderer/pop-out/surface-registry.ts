@@ -29,7 +29,7 @@ export interface SurfaceDescriptor<K extends PopOutKind = PopOutKind> {
    *  ADDITIVE surface with no exclusive in-app counterpart (a 'changes-file'
    *  window must never unmount the inline diff pane it was opened from). See the
    *  carve-out in .claude/rules/pop-out-surface-registry.md. */
-  inAppSurface: 'stats-overlay' | 'task-changes' | 'browser-pane' | 'monitor-overlay' | 'memory-overlay' | null;
+  inAppSurface: 'stats-overlay' | 'task-changes' | 'browser-pane' | 'monitor-overlay' | 'knowledge-graph-overlay' | null;
 }
 
 // Heterogeneous registry: each entry is fully typed via SurfaceDescriptor<K> at its

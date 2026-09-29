@@ -75,7 +75,7 @@ const taskIndexerMock = vi.hoisted(() => ({
 vi.mock('../../src/main/retrieval/task/task-indexer', () => ({
   sweepTaskRecords: taskIndexerMock.sweepTaskRecords,
 }));
-const graphServiceMock = vi.hoisted(() => ({ notifyChanged: vi.fn(), setDigestsSkipped: vi.fn(), setDigestNamesOn: vi.fn() }));
+const graphServiceMock = vi.hoisted(() => ({ notifyChanged: vi.fn(), setSummariesSkipped: vi.fn(), setSummaryNamesOn: vi.fn() }));
 vi.mock('../../src/main/retrieval/graph/graph-service', () => ({ graphService: graphServiceMock }));
 const changeIndexerMock = vi.hoisted(() => ({
   sweepChangeRecords: vi.fn(async () => ({ indexed: 0 })),
@@ -108,7 +108,7 @@ function makeContext(sessionManager: FakeSessionManager, boardEvents = new Board
   return {
     sessionManager,
     boardEvents,
-    configManager: { load: () => ({ memory: { indexingEnabled: true } }) },
+    configManager: { load: () => ({ knowledgeGraph: { indexingEnabled: true } }) },
     currentProjectId: null,
   } as unknown as IpcContext;
 }

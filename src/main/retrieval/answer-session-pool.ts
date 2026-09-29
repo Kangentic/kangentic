@@ -1,5 +1,5 @@
 /**
- * Warm answering sessions, one per Memory Graph chat.
+ * Warm answering sessions, one per Knowledge Graph chat.
  *
  * The graph prewarms a session when it opens, so the first question skips the
  * CLI's start-up, and a chat keeps its session so a follow-up skips resending

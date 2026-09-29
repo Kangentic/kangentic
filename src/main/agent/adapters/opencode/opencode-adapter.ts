@@ -488,7 +488,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: false };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * OpenCode's built-in `plan` agent is read-only: no edits, no bash (the
    * probe's file write and shell command were both refused). The prompt is

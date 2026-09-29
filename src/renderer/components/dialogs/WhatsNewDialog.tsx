@@ -29,7 +29,7 @@ import { githubReleaseUrl } from '../../lib/github-release-url';
  *
  * Rocket rather than Sparkles for the icon: Sparkles means AI/semantic
  * everywhere else in the renderer (NameFromPromptButton, the search palette's
- * "matched by meaning" badge, MemoryTab), and release notes are human-authored.
+ * "matched by meaning" badge, KnowledgeGraphTab), and release notes are human-authored.
  * It is also distinct from the pre-restart dialog's CloudDownload, so "update
  * ready" and "update applied" never read as the same thing.
  *

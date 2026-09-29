@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { composeIslands, placeIslands } from '../../src/renderer/components/memory/compose-islands';
-import type { MemoryGraphNode, MemoryGraphProjection } from '../../src/shared/types';
+import { composeIslands, placeIslands } from '../../src/renderer/components/knowledge-graph/compose-islands';
+import type { KnowledgeGraphNode, KnowledgeGraphProjection } from '../../src/shared/types';
 
-function node(docKey: string, x: number, balanced: number): MemoryGraphNode {
+function node(docKey: string, x: number, balanced: number): KnowledgeGraphNode {
   return {
     docKey, x, y: 0.5, z: 0.5, chunkCount: 1, title: docKey, sessionId: `session-${docKey}`, taskId: null,
     displayId: null, agent: null, model: null, effort: null, durationMs: null, costUsd: null, tokens: null,
@@ -10,7 +10,7 @@ function node(docKey: string, x: number, balanced: number): MemoryGraphNode {
   };
 }
 
-function projection(prefix: string, count: number, regions: number): MemoryGraphProjection {
+function projection(prefix: string, count: number, regions: number): KnowledgeGraphProjection {
   const nodes = Array.from({ length: count }, (_, index) => node(`${prefix}-${index}`, index / Math.max(1, count - 1), index % regions));
   const regionList = Array.from({ length: regions }, (_, id) => ({ id, label: `${prefix} region ${id}`, x: 0.5, y: 0.5, z: 0.5, size: 1 }));
   return {

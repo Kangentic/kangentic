@@ -998,14 +998,14 @@ describe('budget suspend/resume', () => {
 /**
  * Non-terminal consumers of the page's WebGL budget.
  *
- * Terminals were the only consumer until the Memory Graph's three.js canvas.
+ * Terminals were the only consumer until the Knowledge Graph's three.js canvas.
  * An unaccounted second consumer is exactly the eviction the budget exists to
  * prevent: Chromium silently drops the OLDEST context past its per-page cap, and
  * that lands on some terminal as a context loss it did not cause.
  */
 describe('non-terminal context reservations', () => {
   it('counts against the budget, so a terminal at the cap starts suspended', () => {
-    const release = reserveWebglContext('memory-graph');
+    const release = reserveWebglContext('knowledge-graph');
     try {
       expect(getWebglReservationCount()).toBe(1);
       // Budget of 1, already spent by the reservation: this terminal must not
@@ -1032,7 +1032,7 @@ describe('non-terminal context reservations', () => {
   });
 
   it('frees the slot on release, and releasing twice is a no-op', () => {
-    const release = reserveWebglContext('memory-graph');
+    const release = reserveWebglContext('knowledge-graph');
     expect(getWebglReservationCount()).toBe(1);
     release();
     expect(getWebglReservationCount()).toBe(0);
@@ -1045,7 +1045,7 @@ describe('non-terminal context reservations', () => {
     // unrelated window change happened to trigger a re-plan.
     const listener = vi.fn();
     const unsubscribe = onWebglAttachmentsChanged(listener);
-    const release = reserveWebglContext('memory-graph');
+    const release = reserveWebglContext('knowledge-graph');
     expect(listener).toHaveBeenCalledTimes(1);
     release();
     expect(listener).toHaveBeenCalledTimes(2);
@@ -1054,7 +1054,7 @@ describe('non-terminal context reservations', () => {
 
   it('a terminal below the reduced cap still attaches', () => {
     // The reservation shrinks the terminals' share; it does not shut them out.
-    const release = reserveWebglContext('memory-graph');
+    const release = reserveWebglContext('knowledge-graph');
     try {
       const { createAddon, addons } = makeAddonFactory(['ok']);
       const dispose = attachWebglRenderer(fakeTerminal, 'terminal-b', {

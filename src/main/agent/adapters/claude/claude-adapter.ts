@@ -78,7 +78,7 @@ export function writeScopedMcpConfig(
 ): string {
   const configPath = path.join(directory, 'mcp.json');
   // sync-write-ok: the answer call names this file in --mcp-config and cannot
-  // run without it. The throw reaches the MEMORY_GRAPH_ANSWER handler's catch,
+  // run without it. The throw reaches the KNOWLEDGE_GRAPH_ANSWER handler's catch,
   // which turns it into the reason the rail shows.
   fs.writeFileSync(configPath, JSON.stringify({
     mcpServers: {
@@ -119,7 +119,7 @@ const ANSWER_SETTINGS = { advisorModel: '', autoMemoryEnabled: false };
 export function writeAnswerSettings(directory: string): string {
   const settingsPath = path.join(directory, 'settings.json');
   // sync-write-ok: the answer call names this file in --settings and cannot
-  // run without it. The throw reaches the MEMORY_GRAPH_ANSWER handler's catch,
+  // run without it. The throw reaches the KNOWLEDGE_GRAPH_ANSWER handler's catch,
   // which turns it into the reason the chat shows.
   fs.writeFileSync(settingsPath, JSON.stringify(ANSWER_SETTINGS));
   return settingsPath;

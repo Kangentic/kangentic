@@ -1,5 +1,5 @@
 /**
- * Pure projection math for the memory graph's semantic layout.
+ * Pure projection math for the knowledge graph's semantic layout.
  *
  * The graph positions each indexed document by the MEAN of its chunk
  * embeddings, then projects those means to 2D so on-screen proximity means

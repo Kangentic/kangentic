@@ -209,7 +209,7 @@ only in the six general-purpose finders; small.
   sessions instead, which is outside this audit's scope but worth its own look.
 - **Retrieval ground truth** (for section 6): the only live corpus is `'conversation'`; there
   is no repo-file corpus; `kangentic_search` is semantic only for conversations, and
-  `memory.semanticEnabled` defaults off, degrading to FTS5 keyword search that tokenizes
+  `knowledgeGraph.enabled` defaults off, degrading to FTS5 keyword search that tokenizes
   `getUserById` as one token. No finder in this run called any MCP tool at all; the gated
   auditors could not have (Read/Glob/Grep rosters).
 

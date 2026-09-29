@@ -87,7 +87,7 @@ test.describe('Conversation memory search', () => {
 
     // Point Claude at the mock CLI and disable worktrees so the session's cwd
     // is the project directory itself (which the transcript slug is derived
-    // from). Leaving `memory` unset keeps indexingEnabled at its default (true)
+    // from). Leaving `knowledgeGraph` unset keeps indexingEnabled at its default (true)
     // and the semantic layer off, so the search runs lexical FTS only - no
     // embedding-model download.
     fs.writeFileSync(

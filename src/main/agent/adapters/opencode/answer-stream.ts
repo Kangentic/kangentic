@@ -1,5 +1,5 @@
 /**
- * OpenCode's `run --format json` events, read for a Memory Graph answer.
+ * OpenCode's `run --format json` events, read for a Knowledge Graph answer.
  *
  * One JSON object per line, captured on opencode 1.18.31:
  *

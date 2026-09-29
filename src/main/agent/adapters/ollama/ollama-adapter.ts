@@ -168,7 +168,7 @@ export class OllamaAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * `ollama run <model>` with the prompt PIPED: it reads a prompt from stdin
    * when one is piped in, answers, and exits. Read-only by nature, since a

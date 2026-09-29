@@ -14,7 +14,7 @@
  */
 
 import type { CardSourceLineProps } from '../settings-card';
-import type { DigestChoice, MemoryCodeStatus, MemoryDigestStatus, MemorySourceStatus } from '../../../../shared/types';
+import type { SummaryChoice, KnowledgeGraphCodeStatus, KnowledgeGraphSummaryStatus, KnowledgeGraphSourceStatus } from '../../../../shared/types';
 
 /** A line's text and look, without its switch. */
 export type SourceLineState = Pick<CardSourceLineProps, 'value' | 'tone' | 'problem' | 'percent' | 'progressLabel' | 'requirement'>;
@@ -35,59 +35,59 @@ function running(percent: number, minutesLeft: number | null, progressLabel: str
 }
 
 /** Conversations, tasks and commits: always on, so only caught up or running. */
-export function alwaysLine(source: MemorySourceStatus | undefined, progressLabel: string): SourceLineState {
+export function alwaysLine(source: KnowledgeGraphSourceStatus | undefined, progressLabel: string): SourceLineState {
   if (!source) return {};
   if (source.percent !== null) return running(source.percent, source.minutesLeft, progressLabel);
   return { value: source.count.toLocaleString(), tone: 'ready' };
 }
 
-function sameChoice(first: DigestChoice, second: DigestChoice): boolean {
+function sameChoice(first: SummaryChoice, second: SummaryChoice): boolean {
   return first.agent === second.agent && first.model === second.model && first.effort === second.effort;
 }
 
 /**
- * The task summaries (digests) line. `requirement` is what they still wait
+ * The task summaries (summaries) line. `requirement` is what they still wait
  * for (the Knowledge Graph, an agent, a model), which the card decides.
  */
-export function summariesLine(on: boolean, digests: MemoryDigestStatus | undefined, requirement: string | undefined): SourceLineState {
+export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatus | undefined, requirement: string | undefined): SourceLineState {
   if (requirement) return { requirement };
-  if (!digests) return {};
-  const toWrite = Math.max(0, digests.finishedTasks - digests.written);
-  const count = digests.written.toLocaleString();
+  if (!summaries) return {};
+  const toWrite = Math.max(0, summaries.finishedTasks - summaries.written);
+  const count = summaries.written.toLocaleString();
   if (!on) {
     // Switching off keeps what was written, and it goes on helping search.
-    if (digests.finishedTasks > 0 && toWrite === 0) return { value: count, tone: 'ready' };
+    if (summaries.finishedTasks > 0 && toWrite === 0) return { value: count, tone: 'ready' };
     return {
       value: toWrite > 0 ? `${toWrite.toLocaleString()} ${toWrite === 1 ? 'task' : 'tasks'}` : 'No Done tasks yet',
       tone: 'muted',
     };
   }
-  if (digests.awaitingRewrite > 0 && digests.choice) {
+  if (summaries.awaitingRewrite > 0 && summaries.choice) {
     // Every summary written some other way was marked, so what is left
     // unmarked is what the current choice has written.
-    const total = digests.writtenWith.reduce((sum, entry) => sum + entry.count, 0);
-    const done = Math.max(0, total - digests.awaitingRewrite);
+    const total = summaries.writtenWith.reduce((sum, entry) => sum + entry.count, 0);
+    const done = Math.max(0, total - summaries.awaitingRewrite);
     // Rounded down, so it never reads 100% while one still waits.
-    return running(total > 0 ? Math.floor((done / total) * 100) : 0, digests.minutesLeft, 'Summaries rewritten');
+    return running(total > 0 ? Math.floor((done / total) * 100) : 0, summaries.minutesLeft, 'Summaries rewritten');
   }
-  if (digests.state === 'retrying') {
-    const minutes = Math.max(1, Math.round((digests.retryInMs ?? 0) / 60_000));
+  if (summaries.state === 'retrying') {
+    const minutes = Math.max(1, Math.round((summaries.retryInMs ?? 0) / 60_000));
     return { tone: 'caution', problem: 'A call failed', value: `retrying in ${minutes} min` };
   }
-  if (digests.finishedTasks === 0) return { value: 'No Done tasks yet' };
+  if (summaries.finishedTasks === 0) return { value: 'No Done tasks yet' };
   if (toWrite === 0) {
     // Written with another agent or model: no check until Rebuild rewrites them.
-    const choice = digests.choice;
-    const matches = choice === null || digests.writtenWith.every((entry) => sameChoice(entry, choice));
+    const choice = summaries.choice;
+    const matches = choice === null || summaries.writtenWith.every((entry) => sameChoice(entry, choice));
     return matches ? { value: count, tone: 'ready' } : { value: count };
   }
   // The rest are tasks the agent passed over this launch; tried again next launch.
-  // activity-state-ok: the digest pass's own state (idle, writing, retrying),
+  // activity-state-ok: the summary pass's own state (idle, writing, retrying),
   // not a session's ActivityState.
-  if (digests.state === 'idle' && toWrite <= digests.skipped) {
-    return { value: `${count} of ${digests.finishedTasks.toLocaleString()}, ${digests.skipped.toLocaleString()} skipped` };
+  if (summaries.state === 'idle' && toWrite <= summaries.skipped) {
+    return { value: `${count} of ${summaries.finishedTasks.toLocaleString()}, ${summaries.skipped.toLocaleString()} skipped` };
   }
-  return running(Math.floor((digests.written / digests.finishedTasks) * 100), digests.minutesLeft, 'Summaries written');
+  return running(Math.floor((summaries.written / summaries.finishedTasks) * 100), summaries.minutesLeft, 'Summaries written');
 }
 
 function filesOf(count: number): string {
@@ -95,7 +95,7 @@ function filesOf(count: number): string {
 }
 
 /** The source code line. `requirement` is what it still waits for. */
-export function codeLine(code: MemoryCodeStatus | undefined, requirement: string | undefined): SourceLineState {
+export function codeLine(code: KnowledgeGraphCodeStatus | undefined, requirement: string | undefined): SourceLineState {
   if (requirement) return { requirement };
   if (!code) return {};
   switch (code.state) {

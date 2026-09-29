@@ -261,7 +261,7 @@ export class KimiAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * `--plan` is Kimi's plan mode, which is what stands between a question and
    * an edit: print mode implicitly adds `--yolo` (the CLI's own help).

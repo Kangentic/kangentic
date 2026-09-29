@@ -11,7 +11,7 @@ const SURFACE_ICONS: Record<PopOutKind, typeof ChartColumn> = {
   browser: Globe,
   monitor: Activity,
   'changes-file': FileDiff,
-  memory: Brain,
+  'knowledge-graph': Brain,
 };
 
 /**

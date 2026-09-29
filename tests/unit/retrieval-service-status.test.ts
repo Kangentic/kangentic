@@ -1,5 +1,5 @@
 /**
- * retrievalService.getStatus - the MemoryStatus the Search settings tab
+ * retrievalService.getStatus - the KnowledgeGraphStatus the Search settings tab
  * polls.
  *
  * Written for the `workerError` field (DESKTOP-H): when the embedding worker
@@ -48,9 +48,9 @@ vi.mock('../../src/main/retrieval/embedder/embed-engine', () => ({
 
 const CRASH_REASON = "exited with code 1: Error: Cannot find module 'onnxruntime-common'";
 
-function makeContext(memory: { indexingEnabled?: boolean; semanticEnabled?: boolean }): IpcContext {
+function makeContext(knowledgeGraph: { indexingEnabled?: boolean; enabled?: boolean }): IpcContext {
   return {
-    configManager: { load: () => ({ memory }) },
+    configManager: { load: () => ({ knowledgeGraph }) },
     currentProjectId: 'proj-1',
   } as unknown as IpcContext;
 }
@@ -76,7 +76,7 @@ describe('retrievalService.getStatus', () => {
     embedEngineMock.workerCrashed = true;
     embedEngineMock.workerCrashReason = CRASH_REASON;
 
-    const status = retrievalService.getStatus(makeContext({ indexingEnabled: true, semanticEnabled: true }));
+    const status = retrievalService.getStatus(makeContext({ indexingEnabled: true, enabled: true }));
 
     expect(status.semantic).toBe('error');
     expect(status.workerError).toBe(CRASH_REASON);
@@ -87,7 +87,7 @@ describe('retrievalService.getStatus', () => {
   it('reports semantic error with no reason when the policy has none to give', () => {
     embedEngineMock.workerCrashed = true;
 
-    const status = retrievalService.getStatus(makeContext({ indexingEnabled: true, semanticEnabled: true }));
+    const status = retrievalService.getStatus(makeContext({ indexingEnabled: true, enabled: true }));
 
     expect(status.semantic).toBe('error');
     expect(status.workerError).toBeUndefined();
@@ -96,7 +96,7 @@ describe('retrievalService.getStatus', () => {
   it('carries no workerError while healthy (hybrid), and re-marks the project dirty as before', () => {
     embedEngineMock.activeDevice = 'dml';
 
-    const status = retrievalService.getStatus(makeContext({ indexingEnabled: true, semanticEnabled: true }));
+    const status = retrievalService.getStatus(makeContext({ indexingEnabled: true, enabled: true }));
 
     expect(status.semantic).toBe('hybrid');
     expect(status.workerError).toBeUndefined();
@@ -108,7 +108,7 @@ describe('retrievalService.getStatus', () => {
     embedEngineMock.workerCrashed = true;
     embedEngineMock.workerCrashReason = CRASH_REASON;
 
-    const status = retrievalService.getStatus(makeContext({ indexingEnabled: true, semanticEnabled: false }));
+    const status = retrievalService.getStatus(makeContext({ indexingEnabled: true, enabled: false }));
 
     expect(status.semantic).toBe('disabled');
     expect(status.workerError).toBeUndefined();

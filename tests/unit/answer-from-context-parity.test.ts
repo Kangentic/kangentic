@@ -81,7 +81,7 @@ describe('answerFromContext parity', () => {
       .sort();
     expect(
       missing,
-      `These agents can auto-name but cannot answer, so the Memory Graph's\n`
+      `These agents can auto-name but cannot answer, so the Knowledge Graph's\n`
       + `Answering agent dropdown will not list them:\n`
       + missing.map((agent) => `  - ${agent}`).join('\n')
       + `\n\nAdd answerFromContext beside summarize, using that CLI's read-only\n`

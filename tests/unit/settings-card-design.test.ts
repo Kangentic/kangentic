@@ -418,7 +418,7 @@ describe('settings card design', () => {
     expect(tabLabels.size).toBeGreaterThan(15);
     expect(checkedTabs.length).toBe(tabLabels.size);
     // A card per feature on tabs across the panel, the dev-only sections included.
-    for (const card of ['memory.indexingEnabled', 'git.worktreesEnabled', 'dictation.enabled', 'browserAutomation.enabled',
+    for (const card of ['knowledgeGraph.indexingEnabled', 'git.worktreesEnabled', 'dictation.enabled', 'browserAutomation.enabled',
       'mcpServer.enabled', 'mobileBridge.enabled', 'browser.enabled', '"Board layout"', '"Sessions"', '"Terminal"',
       '"Appearance"', '"Shortcuts"', '"Analytics"', '"Diagnostics"', '"Dev inspection bridge"']) {
       expect(cards, `expected the ${card} card`).toContain(card);
@@ -431,7 +431,7 @@ describe('settings card design', () => {
     const owners = descriptions.map((entry) => entry.owner);
     // A registry-sourced header, a literal header, a settingProps binding, an
     // inline row, a nested row, and an unavailable reason.
-    expect(owners).toContain('memory.semanticEnabled');
+    expect(owners).toContain('knowledgeGraph.enabled');
     expect(owners).toContain('"Project defaults"');
     expect(descriptions.some((entry) => entry.text === registryDescriptions.get('mobileBridge.relayMode'))).toBe(true);
     expect(owners).toContain('browserAutomation.allowInteraction');

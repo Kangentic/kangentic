@@ -105,10 +105,10 @@ function fullyDeviatedConfig(): AppConfig {
       autoResumeSessionsOnRestart: false,
       idleTimeoutMinutes: 30,
     },
-    memory: {
+    knowledgeGraph: {
       indexingEnabled: false,
-      semanticEnabled: true,
-      embeddingModel: 'bge-small',
+      enabled: true,
+      localModel: 'bge-small',
       acceleration: 'cpu',
     },
     browserAutomation: {
@@ -211,10 +211,10 @@ describe('buildSettingsSnapshot', () => {
 
   it('sends exactly the deviated keys, numerics bucketed, booleans as strings', () => {
     expect(buildSettingsSnapshot(fullyDeviatedConfig())).toEqual({
-      'memory.indexingEnabled': 'false',
-      'memory.semanticEnabled': 'true',
-      'memory.embeddingModel': 'bge-small',
-      'memory.acceleration': 'cpu',
+      'knowledgeGraph.indexingEnabled': 'false',
+      'knowledgeGraph.enabled': 'true',
+      'knowledgeGraph.localModel': 'bge-small',
+      'knowledgeGraph.acceleration': 'cpu',
       'agent.maxConcurrentSessions': '1-3',
       'agent.queueOverflow': 'reject',
       'agent.autoResumeSessionsOnRestart': 'false',
@@ -310,7 +310,7 @@ describe('trackSettingsSnapshot', () => {
   it('sends the deviations beside their bucketed count', () => {
     trackSettingsSnapshot({ load: () => fullyDeviatedConfig() });
     const [, props] = mocks.trackEvent.mock.calls[0];
-    expect(props).toMatchObject({ deviations: '6+', 'memory.semanticEnabled': 'true' });
+    expect(props).toMatchObject({ deviations: '6+', 'knowledgeGraph.enabled': 'true' });
   });
 
   it('never throws when the config cannot be read; it warns and sends nothing', () => {

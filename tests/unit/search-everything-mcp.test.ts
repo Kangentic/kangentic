@@ -417,7 +417,7 @@ describe('kangentic_search MCP tool', () => {
       expect(result.content[0].text).toBe('No tasks have conversations matching "zebra kettle".');
     });
 
-    it('reports an answer run\'s search to the Memory Graph, as every conversation of every task found', async () => {
+    it('reports an answer run\'s search to the Knowledge Graph, as every conversation of every task found', async () => {
       const answerServer = makeFakeServer();
       registerSearchTools(answerServer as never, resolver, 'answer-chat-1');
       const seen: Array<{ query: string; sessionIds: string[] }> = [];

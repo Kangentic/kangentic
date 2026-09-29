@@ -16,7 +16,7 @@ const PROJECT_ID = 'proj-embed-picker';
 
 /** Seed a project and the polled model status (config for semanticEnabled is set
  *  post-launch via the config store, which is the mechanism the store honors). */
-function makePreConfig(modelState: string, progress?: number, digests?: object, code?: object, sources?: object): string {
+function makePreConfig(modelState: string, progress?: number, summaries?: object, code?: object, sources?: object): string {
   const memoryStatus = {
     code,
     sources,
@@ -32,7 +32,7 @@ function makePreConfig(modelState: string, progress?: number, digests?: object, 
       state: modelState,
       progress,
     },
-    digests,
+    summaries,
   };
   return `
     window.__mockPreConfigure(function (state) {
@@ -100,7 +100,7 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   // Turn the Knowledge Graph on in config (the dropdown + rows are gated on it) via
   // the same config.set + store-reload path the settings UI uses.
   await page.evaluate(() =>
-    window.electronAPI.config.set({ memory: { indexingEnabled: true, semanticEnabled: true, embeddingModel: 'bge-small' } }),
+    window.electronAPI.config.set({ knowledgeGraph: { indexingEnabled: true, enabled: true, localModel: 'bge-small' } }),
   );
   await page.evaluate(() => {
     const stores = (window as unknown as {
@@ -111,16 +111,16 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   return { browser, page };
 }
 
-async function openMemoryTab(page: Page) {
+async function openKnowledgeGraphTab(page: Page) {
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
   // By id: the id is what deep links and saved last-tab state address.
-  await page.getByTestId('settings-tab-memory').click();
+  await page.getByTestId('settings-tab-knowledgeGraph').click();
 }
 
-/** Write memory settings through the path the settings UI uses, then reload the store. */
-async function setMemory(page: Page, memory: Record<string, unknown>) {
-  await page.evaluate((partial) => window.electronAPI.config.set({ memory: partial }), memory);
+/** Write Knowledge Graph settings through the path the settings UI uses, then reload the store. */
+async function setKnowledgeGraph(page: Page, knowledgeGraph: Record<string, unknown>) {
+  await page.evaluate((partial) => window.electronAPI.config.set({ knowledgeGraph: partial }), knowledgeGraph);
   await page.evaluate(() => {
     const stores = (window as unknown as {
       __zustandStores?: { config: { getState: () => { loadConfig: () => Promise<void> } } };
@@ -133,7 +133,7 @@ test.describe('Embedding model picker', () => {
   test('lists the tiers and shows the Ready card when the model is cached', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
 
       const select = page.getByTestId('embedding-model-select');
       await expect(select).toBeVisible();
@@ -154,7 +154,7 @@ test.describe('Embedding model picker', () => {
   test('shows download progress while the model is downloading', async () => {
     const { browser, page } = await launchWithState(makePreConfig('downloading', 0.42));
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
       const card = page.getByTestId('embedding-model-card');
       await expect(page.getByTestId('embedding-model-card-label')).toHaveText('Downloading');
       await expect(page.getByTestId('embedding-model-card-text')).toHaveText('42%, bge small');
@@ -168,7 +168,7 @@ test.describe('Embedding model picker', () => {
   test('a model not on disk yet reads as Downloading at 0%, never as waiting', async () => {
     const { browser, page } = await launchWithState(makePreConfig('absent'));
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
       await expect(page.getByTestId('embedding-model-card-label')).toHaveText('Downloading');
       await expect(page.getByTestId('embedding-model-card-text')).toHaveText('0%, bge small');
     } finally {
@@ -179,7 +179,7 @@ test.describe('Embedding model picker', () => {
   test('a failed download tints the label and keeps the model name neutral', async () => {
     const { browser, page } = await launchWithState(makePreConfig('error'));
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
       const label = page.getByTestId('embedding-model-card-label');
       await expect(label).toHaveText('Download failed');
       await expect(label).toHaveClass(/text-danger/);
@@ -190,10 +190,10 @@ test.describe('Embedding model picker', () => {
     }
   });
 
-  test('selecting a different model persists memory.embeddingModel', async () => {
+  test('selecting a different model persists knowledgeGraph.localModel', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
       await page.getByTestId('embedding-model-select').selectOption('bge-base');
 
       // The change flows through updateConfig -> config.set -> refetch, so the
@@ -202,9 +202,9 @@ test.describe('Embedding model picker', () => {
         .poll(async () =>
           page.evaluate(() => {
             const stores = (window as unknown as {
-              __zustandStores?: { config: { getState: () => { config: { memory?: { embeddingModel?: string } } } } };
+              __zustandStores?: { config: { getState: () => { config: { knowledgeGraph?: { localModel?: string } } } } };
             }).__zustandStores;
-            return stores?.config.getState().config.memory?.embeddingModel;
+            return stores?.config.getState().config.knowledgeGraph?.localModel;
           }),
         )
         .toBe('bge-base');
@@ -216,11 +216,11 @@ test.describe('Embedding model picker', () => {
   test('lists the acceleration options, defaults to Auto, and names the active backend', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
-      await openMemoryTab(page);
-      const choice = page.getByTestId('memory-acceleration-choice');
+      await openKnowledgeGraphTab(page);
+      const choice = page.getByTestId('knowledge-graph-acceleration-choice');
       await expect(choice).toBeVisible();
       await expect(choice.getByRole('radio')).toHaveText(['Auto', 'GPU', 'CPU']);
-      await expect(page.getByTestId('memory-acceleration-auto')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.getByTestId('knowledge-graph-acceleration-auto')).toHaveAttribute('aria-checked', 'true');
       // The status line names the execution provider the worker actually initialized on.
       await expect(page.getByTestId('embedding-model-ready')).toContainText('DirectML (GPU)');
     } finally {
@@ -228,18 +228,18 @@ test.describe('Embedding model picker', () => {
     }
   });
 
-  test('selecting a different acceleration persists memory.acceleration', async () => {
+  test('selecting a different acceleration persists knowledgeGraph.acceleration', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
-      await openMemoryTab(page);
-      await page.getByTestId('memory-acceleration-cpu').click();
+      await openKnowledgeGraphTab(page);
+      await page.getByTestId('knowledge-graph-acceleration-cpu').click();
       await expect
         .poll(async () =>
           page.evaluate(() => {
             const stores = (window as unknown as {
-              __zustandStores?: { config: { getState: () => { config: { memory?: { acceleration?: string } } } } };
+              __zustandStores?: { config: { getState: () => { config: { knowledgeGraph?: { acceleration?: string } } } } };
             }).__zustandStores;
-            return stores?.config.getState().config.memory?.acceleration;
+            return stores?.config.getState().config.knowledgeGraph?.acceleration;
           }),
         )
         .toBe('cpu');
@@ -254,9 +254,9 @@ test.describe('Knowledge Graph card', () => {
   test('one switch holds the local model and the agent, and stays visible with its prerequisite', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
       const card = page.getByTestId('knowledge-graph-card');
-      const agentRow = page.getByTestId('memory-answer-agent');
+      const agentRow = page.getByTestId('knowledge-graph-answer-agent');
       const qualityRow = page.getByTestId('embedding-model-select');
 
       const description = 'Finds your work by meaning and answers questions.';
@@ -270,14 +270,14 @@ test.describe('Knowledge Graph card', () => {
       const qualityBox = await qualityRow.boundingBox();
       const agentBox = await agentRow.boundingBox();
       expect(qualityBox && agentBox && qualityBox.y < agentBox.y).toBe(true);
-      await expect(page.getByTestId('memory-digest-agent')).toHaveCount(0);
+      await expect(page.getByTestId('knowledge-graph-summary-agent')).toHaveCount(0);
       // The first card on the tab: the feature, then the index it reads.
       const indexBox = await page.getByTestId('index-card').boundingBox();
       const cardBox = await card.boundingBox();
       expect(cardBox && indexBox && cardBox.y < indexBox.y).toBe(true);
 
       // Off: the card stays, keeps its description, and hides both models' rows.
-      await setMemory(page, { semanticEnabled: false });
+      await setKnowledgeGraph(page, { enabled: false });
       await expect(card).toBeVisible();
       await expect(card).toContainText(description);
       await expect(page.getByRole('switch', { name: 'Knowledge Graph' })).toHaveAttribute('aria-checked', 'false');
@@ -285,7 +285,7 @@ test.describe('Knowledge Graph card', () => {
       await expect(qualityRow).toHaveCount(0);
 
       // Indexing off: it names its own prerequisite.
-      await setMemory(page, { indexingEnabled: false });
+      await setKnowledgeGraph(page, { indexingEnabled: false });
       await expect(card).toContainText('Needs indexing');
     } finally {
       await browser.close();
@@ -299,17 +299,17 @@ test.describe('Index card', () => {
     tasks: { count: 684, percent: null, minutesLeft: null },
     commits: { count: 2419, percent: null, minutesLeft: null },
   };
-  const DIGESTS = { written: 0, finishedTasks: 674, skipped: 0, state: 'idle', retryInMs: null, minutesLeft: null, writtenWith: [], choice: null, awaitingRewrite: 0 };
+  const SUMMARIES = { written: 0, finishedTasks: 674, skipped: 0, state: 'idle', retryInMs: null, minutesLeft: null, writtenWith: [], choice: null, awaitingRewrite: 0 };
   const CODE = { state: 'estimate', branch: 'origin/main', files: 1488, passages: 12186, embedded: 0, minutesLeft: 28 };
-  const AGENT = { answerAgent: 'claude', answerModel: 'sonnet' };
+  const AGENT = { agent: 'claude', model: 'sonnet' };
 
   const valueOf = (page: Page, source: string) => page.getByTestId(`index-source-${source}-value`);
 
   test('lists every source on one line: the counts with a check, and the opt-in two on by default', async () => {
-    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, DIGESTS, CODE, SOURCES));
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, SUMMARIES, CODE, SOURCES));
     try {
-      await setMemory(page, AGENT);
-      await openMemoryTab(page);
+      await setKnowledgeGraph(page, AGENT);
+      await openKnowledgeGraphTab(page);
       const card = page.getByTestId('index-card');
       await expect(card).toContainText('Index');
       await expect(card).toContainText('What Quick Find and the Knowledge Graph search.');
@@ -326,27 +326,27 @@ test.describe('Index card', () => {
       }
 
       // On by default: nothing is spent until an agent is chosen.
-      await expect(page.getByTestId('setting-row-memory.taskDigests')).toHaveAttribute('aria-checked', 'true');
-      await expect(page.getByTestId('setting-row-memory.codeIndex')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.getByTestId('setting-row-knowledgeGraph.taskSummaries')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.getByTestId('setting-row-knowledgeGraph.sourceCode')).toHaveAttribute('aria-checked', 'true');
 
       // Switched off: only what they would cover, muted, with no call count or time.
-      await setMemory(page, { taskDigests: false, codeIndex: false });
-      await expect(page.getByTestId('setting-row-memory.taskDigests')).toHaveAttribute('aria-checked', 'false');
+      await setKnowledgeGraph(page, { taskSummaries: false, sourceCode: false });
+      await expect(page.getByTestId('setting-row-knowledgeGraph.taskSummaries')).toHaveAttribute('aria-checked', 'false');
       await expect(valueOf(page, 'summaries')).toHaveText('674 tasks');
       await expect(valueOf(page, 'code')).toHaveText('1,488 files');
       await expect(valueOf(page, 'code')).toHaveClass(/text-fg-muted/);
 
-      await page.getByTestId('setting-row-memory.codeIndex').click();
-      await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.get()).memory?.codeIndex)).toBe(true);
+      await page.getByTestId('setting-row-knowledgeGraph.sourceCode').click();
+      await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.get()).knowledgeGraph?.sourceCode)).toBe(true);
     } finally {
       await browser.close();
     }
   });
 
   test('the opt-in two wait on the Knowledge Graph, then an agent, and can be switched off while they wait', async () => {
-    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, DIGESTS, CODE, SOURCES));
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, SUMMARIES, CODE, SOURCES));
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
       // No agent chosen: the agent writes the summaries, and only its answers
       // read the code index, so both wait. The always-on three do not.
       for (const source of ['summaries', 'code']) {
@@ -355,21 +355,21 @@ test.describe('Index card', () => {
       await expect(valueOf(page, 'conversations')).toHaveText('1,002');
       // On by default, so waiting they stay switchable: turned off here, the
       // agent chosen next never starts them.
-      const summariesSwitch = page.getByTestId('setting-row-memory.taskDigests');
+      const summariesSwitch = page.getByTestId('setting-row-knowledgeGraph.taskSummaries');
       await expect(summariesSwitch).toBeEnabled();
       await expect(summariesSwitch).toHaveAttribute('aria-checked', 'true');
       await summariesSwitch.click();
-      await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.get()).memory?.taskDigests)).toBe(false);
-      await expect(page.getByTestId('setting-row-memory.codeIndex')).toBeEnabled();
-      await setMemory(page, { taskDigests: true });
+      await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.get()).knowledgeGraph?.taskSummaries)).toBe(false);
+      await expect(page.getByTestId('setting-row-knowledgeGraph.sourceCode')).toBeEnabled();
+      await setKnowledgeGraph(page, { taskSummaries: true });
 
       // An agent whose run takes a model: the summaries wait for the model too.
-      await setMemory(page, { answerAgent: 'claude' });
+      await setKnowledgeGraph(page, { agent: 'claude' });
       await expect(page.getByTestId('index-source-summaries')).toContainText('Needs a model');
-      await expect(page.getByTestId('setting-row-memory.codeIndex')).toBeEnabled();
+      await expect(page.getByTestId('setting-row-knowledgeGraph.sourceCode')).toBeEnabled();
 
       // The Knowledge Graph off: both are found by meaning.
-      await setMemory(page, { ...AGENT, semanticEnabled: false });
+      await setKnowledgeGraph(page, { ...AGENT, enabled: false });
       for (const source of ['summaries', 'code']) {
         await expect(page.getByTestId(`index-source-${source}`)).toContainText('Needs the Knowledge Graph');
       }
@@ -383,12 +383,12 @@ test.describe('Index card', () => {
       ...SOURCES,
       conversations: { count: 1002, percent: 40, minutesLeft: 5 },
     };
-    const digests = { ...DIGESTS, written: 148, state: 'writing', minutesLeft: 3 };
+    const summaries = { ...SUMMARIES, written: 148, state: 'writing', minutesLeft: 3 };
     const code = { ...CODE, state: 'indexing', embedded: 4210, minutesLeft: 150 };
-    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests, code, running));
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, summaries, code, running));
     try {
-      await setMemory(page, { ...AGENT, taskDigests: true, codeIndex: true });
-      await openMemoryTab(page);
+      await setKnowledgeGraph(page, { ...AGENT, taskSummaries: true, sourceCode: true });
+      await openKnowledgeGraphTab(page);
       await expect(valueOf(page, 'conversations')).toHaveText('40%, 5 min left');
       await expect(page.getByRole('progressbar', { name: 'Conversations embedded' })).toHaveAttribute('aria-valuenow', '40');
       // 148 of 674 is 21.9%, and 4,210 of 12,186 is 34.5%: rounded down.
@@ -403,11 +403,11 @@ test.describe('Index card', () => {
   });
 
   test('a failed call tints its state word and puts the warning in the gutter; the rest stays neutral', async () => {
-    const digests = { ...DIGESTS, written: 200, state: 'retrying', retryInMs: 5 * 60_000 };
-    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests, CODE, SOURCES));
+    const summaries = { ...SUMMARIES, written: 200, state: 'retrying', retryInMs: 5 * 60_000 };
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, summaries, CODE, SOURCES));
     try {
-      await setMemory(page, { ...AGENT, taskDigests: true });
-      await openMemoryTab(page);
+      await setKnowledgeGraph(page, { ...AGENT, taskSummaries: true });
+      await openKnowledgeGraphTab(page);
       const value = valueOf(page, 'summaries');
       await expect(value).toHaveText('A call failed, retrying in 5 min');
       await expect(value.locator('.text-warning')).toHaveText('A call failed');
@@ -418,11 +418,11 @@ test.describe('Index card', () => {
   });
 
   test('Rebuild runs at once when it would spend nothing', async () => {
-    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, DIGESTS, CODE, SOURCES));
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, SUMMARIES, CODE, SOURCES));
     try {
-      await openMemoryTab(page);
-      await expect(page.getByTestId('memory-rebuild-row')).toContainText('Reads every source again, in every project.');
-      await page.getByTestId('memory-rebuild-index').click();
+      await openKnowledgeGraphTab(page);
+      await expect(page.getByTestId('knowledge-graph-rebuild-row')).toContainText('Reads every source again, in every project.');
+      await page.getByTestId('knowledge-graph-rebuild-index').click();
       await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0))
         .toBe(1);
       await expect(page.getByTestId('rebuild-confirm')).toHaveCount(0);
@@ -434,16 +434,16 @@ test.describe('Index card', () => {
   test('Rebuild asks first when summaries were written with another model, naming none', async () => {
     const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
     const opus = { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' };
-    const digests = { ...DIGESTS, written: 674, choice: opus, writtenWith: [{ ...sonnet, count: 674 }] };
-    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, digests, CODE, SOURCES));
+    const summaries = { ...SUMMARIES, written: 674, choice: opus, writtenWith: [{ ...sonnet, count: 674 }] };
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, summaries, CODE, SOURCES));
     try {
-      await setMemory(page, { answerAgent: 'claude', answerModel: 'claude-opus-5-5', taskDigests: true });
-      await openMemoryTab(page);
+      await setKnowledgeGraph(page, { agent: 'claude', model: 'claude-opus-5-5', taskSummaries: true });
+      await openKnowledgeGraphTab(page);
       // Written with another model: the count, and no check until rewritten.
       await expect(valueOf(page, 'summaries')).toHaveText('674');
       await expect(valueOf(page, 'summaries').locator('svg')).toHaveCount(0);
 
-      await page.getByTestId('memory-rebuild-index').click();
+      await page.getByTestId('knowledge-graph-rebuild-index').click();
       const confirm = page.getByTestId('rebuild-confirm');
       await expect(confirm).toContainText('Rebuild everything?');
       await expect(confirm).toContainText('Conversations, tasks, commits, summaries and source code are all rebuilt, in every project.');
@@ -466,7 +466,7 @@ test.describe('Local model error state', () => {
   test('shows the worker error detail when the local model fails to start', async () => {
     const { browser, page } = await launchWithState(makeErrorPreConfig('exit 1: Cannot find module sharp'));
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
       const status = page.getByTestId('semantic-status');
       await expect(status).toBeVisible();
       await expect(status).toHaveText(
@@ -480,7 +480,7 @@ test.describe('Local model error state', () => {
   test('falls back to the generic message when no worker error detail is available', async () => {
     const { browser, page } = await launchWithState(makeErrorPreConfig());
     try {
-      await openMemoryTab(page);
+      await openKnowledgeGraphTab(page);
       const status = page.getByTestId('semantic-status');
       await expect(status).toBeVisible();
       await expect(status).toHaveText('The local model failed to start - showing keyword matches.');

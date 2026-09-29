@@ -239,7 +239,7 @@ export class DroidAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * `droid exec` is already non-interactive and makes no edits without an
    * explicit auto level, so there is no separate read-only flag to pass (the

@@ -362,7 +362,7 @@ export class GrokAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * READ-ONLY IS THE DENY RULES, and nothing else holds. The shipped call made
    * no edits "unless told to", which was measured wrong: asked to create a

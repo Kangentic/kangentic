@@ -64,5 +64,5 @@ instead and let the engine's drain loop pick it up in the background.
 
 `src/main/retrieval/**` (the retrieval/embedding subsystem) and `src/main/ipc/handlers/**` (the
 lifecycle/config call sites that produce chunks or toggle semantic search). Does not cover the
-renderer, which only ever reads `MemoryStatus` via `getStatus()` and never triggers embedding
+renderer, which only ever reads `KnowledgeGraphStatus` via `getStatus()` and never triggers embedding
 itself.

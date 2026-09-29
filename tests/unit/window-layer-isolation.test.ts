@@ -252,9 +252,9 @@ describe('window-manager layer isolation', () => {
       const markerLines = collectScopeMarkerLines();
       const markedFiles = new Set(markerLines.map((entry) => entry.split(':')[0]));
 
-      // One marker per HOST, not per component. Both the monitor and the Memory Graph have
+      // One marker per HOST, not per component. Both the monitor and the Knowledge Graph have
       // TWO hosts that do not share a root: the in-app overlay (MonitorPage /
-      // MemoryGraphPage) and the pop-out window (PopOutMonitorRoot / PopOutMemoryRoot, which
+      // KnowledgeGraphPage) and the pop-out window (PopOutMonitorRoot / PopOutKnowledgeGraphRoot, which
       // render the lazy body + the detail layer WITHOUT the in-app page). Each pair mounts
       // the hook via its detail layer, so both hosts need a scope root or one of them
       // silently stops dismissing - which is exactly what happened when the monitor's marker
@@ -263,15 +263,15 @@ describe('window-manager layer isolation', () => {
         [...markedFiles].sort(),
         'The light-dismiss scope marker must exist on the board shell (AppLayout\'s content row '
         + 'and StatusBar, which sits outside it) and on BOTH hosts of every surface that owns a '
-        + 'window layer (the monitor and the Memory Graph: each in-app overlay and each pop-out '
+        + 'window layer (the monitor and the Knowledge Graph: each in-app overlay and each pop-out '
         + 'root). Losing one silently turns background-close off for that host. '
         + 'Found:\n' + markerLines.join('\n'),
       ).toEqual([
+        'src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx',
         'src/renderer/components/layout/AppLayout.tsx',
         'src/renderer/components/layout/StatusBar.tsx',
-        'src/renderer/components/memory/MemoryGraphPage.tsx',
         'src/renderer/components/monitor/MonitorPage.tsx',
-        'src/renderer/pop-out/roots/PopOutMemoryRoot.tsx',
+        'src/renderer/pop-out/roots/PopOutKnowledgeGraphRoot.tsx',
         'src/renderer/pop-out/roots/PopOutMonitorRoot.tsx',
       ]);
     });
@@ -290,8 +290,8 @@ describe('window-manager layer isolation', () => {
         'src/renderer/components/layout/StatusBar.tsx': 'board',
         'src/renderer/components/monitor/MonitorPage.tsx': 'monitor',
         'src/renderer/pop-out/roots/PopOutMonitorRoot.tsx': 'monitor',
-        'src/renderer/components/memory/MemoryGraphPage.tsx': 'memory',
-        'src/renderer/pop-out/roots/PopOutMemoryRoot.tsx': 'memory',
+        'src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx': 'knowledge-graph',
+        'src/renderer/pop-out/roots/PopOutKnowledgeGraphRoot.tsx': 'knowledge-graph',
       };
 
       const markerLines = collectScopeMarkerLines();

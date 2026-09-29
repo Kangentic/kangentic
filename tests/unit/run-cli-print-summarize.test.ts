@@ -570,7 +570,7 @@ describe('runCliPrintSummarize - a prompt delivered through a file', () => {
   });
 
   it('words an answer failure for the answer, and keeps what the CLI said', async () => {
-    // The Memory Graph prints this verbatim under the question the user asked.
+    // The Knowledge Graph prints this verbatim under the question the user asked.
     // "summarize CLI exited" named a feature they had not used.
     const child = makeFakeChild();
     mockSpawn.mockReturnValue(child);

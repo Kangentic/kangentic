@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { answerFocusIndices } from '../../src/renderer/components/memory/answer-focus';
+import { answerFocusIndices } from '../../src/renderer/components/knowledge-graph/answer-focus';
 
 const indexByDocKey = new Map([
   ['conversation::a', 0],

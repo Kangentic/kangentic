@@ -177,10 +177,10 @@ describe('assertVendorChunksLazy', () => {
   });
 
   it('(g) throws when no three-*.js chunk exists in assets/', () => {
-    // three is the most exposed of the three lazy vendors: PopOutMemoryRoot is
+    // three is the most exposed of the three lazy vendors: PopOutKnowledgeGraphRoot is
     // statically reachable from the entry via the pop-out surface registry, so
     // the ONLY thing keeping three lazy is that it goes through
-    // LazyMemoryGraph. A missing named chunk means that check cannot run.
+    // LazyKnowledgeGraph. A missing named chunk means that check cannot run.
     writeAsset('entry-abc123.js');
     writeAsset('recharts-xyz789.js');
     writeManifest({
@@ -204,7 +204,7 @@ describe('assertVendorChunksLazy', () => {
         isEntry: true,
         // Reached one hop in, which is the realistic shape: the pop-out surface
         // registry is statically imported, and a root under it imports the
-        // scene directly instead of through LazyMemoryGraph.
+        // scene directly instead of through LazyKnowledgeGraph.
         imports: ['popout-root-key'],
       },
       'popout-root-key': {
@@ -219,6 +219,6 @@ describe('assertVendorChunksLazy', () => {
 
     expect(() => assertVendorChunksLazy(tempDir)).toThrow(/STATIC import closure/);
     expect(() => assertVendorChunksLazy(tempDir)).toThrow(/three-def456\.js/);
-    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/LazyMemoryGraph/);
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/LazyKnowledgeGraph/);
   });
 });

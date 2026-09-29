@@ -1,5 +1,5 @@
 /**
- * What a Memory Graph answer run searched for, as it searches.
+ * What a Knowledge Graph answer run searched for, as it searches.
  *
  * The agent's own search is part of what the user watches happen: the chat
  * shows the query as a step line and the map rings the conversations it found.

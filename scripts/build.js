@@ -231,7 +231,7 @@ async function uploadNativeDebugFiles() {
 /**
  * Fails the build unless the heavy lazy-only vendors (recharts behind
  * LazyStatsDashboard, monaco behind the lazy ChangesPanel, three behind
- * LazyMemoryGraph) stayed OUT of the renderer entry's static import closure.
+ * LazyKnowledgeGraph) stayed OUT of the renderer entry's static import closure.
  * Rolldown's chunking has silently defeated these boundaries before (a
  * manualChunks group absorbed react's CJS interop and became a static import of
  * the entry, parsing the whole vendor at every cold start), so this is the
@@ -244,9 +244,9 @@ async function uploadNativeDebugFiles() {
  *      monaco has no named chunk by design - see vite.config.mts), and some
  *      lazy chunk does (proving the markers still detect monaco at all).
  *   4. The same existence + closure pair for `three-*.js`. This one is the most
- *      exposed of the three: `PopOutMemoryRoot` IS statically reachable from the
+ *      exposed of the three: `PopOutKnowledgeGraphRoot` IS statically reachable from the
  *      entry through the pop-out surface registry, so the ONLY thing keeping
- *      three lazy is that it imports the graph through `LazyMemoryGraph`. A
+ *      three lazy is that it imports the graph through `LazyKnowledgeGraph`. A
  *      stray static import there would be invisible in dev and would parse all
  *      of three at every cold start in production.
  * Falls back to asserting index.html carries no reference to the recharts
@@ -303,16 +303,16 @@ function assertVendorChunksLazy(rendererOutDir) {
     throw new Error(
       '[build] No three-*.js chunk in the renderer output. Either three became statically bundled '
       + 'into another chunk (check the manualChunks entry in vite.config.mts) or the dependency '
-      + 'layout changed; the lazy Memory Graph bundle assertion cannot run.',
+      + 'layout changed; the lazy Knowledge Graph bundle assertion cannot run.',
     );
   }
   const threeFile = `assets/${threeChunk}`;
   if (staticFiles.has(threeFile)) {
     throw new Error(
       `[build] ${threeChunk} is in the entry's STATIC import closure. Something imports three `
-      + '(or a Memory Graph module that pulls it) statically from the startup path. The usual cause '
-      + 'is PopOutMemoryRoot, which IS statically reachable from the entry via the pop-out surface '
-      + 'registry - it must reach the scene through the LazyMemoryGraph boundary, never directly.',
+      + '(or a Knowledge Graph module that pulls it) statically from the startup path. The usual cause '
+      + 'is PopOutKnowledgeGraphRoot, which IS statically reachable from the entry via the pop-out surface '
+      + 'registry - it must reach the scene through the LazyKnowledgeGraph boundary, never directly.',
     );
   }
 

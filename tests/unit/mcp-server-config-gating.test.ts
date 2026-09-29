@@ -165,7 +165,7 @@ describe('project-selector description dedup', () => {
   });
 });
 
-describe('buildAnswerMcpServer - a Memory Graph answer run sees one tool', () => {
+describe('buildAnswerMcpServer - a Knowledge Graph answer run sees one tool', () => {
   // The probes that qualified each answering CLI used a one-tool server. The
   // real one carries create, move and delete tools, and several CLIs cannot be
   // limited to one MCP tool from outside (Cursor's --force approves every call;

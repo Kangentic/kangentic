@@ -105,7 +105,7 @@ export function bucketDeviationCount(count: number): string {
   return '6+';
 }
 
-const memoryDefaults = DEFAULT_CONFIG.memory;
+const knowledgeGraphDefaults = DEFAULT_CONFIG.knowledgeGraph;
 const dictationDefaults = DEFAULT_CONFIG.dictation;
 const browserAutomationDefaults = resolveBrowserAutomationConfig(undefined);
 
@@ -121,32 +121,32 @@ const browserAutomationDefaults = resolveBrowserAutomationConfig(undefined);
  */
 export const SETTINGS_SNAPSHOT_ALLOWLIST: readonly SettingsSnapshotEntry[] = [
   {
-    id: 'memory.indexingEnabled',
+    id: 'knowledgeGraph.indexingEnabled',
     kind: 'boolean',
-    defaultValue: memoryDefaults?.indexingEnabled ?? true,
-    read: (config) => config.memory?.indexingEnabled,
+    defaultValue: knowledgeGraphDefaults?.indexingEnabled ?? true,
+    read: (config) => config.knowledgeGraph?.indexingEnabled,
   },
   {
-    id: 'memory.semanticEnabled',
+    id: 'knowledgeGraph.enabled',
     kind: 'boolean',
-    defaultValue: memoryDefaults?.semanticEnabled ?? false,
-    read: (config) => config.memory?.semanticEnabled,
+    defaultValue: knowledgeGraphDefaults?.enabled ?? false,
+    read: (config) => config.knowledgeGraph?.enabled,
   },
   {
-    id: 'memory.embeddingModel',
+    id: 'knowledgeGraph.localModel',
     kind: 'enum',
     // The app's own model list, so a model added upstream counts as itself
     // rather than as `other`.
     values: EMBEDDING_MODELS.map((model) => model.id),
-    defaultValue: memoryDefaults?.embeddingModel ?? DEFAULT_EMBEDDING_MODEL_ID,
-    read: (config) => config.memory?.embeddingModel,
+    defaultValue: knowledgeGraphDefaults?.localModel ?? DEFAULT_EMBEDDING_MODEL_ID,
+    read: (config) => config.knowledgeGraph?.localModel,
   },
   {
-    id: 'memory.acceleration',
+    id: 'knowledgeGraph.acceleration',
     kind: 'enum',
     values: ['auto', 'gpu', 'cpu'],
-    defaultValue: memoryDefaults?.acceleration ?? 'auto',
-    read: (config) => config.memory?.acceleration,
+    defaultValue: knowledgeGraphDefaults?.acceleration ?? 'auto',
+    read: (config) => config.knowledgeGraph?.acceleration,
   },
   {
     id: 'agent.maxConcurrentSessions',

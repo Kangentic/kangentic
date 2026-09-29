@@ -144,7 +144,7 @@ export function useTaskDetailWindowBridge(): void {
    * The board loads only the newest few finished tasks until something asks for
    * the rest, so a finished task older than that preview was not there, and the
    * window silently never opened: on a preview mirroring a real board, 657 of 672
-   * finished tasks could not be opened from Quick Find or the Memory Graph.
+   * finished tasks could not be opened from Quick Find or the Knowledge Graph.
    * A task that is loaded opens synchronously, exactly as before.
    */
   const openWhenLoaded = useCallback((projectId: string, taskId: string): void => {

@@ -47,12 +47,12 @@ const LARGE_CONVERSATION_SEED_TURNS = 3000;
  *  dashboard visibly animates to the new totals. */
 const USAGE_DATA_SEED_DAYS = 60;
 
-/** Documents written per click of "Seed Memory Graph". Chosen to sit in the
+/** Documents written per click of "Seed Knowledge Graph". Chosen to sit in the
  *  same order as a real project's indexed history (the dogfood project holds
  *  ~640), so the layout, the node budget, and the coverage strip are all
  *  exercised at production scale rather than on a toy corpus. Vectors are
  *  written directly, so this stays near-instant despite the size. */
-const MEMORY_GRAPH_SEED_DOCUMENTS = 240;
+const KNOWLEDGE_GRAPH_SEED_DOCUMENTS = 240;
 
 // Lorem source. Titles/descriptions are deliberately meaningless so that
 // dragging a seeded task to an executing column gives the agent nothing real to
@@ -154,7 +154,7 @@ export function TestHarness() {
   const [seedingBacklog, setSeedingBacklog] = useState(false);
   const [seedingConversation, setSeedingConversation] = useState(false);
   const [seedingUsage, setSeedingUsage] = useState(false);
-  const [seedingMemoryGraph, setSeedingMemoryGraph] = useState(false);
+  const [seedingKnowledgeGraph, setSeedingKnowledgeGraph] = useState(false);
   const [seedingRealIndex, setSeedingRealIndex] = useState(false);
 
   // Draggable so the panel can be moved off whatever it is covering. Position
@@ -386,19 +386,19 @@ export function TestHarness() {
   };
 
   // Dev-only: seed a fully-embedded, cluster-structured conversation corpus so
-  // the Memory Graph has nodes, similarity edges, and provenance to render. A
+  // the Knowledge Graph has nodes, similarity edges, and provenance to render. A
   // preview project starts with zero indexed conversations, and embedding this
   // many documents through real inference would take minutes, so the vectors
   // are written directly. Documents are drawn from planted topic clusters, so
   // the map has a ground truth you can check by eye.
-  const handleSeedMemoryGraph = async () => {
-    setSeedingMemoryGraph(true);
+  const handleSeedKnowledgeGraph = async () => {
+    setSeedingKnowledgeGraph(true);
     try {
-      const result = await window.electronAPI.dev?.seedMemoryGraph({
-        documentCount: MEMORY_GRAPH_SEED_DOCUMENTS,
+      const result = await window.electronAPI.dev?.seedKnowledgeGraph({
+        documentCount: KNOWLEDGE_GRAPH_SEED_DOCUMENTS,
       });
       if (!result) {
-        useToastStore.getState().addToast({ message: 'Seeding the memory graph is dev-preview only', variant: 'warning' });
+        useToastStore.getState().addToast({ message: 'Seeding the knowledge graph is dev-preview only', variant: 'warning' });
         return;
       }
       await useBoardStore.getState().loadBoard();
@@ -409,11 +409,11 @@ export function TestHarness() {
       });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to seed memory graph: ${error instanceof Error ? error.message : 'unknown error'}`,
+        message: `Failed to seed knowledge graph: ${error instanceof Error ? error.message : 'unknown error'}`,
         variant: 'error',
       });
     } finally {
-      setSeedingMemoryGraph(false);
+      setSeedingKnowledgeGraph(false);
     }
   };
 
@@ -424,7 +424,7 @@ export function TestHarness() {
   const handleSeedRealIndex = async () => {
     setSeedingRealIndex(true);
     try {
-      const result = await window.electronAPI.dev?.seedMemoryGraphReal({});
+      const result = await window.electronAPI.dev?.seedKnowledgeGraphReal({});
       if (!result) {
         useToastStore.getState().addToast({ message: 'Mirroring the real index is dev-preview only', variant: 'warning' });
         return;
@@ -537,22 +537,22 @@ export function TestHarness() {
       </button>
       <button
         type="button"
-        onClick={handleSeedMemoryGraph}
-        disabled={seedingMemoryGraph}
+        onClick={handleSeedKnowledgeGraph}
+        disabled={seedingKnowledgeGraph}
         className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-seed-memory-graph"
-        title={`Seed ${MEMORY_GRAPH_SEED_DOCUMENTS} fully-embedded synthetic conversations across planted topic clusters, so the Memory Graph has nodes, edges, and provenance to render`}
+        data-testid="dev-seed-knowledge-graph"
+        title={`Seed ${KNOWLEDGE_GRAPH_SEED_DOCUMENTS} fully-embedded synthetic conversations across planted topic clusters, so the Knowledge Graph has nodes, edges, and provenance to render`}
       >
         <Waypoints size={16} />
-        {seedingMemoryGraph ? 'Seeding...' : 'Seed Memory Graph'}
+        {seedingKnowledgeGraph ? 'Seeding...' : 'Seed Knowledge Graph'}
       </button>
       <button
         type="button"
         onClick={handleSeedRealIndex}
         disabled={seedingRealIndex}
         className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-seed-memory-graph-real"
-        title="Mirror a slice of the REAL parent project's conversation index (titles, text, embeddings) into this preview, so the Memory Graph shows actual work"
+        data-testid="dev-seed-knowledge-graph-real"
+        title="Mirror a slice of the REAL parent project's conversation index (titles, text, embeddings) into this preview, so the Knowledge Graph shows actual work"
       >
         <Brain size={16} />
         {seedingRealIndex ? 'Mirroring...' : 'Mirror Real Index'}

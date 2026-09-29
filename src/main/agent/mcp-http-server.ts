@@ -386,7 +386,7 @@ export function buildConfiguredMcpServer(
 }
 
 /**
- * The McpServer a Memory Graph answer run sees: `kangentic_search` and nothing
+ * The McpServer a Knowledge Graph answer run sees: `kangentic_search` and nothing
  * else, with instructions sized for one tool.
  *
  * Selected by the caller segment (`isAnswerCaller`), so it holds no matter how
@@ -406,7 +406,7 @@ export function buildAnswerMcpServer(resolver: RequestResolver, callerSessionId?
         + 'Call kangentic_search when the question needs work the prompt does not already cover.',
     },
   );
-  // The caller rides along so the run's searches reach the Memory Graph trace.
+  // The caller rides along so the run's searches reach the Knowledge Graph trace.
   registerSearchTools(mcpServer, resolver, callerSessionId);
   return mcpServer;
 }
@@ -475,7 +475,7 @@ async function handleHttpRequest(
   // after that call begins: no tool can observe it empty.
   const toolArgumentNotices = createToolArgumentNotices();
 
-  // A Memory Graph answer run gets one tool and nothing else (see
+  // A Knowledge Graph answer run gets one tool and nothing else (see
   // `buildAnswerMcpServer`); every other caller gets the full server.
   const mcpServer = isAnswerCaller(callerSessionId)
     ? buildAnswerMcpServer(resolver, callerSessionId)

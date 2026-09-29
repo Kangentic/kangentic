@@ -45,7 +45,7 @@ import { EMBED_DRAIN_BATCH, EMBED_DUTY_CYCLE, resolveEmbeddingModel, type Embedd
 import { isEmbeddingModelPresent } from './embedding-model';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Embedder, StoredChunk } from '../types';
-import type { MemoryAcceleration } from '../../../shared/types';
+import type { KnowledgeGraphAcceleration } from '../../../shared/types';
 
 /** The narrow slice of RetrievalStore the engine actually uses. Structural
  *  (not the concrete class) so unit tests inject a plain fake object without
@@ -113,7 +113,7 @@ function defaultDelay(ms: number): Promise<void> {
 export interface EmbedEngineDeps {
   getDb: (projectId: string) => Database.Database;
   createStore: (db: Database.Database) => EmbedStore;
-  createClient: (model: EmbeddingModelDef, acceleration: MemoryAcceleration) => EmbedWorkerClient;
+  createClient: (model: EmbeddingModelDef, acceleration: KnowledgeGraphAcceleration) => EmbedWorkerClient;
   delay: (ms: number) => Promise<void>;
   dutyCycle: number;
   drainBatchSize: number;
@@ -151,7 +151,7 @@ const defaultDeps: EmbedEngineDeps = {
  *  engine has no dependency on the service module. */
 function isSemanticEnabled(context: IpcContext): boolean {
   try {
-    return context.configManager.load().memory?.semanticEnabled === true;
+    return context.configManager.load().knowledgeGraph?.enabled === true;
   } catch {
     return false;
   }
@@ -159,15 +159,15 @@ function isSemanticEnabled(context: IpcContext): boolean {
 
 function selectedModel(context: IpcContext): EmbeddingModelDef {
   try {
-    return resolveEmbeddingModel(context.configManager.load().memory?.embeddingModel);
+    return resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
   } catch {
     return resolveEmbeddingModel(undefined);
   }
 }
 
-function selectedAcceleration(context: IpcContext): MemoryAcceleration {
+function selectedAcceleration(context: IpcContext): KnowledgeGraphAcceleration {
   try {
-    return context.configManager.load().memory?.acceleration ?? 'auto';
+    return context.configManager.load().knowledgeGraph?.acceleration ?? 'auto';
   } catch {
     return 'auto';
   }
@@ -191,7 +191,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
   // whole app: shared by the background drain AND the interactive query path.
   let client: EmbedWorkerClient | null = null;
   let activeModelId: string | null = null;
-  let activeAcceleration: MemoryAcceleration | null = null;
+  let activeAcceleration: KnowledgeGraphAcceleration | null = null;
 
   const dirty = new Set<string>();
   let wakeResolve: (() => void) | null = null;
@@ -223,7 +223,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
    * `RECORD_PROGRESS_INTERVAL_MS` while a run embeds them, and once when it has
    * nothing left. The Knowledge Graph re-reads its Index then: a corpus's
    * embedded share is read when the graph loads, and nothing else moves it, so
-   * a row caught mid-embed (a task digest re-embeds its whole record) said
+   * a row caught mid-embed (a task summary re-embeds its whole record) said
    * "98% embedded" until the graph was reopened.
    *
    * Only for a run that embedded something besides conversations. A
@@ -263,7 +263,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
    *  selected model or the acceleration preference changed. Re-resolved on
    *  every drain iteration (never cached across a model switch) and by the
    *  query path. */
-  function getClientFor(model: EmbeddingModelDef, acceleration: MemoryAcceleration): EmbedWorkerClient {
+  function getClientFor(model: EmbeddingModelDef, acceleration: KnowledgeGraphAcceleration): EmbedWorkerClient {
     if (client && (activeModelId !== model.id || activeAcceleration !== acceleration)) {
       client.dispose();
       client = null;

@@ -220,7 +220,7 @@ test.describe('archive lazy-load', () => {
   });
 
   test('opening a finished task older than the preview loads it and opens its window', async () => {
-    // Quick Find and the Memory Graph open a task by id. arch-19 is the OLDEST
+    // Quick Find and the Knowledge Graph open a task by id. arch-19 is the OLDEST
     // of the twenty, outside the fifteen the board hydrates, which is where the
     // detail window used to give up silently: the request was made and nothing
     // ever opened.

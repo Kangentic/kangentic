@@ -300,7 +300,7 @@ test.describe('Search Palette', () => {
       // Keyword only, whatever the Search settings say: meaning-based search
       // lives in the Knowledge Graph, so opening Quick Find warms nothing.
       await page.evaluate(() =>
-        window.electronAPI.config.set({ memory: { indexingEnabled: true, semanticEnabled: true } }),
+        window.electronAPI.config.set({ knowledgeGraph: { indexingEnabled: true, enabled: true } }),
       );
       await page.evaluate(() => {
         const stores = (window as unknown as {

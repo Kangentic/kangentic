@@ -1,5 +1,5 @@
 /**
- * Gemini CLI's `--output-format stream-json`, read for a Memory Graph answer.
+ * Gemini CLI's `--output-format stream-json`, read for a Knowledge Graph answer.
  *
  * One JSON object per line. Read from the bundled CLI (0.61.0) and captured:
  *

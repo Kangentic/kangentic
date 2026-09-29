@@ -17,7 +17,7 @@
 import { ANSWER_SEARCH_BUDGET } from '../agent/mcp-http/answer-search-trace';
 import type { AnswerTaskTable } from './answer-tasks';
 import { formatTaskFieldGlossary, formatTaskTable, summarizeTaskTable } from './answer-tasks';
-import { MEMORY_TASK_FIELDS, type MemoryTaskFacts, type MemoryTaskFieldKey } from '../../shared/memory-task-fields';
+import { KNOWLEDGE_GRAPH_TASK_FIELDS, type KnowledgeGraphTaskFacts, type KnowledgeGraphTaskFieldKey } from '../../shared/knowledge-graph-task-fields';
 
 /** One task of the related work, as the prompt states it. */
 export interface RelatedPromptTask {
@@ -30,9 +30,9 @@ export interface RelatedPromptTask {
   /** The best passage, for the first few tasks only. */
   passage: string | null;
   /** The task's facts from the table, so a superlative inside the set needs no lookup. */
-  facts: MemoryTaskFacts | null;
-  /** What the task set out to do and did, in a sentence or two, when a digest was written. */
-  digest?: string | null;
+  facts: KnowledgeGraphTaskFacts | null;
+  /** What the task set out to do and did, in a sentence or two, when a summary was written. */
+  summary?: string | null;
 }
 
 /**
@@ -42,10 +42,10 @@ export interface RelatedPromptTask {
  * Haiku had to find each related task's cost in a 360-row table and named one
  * that three others outspent. Stated on the related row, the ranking is a read.
  */
-const RELATED_FACT_KEYS: ReadonlyArray<MemoryTaskFieldKey> = [
+const RELATED_FACT_KEYS: ReadonlyArray<KnowledgeGraphTaskFieldKey> = [
   'cost_usd', 'duration', 'tokens', 'sessions', 'files', 'lines_added', 'lines_removed', 'outcome', 'pr',
 ];
-const RELATED_FACT_FIELDS = MEMORY_TASK_FIELDS.filter((field) => RELATED_FACT_KEYS.includes(field.key));
+const RELATED_FACT_FIELDS = KNOWLEDGE_GRAPH_TASK_FIELDS.filter((field) => RELATED_FACT_KEYS.includes(field.key));
 
 /** A passage of source code, as the prompt shows it. */
 export interface CodePromptPassage {
@@ -104,7 +104,7 @@ function rules(context: AnswerPromptContext): string {
   return [
     `Answer only from ${sources}. Together they are the whole of what you know here.`,
     '<related_work> is what a search of every recorded conversation and task description found for this question,'
-      + ' strongest first. Decide which of those tasks the question is really about by their titles, digests and'
+      + ' strongest first. Decide which of those tasks the question is really about by their titles, summaries and'
       + ' passages, keep those,'
       + ' and ignore the ones that only share a word. Count and rank from them together with the table.',
     ...(withCode
@@ -192,7 +192,7 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
   const header = [
     'ref', 'task', 'strength', 'matches', 'first', 'last',
     ...RELATED_FACT_FIELDS.map((field) => field.key),
-    'digest',
+    'summary',
     'passage',
   ].join('|');
   const rows = related.map((task) => [
@@ -203,12 +203,12 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
     isoDate(task.firstMs),
     isoDate(task.lastMs),
     ...RELATED_FACT_FIELDS.map((field) => (task.facts ? field.cell(task.facts) : '')),
-    task.digest ? quote(task.digest) : '',
+    task.summary ? quote(task.summary) : '',
     task.passage ? quote(task.passage) : '',
   ].join('|'));
   return [
     'strength is how closely the task matched, relative to the best match (1.00). matches counts the passages that'
-      + ' matched, and first and last are when. The facts are the same as in <task_table>. digest says what a'
+      + ' matched, and first and last are when. The facts are the same as in <task_table>. summary says what a'
       + ' finished task set out to do and did, where one was written. Only the strongest tasks show a passage.',
     header,
     ...rows,

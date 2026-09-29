@@ -744,7 +744,7 @@ export async function runCliPrintAnswer(
 /**
  * The runner's failure text, worded for an answer.
  *
- * The Memory Graph shows why an answer failed verbatim, and the shared runner
+ * The Knowledge Graph shows why an answer failed verbatim, and the shared runner
  * names every failure after the feature it was written for: "summarize CLI
  * exited 1: Error: Model ... is not available" sat under a question the user had
  * asked, about nothing they had summarized. The CLI's own text after the colon

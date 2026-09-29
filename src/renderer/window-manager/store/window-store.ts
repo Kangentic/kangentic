@@ -1209,7 +1209,7 @@ const HMR_DATA: Record<string, WindowManager> | undefined = import.meta.hot?.dat
  *  `import.meta.hot.data` (the block at the bottom of this module), so they are
  *  recovered here. That write MUST stay after these `resolveInstance` calls. */
 function resolveInstance(
-  key: 'boardWindowManager' | 'commandWindowManager' | 'monitorWindowManager' | 'memoryWindowManager',
+  key: 'boardWindowManager' | 'commandWindowManager' | 'monitorWindowManager' | 'knowledgeGraphWindowManager',
   options: WindowManagerStoreOptions,
 ): WindowManager {
   return HMR_DATA?.[key] ?? createWindowManagerStore(options);
@@ -1240,7 +1240,7 @@ export const monitorWindowManager = resolveInstance('monitorWindowManager', {
 });
 
 /**
- * The Memory Graph's conversation layer. The ONLY instance whose windows are
+ * The Knowledge Graph's conversation layer. The ONLY instance whose windows are
  * conversations rather than task details, and the reason it exists at all: the
  * graph's "Open conversation" used to write `session-store.conversationSessionId`,
  * which the BOARD's bridge turned into a window at z-40 - underneath the graph's
@@ -1253,7 +1253,7 @@ export const monitorWindowManager = resolveInstance('monitorWindowManager', {
  * session claims - all three of those systems already skip non-task-detail
  * windows, so this layer adds no coupling to them.
  */
-export const memoryWindowManager = resolveInstance('memoryWindowManager', {
+export const knowledgeGraphWindowManager = resolveInstance('knowledgeGraphWindowManager', {
   idPrefix: 'mem',
   kind: 'conversation',
 });
@@ -1273,7 +1273,7 @@ export const allWindowManagers: readonly WindowManager[] = [
   boardWindowManager,
   commandWindowManager,
   monitorWindowManager,
-  memoryWindowManager,
+  knowledgeGraphWindowManager,
 ];
 
 /** Back-compat: the board instance's bound store hook. Existing engine consumers
@@ -1290,7 +1290,7 @@ if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.monitorWindowManager = monitorWindowManager;
   // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.data.memoryWindowManager = memoryWindowManager;
+  import.meta.hot.data.knowledgeGraphWindowManager = knowledgeGraphWindowManager;
   // Self-accept: editing this module forces a clean reload rather than handing a
   // second store instance to part of an already-mounted tree (Pattern E).
   // @ts-expect-error -- Vite handles import.meta.hot

@@ -130,7 +130,7 @@ const DEFAULT_RETRY_DELAYS_MS = [2_000, 10_000, 30_000, 30_000, 60_000, 120_000]
  * transitions, so Chromium's silent oldest-context eviction never engages. The
  * changes panel is Monaco and takes none.
  *
- * Terminals are not the page's only consumer: the Memory Graph's three.js canvas
+ * Terminals are not the page's only consumer: the Knowledge Graph's three.js canvas
  * takes one via `reserveWebglContext`, and reservations count against this same
  * number (see `countLiveWebgl`), so terminals get 8 minus whatever is reserved.
  *
@@ -198,7 +198,7 @@ const attachmentControllersByKey: Map<string, WebglAttachmentController> = impor
 // @ts-expect-error -- Vite handles import.meta.hot
 const webglAttachmentListeners: Set<() => void> = import.meta.hot?.data?.webglAttachmentListeners ?? new Set();
 /**
- * Contexts held by NON-terminal consumers (today: the Memory Graph's three.js
+ * Contexts held by NON-terminal consumers (today: the Knowledge Graph's three.js
  * canvas). See `reserveWebglContext`.
  */
 // @ts-expect-error -- Vite handles import.meta.hot
@@ -230,7 +230,7 @@ function countLiveWebgl(): number {
  *
  * The budget exists because Chromium silently evicts the OLDEST context past its
  * per-page cap, which lands on some terminal as a context loss. Terminals were
- * the page's only WebGL consumers until the Memory Graph's three.js canvas; an
+ * the page's only WebGL consumers until the Knowledge Graph's three.js canvas; an
  * unaccounted second consumer is exactly the eviction this module exists to
  * prevent.
  *

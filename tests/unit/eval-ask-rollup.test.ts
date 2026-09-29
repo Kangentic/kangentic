@@ -17,12 +17,12 @@
 import { describe, it, expect } from 'vitest';
 import { buildAnswerTaskTable } from '../../src/main/retrieval/answer-tasks';
 import { toBoardTaskFacts, type BoardTaskFactsRow } from '../../src/main/retrieval/board-task-facts';
-import type { MemoryGraphNode, MemoryGraphProjection } from '../../src/shared/types';
+import type { KnowledgeGraphNode, KnowledgeGraphProjection } from '../../src/shared/types';
 // The harness is plain ESM on purpose (it runs under bare node against a live
 // preview), so it is imported here exactly as it ships.
 import { __testing } from '../../scripts/eval-ask.mjs';
 
-function node(overrides: Partial<MemoryGraphNode> & { docKey: string }): MemoryGraphNode {
+function node(overrides: Partial<KnowledgeGraphNode> & { docKey: string }): KnowledgeGraphNode {
   return {
     x: 0, y: 0, z: 0,
     chunkCount: 10,
@@ -43,7 +43,7 @@ function node(overrides: Partial<MemoryGraphNode> & { docKey: string }): MemoryG
   };
 }
 
-function projection(nodes: MemoryGraphNode[]): MemoryGraphProjection {
+function projection(nodes: KnowledgeGraphNode[]): KnowledgeGraphProjection {
   return {
     nodes,
     edges: [],
@@ -51,7 +51,7 @@ function projection(nodes: MemoryGraphNode[]): MemoryGraphProjection {
       granularity: 'balanced',
       regions: [{ label: 'terminal / pty', size: nodes.length, x: 0, y: 0, z: 0 }],
     }],
-  } as unknown as MemoryGraphProjection;
+  } as unknown as KnowledgeGraphProjection;
 }
 
 /** Comparable shape: the fields both sides claim to compute. */

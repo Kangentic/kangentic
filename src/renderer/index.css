@@ -943,19 +943,19 @@
   text-decoration: underline;
 }
 
-/* The Memory Graph chat is about 350px of prose, where `markdown-body` is tuned
+/* The Knowledge Graph chat is about 350px of prose, where `markdown-body` is tuned
    for a document column. Only the things that actually crowd at that width are
    overridden - the shared type scale and margins already read correctly. */
-.memory-answer-body ul,
-.memory-answer-body ol {
+.knowledge-graph-answer-body ul,
+.knowledge-graph-answer-body ol {
   /* 1.5em of indent spends 5% of the chat on nothing. Enough for the marker. */
   padding-left: 1.1em;
 }
 
-.memory-answer-body h1,
-.memory-answer-body h2,
-.memory-answer-body h3,
-.memory-answer-body h4 {
+.knowledge-graph-answer-body h1,
+.knowledge-graph-answer-body h2,
+.knowledge-graph-answer-body h3,
+.knowledge-graph-answer-body h4 {
   /* An agent's `**Section**` becomes a heading at whatever level it chose, and
      at document scale those tower over 14px body text in a narrow column. */
   font-size: 0.8125rem;
@@ -965,7 +965,7 @@
   margin-top: 1.1em;
 }
 
-.memory-answer-body pre {
+.knowledge-graph-answer-body pre {
   /* A fenced block cannot widen the chat; it scrolls inside it instead. */
   max-width: 100%;
   overflow-x: auto;

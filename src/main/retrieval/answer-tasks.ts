@@ -31,9 +31,9 @@
  * database or a CLI.
  */
 
-import type { MemoryGraphNode, MemoryGraphProjection } from '../../shared/types';
-import type { MemoryTaskFacts, MemoryTaskField } from '../../shared/memory-task-fields';
-import { constantFields, MEMORY_TASK_FIELDS } from '../../shared/memory-task-fields';
+import type { KnowledgeGraphNode, KnowledgeGraphProjection } from '../../shared/types';
+import type { KnowledgeGraphTaskFacts, KnowledgeGraphTaskField } from '../../shared/knowledge-graph-task-fields';
+import { constantFields, KNOWLEDGE_GRAPH_TASK_FIELDS } from '../../shared/knowledge-graph-task-fields';
 
 /**
  * Tasks the table may carry.
@@ -50,12 +50,12 @@ export const MAX_TASK_ROWS = 1_200;
 /**
  * A task's rolled-up facts, as the prompt will state them.
  *
- * The facts themselves come from `MemoryTaskFacts`, which the wire payload
+ * The facts themselves come from `KnowledgeGraphTaskFacts`, which the wire payload
  * extends too - so a field cannot reach the prompt without also reaching the
  * renderer. Only the two things the CATALOG has no business knowing are
  * declared here: which task this is, and what it is called.
  */
-export interface AnswerTaskRow extends MemoryTaskFacts {
+export interface AnswerTaskRow extends KnowledgeGraphTaskFacts {
   taskId: string | null;
   title: string;
   /** The task id, or `conversation:<docKey>` for a conversation with no task:
@@ -103,7 +103,7 @@ export interface AnswerTaskTable {
  * missing from a table the prompt calls complete. On this project that hid four
  * of the tasks that added an agent. These fill it in.
  */
-export interface BoardTaskFacts extends Omit<MemoryTaskFacts, 'region'> {
+export interface BoardTaskFacts extends Omit<KnowledgeGraphTaskFacts, 'region'> {
   taskId: string;
   title: string;
 }
@@ -130,7 +130,7 @@ function addMetric(current: number | null, next: number | null): number | null {
  * question. Display order now comes from the answer's own view spec.
  */
 export function buildAnswerTaskTable(
-  projection: Pick<MemoryGraphProjection, 'nodes' | 'clusterings'>,
+  projection: Pick<KnowledgeGraphProjection, 'nodes' | 'clusterings'>,
   granularity: string,
   /**
    * The conversations inside the map's filters, or null for all of them. The
@@ -147,7 +147,7 @@ export function buildAnswerTaskTable(
 ): AnswerTaskTable {
   const clustering = projection.clusterings.find((entry) => entry.granularity === granularity)
     ?? projection.clusterings[0];
-  const regionLabel = (node: MemoryGraphNode): string | null => {
+  const regionLabel = (node: KnowledgeGraphNode): string | null => {
     if (!clustering) return null;
     const regionIndex = node.clusters[clustering.granularity];
     return clustering.regions[regionIndex]?.label ?? null;
@@ -352,7 +352,7 @@ export function formatTaskTable(table: AnswerTaskTable): string {
   // row. Measured: `agent` is one distinct value across 350 tasks, so this
   // column alone was 4,200 characters of "Claude Code".
   const collapsed = new Set(constantFields(table.rows).map((field) => field.key));
-  const columns = MEMORY_TASK_FIELDS.filter((field) => !collapsed.has(field.key) && field.key !== 'ticket');
+  const columns = KNOWLEDGE_GRAPH_TASK_FIELDS.filter((field) => !collapsed.has(field.key) && field.key !== 'ticket');
 
   const header = ['ref', 'task', ...columns.map((field) => field.key)].join('|');
   const rows = table.rows.map((row, index) => [
@@ -365,7 +365,7 @@ export function formatTaskTable(table: AnswerTaskTable): string {
 }
 
 /** Sums a nullable metric, keeping "never recorded" out of the total. */
-function sumOf(rows: ReadonlyArray<AnswerTaskRow>, field: MemoryTaskField): number | null {
+function sumOf(rows: ReadonlyArray<AnswerTaskRow>, field: KnowledgeGraphTaskField): number | null {
   let total: number | null = null;
   for (const row of rows) {
     const value = field.sortValue(row);
@@ -378,7 +378,7 @@ function sumOf(rows: ReadonlyArray<AnswerTaskRow>, field: MemoryTaskField): numb
 /** Rows tied at the top of a measure, as refs. Ties are the norm on counts. */
 function topRefs(
   rows: ReadonlyArray<AnswerTaskRow>,
-  field: MemoryTaskField,
+  field: KnowledgeGraphTaskField,
   limit: number,
 ): string {
   const ranked = rows
@@ -413,7 +413,7 @@ export function summarizeTaskTable(table: AnswerTaskTable): string {
   if (projectsLine) lines.push(projectsLine);
   const collapsed = new Set(constantFields(rows).map((field) => field.key));
 
-  for (const field of MEMORY_TASK_FIELDS) {
+  for (const field of KNOWLEDGE_GRAPH_TASK_FIELDS) {
     if (field.key === 'ticket') continue;
 
     // A field that never varies: one line, and the column is gone from below.
@@ -466,7 +466,7 @@ export function summarizeTaskTable(table: AnswerTaskTable): string {
 function summarizeProjects(table: AnswerTaskTable): string | null {
   const projects = table.projects;
   if (!projects || projects.length < 2) return null;
-  const costField = MEMORY_TASK_FIELDS.find((field) => field.key === 'cost_usd');
+  const costField = KNOWLEDGE_GRAPH_TASK_FIELDS.find((field) => field.key === 'cost_usd');
   const byPrefix = new Map<string, { tasks: number; cost: number | null }>();
   for (const row of table.rows) {
     const prefix = row.refPrefix ?? '';
@@ -486,7 +486,7 @@ function summarizeProjects(table: AnswerTaskTable): string | null {
 }
 
 /** Renders a computed total through the field's own formatter. */
-function totalAs(field: MemoryTaskField, total: number): Partial<MemoryTaskFacts> {
+function totalAs(field: KnowledgeGraphTaskField, total: number): Partial<KnowledgeGraphTaskFacts> {
   switch (field.key) {
     case 'cost_usd': return { costUsd: total };
     case 'duration': return { durationMs: total };
@@ -511,7 +511,7 @@ export function formatTaskFieldGlossary(table?: AnswerTaskTable): string {
   return [
     `ref - ${describeRef(table)} `
       + 'C1, C2 and so on are conversations with no board task.',
-    ...MEMORY_TASK_FIELDS
+    ...KNOWLEDGE_GRAPH_TASK_FIELDS
       .filter((field) => field.key !== 'ticket')
       .map((field) => `${field.key} - ${field.describe}`),
   ].join('\n');

@@ -32,7 +32,7 @@ export const CONVERSATION_CORPUS: ReadonlyArray<MemoryCorpus> = ['conversation']
  * ranking by them as well as by task records lowered title-named recall inside
  * the handed set from 69 of 96 to 65, even on a question about which tasks
  * changed a file, because nearly every session changes many files. They stay
- * indexed as text, which is what the task digests read, and embedding them
+ * indexed as text, which is what the task summaries read, and embedding them
  * would buy nothing a search uses.
  *
  * Commits on the default branch do not either. Measured the same way (seven

@@ -259,7 +259,7 @@ export class CopilotAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * Non-interactive with status output silenced, the prompt PIPED rather than
    * passed through `-p`. An answer prompt runs to about 50k characters, past the
@@ -308,7 +308,7 @@ export class CopilotAdapter implements AgentAdapter {
     if (retrieval) {
       const configPath = path.join(options?.runDirectory ?? cwd, 'copilot-answer-mcp.json');
       // sync-write-ok: the run names this file in --additional-mcp-config and
-      // cannot search without it. The throw reaches the MEMORY_GRAPH_ANSWER
+      // cannot search without it. The throw reaches the KNOWLEDGE_GRAPH_ANSWER
       // handler's catch, which shows it as the answer's failure.
       fs.writeFileSync(configPath, JSON.stringify({
         mcpServers: { kangentic: { type: 'http', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token } } },

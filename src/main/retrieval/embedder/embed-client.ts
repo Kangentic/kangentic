@@ -7,7 +7,7 @@ import { unpacked } from '../../utility-process/paths';
 import { HEAVY_IDLE_SHUTDOWN_MS, WORKER_COMMIT_CEILING_BYTES, readProcessCommitBytes } from '../../utility-process/commit-ceiling';
 import type { Embedder } from '../types';
 import type { EmbeddingModelDef } from './embedding-config';
-import type { MemoryAcceleration } from '../../../shared/types';
+import type { KnowledgeGraphAcceleration } from '../../../shared/types';
 
 /** Max queued embed requests before new ones resolve null (backpressure). */
 const QUEUE_CAP = 64;
@@ -42,7 +42,7 @@ const SERVICE_NAME = 'kangentic-embeddings';
  * cross-platform GPU fallback elsewhere.
  */
 export function resolveDeviceChain(
-  acceleration: MemoryAcceleration,
+  acceleration: KnowledgeGraphAcceleration,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
   if (acceleration === 'cpu') return ['cpu'];
@@ -78,7 +78,7 @@ export class EmbedClient implements Embedder {
 
   constructor(
     private readonly model: EmbeddingModelDef,
-    acceleration: MemoryAcceleration = 'auto',
+    acceleration: KnowledgeGraphAcceleration = 'auto',
     restartPolicy?: UtilityRestartPolicy,
     options?: { readCommitBytes?: (pid: number) => number | null },
   ) {

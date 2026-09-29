@@ -1,5 +1,5 @@
 /**
- * Cursor's `--output-format stream-json` stream, read for a Memory Graph answer.
+ * Cursor's `--output-format stream-json` stream, read for a Knowledge Graph answer.
  *
  * Claude-like lines with two differences, captured on cursor-agent
  * 2026.09.23 with `--stream-partial-output`:

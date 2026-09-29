@@ -1,5 +1,5 @@
 /**
- * Coverage reconciliation for the Memory Graph's header strip.
+ * Coverage reconciliation for the Knowledge Graph's header strip.
  *
  * This is a RECONCILIATION, not a readout, and that distinction is the whole
  * reason the module exists. `memory_index_state` is per-document bookkeeping

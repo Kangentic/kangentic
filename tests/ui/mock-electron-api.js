@@ -67,23 +67,23 @@
     semantic: 'disabled',
     model: { id: 'bge-base', displayName: 'bge base', tier: 'accurate', approxSizeMb: 110, dimensions: 768, state: 'absent' },
   };
-  // Memory Graph fixture. null means "no projection cached yet", which is the
+  // Knowledge Graph fixture. null means "no projection cached yet", which is the
   // first-open state the surface must handle without looking broken. Seeded via
   // __mockPreConfigure (mirrors searchHits).
-  let memoryGraphSnapshot = null;
+  let knowledgeGraphSnapshot = null;
   // The Projects picker's list. Empty by default, which reads as a list not yet
   // loaded and leaves the picker out (the real app always lists at least the
   // open project); seeded via __mockPreConfigure.
-  let memoryGraphProjects = [];
-  // Task digests by task id, for the selected conversation's panel. Empty by
-  // default, the same as digests switched off.
-  let memoryTaskDigests = {};
+  let knowledgeGraphProjects = [];
+  // Task summaries by task id, for the selected conversation's panel. Empty by
+  // default, the same as summaries switched off.
+  let memoryTaskSummaries = {};
   // Per-project snapshots for a multi-project scope, keyed by project id.
-  // A project missing here falls back to memoryGraphSnapshot.
-  let memoryGraphSnapshotsByProject = {};
-  // Memory Graph retrieval fixture; null yields an empty result set.
-  let memoryGraphQueryResult = null;
-  let memoryGraphAnswerResult = null;
+  // A project missing here falls back to knowledgeGraphSnapshot.
+  let knowledgeGraphSnapshotsByProject = {};
+  // Knowledge Graph retrieval fixture; null yields an empty result set.
+  let knowledgeGraphQueryResult = null;
+  let knowledgeGraphAnswerResult = null;
   // Proactive-recall fixture for task detail; empty means the panel renders
   // nothing at all, which is the common case and must stay silent.
   let memoryRelatedToTask = null;
@@ -558,7 +558,7 @@
   function noop() {}
 
   // `config.onChanged` subscribers. A REAL list rather than a stub: the
-  // Memory Graph re-reads its snapshot on this signal, so a no-op made that
+  // Knowledge Graph re-reads its snapshot on this signal, so a no-op made that
   // path untestable and any spec asserting live refresh would pass without
   // exercising it. Tests fire it with `window.__mockEmitConfigChanged()`.
   const mockConfigChangedListeners = [];
@@ -4576,7 +4576,7 @@
       },
     },
 
-    memory: {
+    knowledgeGraph: {
       getStatus: function () { return Promise.resolve(Object.assign({}, memoryStatus)); },
       // Fire-and-forget worker warm-up on a Knowledge Graph open. Recorded (one
       // timestamp per call) so a UI test can assert Quick Find never sends it.
@@ -4605,11 +4605,11 @@
       // The summaries Rebuild would rewrite: those in the seeded status written
       // some other way, which is what main would count and mark.
       rebuildPlan: function () {
-        var digests = memoryStatus && memoryStatus.digests;
+        var summaries = memoryStatus && memoryStatus.summaries;
         var summariesToRewrite = 0;
-        if (digests && digests.choice && digests.writtenWith) {
-          digests.writtenWith.forEach(function (entry) {
-            var same = entry.agent === digests.choice.agent && entry.model === digests.choice.model && entry.effort === digests.choice.effort;
+        if (summaries && summaries.choice && summaries.writtenWith) {
+          summaries.writtenWith.forEach(function (entry) {
+            var same = entry.agent === summaries.choice.agent && entry.model === summaries.choice.model && entry.effort === summaries.choice.effort;
             if (!same) summariesToRewrite += entry.count;
           });
         }
@@ -4623,29 +4623,29 @@
         }
         return this.rebuildPlan();
       },
-      taskDigest: function (projectId, taskId) {
-        // Seeded per task id via __mockPreConfigure's memoryTaskDigests; null
-        // otherwise, which is what main answers with digests switched off.
+      taskSummary: function (projectId, taskId) {
+        // Seeded per task id via __mockPreConfigure's memoryTaskSummaries; null
+        // otherwise, which is what main answers with summaries switched off.
         if (typeof window !== 'undefined') {
-          if (!window.__mockTaskDigestCalls) window.__mockTaskDigestCalls = [];
-          window.__mockTaskDigestCalls.push({ projectId: projectId, taskId: taskId });
+          if (!window.__mockTaskSummaryCalls) window.__mockTaskSummaryCalls = [];
+          window.__mockTaskSummaryCalls.push({ projectId: projectId, taskId: taskId });
         }
-        return Promise.resolve(Object.prototype.hasOwnProperty.call(memoryTaskDigests, taskId) ? memoryTaskDigests[taskId] : null);
+        return Promise.resolve(Object.prototype.hasOwnProperty.call(memoryTaskSummaries, taskId) ? memoryTaskSummaries[taskId] : null);
       },
       graphSnapshot: function (projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockGraphSnapshotCalls) window.__mockGraphSnapshotCalls = [];
           window.__mockGraphSnapshotCalls.push({ projectId: projectId === undefined ? null : projectId });
         }
-        var keyed = projectId ? memoryGraphSnapshotsByProject[projectId] : undefined;
-        var source = keyed || memoryGraphSnapshot;
+        var keyed = projectId ? knowledgeGraphSnapshotsByProject[projectId] : undefined;
+        var source = keyed || knowledgeGraphSnapshot;
         return Promise.resolve(source ? JSON.parse(JSON.stringify(source)) : null);
       },
       graphProjects: function () {
         if (typeof window !== 'undefined') {
           window.__mockGraphProjectsCalls = (window.__mockGraphProjectsCalls || 0) + 1;
         }
-        return Promise.resolve(JSON.parse(JSON.stringify(memoryGraphProjects)));
+        return Promise.resolve(JSON.parse(JSON.stringify(knowledgeGraphProjects)));
       },
       refreshGraph: function (projectId) {
         if (typeof window !== 'undefined') {
@@ -4660,8 +4660,8 @@
           window.__mockGraphQueryCalls.push({ query: query, projectId: projectId === undefined ? null : projectId });
         }
         return Promise.resolve(
-          memoryGraphQueryResult
-            ? JSON.parse(JSON.stringify(memoryGraphQueryResult))
+          knowledgeGraphQueryResult
+            ? JSON.parse(JSON.stringify(knowledgeGraphQueryResult))
             : { query: query, hits: [], semantic: true },
         );
       },
@@ -4684,7 +4684,7 @@
         var queued = typeof window !== 'undefined' && Array.isArray(window.__mockAnswerResultQueue)
           ? window.__mockAnswerResultQueue.shift()
           : undefined;
-        var settled = queued || memoryGraphAnswerResult;
+        var settled = queued || knowledgeGraphAnswerResult;
         var result = settled
           ? JSON.parse(JSON.stringify(settled))
           : { ok: false, reason: 'no agent configured' };
@@ -5222,23 +5222,23 @@
     if (result && result.memoryStatus && typeof result.memoryStatus === 'object') {
       memoryStatus = result.memoryStatus;
     }
-    if (result && result.memoryGraphSnapshot && typeof result.memoryGraphSnapshot === 'object') {
-      memoryGraphSnapshot = result.memoryGraphSnapshot;
+    if (result && result.knowledgeGraphSnapshot && typeof result.knowledgeGraphSnapshot === 'object') {
+      knowledgeGraphSnapshot = result.knowledgeGraphSnapshot;
     }
-    if (result && Array.isArray(result.memoryGraphProjects)) {
-      memoryGraphProjects = result.memoryGraphProjects;
+    if (result && Array.isArray(result.knowledgeGraphProjects)) {
+      knowledgeGraphProjects = result.knowledgeGraphProjects;
     }
-    if (result && result.memoryTaskDigests && typeof result.memoryTaskDigests === 'object') {
-      memoryTaskDigests = result.memoryTaskDigests;
+    if (result && result.memoryTaskSummaries && typeof result.memoryTaskSummaries === 'object') {
+      memoryTaskSummaries = result.memoryTaskSummaries;
     }
-    if (result && result.memoryGraphSnapshotsByProject && typeof result.memoryGraphSnapshotsByProject === 'object') {
-      memoryGraphSnapshotsByProject = result.memoryGraphSnapshotsByProject;
+    if (result && result.knowledgeGraphSnapshotsByProject && typeof result.knowledgeGraphSnapshotsByProject === 'object') {
+      knowledgeGraphSnapshotsByProject = result.knowledgeGraphSnapshotsByProject;
     }
-    if (result && result.memoryGraphQueryResult && typeof result.memoryGraphQueryResult === 'object') {
-      memoryGraphQueryResult = result.memoryGraphQueryResult;
+    if (result && result.knowledgeGraphQueryResult && typeof result.knowledgeGraphQueryResult === 'object') {
+      knowledgeGraphQueryResult = result.knowledgeGraphQueryResult;
     }
-    if (result && result.memoryGraphAnswerResult && typeof result.memoryGraphAnswerResult === 'object') {
-      memoryGraphAnswerResult = result.memoryGraphAnswerResult;
+    if (result && result.knowledgeGraphAnswerResult && typeof result.knowledgeGraphAnswerResult === 'object') {
+      knowledgeGraphAnswerResult = result.knowledgeGraphAnswerResult;
     }
     if (result && Array.isArray(result.memoryRelatedToTask)) {
       memoryRelatedToTask = result.memoryRelatedToTask;

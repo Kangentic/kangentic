@@ -1,5 +1,5 @@
 /**
- * Where a Memory Graph answer run starts, and where it keeps its own files.
+ * Where a Knowledge Graph answer run starts, and where it keeps its own files.
  *
  * Two directories, for two different reasons.
  *

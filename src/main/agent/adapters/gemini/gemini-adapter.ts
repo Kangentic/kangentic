@@ -270,7 +270,7 @@ export class GeminiAdapter implements AgentAdapter {
   readonly answerCapabilities = { streaming: true, search: false, model: true, effort: false };
 
   /**
-   * Answer a question from retrieved conversation passages (Memory Graph Ask).
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
    * Gemini's `plan` approval mode is its read-only research mode.
    *

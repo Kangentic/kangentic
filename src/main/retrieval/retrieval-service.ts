@@ -37,11 +37,11 @@ import { indexedCodeBranch, purgeCodeRecords, sweepCodeRecords, type CodeSweepRe
 import { codeStatus, createBranchSizes } from './code/code-status';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { graphService } from './graph/graph-service';
-import { createDigestScheduler } from './digest/digest-scheduler';
-import { readDigestFingerprint } from './digest/digest-sources';
-import { DigestStore } from './digest/digest-store';
+import { createSummaryScheduler } from './summary/summary-scheduler';
+import { readSummaryFingerprint } from './summary/summary-sources';
+import { SummaryStore } from './summary/summary-store';
 import { resolveAnswerRun } from './answer-run';
-import { codeSweepPlan, taskDigestsOn, type CodeSweepPlan } from '../../shared/answer-agent';
+import { codeSweepPlan, taskSummariesOn, type CodeSweepPlan } from '../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
 import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
@@ -52,8 +52,8 @@ import { isEmbeddedCorpus, type MemoryCorpus } from './corpora';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
 import type {
-  MemoryStatus, MemorySemanticState, MemoryModelState, MemoryDigestStatus, MemoryCodeStatus, DigestChoice, Project, ActivityState,
-  MemoryRebuildPlan, MemorySourceStatus, MemorySourcesStatus,
+  KnowledgeGraphStatus, KnowledgeGraphSemanticState, KnowledgeGraphModelState, KnowledgeGraphSummaryStatus, KnowledgeGraphCodeStatus, SummaryChoice, Project, ActivityState,
+  KnowledgeGraphRebuildPlan, KnowledgeGraphSourceStatus, KnowledgeGraphSourcesStatus,
 } from '../../shared/types';
 
 /** Grace period after a finalize event before indexing, so the agent CLI has
@@ -133,7 +133,7 @@ function currentProjectHasVec(context: IpcContext): boolean {
 
 function isIndexingEnabled(context: IpcContext): boolean {
   try {
-    return context.configManager.load().memory?.indexingEnabled !== false;
+    return context.configManager.load().knowledgeGraph?.indexingEnabled !== false;
   } catch {
     return true;
   }
@@ -141,7 +141,7 @@ function isIndexingEnabled(context: IpcContext): boolean {
 
 function isSemanticEnabled(context: IpcContext): boolean {
   try {
-    return context.configManager.load().memory?.semanticEnabled === true;
+    return context.configManager.load().knowledgeGraph?.enabled === true;
   } catch {
     return false;
   }
@@ -150,7 +150,7 @@ function isSemanticEnabled(context: IpcContext): boolean {
 /** The user-selected embedding model (or the default). */
 function selectedModel(context: IpcContext): EmbeddingModelDef {
   try {
-    return resolveEmbeddingModel(context.configManager.load().memory?.embeddingModel);
+    return resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
   } catch {
     return resolveEmbeddingModel(undefined);
   }
@@ -288,7 +288,7 @@ async function sweepProjectCommits(
 
 /** What a sweep does with the source code index (`codeSweepPlan`). */
 function codePlan(context: IpcContext): CodeSweepPlan {
-  return codeSweepPlan(() => context.configManager.load().memory);
+  return codeSweepPlan(() => context.configManager.load().knowledgeGraph);
 }
 
 /**
@@ -340,8 +340,8 @@ function sweepAgainAfterStartup(context: IpcContext, projectId: string): void {
   deferredBranchTimers.set(projectId, timer);
 }
 
-/** Resolves once whole-branch reads may run. The digest pass waits on it, so
- *  the first digests after launch are written with their commits rather than
+/** Resolves once whole-branch reads may run. The summary pass waits on it, so
+ *  the first summaries after launch are written with their commits rather than
  *  written without and rewritten a minute later. */
 function untilBranchFullReads(): Promise<void> {
   const waitMs = branchFullReadsFrom - Date.now();
@@ -378,29 +378,29 @@ function queueRecordSweeps(context: IpcContext, projectId: string): void {
   });
 }
 
-/** Task digests are wanted: switched on (they are opt-in), with indexing and
+/** Task summaries are wanted: switched on (they are opt-in), with indexing and
  *  semantic search on, since the Knowledge Graph needs both. */
-function digestsEnabled(context: IpcContext): boolean {
+function summariesEnabled(context: IpcContext): boolean {
   try {
-    const memory = context.configManager.load().memory;
-    return memory?.indexingEnabled !== false && memory?.semanticEnabled === true && taskDigestsOn(memory);
+    const config = context.configManager.load().knowledgeGraph;
+    return config?.indexingEnabled !== false && config?.enabled === true && taskSummariesOn(config);
   } catch {
     return false;
   }
 }
 
 /**
- * Writes task digests in the background with the search agent and its model,
+ * Writes task summaries in the background with the search agent and its model,
  * at the adapter's recommended effort whatever the chosen one (`agentJobChoice`).
- * With no agent chosen it resolves no writer and does nothing. A digest batch
+ * With no agent chosen it resolves no writer and does nothing. A summary batch
  * runs with no tool at all; it summarizes what it is handed.
  */
-const digestScheduler = createDigestScheduler<IpcContext>({
-  isEnabled: digestsEnabled,
-  readFingerprint: (_context, projectId) => readDigestFingerprint(getProjectDb(projectId)),
+const summaryScheduler = createSummaryScheduler<IpcContext>({
+  isEnabled: summariesEnabled,
+  readFingerprint: (_context, projectId) => readSummaryFingerprint(getProjectDb(projectId)),
   resolveWriter: async (context, projectId) => {
-    const resolved = await resolveAnswerRun(context, projectId, 'digest', { withSearch: false, job: 'digest' });
-    digestChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
+    const resolved = await resolveAnswerRun(context, projectId, 'summary', { withSearch: false, job: 'summary' });
+    summaryChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
     if (!resolved.ok) return null;
     const run = resolved.run;
     return {
@@ -412,16 +412,16 @@ const digestScheduler = createDigestScheduler<IpcContext>({
       )),
     };
   },
-  // A digest is part of its task's record, so the record re-reads, and the
-  // map's region names read digests. Renamed at once when the backfill has
+  // A summary is part of its task's record, so the record re-reads, and the
+  // map's region names read summaries. Renamed at once when the backfill has
   // caught up, and otherwise at most every few minutes.
   onWritten: (context, projectId, caughtUp) => {
     queueRecordSweeps(context, projectId);
     graphService.requestRegionNames(projectId, caughtUp);
   },
-  // The files a task changed and its commits are part of what its digest is
+  // The files a task changed and its commits are part of what its summary is
   // written from. Cheap once caught up; on a cold start (which skips the
-  // project-open sweep) it is what keeps the first digests from being written
+  // project-open sweep) it is what keeps the first summaries from being written
   // without them.
   beforePass: async (context, projectId) => {
     const projectPath = projectPathFor(context, projectId);
@@ -432,84 +432,84 @@ const digestScheduler = createDigestScheduler<IpcContext>({
 });
 
 /**
- * What a digest would be written with now: the search agent, its model and the
- * recommended effort main resolves for a digest, or null while digests are off
+ * What a summary would be written with now: the search agent, its model and the
+ * recommended effort main resolves for a summary, or null while summaries are off
  * or wait for a choice. Kept
  * here because a caught-up board never resolves a writer (the fingerprint skip),
- * so a settings change refreshes it (`refreshDigestChoice`) rather than waiting
+ * so a settings change refreshes it (`refreshSummaryChoice`) rather than waiting
  * for a pass. The status poll reads it without resolving anything.
  */
-let digestChoice: DigestChoice | null = null;
-let digestChoiceRefresh: Promise<void> | null = null;
+let summaryChoice: SummaryChoice | null = null;
+let summaryChoiceRefresh: Promise<void> | null = null;
 
 /**
  * What a summary would be written with now, for Rebuild and its plan, or null
  * while summaries are off or wait for a choice (nothing to rewrite then).
  * Resolved through the writer's own rule so the two can never disagree.
  */
-async function resolveRewriteChoice(context: IpcContext): Promise<DigestChoice | null> {
-  if (disposed || !digestsEnabled(context)) return null;
+async function resolveRewriteChoice(context: IpcContext): Promise<SummaryChoice | null> {
+  if (disposed || !summariesEnabled(context)) return null;
   const homeProjectId = context.currentProjectId ?? context.projectRepo.list()[0]?.id;
   if (!homeProjectId) return null;
-  const resolved = await resolveAnswerRun(context, homeProjectId, 'digest', { withSearch: false, job: 'digest' }).catch(() => null);
+  const resolved = await resolveAnswerRun(context, homeProjectId, 'summary', { withSearch: false, job: 'summary' }).catch(() => null);
   if (!resolved?.ok) return null;
   const choice = { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort };
-  digestChoice = choice;
+  summaryChoice = choice;
   return choice;
 }
 
-/** Re-resolve `digestChoice` from the current settings. One at a time. */
-function refreshDigestChoice(context: IpcContext): void {
-  if (disposed || digestChoiceRefresh) return;
+/** Re-resolve `summaryChoice` from the current settings. One at a time. */
+function refreshSummaryChoice(context: IpcContext): void {
+  if (disposed || summaryChoiceRefresh) return;
   const projectId = context.currentProjectId;
-  if (!projectId || !digestsEnabled(context)) {
-    digestChoice = null;
+  if (!projectId || !summariesEnabled(context)) {
+    summaryChoice = null;
     return;
   }
-  digestChoiceRefresh = resolveAnswerRun(context, projectId, 'digest', { withSearch: false, job: 'digest' })
+  summaryChoiceRefresh = resolveAnswerRun(context, projectId, 'summary', { withSearch: false, job: 'summary' })
     .then((resolved) => {
-      digestChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
+      summaryChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
     })
     .catch(() => {
-      digestChoice = null;
+      summaryChoice = null;
     })
     .finally(() => {
-      digestChoiceRefresh = null;
+      summaryChoiceRefresh = null;
     });
 }
 
 /**
- * The open project's digests for the Task digests card's status row and
+ * The open project's summaries for the Task summaries card's status row and
  * Rewrite: a few index reads (under 0.1 ms each measured) and the scheduler's
  * own state. Read on the Knowledge Graph tab's status poll while semantic search is on,
- * with the switch off too: switching digests on starts writing at once, so the
+ * with the switch off too: switching summaries on starts writing at once, so the
  * card gives the backfill's size before it is on.
  */
-function digestStatusFor(context: IpcContext): MemoryDigestStatus | undefined {
+function summaryStatusFor(context: IpcContext): KnowledgeGraphSummaryStatus | undefined {
   const projectId = context.currentProjectId;
   if (!projectId || !isIndexingEnabled(context) || !isSemanticEnabled(context)) return undefined;
   try {
     const db = getProjectDb(projectId);
-    const counts = new RetrievalStore(db).digestCounts();
-    const digests = new DigestStore(db);
-    const scheduler = digestScheduler.status(projectId);
+    const counts = new RetrievalStore(db).summaryCounts();
+    const summaries = new SummaryStore(db);
+    const scheduler = summaryScheduler.status(projectId);
     // Never resolved yet this run (or waiting on a choice): resolve it for the
     // next poll. A settings change refreshes it too.
-    if (digestChoice === null) refreshDigestChoice(context);
-    const skipped = digestScheduler.skipped(projectId);
-    const awaitingRewrite = digests.awaitingRewrite();
+    if (summaryChoice === null) refreshSummaryChoice(context);
+    const skipped = summaryScheduler.skipped(projectId);
+    const awaitingRewrite = summaries.awaitingRewrite();
     // What is left to write at the run's own rate: unwritten tasks the agent
-    // has not passed over, and digests marked for rewriting.
+    // has not passed over, and summaries marked for rewriting.
     const remaining = Math.max(0, counts.finishedTasks - counts.written - skipped) + awaitingRewrite;
-    const perMinute = digestScheduler.writtenPerMinute(projectId);
+    const perMinute = summaryScheduler.writtenPerMinute(projectId);
     return {
       ...counts,
       skipped,
       state: scheduler.state,
       retryInMs: scheduler.retryAtMs === null ? null : Math.max(0, scheduler.retryAtMs - Date.now()),
       minutesLeft: perMinute && remaining > 0 ? remaining / perMinute : null,
-      writtenWith: digests.writtenWith(),
-      choice: digestChoice,
+      writtenWith: summaries.writtenWith(),
+      choice: summaryChoice,
       awaitingRewrite,
     };
   } catch {
@@ -536,7 +536,7 @@ const sourceTotalsCache = new Map<string, { readAt: number; totals: ReturnType<R
  * source waits while any passage lacks a vector for the current model, a
  * keyword-only one never does.
  */
-function sourcesStatusFor(context: IpcContext): MemorySourcesStatus | undefined {
+function sourcesStatusFor(context: IpcContext): KnowledgeGraphSourcesStatus | undefined {
   const projectId = context.currentProjectId;
   if (!projectId || !isIndexingEnabled(context)) return undefined;
   try {
@@ -553,7 +553,7 @@ function sourcesStatusFor(context: IpcContext): MemorySourcesStatus | undefined 
       ? timeSyncWork('status:source-waiting', () => store.countChunksNeedingEmbedding(selectedModel(context).modelTag))
       : new Map<string, number>();
     const perMinute = embedEngine.chunksPerMinute;
-    const sourceOf = (corpus: MemoryCorpus): MemorySourceStatus => {
+    const sourceOf = (corpus: MemoryCorpus): KnowledgeGraphSourceStatus => {
       const row = totals.find((entry) => entry.corpus === corpus);
       const count = row?.documents ?? 0;
       const waiting = isEmbeddedCorpus(corpus) ? waitingByCorpus.get(corpus) ?? 0 : 0;
@@ -583,7 +583,7 @@ const codeBranchSizes = createBranchSizes();
  * reading at most once a minute while nothing is indexed. Read on the Search
  * tab's status poll, only while semantic search is on.
  */
-function codeStatusFor(context: IpcContext): MemoryCodeStatus | undefined {
+function codeStatusFor(context: IpcContext): KnowledgeGraphCodeStatus | undefined {
   const projectId = context.currentProjectId;
   if (!projectId || !isIndexingEnabled(context) || !isSemanticEnabled(context)) return undefined;
   try {
@@ -621,8 +621,8 @@ function scheduleTaskRecordSweep(context: IpcContext, projectId: string): void {
     pendingTimers.delete(timer);
     taskRecordTimers.delete(projectId);
     queueRecordSweeps(context, projectId);
-    // A task that just reached Done gets its digest.
-    digestScheduler.request(context, projectId);
+    // A task that just reached Done gets its summary.
+    summaryScheduler.request(context, projectId);
   }, TASK_RECORD_DEBOUNCE_MS);
   timer.unref();
   pendingTimers.add(timer);
@@ -669,12 +669,12 @@ export const retrievalService = {
     embedEngine.setOnRecordsEmbedded((projectId) => graphService.notifyChanged(projectId));
     // The Index says how many finished tasks the agent passed over, which only
     // the scheduler knows.
-    graphService.setDigestsSkipped((projectId) => digestScheduler.skipped(projectId));
-    // Region names read digests only while they are switched on; off, the
+    graphService.setSummariesSkipped((projectId) => summaryScheduler.skipped(projectId));
+    // Region names read summaries only while they are switched on; off, the
     // map's names are its titles' alone.
-    graphService.setDigestNamesOn(() => {
+    graphService.setSummaryNamesOn(() => {
       try {
-        return taskDigestsOn(context.configManager.load().memory);
+        return taskSummariesOn(context.configManager.load().knowledgeGraph);
       } catch {
         return false;
       }
@@ -742,8 +742,8 @@ export const retrievalService = {
         // background drain regardless of whether anything actually changed
         // (markDirty is cheap and idempotent).
         embedEngine.markDirty(project.id);
-        // Digests read the changes just indexed; the first open backfills.
-        digestScheduler.request(context, project.id);
+        // Summaries read the changes just indexed; the first open backfills.
+        summaryScheduler.request(context, project.id);
       });
     });
   },
@@ -766,18 +766,18 @@ export const retrievalService = {
 
   /** Re-evaluate the embed-worker warm-hold, and (when semantic just became
    *  viable) flag the current project dirty. Call after a change to
-   *  `memory.semanticEnabled`/model/acceleration or to the current project
+   *  `knowledgeGraph.enabled`/model/acceleration or to the current project
    *  (open/close), since those paths have no embed() call of their own to
    *  piggyback the gate on. */
   reconcileEmbedWorker(context: IpcContext): void {
     embedEngine.reconcile(context);
-    // The same memory settings decide digests: choosing the search agent, or
-    // turning digests on, starts the backfill without a re-open, and what a
-    // digest is written with may have changed.
+    // The same memory settings decide summaries: choosing the search agent, or
+    // turning summaries on, starts the backfill without a re-open, and what a
+    // summary is written with may have changed.
     const projectId = context.currentProjectId;
-    digestChoice = null;
-    refreshDigestChoice(context);
-    if (projectId) digestScheduler.request(context, projectId);
+    summaryChoice = null;
+    refreshSummaryChoice(context);
+    if (projectId) summaryScheduler.request(context, projectId);
     // Switching source code on fills the code index, and off clears it.
     if (projectId) queueRecordSweeps(context, projectId);
   },
@@ -788,13 +788,13 @@ export const retrievalService = {
    * now. Resolved here, as Rebuild resolves it, so the count the confirm names
    * is exactly what Rebuild marks. One small read per project.
    */
-  async rebuildPlan(context: IpcContext): Promise<MemoryRebuildPlan> {
+  async rebuildPlan(context: IpcContext): Promise<KnowledgeGraphRebuildPlan> {
     const choice = await resolveRewriteChoice(context);
     if (!choice) return { summariesToRewrite: 0 };
     let summariesToRewrite = 0;
     for (const project of context.projectRepo.list()) {
       try {
-        summariesToRewrite += new DigestStore(getProjectDb(project.id)).countNotWrittenWith(choice);
+        summariesToRewrite += new SummaryStore(getProjectDb(project.id)).countNotWrittenWith(choice);
       } catch (error) {
         console.warn(`[retrieval] rebuild plan could not read project=${project.id}:`, error);
       }
@@ -812,9 +812,9 @@ export const retrievalService = {
    * Only the open project is read again now. A sweep runs for the open project
    * alone (`startForProject` stops any other), so the rest are read again on
    * their next open, from the state cleared here. The same holds for their
-   * rewrites, which their next digest pass picks up.
+   * rewrites, which their next summary pass picks up.
    */
-  async rebuildEverything(context: IpcContext): Promise<MemoryRebuildPlan> {
+  async rebuildEverything(context: IpcContext): Promise<KnowledgeGraphRebuildPlan> {
     if (disposed) return { summariesToRewrite: 0 };
     const choice = await resolveRewriteChoice(context);
     let summariesToRewrite = 0;
@@ -822,9 +822,9 @@ export const retrievalService = {
       try {
         const db = getProjectDb(project.id);
         new RetrievalStore(db).resetIndexState();
-        if (choice) summariesToRewrite += new DigestStore(db).markForRewrite(choice);
+        if (choice) summariesToRewrite += new SummaryStore(db).markForRewrite(choice);
         // Nothing on the board moved, so the fingerprint would call it caught up.
-        digestScheduler.invalidate(project.id);
+        summaryScheduler.invalidate(project.id);
       } catch (error) {
         console.warn(`[retrieval] rebuild could not reset project=${project.id}:`, error);
       }
@@ -835,20 +835,20 @@ export const retrievalService = {
     if (openProject) {
       this.stop(openProject.id);
       this.startForProject(context, openProject);
-      digestScheduler.request(context, openProject.id);
+      summaryScheduler.request(context, openProject.id);
     }
     return { summariesToRewrite };
   },
 
   /**
-   * One task's digest, for the Knowledge Graph's selected conversation. Null
-   * while task digests are switched off, so the panel reads as it did before
-   * digests, and null when the task has none. One indexed read.
+   * One task's summary, for the Knowledge Graph's selected conversation. Null
+   * while task summaries are switched off, so the panel reads as it did before
+   * summaries, and null when the task has none. One indexed read.
    */
-  taskDigest(context: IpcContext, projectId: string, taskId: string): string | null {
+  taskSummary(context: IpcContext, projectId: string, taskId: string): string | null {
     try {
-      if (!taskDigestsOn(context.configManager.load().memory)) return null;
-      return new DigestStore(getProjectDb(projectId)).digestsFor([taskId]).get(taskId) ?? null;
+      if (!taskSummariesOn(context.configManager.load().knowledgeGraph)) return null;
+      return new SummaryStore(getProjectDb(projectId)).summariesFor([taskId]).get(taskId) ?? null;
     } catch {
       return null;
     }
@@ -864,7 +864,7 @@ export const retrievalService = {
 
   /** Current conversation-memory status for the Search settings
    *  tab's index progress and model status line. */
-  getStatus(context: IpcContext): MemoryStatus {
+  getStatus(context: IpcContext): KnowledgeGraphStatus {
     const indexingEnabled = isIndexingEnabled(context);
     const semanticOn = isSemanticEnabled(context);
     const model = selectedModel(context);
@@ -889,7 +889,7 @@ export const retrievalService = {
     const modelPresent = isEmbeddingModelPresent(model);
     const isDownloadingThis = modelDownloadState === 'downloading' && downloadingModelId === model.id;
 
-    let semantic: MemorySemanticState;
+    let semantic: KnowledgeGraphSemanticState;
     let workerError: string | undefined;
     if (!indexingEnabled || !semanticOn) {
       // Genuinely off: the user has not enabled semantic search.
@@ -910,7 +910,7 @@ export const retrievalService = {
       semantic = 'hybrid';
     }
 
-    let modelState: MemoryModelState;
+    let modelState: KnowledgeGraphModelState;
     if (modelDownloadState === 'error') modelState = 'error';
     else if (modelPresent) modelState = 'ready';
     else if (isDownloadingThis || semanticOn) modelState = 'downloading';
@@ -933,7 +933,7 @@ export const retrievalService = {
         state: modelState,
         progress: showProgress ? modelDownloadProgress : undefined,
       },
-      digests: digestStatusFor(context),
+      summaries: summaryStatusFor(context),
       code: codeStatusFor(context),
       sources: sourcesStatusFor(context),
     };
@@ -970,7 +970,7 @@ export const retrievalService = {
     for (const timer of taskRecordTimers.values()) clearTimeout(timer);
     taskRecordTimers.clear();
     deferredBranchTimers.clear();
-    digestScheduler.dispose();
+    summaryScheduler.dispose();
     embedEngine.dispose();
   },
 };

@@ -1,5 +1,5 @@
 /**
- * Gemini CLI's stream-json, read for a Memory Graph answer. The lines are the
+ * Gemini CLI's stream-json, read for a Knowledge Graph answer. The lines are the
  * shapes captured from gemini 0.61.0 on 2026-09-28.
  */
 

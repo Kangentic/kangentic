@@ -61,12 +61,12 @@ describe('taskRecordChunks', () => {
     expect(before[0].tsStart).toBe(Date.parse('2026-09-01T10:00:00.000Z'));
   });
 
-  it('carries the task\'s digest on every chunk, and re-reads when a newer digest lands', () => {
-    const chunks = taskRecordChunks({ ...baseRecord, digest: 'Made the relay reconnect with backoff.', description: 'Body.' });
+  it('carries the task\'s summary on every chunk, and re-reads when a newer summary lands', () => {
+    const chunks = taskRecordChunks({ ...baseRecord, summary: 'Made the relay reconnect with backoff.', description: 'Body.' });
     expect(chunks[0].text).toBe('Relay reconnect after router restart\nSummary: Made the relay reconnect with backoff.\n\nBody.');
-    expect(recordChangedMs({ updatedAt: baseRecord.updatedAt, digestAt: '2026-09-10T00:00:00.000Z' }))
+    expect(recordChangedMs({ updatedAt: baseRecord.updatedAt, summaryAt: '2026-09-10T00:00:00.000Z' }))
       .toBe(Date.parse('2026-09-10T00:00:00.000Z'));
-    expect(recordChangedMs({ updatedAt: baseRecord.updatedAt, digestAt: null })).toBe(Date.parse(baseRecord.updatedAt));
+    expect(recordChangedMs({ updatedAt: baseRecord.updatedAt, summaryAt: null })).toBe(Date.parse(baseRecord.updatedAt));
   });
 
   it('reads the labels column leniently', () => {

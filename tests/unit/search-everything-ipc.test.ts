@@ -30,7 +30,7 @@ vi.mock('electron', () => ({
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       capturedHandlers.set(channel, handler);
     }),
-    // The fire-and-forget channels (`memory:prewarm`) register through `on`.
+    // The fire-and-forget channels (`knowledgeGraph:prewarm`) register through `on`.
     on: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       capturedHandlers.set(channel, handler);
     }),
@@ -77,9 +77,9 @@ function makeContext(projects: Project[] = [DEFAULT_PROJECT, OTHER_PROJECT]) {
     projectRepo: {
       list: vi.fn(() => projects),
     },
-    // The handler reads memory.indexingEnabled to gate conversation search.
+    // The handler reads knowledgeGraph.indexingEnabled to gate conversation search.
     configManager: {
-      load: vi.fn(() => ({ memory: { indexingEnabled: true } })),
+      load: vi.fn(() => ({ knowledgeGraph: { indexingEnabled: true } })),
     },
   };
 }
@@ -162,15 +162,15 @@ describe('search IPC adapter (registerSearchHandlers)', () => {
     expect(callArg.includeProjectHits).toBe(true);
   });
 
-  it('memory:prewarm forwards to retrievalService.prewarmEmbedWorker with the IPC context (fire-and-forget)', () => {
+  it('knowledgeGraph:prewarm forwards to retrievalService.prewarmEmbedWorker with the IPC context (fire-and-forget)', () => {
     const prewarmSpy = vi.spyOn(retrievalService, 'prewarmEmbedWorker').mockImplementation(() => undefined);
     try {
       const context = makeContext();
       capturedHandlers.clear();
       registerSearchHandlers(context as never);
 
-      const handler = capturedHandlers.get(IPC.MEMORY_PREWARM);
-      if (!handler) throw new Error(`Handler for ${IPC.MEMORY_PREWARM} was not registered`);
+      const handler = capturedHandlers.get(IPC.KNOWLEDGE_GRAPH_PREWARM);
+      if (!handler) throw new Error(`Handler for ${IPC.KNOWLEDGE_GRAPH_PREWARM} was not registered`);
       handler({} as Electron.IpcMainEvent);
 
       expect(prewarmSpy).toHaveBeenCalledTimes(1);

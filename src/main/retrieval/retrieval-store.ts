@@ -252,13 +252,13 @@ export class RetrievalStore {
     run();
   }
 
-  /** Every corpus, and the task digests written from it, gone: the Privacy
+  /** Every corpus, and the task summaries written from it, gone: the Privacy
    *  "clear index". */
   purgeAll(): void {
     const run = this.db.transaction(() => {
       this.db.prepare('DELETE FROM memory_chunks').run();
       this.db.prepare('DELETE FROM memory_index_state').run();
-      this.db.prepare('DELETE FROM memory_task_digests').run();
+      this.db.prepare('DELETE FROM memory_task_summaries').run();
       for (const corpus of this.vecTables) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
     });
     run();
@@ -745,7 +745,7 @@ export class RetrievalStore {
   }
 
   /**
-   * One page of chunk identities, ascending by id, for the Memory Graph's
+   * One page of chunk identities, ascending by id, for the Knowledge Graph's
    * projection scan. Ordered and cursored by `id` so a pass can resume from
    * `afterChunkId` instead of rescanning the corpus.
    *
@@ -914,7 +914,7 @@ export class RetrievalStore {
   }
 
   /**
-   * Per-document display metadata for the Memory Graph's nodes: what to call
+   * Per-document display metadata for the Knowledge Graph's nodes: what to call
    * it, which conversation to open, and when it last happened.
    *
    * Without this a node is an opaque hash, which is exactly what made the first
@@ -1050,7 +1050,7 @@ export class RetrievalStore {
    * The `+` on the embedded count's GROUP BY is load-bearing. Without it the
    * planner groups off `(corpus)` to skip a sort, and has to read every chunk
    * row to test `embedded_model`: 277 ms on a 97k-chunk index, on main, on
-   * every Index read while task records embed (about every 9 s during a digest
+   * every Index read while task records embed (about every 9 s during a summary
    * backfill). With it, the covering `(embedded_model, corpus)` index and a
    * small sort: 21 ms.
    */
@@ -1118,13 +1118,13 @@ export class RetrievalStore {
   }
 
   /**
-   * The finished tasks (in a Done column) that can have a digest, and how many
-   * of them do. A digest outlives its task leaving Done, so it is counted only
+   * The finished tasks (in a Done column) that can have a summary, and how many
+   * of them do. A summary outlives its task leaving Done, so it is counted only
    * while the task is back in one: "N of M" never reads past M.
    */
-  digestCounts(): { written: number; finishedTasks: number } {
+  summaryCounts(): { written: number; finishedTasks: number } {
     const written = (this.db
-      .prepare(`SELECT COUNT(*) AS count FROM memory_task_digests d
+      .prepare(`SELECT COUNT(*) AS count FROM memory_task_summaries d
                 JOIN tasks t ON t.id = d.task_id JOIN swimlanes w ON w.id = t.swimlane_id
                 WHERE w.role = 'done'`)
       .get() as { count: number }).count;
@@ -1146,7 +1146,7 @@ export class RetrievalStore {
    * Every task on the board, active and finished, with its facts rolled up from
    * its sessions, whether or not any conversation of it was ever indexed.
    *
-   * The Memory Graph's task table used to be built from indexed conversations
+   * The Knowledge Graph's task table used to be built from indexed conversations
    * alone, while its prompt told the agent the table was complete. On this
    * project four of the fourteen tasks that added an agent (#14 to #17) have no
    * indexed conversation, so "how many adapters did we add?" could not see them
@@ -1198,7 +1198,7 @@ export class RetrievalStore {
    * What is ACTUALLY stored in the vec table: its width, and the model tag the
    * chunks were embedded under.
    *
-   * The Memory Graph reads this rather than the configured model, because the
+   * The Knowledge Graph reads this rather than the configured model, because the
    * two legitimately disagree. `memory_chunks_vec` is fixed-width and is only
    * rebuilt by the embedding path, so between a model switch and the re-embed
    * finishing, config says one width and the table holds another - and a

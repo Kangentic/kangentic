@@ -19,11 +19,11 @@
 import type { AnswerCapabilities, AnswerSetupGap, AppConfig } from './types';
 
 /**
- * The two jobs the search agent does over the index: answering questions, and
- * writing task digests. Both run on the one agent and model chosen in the
- * Search agent card. They differ only in effort, below.
+ * The two jobs the Knowledge Graph's agent does over the index: answering
+ * questions, and writing task summaries. Both run on the one agent and model
+ * chosen in the Knowledge Graph card. They differ only in effort, below.
  */
-export type AgentJob = 'answer' | 'digest';
+export type AgentJob = 'answer' | 'summary';
 
 export interface AgentJobChoice {
   agent: string | null;
@@ -32,49 +32,49 @@ export interface AgentJobChoice {
   effort: string | null;
 }
 
-type MemoryConfig = NonNullable<AppConfig['memory']>;
+type KnowledgeGraphConfig = NonNullable<AppConfig['knowledgeGraph']>;
 
 /**
  * The agent, model and effort one job runs at. The chosen effort is for
- * answers: a digest always runs at the adapter's recommended level. Measured on
- * this project's tasks, digests at high effort read the same as at low and took
+ * answers: a summary always runs at the adapter's recommended level. Measured on
+ * this project's tasks, summaries at high effort read the same as at low and took
  * twice as long, while answers at the highest level got counts right that low
- * got wrong. So raising effort for a hard question neither slows the digests
+ * got wrong. So raising effort for a hard question neither slows the summaries
  * nor marks every one of them as written another way.
  */
-export function agentJobChoice(memory: MemoryConfig | undefined, job: AgentJob): AgentJobChoice {
+export function agentJobChoice(config: KnowledgeGraphConfig | undefined, job: AgentJob): AgentJobChoice {
   return {
-    agent: memory?.answerAgent ?? null,
-    model: memory?.answerModel ?? null,
-    effort: job === 'answer' ? memory?.answerEffort ?? null : null,
+    agent: config?.agent ?? null,
+    model: config?.model ?? null,
+    effort: job === 'answer' ? config?.effort ?? null : null,
   };
 }
 
 /**
- * Whether task summaries (digests) are switched on. On unless switched off:
+ * Whether task summaries are switched on. On unless switched off:
  * they are part of what the Knowledge Graph reads, and nothing is spent until
  * the Knowledge Graph has an agent, since the agent writes them. Their switch
  * stays usable while they wait, so they can be turned off before a call is
  * made. The one test main, the Settings card and the Index row all read, so
  * none of them can default it the other way.
  */
-export function taskDigestsOn(memory: MemoryConfig | undefined): boolean {
-  return memory?.taskDigests !== false;
+export function taskSummariesOn(config: KnowledgeGraphConfig | undefined): boolean {
+  return config?.taskSummaries !== false;
 }
 
 /**
  * Whether source code is indexed: switched on (the default), with indexing
- * and the Knowledge Graph (`semanticEnabled`) on too, since code is found by
+ * and the Knowledge Graph (`enabled`) on too, since code is found by
  * meaning only, and an agent chosen, since only its answers read
  * the code index (no other search does). Waiting for the agent keeps the first
  * fill, real background work, from running for nothing. The one test main,
  * the Settings card, the Index row and the Ask box all read.
  */
-export function codeIndexOn(memory: MemoryConfig | undefined): boolean {
-  return memory?.codeIndex !== false
-    && memory?.indexingEnabled !== false
-    && memory?.semanticEnabled === true
-    && Boolean(memory?.answerAgent);
+export function codeIndexOn(config: KnowledgeGraphConfig | undefined): boolean {
+  return config?.sourceCode !== false
+    && config?.indexingEnabled !== false
+    && config?.enabled === true
+    && Boolean(config?.agent);
 }
 
 /** What a sweep does with the source code index: see `codeSweepPlan`. */
@@ -87,15 +87,15 @@ export type CodeSweepPlan = 'index' | 'clear' | 'keep';
  * off and on again never costs a full re-embed, and a config that cannot be
  * read never clears it.
  */
-export function codeSweepPlan(loadMemory: () => MemoryConfig | undefined): CodeSweepPlan {
-  let memory: MemoryConfig | undefined;
+export function codeSweepPlan(loadConfig: () => KnowledgeGraphConfig | undefined): CodeSweepPlan {
+  let config: KnowledgeGraphConfig | undefined;
   try {
-    memory = loadMemory();
+    config = loadConfig();
   } catch {
     return 'keep';
   }
-  if (codeIndexOn(memory)) return 'index';
-  return memory?.codeIndex === false ? 'clear' : 'keep';
+  if (codeIndexOn(config)) return 'index';
+  return config?.sourceCode === false ? 'clear' : 'keep';
 }
 
 export interface AnswerAgentCandidate {
@@ -109,7 +109,7 @@ export interface AnswerAgentCandidate {
 
 export interface ResolveAnswerAgentInput<T extends AnswerAgentCandidate> {
   agents: ReadonlyArray<T>;
-  /** The configured agent (`memory.answerAgent`), or null/undefined when none
+  /** The configured agent (`knowledgeGraph.agent`), or null/undefined when none
    *  has been chosen. */
   configured?: string | null;
   /**
