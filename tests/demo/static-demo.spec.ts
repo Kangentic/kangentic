@@ -657,6 +657,14 @@ test('both product ids resolve, and every spelling the site may have written sti
   }
 });
 
+test('a scene the site embeds under its earlier name lands on the renamed one', async ({ page }) => {
+  // The site's docs embed the Knowledge Graph tab as settings-memory, its name until the tab id
+  // became knowledgeGraph. Without the alias that page shows the unknown-scene card.
+  await gotoScene(page, { view: 'settings-memory', embed: '1', still: '1' });
+  await expect(page.locator('html')).toHaveAttribute('data-demo-scene', 'settings-knowledgeGraph');
+  await expect(page.locator('[data-testid="demo-error"]')).toHaveCount(0);
+});
+
 test('view=nope renders the error card, logs the unknown scene, and never marks ready', async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on('console', (message) => {

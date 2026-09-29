@@ -42,6 +42,9 @@
   // resolving rather than hitting the error card. The product pair shipped briefly as
   // kangentic-light / kangentic-dark before being named clay / rust.
   var THEME_ALIASES = { night: 'dark', kangentic: 'clay', 'kangentic-light': 'clay', 'kangentic-dark': 'rust' };
+  // The same contract for a scene the site embeds by an earlier name. The Knowledge Graph
+  // tab's scene was settings-memory until the tab id became knowledgeGraph.
+  var SCENE_ALIASES = { 'settings-memory': 'settings-knowledgeGraph' };
   var STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
   // What a patch may say about a session the sample install seeds, and the values each takes. The
   // seed folds a patch in before it derives anything from the session, so the row, the Monitor,
@@ -247,6 +250,7 @@
 
   // ---------------------------------------------------------------- resolve the URL
   var sceneName = params.get('view');
+  if (sceneName !== null && SCENE_ALIASES[sceneName]) sceneName = SCENE_ALIASES[sceneName];
   if (sceneName === null && !params.has('state')) sceneName = 'board';
   var scene = null;
   if (sceneName !== null) {
