@@ -4,7 +4,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
-import { useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
+import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { DEFAULT_AGENT, DEFAULT_PERMISSIONS, getPermissionLabel } from '../../../shared/types';
 import type { TaskRunMode } from '../../../shared/types';
 import { modelRowLabel } from '../../utils/format-tokens';
@@ -187,6 +187,7 @@ export function AdvancedOverridesSection({
   } = useAgentCapabilityResolution(effectiveAgent);
   const modelContextWindows = useModelContextWindows(effectiveAgent);
   const modelDisplayNames = useModelDisplayNames(effectiveAgent);
+  const modelAliases = useModelAliases(effectiveAgent);
   const showEffortPicker = advancedEffortOptions.length > 0;
   const permissionOptions = effectiveAgentInfo?.permissions ?? DEFAULT_PERMISSIONS;
   const showPermissionPicker = permissionOptions.length > 0;
@@ -478,6 +479,7 @@ export function AdvancedOverridesSection({
                       onOpen={() => useConfigStore.getState().rescanModels()}
                       contextWindows={modelContextWindows}
                       modelDisplayNames={modelDisplayNames}
+                      modelAliases={modelAliases}
                     />
                   </Field>
                 )}

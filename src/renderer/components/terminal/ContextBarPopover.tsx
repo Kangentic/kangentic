@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
+import { MODEL_ALIAS_GROUP_HEADING, modelVersionSectionLabel } from '../../utils/format-tokens';
 
 /**
  * `oneMillionValue` carries the exact `<base>[1m]` model string for rows
@@ -20,9 +21,21 @@ interface PopoverOption {
 }
 
 /**
+ * A floating alias row: its bare family name, and `target`, the versioned name
+ * it runs today (rendered muted in a second column, omitted when unknown).
+ * `title` is the hover text naming both.
+ */
+interface AliasPopoverOption {
+  value: string;
+  label: string;
+  target?: string | null;
+  title?: string;
+}
+
+/**
  * Enumeration-only popover for the ContextBar model and effort triggers.
- * Lists the options reported by the agent's `discoverCapabilities` (e.g.
- * Claude's `models = ['opus','sonnet','haiku']` or `effortLevels =
+ * Lists the options reported by the agent's `discoverCapabilities` (model ids
+ * and floating aliases such as `opus`, or `effortLevels =
  * ['low','medium','high','xhigh','max']`), checkmarks the current value,
  * and includes a final "Use column default" item that clears the per-task
  * override (passes `null` to `onSelect`).
@@ -39,9 +52,11 @@ interface PopoverOption {
 export function ContextBarPopover({
   triggerRef,
   title,
+  aliasOptions = [],
   options,
   pinnedOptions = [],
   currentValue,
+  expandToCurrent = true,
   swimlaneDefault,
   swimlaneDefaultLabel,
   onSelect,
@@ -50,16 +65,31 @@ export function ContextBarPopover({
 }: {
   triggerRef: React.RefObject<HTMLElement | null>;
   title: string;
+  /**
+   * Floating aliases, listed first under a "Latest" header, which then stands
+   * in for `title` as the popover's first label. When present, the collapsed
+   * section below holds every specific version and is labelled "Specific
+   * versions"; absent, the popover reads exactly as before, `title` included.
+   */
+  aliasOptions?: ReadonlyArray<AliasPopoverOption>;
   options: ReadonlyArray<PopoverOption>;
   /**
-   * Superseded model generations and dated pinned builds, demoted behind a
-   * collapsed "Older versions" disclosure below the main list. Same row
-   * shape as `options` (a demoted generation keeps its own 1M chip / context
-   * badge). Values are exact spawnable strings.
+   * Superseded model generations and dated pinned builds (and, with aliases,
+   * the current versions an alias already runs), behind a collapsed
+   * disclosure below the main list. Same row shape as `options` (a demoted
+   * generation keeps its own 1M chip / context badge). Values are exact
+   * spawnable strings.
    */
   pinnedOptions?: ReadonlyArray<PopoverOption>;
-  /** The currently active value (live status > task override > swimlane override). Checkmark is rendered next to this. */
+  /** The value that gets the checkmark: what the user picked, or the live model when nothing was picked. */
   currentValue: string | null;
+  /**
+   * Whether a `currentValue` inside the collapsed section opens it. True when
+   * the check marks a choice the user made, so that choice is never hidden;
+   * false when it only marks the live model, so the common "nothing picked"
+   * case keeps the section collapsed. Defaults to true.
+   */
+  expandToCurrent?: boolean;
   /**
    * The swimlane's override for this field, if any. Drives the bottom-row
    * copy: when present we show "Use column default (X)" and the click can
@@ -83,15 +113,17 @@ export function ContextBarPopover({
   testId?: string;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  // Collapsed by default; forced open when the active value IS a demoted row
-  // (a superseded generation or a dated pin) so its checkmark is never hidden.
+  // Collapsed by default. Forced open when the checked value sits in the
+  // collapsed section and `expandToCurrent` says the check marks a choice the
+  // user made; a live-only match leaves it collapsed.
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
   const currentIsDemoted =
     currentValue !== null &&
     pinnedOptions.some(
       (option) => option.value === currentValue || (option.oneMillionValue ?? null) === currentValue,
     );
-  const showPinnedExpanded = pinnedExpanded || currentIsDemoted;
+  const showPinnedExpanded = pinnedExpanded || (expandToCurrent && currentIsDemoted);
+  const hasAliases = aliasOptions.length > 0;
   // The ContextBar is always pinned to the bottom of its container (task-detail
   // dialog, bottom panel, or the floating command-terminal overlay). Prefer
   // opening upward so the menu never renders past a floating container's bottom
@@ -189,6 +221,30 @@ export function ContextBarPopover({
     );
   };
 
+  // A floating alias: bare family name in a fixed-width column so the versions
+  // line up, then the version it runs today, muted. No 1M chip or context
+  // badge: an alias names a family, not a window.
+  const renderAliasRow = (option: AliasPopoverOption) => (
+    <div key={option.value} className="flex items-center hover:bg-surface-hover/40">
+      <button
+        type="button"
+        onClick={() => onSelect(option.value)}
+        title={option.title ?? option.value}
+        className="flex-1 min-w-[180px] py-2 px-3 text-sm text-left flex items-center gap-2 whitespace-nowrap text-fg-secondary"
+        data-testid={testId ? `${testId}-option-${option.value}` : undefined}
+        data-model-alias={option.value}
+      >
+        <Check size={12} className={`flex-shrink-0 ${option.value === currentValue ? 'text-fg-secondary' : 'text-transparent'}`} />
+        <span className="min-w-14 truncate">{option.label}</span>
+        {option.target && (
+          <span className="text-fg-faint text-xs truncate" data-testid={testId ? `${testId}-option-target-${option.value}` : undefined}>
+            {option.target}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+
   return createPortal(
     <div
       ref={popoverRef}
@@ -207,10 +263,24 @@ export function ContextBarPopover({
       // the marker meaningful for anything that reads "is a menu open right now".
       data-dismissable-layer
     >
-      <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-        {title}
-      </div>
-      {options.map((option) => renderOptionRow(option, false))}
+      {/* With a Latest group the popover leads with that label: a second heading
+          above it names a list the opened trigger already names. */}
+      {!hasAliases && (
+        <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
+          {title}
+        </div>
+      )}
+      {hasAliases && (
+        <div data-testid={testId ? `${testId}-alias-group` : undefined}>
+          <div className="px-3 pb-0.5 text-[11px] font-medium text-fg-faint">{MODEL_ALIAS_GROUP_HEADING}</div>
+          {aliasOptions.map(renderAliasRow)}
+        </div>
+      )}
+      {options.length > 0 && (
+        <div className={hasAliases ? 'border-t border-edge mt-1 pt-1' : undefined}>
+          {options.map((option) => renderOptionRow(option, false))}
+        </div>
+      )}
       {pinnedOptions.length > 0 && (
         <div className="border-t border-edge mt-1 pt-1">
           <button
@@ -223,7 +293,7 @@ export function ContextBarPopover({
               size={12}
               className={`flex-shrink-0 transition-transform ${showPinnedExpanded ? '' : '-rotate-90'}`}
             />
-            Older versions ({pinnedOptions.length})
+            {modelVersionSectionLabel(hasAliases)} ({pinnedOptions.length})
           </button>
           {showPinnedExpanded && pinnedOptions.map((option) => renderOptionRow(option, true))}
         </div>

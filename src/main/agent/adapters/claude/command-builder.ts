@@ -4,6 +4,8 @@ import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { interpolateTemplate } from '../../shared/template-utils';
+import { toClaudeModelArgument } from './model-display-name';
+import { peekModelPickerAliasIds } from './model-picker-probe';
 import { buildHooks } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
 import type { CommandOptions } from '../../agent-adapter';
@@ -183,9 +185,14 @@ export class CommandBuilder {
 
     // Per-column model and effort overrides. Both flags are session-scoped:
     // Claude does not persist them, so they are applied on every spawn (fresh
-    // and resumed) until the column setting changes.
+    // and resumed) until the column setting changes. A model written the way
+    // the app displays it ("Opus", "Opus 5.5") is converted to Claude's own
+    // spelling (`opus`, `claude-opus-5-5`) here, at the one place that knows
+    // the value is going to Claude; stored values are never rewritten. See
+    // toClaudeModelArgument for which values convert.
     if (options.model && options.model.trim().length > 0) {
-      parts.push('--model', quoteArg(options.model.trim(), shell));
+      const modelArgument = toClaudeModelArgument(options.model, peekModelPickerAliasIds(options.cliPath));
+      parts.push('--model', quoteArg(modelArgument, shell));
     }
     if (options.effort && options.effort.trim().length > 0) {
       parts.push('--effort', quoteArg(options.effort.trim(), shell));

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useConfigStore } from '../stores/config-store';
+import type { ModelAliasOption } from '../../shared/types';
 
 /**
  * Single source of truth for "what models can this agent run".
@@ -27,17 +28,48 @@ export function useKnownModels(agent: string | null): string[] {
   const fromCache = useConfigStore(
     useShallow((state) => agent ? state.config.discoveredModelsByAgent?.[agent] : undefined),
   );
-  return useMemo(() => {
-    if (!agent) return [];
-    const union = new Set<string>();
-    if (fromAgentList) for (const value of fromAgentList) union.add(value);
-    if (fromCache) for (const value of fromCache) union.add(value);
-    return Array.from(union).sort((a, b) => a.localeCompare(b));
-  }, [agent, fromAgentList, fromCache]);
+  return useMemo(() => (agent ? unionKnownModels(fromAgentList, fromCache) : []), [agent, fromAgentList, fromCache]);
+}
+
+/**
+ * The union `useKnownModels` returns, for a caller that already holds both
+ * sources outside a hook (the board overview reads it per column).
+ */
+export function unionKnownModels(
+  capabilityModels: readonly string[] | undefined,
+  discoveredModels: readonly string[] | undefined,
+): string[] {
+  const union = new Set<string>();
+  if (capabilityModels) for (const value of capabilityModels) union.add(value);
+  if (discoveredModels) for (const value of discoveredModels) union.add(value);
+  return Array.from(union).sort((first, second) => first.localeCompare(second));
 }
 
 const EMPTY_WINDOWS: Record<string, number> = {};
 const EMPTY_DISPLAY_NAMES: Record<string, string> = {};
+const EMPTY_ALIASES: ModelAliasOption[] = [];
+
+/**
+ * Floating model selectors the agent offers (`AgentCapabilities.modelAliases`,
+ * e.g. Claude's `opus`), each with the versioned id it currently resolves to,
+ * in the CLI's own order. The pickers list them above the specific versions.
+ * Live from capability discovery only: an alias is never learned from
+ * telemetry, which reports resolved ids. Selected by content, because every
+ * agent-list reload (one per picker open) brings fresh objects, and a new
+ * array per reload would re-render an open picker for no change.
+ */
+export function useModelAliases(agent: string | null): ModelAliasOption[] {
+  const aliasesKey = useConfigStore((state) => {
+    const aliases = agent
+      ? state.agentList.find((entry) => entry.name === agent)?.capabilities?.modelAliases
+      : undefined;
+    return aliases && aliases.length > 0 ? JSON.stringify(aliases) : '';
+  });
+  return useMemo(
+    () => (aliasesKey ? (JSON.parse(aliasesKey) as ModelAliasOption[]) : EMPTY_ALIASES),
+    [aliasesKey],
+  );
+}
 
 /**
  * Friendly display name per discovered model id (e.g. `claude-opus-4-8` ->

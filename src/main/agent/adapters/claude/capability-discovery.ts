@@ -2,8 +2,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile, exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getCachedModelPickerModels, probeModelPickerModels } from './model-picker-probe';
-import { buildModelDisplayNames } from './model-display-name';
+import { getCachedModelPickerModels, probeModelPickerModels, type ModelPickerScan } from './model-picker-probe';
+import { buildModelCapabilityFields } from './model-display-name';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -194,21 +194,27 @@ export async function discoverClaudeStaticCapabilities(cliPath: string): Promise
  * still does not block the UI: the caller runs it in the background and the
  * dropdown re-renders once the fresh result lands (~2s).
  *
+ * The floating aliases come from the picker only (see parseModelPickerScreen):
+ * transcripts record resolved ids, never the alias a session was started with.
+ *
  * Returns undefined when neither source yields a model, in which case the
  * renderer falls back to a free-form text input.
  */
 export async function rescanClaudeModels(
   cliPath: string,
   forceRefresh = false,
-): Promise<string[] | undefined> {
+): Promise<ModelPickerScan | undefined> {
   const transcriptModels = await discoverHistoricalModels();
-  const pickerModels = forceRefresh
+  const pickerScan = forceRefresh
     ? await probeModelPickerModels(cliPath, true)
     : getCachedModelPickerModels(cliPath);
 
-  if (!transcriptModels && !pickerModels) return undefined;
-  const union = new Set<string>([...(transcriptModels ?? []), ...(pickerModels ?? [])]);
-  return Array.from(union).sort((modelIdA, modelIdB) => modelIdA.localeCompare(modelIdB));
+  if (!transcriptModels && !pickerScan) return undefined;
+  const union = new Set<string>([...(transcriptModels ?? []), ...(pickerScan?.models ?? [])]);
+  return {
+    models: Array.from(union).sort((modelIdA, modelIdB) => modelIdA.localeCompare(modelIdB)),
+    aliases: pickerScan?.aliases ?? [],
+  };
 }
 
 /**
@@ -222,12 +228,7 @@ export async function discoverClaudeCapabilities(
   forceRefresh = false,
 ): Promise<AgentCapabilities> {
   const capabilities = await discoverClaudeStaticCapabilities(cliPath);
-  if (capabilities.supportsModelOverride) {
-    const models = await rescanClaudeModels(cliPath, forceRefresh);
-    if (models) {
-      capabilities.models = models;
-      capabilities.modelDisplayNames = buildModelDisplayNames(models);
-    }
-  }
-  return capabilities;
+  if (!capabilities.supportsModelOverride) return capabilities;
+  const rescan = await rescanClaudeModels(cliPath, forceRefresh);
+  return rescan ? { ...capabilities, ...buildModelCapabilityFields(rescan.models, rescan.aliases) } : capabilities;
 }

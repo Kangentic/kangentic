@@ -73,7 +73,7 @@ Choosing **Agent Override** reveals the per-task pins:
 | Field | Description |
 |-------|-------------|
 | **Agent** | Pick a specific agent CLI (Claude, Codex, etc.) for this task. Defaults to the destination column's agent override, then the project default. Locked (shown disabled, on the one agent it has) when only one agent is detected on the machine. The pencil beside it opens Settings > Agent, where all four of these fields get their project defaults. |
-| **Model** | Adapter-specific model identifier (e.g. `opus`, `sonnet`, `claude-opus-4-8`). The dropdown is fed by the shared model cache. For Claude, the list is populated both by scanning past session transcripts and by harvesting the CLI's own `/model` picker through a hidden background probe, so newly shipped models surface without first being used in a session. |
+| **Model** | Adapter-specific model identifier (e.g. `opus`, `sonnet`, `claude-opus-4-8`). When the agent offers floating aliases, the dropdown leads with a **Latest** group (Opus, Fable, Sonnet, Haiku for Claude), each with the version it runs today beside it. Pick one and the task follows each new release. The versions those aliases run, older generations, and dated pins sit in one collapsed **Specific versions** section, grouped by model with the newest first and a dated pin right after its generation. A current version with no alias stays in the main list. Without aliases, only older generations and dated pins are collapsed, under **Older versions**. For Claude, the list comes from scanning past session transcripts and from the CLI's own `/model` picker, read by a hidden background probe, so newly shipped models surface without first being used in a session. |
 | **Effort** | Adapter-specific reasoning tier (Claude: `low`, `medium`, `high`, `xhigh`, `max`). Only shown when the agent reports effort levels. |
 | **Permission** | Permission mode for this task. A column that forces Plan mode still wins while the task is in that column - that is a safety guarantee, not an ordinary default. |
 
@@ -96,6 +96,8 @@ board's Heavy profile into project X"). See
 [MCP Server > Board Profiles](mcp-server.md#board-profiles).
 
 Before the first spawn, the task detail dialog also shows a slim **pre-spawn context bar** with the same Model and Effort pills. Set them there to avoid the spawn -> cancel -> restart loop: the picker writes the override to the DB, and `prepare-spawn` picks it up on the next agent launch.
+
+The Model popover on both bars leads with the same **Latest** group when the agent offers aliases, then a collapsed **Specific versions** section.
 
 When an agent is already running, the same Model / Effort pills appear in the live context bar below the terminal. Picking a value there delivers the change to the running session via the adapter's slash-command injection sequence when it supports live model changes (Claude's `/model`), or suspends and respawns when it does not.
 
@@ -412,7 +414,7 @@ automations on the right.
 | **Color** | Header accent color |
 | **Icon** | Lucide icon name (e.g., `square-terminal`, `code`, `flask-conical`) |
 | **Agent** | Override the project's default agent for this column (e.g., use Codex for code review) |
-| **Model** / **Effort** | Override the project's default model and reasoning effort for agents in this column |
+| **Model** / **Effort** | Override the project's default model and reasoning effort for agents in this column. The Model dropdown has the same **Latest** and **Specific versions** layout as the New Task dialog. A column set to `Opus` follows each new Opus release, while one set to a specific version stays put. In **All columns**, a column pinned to an older version shows a small mark naming the newer one. |
 | **Permission Mode** | Override the global permission mode for agents in this column |
 | **Auto Spawn** ("Start an agent here") | Whether moving a task here spawns an agent (default: on). Turning it off also stops any **Send message to agent** automation on the column, since there is no agent to type at; those rows show as off with a disabled switch and the reason. |
 | **Hand off context when the agent changes** | On a move that changes the agent, hand the previous agent's conversation to the new one instead of starting it with just the task title and description |

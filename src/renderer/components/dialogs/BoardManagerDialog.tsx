@@ -53,9 +53,10 @@ import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 import { OverlayPopover } from '../OverlayPopover';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
-import { useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
+import { unionKnownModels, useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { useKeybinding } from '../../hooks/useKeybinding';
-import { modelRowLabel } from '../../utils/format-tokens';
+import { buildOfferedIdsByDisplayName, modelAliasTitle, modelRowLabel } from '../../utils/format-tokens';
+import { newerModelFor } from '../../../shared/model-id';
 import {
   getPermissionLabel,
   DEFAULT_PERMISSIONS,
@@ -728,6 +729,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // implicitly updates this subscription too.
   const agentList = useConfigStore((state) => state.agentList);
   const loadAgentList = useConfigStore((state) => state.loadAgentList);
+  // The overview's "newer version available" mark reads the same model union
+  // the Model combobox lists (useKnownModels), so the two never disagree.
+  const discoveredModelsByAgent = useConfigStore((state) => state.config.discoveredModelsByAgent);
 
   // Snapshot originals + drafts at mount. If the dialog was opened with
   // `seedNewDraft=true`, also seed a fresh new draft inline so the dialog
@@ -1106,8 +1110,16 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       // same sources its form fields read, so a row never names a value the
       // column page spells differently (a Codex column's acceptEdits is "Auto
       // (Preset)", not Claude's "Accept Edits").
-      const laneAgentInfo = agentList.find((agent) => agent.name === (overrideName ?? projectDefaultAgent));
+      const laneAgentName = overrideName ?? projectDefaultAgent;
+      const laneAgentInfo = agentList.find((agent) => agent.name === laneAgentName);
       const modelOverride = laneDraft.model_override?.trim();
+      const laneDisplayNames = laneAgentInfo?.capabilities?.modelDisplayNames ?? {};
+      const laneAliases = laneAgentInfo?.capabilities?.modelAliases ?? [];
+      const laneKnownModels = unionKnownModels(
+        laneAgentInfo?.capabilities?.models,
+        laneAgentName ? discoveredModelsByAgent?.[laneAgentName] : undefined,
+      );
+      const newerModel = modelOverride ? newerModelFor(modelOverride, laneKnownModels) : null;
 
       const rows = automationDrafts[id] ?? [];
       const counts = runnableAutomationCounts(rows, laneDraft);
@@ -1132,10 +1144,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           ? { on: false, applicable: false, reason: agentReason, ariaLabel: 'Start an agent here' }
           : { on: laneDraft.auto_spawn, applicable: true, ariaLabel: 'Start an agent here' },
         agent: value(agentLabel, !!overrideName),
-        model: value(
-          modelOverride ? modelRowLabel(modelOverride, laneAgentInfo?.capabilities?.modelDisplayNames ?? {}) : 'Default',
-          !!modelOverride,
-        ),
+        model: {
+          ...value(modelOverride ? modelRowLabel(modelOverride, laneDisplayNames) : 'Default', !!modelOverride),
+          ...(agentApplies && modelOverride
+            ? {
+                title: modelAliasTitle(modelOverride, laneAliases, laneDisplayNames) ?? undefined,
+                newer: newerModel ? modelRowLabel(newerModel, laneDisplayNames) : undefined,
+              }
+            : {}),
+        },
         effort: value(laneDraft.effort_override || 'Default', !!laneDraft.effort_override),
         permission: value(
           laneDraft.permission_mode
@@ -1164,7 +1181,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     });
   }, [
     laneOrder, drafts, originals, newDraftIds, agentList, projectDefaultAgent, projectDefaultAgentLabel,
-    automationDrafts, automationOriginals,
+    automationDrafts, automationOriginals, discoveredModelsByAgent,
   ]);
 
   // Effective-agent resolution for the column manager: column draft's
@@ -1179,6 +1196,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   } = useAgentCapabilityResolution(effectiveAgent);
   const modelContextWindows = useModelContextWindows(effectiveAgent);
   const modelDisplayNames = useModelDisplayNames(effectiveAgent);
+  const modelAliases = useModelAliases(effectiveAgent);
   const agentPermissions = effectiveAgentInfo?.permissions ?? DEFAULT_PERMISSIONS;
 
   // Project-level model/effort defaults (mirrors projectDefaultAgent above).
@@ -1195,14 +1213,23 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // local-only context.
   const discoveredModels = useMemo(() => {
     const merged = new Set(knownModels);
+    // A value written the way the app displays it ("Opus", from a hand-edited
+    // kangentic.json or an MCP call) names a row the picker already lists, so
+    // it is not added as a version of its own. Only values nothing offered
+    // recognizes (another column's custom model) get a row.
+    const offeredIdsByName = buildOfferedIdsByDisplayName(
+      [...knownModels, ...modelAliases.map((alias) => alias.id)],
+      modelDisplayNames,
+    );
     for (const lane of Object.values(drafts)) {
       if (!lane.model_override) continue;
       const laneAgent = lane.agent_override ?? projectDefaultAgent;
       if (laneAgent !== effectiveAgent) continue;
+      if (offeredIdsByName.has(lane.model_override.trim().toLowerCase())) continue;
       merged.add(lane.model_override);
     }
     return Array.from(merged).sort((a, b) => a.localeCompare(b));
-  }, [knownModels, drafts, projectDefaultAgent, effectiveAgent]);
+  }, [knownModels, drafts, projectDefaultAgent, effectiveAgent, modelAliases, modelDisplayNames]);
 
   const usedIcons = useMemo(() => {
     return getUsedIcons(
@@ -2219,6 +2246,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                           onOpen={() => useConfigStore.getState().rescanModels()}
                           contextWindows={modelContextWindows}
                           modelDisplayNames={modelDisplayNames}
+                          modelAliases={modelAliases}
                         />
                       </div>
                     </SettingField>

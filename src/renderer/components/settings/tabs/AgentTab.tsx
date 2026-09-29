@@ -6,7 +6,7 @@ import type { AgentDetectionInfo, AgentPermissionEntry, AppConfig, PermissionMod
 import { DEFAULT_PERMISSIONS, DEFAULT_AGENT, getAgentDefaultPermission } from '../../../../shared/types';
 import { agentDisplayName, agentLoginCommand } from '../../../utils/agent-display-name';
 import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityResolution';
-import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
+import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
@@ -64,6 +64,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
   } = useAgentCapabilityResolution(effectiveAgent);
   const defaultModelContextWindows = useModelContextWindows(effectiveAgent);
   const defaultModelDisplayNames = useModelDisplayNames(effectiveAgent);
+  const defaultModelAliases = useModelAliases(effectiveAgent);
   const showDefaultEffortPicker = defaultEffortOptions.length > 0;
 
   const handleDefaultAgentChange = async (agentName: string) => {
@@ -127,6 +128,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
             onOpen={() => useConfigStore.getState().rescanModels()}
             contextWindows={defaultModelContextWindows}
             modelDisplayNames={defaultModelDisplayNames}
+            modelAliases={defaultModelAliases}
           />
         </CardRow>
       )}

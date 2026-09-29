@@ -1,4 +1,4 @@
-import { Bot, MessageSquare, Zap } from 'lucide-react';
+import { Bot, CircleArrowUp, MessageSquare, Zap } from 'lucide-react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../DataTable';
 import { Pill } from '../../Pill';
 import { ToggleSwitch } from '../../settings/shared';
@@ -41,6 +41,10 @@ export interface OverviewValue {
   applicable: boolean;
   /** Why it does not apply. Required when `applicable` is false; becomes the cell's `title`. */
   reason?: string;
+  /** Hover text when it should say more than `label` (a floating model alias names the version it runs). */
+  title?: string;
+  /** A newer version of the value is known, e.g. "Sonnet 5.5" for a column pinned to Sonnet 5. */
+  newer?: string;
 }
 
 /** One boolean cell, rendered as the read-only control that sets it. */
@@ -99,20 +103,42 @@ function OverviewCell({ value }: { value: OverviewValue }) {
     return (
       <span
         data-state="changed"
-        title={value.label}
+        title={value.title ?? value.label}
         className="inline-flex h-[22px] max-w-full min-w-0 items-center whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg"
       >
         <span className="truncate">{value.label}</span>
+        <NewerMark newer={value.newer} />
       </span>
     );
   }
   return (
     <span
       data-state="unchanged"
-      title={value.label}
+      title={value.title ?? value.label}
       className="inline-block max-w-full truncate align-middle text-fg-faint"
     >
       {value.label}
+      <NewerMark newer={value.newer} />
+    </span>
+  );
+}
+
+/**
+ * A small upgrade mark after a value a newer version has superseded. It is a
+ * fixed part of the cell, never a button: the update itself is picking the
+ * newer model in the column's own Model field.
+ */
+function NewerMark({ newer }: { newer?: string }) {
+  if (!newer) return null;
+  return (
+    <span
+      data-overview-newer
+      role="img"
+      title={`${newer} available`}
+      aria-label={`${newer} available`}
+      className="ml-1 inline-flex flex-shrink-0 align-middle text-fg-faint"
+    >
+      <CircleArrowUp size={12} />
     </span>
   );
 }

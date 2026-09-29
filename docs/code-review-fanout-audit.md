@@ -804,6 +804,9 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #723 | 9f +210 | 32KB, 459 lines | 3 (2) | 6 | 0 | 8 | 28 of 7 pack-carrying | 12 / 9 |
 | #728 | 15f +576 plus 8 new files | 176KB, 3359 lines | 16 (7) | 7 | 0 | 8 | 10 of 7 pack-carrying | 11 / 7 |
 | task 733, pre-PR | 26f +1012 plus 3 new files | 164KB, 2755 lines | 8 (4) | 21 | 0 | 9 | 10 of 8 pack-carrying | 8 / 5, plus 2 found in verification |
+| task 734, pre-PR | 36f +1490 plus 1 new file | 248KB, 4510 lines | 9 (6) | 28 | 0 | 10 | 3 of 9 pack-carrying | 31 / 27 |
+| task 734, second pass | 32f +1824 plus 2 new files | 260KB, 4765 lines | 9 (5) | 25 | 0 | 10 | 6 of 9 pack-carrying | 31 / 20 |
+| task 734, third pass | 37f +2922 plus 2 new files | 317KB, 5814 lines | 7 (2) | 32 | 0 | 9 | 16 of 8 pack-carrying | 35 / 28 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -919,3 +922,34 @@ spawn. The driver refuted four of the 11 candidates, each for a stated reason:
 - A fail-open ordering case had no SDK-shaped trigger.
 - Two platform nits changed no behavior.
 - One coverage hole was on code the diff moved without changing.
+
+The task 734 second-pass row re-reviewed the same task's uncommitted work after its first pass.
+At 260KB and 4765 lines the pack is past the Read tool's output cap at 2000 lines, and the skill
+still sizes the load at one call per 2000 lines. At least three finders (`hmr-parity`,
+conventions, `platform-guard`) had that call fail on the 25,000-token limit and fell back to
+smaller windows or greps. Two of them reported skipping sections off their checklist rather than
+loading the whole pack. So the call-count rule is now wrong for most packs this size, the same
+finding as row six. Of the 6 reads beyond the pack, the correctness finder's 4 were outside the
+changed set (the adapter's cache path, MCP spawn-override validation, and the model union hook)
+or in a window gap of the probe test. The IPC auditor's 2 were the UI mock and `agent-list.ts`,
+both outside it. None was a `HUNK_CONTEXT_LINES` case. The driver dropped 11 of 31 candidates.
+Most were informational or off the diff. Two convention findings graded against a prompt worded
+more strictly than the rules they cited, a hover-only claim on a supplementary `title` and an
+adapter-boundary claim on a call that does not branch on an agent.
+
+The task 734 third-pass row is the same task again, with the two earlier passes' tests now
+committed and the source still uncommitted. The conventions finder hit the 25,000-token Read cap
+on a 2000-line call and loaded the pack in smaller windows, as in the second pass. The IPC, HMR,
+and `platform-guard` auditors were told to jump to their sections by the table of contents
+instead of loading all 5814 lines, and none reported missing anything. The maintainability
+finder did not report its reads, so its count is absent from the 16. Most of the 16 were outside
+the changed set: the agent-list handler and config store (IPC), `paths.ts` (`platform-guard`),
+and test files for coverage.
+None was a `HUNK_CONTEXT_LINES` case. The one High finding came from verification, not from a
+finder as raised. `platform-guard` flagged the exact `cliPath` compare as a Low case-sensitivity
+nit. The driver traced the spawn path to `resolveShimLaunch`, which swaps an npm `claude.cmd` for
+its `.ps1` or extensionless sibling, so the compare always failed there and the spawn-time alias
+conversion never ran. The driver dropped 7 of 35 candidates: two duplicates of a non-atomic
+write already self-healing on read, a speculative ASCII glyph fallback, a forced-probe cost that
+predates the change, a documented cold-start pass-through, an informational mock note, and a
+`closeMenu` extraction the effect deps rule out.

@@ -4,7 +4,7 @@
  * copy from the standalone discoverClaudeCapabilities function in
  * capability-discovery.ts (covered by claude-capability-discovery.test.ts) -
  * nothing previously called the adapter method directly and asserted on
- * modelDisplayNames, so dropping `buildModelDisplayNames(models)` from the
+ * modelDisplayNames, so dropping `buildModelCapabilityFields(...)` from the
  * adapter would not fail any test in CI.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -20,7 +20,7 @@ const { staticCapabilitiesMock, rescanModelsMock } = vi.hoisted(() => ({
 }));
 
 // Mock only the two capability-discovery entry points the adapter calls; the
-// adapter's `buildModelDisplayNames` import comes from a different module
+// adapter's `buildModelCapabilityFields` import comes from a different module
 // (./model-display-name) and runs for real, so the assertions below exercise
 // the adapter's actual humanization wiring, not a stubbed shortcut.
 vi.mock('../../src/main/agent/adapters/claude/capability-discovery', () => ({
@@ -39,7 +39,7 @@ describe('ClaudeAdapter.discoverCapabilities', () => {
 
   it('builds modelDisplayNames alongside a rescanned model list', async () => {
     staticCapabilitiesMock.mockResolvedValue({ supportsModelOverride: true });
-    rescanModelsMock.mockResolvedValue(['claude-opus-4-8', 'claude-sonnet-4-6']);
+    rescanModelsMock.mockResolvedValue({ models: ['claude-opus-4-8', 'claude-sonnet-4-6'], aliases: [] });
 
     const adapter = new ClaudeAdapter();
     const capabilities = await adapter.discoverCapabilities('/usr/bin/claude');
@@ -48,6 +48,33 @@ describe('ClaudeAdapter.discoverCapabilities', () => {
     expect(capabilities.modelDisplayNames).toEqual({
       'claude-opus-4-8': 'Opus 4.8',
       'claude-sonnet-4-6': 'Sonnet 4.6',
+    });
+    // No aliases derived: the field is omitted, not an empty list.
+    expect(capabilities.modelAliases).toBeUndefined();
+  });
+
+  it('carries the picker aliases and names them by their bare family', async () => {
+    staticCapabilitiesMock.mockResolvedValue({ supportsModelOverride: true });
+    rescanModelsMock.mockResolvedValue({
+      models: ['claude-opus-5-5', 'claude-sonnet-5-5'],
+      aliases: [
+        { id: 'opus', resolvesTo: 'claude-opus-5-5' },
+        { id: 'sonnet', resolvesTo: 'claude-sonnet-5-5' },
+      ],
+    });
+
+    const adapter = new ClaudeAdapter();
+    const capabilities = await adapter.discoverCapabilities('/usr/bin/claude');
+
+    expect(capabilities.modelAliases).toEqual([
+      { id: 'opus', resolvesTo: 'claude-opus-5-5' },
+      { id: 'sonnet', resolvesTo: 'claude-sonnet-5-5' },
+    ]);
+    expect(capabilities.modelDisplayNames).toEqual({
+      'claude-opus-5-5': 'Opus 5.5',
+      'claude-sonnet-5-5': 'Sonnet 5.5',
+      opus: 'Opus',
+      sonnet: 'Sonnet',
     });
   });
 
