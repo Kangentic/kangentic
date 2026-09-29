@@ -165,12 +165,17 @@ export const QUESTIONS = [
     id: 'selection-outcome',
     corpus: 'conversation',
     question: 'Which tasks were dropped without ever finishing?',
-    // A state the app never produces: only the move into Done archives a task,
-    // so the table has Done and Open and nothing else. The only thing worth
-    // asserting is that the answer does not INVENT one. Naming no ticket is the
-    // whole test; which words it declines with is its own business, and
-    // requiring a specific phrasing would grade wording.
-    truth: () => expect([], ['#']),
+    // Status has no "dropped": only the move into Done archives a task. What the
+    // table does carry is each task's pull request, and one closed without
+    // merging is work given up on, which is how Sonnet read the question on the
+    // real board (the three closed-unmerged PRs, and only those). With none, the
+    // only thing worth asserting is that the answer does not INVENT one: naming
+    // no ticket is the whole test, and the words it declines with are its own.
+    truth: (rollup) => {
+      const closed = rollup.filter((row) => row.prState === 'closed' && row.displayId != null);
+      if (closed.length === 0) return expect([], ['#']);
+      return expect([], [], [], { allOf: closed.slice(0, 3).map((row) => nameFor(rollup, row)) });
+    },
   },
   {
     id: 'total-spend',

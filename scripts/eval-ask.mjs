@@ -140,6 +140,13 @@ function rollUpConversations(nodes, boardTasks = []) {
     if (existing.outcome === null) existing.outcome = node.outcome;
     if (existing.displayId === null) existing.displayId = node.displayId;
   }
+  // A task's pull request belongs to the TASK, so every row takes it from the
+  // board's record, as the shipped table does.
+  const boardByTask = new Map(boardTasks.map((task) => [task.taskId, task]));
+  for (const row of byTask.values()) {
+    const board = row.taskId ? boardByTask.get(row.taskId) : undefined;
+    row.prState = board?.prState ?? null;
+  }
   for (const task of boardTasks) {
     if (byTask.has(task.taskId)) continue;
     byTask.set(task.taskId, {
@@ -152,6 +159,7 @@ function rollUpConversations(nodes, boardTasks = []) {
       tokens: task.tokens,
       outcome: task.outcome,
       lastActivityMs: task.lastActivityMs,
+      prState: task.prState ?? null,
       docKeys: [],
     });
   }

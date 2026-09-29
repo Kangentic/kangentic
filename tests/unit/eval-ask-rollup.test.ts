@@ -63,6 +63,7 @@ function comparable(rows: ReadonlyArray<{
   tokens: number | null;
   outcome: string | null;
   lastActivityMs: number | null;
+  prState?: string | null;
 }>) {
   return [...rows]
     .map((row) => ({
@@ -73,6 +74,7 @@ function comparable(rows: ReadonlyArray<{
       tokens: row.tokens,
       outcome: row.outcome,
       lastActivityMs: row.lastActivityMs,
+      prState: row.prState ?? null,
     }))
     // Row ORDER is not part of the contract - the shipped builder sorts by cost
     // as a truncation policy, the harness does not sort at all - so both sides
@@ -126,14 +128,20 @@ describe('the Ask harness rollup matches the shipped one', () => {
       prNumber: null,
       prState: null,
     });
-    // t1 is on the board too: its conversation row must win, not be doubled.
-    const boardTasks = [boardRow('t1', 529, 99), boardRow('t9', 14, 3.5), boardRow('t10', 15, null)].map(toBoardTaskFacts);
+    // t1 is on the board too: its conversation row must win, not be doubled,
+    // and still carry the pull request the board records for its task.
+    const boardTasks = [
+      { ...boardRow('t1', 529, 99), prNumber: 255, prState: 'closed' },
+      boardRow('t9', 14, 3.5),
+      boardRow('t10', 15, null),
+    ].map(toBoardTaskFacts);
 
     const shipped = buildAnswerTaskTable(projection(nodes), 'balanced', null, boardTasks).rows;
     const harness = __testing.rollUpConversations(nodes, boardTasks);
 
     expect(harness).toHaveLength(3);
     expect(comparable(harness)).toEqual(comparable(shipped));
+    expect(harness.find((row) => row.displayId === 529)?.prState).toBe('closed');
   });
 
   it('keeps an unrecorded metric null on BOTH sides', () => {
