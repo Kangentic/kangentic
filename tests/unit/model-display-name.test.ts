@@ -4,6 +4,7 @@ import {
   humanizeClaudeModelId,
   configuredModelFromClaudeCommand,
   buildModelDisplayNames,
+  buildModelCapabilityFields,
 } from '../../src/main/agent/adapters/claude/model-display-name';
 import { CommandBuilder } from '../../src/main/agent/adapters/claude';
 
@@ -97,6 +98,38 @@ describe('buildModelDisplayNames', () => {
 
   it('returns an empty map for an empty list', () => {
     expect(buildModelDisplayNames([])).toEqual({});
+  });
+});
+
+describe('buildModelCapabilityFields', () => {
+  it('names the ids and the alias ids, and carries the aliases through in the given order', () => {
+    const aliases = [
+      { id: 'opus', resolvesTo: 'claude-opus-4-8' },
+      { id: 'haiku', resolvesTo: 'claude-haiku-4-5' },
+    ];
+    const fields = buildModelCapabilityFields(['claude-opus-4-8', 'claude-haiku-4-5'], aliases);
+    expect(fields.models).toEqual(['claude-opus-4-8', 'claude-haiku-4-5']);
+    expect(fields.modelAliases).toEqual(aliases);
+    // An alias shows as its bare family name, beside the versioned ids it resolves to.
+    expect(fields.modelDisplayNames).toEqual({
+      'claude-opus-4-8': 'Opus 4.8',
+      'claude-haiku-4-5': 'Haiku 4.5',
+      opus: 'Opus',
+      haiku: 'Haiku',
+    });
+  });
+
+  it('leaves modelAliases out entirely (not an empty array) when the CLI offered none', () => {
+    const fields = buildModelCapabilityFields(['claude-opus-4-8'], []);
+    expect('modelAliases' in fields).toBe(false);
+    expect(fields.modelDisplayNames).toEqual({ 'claude-opus-4-8': 'Opus 4.8' });
+  });
+
+  it('still names aliases when the model list is empty', () => {
+    const fields = buildModelCapabilityFields([], [{ id: 'sonnet' }]);
+    expect(fields.models).toEqual([]);
+    expect(fields.modelDisplayNames).toEqual({ sonnet: 'Sonnet' });
+    expect(fields.modelAliases).toEqual([{ id: 'sonnet' }]);
   });
 });
 
