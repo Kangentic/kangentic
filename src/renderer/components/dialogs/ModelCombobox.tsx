@@ -1,7 +1,16 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown, X } from 'lucide-react';
-import { groupModelIds, type ModelDisplayGroup } from '../../../shared/model-id';
-import { modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
+import { newerModelFor, planModelPickerRows, type ModelDisplayGroup } from '../../../shared/model-id';
+import type { ModelAliasOption } from '../../../shared/types';
+import {
+  aliasRowView,
+  buildOfferedIdsByDisplayName,
+  MODEL_ALIAS_GROUP_HEADING,
+  modelAliasTitle,
+  modelContextBadgeLabel,
+  modelRowLabel,
+  modelVersionSectionLabel,
+} from '../../utils/format-tokens';
 import { OverlayPopover } from '../OverlayPopover';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
@@ -25,6 +34,9 @@ interface ModelComboboxProps {
   /** Friendly display name per model id, from `useModelDisplayNames`. A row
    *  without an entry falls back to its raw id (see `modelRowLabel`). */
   modelDisplayNames?: Record<string, string>;
+  /** Floating selectors from `useModelAliases`, listed in a "Latest" group
+   *  above the specific versions. Empty keeps the list exactly as it was. */
+  modelAliases?: ModelAliasOption[];
   /**
    * How the placeholder reads when value is ''. 'resolved' (default) renders
    * it at full text weight because it names a concrete model that will
@@ -35,16 +47,34 @@ interface ModelComboboxProps {
   placeholderVariant?: 'resolved' | 'muted';
 }
 
-// Vertically-navigable suggestion buttons: model options plus the older-versions
-// toggle. 1M chips sit outside the vertical order and are reached with
-// ArrowRight/ArrowLeft inside their row.
-const NAVIGABLE_SELECTOR = '[data-model-option], [data-model-pinned-toggle]';
+const NO_ALIASES: ModelAliasOption[] = [];
+const NO_DISPLAY_NAMES: Record<string, string> = {};
 
-/** A row demoted to the "Older versions" section: either a whole superseded
- *  generation (keeps its 1M chip / context badge) or a bare dated pin. Both
- *  are sorted together by their selectable id, so a superseded alias renders
- *  directly above its own dated pins and families stay clustered. */
-type DemotedRow = { kind: 'group'; group: ModelDisplayGroup; sortId: string } | { kind: 'pin'; id: string; sortId: string };
+/**
+ * On close, rewrite text the user typed into the id the agent CLI accepts
+ * (see `typedTextRef`), then forget it. The rewrite lands only when the text
+ * is the display name of a value this agent actually offers, so another
+ * agent's model typed as "Gemini 2.5" is never turned into an id it does not
+ * have. Takes refs so the close paths inside once-per-open listeners always
+ * see the latest typing, callback, and options (a rescan can land while the
+ * menu is open).
+ */
+function commitNormalizedTypedValue(
+  typedTextRef: React.MutableRefObject<string>,
+  onChangeRef: React.MutableRefObject<(value: string) => void>,
+  offeredIdsByNameRef: React.MutableRefObject<ReadonlyMap<string, string>>,
+): void {
+  const typed = typedTextRef.current;
+  typedTextRef.current = '';
+  if (!typed) return;
+  const offeredId = offeredIdsByNameRef.current.get(typed.trim().toLowerCase());
+  if (offeredId !== undefined && offeredId !== typed) onChangeRef.current(offeredId);
+}
+
+// Vertically-navigable suggestion buttons: model options (alias rows included)
+// plus the versions toggle. 1M chips sit outside the vertical order and are
+// reached with ArrowRight/ArrowLeft inside their row.
+const NAVIGABLE_SELECTOR = '[data-model-option], [data-model-pinned-toggle]';
 
 export function ModelCombobox({
   value,
@@ -55,7 +85,8 @@ export function ModelCombobox({
   testId = 'model-combobox',
   onOpen,
   contextWindows = {},
-  modelDisplayNames = {},
+  modelDisplayNames = NO_DISPLAY_NAMES,
+  modelAliases = NO_ALIASES,
   placeholderVariant = 'resolved',
 }: ModelComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -68,6 +99,26 @@ export function ModelCombobox({
   // not reopen the menu (and fire `onOpen`, a model rescan, again) for a focus
   // the user did not give it. See the Escape listener below.
   const suppressOpenOnFocusRef = useRef(false);
+  // What the user typed since the menu opened. Typed text is committed on every
+  // keystroke, so when the menu closes a row's display name is rewritten to
+  // that row's id: "Opus" -> `opus`, "Opus 5.5" -> `claude-opus-5-5`. Without
+  // it a typed "Opus" would read exactly like the alias row and then fail at
+  // spawn. A ref, because the close paths include listeners registered once
+  // per open.
+  const typedTextRef = useRef('');
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  // Every value the rows can select, alias ids included, keyed by display
+  // name: the typed-text rewrite above only lands on one of these.
+  const offeredIdsByNameRef = useRef<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    offeredIdsByNameRef.current = buildOfferedIdsByDisplayName(
+      [...availableModels, ...modelAliases.map((alias) => alias.id)],
+      modelDisplayNames,
+    );
+  }, [availableModels, modelAliases, modelDisplayNames]);
 
   // The committed value's friendly label (matches the dropdown rows and the
   // inherited-default placeholder, both of which already go through
@@ -80,15 +131,27 @@ export function ModelCombobox({
   const selectedLabel = value ? modelRowLabel(value, modelDisplayNames) : '';
   const displayValue = isOpen ? (filterText || selectedLabel) : selectedLabel;
   const searchQuery = filterText.toLowerCase();
+  // An alias value reads as its bare family name ("Opus"); the hover names
+  // the version it runs today.
+  const valueTitle = value ? modelAliasTitle(value, modelAliases, modelDisplayNames) : null;
 
-  // One row per base model: [1m] variants collapse onto their base row as a 1M
-  // chip, dated pins are demoted to the bottom section, and a superseded
-  // generation (an older Opus/Sonnet/Haiku version whose family has a newer
-  // one) is demoted alongside them. Every selectable value stays the exact
-  // discovered string (it is the spawn value).
-  const modelGroups = useMemo(() => groupModelIds(availableModels), [availableModels]);
-  const latestGroups = useMemo(() => modelGroups.filter((group) => !group.isSuperseded), [modelGroups]);
-  const supersededGroups = useMemo(() => modelGroups.filter((group) => group.isSuperseded), [modelGroups]);
+  // Floating aliases first, then any current version no alias covers, then
+  // one collapsed section with every specific version: [1m] variants collapse
+  // onto their base row as a 1M chip, dated pins and superseded generations
+  // sit in the section, and (with aliases) so do the current versions an alias
+  // already runs. Every selectable value stays the exact discovered string.
+  const pickerRows = useMemo(
+    () => planModelPickerRows(availableModels, modelAliases),
+    [availableModels, modelAliases],
+  );
+  const hasAliases = pickerRows.aliasRows.length > 0;
+  const hasOptions = availableModels.length > 0 || hasAliases;
+  // A value one generation behind (e.g. a column pinned to Sonnet 5 while
+  // Sonnet 5.5 is known) says so on its own row.
+  const newerThanValue = useMemo(
+    () => (value ? newerModelFor(value, availableModels) : null),
+    [value, availableModels],
+  );
 
   const matchesQuery = (model: string) =>
     model.toLowerCase().includes(searchQuery) ||
@@ -96,35 +159,26 @@ export function ModelCombobox({
   const groupMatches = (group: ModelDisplayGroup) =>
     matchesQuery(group.primaryId) || (group.oneMillionId !== null && matchesQuery(group.oneMillionId));
 
-  const filteredGroups = latestGroups.filter(groupMatches);
-
-  const demotedRows: DemotedRow[] = useMemo(() => {
-    const rows: DemotedRow[] = supersededGroups.map((group) => ({
-      kind: 'group',
-      group,
-      sortId: group.primaryId,
-    }));
-    for (const group of modelGroups) {
-      for (const id of group.pinnedBuildIds) {
-        rows.push({ kind: 'pin', id, sortId: id });
-      }
-    }
-    return rows.sort((first, second) => first.sortId.localeCompare(second.sortId));
-  }, [modelGroups, supersededGroups]);
-
-  const filteredDemotedRows = demotedRows.filter((row) =>
+  const filteredAliasRows = pickerRows.aliasRows.filter(
+    (alias) => matchesQuery(alias.id) || (alias.resolvesTo !== undefined && matchesQuery(alias.resolvesTo)),
+  );
+  const filteredGroups = pickerRows.topGroups.filter(groupMatches);
+  const filteredDemotedRows = pickerRows.versionRows.filter((row) =>
     row.kind === 'group' ? groupMatches(row.group) : matchesQuery(row.id),
   );
 
-  // When the query only matches demoted rows (e.g. typing an older version or
-  // a pin's date), surface them even though the section is collapsed by
-  // default. The toggle is hidden in this state (it cannot collapse a
+  // When the query only matches the collapsed section (e.g. typing an older
+  // version or a pin's date), surface it even though the section is collapsed
+  // by default. The toggle is hidden in this state (it cannot collapse a
   // force-open section).
   const autoExpandPinned =
-    searchQuery.length > 0 && filteredGroups.length === 0 && filteredDemotedRows.length > 0;
+    searchQuery.length > 0 &&
+    filteredAliasRows.length === 0 &&
+    filteredGroups.length === 0 &&
+    filteredDemotedRows.length > 0;
   const showPinnedExpanded = pinnedExpanded || autoExpandPinned;
 
-  const showSuggestions = isOpen && availableModels.length > 0;
+  const showSuggestions = isOpen && hasOptions;
 
   // Portaled to document.body (see render below), so measure and position against
   // the visible field rather than relying on an in-flow absolute offset that would
@@ -141,30 +195,18 @@ export function ModelCombobox({
     matchTriggerWidth: true,
   });
 
-  // Ids selectable from within the demoted section, so a task/column already
-  // set to a superseded generation or a dated pin opens with the section
-  // expanded instead of hiding the current selection behind a collapsed toggle.
-  const demotedSelectableIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const group of supersededGroups) {
-      ids.add(group.primaryId);
-      if (group.oneMillionId !== null) ids.add(group.oneMillionId);
-    }
-    for (const group of modelGroups) {
-      for (const id of group.pinnedBuildIds) ids.add(id);
-    }
-    return ids;
-  }, [modelGroups, supersededGroups]);
-
   // Seed the expanded state only on the open transition (reading value and
-  // demotedSelectableIds from this render); re-running on every keystroke
-  // while open would fight a manual collapse. A render-time adjustment on the
-  // transition (React's "adjusting state when a prop changes" pattern) rather
-  // than an effect, so the menu never paints a frame in the wrong state.
+  // the section's selectable ids from this render); re-running on every
+  // keystroke while open would fight a manual collapse. A task/column already
+  // set to a specific version opens with the section expanded instead of
+  // hiding the current selection behind a collapsed toggle. A render-time
+  // adjustment on the transition (React's "adjusting state when a prop
+  // changes" pattern) rather than an effect, so the menu never paints a frame
+  // in the wrong state.
   const [wasOpen, setWasOpen] = useState(isOpen);
   if (isOpen !== wasOpen) {
     setWasOpen(isOpen);
-    setPinnedExpanded(isOpen && Boolean(value) && demotedSelectableIds.has(value));
+    setPinnedExpanded(isOpen && Boolean(value) && pickerRows.versionSelectableIds.has(value));
   }
 
   useEffect(() => {
@@ -177,6 +219,7 @@ export function ModelCombobox({
         !containerRef.current.contains(event.target as Node) &&
         (!menuRef.current || !menuRef.current.contains(event.target as Node))
       ) {
+        commitNormalizedTypedValue(typedTextRef, onChangeRef, offeredIdsByNameRef);
         setIsOpen(false);
         setFilterText('');
       }
@@ -201,7 +244,7 @@ export function ModelCombobox({
   // plain Escape on a closed combobox still reaches the host. Mirrors
   // BranchPicker (LabelInput gets the same result from a `stopPropagation` in
   // its input's own key handler, since its suggestions never take keyboard
-  // focus). Covers every focusable in the menu (rows, the 1M chips, the Older
+  // focus). Covers every focusable in the menu (rows, the 1M chips, the
   // versions toggle) without a handler on each.
   useEffect(() => {
     if (!showSuggestions) return;
@@ -216,6 +259,7 @@ export function ModelCombobox({
         inputRef.current?.focus();
         suppressOpenOnFocusRef.current = false;
       }
+      commitNormalizedTypedValue(typedTextRef, onChangeRef, offeredIdsByNameRef);
       setIsOpen(false);
       setFilterText('');
     };
@@ -224,12 +268,15 @@ export function ModelCombobox({
   }, [showSuggestions]);
 
   const handleInputChange = (newValue: string) => {
+    typedTextRef.current = newValue;
     onChange(newValue);
     setFilterText(newValue);
     setIsOpen(true);
   };
 
   const handleSelectModel = (model: string) => {
+    // A picked row is already an exact spawn value; it replaces any typing.
+    typedTextRef.current = '';
     onChange(model);
     setFilterText('');
     setIsOpen(false);
@@ -241,6 +288,7 @@ export function ModelCombobox({
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
+    typedTextRef.current = '';
     onChange('');
     setFilterText('');
     inputRef.current?.focus();
@@ -248,6 +296,7 @@ export function ModelCombobox({
 
   const handleToggleDropdown = () => {
     if (isOpen) {
+      commitNormalizedTypedValue(typedTextRef, onChangeRef, offeredIdsByNameRef);
       setIsOpen(false);
       setFilterText('');
     } else {
@@ -259,20 +308,33 @@ export function ModelCombobox({
 
   const handleInputFocus = () => {
     if (suppressOpenOnFocusRef.current) return;
-    if (availableModels.length > 0) {
+    if (hasOptions) {
       setIsOpen(true);
       onOpen?.();
     }
+  };
+
+  // Focus leaving the field and its menu (a Tab to the dialog's Create button)
+  // fires none of the close paths, so it commits the typing here. Bound on the
+  // container, where React's onBlur bubbles like focusout, because a forward
+  // Tab leaves through the field's own Clear and chevron buttons, not the
+  // input. A move within the field or into the menu (a row press) does not.
+  const handleFieldBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    const nextFocus = event.relatedTarget as Node | null;
+    if (nextFocus && (menuRef.current?.contains(nextFocus) || containerRef.current?.contains(nextFocus))) return;
+    commitNormalizedTypedValue(typedTextRef, onChangeRef, offeredIdsByNameRef);
   };
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       // Reached only with no menu showing (the capture listener above consumes
       // Escape while one is): reset, and let the host see the key.
+      commitNormalizedTypedValue(typedTextRef, onChangeRef, offeredIdsByNameRef);
       setIsOpen(false);
       setFilterText('');
     } else if (e.key === 'Enter') {
-      // Accept typed value and close dropdown
+      // Accept typed value (in the CLI's spelling) and close dropdown
+      commitNormalizedTypedValue(typedTextRef, onChangeRef, offeredIdsByNameRef);
       setIsOpen(false);
       setFilterText('');
     } else if (e.key === 'ArrowDown' && showSuggestions) {
@@ -329,10 +391,47 @@ export function ModelCombobox({
     }
   };
 
+  // "Sonnet 5.5 available" on the row that holds the current value, when a
+  // newer generation of its family is known. Shown only there: it describes
+  // the choice already made, not every older row.
+  const renderNewerHint = (rowIds: Array<string | null>) =>
+    newerThanValue !== null && rowIds.includes(value) ? (
+      <span data-model-newer className="ml-auto pl-2 text-xs text-fg-faint flex-shrink-0">
+        {modelRowLabel(newerThanValue, modelDisplayNames)} available
+      </span>
+    ) : null;
+
+  // One floating alias: its bare family name in a fixed-width column so the
+  // resolved versions line up, then the version it runs today, muted. No 1M
+  // chip and no context badge: an alias names a family, not a window.
+  const renderAliasRow = (alias: ModelAliasOption) => {
+    const row = aliasRowView(alias, modelAliases, modelDisplayNames);
+    return (
+      <div key={alias.id} data-model-row className="flex items-center hover:bg-surface-hover transition-colors">
+        <button
+          type="button"
+          data-model-option
+          data-model-alias={alias.id}
+          onClick={() => handleSelectModel(alias.id)}
+          onKeyDown={handleOptionKeyDown}
+          title={row.title}
+          className="flex-1 min-w-0 flex items-center gap-3 text-left px-3 py-1.5 text-sm text-fg focus:bg-surface-hover focus:outline-none"
+        >
+          <span className="min-w-16 truncate">{row.label}</span>
+          {row.target !== null && (
+            <span data-model-alias-target className="text-xs text-fg-faint truncate">
+              {row.target}
+            </span>
+          )}
+        </button>
+      </div>
+    );
+  };
+
   // Shared row markup for a full model group (primary button + optional
   // context badge + optional 1M chip), reused for the top-level list and for
-  // a superseded generation demoted into "Older versions" (`indent` matches
-  // it visually to the plain dated-pin rows in that same section).
+  // a generation inside the collapsed section (`indent` matches it visually
+  // to the plain dated-pin rows in that same section).
   const renderGroupRow = (group: ModelDisplayGroup, indent: boolean) => {
     const oneMillionId = group.oneMillionId;
     // Right-aligned context-size badge (1M / 200K). See modelContextBadgeLabel:
@@ -348,11 +447,12 @@ export function ModelCombobox({
           onClick={() => handleSelectModel(group.primaryId)}
           onKeyDown={handleOptionKeyDown}
           title={group.primaryId}
-          className={`flex-1 min-w-0 text-left py-1.5 text-sm focus:bg-surface-hover focus:outline-none truncate ${
+          className={`flex-1 min-w-0 flex items-center text-left py-1.5 text-sm focus:bg-surface-hover focus:outline-none ${
             indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg'
           }`}
         >
-          {modelRowLabel(group.primaryId, modelDisplayNames)}
+          <span className="truncate">{modelRowLabel(group.primaryId, modelDisplayNames)}</span>
+          {renderNewerHint([group.primaryId, oneMillionId])}
         </button>
         {contextLabel && (
           <span
@@ -379,8 +479,10 @@ export function ModelCombobox({
     );
   };
 
+  const hasAnyRow = filteredAliasRows.length > 0 || filteredGroups.length > 0 || filteredDemotedRows.length > 0;
+
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative ${className}`} onBlur={handleFieldBlur}>
       <div className="flex items-center gap-0 border border-edge-input rounded bg-surface-control">
         <input
           ref={inputRef}
@@ -390,6 +492,7 @@ export function ModelCombobox({
           onFocus={handleInputFocus}
           onKeyDown={handleInputKeyDown}
           placeholder={placeholder}
+          title={valueTitle ?? undefined}
           data-testid={testId}
           className={`flex-1 bg-transparent px-3 py-1.5 text-sm text-fg focus:outline-none ${
             placeholderVariant === 'muted' ? 'placeholder-fg-faint' : 'placeholder-fg'
@@ -406,7 +509,7 @@ export function ModelCombobox({
             <X size={16} />
           </button>
         )}
-        {availableModels.length > 0 && (
+        {hasOptions && (
           <button
             type="button"
             onClick={handleToggleDropdown}
@@ -432,15 +535,25 @@ export function ModelCombobox({
         style={popoverStyle}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
-        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-48 overflow-y-auto"
+        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-64 overflow-y-auto"
         data-testid={`${testId}-menu`}
       >
-        {filteredGroups.length > 0 || filteredDemotedRows.length > 0 ? (
+        {hasAnyRow ? (
           <div className="py-1">
-            {filteredGroups.map((group) => renderGroupRow(group, false))}
+            {filteredAliasRows.length > 0 && (
+              <div data-model-alias-group>
+                <div className="px-3 pt-1.5 pb-0.5 text-[11px] font-medium text-fg-faint">{MODEL_ALIAS_GROUP_HEADING}</div>
+                {filteredAliasRows.map(renderAliasRow)}
+              </div>
+            )}
+            {filteredGroups.length > 0 && (
+              <div className={filteredAliasRows.length > 0 ? 'border-t border-edge mt-1 pt-1' : undefined}>
+                {filteredGroups.map((group) => renderGroupRow(group, false))}
+              </div>
+            )}
             {filteredDemotedRows.length > 0 && (
               <div className="border-t border-edge mt-1 pt-1">
-                {/* During auto-expand (a query that matches only demoted rows)
+                {/* During auto-expand (a query that matches only the section)
                     the section is forced open, so the toggle cannot collapse
                     anything: hide the dead control rather than render it inert. */}
                 {!autoExpandPinned && (
@@ -455,7 +568,7 @@ export function ModelCombobox({
                       size={12}
                       className={`transition-transform ${showPinnedExpanded ? '' : '-rotate-90'}`}
                     />
-                    Older versions ({filteredDemotedRows.length})
+                    {modelVersionSectionLabel(hasAliases)} ({filteredDemotedRows.length})
                   </button>
                 )}
                 {showPinnedExpanded &&
@@ -471,9 +584,10 @@ export function ModelCombobox({
                         onClick={() => handleSelectModel(row.id)}
                         onKeyDown={handleOptionKeyDown}
                         title={row.id}
-                        className="w-full text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate"
+                        className="w-full flex items-center text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors"
                       >
-                        {modelRowLabel(row.id, modelDisplayNames)}
+                        <span className="truncate">{modelRowLabel(row.id, modelDisplayNames)}</span>
+                        {renderNewerHint([row.id])}
                       </button>
                     ),
                   )}

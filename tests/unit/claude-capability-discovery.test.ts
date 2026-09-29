@@ -390,7 +390,7 @@ Commands:
         },
       });
       // Overlap on opus collapses in the union; the rest sorts alphabetically.
-      probeMock.mockReturnValue(['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-fable-5']);
+      probeMock.mockReturnValue({ models: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-fable-5'], aliases: [] });
 
       const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
       expect(capabilities.models).toEqual([
@@ -403,7 +403,7 @@ Commands:
     it('returns cached picker models alone when the transcript walk finds nothing', async () => {
       setHelpOutput(MODEL_HELP);
       setSessionStore(null);
-      probeMock.mockReturnValue(['claude-sonnet-4-6', 'claude-opus-4-8']);
+      probeMock.mockReturnValue({ models: ['claude-sonnet-4-6', 'claude-opus-4-8'], aliases: [] });
 
       const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
       expect(capabilities.models).toEqual(['claude-opus-4-8', 'claude-sonnet-4-6']);
@@ -422,10 +422,41 @@ Commands:
       expect(capabilities.models).toEqual(['claude-opus-4-7']);
     });
 
+    it('surfaces the picker aliases with bare family display names; transcripts add none', async () => {
+      setHelpOutput(MODEL_HELP);
+      setSessionStore({
+        '-Users-dev-projectA': {
+          'session.jsonl': `${assistantLine('claude-opus-4-7')}\n`,
+        },
+      });
+      probeMock.mockReturnValue({
+        models: ['claude-opus-5-5'],
+        aliases: [{ id: 'opus', resolvesTo: 'claude-opus-5-5' }],
+      });
+
+      const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
+      expect(capabilities.models).toEqual(['claude-opus-4-7', 'claude-opus-5-5']);
+      expect(capabilities.modelAliases).toEqual([{ id: 'opus', resolvesTo: 'claude-opus-5-5' }]);
+      expect(capabilities.modelDisplayNames?.opus).toBe('Opus');
+    });
+
+    it('reports no aliases when only transcripts answered', async () => {
+      setHelpOutput(MODEL_HELP);
+      setSessionStore({
+        '-Users-dev-projectA': {
+          'session.jsonl': `${assistantLine('claude-opus-4-7')}\n`,
+        },
+      });
+      probeMock.mockReturnValue(undefined);
+
+      const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
+      expect(capabilities.modelAliases).toBeUndefined();
+    });
+
     it('passes the CLI path through to the cache accessor', async () => {
       setHelpOutput(MODEL_HELP);
       setSessionStore(null);
-      probeMock.mockReturnValue(['claude-opus-4-8']);
+      probeMock.mockReturnValue({ models: ['claude-opus-4-8'], aliases: [] });
 
       await discoverClaudeCapabilities('/opt/claude/bin/claude');
       expect(probeMock).toHaveBeenCalledWith('/opt/claude/bin/claude');
@@ -444,20 +475,42 @@ Commands:
       setSessionStore(null);
       // The stale cache does not know the new model; only a fresh forced probe
       // reports it. The forced path must await that probe, not read the cache.
-      probeMock.mockReturnValue(['claude-opus-4-8']);
-      probeFreshMock.mockResolvedValue(['claude-opus-4-8', 'claude-sonnet-5']);
+      probeMock.mockReturnValue({ models: ['claude-opus-4-8'], aliases: [] });
+      probeFreshMock.mockResolvedValue({ models: ['claude-opus-4-8', 'claude-sonnet-5'], aliases: [] });
 
       const capabilities = await discoverClaudeCapabilities('/usr/bin/claude', true);
       expect(probeFreshMock).toHaveBeenCalledWith('/usr/bin/claude', true);
       expect(probeMock).not.toHaveBeenCalled();
       // The just-shipped model appears without a restart.
       expect(capabilities.models).toEqual(['claude-opus-4-8', 'claude-sonnet-5']);
+      // A probe that found no aliases leaves the field off rather than empty.
+      expect(capabilities.modelAliases).toBeUndefined();
+    });
+
+    it('carries the forced probe alias list into capabilities.modelAliases', async () => {
+      setHelpOutput(MODEL_HELP);
+      setSessionStore(null);
+      probeFreshMock.mockResolvedValue({
+        models: ['claude-opus-5-5', 'claude-sonnet-5-5'],
+        aliases: [
+          { id: 'opus', resolvesTo: 'claude-opus-5-5' },
+          { id: 'sonnet', resolvesTo: 'claude-sonnet-5-5' },
+        ],
+      });
+
+      const capabilities = await discoverClaudeCapabilities('/usr/bin/claude', true);
+      expect(probeMock).not.toHaveBeenCalled();
+      expect(capabilities.modelAliases).toEqual([
+        { id: 'opus', resolvesTo: 'claude-opus-5-5' },
+        { id: 'sonnet', resolvesTo: 'claude-sonnet-5-5' },
+      ]);
+      expect(capabilities.modelDisplayNames?.opus).toBe('Opus');
     });
 
     it('reads the background-warmed cache (never the fresh probe) when not forced', async () => {
       setHelpOutput(MODEL_HELP);
       setSessionStore(null);
-      probeMock.mockReturnValue(['claude-opus-4-8']);
+      probeMock.mockReturnValue({ models: ['claude-opus-4-8'], aliases: [] });
 
       const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
       expect(probeMock).toHaveBeenCalledWith('/usr/bin/claude');

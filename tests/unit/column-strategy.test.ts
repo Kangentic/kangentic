@@ -104,6 +104,14 @@ describe('resolveColumnStrategy', () => {
       expect(resolved.permission_mode).toBeNull();
     });
 
+    it('passes a profile model through exactly as written, for any agent', () => {
+      // The fold does not know the lane's agent, so it never rewrites a model;
+      // the Claude adapter converts a friendly Claude name at spawn.
+      const lane = makeLane();
+      const profile = makeProfile({ 'lane-executing': { modelOverride: 'Gemini 2.5' } });
+      expect(resolveColumnStrategy({ lane, profile }).model_override).toBe('Gemini 2.5');
+    });
+
     it('distinguishes clear-to-null from inherit within one entry', () => {
       const lane = makeLane({ model_override: 'claude-opus-5', effort_override: 'xhigh' });
       const profile = makeProfile({ 'lane-executing': { modelOverride: null } });

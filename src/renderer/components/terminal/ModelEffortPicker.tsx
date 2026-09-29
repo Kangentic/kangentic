@@ -3,9 +3,9 @@ import { ChevronDown } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
-import { useKnownModels, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
-import { groupModelIds, type ModelDisplayGroup } from '../../../shared/model-id';
-import { modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
+import { useKnownModels, useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
+import { planModelPickerRows, type ModelDisplayGroup } from '../../../shared/model-id';
+import { aliasRowView, modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
 import { resolveEffortDisplay, resolveModelDisplay } from '../../utils/pill-provenance';
 import { ContextBarPopover } from './ContextBarPopover';
 import { pillForProvenance } from './context-bar-pill';
@@ -96,21 +96,19 @@ export function ModelEffortPicker({
   // with the New Task Advanced section + column manager, and learns any model
   // the user invokes live.
   const modelOptions = useKnownModels(agent);
+  const modelAliases = useModelAliases(agent);
   const modelContextWindows = useModelContextWindows(agent);
   const modelDisplayNames = useModelDisplayNames(agent);
-  // Display grouping only: one row per base model, with [1m] variants as a 1M
-  // chip, dated pins demoted behind the popover's collapsed section, and a
-  // superseded generation (an older Opus/Sonnet/Haiku version whose family
-  // has a newer one) demoted alongside them. Every selectable value stays the
-  // exact discovered string.
-  const modelGroups = useMemo(() => groupModelIds(modelOptions), [modelOptions]);
-  const latestModelGroups = useMemo(() => modelGroups.filter((group) => !group.isSuperseded), [modelGroups]);
-  const supersededModelGroups = useMemo(() => modelGroups.filter((group) => group.isSuperseded), [modelGroups]);
 
-  // Memoized to match the sibling `*ModelGroups` derivations above (the
-  // pre-demotion code memoized the pinned list; keep parity so a later
-  // React.memo on ContextBarPopover would see stable option identities).
-  const { modelOptionsForPopover, pinnedModelOptions } = useMemo(() => {
+  // The same layout the model combobox uses (planModelPickerRows): floating
+  // aliases first, then any current version no alias covers, then one
+  // collapsed section with every specific version - [1m] variants as a 1M
+  // chip, dated pins and superseded generations, and (with aliases) the
+  // current versions an alias already runs. Every selectable value stays the
+  // exact discovered string. Memoized so a later React.memo on
+  // ContextBarPopover would see stable option identities.
+  const { aliasOptionsForPopover, modelOptionsForPopover, pinnedModelOptions } = useMemo(() => {
+    const pickerRows = planModelPickerRows(modelOptions, modelAliases);
     const toOption = (group: ModelDisplayGroup) => ({
       value: group.primaryId,
       label: modelRowLabel(group.primaryId, modelDisplayNames),
@@ -120,27 +118,17 @@ export function ModelEffortPicker({
       // the telemetry-learned window for the base id.
       contextLabel: modelContextBadgeLabel(group, modelContextWindows),
     });
-
-    const latestOptions = latestModelGroups.map(toOption);
-    // Merged "Older versions" list: every superseded generation (as a full row,
-    // keeping its 1M chip / context badge) plus every group's dated pins, all
-    // sorted together by id so a superseded alias renders directly above its
-    // own dated pins and families stay clustered.
-    const demotedEntries: Array<{ sortId: string; option: { value: string; label: string; oneMillionValue?: string | null; contextLabel?: string | null } }> = [];
-    for (const group of supersededModelGroups) {
-      demotedEntries.push({ sortId: group.primaryId, option: toOption(group) });
-    }
-    for (const group of modelGroups) {
-      for (const id of group.pinnedBuildIds) {
-        demotedEntries.push({ sortId: id, option: { value: id, label: modelRowLabel(id, modelDisplayNames) } });
-      }
-    }
-    const demotedOptions = demotedEntries
-      .sort((first, second) => first.sortId.localeCompare(second.sortId))
-      .map((entry) => entry.option);
-
-    return { modelOptionsForPopover: latestOptions, pinnedModelOptions: demotedOptions };
-  }, [latestModelGroups, supersededModelGroups, modelGroups, modelDisplayNames, modelContextWindows]);
+    return {
+      aliasOptionsForPopover: pickerRows.aliasRows.map((alias) => ({
+        value: alias.id,
+        ...aliasRowView(alias, modelAliases, modelDisplayNames),
+      })),
+      modelOptionsForPopover: pickerRows.topGroups.map(toOption),
+      pinnedModelOptions: pickerRows.versionRows.map((row) =>
+        row.kind === 'group' ? toOption(row.group) : { value: row.id, label: modelRowLabel(row.id, modelDisplayNames) },
+      ),
+    };
+  }, [modelOptions, modelAliases, modelDisplayNames, modelContextWindows]);
 
   const [openPopover, setOpenPopover] = useState<'model' | 'effort' | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
@@ -169,7 +157,8 @@ export function ModelEffortPicker({
   };
 
   const effortOptions = agentCapabilities?.effortLevels ?? [];
-  const supportsModel = !!agentCapabilities?.supportsModelOverride && modelOptions.length > 0;
+  const supportsModel = !!agentCapabilities?.supportsModelOverride
+    && (modelOptions.length > 0 || modelAliases.length > 0);
   const supportsEffort = effortOptions.length > 0;
 
   const taskModelOverride = task?.model_override ?? null;
@@ -243,10 +232,21 @@ export function ModelEffortPicker({
     ? modelRowLabel(swimlaneDefaultModelId, modelDisplayNames)
     : null;
 
-  // Resolve checkmark target: live ID match > task override.
-  const currentModelValue = (liveModelId ? modelOptions.find((id) => id === liveModelId) : undefined)
-    ?? taskModelOverride
-    ?? null;
+  // The checkmark shows what the user picked; the pill already shows what is
+  // running. So the task's own override wins (an `opus` override checks the
+  // Opus alias row even while Opus 5.5 runs); a task following its column or
+  // project default checks the "Use column default" row; only when nothing is
+  // configured does the live model get the check. A Command Terminal session
+  // has no column, so it never checks the footer. The live id may be an alias
+  // too: the spawn seeds it from `--model` before telemetry lands.
+  const liveModelIsOffered = liveModelId !== null
+    && (modelOptions.includes(liveModelId) || modelAliases.some((alias) => alias.id === liveModelId));
+  const liveModelMatch = liveModelIsOffered ? liveModelId : null;
+  const followsConfiguredDefault = target.kind === 'task' && swimlaneDefaultModelId !== null;
+  const currentModelValue = taskModelOverride ?? (followsConfiguredDefault ? null : liveModelMatch);
+  // Only a choice the user made opens the collapsed versions section to show
+  // its check; a live-only match leaves it collapsed.
+  const currentModelIsConfigured = taskModelOverride !== null;
   const currentEffortValue = effectiveEffort ?? null;
 
   // Pill variant is chosen per-trigger from provenance, so `triggerBase` no
@@ -281,9 +281,11 @@ export function ModelEffortPicker({
             <ContextBarPopover
               triggerRef={modelTriggerRef}
               title="Model"
+              aliasOptions={aliasOptionsForPopover}
               options={modelOptionsForPopover}
               pinnedOptions={pinnedModelOptions}
               currentValue={currentModelValue}
+              expandToCurrent={currentModelIsConfigured}
               swimlaneDefault={swimlaneModelOverride ?? projectDefaultModel}
               // Humanized the same way as the rows above, so the footer reads
               // "Use column default (Sonnet 5)" rather than the raw CLI id.

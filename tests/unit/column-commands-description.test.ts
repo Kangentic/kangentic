@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { handleUpdateColumn } from '../../src/main/agent/commands/column-commands';
+import { handleCreateColumn, handleUpdateColumn } from '../../src/main/agent/commands/column-commands';
 import { handleGetColumnDetail } from '../../src/main/agent/commands/analytics-commands';
 import { COLUMN_ENUM_FIELDS } from '../../src/main/agent/commands/column-enums';
 import type { CommandContext } from '../../src/main/agent/commands/types';
@@ -75,7 +75,14 @@ function makeSwimlaneRow(overrides: Partial<MockSwimlaneRow> = {}): MockSwimlane
 
 function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] = [], archivedCount = 0) {
   return {
+    // handleCreateColumn wraps the position shift and the insert in one
+    // transaction; better-sqlite3's transaction(fn) returns a callable.
+    transaction: (body: () => unknown) => () => body(),
     prepare: vi.fn((sql: string) => {
+      // SwimlaneRepository.create() with no position asks for the current max.
+      if (sql.includes('MAX(position)')) {
+        return { get: vi.fn(() => ({ max: 0 })), all: vi.fn(() => []), run: vi.fn() };
+      }
       // SwimlaneRepository.list() - also used by listActiveSwimlanes (resolveColumn)
       if (sql.includes('FROM swimlanes') && sql.includes('ORDER BY position')) {
         return {
@@ -254,6 +261,36 @@ describe('handleUpdateColumn - description field', () => {
     expect(result.success).toBe(true);
     // description is unchanged - it comes back from the merged swimlane
     expect((result.data as Record<string, unknown>).description).toBe('preserved description');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Column model overrides are stored exactly as given
+// ---------------------------------------------------------------------------
+
+describe('column handlers - model override stored as given', () => {
+  // The handlers do not know which agent the column runs, so they never rewrite
+  // a model: "Gemini 2.5" must not become `claude-gemini-2-5`. A friendly Claude
+  // name ("Opus") is converted by the Claude adapter when it builds `--model`.
+  const inputs = ['Opus', 'Opus 5.5', 'Gemini 2.5', 'GPT-5.5', 'claude-opus-5-5'];
+
+  it.each(inputs)('update stores %s unchanged', (input) => {
+    const swimlaneRow = makeSwimlaneRow({ name: 'Planning', role: null });
+    const context = createMockContext(createMockDb([swimlaneRow]));
+
+    const result = handleUpdateColumn({ column: 'Planning', modelOverride: input }, context);
+
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).modelOverride).toBe(input);
+  });
+
+  it.each(inputs)('create stores %s unchanged', (input) => {
+    const context = createMockContext(createMockDb([makeSwimlaneRow()]));
+
+    const result = handleCreateColumn({ name: 'Planning', modelOverride: input }, context);
+
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).modelOverride).toBe(input);
   });
 });
 

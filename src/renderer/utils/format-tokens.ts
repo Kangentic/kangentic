@@ -1,4 +1,5 @@
 import { parseModelId, type ModelDisplayGroup } from '../../shared/model-id';
+import type { ModelAliasOption } from '../../shared/types';
 
 /**
  * Format a token count for compact display.
@@ -75,6 +76,75 @@ export function modelRowLabel(id: string, displayNames: Record<string, string>):
   if (!displayName) return id;
   const { datedSnapshot } = parseModelId(id);
   return datedSnapshot ? `${displayName} · ${formatDatedSnapshot(datedSnapshot)}` : displayName;
+}
+
+/**
+ * What an alias row shows, shared by the model combobox and the context bar
+ * popover: the bare family label, the version it runs today (null when the
+ * agent did not say), and the hover text naming both.
+ */
+export function aliasRowView(
+  alias: ModelAliasOption,
+  aliases: readonly ModelAliasOption[],
+  displayNames: Record<string, string>,
+): { label: string; target: string | null; title: string } {
+  return {
+    label: modelRowLabel(alias.id, displayNames),
+    target: alias.resolvesTo !== undefined ? modelRowLabel(alias.resolvesTo, displayNames) : null,
+    title: modelAliasTitle(alias.id, aliases, displayNames) ?? alias.id,
+  };
+}
+
+/** Heading over a model picker's floating alias rows. */
+export const MODEL_ALIAS_GROUP_HEADING = 'Latest';
+
+/**
+ * Label of a model picker's collapsed section: with aliases above it the
+ * section holds every specific version, without them only the older ones.
+ */
+export function modelVersionSectionLabel(hasAliases: boolean): string {
+  return hasAliases ? 'Specific versions' : 'Older versions';
+}
+
+/**
+ * Map each offered id's display name (lowercased) to that id, using only the
+ * names the agent's adapter supplied, so no agent's naming scheme lives in the
+ * renderer. The model combobox uses it to turn typed text ("Opus 5.5") into the
+ * id of the row it names. When several ids share a name (a dated pin drops its
+ * date), the shortest id wins, which is the undated one.
+ */
+export function buildOfferedIdsByDisplayName(
+  offeredIds: readonly string[],
+  displayNames: Record<string, string>,
+): ReadonlyMap<string, string> {
+  const idsByName = new Map<string, string>();
+  for (const id of offeredIds) {
+    const displayName = displayNames[id];
+    if (!displayName) continue;
+    const key = displayName.trim().toLowerCase();
+    const current = idsByName.get(key);
+    if (current === undefined || id.length < current.length) idsByName.set(key, id);
+  }
+  return idsByName;
+}
+
+/**
+ * Hover text naming what a floating alias runs today, e.g. "Latest Opus,
+ * currently Opus 5.5", or just "Latest Opus" when the agent did not say. Null
+ * when `id` is not one of the aliases, so a caller can pass it straight to a
+ * `title` and a pinned value shows no title at all.
+ */
+export function modelAliasTitle(
+  id: string,
+  aliases: readonly ModelAliasOption[],
+  displayNames: Record<string, string>,
+): string | null {
+  const alias = aliases.find((candidate) => candidate.id === id);
+  if (!alias) return null;
+  const label = modelRowLabel(alias.id, displayNames);
+  return alias.resolvesTo
+    ? `Latest ${label}, currently ${modelRowLabel(alias.resolvesTo, displayNames)}`
+    : `Latest ${label}`;
 }
 
 /**

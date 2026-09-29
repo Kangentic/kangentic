@@ -288,6 +288,8 @@ test.describe('ContextBar model/effort popover', () => {
     await expect(popover).toContainText('opus');
     await expect(popover).toContainText('sonnet');
     await expect(popover).toContainText('haiku');
+    // With no aliases there is no Latest group, so the popover keeps its heading.
+    await expect(popover.getByText('Model', { exact: true })).toHaveCount(1);
     // "Use column default" intentionally hidden when the swimlane has no
     // model_override (the default fixture). Covered separately by the
     // 'hides "Use column default" row when the column has no override'
@@ -678,20 +680,35 @@ test.describe('ContextBar model popover - grouped suffixed models', () => {
       await modelTrigger.click();
       await expect(popover).toHaveCount(0);
 
-      // When the live model IS a demoted (dated pin) build, the disclosure
-      // auto-expands so the active value's checkmark is never hidden.
+      // The checkmark marks what the user picked; the pill shows what runs.
+      // The task is pinned (the 1M chip above), so a live model on a dated
+      // build does not open the collapsed section: only a pick does.
+      const setTaskModelOverride = (model: string | null) =>
+        page.evaluate(({ taskId, value }) => {
+          const stores = (window as unknown as {
+            __zustandStores?: { board: { setState: (updater: (storeState: unknown) => unknown) => void } };
+          }).__zustandStores;
+          stores?.board.setState((storeState) => {
+            const state = storeState as { tasks: Array<{ id: string; model_override: string | null }> };
+            return {
+              tasks: state.tasks.map((boardTask) => (boardTask.id === taskId ? { ...boardTask, model_override: value } : boardTask)),
+            };
+          });
+        }, { taskId: TASK_ID, value: model });
+      await setTaskModelOverride('claude-opus-4-8[1m]');
       await applyClaudeUsage(page, SESSION_ID, 'claude-haiku-4-5-20251001', 'Haiku 4.5', 'high');
       await modelTrigger.click();
-      await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-haiku-4-5-20251001"]')).toBeVisible();
+      await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-8"]')).toBeVisible();
+      await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-haiku-4-5-20251001"]')).toHaveCount(0);
 
       // Close before reopening: the trigger toggles, so leaving the popover
       // open here would make the next click close it instead of reopening.
       await modelTrigger.click();
       await expect(popover).toHaveCount(0);
 
-      // When the live model IS a superseded generation, the disclosure
-      // auto-expands too.
-      await applyClaudeUsage(page, SESSION_ID, 'claude-opus-4-7', 'Opus 4.7', 'high');
+      // When the task's own pick IS a superseded generation, the section opens
+      // so that checkmark is never hidden.
+      await setTaskModelOverride('claude-opus-4-7');
       await modelTrigger.click();
       await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-7"]')).toBeVisible();
     } finally {

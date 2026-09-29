@@ -87,19 +87,38 @@ export interface AgentCapabilities {
    */
   supportsModelOverride?: boolean;
   /**
-   * Model identifiers the user can pick from. Discovered from the same sources
-   * the agent's own picker uses (e.g. Claude reads `availableModels` from the
-   * user/project settings hierarchy). Absent when the user has not curated a
-   * list - the renderer falls back to a free-form text input in that case.
+   * Model identifiers the user can pick from, each an exact spawnable string.
+   * Discovered from the CLI itself (e.g. Claude: the ids its `/model` picker
+   * lists plus the ids recorded in its own transcripts). Absent when nothing
+   * can be discovered - the renderer falls back to a free-form text input.
    */
   models?: string[];
   /**
-   * Friendly display name per entry in `models` (e.g. `claude-opus-4-8` ->
-   * "Opus 4.8"), computed by the adapter so no agent-naming knowledge lives in
-   * shared or renderer code. An id absent from this map (or when the map
-   * itself is absent) falls back to showing its raw id.
+   * Friendly display name per entry in `models` and per `modelAliases` id
+   * (e.g. `claude-opus-4-8` -> "Opus 4.8", `opus` -> "Opus"), computed by the
+   * adapter so no agent-naming knowledge lives in shared or renderer code. An
+   * id absent from this map (or when the map itself is absent) falls back to
+   * showing its raw id.
    */
   modelDisplayNames?: Record<string, string>;
+  /**
+   * Floating selectors that follow the latest release of a model family (e.g.
+   * Claude's `opus`), in the CLI's own order. The renderer offers them above
+   * the specific versions in `models`. Absent when the adapter cannot derive
+   * any from the CLI.
+   */
+  modelAliases?: ModelAliasOption[];
+}
+
+/** One floating model selector, see `AgentCapabilities.modelAliases`. */
+export interface ModelAliasOption {
+  /** Exact value passed to the CLI's model flag, e.g. `opus`. */
+  id: string;
+  /**
+   * The versioned model id the CLI currently shows for this family, e.g.
+   * `claude-opus-5-5`. Absent when the CLI does not say.
+   */
+  resolvesTo?: string;
 }
 
 export interface AgentDetectionInfo {

@@ -375,6 +375,23 @@ describe('board-config parity: apply (kangentic.json -> DB)', () => {
     }
   });
 
+  it('stores a hand-written model exactly as written, whatever the agent', () => {
+    // The file does not know which agent a column runs, so it never rewrites a
+    // model: "Gemini 2.5" must not become `claude-gemini-2-5`. A friendly Claude
+    // name ("Opus") is converted where it is used, by the Claude adapter at
+    // spawn (claude-command-builder model tests).
+    for (const written of ['Opus', 'Opus 5.5', 'Gemini 2.5', 'GPT-5.5', 'claude-opus-5-5']) {
+      hoisted.lanes = [
+        makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+        makeSwimlane({ id: 'lane-review', name: 'Review' }),
+        makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+      ];
+      applyBoardConfigToDb('p', makeConfig({ id: 'lane-review', name: 'Review', modelOverride: written }));
+      const updated = hoisted.updateCalls.filter((call) => call.id === 'lane-review').at(-1);
+      expect((updated as Record<string, unknown>).model_override, `"${written}"`).toBe(written);
+    }
+  });
+
   it('update preserves existing description when config omits the description key', () => {
     // Build-config omits the description key entirely when lane.description is
     // null/falsy (the `if (lane.description)` guard).  When apply-config processes
