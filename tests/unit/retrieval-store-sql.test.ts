@@ -584,3 +584,33 @@ describe('RetrievalStore.getNeighbors', () => {
     expect(new RetrievalStore(db).getNeighbors(999, 3)).toEqual([]);
   });
 });
+
+describe('RetrievalStore.coverageFingerprint', () => {
+  it('counts embedded conversation chunks off the covering index', () => {
+    // A bare `corpus = 'conversation'` seeks (corpus) and reads every
+    // conversation chunk's row: 264 ms on a 93k-chunk index, on every snapshot
+    // read. `+corpus` keeps it on (embedded_model, corpus): 5.4 ms.
+    const { db, calls } = makeRecordingDb({ get: () => ({ count: 0, maxId: 0 }), all: () => [] });
+    new RetrievalStore(db).coverageFingerprint();
+    const embedded = calls.find((call) => call.sql.includes('embedded_model IS NOT NULL'));
+    expect(embedded?.sql).toContain("+corpus = 'conversation'");
+  });
+});
+
+describe('RetrievalStore.corpusTotals', () => {
+  it('counts embedded chunks off the covering index, not by reading every row', () => {
+    // Grouped by a bare `corpus`, the planner reads every chunk row through the
+    // (corpus) index: 277 ms on a 97k-chunk index, on main, on every Index read
+    // while task records embed. `+corpus` keeps it on the covering
+    // (embedded_model, corpus) index: 21 ms.
+    const { db, calls } = makeRecordingDb({
+      all: (sql) => (sql.includes('DISTINCT corpus') ? [{ corpus: 'conversation', count: 2 }] : [{ corpus: 'conversation', count: 5 }]),
+    });
+
+    const totals = new RetrievalStore(db).corpusTotals();
+
+    const embedded = calls.find((call) => call.sql.includes('embedded_model IS NOT NULL'));
+    expect(embedded?.sql).toMatch(/GROUP BY \+corpus/);
+    expect(totals).toEqual([{ corpus: 'conversation', documents: 2, chunks: 5, embeddedChunks: 5 }]);
+  });
+});

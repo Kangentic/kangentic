@@ -116,6 +116,7 @@ function fakeProject(board: {
 const deps = (db: Database.Database) => ({
   getDb: () => db,
   now: () => '2026-09-28T00:00:00.000Z',
+  clock: () => 0,
   yieldToEventLoop: async () => undefined,
 });
 

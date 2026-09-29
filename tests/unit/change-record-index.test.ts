@@ -17,6 +17,7 @@ import {
   CHANGE_RECORD_VERSION,
 } from '../../src/main/retrieval/change/change-record';
 import { sweepChangeRecords } from '../../src/main/retrieval/change/change-indexer';
+import { SLICE_BUDGET_MS } from '../../src/main/retrieval/timed-slices';
 
 const TOOLS = [
   { tool: 'Edit', pathField: 'file_path' },
@@ -113,6 +114,10 @@ function fakeIndex(state: {
   conversations: Array<{ docId: string; sessionId: string; indexedAt: string }>;
   signatures?: Array<{ docId: string; sourcePath: string; sourceMtimeMs: number }>;
   chunkText: string;
+  /** Chunks each conversation holds, all with `chunkText`. One when unset. */
+  chunkCount?: number;
+  /** Runs on every page read, as a page's cost on the clock. */
+  onPageRead?: () => void;
 }): { db: Database.Database; calls: Call[] } {
   const calls: Call[] = [];
   const db = {
@@ -121,12 +126,15 @@ function fakeIndex(state: {
         calls.push({ sql, args });
         if (sql.includes("WHERE corpus = 'conversation'") && sql.includes('memory_index_state')) return state.conversations;
         if (sql.includes('FROM memory_index_state WHERE corpus = ?')) return state.signatures ?? [];
-        if (sql.startsWith('SELECT * FROM memory_chunks WHERE corpus = ? AND doc_id = ?')) {
-          return [{
-            id: 1, corpus: 'conversation', doc_id: args[1], seq: 0, session_id: 'session-1', task_id: 'task-1',
-            agent_session_id: args[1], role: 'assistant', text: state.chunkText, content_hash: 'h', token_estimate: 10,
-            ts_start: 10, ts_end: 20, turn_uuid_start: null, turn_uuid_end: null, embedded_model: null,
-          }];
+        if (sql.includes('FROM memory_chunks WHERE corpus = ? AND doc_id = ? AND seq > ?')) {
+          state.onPageRead?.();
+          const [, , afterSeq, limit] = args as [string, string, number, number];
+          const total = state.chunkCount ?? 1;
+          const rows = [];
+          for (let seq = afterSeq + 1; seq < total && rows.length < limit; seq += 1) {
+            rows.push({ seq, text: state.chunkText, sessionId: 'session-1', taskId: 'task-1', tsEnd: 20 + seq });
+          }
+          return rows;
         }
         if (sql.includes('FROM sessions WHERE id = ?')) return [{ sessionType: 'claude_agent' }];
         return [];
@@ -149,6 +157,7 @@ const deps = (db: Database.Database) => ({
   getDb: () => db,
   toolsFor: (sessionType: string) => (sessionType === 'claude_agent' ? TOOLS : []),
   now: () => '2026-09-28T00:00:00.000Z',
+  clock: () => 0,
   yieldToEventLoop: async () => undefined,
 });
 
@@ -196,5 +205,34 @@ describe('sweepChangeRecords', () => {
     expect(result).toEqual({ indexed: 1 });
     expect(calls.some((call) => call.sql.includes('INSERT INTO memory_chunks'))).toBe(false);
     expect(calls.find((call) => call.sql.includes('INSERT INTO memory_index_state'))?.args[4]).toBe(Date.parse('2026-09-28T09:00:00.000Z'));
+  });
+
+  it('reads a long conversation a page at a time, yielding between pages, and counts every edit', async () => {
+    let nowMs = 0;
+    const { db, calls } = fakeIndex({
+      conversations: [{ docId: 'agent-1', sessionId: 'session-1', indexedAt }],
+      chunkText,
+      chunkCount: 5000,
+      // Each page costs half a slice's budget, so a slice holds two.
+      onPageRead: () => { nowMs += SLICE_BUDGET_MS / 2; },
+    });
+    let yields = 0;
+
+    const result = await sweepChangeRecords('project', '/home/dev/app', () => true, {
+      ...deps(db),
+      clock: () => nowMs,
+      yieldToEventLoop: async () => { yields += 1; },
+    });
+
+    expect(result).toEqual({ indexed: 1 });
+    const pageReads = calls.filter((call) => call.sql.includes('AND seq > ?'));
+    expect(pageReads.length).toBeGreaterThan(2);
+    // No page reads the whole conversation, and the reads yield between them.
+    expect(Math.max(...pageReads.map((call) => call.args[3] as number))).toBeLessThan(5000);
+    expect(yields).toBeGreaterThanOrEqual(Math.floor(pageReads.length / 2) - 1);
+    // Edits merged across every page into one file.
+    const insert = calls.find((call) => call.sql.includes('INSERT INTO memory_chunks'));
+    expect(insert?.args[7]).toBe('Files changed:\nsrc/main/pty/session-manager.ts (main pty session manager)');
+    expect(calls.filter((call) => call.sql.includes('INSERT INTO memory_index_state'))).toHaveLength(1);
   });
 });

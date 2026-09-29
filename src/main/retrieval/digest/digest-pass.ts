@@ -3,6 +3,7 @@ import { getProjectDb } from '../../db/database';
 import { buildDigestPrompt, DIGEST_BATCH_SIZE, parseDigestReply } from './digest-prompt';
 import { readDigestCandidates } from './digest-sources';
 import { DigestStore } from './digest-store';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 
 /** Writes one batch's digests: the digest agent's read-only answer run. */
 export interface DigestWriter {
@@ -93,34 +94,44 @@ export async function runDigestPass(
   }));
 
   let attempted = 0;
-  for (const { batch, reply } of replies) {
-    if (reply === null) {
-      result.failed = true;
-      continue;
+  // The pass's writes in ONE transaction. Thirty separate commits each sync the
+  // WAL to disk: measured 27.5 ms on main, against 1.2 ms for one commit.
+  const writeReplies = db.transaction(() => {
+    for (const { batch, reply } of replies) {
+      if (reply === null) {
+        result.failed = true;
+        continue;
+      }
+      attempted += batch.length;
+      const digests = parseDigestReply(reply, batch.length);
+      batch.forEach((candidate, position) => {
+        const digest = digests.get(position);
+        if (!digest) {
+          result.unanswered.push(candidate.input.taskId);
+          return;
+        }
+        try {
+          store.write({
+            taskId: candidate.input.taskId,
+            digest,
+            inputHash: candidate.hash,
+            agent: writer.agent,
+            model: writer.model,
+            effort: writer.effort,
+            createdAt: deps.now(),
+          });
+          result.written += 1;
+        } catch (error) {
+          console.warn(`[retrieval] digest for ${candidate.input.taskId} failed to save:`, error);
+        }
+      });
     }
-    attempted += batch.length;
-    const digests = parseDigestReply(reply, batch.length);
-    batch.forEach((candidate, position) => {
-      const digest = digests.get(position);
-      if (!digest) {
-        result.unanswered.push(candidate.input.taskId);
-        return;
-      }
-      try {
-        store.write({
-          taskId: candidate.input.taskId,
-          digest,
-          inputHash: candidate.hash,
-          agent: writer.agent,
-          model: writer.model,
-          effort: writer.effort,
-          createdAt: deps.now(),
-        });
-        result.written += 1;
-      } catch (error) {
-        console.warn(`[retrieval] digest for ${candidate.input.taskId} failed to save:`, error);
-      }
-    });
+  });
+  try {
+    timeSyncWork('digests:write', () => writeReplies());
+  } catch (error) {
+    console.warn('[retrieval] digests failed to save:', error);
+    result.failed = true;
   }
   result.remaining = stale.length - attempted;
   return result;

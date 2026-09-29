@@ -42,6 +42,15 @@ interface StoredChunkRow {
   embedded_model: string | null;
 }
 
+/** One chunk as a paged text read returns it. */
+export interface ChunkTextRow {
+  seq: number;
+  text: string;
+  sessionId: string | null;
+  taskId: string | null;
+  tsEnd: number | null;
+}
+
 function toStoredChunk(row: StoredChunkRow): StoredChunk {
   return {
     id: row.id,
@@ -452,6 +461,18 @@ export class RetrievalStore {
     return rows.map(toStoredChunk);
   }
 
+  /** A page of one document's chunks after `afterSeq`, in seq order, holding
+   *  only what a change record reads, so a long conversation can be read in
+   *  pieces between yields. */
+  chunkTextPage(corpus: string, docId: string, afterSeq: number, limit: number): ChunkTextRow[] {
+    return this.db
+      .prepare(
+        `SELECT seq, text, session_id AS sessionId, task_id AS taskId, ts_end AS tsEnd
+         FROM memory_chunks WHERE corpus = ? AND doc_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`,
+      )
+      .all(corpus, docId, afterSeq, limit) as ChunkTextRow[];
+  }
+
   /** Chunks within +/- radius seq of a given chunk, same document, seq order. */
   getNeighbors(chunkId: number, radius: number): StoredChunk[] {
     const anchor = this.db
@@ -734,13 +755,19 @@ export class RetrievalStore {
    * Conversations only. Coverage describes conversations, and a task edit
    * re-indexes that task's record: counted here, every board change would throw
    * the coverage away and pay the 285 ms again.
+   *
+   * The `+` on the embedded count's corpus is load-bearing. Without it the
+   * planner seeks `(corpus)` and reads every conversation chunk's row to test
+   * `embedded_model`: 264 ms on a 93k-chunk index, on main, on EVERY snapshot
+   * read, which an open graph makes on every push. With it, the covering
+   * `(embedded_model, corpus)` index: 5.4 ms.
    */
   coverageFingerprint(): string {
     const chunks = this.db
       .prepare("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS maxId FROM memory_chunks WHERE corpus = 'conversation'")
       .get() as { count: number; maxId: number };
     const embedded = this.db
-      .prepare("SELECT COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL AND corpus = 'conversation'")
+      .prepare("SELECT COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL AND +corpus = 'conversation'")
       .get() as { count: number };
     const states = this.db
       .prepare(
@@ -937,6 +964,13 @@ export class RetrievalStore {
    * come off `(corpus, doc_id, seq)`, the chunks off `(corpus)`, and the
    * embedded chunks off `(embedded_model, corpus)`, each covering, so no chunk
    * row is read. A corpus with nothing in it is absent.
+   *
+   * The `+` on the embedded count's GROUP BY is load-bearing. Without it the
+   * planner groups off `(corpus)` to skip a sort, and has to read every chunk
+   * row to test `embedded_model`: 277 ms on a 97k-chunk index, on main, on
+   * every Index read while task records embed (about every 9 s during a digest
+   * backfill). With it, the covering `(embedded_model, corpus)` index and a
+   * small sort: 21 ms.
    */
   corpusTotals(): Array<{ corpus: string; documents: number; chunks: number; embeddedChunks: number }> {
     const documents = this.db
@@ -946,7 +980,7 @@ export class RetrievalStore {
       .prepare('SELECT corpus, COUNT(*) AS count FROM memory_chunks GROUP BY corpus')
       .all() as Array<{ corpus: string; count: number }>;
     const embedded = this.db
-      .prepare('SELECT corpus, COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL GROUP BY corpus')
+      .prepare('SELECT corpus, COUNT(*) AS count FROM memory_chunks WHERE embedded_model IS NOT NULL GROUP BY +corpus')
       .all() as Array<{ corpus: string; count: number }>;
     const countOf = (rows: Array<{ corpus: string; count: number }>, corpus: string): number =>
       rows.find((row) => row.corpus === corpus)?.count ?? 0;

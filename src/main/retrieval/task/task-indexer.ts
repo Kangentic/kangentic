@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { writeInTimedSlices } from '../timed-slices';
 import { parseLabels, recordChangedMs, taskRecordChunks, TASK_RECORD_VERSION, type TaskRecordSource } from './task-record';
 
 /**
@@ -16,8 +18,6 @@ import { parseLabels, recordChangedMs, taskRecordChunks, TASK_RECORD_VERSION, ty
  */
 
 const CORPUS = 'task';
-/** Records chunked between yields, so a first sweep never holds main. */
-const RECORDS_PER_SLICE = 50;
 /** Recorded as each record's source, so a format change re-reads every one. */
 const RECORD_SOURCE = `task-record-v${TASK_RECORD_VERSION}`;
 /** A backlog item's document id, distinct from any task id. */
@@ -33,12 +33,14 @@ export interface TaskSweepResult {
 export interface TaskIndexerDeps {
   getDb: (projectId: string) => Database.Database;
   now: () => string;
+  clock: () => number;
   yieldToEventLoop: () => Promise<void>;
 }
 
 const defaultDeps: TaskIndexerDeps = {
   getDb: getProjectDb,
   now: () => new Date().toISOString(),
+  clock: () => performance.now(),
   yieldToEventLoop: () => new Promise((resolve) => setImmediate(resolve)),
 };
 
@@ -100,8 +102,8 @@ export async function sweepTaskRecords(
   try {
     db = deps.getDb(projectId);
     store = new RetrievalStore(db);
-    sources = readTaskRecordSources(db);
-    signatures = store.indexSignatures(CORPUS);
+    sources = timeSyncWork('records:task-read', () => readTaskRecordSources(db));
+    signatures = timeSyncWork('records:task-signatures', () => store.indexSignatures(CORPUS));
   } catch (error) {
     console.warn('[retrieval] task record sweep could not read the board:', error);
     return result;
@@ -114,34 +116,31 @@ export async function sweepTaskRecords(
       || signature.sourceMtimeMs !== recordChangedMs(source);
   });
 
-  for (let start = 0; start < stale.length; start += RECORDS_PER_SLICE) {
-    if (!shouldContinue()) return result;
-    for (const source of stale.slice(start, start + RECORDS_PER_SLICE)) {
-      const chunks = taskRecordChunks(source);
-      try {
-        store.upsertDocument(
-          { corpus: CORPUS, docId: source.docId, sessionId: null, taskId: source.taskId, agentSessionId: null, metaJson: null },
-          chunks,
-        );
-        store.setIndexState({
-          corpus: CORPUS,
-          docId: source.docId,
-          sessionId: null,
-          sourcePath: RECORD_SOURCE,
-          sourceMtimeMs: recordChangedMs(source),
-          sourceSize: chunks.reduce((total, chunk) => total + chunk.text.length, 0),
-          entryCount: 1,
-          chunkCount: chunks.length,
-          status: 'ok',
-          indexedAt: deps.now(),
-        });
-        result.indexed += 1;
-      } catch (error) {
-        console.warn(`[retrieval] task record ${source.docId} failed to index:`, error);
-      }
+  const writeRecord = (source: TaskRecordSource): void => {
+    const chunks = taskRecordChunks(source);
+    try {
+      store.upsertDocument(
+        { corpus: CORPUS, docId: source.docId, sessionId: null, taskId: source.taskId, agentSessionId: null, metaJson: null },
+        chunks,
+      );
+      store.setIndexState({
+        corpus: CORPUS,
+        docId: source.docId,
+        sessionId: null,
+        sourcePath: RECORD_SOURCE,
+        sourceMtimeMs: recordChangedMs(source),
+        sourceSize: chunks.reduce((total, chunk) => total + chunk.text.length, 0),
+        entryCount: 1,
+        chunkCount: chunks.length,
+        status: 'ok',
+        indexedAt: deps.now(),
+      });
+      result.indexed += 1;
+    } catch (error) {
+      console.warn(`[retrieval] task record ${source.docId} failed to index:`, error);
     }
-    await deps.yieldToEventLoop();
-  }
+  };
+  if (!await writeInTimedSlices(db, stale, writeRecord, 'records:task-slice', shouldContinue, deps)) return result;
 
   // Records whose task or backlog item is gone: deleted, or promoted from the
   // backlog (which gives the task a new id and removes the backlog row).
