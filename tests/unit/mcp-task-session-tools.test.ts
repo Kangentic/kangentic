@@ -518,6 +518,27 @@ describe('kangentic_create_task agent/model/effort/permissionMode/autoCommand ov
     expect((params as Record<string, unknown>).modelOverride).toBe('claude-opus-4-8');
   });
 
+  it('stores a single-word model as written on create, leaving the Claude spelling to spawn', async () => {
+    // "Workhorse" may be another agent's own model name; only the Claude
+    // adapter knows which single words are its aliases. A single word must
+    // reach both the validator and the stored task with its case intact.
+    for (const written of ['Workhorse', 'Sonnet']) {
+      mockCallHandler.mockClear();
+      mockValidateSpawnOverrides.mockClear();
+      await server.getHandler('kangentic_create_task')({
+        title: `Task with single-word model ${written}`,
+        modelOverride: written,
+      });
+
+      expect(mockValidateSpawnOverrides).toHaveBeenCalledOnce();
+      expect(mockValidateSpawnOverrides.mock.calls[0][0]).toMatchObject({ modelOverride: written });
+      expect(mockCallHandler).toHaveBeenCalledOnce();
+      const [handlerName, params] = mockCallHandler.mock.calls[0];
+      expect(handlerName).toBe('create_task');
+      expect((params as Record<string, unknown>).modelOverride).toBe(written);
+    }
+  });
+
   it('lowercases effortOverride via resolveEffortSelector before forwarding', async () => {
     await server.getHandler('kangentic_create_task')({
       title: 'Task with cased effort',
@@ -702,6 +723,17 @@ describe('kangentic_update_task model/effort/permissionMode tri-state wiring', (
     expect(mockCallHandler).toHaveBeenCalledOnce();
     const [, params] = mockCallHandler.mock.calls[0];
     expect((params as Record<string, unknown>).model).toBe('claude-sonnet-4-5');
+  });
+
+  it('stores a single-word model as written, leaving the Claude spelling to spawn', async () => {
+    // "Workhorse" may be another agent's own model name; only the Claude
+    // adapter knows which single words are its aliases.
+    for (const written of ['Sonnet', 'Workhorse']) {
+      mockCallHandler.mockClear();
+      await server.getHandler('kangentic_update_task')({ taskId: 'task-1', model: written });
+      const [, params] = mockCallHandler.mock.calls[0];
+      expect((params as Record<string, unknown>).model).toBe(written);
+    }
   });
 
   it('lowercases a concrete effort value via resolveEffortSelector', async () => {

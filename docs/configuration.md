@@ -549,7 +549,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 | `auto_command_mode` | `'immediate'` \| `'deferred'` | `'immediate'` | RETIRED with `auto_command`, and reset by the same migration. The delivery choice is the `send_message` automation's own `mode` field. |
 | `plan_exit_target_id` | string \| null | null | Target column when plan-mode agent exits |
 | `agent_override` | string \| null | null | Agent CLI override for sessions spawned in this column |
-| `model_override` | string \| null | null | Adapter-specific model identifier passed at spawn time (e.g. Claude `--model opus`). Live-applied via `/model` slash on column transition when supported. |
+| `model_override` | string \| null | null | Adapter-specific model identifier passed at spawn time (e.g. Claude `--model opus`), stored exactly as written. Live-applied via `/model` slash on column transition when supported. |
 | `effort_override` | string \| null | null | Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude `--effort xhigh`). Live-applied via `/effort` slash on column transition when supported. |
 | `handoff_context` | boolean | false | When enabled, cross-agent transitions package prior session context for the target agent |
 | `session_target` | `'main'` \| `'isolated'` | `'main'` | Which session track a task runs on in this column. `main` = the task's shared main conversation; `isolated` = this column's own context-isolated session (keyed by the swimlane id). See `SessionTarget` in `src/shared/types.ts`. |
@@ -730,6 +730,18 @@ Ghost columns are invisible on the board but still exist in the database. Once a
   "_modifiedBy": "device-id"
 }
 ```
+
+**A `modelOverride` is the value the agent CLI receives.** A floating alias (`"opus"`) runs the
+latest release of that family, so a committed column moves to each new version with no edit; a
+full id (`"claude-opus-5-5"`) stays pinned for a column that needs a fixed model. A value is
+stored exactly as written, because the file does not know which agent a column runs. A
+hand-written friendly Claude name (`"Opus"`, `"Opus 5.5"`) still works: the Claude adapter
+converts it to Claude's spelling (`opus`, `claude-opus-5-5`) when it builds `--model`, and no
+other agent ever sees that conversion. A single word converts only when Claude's own `/model`
+picker has listed that family, so a gateway model named `"Workhorse"` reaches the CLI as written;
+before the first picker scan on a machine, write the alias in lowercase. What an alias means is
+decided by the CLI on each machine: the provider and variables such as
+`ANTHROPIC_DEFAULT_OPUS_MODEL` can point it at a different version.
 
 **Automations nest under the column that owns them, as two named arrays.** Array order IS the
 run order within its group, an empty group is an absent key, and the type's own fields sit flat

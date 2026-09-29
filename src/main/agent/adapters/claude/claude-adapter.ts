@@ -26,7 +26,7 @@ import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-na
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { describeClaudeStartupFailure } from './startup-failure';
-import { configuredModelFromClaudeCommand, buildModelDisplayNames } from './model-display-name';
+import { configuredModelFromClaudeCommand, buildModelCapabilityFields, toClaudeModelArgument } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
   AgentAdapter,
@@ -50,6 +50,7 @@ import type {
   TranscriptToolCounts,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+import { peekModelPickerAliasIds } from './model-picker-probe';
 
 /**
  * Claude Code adapter - wraps ClaudeDetector, CommandBuilder,
@@ -125,9 +126,9 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!staticCapabilities.supportsModelOverride) {
       return staticCapabilities;
     }
-    const models = await rescanClaudeModels(cliPath, forceRefresh);
-    return models
-      ? { ...staticCapabilities, models, modelDisplayNames: buildModelDisplayNames(models) }
+    const rescan = await rescanClaudeModels(cliPath, forceRefresh);
+    return rescan
+      ? { ...staticCapabilities, ...buildModelCapabilityFields(rescan.models, rescan.aliases) }
       : staticCapabilities;
   }
 
@@ -381,11 +382,15 @@ export class ClaudeAdapter implements AgentAdapter {
    * empirically (scripts/probe-claude-model-forms.js for the CLI flag form,
    * and live-tested for the slash form). Order is /model before /effort
    * because /effort xhigh is Opus-only; setting the model first ensures
-   * /effort lands on a model that accepts the requested level.
+   * /effort lands on a model that accepts the requested level. The model is
+   * converted to Claude's spelling ("Opus" -> `opus`) the same way the
+   * `--model` flag is (see CommandBuilder).
    */
   getInjectionSequence(spec: SettingsChangeSpec): string[] {
     const sequence: string[] = [];
-    if (spec.modelChanged && spec.model) sequence.push(`/model ${spec.model}`);
+    if (spec.modelChanged && spec.model) {
+      sequence.push(`/model ${toClaudeModelArgument(spec.model, peekModelPickerAliasIds())}`);
+    }
     if (spec.effortChanged && spec.effort) sequence.push(`/effort ${spec.effort}`);
     return sequence;
   }

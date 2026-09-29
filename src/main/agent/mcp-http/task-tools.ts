@@ -5,7 +5,7 @@ import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-commands';
 import { TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
-import { resolveModelSelector, resolveEffortSelector } from '../../../shared/model-id';
+import { resolveSpacedModelName, resolveEffortSelector } from '../../../shared/model-id';
 import { validateSpawnOverrides } from './spawn-override-validation';
 import { resolveColumn } from '../commands/column-resolver';
 import { TaskRepository } from '../../db/repositories/task-repository';
@@ -200,7 +200,7 @@ export function registerTaskTools(
           filename: z.string().optional().describe('Override display filename'),
         })).optional().describe('File attachments. Always include here any local files the user referenced in the prompt by absolute path - reading a file for context does not replace attaching it. Each entry needs `filePath` (absolute) and may override the display `filename`. Skip only when the user explicitly said the file is "for context only, don\'t attach."'),
         agentOverride: z.string().optional().describe('Pin a specific agent for this task\'s entire lifetime (e.g. "claude", "codex"). Locks against column moves, same as the New Task dialog\'s Advanced section. Rejected at once if it is not a registered agent, with the valid names listed. Omit to resolve through the normal chain: column override -> project default -> app default.'),
-        modelOverride: z.string().max(200).optional().describe('Model to spawn this task with (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). A friendly name is converted to the CLI id, then checked against the models the resolved agent actually offers; an unknown one is rejected here with the valid list, rather than failing later at spawn. When that agent enumerates no models, the value is accepted as given and its CLI remains the final validator. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
+        modelOverride: z.string().max(200).optional().describe('Model to spawn this task with (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). A friendly versioned name is converted to the CLI id, then checked against the models the resolved agent actually offers; an unknown one is rejected here with the valid list, rather than failing later at spawn. When that agent enumerates no models, the value is accepted as given and its CLI remains the final validator. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
         effortOverride: z.string().max(50).optional().describe('Effort/reasoning level to spawn this task with (e.g. "xhigh", "high"). Valid values are agent-specific and are checked here against the resolved agent, so an unknown one is rejected with the valid list instead of failing later at spawn. An agent with no effort levels (several have none) accepts any value. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode to spawn this task with. Omit to resolve through the normal chain: column override -> project default -> app default.'),
         autoCommand: z.string().max(4000).optional().describe('Slash command to run once the agent spawns for this task (e.g. "/code-review", "/release"). Overrides the destination column\'s auto_command for this task only. Not surfaced in the UI - MCP-only.'),
@@ -261,7 +261,12 @@ export function registerTaskTools(
       // surface BEFORE reserving quota, for the same reason as the guardrail
       // above: a rejected call must not burn a slot. Skipped for the backlog,
       // whose items never spawn and carry no pins.
-      const normalizedModel = modelOverride ? resolveModelSelector(modelOverride) : null;
+      // A friendly versioned name ("Opus 4.8") has a space, so it can never be a
+      // raw id: it converts here, where the check below can validate it. A single
+      // word ("Opus", a gateway's own "Workhorse") is stored as written, because
+      // this tool does not know the task's agent; the Claude adapter converts it
+      // at spawn only when Claude's picker listed it.
+      const normalizedModel = modelOverride ? resolveSpacedModelName(modelOverride) : null;
       const normalizedEffort = effortOverride ? resolveEffortSelector(effortOverride) : null;
       // Gated on something actually being pinned, so an ordinary create - the
       // overwhelming majority - touches neither config nor the column lookup.
@@ -596,7 +601,7 @@ export function registerTaskTools(
         labels: z.array(z.string()).optional().describe('Replace the task\'s label list. Pass [] to clear all labels. Use kangentic_board_summary to see the labels this board already uses. If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server.'),
         baseBranch: z.string().optional().describe('Base branch the task\'s worktree branches from (e.g. "main").'),
         useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree. Set false and nothing is checked out: no worktree is created, the user\'s working tree is untouched, and the agent runs in the project directory on whatever branch the repo currently has out.'),
-        model: z.string().max(200).optional().describe('Model override for this task (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). A friendly name is converted to the CLI id, then checked against the models the resolved agent offers; an unknown one is rejected here with the valid list. When that agent enumerates no models, the value is accepted as given. Pass empty string to clear.'),
+        model: z.string().max(200).optional().describe('Model override for this task (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). A friendly versioned name is converted to the CLI id, then checked against the models the resolved agent offers; an unknown one is rejected here with the valid list. When that agent enumerates no models, the value is accepted as given. Pass empty string to clear.'),
         effort: z.string().max(50).optional().describe('Effort/reasoning level override for this task (e.g. "xhigh"). Valid values are agent-specific and checked here against the resolved agent; an agent with no effort levels accepts any value. Pass empty string to clear.'),
         permissionMode: z.union([PERMISSION_MODE_SCHEMA, z.literal('')]).optional().describe('Permission mode override for this task. Pass empty string to clear.'),
         profile: z.string().optional().describe('Board Profile this task rides (name or id) - an alternate set of per-column agent/model/effort settings, applied as the task moves. Pass empty string to clear it back to "Default". Mutually exclusive with the model/effort/agent/permissionMode pins: setting a profile clears them and setting any of them clears the profile. Use kangentic_list_board_profiles to see the board\'s profiles.'),
@@ -643,7 +648,7 @@ export function registerTaskTools(
         // task's stored values would make a labels-only follow-up start failing
         // on a task carrying a since-deprecated model pin - which is exactly
         // the follow-up the labels notice below asks for.
-        const normalizedModel = model !== undefined ? (model ? resolveModelSelector(model) : null) : undefined;
+        const normalizedModel = model !== undefined ? (model ? resolveSpacedModelName(model) : null) : undefined;
         const normalizedEffort = effort !== undefined ? (effort ? resolveEffortSelector(effort) : null) : undefined;
         if (normalizedModel || normalizedEffort || agent) {
           const agentConfig = resolver.getAgentValidationConfig();

@@ -10,8 +10,107 @@ import {
   contextWindowDisplayPercent,
   modelContextBadgeLabel,
   modelRowLabel,
+  modelAliasTitle,
+  aliasRowView,
+  modelVersionSectionLabel,
+  buildOfferedIdsByDisplayName,
 } from '../../src/renderer/utils/format-tokens';
 import { groupModelIds } from '../../src/shared/model-id';
+
+describe('buildOfferedIdsByDisplayName', () => {
+  it('maps the lowercased, trimmed display name to its id', () => {
+    const idsByName = buildOfferedIdsByDisplayName(
+      ['claude-opus-5-5', 'claude-sonnet-5-5'],
+      { 'claude-opus-5-5': '  Opus 5.5 ', 'claude-sonnet-5-5': 'SONNET 5.5' },
+    );
+    expect(idsByName.get('opus 5.5')).toBe('claude-opus-5-5');
+    expect(idsByName.get('sonnet 5.5')).toBe('claude-sonnet-5-5');
+    expect(idsByName.size).toBe(2);
+  });
+
+  it('skips an id with no display name, so no name is invented for it', () => {
+    const idsByName = buildOfferedIdsByDisplayName(
+      ['claude-opus-5-5', 'mystery-model'],
+      { 'claude-opus-5-5': 'Opus 5.5' },
+    );
+    expect(Array.from(idsByName.values())).toEqual(['claude-opus-5-5']);
+  });
+
+  it('ignores a display name for an id that is not offered', () => {
+    const idsByName = buildOfferedIdsByDisplayName(
+      ['claude-opus-5-5'],
+      { 'claude-opus-5-5': 'Opus 5.5', 'claude-fable-5': 'Fable 5' },
+    );
+    expect(idsByName.has('fable 5')).toBe(false);
+  });
+
+  it('gives a shared name to the shortest id, whichever order the ids arrive in', () => {
+    const displayNames = {
+      'claude-opus-4-8': 'Opus 4.8',
+      'claude-opus-4-8-20250101': 'Opus 4.8',
+    };
+    // The longer dated pin comes first, so a first-wins rule would pick it.
+    expect(buildOfferedIdsByDisplayName(['claude-opus-4-8-20250101', 'claude-opus-4-8'], displayNames).get('opus 4.8'))
+      .toBe('claude-opus-4-8');
+    expect(buildOfferedIdsByDisplayName(['claude-opus-4-8', 'claude-opus-4-8-20250101'], displayNames).get('opus 4.8'))
+      .toBe('claude-opus-4-8');
+  });
+});
+
+describe('aliasRowView', () => {
+  const displayNames = { opus: 'Opus', 'claude-opus-5-5': 'Opus 5.5' };
+  const aliases = [{ id: 'opus', resolvesTo: 'claude-opus-5-5' }];
+
+  it('shows the bare family label, the version it runs today, and a hover title naming both', () => {
+    expect(aliasRowView(aliases[0], aliases, displayNames)).toEqual({
+      label: 'Opus',
+      target: 'Opus 5.5',
+      title: 'Latest Opus, currently Opus 5.5',
+    });
+  });
+
+  it('has a null target when the agent did not report what the alias resolves to', () => {
+    const bareAlias = { id: 'opus' };
+    expect(aliasRowView(bareAlias, [bareAlias], displayNames)).toEqual({
+      label: 'Opus',
+      target: null,
+      title: 'Latest Opus',
+    });
+  });
+
+  it('falls back to the raw id for the label and title when no display name is known', () => {
+    const unnamed = { id: 'workhorse' };
+    expect(aliasRowView(unnamed, [], {})).toEqual({
+      label: 'workhorse',
+      target: null,
+      title: 'workhorse',
+    });
+  });
+});
+
+describe('modelVersionSectionLabel', () => {
+  it('says "Specific versions" when aliases sit above the section, "Older versions" when they do not', () => {
+    expect(modelVersionSectionLabel(true)).toBe('Specific versions');
+    expect(modelVersionSectionLabel(false)).toBe('Older versions');
+  });
+});
+
+describe('modelAliasTitle', () => {
+  const displayNames = { opus: 'Opus', 'claude-opus-5-5': 'Opus 5.5' };
+
+  it('names the version a floating alias runs today', () => {
+    expect(modelAliasTitle('opus', [{ id: 'opus', resolvesTo: 'claude-opus-5-5' }], displayNames))
+      .toBe('Latest Opus, currently Opus 5.5');
+  });
+
+  it('says only "Latest" when the agent did not report a target', () => {
+    expect(modelAliasTitle('opus', [{ id: 'opus' }], displayNames)).toBe('Latest Opus');
+  });
+
+  it('is null for a value that is not one of the aliases, such as a pinned id', () => {
+    expect(modelAliasTitle('claude-opus-5-5', [{ id: 'opus', resolvesTo: 'claude-opus-5-5' }], displayNames)).toBeNull();
+  });
+});
 
 describe('formatTokenCount', () => {
   it('renders sub-thousand counts verbatim', () => {

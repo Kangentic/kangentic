@@ -5,7 +5,10 @@ import {
   parseModelFamily,
   compareModelVersion,
   resolveModelSelector,
+  resolveSpacedModelName,
   resolveEffortSelector,
+  planModelPickerRows,
+  newerModelFor,
 } from '../../src/shared/model-id';
 
 describe('parseModelId', () => {
@@ -321,6 +324,172 @@ describe('resolveModelSelector', () => {
 
   it('trims surrounding whitespace before matching', () => {
     expect(resolveModelSelector('  Opus 4.8  ')).toBe('claude-opus-4-8');
+  });
+
+  it('turns a bare family name into the lowercase floating alias, never claude-<name>', () => {
+    // The pre-fix bug: "Sonnet" became `claude-sonnet`, which is not a valid
+    // id, and MCP validation waved it through as a floating alias.
+    expect(resolveModelSelector('Sonnet')).toBe('sonnet');
+    expect(resolveModelSelector('Opus')).toBe('opus');
+    expect(resolveModelSelector('Sonnet (1M)')).toBe('sonnet[1m]');
+  });
+
+  it('never rewrites anything outside the shapes humanizeModelId emits', () => {
+    for (const raw of [
+      'GPT-5.5',
+      'gpt-5.3-codex-high',
+      'Qwen2.5-Coder:7B',
+      'claude-opus-5-5[1m]',
+      'claude-haiku-4-5-20251001',
+      'opusplan',
+      'Opus Plan Mode',
+      'OPUS',
+    ]) {
+      expect(resolveModelSelector(raw)).toBe(raw);
+    }
+  });
+});
+
+describe('planModelPickerRows', () => {
+  const ids = [
+    'claude-fable-5',
+    'claude-fable-5-1',
+    'claude-haiku-4-5',
+    'claude-haiku-4-5-20251001',
+    'claude-opus-4-8',
+    'claude-opus-5-5',
+    'claude-opus-5-5[1m]',
+    'claude-sonnet-5',
+    'claude-sonnet-5-5',
+  ];
+
+  it('without aliases, splits exactly as before: current generations on top, the rest collapsed', () => {
+    const rows = planModelPickerRows(ids);
+    expect(rows.aliasRows).toEqual([]);
+    expect(rows.topGroups.map((group) => group.primaryId)).toEqual([
+      'claude-fable-5-1',
+      'claude-haiku-4-5',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+    ]);
+    expect(rows.versionRows.map((row) => row.sortId)).toEqual([
+      'claude-fable-5',
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-8',
+      'claude-sonnet-5',
+    ]);
+  });
+
+  it('with aliases, moves every covered current version into the collapsed section, no duplicates', () => {
+    const rows = planModelPickerRows(ids, [
+      { id: 'opus', resolvesTo: 'claude-opus-5-5' },
+      { id: 'fable', resolvesTo: 'claude-fable-5-1' },
+      { id: 'sonnet', resolvesTo: 'claude-sonnet-5-5' },
+      { id: 'haiku', resolvesTo: 'claude-haiku-4-5' },
+    ]);
+    expect(rows.aliasRows.map((alias) => alias.id)).toEqual(['opus', 'fable', 'sonnet', 'haiku']);
+    expect(rows.topGroups).toEqual([]);
+    // Families side by side, newest version first within each, a dated pin
+    // right after the generation it pins.
+    expect(rows.versionRows.map((row) => row.sortId)).toEqual([
+      'claude-fable-5-1',
+      'claude-fable-5',
+      'claude-haiku-4-5',
+      'claude-haiku-4-5-20251001',
+      'claude-opus-5-5',
+      'claude-opus-4-8',
+      'claude-sonnet-5-5',
+      'claude-sonnet-5',
+    ]);
+    // The [1m] chip stays on its version row, and a value held there opens the section.
+    expect(rows.versionSelectableIds.has('claude-opus-5-5[1m]')).toBe(true);
+    expect(rows.versionSelectableIds.has('claude-sonnet-5-5')).toBe(true);
+  });
+
+  it('orders a family newest first by version number, not by the text of the id', () => {
+    // Text order would put 4-10 before 4-9 and 4-6 first; the numbers say 4-10 is newest.
+    const rows = planModelPickerRows(
+      ['claude-opus-4-6', 'claude-opus-4-9', 'claude-opus-4-10', 'claude-opus-4-9-20260101'],
+      [{ id: 'opus', resolvesTo: 'claude-opus-4-10' }],
+    );
+    expect(rows.versionRows.map((row) => row.sortId)).toEqual([
+      'claude-opus-4-10',
+      'claude-opus-4-9',
+      'claude-opus-4-9-20260101',
+      'claude-opus-4-6',
+    ]);
+  });
+
+  it('keeps a family with no alias at the top level so a latest model is never hidden', () => {
+    const rows = planModelPickerRows(ids, [{ id: 'opus', resolvesTo: 'claude-opus-5-5' }]);
+    expect(rows.topGroups.map((group) => group.primaryId)).toEqual([
+      'claude-fable-5-1',
+      'claude-haiku-4-5',
+      'claude-sonnet-5-5',
+    ]);
+  });
+
+  it('treats an alias with no resolved target as covering nothing', () => {
+    const rows = planModelPickerRows(ids, [{ id: 'opus' }]);
+    expect(rows.topGroups.map((group) => group.primaryId)).toContain('claude-opus-5-5');
+  });
+
+  it('folds a learned bare alias into the alias row instead of listing it again', () => {
+    const rows = planModelPickerRows(['sonnet', 'claude-sonnet-5-5'], [
+      { id: 'sonnet', resolvesTo: 'claude-sonnet-5-5' },
+    ]);
+    expect(rows.topGroups).toEqual([]);
+    expect(rows.versionRows.map((row) => row.sortId)).toEqual(['claude-sonnet-5-5']);
+  });
+
+  it('keeps an alias [1m] value selectable as a specific version, never at the top', () => {
+    const rows = planModelPickerRows(['sonnet', 'sonnet[1m]', 'claude-sonnet-5-5'], [
+      { id: 'sonnet', resolvesTo: 'claude-sonnet-5-5' },
+    ]);
+    expect(rows.topGroups).toEqual([]);
+    expect(rows.versionRows.map((row) => row.sortId)).toEqual(['claude-sonnet-5-5', 'sonnet[1m]']);
+    expect(rows.versionSelectableIds.has('sonnet[1m]')).toBe(true);
+  });
+});
+
+describe('newerModelFor', () => {
+  const ids = ['claude-sonnet-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'sonnet'];
+
+  it('names the newest generation of an older pin', () => {
+    expect(newerModelFor('claude-sonnet-5', ids)).toBe('claude-sonnet-5-5');
+    expect(newerModelFor('claude-sonnet-4-6[1m]', ids)).toBe('claude-sonnet-5-5');
+  });
+
+  it('is null for the newest version, a floating alias, or an unversioned id', () => {
+    expect(newerModelFor('claude-sonnet-5-5', ids)).toBeNull();
+    expect(newerModelFor('sonnet', ids)).toBeNull();
+    expect(newerModelFor('gpt-5', ids)).toBeNull();
+  });
+
+  it('returns the newest newer generation, not the first newer one, whatever the list order', () => {
+    const generations = ['claude-sonnet-5', 'claude-sonnet-5-5', 'claude-sonnet-6'];
+    expect(newerModelFor('claude-sonnet-5', generations)).toBe('claude-sonnet-6');
+    expect(newerModelFor('claude-sonnet-5', [...generations].reverse())).toBe('claude-sonnet-6');
+  });
+});
+
+describe('resolveSpacedModelName', () => {
+  it('converts a name with whitespace the way resolveModelSelector does', () => {
+    expect(resolveSpacedModelName('Opus 4.8')).toBe('claude-opus-4-8');
+    expect(resolveSpacedModelName('Sonnet (1M)')).toBe('sonnet[1m]');
+  });
+
+  it('passes a single word through unchanged, because only the adapter knows if it is an alias', () => {
+    // resolveModelSelector('Opus') would return 'opus'; this must not.
+    expect(resolveSpacedModelName('Opus')).toBe('Opus');
+    expect(resolveSpacedModelName('Workhorse')).toBe('Workhorse');
+  });
+
+  it('trims before deciding whether the input has whitespace', () => {
+    // A leading or trailing space must not read as "has whitespace" and
+    // lowercase a single word into an id that does not exist.
+    expect(resolveSpacedModelName('  Workhorse ')).toBe('Workhorse');
+    expect(resolveSpacedModelName('  Opus 4.8 ')).toBe('claude-opus-4-8');
   });
 });
 

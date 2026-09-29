@@ -39,7 +39,7 @@ export const CAPABILITY_PROBE_TIMEOUT_MS = 5_000;
 export interface SpawnOverrideValidationInput {
   /** `agentOverride` as passed by the caller, or null/undefined when unset. */
   agentOverride?: string | null;
-  /** `modelOverride` AFTER `toStoredModel` (task-tools.ts), or null/undefined when unset. */
+  /** `modelOverride` AFTER `resolveSpacedModelName` (task-tools.ts), or null/undefined when unset. */
   modelOverride?: string | null;
   /** `effortOverride` AFTER `resolveEffortSelector`, or null/undefined when unset. */
   effortOverride?: string | null;

@@ -9,7 +9,8 @@
  * code. Model-name humanizing delegates to the shared `humanizeModelId`.
  */
 
-import { humanizeModelId } from '../../../../shared/model-id';
+import { humanizeModelId, resolveModelSelector, resolveSpacedModelName } from '../../../../shared/model-id';
+import type { AgentCapabilities, ModelAliasOption } from '../../../../shared/types';
 
 /**
  * Extract the raw `--model` value from a built Claude command string. `quoteArg`
@@ -65,4 +66,38 @@ export function buildModelDisplayNames(models: string[]): Record<string, string>
     if (displayName) displayNames[id] = displayName;
   }
   return displayNames;
+}
+
+/**
+ * The value to hand Claude for a stored model. Stored values keep what was
+ * written, so a model the app displays ("Opus 5.5", "Sonnet (1M)") is
+ * converted to Claude's spelling here. A name with a space can never be a raw
+ * id, so it always converts. A single capitalized word ("Opus") converts only
+ * when its lowercase form is an alias Claude's own picker reported
+ * (`knownAliasIds`); anything else ("Workhorse", a gateway's own model name)
+ * passes through exactly as written, never guessed at.
+ */
+export function toClaudeModelArgument(model: string, knownAliasIds: ReadonlySet<string>): string {
+  const written = model.trim();
+  if (/\s/.test(written)) return resolveSpacedModelName(written);
+  const converted = resolveModelSelector(written);
+  return knownAliasIds.has(converted) ? converted : written;
+}
+
+/**
+ * The model-related `AgentCapabilities` fields for one discovery pass: the ids,
+ * display names covering both the ids and the alias ids (an alias shows as its
+ * bare family name, `opus` -> "Opus"), and the aliases themselves when there
+ * are any. Shared by the adapter's cached path and `discoverClaudeCapabilities`.
+ */
+export function buildModelCapabilityFields(
+  models: string[],
+  aliases: ModelAliasOption[],
+): Pick<AgentCapabilities, 'models' | 'modelDisplayNames' | 'modelAliases'> {
+  const aliasIds = aliases.map((alias) => alias.id);
+  return {
+    models,
+    modelDisplayNames: buildModelDisplayNames([...models, ...aliasIds]),
+    ...(aliases.length > 0 ? { modelAliases: aliases } : {}),
+  };
 }

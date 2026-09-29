@@ -108,6 +108,19 @@ describe('handleCreateBoardProfile', () => {
     expect(stored.profiles[0].columns[PLANNING_ID]).toEqual({ modelOverride: 'opus' });
   });
 
+  it('stores a model exactly as given, since a profile entry does not know which agent runs it', () => {
+    // "Gemini 2.5" must not become `claude-gemini-2-5`; a friendly Claude name
+    // is converted by the Claude adapter at spawn instead.
+    const { context, stored } = createContext([]);
+
+    handleCreateBoardProfile(
+      { name: 'Heavy', columns: { Planning: { modelOverride: 'Gemini 2.5' } } },
+      context,
+    );
+
+    expect(stored.profiles[0].columns[PLANNING_ID]).toEqual({ modelOverride: 'Gemini 2.5' });
+  });
+
   it('matches column names case-insensitively', () => {
     const { context, stored } = createContext([]);
 

@@ -15,7 +15,7 @@
  * and demo/vite.config.mts serializes this module into the static build.
  */
 
-import { buildModelDisplayNames } from '../../../src/main/agent/adapters/claude/model-display-name';
+import { buildModelCapabilityFields } from '../../../src/main/agent/adapters/claude/model-display-name';
 import { buildDictationInfo } from '../../../src/main/transcription/dictation-info';
 import { selectEngine } from '../../../src/main/transcription/engines/engine-selection';
 import { DEFAULT_CONFIG } from '../../../src/shared/types';
@@ -411,8 +411,17 @@ const MODEL_BY_AGENT: Record<string, { id: string; displayName: string }> = { cl
  * on Opus, as this repo's own kangentic.json does), not a recorded session.
  */
 export const DEMO_COLUMN_MODELS = { opus: OPUS.id, sonnet: 'claude-sonnet-5', codex: CODEX.id } as const;
-/** Claude's model list: the mock's aliases plus the two ids the columns name. */
-const CLAUDE_MODELS = ['haiku', 'opus', 'sonnet', DEMO_COLUMN_MODELS.opus, DEMO_COLUMN_MODELS.sonnet];
+/** Claude's model list: the two ids the columns name, plus the Haiku its picker lists beside them. */
+const CLAUDE_MODELS = [DEMO_COLUMN_MODELS.opus, DEMO_COLUMN_MODELS.sonnet, 'claude-haiku-4-5'];
+/**
+ * The floating aliases Claude's picker probe derives for that list, one per family, each naming
+ * the version it ran at recording time. The Model fields list them in a "Latest" group.
+ */
+const CLAUDE_ALIASES = [
+  { id: 'opus', resolvesTo: DEMO_COLUMN_MODELS.opus },
+  { id: 'sonnet', resolvesTo: DEMO_COLUMN_MODELS.sonnet },
+  { id: 'haiku', resolvesTo: 'claude-haiku-4-5' },
+];
 /** The mock's global default, which a lane with no permission mode of its own spawns in. */
 const DEFAULT_PERMISSION_MODE = 'acceptEdits';
 
@@ -485,8 +494,9 @@ export const DEMO_BACKLOG: DemoBacklogItem[] = [
  * install, and the Column Manager reads it: without it a Codex column's form hides its Model
  * field. Each block is whole, since the mock's merge is shallow.
  *
- *   - Claude: its --help effort levels, and display names from the adapter's own
- *     buildModelDisplayNames, so a column on claude-opus-5 reads "Opus 5" as on the desktop.
+ *   - Claude: its --help effort levels, and the model fields from the adapter's own
+ *     buildModelCapabilityFields, so a column on claude-opus-5 reads "Opus 5" and an `opus`
+ *     column reads "Opus", as on the desktop.
  *   - Codex: no effort levels. Its effort is config.toml only, so Kangentic offers none
  *     (discoverCodexCapabilities), and its models come from session history: the one recorded.
  *   - Copilot: the --reasoning-effort choices its help lists, and its recorded model.
@@ -497,8 +507,7 @@ export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
     capabilities: {
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       supportsModelOverride: true,
-      models: CLAUDE_MODELS,
-      modelDisplayNames: buildModelDisplayNames(CLAUDE_MODELS),
+      ...buildModelCapabilityFields(CLAUDE_MODELS, CLAUDE_ALIASES),
     },
   },
   codex: {
