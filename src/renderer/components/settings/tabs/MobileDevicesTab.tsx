@@ -36,9 +36,9 @@ const MOBILE_DOCS_URL = DOCS_URLS.mobile;
 const RELAY_DOCS_URL = DOCS_URLS.relay;
 
 /** The ids each card's heading advertises. Declared once and passed to BOTH
- *  the SettingsCard's `searchIds` and the body's `useAnySettingVisible` gate,
- *  so the two cannot answer the search differently: a body gated on a subset
- *  hides the very row the query matched and leaves the heading orphaned. */
+ *  its own card's `searchIds` and the master card's, so the two cannot answer
+ *  the search differently: a master card listing a subset hides the very card
+ *  the query matched while the bridge is off. */
 const RELAY_SEARCH_IDS = ['mobileBridge.relayMode', 'mobileBridge.relayUrl'];
 
 /**

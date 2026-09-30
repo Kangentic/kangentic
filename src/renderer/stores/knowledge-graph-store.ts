@@ -425,9 +425,14 @@ function createKnowledgeGraphStore() {
         const seeded = openProjectId && own && scope.includes(openProjectId) && !(openProjectId in cached)
           ? { ...cached, [openProjectId]: own }
           : cached;
+        const previous = new Set(get().scopeProjectIds ?? []);
         set({ scopeProjectIds: scope, scopeSnapshots: seeded });
         for (const id of scope) {
-          if (!(id in seeded)) void get().loadScopeSnapshot(id);
+          // A project coming back into the scope is read again. Its pushes were
+          // ignored while it was out, so the island it left behind may be stale;
+          // it stays on screen until the read lands.
+          const rejoined = !previous.has(id) && id !== openProjectId;
+          if (!(id in seeded) || rejoined) void get().loadScopeSnapshot(id);
         }
       },
 
@@ -446,7 +451,9 @@ function createKnowledgeGraphStore() {
           // listed in the picker.
           rebuildIfStale(projectId, snapshot, options?.fromPush === true);
         } catch {
-          if (get().scopeProjectIds?.includes(projectId)) {
+          // A failed re-read keeps the island already drawn, as `loadSnapshot`
+          // keeps its snapshot; only a project with nothing yet is marked empty.
+          if (get().scopeProjectIds?.includes(projectId) && !(projectId in get().scopeSnapshots)) {
             set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: null } }));
           }
         } finally {

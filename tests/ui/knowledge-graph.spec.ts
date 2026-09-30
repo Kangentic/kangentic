@@ -165,6 +165,8 @@ function projectionLiteral(nodeCount: number, options: { collapsed?: boolean } =
         // node had a cost could not catch the mode being offered on an index
         // that has none.
         costUsd: i % 5 === 0 ? null : i * 1.5,
+        // Input plus output tokens, null on the same terms as the cost.
+        tokens: i % 5 === 0 ? null : i * 1000,
         durationMs: i % 7 === 0 ? null : (i + 1) * 90000,
         outcome: i % 3 === 0 ? 'done' : (i % 3 === 1 ? 'active' : 'done'),
         // Every granularity, since the projection ships all three. The
@@ -1478,8 +1480,14 @@ test.describe('knowledge graph', () => {
       ).filter((option) => option.scrollWidth > option.clientWidth + 1 || option.getBoundingClientRect().right > option.closest('[role="radiogroup"]')!.getBoundingClientRect().right + 1)
         .map((option) => option.textContent));
       expect(clipped).toEqual([]);
-      // Regions are their own panel now, not a row in this group.
-      await expect(page.locator('[data-testid="knowledge-graph-filter-region"]')).toHaveCount(0);
+      // Regions are their own card now, not a row in the Filter card: the
+      // region rows are in the Regions card, and none is in this one.
+      await expect(
+        page.locator('[data-testid="knowledge-graph-regions-card"] [data-testid="knowledge-graph-region-row"]'),
+      ).toHaveCount(2);
+      await expect(
+        page.locator('[data-testid="knowledge-graph-filter-card"] [data-testid="knowledge-graph-region-row"]'),
+      ).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -1963,9 +1971,12 @@ test.describe('knowledge graph', () => {
         let collisions = 0;
         for (let first = 0; first < visible.length; first += 1) {
           for (let second = first + 1; second < visible.length; second += 1) {
-            const a = visible[first];
-            const b = visible[second];
-            if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) collisions += 1;
+            const firstBox = visible[first];
+            const secondBox = visible[second];
+            if (
+              firstBox.left < secondBox.right && firstBox.right > secondBox.left
+              && firstBox.top < secondBox.bottom && firstBox.bottom > secondBox.top
+            ) collisions += 1;
           }
         }
         return collisions;
@@ -2290,21 +2301,21 @@ test.describe('knowledge graph', () => {
 
       // W sits ABOVE and between A and D: the physical arrangement, which is a
       // picture of where the hand goes rather than a list of four letters.
-      const [w, a, s, d] = await Promise.all([cap('W'), cap('A'), cap('S'), cap('D')]);
-      expect(w!.y + w!.height).toBeLessThanOrEqual(a!.y + 1);
-      expect(a!.x).toBeLessThan(s!.x);
-      expect(s!.x).toBeLessThan(d!.x);
-      const wCentre = w!.x + w!.width / 2;
-      expect(wCentre).toBeGreaterThan(a!.x);
-      expect(wCentre).toBeLessThan(d!.x + d!.width);
+      const [wKey, aKey, sKey, dKey] = await Promise.all([cap('W'), cap('A'), cap('S'), cap('D')]);
+      expect(wKey!.y + wKey!.height).toBeLessThanOrEqual(aKey!.y + 1);
+      expect(aKey!.x).toBeLessThan(sKey!.x);
+      expect(sKey!.x).toBeLessThan(dKey!.x);
+      const wCentre = wKey!.x + wKey!.width / 2;
+      expect(wCentre).toBeGreaterThan(aKey!.x);
+      expect(wCentre).toBeLessThan(dKey!.x + dKey!.width);
 
       // Grouped by what you touch. Q and E are keyboard keys, so they belong
       // beside WASD and not next to Scroll - and the two DRAG gestures, which
       // differ only by a modifier, sit adjacent rather than diagonally apart.
-      const [q, drag, rightDrag, scroll] = await Promise.all([
+      const [qKey, drag, rightDrag, scroll] = await Promise.all([
         cap('Q'), cap('Drag'), cap('Right Drag'), cap('Scroll'),
       ]);
-      expect(Math.abs(q!.x - d!.x)).toBeLessThan(Math.abs(q!.x - scroll!.x));
+      expect(Math.abs(qKey!.x - dKey!.x)).toBeLessThan(Math.abs(qKey!.x - scroll!.x));
       expect(drag!.x).toBeLessThan(rightDrag!.x);
       expect(rightDrag!.x).toBeLessThan(scroll!.x);
 
@@ -2700,6 +2711,43 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  test('Back retraces one hop per click along a two-hop trail', async () => {
+    // Each hop goes onto the trail once. A hop pushed twice (a state updater
+    // that sets other state runs twice under StrictMode, which the dev renderer
+    // mounts) needs two Back clicks per hop: the first shows the same
+    // conversation again, and the second is the one that moves.
+    const { browser, page } = await launchWithState(conversationFixture());
+    try {
+      await openKnowledgeGraph(page);
+      const start = await selectVisibleNode(page);
+      const named = (hops: number) => `Conversation ${(start + hops) % 30}`;
+      const title = page.locator('[data-testid="knowledge-graph-detail-title"]');
+      const back = page.locator('[data-testid="knowledge-graph-detail-back"]');
+      const nearest = page.locator('[data-testid="knowledge-graph-neighbor"]').first();
+
+      // The fixture makes a node's nearest neighbour the next one, twice over.
+      await nearest.click();
+      await expect(title).toHaveText(named(1));
+      await nearest.click();
+      await expect(title).toHaveText(named(2));
+
+      // Back names the conversation it returns to, and one click returns to it.
+      await expect(back).toContainText(new RegExp(`${named(1)}\\b`));
+      await back.click();
+      await expect(title).toHaveText(named(1));
+
+      // The second click reaches the first conversation, not the same one again.
+      await expect(back).toContainText(new RegExp(`${named(0)}\\b`));
+      await back.click();
+      await expect(title).toHaveText(named(0));
+
+      // The trail is spent: with no chat open there is nothing left to go back to.
+      await expect(back).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the index section is collapsed by default and opens on demand', async () => {
     // One left panel, four cards: Filter, Regions and Display are what you
     // touch, Index is reference. It used to be a second floating slab pinned to
@@ -2731,6 +2779,31 @@ test.describe('knowledge graph', () => {
       const indexBox = (await page.locator('[data-testid="knowledge-graph-index-panel"]').boundingBox())!;
       expect(indexBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 2);
       expect(indexBox.y + indexBox.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Escape closes the Index flyout and leaves the graph open', async () => {
+    // The flyout is the top thing, so Escape closes it and stops there, as the
+    // Projects picker and the camera legend do. Without its own Escape the key
+    // fell through to the page and closed the whole graph under the flyout.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
+    try {
+      await openKnowledgeGraph(page);
+      const indexPanel = page.locator('[data-testid="knowledge-graph-index-panel"]');
+      const indexToggle = page.locator('[data-testid="knowledge-graph-index-toggle"]');
+      await indexToggle.click();
+      await expect(indexPanel).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await expect(indexPanel).toHaveCount(0);
+      await expect(page.locator('[data-testid="knowledge-graph-page"]')).toBeVisible();
+
+      // With the flyout gone the next Escape is the graph's own, so the flyout's
+      // listener does not outlive it.
+      await page.keyboard.press('Escape');
+      await page.locator('[data-testid="knowledge-graph-page"]').waitFor({ state: 'hidden', timeout: 5000 });
     } finally {
       await browser.close();
     }
@@ -2891,8 +2964,11 @@ test.describe('knowledge graph', () => {
       const picker = page.locator('[data-testid="knowledge-graph-projects"]');
       await expect(picker).toContainText('Kangentic');
       await expect(picker).toContainText('1 of 1');
-      // The row names the scope, so the header does not repeat it.
-      await expect(page.locator('[data-testid="knowledge-graph-scope"]')).toHaveCount(0);
+      // The row names the scope, so the header does not repeat it: it holds the
+      // surface's title and no project name.
+      const header = page.locator('[data-testid="surface-header-knowledge-graph"]');
+      await expect(header.locator('h1')).toHaveText('Knowledge Graph');
+      await expect(header).not.toContainText('Kangentic');
 
       await picker.click();
       const menu = page.locator('[data-testid="knowledge-graph-projects-menu"]');

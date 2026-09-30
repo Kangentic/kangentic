@@ -6,7 +6,7 @@ import type { RequestResolver } from './project-resolver';
 import { runSearchEverything } from '../../search/search-core';
 import type { SearchHit, Project } from '../../../shared/types';
 import { isAnswerCaller } from './caller-url';
-import { ANSWER_SEARCH_BUDGET, claimAnswerSearch, publishAnswerSearch } from './answer-search-trace';
+import { ANSWER_SEARCH_BUDGET, answerSearchProjects, claimAnswerSearch, publishAnswerSearch } from './answer-search-trace';
 import {
   boardRecordTasks,
   indexedConversationNodes,
@@ -60,7 +60,7 @@ export function registerSearchTools(
   server.registerTool(
     'kangentic_search',
     {
-      description: 'The single unified search tool: one query across the active project (or all registered projects with scope:"all") covering board tasks (active + archived, title and description), backlog items, session events (the tool_start/tool_end/idle stream from agent runs), past agent conversations, commits on the default branch (by subject, body, or a sha prefix, each with the task it came from), and project names/paths. Returns a per-kind grouped result with snippets, so you pinpoint the matching task, backlog item, session event, conversation turn, commit, or project in one call. Conversations are matched by MEANING and keyword by default (mode:"hybrid"), the "have we solved this / seen this before?" recall path; mode:"keyword" matches literal words only. Conversation hits carry a sessionId + turnUuid; follow up with kangentic_get_transcript (aroundUuid) to read the surrounding turns. Pass taskId to restrict CONVERSATION and COMMIT hits to one task\'s history (resolve the display "#N" to its internal id first with kangentic_find_task or kangentic_get_current_task). Per-kind hit caps: 30 tasks, 20 backlog, 50 session events, 10 projects, 20 conversations, 10 commits. Pass groupBy:"task" to rank TASKS by how much their conversations, records, and commits are about the query, each with its facts (cost, time, tokens, outcome, PR) and, for the strongest, its summary and best passage: for counting or ranking work on a topic. Pass relatedToTask to rank the tasks most like one task, for "has anything like this been done before?". (kangentic_search_tasks already spans board + backlog within one project; reach for this tool for session events, conversations, commits, meaning, or cross-project scope.) Defaults to the active project; pass scope:"all" to widen across every registered project. Passing project forces scope to "current" since explicit routing already specifies the target.',
+      description: 'The single unified search tool: one query across the active project (or all registered projects with scope:"all") covering board tasks (active + archived, title and description), backlog items, session events (the tool_start/tool_end/idle stream from agent runs), past agent conversations, commits on the default branch (by subject, body, or a sha prefix, each with the task it came from), and project names/paths. Returns a per-kind grouped result with snippets, so you pinpoint the matching task, backlog item, session event, conversation turn, commit, or project in one call. Conversations are matched by MEANING and keyword by default (mode:"hybrid"), the "have we solved this / seen this before?" recall path; mode:"keyword" matches literal words only. Conversation hits carry a sessionId + turnUuid; follow up with kangentic_get_transcript (aroundUuid) to read the surrounding turns. Pass taskId to restrict CONVERSATION and COMMIT hits to one task\'s history (resolve the display "#N" to its internal id first with kangentic_find_task or kangentic_get_current_task). Per-kind hit caps: 30 tasks, 20 backlog, 50 session events, 10 projects, 20 conversations, 10 commits per project. Pass groupBy:"task" to rank TASKS by how much their conversations, records, and commits are about the query, each with its facts (cost, time, tokens, outcome, PR) and, for the strongest, its summary and best passage: for counting or ranking work on a topic. Pass relatedToTask to rank the tasks most like one task, for "has anything like this been done before?". (kangentic_search_tasks already spans board + backlog within one project; reach for this tool for session events, conversations, commits, meaning, or cross-project scope.) Defaults to the active project; pass scope:"all" to widen across every registered project. Passing project forces scope to "current" since explicit routing already specifies the target.',
       inputSchema: z.object({
         query: z.string().min(1).optional().describe('Search keyword or phrase, or - in mode:"hybrid" - a natural-language description of what you are looking for (case-insensitive). Required unless relatedToTask is set. A "#<number>" query (e.g. "#42") is a ticket lookup instead of a text search: it returns only board tasks whose display ID prefix-matches the number ("#4" matches #4, #40, #400), skipping the backlog, session-event, conversation, commit, and project kinds entirely. A bare number with no "#" stays a text search.'),
         scope: z.enum(['current', 'all']).optional().describe('"current" (default) searches only the active or `project`-routed project. "all" widens to every registered project on this machine and additionally surfaces project-name hits so an agent can discover routing targets. Ignored (forced to "current") when `project` is set.'),
@@ -78,17 +78,7 @@ export function registerSearchTools(
       const refusal = searchArgumentRefusal({ query, scope, project, taskId, groupBy, relatedToTask });
       if (refusal) return { content: [{ type: 'text' as const, text: refusal }], isError: true };
 
-      // An answer run's question has a search budget. Past it, the tool says
-      // so in words the agent acts on (answer now), rather than failing, so a
-      // run that over-searches still ends in an answer.
-      if (callerSessionId && isAnswerCaller(callerSessionId) && !claimAnswerSearch(callerSessionId)) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `This question has used its ${ANSWER_SEARCH_BUDGET} searches. Do not search again: answer now from what you have already found.`,
-          }],
-        };
-      }
+      const answerCaller = Boolean(callerSessionId && isAnswerCaller(callerSessionId));
       const resolved = resolver.resolveProject(project);
       if ('error' in resolved) {
         return {
@@ -104,7 +94,12 @@ export function registerSearchTools(
       // the resolver and this branch.
       const effectiveScope: 'current' | 'all' = resolved.isDefault ? (scope ?? 'current') : 'current';
 
-      const allProjects = resolver.listProjectsRaw();
+      // An answer run reads only the projects its question was asked across,
+      // whatever scope or project the agent passes: the user chose them, and
+      // the Privacy tab names what an answer sends.
+      const askedAcross = answerCaller && callerSessionId ? answerSearchProjects(callerSessionId) : null;
+      const allProjects = resolver.listProjectsRaw()
+        .filter((entry) => !askedAcross || askedAcross.has(entry.id));
       let projectsToScan: Project[];
       if (effectiveScope === 'all') {
         projectsToScan = allProjects;
@@ -114,9 +109,22 @@ export function registerSearchTools(
       }
 
       if (projectsToScan.length === 0) {
+        const text = askedAcross
+          ? `This question is asked across ${allProjects.map((entry) => entry.name).join(', ')}. Search only those.`
+          : `No projects available to search.`;
+        return { content: [{ type: 'text' as const, text }], isError: true };
+      }
+
+      // An answer run's question has a search budget, spent only by a search
+      // that runs. Past it, the tool says so in words the agent acts on (answer
+      // now), rather than failing, so a run that over-searches still ends in an
+      // answer.
+      if (callerSessionId && answerCaller && !claimAnswerSearch(callerSessionId)) {
         return {
-          content: [{ type: 'text' as const, text: `No projects available to search.` }],
-          isError: true,
+          content: [{
+            type: 'text' as const,
+            text: `This question has used its ${ANSWER_SEARCH_BUDGET} searches. Do not search again: answer now from what you have already found.`,
+          }],
         };
       }
 
@@ -128,7 +136,6 @@ export function registerSearchTools(
       const effectiveMode = mode ?? 'hybrid';
       const embedder = effectiveMode === 'keyword' ? null : resolver.getMemoryEmbedder();
       const indexingEnabled = resolver.isMemoryIndexingEnabled();
-      const answerCaller = Boolean(callerSessionId && isAnswerCaller(callerSessionId));
 
       if (relatedToTask) {
         return searchRelatedToTask({

@@ -94,8 +94,9 @@ function stripToRepository(forward: string, projectPath: string | null): string 
     const fold = (value: string): string => (process.platform === 'win32' ? value.toLowerCase() : value);
     if (fold(forward).startsWith(fold(root))) return forward.slice(root.length) || null;
   }
-  // Already relative: nothing to strip.
-  if (!/^([A-Za-z]:\/|\/)/.test(forward)) return forward;
+  // Already relative: nothing to strip. One that climbs out of the repository
+  // names no file in it.
+  if (!/^([A-Za-z]:\/|\/)/.test(forward) && !/^\.\.(\/|$)/.test(forward)) return forward;
   return null;
 }
 

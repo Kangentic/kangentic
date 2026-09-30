@@ -126,7 +126,10 @@ describe('region count', () => {
     // neighbour purity - is maximised by the FEWEST regions, so left to a score
     // the map came back as five regions with 45 conversations in one of them.
     for (const rowCount of [60, 150, 240, 638]) {
-      const chosen = chooseClusterCount(rowCount, plantedGroups(6, Math.round(rowCount / 6)), COMPONENTS);
+      // Exactly rowCount points: 638 does not divide by six, and a short fixture
+      // left the last rows reading past the array as undefined.
+      const points = plantedGroups(6, Math.ceil(rowCount / 6)).subarray(0, rowCount * COMPONENTS);
+      const chosen = chooseClusterCount(rowCount, points, COMPONENTS);
       const averageSize = rowCount / chosen;
       expect(averageSize).toBeLessThanOrEqual(27);
       expect(averageSize).toBeGreaterThanOrEqual(9);

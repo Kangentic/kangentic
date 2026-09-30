@@ -18,6 +18,7 @@ import {
   computeProjectionSleepMs,
   buildSignature,
   isProjectionFresh,
+  PROJECTION_SUMS_KEY,
   type GraphProjection,
 } from '../../src/main/retrieval/graph/projection-engine';
 import { computeCosineNeighbors } from '../../src/main/retrieval/graph/neighbor-edges';
@@ -438,7 +439,7 @@ describe('projection pass', () => {
       store: first.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
     });
     expect(initial).not.toBeNull();
-    shared.set('graph_projection_sums_v1', JSON.stringify(initial!.sums));
+    shared.set(PROJECTION_SUMS_KEY, JSON.stringify(initial!.sums));
 
     // Second pass over the SAME corpus should find nothing new to scan.
     const second = scriptedStore(chunks, shared);
@@ -461,7 +462,7 @@ describe('projection pass', () => {
     const initial = await runProjectionPass({
       store: first.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay,
     });
-    shared.set('graph_projection_sums_v1', JSON.stringify(initial!.sums));
+    shared.set(PROJECTION_SUMS_KEY, JSON.stringify(initial!.sums));
 
     // doc-000 re-indexed: its 3 chunks replaced by 2 with fresh, higher ids.
     const reindexed = original
@@ -489,7 +490,7 @@ describe('projection pass', () => {
     const initial = await runProjectionPass({
       store: first.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay,
     });
-    shared.set('graph_projection_sums_v1', JSON.stringify(initial!.sums));
+    shared.set(PROJECTION_SUMS_KEY, JSON.stringify(initial!.sums));
 
     const second = scriptedStore(chunks, shared);
     const rebuilt = await runProjectionPass({

@@ -899,7 +899,7 @@ export interface AgentAdapter {
 
   /**
    * What this adapter's `answerFromContext` run can do beyond the base, declared
-   * beside it. Read generically by the answer handler and the Search settings tab,
+   * beside it. Read generically by the answer handler and the Knowledge Graph settings tab,
    * never by agent name. Every flag is a promise the run keeps: `streaming`
    * means `onEvent` sees text as it is written, `search` means `retrieval` is
    * honoured, `model` means the run takes the Knowledge Graph Model setting, which makes

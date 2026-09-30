@@ -21,7 +21,7 @@ import type { ChunkInput } from '../types';
  */
 
 /** Bump when the chunking or the file rules change, so every file re-reads. */
-export const CODE_RECORD_VERSION = 1;
+export const CODE_RECORD_VERSION = 2;
 /** Files bigger than this are skipped: generated, vendored, or data. */
 export const CODE_MAX_FILE_BYTES = 256 * 1024;
 const CHUNK_CHARS = 1_600;
@@ -32,6 +32,9 @@ const MINIFIED = /\.min\.(js|css)$/;
 const BINARY_EXTENSIONS = /\.(png|jpe?g|gif|webp|ico|icns|bmp|tiff?|pdf|zip|gz|tgz|7z|rar|woff2?|ttf|otf|eot|mp[34]|mov|webm|wav|ogg|exe|dll|so|dylib|node|wasm|onnx|bin|dat|db|sqlite)$/i;
 const TESTS_AND_FIXTURES = /(^|\/)(tests?|__tests__|__mocks__|fixtures?|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i;
 const DATA_FILES = /\.(json|ya?ml|toml|csv|svg|snap|lock)$/i;
+/** Keys and credential files, committed or not: a passage is handed to the
+ *  answering agent, so none of these may ever become one. */
+const SECRET_FILES = /(^|\/)(\.env(\..+)?|\.npmrc|\.pypirc|\.netrc|id_(rsa|dsa|ecdsa|ed25519))$|\.(pem|key|p12|pfx|jks|keystore)$/i;
 /** A line that starts a top-level declaration, where a chunk may break. */
 const DECLARATION = /^(export |function |class |interface |type |const |let |async function |def |fn |pub |func |impl |struct |enum |module |describe\(|it\(|test\()/;
 
@@ -42,7 +45,8 @@ export function isIndexableCodePath(path: string): boolean {
     && !MINIFIED.test(path)
     && !BINARY_EXTENSIONS.test(path)
     && !TESTS_AND_FIXTURES.test(path)
-    && !DATA_FILES.test(path);
+    && !DATA_FILES.test(path)
+    && !SECRET_FILES.test(path);
 }
 
 /** A file's chunks, or none for one that holds a NUL byte (binary). */

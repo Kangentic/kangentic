@@ -456,7 +456,10 @@ export class GrokAdapter implements AgentAdapter {
           : {}),
       });
     } finally {
-      if (sessionId) {
+      // The id comes off the CLI's own output and becomes a path segment of a
+      // recursive delete, so only a plain id is trusted: `..` would name the
+      // sessions folder itself.
+      if (sessionId && /^[\w-]+$/.test(sessionId)) {
         await fs.promises.rm(grokSessionDir(cwd, sessionId), { recursive: true, force: true }).catch(() => undefined);
       }
     }

@@ -315,7 +315,9 @@ export class GeminiAdapter implements AgentAdapter {
           : {}),
       });
     } finally {
-      await removeGeminiChat(cwd, sessionId);
+      // Best effort, as the other adapters' cleanups are: a registry that
+      // holds something other than a folder name must not replace the answer.
+      await removeGeminiChat(cwd, sessionId).catch(() => undefined);
     }
   }
 

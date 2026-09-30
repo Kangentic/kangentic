@@ -42,7 +42,7 @@ describe('granularity options', () => {
   });
 
   it('drops a granularity that resolves to the map already on offer', () => {
-    // TWC-Website, 32 conversations: coarse and balanced both clamp to 3.
+    // A project with about 30 conversations: coarse and balanced both clamp to 3.
     expect(
       availableGranularities({
         clusterings: [clustering('coarse', 3), clustering('balanced', 3), clustering('fine', 4)],

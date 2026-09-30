@@ -1,5 +1,5 @@
 /**
- * retrievalService.getStatus - the KnowledgeGraphStatus the Search settings tab
+ * retrievalService.getStatus - the KnowledgeGraphStatus the Knowledge Graph settings tab
  * polls.
  *
  * Written for the `workerError` field (DESKTOP-H): when the embedding worker

@@ -214,7 +214,7 @@ function relatedWork(handed: RelatedWorkTask[]): RelatedWork {
   };
 }
 
-/** Global memory settings for the context double, per test. */
+/** Global Knowledge Graph settings for the context double, per test. */
 let knowledgeGraphConfig: Record<string, unknown> = {};
 
 /**
@@ -1021,6 +1021,28 @@ describe('the Ask handler', () => {
       await ask('anything', 'req-1', { chatId: 'chat-1' });
       expect(sessions).toHaveLength(1);
       expect(sessions[0].prompts).toHaveLength(1);
+    });
+
+    it('opens no warm session for a project that is no longer registered, and still prewarms a registered one', async () => {
+      // A pop-out can still hold a deleted project's id, and a warm agent
+      // pointed at it would search a project that is gone.
+      mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'))];
+      registerSearchHandlers(makeContext() as unknown as Parameters<typeof registerSearchHandlers>[0]);
+      const prewarmHandler = capturedHandlers.get(IPC.KNOWLEDGE_GRAPH_PREWARM);
+      if (!prewarmHandler) throw new Error('knowledgeGraph:prewarm handler not registered');
+
+      // The deleted project's prewarm goes first, so an unguarded handler
+      // would open its session ahead of the registered one's.
+      prewarmHandler(undefined, { chatId: 'chat-gone', projectId: 'project-deleted' });
+      prewarm('chat-live');
+      await vi.waitFor(() => expect(sessions.length).toBeGreaterThan(0));
+      // Both prewarms resolve through the same async steps; one macrotask
+      // lets any session the guard should have prevented open before asserting.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(sessions.map((session) => session.input.retrieval?.url)).toEqual([
+        'http://127.0.0.1:4321/mcp/project-1/answer-chat-live',
+      ]);
     });
 
     it('starts a fresh session when the scope changes, carrying the chat so far', async () => {

@@ -26,7 +26,7 @@ import type {
  * answers and writes the task summaries), and the Index it reads (one line per
  * source, and one Rebuild). The index also powers Quick Find (humans) and the
  * kangentic_search MCP tool (agents) by keyword. Indexing is on by default; the
- * Knowledge Graph (`semanticEnabled`) is opt-in, since it downloads a model.
+ * Knowledge Graph (`knowledgeGraph.enabled`) is opt-in, since it downloads a model.
  */
 
 /** A platform-level note for the semantic layer (only when it cannot run
@@ -46,7 +46,7 @@ function semanticPlatformNote(status: KnowledgeGraphStatus | null): string | nul
   return null;
 }
 
-const SUMMARIES_INFO = 'A sentence or two per Done task, so questions find it. The Knowledge Graph\'s agent reads each Done task\'s title, description, changed files and how its sessions ended, about ten tasks a call, in the background.';
+const SUMMARIES_INFO = `A sentence or two per Done task, so questions find it. The Knowledge Graph's agent reads each Done task's title, description, changed files and how its sessions ended, about ${SUMMARY_BATCH_SIZE} tasks a call, in the background.`;
 const CODE_INFO = 'The project\'s code and docs, so answers can explain it. Reads the default branch as committed: source files and docs. Tests, fixtures, data files and anything over 256 KB are skipped. Kept current as the branch moves.';
 
 export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig }) {
@@ -126,6 +126,9 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
   // will spend agent calls (task summaries written with another agent or
   // model); reading everything again is free, so otherwise it runs at once.
   const [rebuilding, setRebuilding] = useState(false);
+  // While the plan is read the button is already committed, so a second click
+  // cannot start a second rebuild.
+  const [planning, setPlanning] = useState(false);
   const [rebuildAsk, setRebuildAsk] = useState<number | null>(null);
   const runRebuild = () => {
     setRebuildAsk(null);
@@ -138,6 +141,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
       .finally(() => window.setTimeout(() => setRebuilding(false), 1200));
   };
   const handleRebuild = () => {
+    setPlanning(true);
     window.electronAPI.knowledgeGraph
       .rebuildPlan()
       .then((plan) => {
@@ -145,7 +149,8 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
         else runRebuild();
       })
       // Without the plan it cannot say what it would spend, so it does not run.
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setPlanning(false));
   };
 
   const semanticReady = indexingEnabled && semanticEnabled;
@@ -290,7 +295,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
               <button
                 type="button"
                 onClick={handleRebuild}
-                disabled={rebuilding}
+                disabled={rebuilding || planning}
                 data-testid="knowledge-graph-rebuild-index"
                 className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge-input bg-surface-control px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg disabled:opacity-50"
               >

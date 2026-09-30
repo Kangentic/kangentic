@@ -175,6 +175,13 @@ function chain(job: () => Promise<unknown>): void {
   );
 }
 
+/** `chain`, for a caller that waits on the job and handles its failure. */
+function onChain(job: () => Promise<unknown>): Promise<void> {
+  const run = jobChain.then(() => job()).then(() => undefined);
+  jobChain = run.catch(() => undefined);
+  return run;
+}
+
 function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;
   // Per-session TRAILING debounce, like scheduleLiveIndex below. One suspend
@@ -256,7 +263,6 @@ function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
   liveIndexTimers.set(sessionId, timer);
 }
 
-/** A project's root, so a changed file in its main checkout reads repo-relative. */
 /** False once a project is deleted. A context that cannot say counts it as
  *  present, so a missing repository never silently stops indexing. */
 function projectStillExists(context: IpcContext, projectId: string): boolean {
@@ -267,6 +273,7 @@ function projectStillExists(context: IpcContext, projectId: string): boolean {
   }
 }
 
+/** A project's root, so a changed file in its main checkout reads repo-relative. */
 function projectPathFor(context: IpcContext, projectId: string): string | null {
   try {
     return context.projectRepo.getById(projectId)?.path ?? null;
@@ -411,8 +418,14 @@ function summariesEnabled(context: IpcContext): boolean {
  */
 const summaryScheduler = createSummaryScheduler<IpcContext>({
   isEnabled: summariesEnabled,
-  readFingerprint: (_context, projectId) => readSummaryFingerprint(getProjectDb(projectId)),
+  // A deleted project reads no fingerprint and gets no writer, so its pass does
+  // nothing: a board-change timer or a retry can fire after the delete, and
+  // opening its database would create an empty one again.
+  readFingerprint: (context, projectId) => (
+    projectStillExists(context, projectId) ? readSummaryFingerprint(getProjectDb(projectId)) : null
+  ),
   resolveWriter: async (context, projectId) => {
+    if (!projectStillExists(context, projectId)) return null;
     const resolved = await resolveAnswerRun(context, projectId, 'summary', { withSearch: false, job: 'summary' });
     summaryChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
     if (!resolved.ok) return null;
@@ -437,11 +450,16 @@ const summaryScheduler = createSummaryScheduler<IpcContext>({
   // written from. Cheap once caught up; on a cold start (which skips the
   // project-open sweep) it is what keeps the first summaries from being written
   // without them.
+  //
+  // On the job chain, like every other sweep: two commit sweeps of one project
+  // interleaving at their awaits let the older one delete what the newer one
+  // wrote. The startup wait sits between the two, off the chain, so it holds
+  // up no other indexing.
   beforePass: async (context, projectId) => {
     const projectPath = projectPathFor(context, projectId);
-    await sweepChangeRecords(projectId, projectPath, () => !disposed);
+    await onChain(() => sweepChangeRecords(projectId, projectPath, () => !disposed));
     await untilBranchFullReads();
-    await sweepProjectCommits(context, projectId, projectPath, () => !disposed);
+    await onChain(() => sweepProjectCommits(context, projectId, projectPath, () => !disposed));
   },
 });
 
@@ -785,7 +803,7 @@ export const retrievalService = {
    *  piggyback the gate on. */
   reconcileEmbedWorker(context: IpcContext): void {
     embedEngine.reconcile(context);
-    // The same memory settings decide summaries: choosing the search agent, or
+    // The same Knowledge Graph settings decide summaries: choosing the search agent, or
     // turning summaries on, starts the backfill without a re-open, and what a
     // summary is written with may have changed.
     const projectId = context.currentProjectId;

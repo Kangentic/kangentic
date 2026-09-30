@@ -2,7 +2,8 @@
  * Does the answer call get prompt caching on its stable prefix?
  *
  * MANUAL ONLY, like `eval-ask.mjs`, and for the same reason: this spends real
- * agent calls. Two of them.
+ * agent calls. Three of them: a floor, then the two that answer the question.
+ * It refuses to run where a CI variable is set.
  *
  *   node scripts/probe-cache.mjs
  *
@@ -28,6 +29,10 @@
 
 import { spawn } from 'node:child_process';
 import * as os from 'node:os';
+import * as url from 'node:url';
+
+/** Past this, a call counts as failed and its CLI is stopped. */
+const CALL_TIMEOUT_MS = 120_000;
 
 /**
  * A stand-in for the stable prefix, sized to match the real one.
@@ -49,34 +54,64 @@ function buildPrefix(rows) {
 
 function ask(prompt) {
   return new Promise((resolve) => {
+    // `shell` is what finds the npm `claude.cmd` shim on Windows, and a shell
+    // joins argv with spaces unquoted, so the empty tool list is written as a
+    // quoted empty string. Bare, it vanished and left `--tools` with no value.
     const args = [
       '-p', '--model', 'haiku',
-      '--tools', '', '--strict-mcp-config',
+      '--tools', '""', '--strict-mcp-config',
       '--output-format', 'json',
     ];
     // Prompt on STDIN, exactly as the product sends it - an argv prompt of this
     // size would not survive the command line and would not be the same test.
     const child = spawn('claude', args, { cwd: os.tmpdir(), shell: true });
     let out = '';
+    let settled = false;
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      settle({ error: `no reply within ${CALL_TIMEOUT_MS / 1000}s` });
+    }, CALL_TIMEOUT_MS);
+    child.on('error', (error) => settle({ error: error.message }));
+    child.stdin.on('error', () => undefined);
     child.stdout.on('data', (chunk) => { out += chunk; });
     child.on('close', () => {
       try {
         const parsed = JSON.parse(out);
         const usage = parsed.usage ?? {};
-        resolve({
+        settle({
           input: usage.input_tokens ?? 0,
           cacheWrite: usage.cache_creation_input_tokens ?? 0,
           cacheRead: usage.cache_read_input_tokens ?? 0,
           costUsd: parsed.total_cost_usd ?? null,
         });
       } catch {
-        resolve({ error: out.slice(0, 300) });
+        settle({ error: out.slice(0, 300) });
       }
     });
     child.stdin.write(prompt);
     child.stdin.end();
   });
 }
+
+/** The same guard as `eval-ask.mjs`: a real agent call never runs unattended. */
+function refuseIfAutomated() {
+  const automated = ['CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILD_NUMBER']
+    .find((name) => process.env[name]);
+  if (automated) {
+    throw new Error(`Refusing to run: ${automated} is set. This probe spends real agent calls and is for on-demand use only.`);
+  }
+}
+
+if (!process.argv[1] || url.pathToFileURL(process.argv[1]).href !== import.meta.url) {
+  throw new Error('Run this probe directly with node, never import it.');
+}
+refuseIfAutomated();
 
 const prefix = buildPrefix(350);
 const shared = `Here is a table of tasks.\n\n${prefix}\n\n`;

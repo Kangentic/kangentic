@@ -35,7 +35,8 @@ vi.mock('node:child_process', () => ({
 interface FakeChild {
   stdout: EventEmitter;
   stderr: EventEmitter;
-  stdin: { end: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> };
+  /** A real emitter, as the child's stdin is: an `error` nobody listens for throws. */
+  stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
   kill: ReturnType<typeof vi.fn>;
   killed: boolean;
   on: (event: string, handler: (...args: unknown[]) => void) => void;
@@ -54,7 +55,7 @@ function makeFakeChild(): FakeChild {
   const child: FakeChild = {
     stdout,
     stderr,
-    stdin: { end: vi.fn(), on: vi.fn() },
+    stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
     kill: vi.fn(),
     killed: false,
     on: (event, handler) => emitter.on(event, handler),
@@ -636,6 +637,91 @@ describe('runCliPrintAnswer - the streamed text', () => {
 
     child.emit('close', 0);
     expect(await resultPromise).toBe('→');
+  });
+});
+
+/**
+ * A CLI that exits before it reads its stdin (a rejected flag, a failed login)
+ * closes the pipe under a prompt tens of thousands of characters long, and the
+ * write fails as an EPIPE event on the stream. An `error` event nobody listens
+ * for is thrown, which in the main process is an uncaught exception.
+ */
+describe('runCliPrintAnswer - a CLI that closes stdin before reading the prompt', () => {
+  it('survives the EPIPE, and settles from close with the CLI\'s exit code and stderr', async () => {
+    const child = makeFakeChild();
+    // What the stream had listening at the moment the prompt was written: the
+    // listener has to be there before the write, since the error comes after it.
+    let errorListenersAtWrite = -1;
+    child.stdin.end.mockImplementation(() => {
+      errorListenersAtWrite = child.stdin.listenerCount('error');
+    });
+    mockSpawn.mockReturnValue(child);
+
+    const resultPromise = runCliPrintAnswer({
+      cliPath: '/usr/bin/fake',
+      args: ['--bogus'],
+      prompt: 'a very long prompt',
+      cwd: '/tmp',
+    });
+    expect(child.stdin.end).toHaveBeenCalledWith('a very long prompt');
+    expect(errorListenersAtWrite).toBeGreaterThan(0);
+
+    const brokenPipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+    expect(() => child.stdin.emit('error', brokenPipe)).not.toThrow();
+
+    child.stderr.emit('data', Buffer.from('error: unknown option --bogus'));
+    child.emit('close', 2);
+    // The exit code and stderr report the failure; the broken pipe adds nothing.
+    await expect(resultPromise).rejects.toThrow('the agent exited 2: error: unknown option --bogus');
+  });
+});
+
+/**
+ * A CLI past its output budget is stopped once. Every chunk that lands after
+ * the budget used to stop it again, and for a Windows `.cmd` shim each stop is a
+ * `taskkill` process of its own.
+ */
+describe('runCliPrintAnswer - stopping a CLI that passes its output budget', () => {
+  const originalPlatform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+  });
+
+  /** Emits `chunkCount` chunks of 80 bytes against a budget of 100: the second one crosses it. */
+  function emitChunksPastBudget(child: FakeChild, chunkCount: number): void {
+    for (let chunk = 0; chunk < chunkCount; chunk += 1) child.stdout.emit('data', Buffer.alloc(80, 'z'));
+  }
+
+  it('sends SIGTERM once, however many chunks arrive after the budget', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+    const resultPromise = runCliPrintAnswer({ cliPath: '/usr/bin/fake', args: [], prompt: 'question', cwd: '/tmp', outputBudget: 100 });
+
+    // One chunk under the budget, then six past it.
+    emitChunksPastBudget(child, 7);
+
+    expect(child.kill.mock.calls.filter(([signal]) => signal === 'SIGTERM')).toHaveLength(1);
+    child.emit('close', 0);
+    // Only the chunk under the budget was kept.
+    expect(await resultPromise).toHaveLength(80);
+  });
+
+  it('starts one taskkill for a CLI launched through cmd.exe, not one per chunk', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const child = makeFakeChild() as FakeChild & { pid: number };
+    child.pid = 4242;
+    const taskkill = { on: vi.fn(), unref: vi.fn() };
+    taskkill.on.mockReturnValue(taskkill);
+    mockSpawn.mockImplementation((command: string) => (command === 'taskkill' ? taskkill : child));
+    const resultPromise = runCliPrintAnswer({ cliPath: 'C:\\tools\\fake.cmd', args: [], prompt: 'question', cwd: '/tmp', outputBudget: 100 });
+
+    emitChunksPastBudget(child, 7);
+
+    const taskkills = mockSpawn.mock.calls.filter(([command]) => command === 'taskkill');
+    expect(taskkills).toHaveLength(1);
+    expect(taskkills[0][1]).toEqual(['/pid', '4242', '/T', '/F']);
+    child.emit('close', 0);
+    expect(await resultPromise).toHaveLength(80);
   });
 });
 

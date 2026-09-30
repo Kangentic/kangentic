@@ -166,6 +166,9 @@ export function registerSearchHandlers(context: IpcContext): void {
     if (!chat?.chatId) return;
     const homeProjectId = chat.projectId ?? context.currentProjectId;
     if (!homeProjectId) return;
+    // A pop-out can still hold a deleted project's id, and a warm agent pointed
+    // at it would search a project that is gone.
+    if (!context.projectRepo.list().some((entry) => entry.id === homeProjectId)) return;
     // Read before the await: a chat that ends while its agent is resolved must
     // not get a session afterwards.
     const endGeneration = answerSessionPool.endGeneration(chat.chatId);
@@ -551,7 +554,7 @@ export function registerSearchHandlers(context: IpcContext): void {
               query: search.query,
               docKeys: searchDocKeys(search, docKeysBySession, docKeysByTask),
             });
-          })
+          }, scopeProjects.map((entry) => entry.id))
           : () => {};
 
         const onEvent = (event: AnswerStreamEvent): void => {

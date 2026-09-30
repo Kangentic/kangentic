@@ -53,6 +53,10 @@ export async function writeCursorAnswerWorkspace(answerHome: string): Promise<vo
  * recomputing the hash. Best-effort.
  */
 export async function removeCursorChat(chatId: string): Promise<void> {
+  // The id comes off the CLI's own output and becomes a path segment of a
+  // recursive delete, so only a plain id is trusted: `..` would name the chats
+  // folder itself, and an empty one a whole workspace.
+  if (!/^[\w-]+$/.test(chatId)) return;
   const chatsRoot = path.join(os.homedir(), '.cursor', 'chats');
   const workspaces = await fs.promises.readdir(chatsRoot).catch(() => [] as string[]);
   for (const workspace of workspaces) {

@@ -53,18 +53,28 @@ export const ANSWER_SEARCH_BUDGET = 4;
 interface Watch {
   listener: Listener;
   used: number;
+  /** The projects the question is asked across, or null for no limit. */
+  projectIds: ReadonlySet<string> | null;
 }
 
 const watches = new Map<string, Watch>();
 
 /** Watch one answer caller's searches for one question, with a fresh search
- *  budget. Returns the unsubscribe. */
-export function watchAnswerSearches(callerId: string, listener: Listener): () => void {
-  const watch: Watch = { listener, used: 0 };
+ *  budget. `projectIds`, when given, are the only projects its searches may
+ *  read: the user chose them, and the answer is about them. Returns the
+ *  unsubscribe. */
+export function watchAnswerSearches(callerId: string, listener: Listener, projectIds?: ReadonlyArray<string>): () => void {
+  const watch: Watch = { listener, used: 0, projectIds: projectIds ? new Set(projectIds) : null };
   watches.set(callerId, watch);
   return () => {
     if (watches.get(callerId) === watch) watches.delete(callerId);
   };
+}
+
+/** The projects this caller's question may search, or null when no question
+ *  limits it (a probe, a run whose question already ended). */
+export function answerSearchProjects(callerId: string): ReadonlySet<string> | null {
+  return watches.get(callerId)?.projectIds ?? null;
 }
 
 /**

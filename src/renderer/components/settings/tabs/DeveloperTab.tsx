@@ -3,6 +3,8 @@ import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardToggleRow, SettingTag } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { effectiveCombo } from '../../../../shared/keybindings';
+import { formatCombo } from '../../../utils/keybindings';
 import { DevToolsSections } from '../../../../devtools/renderer/DevToolsSections';
 
 /**
@@ -32,6 +34,8 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
   // bounding growth), not the long-running npm start dogfooding session.
   const recordIpcTrafficEnabled =
     developerConfig.recordIpcTraffic ?? (__KANGENTIC_DEV__ && window.electronAPI.dev?.isEphemeralPreview === true);
+  // Read from the registry, so it says Cmd on macOS and follows a rebind.
+  const overlayCombo = effectiveCombo('debug.toggleOverlay', globalConfig.hotkeyOverrides);
 
   return (
     <div className="space-y-4" data-testid="developer-tab">
@@ -48,7 +52,7 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
             + '10 transitions, polled every 2s. With it on, the engine also writes a snapshot to '
             + '.kangentic/debug/<sessionId>.json on every state change.'
           }
-          labelTrailing={<SettingTag>Ctrl+Shift+D</SettingTag>}
+          labelTrailing={overlayCombo ? <SettingTag>{formatCombo(overlayCombo)}</SettingTag> : undefined}
           checked={overlayEnabled}
           onChange={(value) => updateGlobal({ developer: { activityDebugOverlay: value } })}
         />

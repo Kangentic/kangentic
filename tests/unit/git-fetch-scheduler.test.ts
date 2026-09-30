@@ -54,6 +54,11 @@ function makeProject(id: string): Project {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  // clearAllMocks keeps implementations, so a stamp one test set, or a queued
+  // reply it never consumed, would leak into the next. Every test starts from a
+  // repo that has never had a full fetch.
+  mockLastFetchAt.mockReset();
+  mockLastFetchAt.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -181,7 +186,6 @@ describe('gitFetchScheduler', () => {
 
     await vi.advanceTimersByTimeAsync(3 * 60_000); // 8 minutes: due now
     expect(mockFetch).toHaveBeenCalledTimes(2);
-    mockLastFetchAt.mockResolvedValue(null);
   });
 
   // A config save restarts the project the user is already on. The project id
@@ -216,9 +220,11 @@ describe('gitFetchScheduler', () => {
     expect(mockLastFetchAt).toHaveBeenCalledTimes(1);
   });
 
-  // A failed fetch stamps nothing, so the clock also counts from the
-  // scheduler's own attempt; otherwise an offline repo would retry every wake.
-  it('waits a full interval after a sweep even when that fetch left no stamp', async () => {
+  // A failed fetch stamps nothing, so its repo reads as never fetched. Each
+  // sweep re-arms the timer a full interval out, which is what keeps an offline
+  // repo to one retry per interval. This pins that re-arm; the test after it
+  // pins the scheduler's own attempt clock, which is separate.
+  it('re-arms a full interval after each sweep, so a fetch that left no stamp is retried once per interval', async () => {
     mockLastFetchAt.mockResolvedValue(null);
     gitFetchScheduler.startForProject(makeContext('p1', true), makeProject('p1'));
     await vi.advanceTimersByTimeAsync(FIVE_MIN);
@@ -228,5 +234,30 @@ describe('gitFetchScheduler', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1000);
     expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  // The scheduler counts from its own last attempt as well as from the repo's
+  // last stamp. The re-arm above cannot show it, because a wake normally comes
+  // a full interval after a sweep. A wake that comes short of one, with no
+  // stamp to push it back, is the case only the attempt clock covers.
+  it('goes back to sleep for the rest of the interval when it wakes short of one after its own last sweep', async () => {
+    gitFetchScheduler.startForProject(makeContext('p1', true), makeProject('p1'));
+    await vi.advanceTimersByTimeAsync(0); // the on-open sweep is the attempt
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // The 5-minute wake finds the wall clock a second short of the interval, as
+    // when a timer fires early or the clock is stepped back.
+    const attemptedAt = Date.now();
+    const wallClock = vi.spyOn(Date, 'now').mockReturnValue(attemptedAt + FIVE_MIN - 1000);
+    try {
+      await vi.advanceTimersByTimeAsync(FIVE_MIN);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      wallClock.mockReturnValue(attemptedAt + FIVE_MIN);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      wallClock.mockRestore();
+    }
   });
 });

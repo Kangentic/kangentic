@@ -14,7 +14,7 @@ const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 const PROJECT_ID = 'proj-embed-picker';
 
-/** Seed a project and the polled model status (config for semanticEnabled is set
+/** Seed a project and the polled model status (config for knowledgeGraph.enabled is set
  *  post-launch via the config store, which is the mechanism the store honors). */
 function makePreConfig(modelState: string, progress?: number, summaries?: object, code?: object, sources?: object): string {
   const memoryStatus = {
@@ -270,7 +270,7 @@ test.describe('Knowledge Graph card', () => {
       const qualityBox = await qualityRow.boundingBox();
       const agentBox = await agentRow.boundingBox();
       expect(qualityBox && agentBox && qualityBox.y < agentBox.y).toBe(true);
-      await expect(page.getByTestId('knowledge-graph-summary-agent')).toHaveCount(0);
+      await expect(page.getByTestId('knowledge-graph-answer-agent')).toHaveCount(1);
       // The first card on the tab: the feature, then the index it reads.
       const indexBox = await page.getByTestId('index-card').boundingBox();
       const cardBox = await card.boundingBox();
@@ -441,6 +441,53 @@ test.describe('Index card', () => {
       await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0))
         .toBe(1);
       await expect(page.getByTestId('rebuild-confirm')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a second click while the plan is still being read starts no second rebuild', async () => {
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, SUMMARIES, CODE, SOURCES));
+    try {
+      await openKnowledgeGraphTab(page);
+      // The mock answers the plan at once, so the read is held open here: the
+      // first plan call waits for `__releaseRebuildPlan`, and any later call
+      // (the mock's own `rebuildIndex` asks for a plan too) gets the mock's answer.
+      await page.evaluate(() => {
+        const scope = window as unknown as {
+          electronAPI: { knowledgeGraph: { rebuildPlan: () => Promise<{ summariesToRewrite: number }> } };
+          __rebuildPlanCalls: number;
+          __releaseRebuildPlan: () => void;
+        };
+        const knowledgeGraph = scope.electronAPI.knowledgeGraph;
+        const mockPlan = knowledgeGraph.rebuildPlan;
+        scope.__rebuildPlanCalls = 0;
+        knowledgeGraph.rebuildPlan = () => {
+          scope.__rebuildPlanCalls += 1;
+          if (scope.__rebuildPlanCalls > 1) return mockPlan.call(knowledgeGraph);
+          return new Promise((resolve) => {
+            scope.__releaseRebuildPlan = () => resolve({ summariesToRewrite: 0 });
+          });
+        };
+      });
+      const rebuildCalls = () => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0);
+      const planCalls = () => page.evaluate(() => (window as unknown as { __rebuildPlanCalls: number }).__rebuildPlanCalls);
+      const rebuildButton = page.getByTestId('knowledge-graph-rebuild-index');
+
+      await rebuildButton.click();
+      // The button is committed from the click, not only once the rebuild starts.
+      await expect(rebuildButton).toBeDisabled();
+      // A click on the disabled button: forced, since a user's press does not
+      // wait for the control to be enabled.
+      await rebuildButton.click({ force: true });
+
+      // The click handler is synchronous, so both counts are already final:
+      // one plan asked for, and no rebuild started while it is pending.
+      expect(await planCalls()).toBe(1);
+      expect(await rebuildCalls()).toBe(0);
+
+      await page.evaluate(() => (window as unknown as { __releaseRebuildPlan: () => void }).__releaseRebuildPlan());
+      await expect.poll(rebuildCalls).toBe(1);
     } finally {
       await browser.close();
     }

@@ -15,8 +15,12 @@
  *    reader's project id and may start a rebuild a push may not), while a push
  *    that was waiting yields to a reader,
  *  - the read asked for meanwhile still runs when the first one fails,
- *  - the answer stream is gated on the active turn's request id, and
- *  - a scope of just the open project is not a scope.
+ *  - the answer stream is gated on the active turn's request id,
+ *  - a scope of just the open project is not a scope,
+ *  - a project coming back into the scope is read again (its pushes were ignored
+ *    while it was out), while one that stayed in, and the open project, are not, and
+ *  - a scoped re-read that rejects keeps the island already drawn, while a first
+ *    read that rejects records the project as empty.
  *
  * window.electronAPI is stubbed globally and the store is imported fresh for
  * every test (vi.resetModules): its in-flight read, pending read, stream
@@ -349,5 +353,91 @@ describe('knowledge-graph-store setScope', () => {
 
     store.getState().setScope(null);
     expect(store.getState().scopeProjectIds).toBeNull();
+  });
+
+  it('reads a project again when it comes back into the scope, and keeps its old island until the read lands', async () => {
+    const staleIsland = makeSnapshot('B', { stale: true });
+    const freshIsland = makeSnapshot('B', { stale: false });
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A') });
+
+    store.getState().setScope(['A', 'B']);
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    resolveRead('B', staleIsland);
+    await flush();
+    expect(store.getState().scopeSnapshots.B).toBe(staleIsland);
+
+    // B leaves the scope (just the open project is no scope), where its pushes
+    // are ignored, and comes back. The island it left behind may be stale.
+    store.getState().setScope(['A']);
+    expect(store.getState().scopeProjectIds).toBeNull();
+    store.getState().setScope(['A', 'B']);
+
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    // The old island stays on screen while the read is in flight.
+    expect(store.getState().scopeSnapshots.B).toBe(staleIsland);
+
+    resolveRead('B', freshIsland);
+    await flush();
+    expect(store.getState().scopeSnapshots.B).toBe(freshIsland);
+  });
+
+  it('does not read a project that stayed in the scope, only the one that joined it', async () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A') });
+    store.getState().setScope(['A', 'B']);
+    resolveRead('B');
+    await flush();
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+
+    store.getState().setScope(['A', 'B', 'C']);
+
+    // B was already in the previous scope: its island is kept without a read.
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('C');
+  });
+
+  it('does not read the open project when it rejoins the scope, its map is seeded', async () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A') });
+    store.getState().setScope(['B']);
+    resolveRead('B');
+    await flush();
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+
+    store.getState().setScope(['A', 'B']);
+
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().scopeSnapshots.A).toBe(store.getState().snapshot);
+  });
+});
+
+describe('knowledge-graph-store loadScopeSnapshot when a read fails', () => {
+  it('keeps the island already drawn when a push-triggered re-read rejects', async () => {
+    const goodIsland = makeSnapshot('B');
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A') });
+    store.getState().setScope(['A', 'B']);
+    resolveRead('B', goodIsland);
+    await flush();
+    expect(store.getState().scopeSnapshots.B).toBe(goodIsland);
+
+    const reread = store.getState().loadScopeSnapshot('B', { fromPush: true });
+    takePendingRead('B').reject(new Error('main is busy'));
+    await reread;
+
+    // A failed re-read must not blank an island that was fine a moment ago.
+    expect(store.getState().scopeSnapshots.B).toBe(goodIsland);
+  });
+
+  it('records a project as empty when its first read rejects', async () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A') });
+    store.getState().setScope(['A', 'B']);
+    expect('B' in store.getState().scopeSnapshots).toBe(false);
+
+    takePendingRead('B').reject(new Error('main is busy'));
+    await flush();
+
+    // A project with nothing yet is marked empty (null), not left as "loading".
+    expect('B' in store.getState().scopeSnapshots).toBe(true);
+    expect(store.getState().scopeSnapshots.B).toBeNull();
   });
 });

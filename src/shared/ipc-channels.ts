@@ -550,7 +550,7 @@ export const IPC = {
   TRANSCRIPT_GET: 'transcript:get',
   TRANSCRIPT_LIST_SESSIONS: 'transcript:listSessions',
 
-  // Conversation-memory semantic-layer status (the Search settings tab).
+  // Conversation-memory semantic-layer status (the Knowledge Graph settings tab).
   KNOWLEDGE_GRAPH_STATUS: 'knowledgeGraph:status',
   // Spawn + init the embedding worker ahead of the first question (Knowledge
   // Graph open); fire-and-forget, embeds nothing. With a chat, also starts the

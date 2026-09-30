@@ -39,7 +39,11 @@ type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
 
 describe('code records', () => {
   it('keeps source and docs, and skips tests, fixtures, data, lock files, binaries and build output', () => {
-    for (const kept of ['src/main/pty/session-manager.ts', 'docs/architecture.md', 'scripts/dev.js', 'README.md', 'src/renderer/App.tsx']) {
+    for (const kept of [
+      'src/main/pty/session-manager.ts', 'docs/architecture.md', 'scripts/dev.js', 'README.md', 'src/renderer/App.tsx',
+      // Lookalikes of a secret file's name that are ordinary source.
+      'src/env.ts', 'src/keyboard.ts',
+    ]) {
       expect(isIndexableCodePath(kept), kept).toBe(true);
     }
     for (const skipped of [
@@ -48,6 +52,19 @@ describe('code records', () => {
       'dist/index.js', 'node_modules/left-pad/index.js', 'models/embed.onnx',
     ]) {
       expect(isIndexableCodePath(skipped), skipped).toBe(false);
+    }
+  });
+
+  it('never indexes a key or credential file, wherever it sits and however it is named', () => {
+    // A passage is handed to the answering agent, and none of these matches any
+    // other skip rule: each is caught by the secret-file rule alone.
+    for (const secret of [
+      '.env', 'config/.env.production', '.env.local', 'apps/web/.env.staging',
+      'certs/server.pem', 'deploy/site.key', 'keys/signing.p12', 'keys/client.pfx', 'android/release.jks', 'android/upload.keystore',
+      '.npmrc', 'packages/app/.npmrc', '.pypirc', '.netrc',
+      'ops/id_ed25519', 'ops/id_rsa', 'ops/id_dsa', 'id_ecdsa',
+    ]) {
+      expect(isIndexableCodePath(secret), secret).toBe(false);
     }
   });
 

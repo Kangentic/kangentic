@@ -152,8 +152,9 @@ describe('related work across projects', () => {
     mockIndexes = {
       a: { semantic: [hit(1, 0.8)], placements: [placement(1, 'a1')], texts: {} },
     };
+    keywordQueries = [];
     const work = await searchRelatedWorkAcross({
-      question: 'anything',
+      question: 'relay reconnect',
       projects: [{ projectId: 'a', nodes: [node('a1', 'task-a1', 5)] }],
       embedder: null,
       getDb,
@@ -161,6 +162,9 @@ describe('related work across projects', () => {
     // No vectors, so the semantic hits are never asked for.
     expect(work.semantic).toBe(false);
     expect(work.ranked).toEqual([]);
+    // The keyword search did run, on the question's words: it is the only way
+    // left to find anything, and the fake store answers it with no match.
+    expect(keywordQueries).toEqual(['"relay" OR "reconnect"']);
   });
 });
 

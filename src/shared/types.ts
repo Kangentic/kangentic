@@ -3389,8 +3389,9 @@ export interface AppConfig {
     /** The Knowledge Graph switch: the semantic (embedding) layer on top of
      *  lexical search, which the map, Ask, task summaries and source code all
      *  need. Default false; turning it on triggers the one-time download of the
-     *  local model that finds by meaning. The key keeps its old name, since
-     *  configs already carry it. */
+     *  local model that finds by meaning. A config written before the rename
+     *  carries it as `memory.semanticEnabled`, which `legacy-memory-keys.ts`
+     *  moves here once. */
     enabled?: boolean;
     /** Selected embedding model id (see src/shared/embedding-models.ts). Default
      *  'bge-base'. Switching re-embeds the index in the background. */
@@ -6649,8 +6650,8 @@ export interface ElectronAPI {
   // Conversation memory (search index) status + proactive surfaces.
   knowledgeGraph: {
     getStatus: () => Promise<KnowledgeGraphStatus>;
-    /** Spawn + init the embedding worker ahead of the first Smart query, so
-     *  Quick Find's typing time covers the cold start. Fire-and-forget. With a
+    /** Spawn + init the embedding worker ahead of the first question, so the
+     *  time spent typing it covers the cold start. Fire-and-forget. With a
      *  chat (the Knowledge Graph opening), also starts the answering agent's
      *  warm session for it. */
     prewarm: (chat?: KnowledgeGraphAnswerPrewarm) => void;
@@ -6849,7 +6850,7 @@ export interface SearchRequest {
   mode?: 'keyword' | 'smart';
 }
 
-/** Runtime state of the semantic (embedding) layer, for the Search
+/** Runtime state of the semantic (embedding) layer, for the Knowledge Graph
  *  settings tab. `lexical` = enabled but sqlite-vec unavailable, so search stays lexical. */
 export type KnowledgeGraphSemanticState = 'disabled' | 'downloading' | 'lexical' | 'hybrid' | 'error';
 
@@ -7122,9 +7123,9 @@ export interface KnowledgeGraphRelatedTask {
   projectId?: string;
   projectName?: string;
   /**
-   * The ref the answer uses for this task, exactly as written: \`#561\`, or
-   * \`mobile#88\` for a task outside the open project in a question asked across
-   * projects, since ticket numbers repeat between projects. Absent means \`#N\`.
+   * The ref the answer uses for this task, exactly as written: `#561`, or
+   * `mobile#88` for a task outside the open project in a question asked across
+   * projects, since ticket numbers repeat between projects. Absent means `#N`.
    */
   ref?: string;
 }

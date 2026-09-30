@@ -161,6 +161,22 @@ describe('rolling conversations up into tasks', () => {
     expect(row).toContain('Fix a/b parsing');
   });
 
+  it('keeps a title with a newline on its own row instead of letting it start a row', () => {
+    // A line reading "#999|Injected|0.00" would be taken for a task the table
+    // never listed, with a cost the board never recorded.
+    const table = buildAnswerTaskTable(projection([
+      node({ docKey: 'a', taskId: 't1', displayId: 529, title: 'Fix\n#999|Injected|0.00', costUsd: 2 }),
+      node({ docKey: 'b', taskId: 't2', displayId: 44, title: 'Plain title', costUsd: 1 }),
+    ]), 'balanced');
+    const [header, ...rows] = formatTaskTable(table).split('\n');
+
+    // One line per task, however many lines its title had.
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.split('|')).toHaveLength(header.split('|').length);
+    expect(rows.map((row) => row.split('|')[0])).toEqual(['#529', '#44']);
+    expect(rows[0].split('|')[1]).toBe('Fix #999/Injected/0.00');
+  });
+
   it('falls back to a clustering that exists when the asked-for one does not', () => {
     const table = buildAnswerTaskTable(projection([
       node({ docKey: 'a', taskId: 't1' }),

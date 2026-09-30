@@ -460,7 +460,14 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
         };
       }
       controls.dispose();
+      // `dispose` frees the GPU resources but not the context, which lives
+      // until the canvas is collected. On a real unmount the canvas has already
+      // left the document, so the context is lost here; a rebuild for a new map
+      // (and StrictMode's rehearsal) keeps the canvas, and the next scene takes
+      // a context on that same element, so losing it there would blank the map.
+      const unmounting = !canvas.isConnected;
       scene.dispose();
+      if (unmounting) scene.renderer.forceContextLoss();
       controlsRef.current = null;
       sceneRef.current = null;
       // Released only after the context is genuinely gone, so the coordinator
@@ -474,7 +481,10 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
   }, [signature, canvasRef, containerRef, requestRender]);
 
   // Link colour follows the theme, which can change without the data changing.
+  // The scene is built with the colour of its own render, and the host reads
+  // the theme token a commit later, so the first scene needs this too.
   useEffect(() => {
+    sceneRef.current?.setEdgeColor(edgeColor);
     requestRender();
   }, [edgeColor, requestRender]);
 

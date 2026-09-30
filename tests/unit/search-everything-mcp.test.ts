@@ -1227,6 +1227,118 @@ describe('kangentic_search MCP tool', () => {
     });
   });
 
+  describe('an answer run\'s project scope', () => {
+    // The user chose the projects a question is asked across, and the Privacy
+    // tab names what an answer sends. The search tool is the one door an agent
+    // has to a project's history, so it keeps to those projects whatever
+    // `project` or `scope` the agent passes.
+    const THIRD_PROJECT_ID = '33333333-3333-4333-8333-333333333333';
+    const THIRD_PROJECT = makeProject({ id: THIRD_PROJECT_ID, name: 'Third', path: '/tmp/third' });
+
+    /** A resolver with three registered projects, of which a question is asked across some. */
+    function threeProjectResolver(): RequestResolver {
+      const registered = makeResolver();
+      vi.mocked(registered.listProjectsRaw).mockReturnValue([DEFAULT_PROJECT, OTHER_PROJECT, THIRD_PROJECT]);
+      return registered;
+    }
+
+    /** The projects the search core was asked to scan, and the ones it may name in project hits. */
+    function scannedProjects() {
+      const call = mockRunSearchEverything.mock.calls[0][0] as unknown as {
+        projects: Project[];
+        projectsForProjectHits: Project[];
+        includeProjectHits: boolean;
+      };
+      return {
+        scanned: call.projects.map((project) => project.id),
+        nameable: call.projectsForProjectHits.map((project) => project.id),
+        includeProjectHits: call.includeProjectHits,
+      };
+    }
+
+    it('refuses a project the question was not asked across, and names the ones it was', async () => {
+      const handler = registerServer(threeProjectResolver(), 'answer-scope-1');
+      const stop = watchAnswerSearches('answer-scope-1', () => undefined, [DEFAULT_PROJECT_ID, THIRD_PROJECT_ID]);
+      try {
+        const result = await handler({ query: 'relay', project: 'Other' });
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe('This question is asked across Default, Third. Search only those.');
+        // Nothing was read from the project it may not search.
+        expect(mockRunSearchEverything).not.toHaveBeenCalled();
+        expect(mockSearchCommits).not.toHaveBeenCalled();
+        expect(mockGetProjectDb).not.toHaveBeenCalled();
+      } finally {
+        stop();
+      }
+    });
+
+    it('still searches a project the question was asked across when the agent names it', async () => {
+      const handler = registerServer(threeProjectResolver(), 'answer-scope-2');
+      const stop = watchAnswerSearches('answer-scope-2', () => undefined, [DEFAULT_PROJECT_ID, OTHER_PROJECT_ID]);
+      try {
+        const result = await handler({ query: 'relay', project: 'Other' });
+
+        expect(result.isError).toBeUndefined();
+        expect(scannedProjects().scanned).toEqual([OTHER_PROJECT_ID]);
+      } finally {
+        stop();
+      }
+    });
+
+    it('searches only the projects the question was asked across when the agent passes scope "all"', async () => {
+      const handler = registerServer(threeProjectResolver(), 'answer-scope-3');
+      const stop = watchAnswerSearches('answer-scope-3', () => undefined, [DEFAULT_PROJECT_ID, OTHER_PROJECT_ID]);
+      try {
+        await handler({ query: 'relay', scope: 'all' });
+
+        const { scanned, nameable, includeProjectHits } = scannedProjects();
+        expect(scanned).toEqual([DEFAULT_PROJECT_ID, OTHER_PROJECT_ID]);
+        // Project-name hits come from the same list, so the third project's name does not leak.
+        expect(includeProjectHits).toBe(true);
+        expect(nameable).toEqual([DEFAULT_PROJECT_ID, OTHER_PROJECT_ID]);
+        // Its commits are not read either.
+        expect(mockGetProjectDb.mock.calls.map(([projectId]) => projectId)).toEqual([DEFAULT_PROJECT_ID, OTHER_PROJECT_ID]);
+      } finally {
+        stop();
+      }
+    });
+
+    it('does not limit an answer run whose question names no projects', async () => {
+      const handler = registerServer(threeProjectResolver(), 'answer-scope-4');
+      const stop = watchAnswerSearches('answer-scope-4', () => undefined);
+      try {
+        await handler({ query: 'relay', scope: 'all' });
+
+        expect(scannedProjects().scanned).toEqual([DEFAULT_PROJECT_ID, OTHER_PROJECT_ID, THIRD_PROJECT_ID]);
+      } finally {
+        stop();
+      }
+    });
+
+    it('spends none of the question\'s searches on a call it refuses', async () => {
+      const handler = registerServer(threeProjectResolver(), 'answer-scope-5');
+      const stop = watchAnswerSearches('answer-scope-5', () => undefined, [DEFAULT_PROJECT_ID]);
+      try {
+        // More refusals than the budget: were each one to claim a search, none would be left.
+        for (let attempt = 0; attempt <= ANSWER_SEARCH_BUDGET; attempt += 1) {
+          const refused = await handler({ query: 'relay', project: 'Other' });
+          expect(refused.isError).toBe(true);
+          expect(refused.content[0].text).toContain('Search only those.');
+        }
+        for (let search = 0; search < ANSWER_SEARCH_BUDGET; search += 1) {
+          const result = await handler({ query: `query ${search}` });
+          expect(result.isError).toBeUndefined();
+          expect(result.content[0].text).not.toContain('answer now from what you have already found');
+        }
+        const overBudget = await handler({ query: 'one more' });
+        expect(overBudget.content[0].text).toContain('answer now from what you have already found');
+      } finally {
+        stop();
+      }
+    });
+  });
+
   it('renders turnUuid as n/a when a conversation hit lost its anchor', async () => {
     mockRunSearchEverything.mockResolvedValueOnce([
       {

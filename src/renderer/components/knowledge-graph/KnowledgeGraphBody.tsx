@@ -222,21 +222,19 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     setDetailTrail([]);
   }, []);
 
-  /** A hop along a link: remember where we came from. */
+  /** A hop along a link: remember where we came from. Both states are set
+   *  side by side, never one inside the other's updater: an updater must be
+   *  pure, and StrictMode runs it twice, which pushed every hop twice. */
   const followNeighbor = useCallback((index: number) => {
-    setSelectedIndex((current) => {
-      if (current !== null) setDetailTrail((trail) => [...trail, current]);
-      return index;
-    });
-  }, []);
+    if (selectedIndex !== null) setDetailTrail((trail) => [...trail, selectedIndex]);
+    setSelectedIndex(index);
+  }, [selectedIndex]);
 
   const goBack = useCallback(() => {
-    setDetailTrail((trail) => {
-      if (trail.length === 0) return trail;
-      setSelectedIndex(trail[trail.length - 1]);
-      return trail.slice(0, -1);
-    });
-  }, []);
+    if (detailTrail.length === 0) return;
+    setSelectedIndex(detailTrail[detailTrail.length - 1]);
+    setDetailTrail(detailTrail.slice(0, -1));
+  }, [detailTrail]);
 
   const indexByDocKey = useMemo(() => {
     const map = new Map<string, number>();

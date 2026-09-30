@@ -349,6 +349,22 @@ function toLinearTriplet(css: string): [number, number, number] {
   return [color.r, color.g, color.b];
 }
 
+/**
+ * The identity of a set of node indices: its size and an order-free checksum
+ * of every member. Two sets that share their first few members (a follow-up
+ * turn lighting a set of the same size) key apart, and the same members in
+ * another order key the same.
+ */
+export function nodeSetKey(indices: ReadonlyArray<number>): string {
+  let sum = 0;
+  let mixed = 0;
+  for (const index of indices) {
+    sum = (sum + index) >>> 0;
+    mixed = (mixed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0;
+  }
+  return `${indices.length}:${sum}:${mixed}`;
+}
+
 export function KnowledgeGraphCanvas({
   projection,
   highlighted,
@@ -1193,7 +1209,7 @@ export function KnowledgeGraphCanvas({
   const flyTarget = focusIndices && focusIndices.length > 0
     ? focusIndices
     : highlighted && highlighted.size > 0 ? [...highlighted] : null;
-  const flyKey = flyTarget ? `${flyTarget.length}:${flyTarget.slice(0, 8).join(',')}` : null;
+  const flyKey = flyTarget ? nodeSetKey(flyTarget) : null;
   const flewToTargetRef = useRef(false);
   useEffect(() => {
     if (!graph.scene) return;

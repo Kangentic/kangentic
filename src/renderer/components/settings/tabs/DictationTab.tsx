@@ -277,7 +277,9 @@ export function DictationTab({
       <SettingsCard
         icon={<Mic size={16} />}
         {...settingProps('dictation.enabled')}
-        searchIds={['dictation.releaseBufferMs', 'dictation.autoSubmit']}
+        // The Transcription card's settings too: that card is not rendered while
+        // dictation is off, so a search for one of them finds this switch.
+        searchIds={['dictation.releaseBufferMs', 'dictation.autoSubmit', 'dictation.language', 'dictation.punctuation', 'dictation.remote']}
         checked={enabled}
         onChange={(value) => updateGlobal({ dictation: { enabled: value } })}
       >

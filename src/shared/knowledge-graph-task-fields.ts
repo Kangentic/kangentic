@@ -272,7 +272,7 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
     kind: 'measure',
     selectable: true,
     describe: 'how many separate agent conversations the task ran.',
-    cell: (facts) => String(facts.sessions ?? 0),
+    cell: (facts) => (facts.sessions == null ? '' : String(facts.sessions)),
     display: (facts) => (facts.sessions == null ? null : String(facts.sessions)),
     sortValue: (facts) => facts.sessions ?? null,
   },

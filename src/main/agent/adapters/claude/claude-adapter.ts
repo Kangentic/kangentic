@@ -602,8 +602,16 @@ export class ClaudeAdapter implements AgentAdapter {
       // The MCP config carries a live token. It exists only for the duration of
       // one call, and `force` because Windows may still hold the handle for a
       // beat after the child exits. A caller's run directory is the caller's
-      // to remove.
-      if (ownsDirectory) fs.rmSync(configDirectory, { recursive: true, force: true });
+      // to remove. `force` only ignores a missing path, so a handle Windows still
+      // holds throws EBUSY; caught, or it would replace the answer or the real
+      // error, and the stale-directory sweep takes the folder later.
+      if (ownsDirectory) {
+        try {
+          fs.rmSync(configDirectory, { recursive: true, force: true });
+        } catch {
+          // Left for the sweep in answer-run-directory.ts.
+        }
+      }
     }
   }
 

@@ -337,7 +337,7 @@ describe('config write handlers - report whether the write reached disk', () => 
 });
 
 describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring', () => {
-  // Regression guard: toggling memory settings (semanticEnabled off, etc.) must
+  // Regression guard: toggling Knowledge Graph settings (enabled off, etc.) must
   // release/re-hold the resident embed worker promptly rather than waiting for
   // its next idle-recycle window. Mirrors the CONFIG_SET_PROJECT_BY_PATH
   // prRefreshScheduler wiring tests below - the call is behind a lazy dynamic

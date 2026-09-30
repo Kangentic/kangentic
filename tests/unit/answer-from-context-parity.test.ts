@@ -102,12 +102,19 @@ describe('answerFromContext parity', () => {
     // adapter that ignores it silently answers at the CLI default, and the
     // setting appears to do nothing.
     const offenders: string[] = [];
+    let checked = 0;
     for (const entry of adapterSources()) {
       const match = entry.source.match(/async answerFromContext\(([\s\S]*?)\): Promise<string>/);
       if (!match) continue;
-      if (!/model\?:\s*string \| null/.test(match[1])) offenders.push(entry.file);
+      checked += 1;
+      // One parameter per entry. No parameter type here holds a comma, so a
+      // plain split reads the list; a type that does will fail loudly below.
+      const parameters = match[1].split(',').map((parameter) => parameter.trim()).filter(Boolean);
+      if (!/^model\?:\s*string \| null$/.test(parameters[3] ?? '')) offenders.push(entry.file);
     }
-    expect(offenders, `answerFromContext must accept \`model?: string | null\``).toEqual([]);
+    // Guards the guard: a scan that matched no signature would pass vacuously.
+    expect(checked).toBeGreaterThanOrEqual(10);
+    expect(offenders, `answerFromContext must take \`model?: string | null\` as its fourth parameter`).toEqual([]);
   });
 
   it('never passes the answer prompt on the command line', () => {

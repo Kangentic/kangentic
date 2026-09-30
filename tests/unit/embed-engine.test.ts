@@ -448,8 +448,9 @@ describe('createEmbedEngine drain loop', () => {
 
     engine.attach(makeContext({ currentProjectId: 'proj-records' }));
     engine.markDirty('proj-records');
-    await vi.waitFor(() => expect(reports.at(-1)?.remaining).toBe(0));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Three progress reports and the caught-up one, whose arrival is awaited
+    // rather than slept for.
+    await vi.waitFor(() => expect(reports).toHaveLength(4));
 
     expect(RECORD_PROGRESS_INTERVAL_MS).toBe(30_000);
     expect(reports.map((report) => report.remaining)).toEqual([4, 2, 0, 0]);

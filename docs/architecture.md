@@ -499,7 +499,7 @@ Read-only structured-transcript access for the conversation viewer. Prefer the e
 | `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
-### Knowledge Graph (14 channels)
+### Knowledge Graph (13 channels)
 Conversation-memory semantic layer and the Knowledge Graph surface built on it.
 See the Knowledge Graph settings tab (id `knowledgeGraph`).
 | Channel | Pattern | Purpose |

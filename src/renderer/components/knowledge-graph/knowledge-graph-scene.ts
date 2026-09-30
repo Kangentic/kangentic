@@ -225,6 +225,9 @@ export interface KnowledgeGraphScene {
   setNodeStyles(styles: ReadonlyArray<SceneNodeStyle>, options?: { animate?: boolean }): void;
   /** Global link opacity, so "Links" can be toggled without touching geometry. */
   setEdgeOpacity(opacity: number): void;
+  /** Repaint the links between regions in a new theme colour. The links inside
+   *  a region keep their region's hue. */
+  setEdgeColor(css: string): void;
   /** Nearest node under normalized device coords, or null. */
   pick(ndcX: number, ndcY: number): number | null;
   /** Draw one frame. True while a style change is still easing, so the host
@@ -975,10 +978,13 @@ export function createKnowledgeGraphScene(options: KnowledgeGraphSceneOptions): 
    * link stays neutral, which turns the remaining grey lines into the visible
    * bridges between topics rather than undifferentiated background.
    *
-   * Set once at build time: cluster membership is a property of the projection,
-   * not of the current selection, so nothing here changes per frame.
+   * Set at build time: cluster membership is a property of the projection, not
+   * of the current selection, so nothing here changes per frame. The neutral
+   * colour is the theme's, so `setEdgeColor` repaints those links alone when the
+   * theme changes under an unchanged map.
    */
   const edgeColors = new Float32Array(edges.length * 6);
+  const neutralEdges = new Uint8Array(edges.length);
   const neutral = new Color(edgeColor);
   const tint = new Color();
   for (let index = 0; index < edges.length; index += 1) {
@@ -990,6 +996,7 @@ export function createKnowledgeGraphScene(options: KnowledgeGraphSceneOptions): 
       tint.setHSL(clusterHue(fromRegion) / 360, 0.62, 0.62);
     } else {
       tint.copy(neutral);
+      neutralEdges[index] = 1;
     }
     for (let vertex = 0; vertex < 2; vertex += 1) {
       edgeColors[index * 6 + vertex * 3] = tint.r;
@@ -1152,6 +1159,19 @@ export function createKnowledgeGraphScene(options: KnowledgeGraphSceneOptions): 
     setEdgeOpacity(opacity) {
       edgeMaterial.uniforms.baseOpacity.value = opacity;
       edgeMaterial.visible = opacity > 0;
+    },
+
+    setEdgeColor(css) {
+      neutral.set(css);
+      for (let index = 0; index < edges.length; index += 1) {
+        if (neutralEdges[index] === 0) continue;
+        for (let vertex = 0; vertex < 2; vertex += 1) {
+          edgeColors[index * 6 + vertex * 3] = neutral.r;
+          edgeColors[index * 6 + vertex * 3 + 1] = neutral.g;
+          edgeColors[index * 6 + vertex * 3 + 2] = neutral.b;
+        }
+      }
+      (edgeGeometry.getAttribute('edgeColor') as BufferAttribute).needsUpdate = true;
     },
 
     pick(ndcX, ndcY) {

@@ -1303,9 +1303,30 @@ export class RetrievalStore {
     const placeholders = ids.map(() => '?').join(',');
     const tables = isMemoryCorpus(corpus) ? [corpus] : [...MEMORY_CORPORA];
     for (const table of tables) {
-      if (!this.vecTables.has(table)) continue;
+      if (!this.hasVecTable(table)) continue;
       // vec0 rowids must be bound as BigInt (see writeEmbeddings).
       this.db.prepare(`DELETE FROM ${vecTableName(table)} WHERE rowid IN (${placeholders})`).run(...ids.map((id) => BigInt(id)));
+    }
+  }
+
+  /**
+   * Whether `corpus`'s vec table exists, looked up again when this store has
+   * not seen it. Another store on the same connection (the embedding drain's)
+   * can create it after this one was built, and a delete that skipped it would
+   * leave a vector behind for a chunk id SQLite may hand out again.
+   */
+  private hasVecTable(corpus: MemoryCorpus): boolean {
+    if (this.vecTables.has(corpus)) return true;
+    if (!EMBEDDED_CORPORA.includes(corpus) || !hasVecSupport(this.db)) return false;
+    try {
+      const exists = this.db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(vecTableName(corpus));
+      if (exists === undefined) return false;
+      this.vecTables.add(corpus);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

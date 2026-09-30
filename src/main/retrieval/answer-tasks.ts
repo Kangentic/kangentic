@@ -358,8 +358,9 @@ export function formatTaskTable(table: AnswerTaskTable): string {
   const header = ['ref', 'task', ...columns.map((field) => field.key)].join('|');
   const rows = table.rows.map((row, index) => [
     taskRef(row, index),
-    // The pipe is the delimiter, so a title carrying one would shift a column.
-    row.title.replace(/\|/g, '/'),
+    // The pipe is the delimiter, so a title carrying one would shift a column,
+    // and a newline would start a row of its own.
+    row.title.replace(/\s+/g, ' ').replace(/\|/g, '/'),
     ...columns.map((field) => field.cell(row)),
   ].join('|'));
   return [header, ...rows].join('\n');

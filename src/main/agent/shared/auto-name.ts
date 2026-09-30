@@ -606,8 +606,10 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutSize += chunk.length;
       if (stdoutSize > outputBudget) {
+        // Stopped once: every chunk past the budget lands here, and a `.cmd`
+        // shim would otherwise start one taskkill per chunk.
+        if (!terminated) stopCli(child, cliPath);
         terminated = true;
-        stopCli(child, cliPath);
       } else {
         stdoutChunks.push(chunk);
         // Forwarded as it lands, so a streaming consumer sees the text while
@@ -668,6 +670,12 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
       finish(stdout, code, terminated);
     });
 
+    // A CLI that exits before reading its stdin (a rejected flag, a failed
+    // login) closes the pipe under an answer prompt tens of thousands of
+    // characters long, and the write fails as an EPIPE event on the stream. With
+    // no listener that is an uncaught exception in main. The exit code and
+    // stderr already report the failure through `close`.
+    child.stdin.on('error', () => undefined);
     try {
       if (promptVia === 'stdin') {
         child.stdin.end(prompt);

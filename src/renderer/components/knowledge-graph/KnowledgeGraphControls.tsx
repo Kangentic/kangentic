@@ -506,8 +506,19 @@ export function KnowledgeGraphControls({
       if (indexTriggerRef.current?.contains(target)) return;
       setIndexCollapsed(true);
     };
+    // Escape closes the flyout, not the graph under it: a capture-phase
+    // listener registered only while open, as the Projects picker does.
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setIndexCollapsed(true);
+    };
     document.addEventListener('mousedown', closeOnOutsideClick, true);
-    return () => document.removeEventListener('mousedown', closeOnOutsideClick, true);
+    document.addEventListener('keydown', closeOnEscape, true);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick, true);
+      document.removeEventListener('keydown', closeOnEscape, true);
+    };
   }, [indexCollapsed]);
 
   const shownRegionCount = regions.filter((region) => !facets.hiddenRegions.has(region.id)).length;

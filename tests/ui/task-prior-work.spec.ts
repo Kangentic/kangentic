@@ -152,12 +152,13 @@ test.describe('task prior work', () => {
     }
   });
 
-  test('lists one row per task, not one per session', async () => {
+  test('renders one row per hit it is given, each a distinct piece of prior work', async () => {
     // Retrieval collapses to one hit per SESSION, and a task usually has
     // several, so the raw list repeats the same task title back at the user -
-    // which reads as a bug. The unit here is the task. (The mock returns what
-    // main would have already deduped; this pins the rendering contract that
-    // each row is a distinct piece of prior work.)
+    // which reads as a bug. The unit here is the task. The mock returns what
+    // main would already have deduped, so this pins only the rendering side:
+    // two distinct hits become two rows with two distinct titles. The dedupe
+    // itself is main's, and is not asserted here.
     const related = `[${hit('s-1', 'Terminal resize debounce', 'first session')}, ${hit('s-2', 'ConPTY width drift', 'other work')}]`;
     const { browser, page } = await launchWithState(preConfig(related));
     try {

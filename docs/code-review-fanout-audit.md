@@ -808,6 +808,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 734, second pass | 32f +1824 plus 2 new files | 260KB, 4765 lines | 9 (5) | 25 | 0 | 10 | 6 of 9 pack-carrying | 31 / 20 |
 | task 734, third pass | 37f +2922 plus 2 new files | 317KB, 5814 lines | 7 (2) | 32 | 0 | 9 | 16 of 8 pack-carrying | 35 / 28 |
 | task 529, whole branch, pre-PR | 357f +51373 -3763 | 3508KB, 61990 lines | 4 (0) | 353 | 1 | 13, sharded by area | about 47 of 12 pack-carrying | about 94 / 38 applied |
+| task 529, whole branch, second pass | 364f +53178 -3804 | 3607KB, 63938 lines | 3 (0) | 361 | 1 | 17, sharded by area, 4 over tests | about 68 of 16 pack-carrying | about 106 / 53 applied |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -976,3 +977,22 @@ with a reason or refuted; two refutations were a summary-pass retry loop that co
 schema comment that contradicted a deliberate delete. The skill has no path for a pack this size,
 and the sharding here was improvised; a threshold (about 6,000 pack lines per finder) and the
 TOC-driven shard lists are the part worth writing into the skill.
+
+The task 529 second pass re-reviewed the same branch after the first pass's fixes landed. It
+closed the gap that row named: the roughly 25,000 lines of changed tests went to four test shards
+of 5,981 to 6,611 pack lines, each with test-specific criteria, and they raised 23 of the 106
+findings. Those included two assertions on test ids that no longer exist in the renderer, a
+fixture two rows short of the count it claimed, a guard test whose only discriminating assertion
+never touched the skip list it named, and a client name in a comment. The eight source shards ran
+2,726 to 6,070 lines, with the stubbed `KnowledgeGraphCanvas.tsx` read from disk inside its shard.
+Two mechanics changed. The finders loaded their ranges in 600-line calls, and none reported the
+25,000-token cap failing. The shared criteria went into three brief files that every finder read
+first, so the driver no longer wrote the criteria out once per finder prompt. The one High finding
+came from `platform-guard`. The one-shot CLI runner wrote answer prompts of tens of thousands of
+characters to stdin with no `error` listener, so a CLI that exited early would have thrown an
+uncaught EPIPE in main. The driver refuted three findings. Two asks racing in one chat are
+impossible, because the store refuses a question while a turn is in flight. A warm session cannot
+cross projects, because its key carries the search URL. A queued question already stays in the
+draft. The main-process and renderer test-builders ran in parallel on disjoint files. One
+reverted shared source briefly while the other ran, so the driver re-ran every touched unit file
+and UI spec afterwards.

@@ -13,7 +13,7 @@
  *      full list back to the preview.
  *   5. After the dialog closes, the next agent-driven reload downgrades back to
  *      the preview: no further full `tasks.listArchived`, only the preview fetch.
- *   6. Opening a finished task older than the preview (Quick Find, the Memory
+ *   6. Opening a finished task older than the preview (Quick Find, the Knowledge
  *      Graph) loads the full archive and opens its window, never nothing.
  */
 import { test, expect } from '@playwright/test';

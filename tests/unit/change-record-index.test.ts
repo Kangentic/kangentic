@@ -70,6 +70,17 @@ describe('repoRelativePath', () => {
     expect(repoRelativePath('/home/dev/.claude/plans/plan.md', '/home/dev/app')).toBeNull();
   });
 
+  it('drops a relative path that climbs out of the repository, since it names no file in it', () => {
+    expect(repoRelativePath('../notes/plan.md', '/home/dev/app')).toBeNull();
+    expect(repoRelativePath('../../secrets.txt', null)).toBeNull();
+    expect(repoRelativePath('..\\outside\\a.ts', '/home/dev/app')).toBeNull();
+    expect(repoRelativePath('..', '/home/dev/app')).toBeNull();
+    // A plain relative path still passes through.
+    expect(repoRelativePath('src/f.ts', '/home/dev/app')).toBe('src/f.ts');
+    // A name that merely starts with two dots is a file, not the parent directory.
+    expect(repoRelativePath('..hidden/g.ts', '/home/dev/app')).toBe('..hidden/g.ts');
+  });
+
   it('drops runtime scratch and git internals, which are not the repository\'s work', () => {
     expect(repoRelativePath('/home/dev/app/.kangentic/worktrees/7/.kangentic/COMMIT_MSG.tmp', null)).toBeNull();
     expect(repoRelativePath('/home/dev/app/.git/info/exclude', '/home/dev/app')).toBeNull();

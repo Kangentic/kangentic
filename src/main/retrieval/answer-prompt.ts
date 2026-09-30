@@ -206,7 +206,10 @@ function formatSpan(table: AnswerTaskTable, nowMs: number): string {
 /** The related work as a compact table, strongest first. */
 export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): string {
   if (related.length === 0) return 'Nothing in the recorded conversations matched this question.';
-  const quote = (text: string): string => `"${outside(text).replace(/\|/g, '/').replace(/"/g, '\'')}"`;
+  // One line per row: a newline in a title or a written summary would start a
+  // row of its own, and a pipe would shift a column.
+  const cellText = (text: string): string => outside(text).replace(/\s+/g, ' ').replace(/\|/g, '/');
+  const quote = (text: string): string => `"${cellText(text).replace(/"/g, '\'')}"`;
   const header = [
     'ref', 'task', 'strength', 'matches', 'first', 'last',
     ...RELATED_FACT_FIELDS.map((field) => field.key),
@@ -215,7 +218,7 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
   ].join('|');
   const rows = related.map((task) => [
     task.ref,
-    outside(task.title).replace(/\|/g, '/'),
+    cellText(task.title),
     task.strength.toFixed(2),
     String(task.matches),
     isoDate(task.firstMs),

@@ -14,6 +14,7 @@ import {
   summaryInputHash,
   parseSummaryReply,
   SUMMARY_BATCH_SIZE,
+  SUMMARY_MAX_CHARS,
   type SummaryInput,
 } from '../../src/main/retrieval/summary/summary-prompt';
 import {
@@ -76,7 +77,12 @@ describe('the summary prompt', () => {
 
   it('cuts a summary that runs long, since it is a summary', () => {
     const summaries = parseSummaryReply(`D1: ${'word '.repeat(200)}`, 1);
-    expect((summaries.get(0) ?? '').length).toBeLessThanOrEqual(363);
+    // Present, and cut at the cap with the ellipsis after it: a summary that was
+    // dropped altogether would satisfy an upper bound alone.
+    expect(summaries.has(0)).toBe(true);
+    const summary = summaries.get(0) ?? '';
+    expect(summary.endsWith('...')).toBe(true);
+    expect(summary).toHaveLength(SUMMARY_MAX_CHARS + '...'.length);
   });
 
   it('hashes what the summary was written from, so a change to it rewrites the summary', () => {
@@ -290,8 +296,14 @@ describe('a summary pass', () => {
     const result = await runSummaryPass('project', { agent: 'claude', model: null, write }, { maxBatches: 5, shouldContinue: () => true, skip: new Set(['skipped']) }, passDeps(board.db));
 
     expect(write).toHaveBeenCalledTimes(1);
-    expect(write.mock.calls[0][0]).toContain('Title: Task new');
-    expect(write.mock.calls[0][0]).not.toContain('Title: Task kept');
+    const prompt = write.mock.calls[0][0];
+    expect(prompt).toContain('Title: Task new');
+    expect(prompt).not.toContain('Title: Task kept');
+    // `skipped` has no summary and is not current either, so only the skip list
+    // holds it out. `written` is 1 whether or not it is asked about, since the
+    // reply answers D1 alone; the prompt is what tells the two apart.
+    expect(prompt).not.toContain('Title: Task skipped');
+    expect((prompt.match(/<task label=/g) ?? []).length).toBe(1);
     expect(result.written).toBe(1);
   });
 
