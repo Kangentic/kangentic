@@ -36,6 +36,14 @@ interface ExistingChunkRow {
 export const CHUNKS_PER_TRANSACTION = 64;
 export const DELETES_PER_TRANSACTION = 256;
 
+/**
+ * Bytes of document sums written per transaction, and sums rows deleted per
+ * one. A row holds two Float64 sums, 16 KB at 1,024 dimensions, so the cap is
+ * the same 256 KB a record slice may write (`timed-slices.ts`).
+ */
+const SUM_BYTES_PER_TRANSACTION = 256 * 1024;
+const DOC_SUMS_DELETED_PER_TRANSACTION = 16;
+
 interface StoredChunkRow {
   id: number;
   corpus: string;
@@ -88,6 +96,67 @@ function toStoredChunk(row: StoredChunkRow): StoredChunk {
 /** A corpus list for SQL: one placeholder per corpus. */
 function corpusPlaceholders(corpora: ReadonlyArray<MemoryCorpus>): string {
   return corpora.map(() => '?').join(',');
+}
+
+/** Prepared statements per connection (see `RetrievalStore.prepared`). Weak, so
+ *  a closed connection's statements go with it. */
+const statementCaches = new WeakMap<Database.Database, Map<string, Database.Statement>>();
+
+/** One of a document's chunks as a projection pass reads it. */
+export interface ChunkState {
+  id: number;
+  seq: number;
+  embedded: boolean;
+  textBytes: number;
+}
+
+/** A document's stored prefix (see `memory_doc_sums` in the project schema). */
+export interface DocSumPrefix {
+  /** -1 when the document has no prefix. */
+  prefixThroughSeq: number;
+  prefixCount: number;
+  prefixTextBytes: number;
+  prefixSum: Float64Array | null;
+}
+
+/** A document's stored prefix as `docSumPrefix` reads it. */
+export interface StoredDocSumPrefix extends DocSumPrefix {
+  version: number;
+  modelTag: string;
+  dimensions: number;
+}
+
+/** A document's stored sums, as a page of them reads. */
+export interface DocSumRow {
+  docId: string;
+  version: number;
+  modelTag: string;
+  dimensions: number;
+  chunkCount: number;
+  embeddedCount: number;
+  indexedAt: string | null;
+  textBytes: number;
+  foldedCount: number;
+  fullSum: Float64Array | null;
+  prefixThroughSeq: number;
+}
+
+/** Sums a pass computed for one document, and the row version it read. */
+export interface DocSumWrite extends Omit<DocSumRow, 'version'>, Omit<DocSumPrefix, 'prefixThroughSeq'> {
+  /** The row's version when the pass read it, or null when there was no row. */
+  expectedVersion: number | null;
+}
+
+/** A Float64 sum from its stored bytes, copied so it does not alias SQLite's buffer. */
+function toFloat64(blob: Buffer | null): Float64Array | null {
+  if (!blob || blob.byteLength === 0 || blob.byteLength % 8 !== 0) return null;
+  const sum = new Float64Array(blob.byteLength / 8);
+  new Uint8Array(sum.buffer).set(blob);
+  return sum;
+}
+
+function toBlob(sum: Float64Array | null): Buffer | null {
+  return sum ? Buffer.from(sum.buffer, sum.byteOffset, sum.byteLength) : null;
 }
 
 /**
@@ -296,9 +365,9 @@ export class RetrievalStore {
   }
 
   /** Every corpus, and what was derived from it, gone: the Privacy "clear
-   *  index". That includes the graph's cached map, its per-document sums and
-   *  its region names (the `graph_` meta keys), which carry titles, cost and
-   *  task ids read from the cleared chunks. */
+   *  index". That includes the graph's per-document sums (`purgeCorpora`), and
+   *  its cached map and region names (the `graph_` meta keys), which carry
+   *  titles, cost and task ids read from the cleared chunks. */
   purgeAll(): void {
     this.purgeCorpora(MEMORY_CORPORA);
     writeTransaction(this.db, () => {
@@ -333,6 +402,20 @@ export class RetrievalStore {
         if (this.hasVecTable(corpus)) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
       }
     })();
+    for (const corpus of corpora) this.clearDocSums(corpus);
+  }
+
+  /** Every stored document sum of one corpus, a few rows per transaction:
+   *  each row is two vector sums, 16 KB at 1,024 dimensions. */
+  private clearDocSums(corpus: MemoryCorpus): void {
+    const clearPage = this.prepared(
+      `DELETE FROM memory_doc_sums WHERE rowid IN
+         (SELECT rowid FROM memory_doc_sums WHERE corpus = ? LIMIT ${DOC_SUMS_DELETED_PER_TRANSACTION})`,
+    );
+    for (;;) {
+      const cleared = writeTransaction(this.db, () => clearPage.run(corpus).changes)();
+      if (cleared === 0) break;
+    }
   }
 
   /** Chunks gone by id, `DELETES_PER_TRANSACTION` at a time, with their
@@ -728,6 +811,9 @@ export class RetrievalStore {
     })();
     this.vecTables.clear();
     for (const corpus of EMBEDDED_CORPORA) this.vecTables.add(corpus);
+    // Sums of vectors at the old width. The pass would replace them anyway,
+    // since each row names its model and width; this frees them now.
+    for (const corpus of MEMORY_CORPORA) this.clearDocSums(corpus);
   }
 
   /**
@@ -877,55 +963,143 @@ export class RetrievalStore {
   }
 
   /**
-   * One page of chunk identities, ascending by id, for the Knowledge Graph's
-   * projection scan. Ordered and cursored by `id` so a pass can resume from
-   * `afterChunkId` instead of rescanning the corpus.
-   *
-   * Paging `memory_chunks` (a real B-tree) and then fetching those rowids from
-   * the vec table is deliberate: `memory_chunks_vec` is a vec0 virtual table
-   * whose cost is dominated by per-row blob decode, so there is no cheaper
-   * ordering to be had on that side.
-   *
-   * One corpus at a time, through `idx_memory_chunks_corpus (corpus)`, which
-   * carries rowid, so the page is a range seek in id order. Filtering by corpus
-   * any other way let the planner pick the (corpus, doc_id, seq) index and sort
-   * the whole corpus for every page: 142 ms against 0.2 ms, measured.
+   * A page of one document's chunks after `afterSeq`, in seq order: each one's
+   * id, whether it has a vector, and its text size in bytes. What a projection
+   * pass reads of a changed document, from its stored prefix on (-1 for the
+   * whole of it). A range seek on the table's UNIQUE(corpus, doc_id, seq)
+   * index. `octet_length` reads a value's size without reading the value:
+   * 11 ms against 70 ms for `length`, which counts characters, over 50 MB.
    */
-  listChunkIdentities(afterChunkId: number, limit: number, corpus: MemoryCorpus): Array<{
-    id: number;
-    corpus: string;
-    docId: string;
-  }> {
-    return this.db
-      .prepare(
-        `SELECT id, corpus, doc_id AS docId FROM memory_chunks
-         WHERE corpus = ? AND id > ? AND embedded_model IS NOT NULL
-         ORDER BY id ASC
-         LIMIT ?`,
-      )
-      .all(corpus, afterChunkId, limit) as Array<{ id: number; corpus: string; docId: string }>;
+  chunkStatesAfter(corpus: MemoryCorpus, docId: string, afterSeq: number, limit: number): ChunkState[] {
+    const rows = this.prepared(
+      `SELECT id, seq, embedded_model IS NOT NULL AS embedded, octet_length(text) AS textBytes
+       FROM memory_chunks WHERE corpus = ? AND doc_id = ? AND seq > ? ORDER BY seq LIMIT ?`,
+    ).all(corpus, docId, afterSeq, limit) as Array<{ id: number; seq: number; embedded: number; textBytes: number | null }>;
+    return rows.map((row) => ({ id: row.id, seq: row.seq, embedded: row.embedded === 1, textBytes: row.textBytes ?? 0 }));
+  }
+
+  /** A page of stored document sums, in doc id order, without their prefixes
+   *  (read per changed document with `docSumPrefix`). */
+  docSumsPage(corpus: MemoryCorpus, afterDocId: string, limit: number): DocSumRow[] {
+    const rows = this.prepared(
+      `SELECT doc_id AS docId, version, model_tag AS modelTag, dimensions, chunk_count AS chunkCount,
+              embedded_count AS embeddedCount, indexed_at AS indexedAt, text_bytes AS textBytes,
+              folded_count AS foldedCount, full_sum AS fullSum, prefix_through_seq AS prefixThroughSeq
+       FROM memory_doc_sums WHERE corpus = ? AND doc_id > ? ORDER BY doc_id LIMIT ?`,
+    ).all(corpus, afterDocId, limit) as Array<Omit<DocSumRow, 'fullSum'> & { fullSum: Buffer | null }>;
+    return rows.map((row) => ({ ...row, fullSum: toFloat64(row.fullSum) }));
+  }
+
+  /** One document's stored prefix, with the model it was summed under and the
+   *  row's version it was read at. */
+  docSumPrefix(corpus: MemoryCorpus, docId: string): StoredDocSumPrefix | null {
+    const row = this.prepared(
+      `SELECT version, model_tag AS modelTag, dimensions, prefix_through_seq AS prefixThroughSeq,
+              prefix_count AS prefixCount, prefix_text_bytes AS prefixTextBytes, prefix_sum AS prefixSum
+       FROM memory_doc_sums WHERE corpus = ? AND doc_id = ?`,
+    ).get(corpus, docId) as (Omit<StoredDocSumPrefix, 'prefixSum'> & { prefixSum: Buffer | null }) | undefined;
+    return row ? { ...row, prefixSum: toFloat64(row.prefixSum) } : null;
   }
 
   /**
-   * The embedded chunk identities of the given documents, ascending by id, for
-   * an incremental projection pass that reads again only the documents whose
-   * chunks changed. One seek per document on `idx_memory_chunks_doc_embedded
-   * (corpus, doc_id, embedded_model)`, and only embedded chunks, the same ones
-   * `documentChunkTotals` counts as `embeddedCount`, so a document read here
-   * accumulates the count the next pass compares against.
+   * Store document sums a projection pass computed, each only if its document
+   * is still what the pass read. A pass reads a row, then yields while it reads
+   * vectors, and the index can change under it in between: a turn's re-index, a
+   * trigger emptying the prefix, another pass. So, inside one transaction, a
+   * write goes in only when the row's version is the one the pass read (or there
+   * is still no row), the live chunk and embedded counts are the ones it folded,
+   * and the index time has not moved (an absent one, mid Rebuild, has not moved).
+   * Anything else is skipped and read again by the next pass. Written
+   * `SUM_BYTES_PER_TRANSACTION` of sums at a time. Returns how many went in.
    */
-  listDocumentChunkIdentities(corpus: MemoryCorpus, docIds: ReadonlyArray<string>): Array<{
-    id: number;
-    corpus: string;
-    docId: string;
-  }> {
-    if (docIds.length === 0) return [];
-    const statement = this.db.prepare(
-      `SELECT id, corpus, doc_id AS docId FROM memory_chunks
-       WHERE corpus = ? AND doc_id = ? AND embedded_model IS NOT NULL
-       ORDER BY id ASC`,
+  writeDocSums(corpus: MemoryCorpus, writes: ReadonlyArray<DocSumWrite>): number {
+    let written = 0;
+    let batch: DocSumWrite[] = [];
+    let batchBytes = 0;
+    for (const write of writes) {
+      const bytes = (write.fullSum?.byteLength ?? 0) + (write.prefixSum?.byteLength ?? 0);
+      if (batch.length > 0 && batchBytes + bytes > SUM_BYTES_PER_TRANSACTION) {
+        written += this.writeDocSumsBatch(corpus, batch);
+        batch = [];
+        batchBytes = 0;
+      }
+      batch.push(write);
+      batchBytes += bytes;
+    }
+    if (batch.length > 0) written += this.writeDocSumsBatch(corpus, batch);
+    return written;
+  }
+
+  private writeDocSumsBatch(corpus: MemoryCorpus, writes: ReadonlyArray<DocSumWrite>): number {
+    const currentVersion = this.prepared('SELECT version FROM memory_doc_sums WHERE corpus = ? AND doc_id = ?');
+    // Covered by (corpus, doc_id, embedded_model): the counts never read the table.
+    const liveCounts = this.prepared(
+      'SELECT COUNT(*) AS chunks, COUNT(embedded_model) AS embedded FROM memory_chunks WHERE corpus = ? AND doc_id = ?',
     );
-    return docIds.flatMap((docId) => statement.all(corpus, docId) as Array<{ id: number; corpus: string; docId: string }>);
+    const liveIndexedAt = this.prepared('SELECT indexed_at AS indexedAt FROM memory_index_state WHERE corpus = ? AND doc_id = ?');
+    const upsert = this.prepared(
+      `INSERT INTO memory_doc_sums
+         (corpus, doc_id, version, model_tag, dimensions, chunk_count, embedded_count, indexed_at, text_bytes,
+          folded_count, full_sum, prefix_through_seq, prefix_count, prefix_text_bytes, prefix_sum)
+       VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(corpus, doc_id) DO UPDATE SET
+         version = memory_doc_sums.version + 1,
+         model_tag = excluded.model_tag, dimensions = excluded.dimensions,
+         chunk_count = excluded.chunk_count, embedded_count = excluded.embedded_count,
+         indexed_at = excluded.indexed_at, text_bytes = excluded.text_bytes,
+         folded_count = excluded.folded_count, full_sum = excluded.full_sum,
+         prefix_through_seq = excluded.prefix_through_seq, prefix_count = excluded.prefix_count,
+         prefix_text_bytes = excluded.prefix_text_bytes, prefix_sum = excluded.prefix_sum`,
+    );
+    return writeTransaction(this.db, () => {
+      let written = 0;
+      for (const write of writes) {
+        const row = currentVersion.get(corpus, write.docId) as { version: number } | undefined;
+        if ((row?.version ?? null) !== write.expectedVersion) continue;
+        const counts = liveCounts.get(corpus, write.docId) as { chunks: number; embedded: number };
+        if (counts.chunks !== write.chunkCount || counts.embedded !== write.embeddedCount) continue;
+        const stamp = (liveIndexedAt.get(corpus, write.docId) as { indexedAt: string } | undefined)?.indexedAt ?? null;
+        if (stamp !== null && stamp !== write.indexedAt) continue;
+        upsert.run(
+          corpus, write.docId, write.modelTag, write.dimensions, write.chunkCount, write.embeddedCount,
+          write.indexedAt, write.textBytes, write.foldedCount, toBlob(write.fullSum),
+          write.prefixThroughSeq, write.prefixCount, write.prefixTextBytes, toBlob(write.prefixSum),
+        );
+        written += 1;
+      }
+      return written;
+    })();
+  }
+
+  /** Stored sums of documents no longer in the index, a few rows per transaction. */
+  deleteDocSums(corpus: MemoryCorpus, docIds: ReadonlyArray<string>): void {
+    for (let start = 0; start < docIds.length; start += DOC_SUMS_DELETED_PER_TRANSACTION) {
+      const batch = docIds.slice(start, start + DOC_SUMS_DELETED_PER_TRANSACTION);
+      writeTransaction(this.db, () => {
+        this.db
+          .prepare(`DELETE FROM memory_doc_sums WHERE corpus = ? AND doc_id IN (${batch.map(() => '?').join(',')})`)
+          .run(corpus, ...batch);
+      })();
+    }
+  }
+
+  /**
+   * `db.prepare(sql)`, prepared once per connection and reused. Preparing is
+   * not free: a fresh commit sweep spent 102 ms of one stall profile in the
+   * statement constructor, where the same few statements were prepared per call.
+   */
+  private prepared(sql: string): Database.Statement {
+    let cache = statementCaches.get(this.db);
+    if (!cache) {
+      cache = new Map();
+      statementCaches.set(this.db, cache);
+    }
+    let statement = cache.get(sql);
+    if (!statement) {
+      statement = this.db.prepare(sql);
+      cache.set(sql, statement);
+    }
+    return statement;
   }
 
   /**
@@ -980,7 +1154,7 @@ export class RetrievalStore {
 
   /**
    * When each document in `corpus` was last indexed, keyed by doc id. An
-   * incremental projection pass compares it with the time its cached sum was
+   * incremental projection pass compares it with the time its stored sum was
    * read at, because a document rewritten at the same embedded count (a live
    * conversation's tail chunk growing in place) moves no count. One range seek
    * on the `(corpus, doc_id)` primary key.
@@ -1272,13 +1446,12 @@ export class RetrievalStore {
     return { documents, chunks, embedded };
   }
 
-  /** Characters of text held in some corpora. For the small ones: the
-   *  conversation total is a paged scan in the projection pass (see
-   *  `indexedTextBytesPage`). */
+  /** Bytes of text held in some corpora. For the small ones: the conversation
+   *  total is the projection pass's sum of its per-document sizes. */
   corpusTextBytes(corpora: ReadonlyArray<MemoryCorpus>): number {
     if (corpora.length === 0) return 0;
     const row = this.db
-      .prepare(`SELECT COALESCE(SUM(length(text)), 0) AS bytes FROM memory_chunks WHERE corpus IN (${corpusPlaceholders(corpora)})`)
+      .prepare(`SELECT COALESCE(SUM(octet_length(text)), 0) AS bytes FROM memory_chunks WHERE corpus IN (${corpusPlaceholders(corpora)})`)
       .get(...corpora) as { bytes: number };
     return row.bytes;
   }
@@ -1353,42 +1526,6 @@ export class RetrievalStore {
     return this.db.prepare(BOARD_TASK_FACTS_SQL).all() as BoardTaskFactsRow[];
   }
 
-  /**
-   * One PAGE of the indexed chunk-text byte total, resuming after `afterChunkId`.
-   *
-   * Pageable rather than a single `SUM(length(text))` because better-sqlite3 is
-   * synchronous and the whole scan measured ~170ms over the real corpus's 52k
-   * chunks. Every other block in the projection pass is chunked precisely so no
-   * single step exceeds a frame budget, and a 170ms statement is a long task by
-   * any definition - it would have been the one unpaced block in a pass whose
-   * entire design premise is that it never blocks the main thread.
-   *
-   * `lastChunkId` is 0 when the page came back empty, which is how the caller
-   * knows it has reached the end. Callers must keep this on the pass side, never
-   * on `getSnapshot`, which is a cheap read on the IPC path.
-   *
-   * The vector half needs no query at all: vec0 rows are fixed-width, so it is
-   * exactly `embeddedChunks * dimensions * 4` (verified against the live table,
-   * which held uniform 4096-byte blobs at 1024 dimensions).
-   */
-  indexedTextBytesPage(afterChunkId: number, limit: number, corpus: MemoryCorpus): { bytes: number; lastChunkId: number } {
-    const rows = this.db
-      .prepare(
-        `SELECT id, length(text) AS bytes
-         FROM memory_chunks
-         WHERE corpus = ? AND id > ?
-         ORDER BY id
-         LIMIT ?`,
-      )
-      .all(corpus, afterChunkId, limit) as Array<{ id: number; bytes: number | null }>;
-    let bytes = 0;
-    let lastChunkId = 0;
-    for (const row of rows) {
-      bytes += row.bytes ?? 0;
-      lastChunkId = row.id;
-    }
-    return { bytes, lastChunkId };
-  }
 
   /**
    * What is ACTUALLY stored in the vec table: its width, and the model tag the

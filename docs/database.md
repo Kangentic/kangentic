@@ -713,23 +713,53 @@ One summary per finished task: a sentence or two the Knowledge Graph's agent wro
 ### memory_meta table
 
 Key/value bookkeeping for the memory index. The Privacy "clear index" deletes every `graph_` key
-with the chunks, since the cached map, its sums and its region names are read from them.
+with the chunks, since the cached map and its region names are read from them.
 
 - `chunker_version` - a mismatch against the current chunker version purges and reindexes the project's conversations and the session changes read from them; task records are left in place.
 - `vec_dims` - the width of the vector tables, set from the selected embedding model. A change forces a full re-embed, since vec0 tables are fixed-width.
 - `graph_projection_v11` - the Knowledge Graph's cached projection (nodes, edges, the three region carve-ups, the 3D layout, each conversation's agent/model/effort and its duration/cost/tokens, the exact per-node neighbour lists, the index size on disk, and the corpus signature it was built from), JSON-encoded. The version suffix must be bumped whenever the payload SHAPE changes, because the freshness signature does not move for it and a stale blob would otherwise be served and rendered. It is bumped for a change to the CLUSTERING too, for the same reason: v6 chose the region count from the data, v8 replaced that score with a size rule, and v10 raised the region ceiling and stopped choosing the count from a leading slice of the corpus - none of which alters the shape, but each of which would otherwise keep serving the previous carve-up forever.
-- `graph_projection_sums_v1` - the per-document running vector SUMS behind that projection, with the embedded chunk count each one folded in and its `memory_index_state.indexed_at` as the pass read it. A rebuild reads again only the documents whose live embedded count or index time no longer matches (a re-indexed or growing conversation, a tail chunk rewritten in place at the same count, or a new one), by doc key, and forgets the ones gone; every other document keeps its cached sum. A blob written before the index times were recorded is read again whole, once. By doc key because a re-index mints new ids that can sit below any cursor. Reading every embedding costs ~62s on a large corpus, so this is what keeps that a one-time cost rather than a per-rebuild one.
 - `graph_region_names` - region names made with task summaries, laid over the cached projection: the projection signature and labeller version they were made for, whether summaries were on (`off` or the summaries' fingerprint), and the names by region id. Shown only while all three still match, so a rebuilt map or a summaries switch never shows another map's names.
 - `commit_index_head` - the ref (`origin/<base>` or `<base>`) and head sha the commit corpus was last read at, and the commit record version. A sweep whose head has not moved stops at one `git rev-parse`; a head that moved forward is read from this sha on, and anything else is read whole and reconciled. A read of the whole branch (the first, or after a rewrite) waits until a minute after launch, clear of startup's own load, and the summary pass waits with it so its summaries see the commits.
 - `commit_relink_marker` - the newest conversation `indexed_at` the last retry of young unlinked commits saw. The retry runs only when a conversation was indexed since, the one thing that can change its answer.
 - `code_index_head` - the ref and head sha the code corpus was last read at, and the code record version. A sweep whose head has not moved stops at one `git rev-parse`. One that moved lists the tree and re-reads only the files whose blob id changed, each file's blob id being kept on its `memory_index_state` row as `code-record-v<version>:<blob>`. The first fill waits until a minute after launch, as a whole-branch commit read does. The Knowledge Graph's Index panel and the Source code line in Settings read the corpus this ref fills. The ref is `origin/<base>`, else `<base>`, else `origin/HEAD`, else the checked-out HEAD.
 
-Both graph keys are version-suffixed so a format change invalidates the cache rather than being mis-parsed. The two version independently, and the projection key's two bumps are why: `v1` -> `v2` added a 3D layout beside the flat one, `v2` -> `v3` dropped the flat one so a node carries a single `x, y, z`. The freshness signature is `modelTag:chunkCount:maxChunkId`, which a change to the layout's SHAPE does not move, so without a bump an older blob would have matched and been served with coordinates the renderer does not have. The sums key stayed at `v1` through both, because the vector sums were unaffected - which made each rebuild the ~330ms kNN plus layout rather than the full 62s scan. Bump the projection key on every shape change; the signature will not do it for you.
+The projection key is version-suffixed so a format change invalidates the cache rather than being mis-parsed: `v1` -> `v2` added a 3D layout beside the flat one, `v2` -> `v3` dropped the flat one so a node carries a single `x, y, z`. The freshness signature is `modelTag:chunkCount:maxChunkId`, which a change to the layout's SHAPE does not move, so without a bump an older blob would have matched and been served with coordinates the renderer does not have. Bump the projection key on every shape change; the signature will not do it for you. The vector sums behind the projection are rows of `memory_doc_sums`, so a layout change leaves them alone and a rebuild stays the kNN plus the layout rather than a read of every vector.
 
 | Column | Type | Constraints |
 |--------|------|-------------|
 | key | TEXT | PRIMARY KEY |
 | value | TEXT | NOT NULL |
+
+### memory_doc_sums table
+
+Each document's vector sum behind the Knowledge Graph's projection (`src/main/retrieval/graph/projection-engine.ts`), so a rebuild reads the vectors of changed documents only. Reading every embedding costs about 62 s on a large index (vec0 decodes each one), which this keeps a one-time cost. The sums were one JSON blob in `memory_meta` before, 19 MB rewritten whole on every rebuild.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| corpus | TEXT | NOT NULL | |
+| doc_id | TEXT | NOT NULL | |
+| version | INTEGER | NOT NULL | 0 |
+| model_tag | TEXT | NOT NULL | |
+| dimensions | INTEGER | NOT NULL | |
+| chunk_count | INTEGER | NOT NULL | |
+| embedded_count | INTEGER | NOT NULL | |
+| indexed_at | TEXT | | |
+| text_bytes | INTEGER | NOT NULL | |
+| folded_count | INTEGER | NOT NULL | |
+| full_sum | BLOB | | |
+| prefix_through_seq | INTEGER | NOT NULL | -1 |
+| prefix_count | INTEGER | NOT NULL | 0 |
+| prefix_text_bytes | INTEGER | NOT NULL | 0 |
+| prefix_sum | BLOB | | |
+
+Constraint: `PRIMARY KEY (corpus, doc_id)`. Both sums are Float64 bytes, one value per dimension.
+
+- A row holds while its model, width, chunk and embedded counts, and `indexed_at` still match the index. The index time catches a live conversation's newest chunk rewritten at the same count. An absent index time, which Rebuild index leaves while it re-indexes, counts as unchanged.
+- The prefix is the run of chunks from seq 0 whose vectors are all in `prefix_sum`. It ends below the first chunk with no vector and two short of the newest chunk, since appending entries to a transcript rewrites at most its last chunk. A document that changed is read again from its prefix on, so a turn of a live conversation reads a few vectors, not the whole conversation.
+- Two triggers on `memory_chunks` empty the prefix and bump `version` when a chunk in it is deleted (`trg_memory_chunks_doc_sums_ad`) or loses or changes its vector (`trg_memory_chunks_doc_sums_au`). Being triggers, they hold for any path that deletes a chunk, including the session-delete cascade.
+- A pass writes a row only if its `version`, the live counts and `indexed_at` are still what it read (`RetrievalStore.writeDocSums`), so a document re-indexed while the pass yielded is read again by the next pass rather than stored stale.
+- `text_bytes` is `octet_length(text)` over the document's chunks, the text half of the index size on disk. A document with nothing embedded still has a row, for its size.
+- Rows of a document gone from the index are deleted by the next pass. A purge of a corpus (a chunker change, the Privacy "clear index") and a model switch that changes the width delete them a few rows per transaction.
 
 ### project_meta table
 

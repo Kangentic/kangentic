@@ -920,6 +920,58 @@ export function runProjectMigrations(db: Database.Database): void {
 
   db.exec('CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 
+  // Per-document vector sums for the Knowledge Graph's projection pass, so a
+  // rebuild reads only what changed (`graph/projection-engine.ts`). `full_sum`
+  // is every folded vector of the document; `prefix_sum` is those at or below
+  // `prefix_through_seq`, a run no later write can change, so a document whose
+  // tail grew is read again from there only. Both are Float64 bytes. The counts,
+  // `indexed_at` and `text_bytes` are what the pass compares against the live
+  // index to decide a row still holds, and `version` moves on every write and
+  // every invalidation, so a pass that read a row writes it back only if nothing
+  // touched it in between. Replaces the `graph_projection_sums_v1` meta blob,
+  // which was 19 MB rewritten whole on every rebuild.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_doc_sums (
+      corpus TEXT NOT NULL,
+      doc_id TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      model_tag TEXT NOT NULL,
+      dimensions INTEGER NOT NULL,
+      chunk_count INTEGER NOT NULL,
+      embedded_count INTEGER NOT NULL,
+      indexed_at TEXT,
+      text_bytes INTEGER NOT NULL,
+      folded_count INTEGER NOT NULL,
+      full_sum BLOB,
+      prefix_through_seq INTEGER NOT NULL DEFAULT -1,
+      prefix_count INTEGER NOT NULL DEFAULT 0,
+      prefix_text_bytes INTEGER NOT NULL DEFAULT 0,
+      prefix_sum BLOB,
+      PRIMARY KEY (corpus, doc_id)
+    )
+  `);
+  // A chunk leaving the prefix, by delete or by losing its vector, empties the
+  // prefix, whatever deleted it: the store's own writes, a trigger cascade from
+  // a session delete, or anything written later. Triggers rather than store
+  // code, so no path can be missed. The pass then reads that document whole.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_doc_sums_ad AFTER DELETE ON memory_chunks BEGIN
+      UPDATE memory_doc_sums
+         SET prefix_through_seq = -1, prefix_count = 0, prefix_text_bytes = 0, prefix_sum = NULL,
+             version = version + 1
+       WHERE corpus = old.corpus AND doc_id = old.doc_id AND prefix_through_seq >= old.seq;
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_doc_sums_au AFTER UPDATE OF embedded_model ON memory_chunks
+    WHEN old.embedded_model IS NOT NULL AND (new.embedded_model IS NULL OR new.embedded_model <> old.embedded_model) BEGIN
+      UPDATE memory_doc_sums
+         SET prefix_through_seq = -1, prefix_count = 0, prefix_text_bytes = 0, prefix_sum = NULL,
+             version = version + 1
+       WHERE corpus = old.corpus AND doc_id = old.doc_id AND prefix_through_seq >= old.seq;
+    END
+  `);
+
   // Task summaries: one or two sentences per finished task, written by the
   // summary agent (`src/main/retrieval/summary/`). `input_hash` is what the
   // summary was written from, so a task whose input moved is rewritten; an

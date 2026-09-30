@@ -455,6 +455,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
           // of the whole, so it buys speed by making the map wrong.
           const isFirstBuild = readCachedProjection(store) === null;
           const embedding = resolveEmbedding(store, modelTag, dimensions);
+          const startedAt = now();
           const result = await runProjectionPass({
             store,
             modelTag: embedding.modelTag,
@@ -463,7 +464,12 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
             dutyCycle: isFirstBuild ? FIRST_BUILD_DUTY_CYCLE : undefined,
           });
           if (!result || signal.aborted) return;
-          writeProjectionCache(store, result.projection, result.sums);
+          writeProjectionCache(store, result.projection);
+          const { counts } = result;
+          console.log(
+            `[knowledge-graph] map rebuilt: ${counts.documents} conversations, ${counts.documentsRead} read again `
+            + `(${counts.vectorsRead} vectors) in ${now() - startedAt} ms`,
+          );
           // The new map's names in the same pass, so it never shows its
           // build-time names first and then renames under the reader.
           try {

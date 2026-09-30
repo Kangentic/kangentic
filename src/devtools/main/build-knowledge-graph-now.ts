@@ -63,7 +63,7 @@ export async function buildKnowledgeGraphNow(projectId: string): Promise<BuildKn
   });
   if (!result) return null;
 
-  writeProjectionCache(store, result.projection, result.sums);
+  writeProjectionCache(store, result.projection);
   // Announce it, exactly as the paced pass does on completion. Writing the
   // cache silently left an OPEN Knowledge Graph showing the pre-seed state - zero
   // conversations over a freshly mirrored index - until it was closed and

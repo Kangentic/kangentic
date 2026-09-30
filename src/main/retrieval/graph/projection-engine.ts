@@ -21,26 +21,23 @@
  * WHY IT IS INCREMENTAL. That 62s is unavoidable per-vector cost (vec0 decodes
  * each blob; a sequential scan measured 62s against 68s for a batched one, so
  * there is no cheaper read). Paying it on every rebuild would make the surface
- * unusable on an actively-indexed project. Instead the per-document running
- * SUMS are cached alongside the highest chunk id folded in, so later passes
- * scan only what is new and steady-state cost is ~0.
+ * unusable on an actively-indexed project. Instead each document's vector sum
+ * is stored in `memory_doc_sums`, with a prefix no later write can change, so a
+ * pass reads only the documents that changed, and of a live conversation only
+ * its newest chunks (`readDocument`).
  */
 
-import type { RetrievalStore } from '../retrieval-store';
+import type { DocSumRow, DocSumWrite, RetrievalStore } from '../retrieval-store';
 import { CONVERSATION_CORPUS } from '../corpora';
 import type { KnowledgeGraphNode, KnowledgeGraphProjection } from '../../../shared/types';
 import { KNOWLEDGE_GRAPH_GRANULARITIES } from '../../../shared/types';
 import {
+  addVectorInto,
   createMeanPoolAccumulator,
-  accumulateVector,
   finalizeMeanPool,
-  serializeMeanPool,
-  deserializeMeanPool,
-  forgetDocument,
   embedNeighborGraphSteps,
   fitLayoutToPercentileBoxN,
-  type MeanPoolAccumulator,
-  type SerializedMeanPool,
+  setDocumentSum,
 } from './projection-math';
 import { computeCosineNeighbors, buildSimilarityEdgesByQuantile } from './neighbor-edges';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -72,13 +69,8 @@ import { runInSlices } from './stepwise';
  *  at all, so an older blob would have matched, been served, and rendered with
  *  coordinates the renderer does not have - the same silent-empty failure the
  *  1024-vs-768 width mismatch caused here once already. Bump on every shape
- *  change; the signature will not do it for you.
- *
- *  The SUMS key deliberately stays at v1. It carries the per-document vector sums
- *  and `lastScannedChunkId`, which the new layout does not change, so keeping it
- *  makes the rebuild the ~330ms kNN + embed rather than the ~62s full vector scan. */
+ *  change; the signature will not do it for you. */
 export const PROJECTION_CACHE_KEY = 'graph_projection_v11';
-export const PROJECTION_SUMS_KEY = 'graph_projection_sums_v1';
 
 /**
  * Components in the layout. Three, and only three: the surface is spatial-only,
@@ -86,10 +78,26 @@ export const PROJECTION_SUMS_KEY = 'graph_projection_sums_v1';
  */
 const LAYOUT_COMPONENTS = 3;
 
-/** Chunks read per batch. Small enough that one batch's DB work stays well
- *  inside a frame budget, large enough that the per-statement overhead does not
- *  dominate the 51k-row scan. */
+/** Chunk states read per page of a changed document: 3.3 ms at most a page on
+ *  the longest real conversation (4,832 chunks), where one read of it all took
+ *  58 ms. */
 const SCAN_BATCH = 400;
+/** Vectors read per page. vec0 decodes each one: a 400-row page took about
+ *  450 ms on the real index. */
+const VECTOR_PAGE = 100;
+/** Stored document sums read per page, each carrying its 8 KB sum at 1,024
+ *  dimensions. */
+const SUMS_PAGE = 100;
+/**
+ * How many of a document's newest chunks stay out of its stored prefix. A live
+ * conversation is indexed again after every turn, and appending entries
+ * rewrites at most its last chunk: `chunkTranscript` never reopens a chunk it
+ * closed, and only the open last one grows or splits from the one it was
+ * merged into. Two leaves one chunk of slack. This is for speed only. A rewrite
+ * that reaches the prefix deletes a chunk in it, and the delete trigger on
+ * `memory_chunks` empties the prefix (see `memory_doc_sums` in the schema).
+ */
+export const PREFIX_TAIL_MARGIN = 2;
 /** Rows of kNN computed between yields. kNN is O(n*d) per row; at 1024
  *  dimensions this keeps a slice near a millisecond. */
 const NEIGHBOR_CHUNK = 32;
@@ -154,64 +162,236 @@ export interface ProjectionPassDeps {
   readonly signal?: { readonly aborted: boolean };
 }
 
-/**
- * What a pass starts from: the cached accumulator with every document that
- * changed taken out, and the documents to read again. `documentsToRead` is null
- * when there is no usable cache and the pass reads the whole corpus.
- *
- * A document changed when its live embedded count no longer matches the count
- * the cache folded in. `upsertDocument` re-indexes one by deleting from the
- * first divergent seq and reinserting, which mints NEW chunk ids under the SAME
- * doc key, and a new id can sit below the old scan cursor: the live
- * conversation holds the highest ids, so deleting its tail and reinserting
- * reuses them. A cursor therefore cannot find a re-indexed document's chunks.
- * This used to answer any change with a rescan of every vector in the corpus,
- * which a live conversation causes on every turn. Reading the changed
- * documents by doc key finds every chunk of theirs whatever its id, so the
- * rest keep their cached sums.
- *
- * The count alone misses a document rewritten at the SAME count: the live
- * conversation's tail chunk grows in place and is embedded again, and when no
- * pass runs in between the count reads as unchanged. So a document whose index
- * time moved is read again too. `liveIndexTimes` is read before any vector, so
- * a re-index that lands while this pass yields stamps a later time than the one
- * recorded, and the next pass reads that document again.
- *
- * A document with no index time at all has not moved by it. Rebuild index
- * deletes every index-state row and then re-indexes, so a pass in between
- * would otherwise read every vector again. Once the rebuild has re-stamped
- * them, the next pass does read every document again, once: the stamps say
- * each was indexed, not whether its chunks changed.
- */
-function planScan(
-  cached: SerializedMeanPool | null,
-  dimensions: number,
-  modelTag: string,
-  liveCounts: Map<string, number>,
-  liveIndexTimes: Map<string, string>,
-): { accumulator: MeanPoolAccumulator; resumeFrom: number; documentsToRead: string[] | null } {
-  const fullScan = { accumulator: createMeanPoolAccumulator(dimensions), resumeFrom: 0, documentsToRead: null };
-  if (!cached) return fullScan;
-  // Written before index times were recorded, so a same-count rewrite in it is
-  // undetectable. Read once from scratch, then incremental again.
-  const cachedIndexTimes = cached.indexedAtByDocKey;
-  if (!cachedIndexTimes) return fullScan;
-  const restored = deserializeMeanPool(cached, dimensions, modelTag);
-  // Different model or width: the vectors mean something else entirely.
-  if (!restored) return fullScan;
+/** A document's sums as a pass holds them. */
+interface DocumentSums {
+  /** Vectors folded into `fullSum`. */
+  foldedCount: number;
+  /** Null when no vector of the document was folded. */
+  fullSum: Float64Array | null;
+  /** Bytes of the document's chunk text. */
+  textBytes: number;
+}
 
-  for (const [docKey, cachedCount] of [...restored.countsByDocKey]) {
-    // A document gone from the index, or with nothing embedded any more, is
-    // forgotten; one whose count or index time moved is forgotten and read
-    // again below.
-    const liveIndexTime = liveIndexTimes.get(docKey);
-    const indexTimeMoved = liveIndexTime !== undefined && liveIndexTime !== cachedIndexTimes[docKey];
-    if (liveCounts.get(docKey) !== cachedCount || indexTimeMoved) forgetDocument(restored, docKey);
+/** A document's chunk totals, read at the start of a pass. */
+interface LiveDocument {
+  docId: string;
+  chunkCount: number;
+  embeddedCount: number;
+}
+
+/**
+ * Whether a stored row still describes its document: the same model and width,
+ * the same chunk and embedded counts, and the same index time. The counts alone
+ * miss a document rewritten at the same count (a live conversation's newest
+ * chunk grows in place and is embedded again), which the index time catches.
+ * A document with no index time at all has not moved by it: Rebuild index
+ * deletes every index-state row and then re-indexes, and a pass in between
+ * would otherwise read every vector again.
+ */
+function storedRowHolds(
+  row: DocSumRow,
+  live: LiveDocument,
+  liveIndexedAt: string | null,
+  modelTag: string,
+  dimensions: number,
+): boolean {
+  return row.modelTag === modelTag
+    && row.dimensions === dimensions
+    && row.chunkCount === live.chunkCount
+    && row.embeddedCount === live.embeddedCount
+    && (liveIndexedAt === null || row.indexedAt === liveIndexedAt)
+    && (row.foldedCount === 0 || row.fullSum?.length === dimensions);
+}
+
+/**
+ * Read one document again from its stored prefix on, and compute its new sums.
+ *
+ * The prefix is a run of chunks from seq 0 whose vectors are all folded in, and
+ * no later write can change it without the schema's triggers emptying it, so
+ * only the chunks after it are read. The new prefix extends over the chunks
+ * read, up to the first one with no vector and short of the newest
+ * `PREFIX_TAIL_MARGIN`. A live conversation's next turn then reads a few
+ * chunks, where it read the whole conversation before.
+ *
+ * `write` carries the version and index time read here, so the store writes it
+ * only if nothing changed the document while this read yielded
+ * (`RetrievalStore.writeDocSums`). The sums are used for this pass either way:
+ * they are what the chunks held when read.
+ */
+async function readDocument(
+  store: RetrievalStore,
+  docId: string,
+  modelTag: string,
+  dimensions: number,
+  scanBatch: number,
+  pace: (workedMs: number) => Promise<void>,
+  aborted: () => boolean,
+): Promise<{ sums: DocumentSums; write: DocSumWrite; vectorsRead: number } | null> {
+  const indexedAt = store.getIndexState('conversation', docId)?.indexedAt ?? null;
+  const stored = store.docSumPrefix('conversation', docId);
+  const prefix = stored
+    && stored.modelTag === modelTag
+    && stored.dimensions === dimensions
+    && stored.prefixThroughSeq >= 0
+    && stored.prefixSum?.length === dimensions
+    ? stored
+    : null;
+
+  const fullSum = new Float64Array(dimensions);
+  const prefixSum = new Float64Array(dimensions);
+  if (prefix?.prefixSum) {
+    fullSum.set(prefix.prefixSum);
+    prefixSum.set(prefix.prefixSum);
   }
-  // Every live document the accumulator no longer holds: the changed ones, and
-  // any new since the cache was written.
-  const documentsToRead = [...liveCounts.keys()].filter((docKey) => !restored.countsByDocKey.has(docKey));
-  return { accumulator: restored, resumeFrom: cached.lastScannedChunkId, documentsToRead };
+  let prefixThroughSeq = prefix?.prefixThroughSeq ?? -1;
+  let prefixCount = prefix?.prefixCount ?? 0;
+  let prefixTextBytes = prefix?.prefixTextBytes ?? 0;
+  // Every chunk up to the prefix exists and is folded, so the counts start there.
+  let chunkCount = prefixCount;
+  let embeddedCount = prefixCount;
+  let foldedCount = prefixCount;
+  let textBytes = prefixTextBytes;
+
+  // The chunks after the prefix that can still join it: folded, with no chunk
+  // lacking a vector before them. The newest `PREFIX_TAIL_MARGIN` wait here
+  // until newer ones arrive.
+  const waiting: Array<{ seq: number; vector: Float32Array; textBytes: number }> = [];
+  let runOpen = true;
+  let newestSeq = prefixThroughSeq;
+  let vectorsRead = 0;
+  const joinPrefix = (chunk: { seq: number; vector: Float32Array; textBytes: number }): void => {
+    addVectorInto(prefixSum, chunk.vector);
+    prefixThroughSeq = chunk.seq;
+    prefixCount += 1;
+    prefixTextBytes += chunk.textBytes;
+  };
+
+  for (;;) {
+    if (aborted()) return null;
+    let startedAt = Date.now();
+    const states = timeSyncWork('graph:read-chunks', () => store.chunkStatesAfter('conversation', docId, newestSeq, scanBatch));
+    await pace(Date.now() - startedAt);
+    if (states.length === 0) break;
+
+    const embeddedIds = states.filter((state) => state.embedded).map((state) => state.id);
+    vectorsRead += embeddedIds.length;
+    const vectors = new Map<number, Float32Array>();
+    for (let start = 0; start < embeddedIds.length; start += VECTOR_PAGE) {
+      if (aborted()) return null;
+      startedAt = Date.now();
+      const page = timeSyncWork('graph:read-vectors', () => store.readVectors(embeddedIds.slice(start, start + VECTOR_PAGE), 'conversation'));
+      for (const [id, vector] of page) vectors.set(id, vector);
+      await pace(Date.now() - startedAt);
+    }
+
+    for (const state of states) {
+      chunkCount += 1;
+      textBytes += state.textBytes;
+      newestSeq = state.seq;
+      if (state.embedded) embeddedCount += 1;
+      const vector = state.embedded ? vectors.get(state.id) : undefined;
+      const folded = vector !== undefined && addVectorInto(fullSum, vector);
+      if (folded) foldedCount += 1;
+      if (!runOpen) continue;
+      if (!folded) {
+        runOpen = false;
+        continue;
+      }
+      waiting.push({ seq: state.seq, vector, textBytes: state.textBytes });
+      if (waiting.length > PREFIX_TAIL_MARGIN) joinPrefix(waiting.shift()!);
+    }
+  }
+  // What still waits joins unless it is among the newest chunks. When the run
+  // reached the newest chunk none does; when it stopped at a chunk with no
+  // vector, the ones well before it can.
+  for (const chunk of waiting) {
+    if (chunk.seq > newestSeq - PREFIX_TAIL_MARGIN) break;
+    joinPrefix(chunk);
+  }
+
+  const sums: DocumentSums = { foldedCount, fullSum: foldedCount > 0 ? fullSum : null, textBytes };
+  const write: DocSumWrite = {
+    docId,
+    expectedVersion: stored?.version ?? null,
+    modelTag,
+    dimensions,
+    chunkCount,
+    embeddedCount,
+    indexedAt,
+    textBytes,
+    foldedCount,
+    fullSum: sums.fullSum,
+    prefixThroughSeq,
+    prefixCount,
+    prefixTextBytes,
+    prefixSum: prefixCount > 0 ? prefixSum : null,
+  };
+  return { sums, write, vectorsRead };
+}
+
+/** What a pass read again, for its log line: the steady state is a few
+ *  documents and a few vectors. */
+export interface ProjectionReadCounts {
+  documents: number;
+  documentsRead: number;
+  vectorsRead: number;
+}
+
+/**
+ * Every conversation's sums: the stored ones that still hold, and the changed
+ * and new documents read again, each stored as it is read. Stored rows of
+ * documents gone from the index are deleted. Paged and paced throughout.
+ */
+async function readDocumentSums(
+  store: RetrievalStore,
+  modelTag: string,
+  dimensions: number,
+  scanBatch: number,
+  pace: (workedMs: number) => Promise<void>,
+  aborted: () => boolean,
+): Promise<{ sums: Map<string, DocumentSums>; embeddedChunks: number; counts: ProjectionReadCounts } | null> {
+  // Both are index reads: the counts come off the covering
+  // (corpus, doc_id, embedded_model) index, about 10 ms on 94k chunks.
+  const live = new Map<string, LiveDocument>();
+  let embeddedChunks = 0;
+  for (const row of store.documentChunkTotals(CONVERSATION_CORPUS)) {
+    live.set(row.docId, row);
+    embeddedChunks += row.embeddedCount;
+  }
+  const liveIndexTimes = store.documentIndexTimes('conversation');
+
+  const sums = new Map<string, DocumentSums>();
+  const gone: string[] = [];
+  let afterDocId = '';
+  for (;;) {
+    if (aborted()) return null;
+    const startedAt = Date.now();
+    const page = timeSyncWork('graph:read-sums', () => store.docSumsPage('conversation', afterDocId, SUMS_PAGE));
+    if (page.length === 0) break;
+    for (const row of page) {
+      const document = live.get(row.docId);
+      if (!document) {
+        gone.push(row.docId);
+      } else if (storedRowHolds(row, document, liveIndexTimes.get(row.docId) ?? null, modelTag, dimensions)) {
+        sums.set(row.docId, { foldedCount: row.foldedCount, fullSum: row.fullSum, textBytes: row.textBytes });
+      }
+    }
+    afterDocId = page[page.length - 1].docId;
+    await pace(Date.now() - startedAt);
+  }
+
+  const counts: ProjectionReadCounts = { documents: live.size, documentsRead: 0, vectorsRead: 0 };
+  for (const document of live.values()) {
+    if (sums.has(document.docId)) continue;
+    const read = await readDocument(store, document.docId, modelTag, dimensions, scanBatch, pace, aborted);
+    if (read === null) return null;
+    sums.set(document.docId, read.sums);
+    counts.documentsRead += 1;
+    counts.vectorsRead += read.vectorsRead;
+    timeSyncWork('graph:write-sums', () => store.writeDocSums('conversation', [read.write]));
+  }
+  if (gone.length > 0) timeSyncWork('graph:delete-sums', () => store.deleteDocSums('conversation', gone));
+  return { sums, embeddedChunks, counts };
 }
 
 /**
@@ -220,81 +400,32 @@ function planScan(
  */
 export async function runProjectionPass(
   deps: ProjectionPassDeps,
-): Promise<{ projection: GraphProjection; sums: SerializedMeanPool } | null> {
+): Promise<{ projection: GraphProjection; counts: ProjectionReadCounts } | null> {
   const { store, modelTag, dimensions } = deps;
   const delay = deps.delay ?? defaultDelay;
   const dutyCycle = deps.dutyCycle ?? DUTY_CYCLE;
   const scanBatch = deps.scanBatch ?? SCAN_BATCH;
   const aborted = (): boolean => deps.signal?.aborted === true;
+  // No single step may hold main for more than a slice; each is followed by a
+  // sleep that keeps the pass to its share of wall time.
+  const pace = (workedMs: number): Promise<void> => delay(computeProjectionSleepMs(workedMs, dutyCycle));
 
   // The map is drawn from conversations. Task records and session changes are
   // searched, never drawn, so they stay out of the scan and out of the
   // signature: a board edit must not rebuild the map.
-  const totals = store.documentChunkTotals(CONVERSATION_CORPUS);
-  const liveCounts = new Map<string, number>();
-  for (const row of totals) {
-    if (row.embeddedCount > 0) liveCounts.set(`${row.corpus}::${row.docId}`, row.embeddedCount);
+  const documents = await readDocumentSums(store, modelTag, dimensions, scanBatch, pace, aborted);
+  if (documents === null || aborted()) return null;
+
+  const accumulator = createMeanPoolAccumulator(dimensions);
+  let textBytes = 0;
+  for (const [docId, document] of documents.sums) {
+    textBytes += document.textBytes;
+    if (document.fullSum) setDocumentSum(accumulator, `conversation::${docId}`, document.fullSum, document.foldedCount);
   }
-  const liveIndexTimes = new Map<string, string>();
-  for (const [docId, indexedAt] of store.documentIndexTimes('conversation')) {
-    liveIndexTimes.set(`conversation::${docId}`, indexedAt);
-  }
-
-  // A 19 MB blob on 1,005 conversations, about 30 ms to parse.
-  const cachedSums = timeSyncWork('graph:read-sums', () => readJson<SerializedMeanPool>(store, PROJECTION_SUMS_KEY));
-  const { accumulator, resumeFrom, documentsToRead } = planScan(
-    cachedSums, dimensions, modelTag, liveCounts, liveIndexTimes,
-  );
-
-  /** Fold one page of chunks in, then pace. */
-  const foldPage = async (identities: ReadonlyArray<{ id: number; corpus: string; docId: string }>): Promise<void> => {
-    const startedAt = Date.now();
-    const vectors = store.readVectors(identities.map((row) => row.id), 'conversation');
-    for (const identity of identities) {
-      const vector = vectors.get(identity.id);
-      if (vector === undefined) continue;
-      accumulateVector(accumulator, `${identity.corpus}::${identity.docId}`, vector);
-    }
-    await delay(computeProjectionSleepMs(Date.now() - startedAt, dutyCycle));
-  };
-
-  let cursor = resumeFrom;
-  if (documentsToRead === null) {
-    for (;;) {
-      if (aborted()) return null;
-      const identities = store.listChunkIdentities(cursor, scanBatch, 'conversation');
-      if (identities.length === 0) break;
-      await foldPage(identities);
-      // Rowids are not contiguous, so advance by the last id SEEN rather than by
-      // how many vectors came back - otherwise a page with gaps stalls the cursor.
-      cursor = identities[identities.length - 1].id;
-    }
-  } else if (documentsToRead.length > 0) {
-    // In pages of the same size as a full scan, paced and abortable the same
-    // way: the live conversation alone can hold thousands of chunks.
-    const identities = store.listDocumentChunkIdentities(
-      'conversation',
-      documentsToRead.map((docKey) => docKey.slice(docKey.indexOf('::') + 2)),
-    );
-    for (let start = 0; start < identities.length; start += scanBatch) {
-      if (aborted()) return null;
-      const page = identities.slice(start, start + scanBatch);
-      await foldPage(page);
-      for (const identity of page) cursor = Math.max(cursor, identity.id);
-    }
-  }
-
-  if (aborted()) return null;
 
   const pooled = finalizeMeanPool(accumulator);
   const neighbors = await computeNeighborsChunked(pooled.matrix, pooled.rowCount, dimensions, delay, dutyCycle, aborted);
   if (neighbors === null) return null;
-
-  // Everything below is paced like the scan: no single step may hold main for
-  // more than a slice. Before, the layout, the metadata read and the region
-  // sweep ran back to back and held it for 602 ms on 1,005 conversations, on
-  // every rebuild, including one over an unchanged index.
-  const pace = (workedMs: number): Promise<void> => delay(computeProjectionSleepMs(workedMs, dutyCycle));
 
   // ONE layout, in three components. Measured on the real 638-document corpus,
   // the third axis is worth having on its own terms: neighbourhood preservation
@@ -399,16 +530,11 @@ export async function runProjectionPass(
     };
   });
 
-  // EMBEDDED chunks, not every chunk: `liveCounts` is populated from
-  // `embeddedCount` above. The distinction is load-bearing for the vector half
-  // of the size below - an unembedded chunk has no row in `memory_chunks_vec`
-  // and so occupies no vector bytes - and it is what the freshness signature has
-  // always counted.
-  let embeddedChunks = 0;
-  for (const count of liveCounts.values()) embeddedChunks += count;
-
-  const textBytes = await sumIndexedTextBytes(store, delay, dutyCycle, scanBatch, aborted);
-  if (textBytes === null) return null;
+  // EMBEDDED chunks, not every chunk. The distinction is load-bearing for the
+  // vector half of the size below - an unembedded chunk has no row in
+  // `memory_chunks_vec` and so occupies no vector bytes - and it is what the
+  // freshness signature has always counted.
+  const { embeddedChunks } = documents;
 
   const projection: GraphProjection = {
     nodes,
@@ -425,50 +551,14 @@ export async function runProjectionPass(
     modelTag,
     dimensions,
     // Only the vector half is arithmetic: vec0 rows are fixed-width, so it is
-    // exactly embeddedChunks * dims * 4. The text half is a real scan, which is
-    // why it is paged above rather than summed in one statement. Both belong
-    // here rather than in `getSnapshot`, which must stay a cheap read.
+    // exactly embeddedChunks * dims * 4. The text half is the sum of each
+    // document's stored size. Both belong here rather than in `getSnapshot`,
+    // which must stay a cheap read. The snapshot adds the other corpora's size,
+    // which is small enough to read live (`KnowledgeGraphIndexSummary`).
     storageBytes: textBytes + embeddedChunks * dimensions * 4,
     builtAt: new Date().toISOString(),
   };
-
-  const sums = timeSyncWork('graph:serialize-sums', () => serializeMeanPool(accumulator, cursor, modelTag, liveIndexTimes));
-  return { projection, sums };
-}
-
-/**
- * Sum the indexed chunk TEXT in paced pages.
- *
- * A single `SUM(length(text))` measured ~170ms over the real corpus, and
- * better-sqlite3 is synchronous - that would have been the one block in this
- * pass capable of exceeding a frame, in a pass whose whole point is that it
- * never does. Paged through the same duty-cycle pacer as the vector scan and
- * the kNN slicer, so it costs wall time instead of responsiveness.
- *
- * Returns null when the pass was aborted mid-scan, matching the caller's
- * existing abort contract.
- */
-async function sumIndexedTextBytes(
-  store: RetrievalStore,
-  delay: (ms: number) => Promise<void>,
-  dutyCycle: number,
-  scanBatch: number,
-  aborted: () => boolean,
-): Promise<number | null> {
-  let bytes = 0;
-  let cursor = 0;
-  for (;;) {
-    if (aborted()) return null;
-    const startedAt = Date.now();
-    // The map's own corpus. The snapshot adds the other corpora's size, which
-    // is small enough to read live (`KnowledgeGraphIndexSummary`).
-    const page = store.indexedTextBytesPage(cursor, scanBatch, 'conversation');
-    if (page.lastChunkId === 0) break;
-    bytes += page.bytes;
-    cursor = page.lastChunkId;
-    await delay(computeProjectionSleepMs(Date.now() - startedAt, dutyCycle));
-  }
-  return bytes;
+  return { projection, counts: documents.counts };
 }
 
 /**
@@ -538,18 +628,9 @@ export function readCachedProjection(store: RetrievalStore): GraphProjection | n
   return readJson<GraphProjection>(store, PROJECTION_CACHE_KEY);
 }
 
-/**
- * Store a finished pass. Timed per write: the sums are one JSON blob, about
- * 19 MB and 63 ms to stringify on 1,005 conversations, which a binary format
- * would cut and nothing here can split.
- */
-export function writeProjectionCache(
-  store: RetrievalStore,
-  projection: GraphProjection,
-  sums: SerializedMeanPool,
-): void {
+/** Store a finished pass's map. Its sums were stored as the pass read them. */
+export function writeProjectionCache(store: RetrievalStore, projection: GraphProjection): void {
   timeSyncWork('graph:write-projection', () => store.setMeta(PROJECTION_CACHE_KEY, JSON.stringify(projection)));
-  timeSyncWork('graph:write-sums', () => store.setMeta(PROJECTION_SUMS_KEY, JSON.stringify(sums)));
 }
 
 /** Whether a cached projection still describes the corpus. */

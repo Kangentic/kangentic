@@ -2,7 +2,7 @@ import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
-import { CHUNKS_PER_TRANSACTION, RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+import { CHUNKS_PER_TRANSACTION, RetrievalStore, type DocSumWrite } from '../../src/main/retrieval/retrieval-store';
 import { markVecCapable } from '../../src/main/retrieval/vec-support';
 import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/types';
 
@@ -619,33 +619,6 @@ describe('RetrievalStore corpus reads', () => {
   });
 });
 
-describe('RetrievalStore.listDocumentChunkIdentities', () => {
-  it('seeks each document once, embedded chunks only, in id order, and returns them all', () => {
-    const { db, calls } = makeRecordingDb({
-      all: (_sql, args) => [{ id: args[1] === 'doc-a' ? 7 : 3, corpus: 'conversation', docId: args[1] }],
-    });
-
-    const rows = new RetrievalStore(db).listDocumentChunkIdentities('conversation', ['doc-a', 'doc-b']);
-
-    expect(rows).toEqual([
-      { id: 7, corpus: 'conversation', docId: 'doc-a' },
-      { id: 3, corpus: 'conversation', docId: 'doc-b' },
-    ]);
-    const selects = calls.filter((call) => call.method === 'all');
-    expect(selects.map((call) => call.args)).toEqual([['conversation', 'doc-a'], ['conversation', 'doc-b']]);
-    // The count the projection compares against is `embeddedCount`, so a
-    // re-read document must fold in embedded chunks alone.
-    expect(selects[0].sql).toContain('corpus = ? AND doc_id = ? AND embedded_model IS NOT NULL');
-    expect(selects[0].sql).toContain('ORDER BY id ASC');
-  });
-
-  it('touches the database for no documents at all', () => {
-    const { db, calls } = makeRecordingDb({});
-    expect(new RetrievalStore(db).listDocumentChunkIdentities('conversation', [])).toEqual([]);
-    expect(calls).toHaveLength(0);
-  });
-});
-
 describe('RetrievalStore.getChunkIdsForTask', () => {
   it('returns the set of chunk ids for one task, binding taskId', () => {
     const { db, calls } = makeRecordingDb({
@@ -791,6 +764,7 @@ describeWithSqlite('RetrievalStore.purgeAll (real database)', () => {
   it('clears every corpus and the graph\'s cached map, sums and region names, and no other meta key', () => {
     const { store, count, metaKeys } = project();
     store.upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
+    store.writeDocSums('conversation', [sumsWrite({ docId: ref.docId, chunkCount: 2, embeddedCount: 0 })]);
     store.setIndexState({
       corpus: 'conversation',
       docId: ref.docId,
@@ -803,8 +777,8 @@ describeWithSqlite('RetrievalStore.purgeAll (real database)', () => {
       status: 'ok',
       indexedAt: '2026-09-30T00:00:00.000Z',
     });
-    // The keys the graph writes: the cached map, its per-document sums, its region names.
-    const graphKeys = ['graph_projection_v11', 'graph_projection_sums_v1', 'graph_region_names'];
+    // The keys the graph writes: the cached map and its region names.
+    const graphKeys = ['graph_projection_v11', 'graph_region_names'];
     for (const key of graphKeys) store.setMeta(key, '{"titles":["Relay config"]}');
     // Keys that are not the graph's, one of them beginning "graph" without the
     // underscore: an unescaped `_` in the LIKE pattern is a wildcard and would take it.
@@ -813,13 +787,163 @@ describeWithSqlite('RetrievalStore.purgeAll (real database)', () => {
     const survivors = metaKeys().filter((key) => !graphKeys.includes(key));
     expect(count('memory_chunks')).toBe(2);
     expect(count('memory_index_state')).toBe(1);
+    expect(count('memory_doc_sums')).toBe(1);
 
     store.purgeAll();
 
     expect(count('memory_chunks')).toBe(0);
     expect(count('memory_index_state')).toBe(0);
+    expect(count('memory_doc_sums')).toBe(0);
     expect(metaKeys()).toEqual(survivors);
     for (const key of otherKeys) expect(store.getMeta(key), key).toBe('kept');
     for (const key of graphKeys) expect(store.getMeta(key), key).toBeUndefined();
+  });
+
+  it('clears the sums of the purged corpora only', () => {
+    const { store, count } = project();
+    store.upsertDocument(ref, [chunk(0, 'hashA')]);
+    store.upsertDocument({ ...ref, corpus: 'task', docId: 'task-1' }, [chunk(0, 'hashB')]);
+    store.writeDocSums('conversation', [sumsWrite({ docId: ref.docId, chunkCount: 1, embeddedCount: 0 })]);
+    store.writeDocSums('task', [sumsWrite({ docId: 'task-1', chunkCount: 1, embeddedCount: 0 })]);
+
+    store.purgeCorpora(['conversation']);
+
+    expect(count('memory_doc_sums')).toBe(1);
+    expect(store.docSumPrefix('task', 'task-1')).not.toBeNull();
+  });
+});
+
+/** A sums write for a document with nothing folded, the fields a test cares
+ *  about given. */
+function sumsWrite(fields: Partial<DocSumWrite> & { docId: string; chunkCount: number; embeddedCount: number }): DocSumWrite {
+  return {
+    expectedVersion: null,
+    modelTag: 'bge-base@q8-cls',
+    dimensions: 2,
+    indexedAt: null,
+    textBytes: 0,
+    foldedCount: 0,
+    fullSum: null,
+    prefixThroughSeq: -1,
+    prefixCount: 0,
+    prefixTextBytes: 0,
+    prefixSum: null,
+    ...fields,
+  };
+}
+
+describeWithSqlite('RetrievalStore document sums (real database)', () => {
+  const INDEXED_AT = '2026-09-30T00:00:00.000Z';
+
+  /** A project with doc-1 of five chunks, all embedded, and its sums stored
+   *  with a prefix through seq 2. */
+  function project() {
+    const database = new sqlite!.DatabaseSync(':memory:');
+    const db = adaptDatabase(database);
+    runProjectMigrations(db);
+    const store = new RetrievalStore(db);
+    store.upsertDocument(ref, [0, 1, 2, 3, 4].map((seq) => chunk(seq, `hash-${seq}`)));
+    store.setIndexState({
+      corpus: 'conversation', docId: ref.docId, sessionId: 'session-1', sourcePath: null, sourceMtimeMs: null,
+      sourceSize: null, entryCount: 5, chunkCount: 5, status: 'ok', indexedAt: INDEXED_AT,
+    });
+    database.prepare("UPDATE memory_chunks SET embedded_model = 'model-a'").run();
+    const written = store.writeDocSums('conversation', [sumsWrite({
+      docId: ref.docId, chunkCount: 5, embeddedCount: 5, indexedAt: INDEXED_AT, foldedCount: 5,
+      fullSum: new Float64Array([5, 1]), prefixThroughSeq: 2, prefixCount: 3, prefixTextBytes: 18,
+      prefixSum: new Float64Array([3, 0.5]),
+    })]);
+    expect(written).toBe(1);
+    const prefix = () => store.docSumPrefix('conversation', ref.docId);
+    const setModel = (seq: number, modelTag: string | null) =>
+      database.prepare('UPDATE memory_chunks SET embedded_model = ? WHERE seq = ?').run(modelTag, seq);
+    const deleteSeq = (seq: number) => database.prepare('DELETE FROM memory_chunks WHERE seq = ?').run(seq);
+    return { database, store, prefix, setModel, deleteSeq };
+  }
+
+  it('stores a new row at version 0 and reads it back', () => {
+    const { store, prefix } = project();
+    expect(prefix()).toEqual({
+      version: 0, modelTag: 'bge-base@q8-cls', dimensions: 2, prefixThroughSeq: 2, prefixCount: 3,
+      prefixTextBytes: 18, prefixSum: new Float64Array([3, 0.5]),
+    });
+    const [row] = store.docSumsPage('conversation', '', 10);
+    expect(row).toMatchObject({ docId: ref.docId, version: 0, chunkCount: 5, embeddedCount: 5, foldedCount: 5, prefixThroughSeq: 2 });
+    expect(row.fullSum).toEqual(new Float64Array([5, 1]));
+  });
+
+  it('empties the prefix when a chunk in it is deleted, and not for a chunk after it', () => {
+    const { prefix, deleteSeq } = project();
+    deleteSeq(3);
+    expect(prefix()).toMatchObject({ version: 0, prefixThroughSeq: 2 });
+    deleteSeq(2);
+    expect(prefix()).toMatchObject({ version: 1, prefixThroughSeq: -1, prefixCount: 0, prefixTextBytes: 0, prefixSum: null });
+  });
+
+  it('empties the prefix when a chunk in it loses its vector or is embedded again, and not when one is embedded first', () => {
+    const lost = project();
+    lost.setModel(1, null);
+    expect(lost.prefix()).toMatchObject({ version: 1, prefixThroughSeq: -1 });
+
+    const switched = project();
+    switched.setModel(0, 'model-b');
+    expect(switched.prefix()).toMatchObject({ version: 1, prefixThroughSeq: -1 });
+
+    const after = project();
+    after.setModel(4, 'model-b');
+    expect(after.prefix()).toMatchObject({ version: 0, prefixThroughSeq: 2 });
+
+    // A chunk with no vector gaining one is the drain's ordinary write.
+    const first = project();
+    first.database.prepare('UPDATE memory_chunks SET embedded_model = NULL WHERE seq = 4').run();
+    expect(first.prefix()).toMatchObject({ version: 0 });
+    first.setModel(4, 'model-a');
+    expect(first.prefix()).toMatchObject({ version: 0, prefixThroughSeq: 2 });
+  });
+
+  it('writes only when the row, the counts and the index time are still what the pass read', () => {
+    const { database, store, prefix } = project();
+    const update = (fields: Partial<DocSumWrite>) => store.writeDocSums('conversation', [sumsWrite({
+      docId: ref.docId, chunkCount: 5, embeddedCount: 5, indexedAt: INDEXED_AT, expectedVersion: 0, ...fields,
+    })]);
+
+    // Another pass wrote first, or a trigger emptied the prefix.
+    expect(update({ expectedVersion: null })).toBe(0);
+    expect(update({ expectedVersion: 7 })).toBe(0);
+    // The chunks moved since they were read.
+    expect(update({ chunkCount: 4 })).toBe(0);
+    expect(update({ embeddedCount: 4 })).toBe(0);
+    // The document was indexed again since.
+    expect(update({ indexedAt: '2026-09-29T00:00:00.000Z' })).toBe(0);
+    expect(prefix()).toMatchObject({ version: 0, prefixThroughSeq: 2 });
+
+    expect(update({ prefixThroughSeq: 3, prefixCount: 4 })).toBe(1);
+    expect(prefix()).toMatchObject({ version: 1, prefixThroughSeq: 3, prefixCount: 4 });
+
+    // Rebuild index clears the index times before it re-indexes: nothing moved.
+    database.prepare('DELETE FROM memory_index_state').run();
+    expect(update({ expectedVersion: 1, indexedAt: null })).toBe(1);
+  });
+
+  it('writes a new row only while there is still none', () => {
+    const { store } = project();
+    store.upsertDocument({ ...ref, docId: 'doc-2' }, [chunk(0, 'hash-a')]);
+    const insert = () => store.writeDocSums('conversation', [sumsWrite({ docId: 'doc-2', chunkCount: 1, embeddedCount: 0 })]);
+    expect(insert()).toBe(1);
+    expect(insert()).toBe(0);
+  });
+
+  it('reads a document\'s chunks after a seq in pages, with their size in bytes', () => {
+    const { database, store } = project();
+    database.prepare("UPDATE memory_chunks SET text = 'café', embedded_model = NULL WHERE seq = 4").run();
+    expect(store.chunkStatesAfter('conversation', ref.docId, 1, 2).map((state) => state.seq)).toEqual([2, 3]);
+    const [last] = store.chunkStatesAfter('conversation', ref.docId, 3, 10);
+    expect(last).toMatchObject({ seq: 4, embedded: false, textBytes: 5 });
+  });
+
+  it('deletes the sums of documents gone from the index', () => {
+    const { store } = project();
+    store.deleteDocSums('conversation', [ref.docId]);
+    expect(store.docSumPrefix('conversation', ref.docId)).toBeNull();
   });
 });

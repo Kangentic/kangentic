@@ -18,9 +18,9 @@
 
 import { runToCompletion, type Stepwise } from './stepwise';
 
-/** Accumulates a running per-document vector sum without holding every chunk
- *  vector resident. The whole point of mean-pooling at read time: the corpus is
- *  ~200 MiB of chunk vectors but only ~5 MiB of document means. */
+/** Each document's vector sum and how many vectors it holds, without holding
+ *  every chunk vector resident. The whole point of mean-pooling at read time:
+ *  the corpus is ~200 MiB of chunk vectors but only ~5 MiB of document means. */
 export interface MeanPoolAccumulator {
   readonly dimensions: number;
   /** docKey -> running sum. Float64 because a document can carry 1500+ chunks
@@ -47,26 +47,29 @@ export function createMeanPoolAccumulator(dimensions: number): MeanPoolAccumulat
   return { dimensions, sumsByDocKey: new Map(), countsByDocKey: new Map() };
 }
 
-/** Fold one chunk vector into its document's running sum. Vectors whose width
- *  does not match the accumulator are skipped rather than throwing: a corpus
- *  can briefly hold rows from a previous model while a re-embed drains, and one
- *  stale row must not abort a whole projection pass. */
-export function accumulateVector(
-  accumulator: MeanPoolAccumulator,
-  docKey: string,
-  vector: Float32Array,
-): boolean {
-  if (vector.length !== accumulator.dimensions) return false;
-  let sum = accumulator.sumsByDocKey.get(docKey);
-  if (sum === undefined) {
-    sum = new Float64Array(accumulator.dimensions);
-    accumulator.sumsByDocKey.set(docKey, sum);
-  }
+/** Add one chunk vector into a running sum. A vector whose width does not
+ *  match is skipped rather than thrown on: a corpus can briefly hold rows from
+ *  a previous model while a re-embed drains, and one stale row must not abort a
+ *  whole projection pass. Float64 because a document can carry 1500+ chunks and
+ *  Float32 accumulation drifts measurably at that length. */
+export function addVectorInto(sum: Float64Array, vector: Float32Array): boolean {
+  if (vector.length !== sum.length) return false;
   for (let index = 0; index < vector.length; index += 1) {
     sum[index] += vector[index];
   }
-  accumulator.countsByDocKey.set(docKey, (accumulator.countsByDocKey.get(docKey) ?? 0) + 1);
   return true;
+}
+
+/** Record one document's finished sum and the number of vectors in it. */
+export function setDocumentSum(
+  accumulator: MeanPoolAccumulator,
+  docKey: string,
+  sum: Float64Array,
+  count: number,
+): void {
+  if (sum.length !== accumulator.dimensions || count <= 0) return;
+  accumulator.sumsByDocKey.set(docKey, sum);
+  accumulator.countsByDocKey.set(docKey, count);
 }
 
 /** Divide each running sum by its count and L2-normalize the result, so the
@@ -102,98 +105,6 @@ export function finalizeMeanPool(accumulator: MeanPoolAccumulator): MeanPooledDo
   }
 
   return { docKeys, matrix, rowCount: docKeys.length, dimensions, chunkCounts };
-}
-
-/**
- * Serializable form of a partly-built accumulator, so the ~62-second full scan
- * of the vec table is paid ONCE per project.
- *
- * Measured on the real corpus, reading all 51,265 vectors through vec0 takes
- * 62s sequentially and 68s batched - the cost is vec0's per-row blob decode, so
- * there is no faster public read. Persisting the running SUMS (not just the
- * finished means) lets a later pass read only the documents that changed and
- * fold them into what is already there, which drops steady-state cost to near
- * zero.
- *
- * `countsByDocKey` is the correctness guard, and it is not optional.
- * `upsertDocument` re-indexes a changed document by DELETING from the first
- * divergent seq and reinserting, which mints new chunk ids under the SAME doc
- * key, at or below ids already scanned. Comparing each document's live
- * embedded count, and the time it was last indexed, against the cached ones
- * finds the documents that changed; `forgetDocument` then drops the stale sum
- * and the pass reads that document again by doc key (`planScan` in
- * projection-engine.ts).
- */
-export interface SerializedMeanPool {
-  readonly dimensions: number;
-  /** Highest `memory_chunks.id` folded in so far. */
-  readonly lastScannedChunkId: number;
-  /** Model tag the sums were built under. A model switch changes vector width
-   *  and meaning, so a mismatch must discard the whole cache. */
-  readonly modelTag: string;
-  readonly sumsByDocKey: Record<string, number[]>;
-  readonly countsByDocKey: Record<string, number>;
-  /**
-   * Each document's `memory_index_state.indexed_at` as the pass that folded it
-   * in read it. The count alone misses a document rewritten at the same count:
-   * a live conversation's tail chunk grows in place, keeps its seq, and is
-   * embedded again, often under the same reused rowid. Absent from a blob
-   * written before it was recorded, which is read again whole.
-   */
-  readonly indexedAtByDocKey?: Record<string, string>;
-}
-
-export function serializeMeanPool(
-  accumulator: MeanPoolAccumulator,
-  lastScannedChunkId: number,
-  modelTag: string,
-  indexedAtByDocKey: ReadonlyMap<string, string>,
-): SerializedMeanPool {
-  const sumsByDocKey: Record<string, number[]> = {};
-  const countsByDocKey: Record<string, number> = {};
-  const indexedAt: Record<string, string> = {};
-  for (const [docKey, sum] of accumulator.sumsByDocKey) {
-    sumsByDocKey[docKey] = Array.from(sum);
-    countsByDocKey[docKey] = accumulator.countsByDocKey.get(docKey) ?? 0;
-    const stamp = indexedAtByDocKey.get(docKey);
-    if (stamp !== undefined) indexedAt[docKey] = stamp;
-  }
-  return {
-    dimensions: accumulator.dimensions,
-    lastScannedChunkId,
-    modelTag,
-    sumsByDocKey,
-    countsByDocKey,
-    indexedAtByDocKey: indexedAt,
-  };
-}
-
-/** Rebuild an accumulator from cache. Returns null when the cache was built
- *  under a different model or width, which must force a full rescan rather
- *  than a silent mix of incompatible vectors. */
-export function deserializeMeanPool(
-  serialized: SerializedMeanPool,
-  expectedDimensions: number,
-  expectedModelTag: string,
-): MeanPoolAccumulator | null {
-  if (serialized.dimensions !== expectedDimensions) return null;
-  if (serialized.modelTag !== expectedModelTag) return null;
-
-  const accumulator = createMeanPoolAccumulator(serialized.dimensions);
-  for (const [docKey, sum] of Object.entries(serialized.sumsByDocKey)) {
-    if (sum.length !== serialized.dimensions) continue;
-    accumulator.sumsByDocKey.set(docKey, Float64Array.from(sum));
-    accumulator.countsByDocKey.set(docKey, serialized.countsByDocKey[docKey] ?? 0);
-  }
-  return accumulator;
-}
-
-/** Drop one document's accumulated sum, so it can be rescanned from scratch.
- *  Call this for any document whose live chunk count no longer matches the
- *  cached one (see `SerializedMeanPool`). */
-export function forgetDocument(accumulator: MeanPoolAccumulator, docKey: string): void {
-  accumulator.sumsByDocKey.delete(docKey);
-  accumulator.countsByDocKey.delete(docKey);
 }
 
 /** Deterministic xorshift32. The layout's starting positions and its negative

@@ -54,13 +54,19 @@ function planOf(database: NodeDatabase, sql: string, params: Array<string | numb
     .join(' | ');
 }
 
+/** The full-text triggers on `memory_chunks`. The ones that keep the graph's
+ *  document sums honest are pinned in `retrieval-store-sql.test.ts`. */
+function isFullTextTrigger(name: string): boolean {
+  return !name.startsWith('trg_memory_chunks_doc_sums');
+}
+
 function triggerNames(database: NodeDatabase): string[] {
-  return (database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'memory_chunks' ORDER BY name").all() as Array<{ name: string }>)
-    .map((row) => row.name);
+  return triggerSql(database).map((row) => row.name);
 }
 
 function triggerSql(database: NodeDatabase): Array<{ name: string; sql: string }> {
-  return database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'memory_chunks' ORDER BY name").all() as Array<{ name: string; sql: string }>;
+  return (database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'memory_chunks' ORDER BY name").all() as Array<{ name: string; sql: string }>)
+    .filter((row) => isFullTextTrigger(row.name));
 }
 
 function insertChunk(database: NodeDatabase, corpus: string, docId: string, text: string): void {

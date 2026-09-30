@@ -17,14 +17,12 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  addVectorInto,
   createMeanPoolAccumulator,
-  accumulateVector,
   finalizeMeanPool,
   fitLayoutToPercentileBoxN,
   embedNeighborGraph,
-  serializeMeanPool,
-  deserializeMeanPool,
-  forgetDocument,
+  setDocumentSum,
   type MeanPoolAccumulator,
 } from '../../src/main/retrieval/graph/projection-math';
 import {
@@ -134,11 +132,18 @@ function clusterContrast(
   return { within: withinTotal / withinCount, across: acrossTotal / acrossCount };
 }
 
+/** A document's sum over `vectors`, recorded in `accumulator`. */
+function addDocument(accumulator: MeanPoolAccumulator, docKey: string, vectors: Float32Array[]): void {
+  const sum = new Float64Array(accumulator.dimensions);
+  let count = 0;
+  for (const vector of vectors) if (addVectorInto(sum, vector)) count += 1;
+  setDocumentSum(accumulator, docKey, sum, count);
+}
+
 describe('mean pooling', () => {
   it('averages and L2-normalizes each document', () => {
     const accumulator = createMeanPoolAccumulator(3);
-    accumulateVector(accumulator, 'doc-a', new Float32Array([2, 0, 0]));
-    accumulateVector(accumulator, 'doc-a', new Float32Array([0, 2, 0]));
+    addDocument(accumulator, 'doc-a', [new Float32Array([2, 0, 0]), new Float32Array([0, 2, 0])]);
 
     const pooled = finalizeMeanPool(accumulator);
     expect(pooled.rowCount).toBe(1);
@@ -153,16 +158,23 @@ describe('mean pooling', () => {
   it('skips vectors whose width does not match, rather than throwing', () => {
     // A corpus can briefly hold rows from a previous model while a re-embed
     // drains. One stale row must not abort a whole projection pass.
+    const sum = new Float64Array(4);
+    expect(addVectorInto(sum, new Float32Array([1, 0, 0, 0]))).toBe(true);
+    expect(addVectorInto(sum, new Float32Array([1, 0, 0]))).toBe(false);
+    expect(Array.from(sum)).toEqual([1, 0, 0, 0]);
+  });
+
+  it('records no document with nothing folded, or a sum of another width', () => {
     const accumulator = createMeanPoolAccumulator(4);
-    expect(accumulateVector(accumulator, 'doc', new Float32Array([1, 0, 0, 0]))).toBe(true);
-    expect(accumulateVector(accumulator, 'doc', new Float32Array([1, 0, 0]))).toBe(false);
-    expect(finalizeMeanPool(accumulator).chunkCounts).toEqual([1]);
+    setDocumentSum(accumulator, 'empty', new Float64Array(4), 0);
+    setDocumentSum(accumulator, 'narrow', new Float64Array(3), 2);
+    expect(finalizeMeanPool(accumulator).rowCount).toBe(0);
   });
 
   it('orders documents by key so a cached projection is reproducible', () => {
     const build = (keys: string[]): string[] => {
       const accumulator = createMeanPoolAccumulator(2);
-      for (const key of keys) accumulateVector(accumulator, key, new Float32Array([1, 0]));
+      for (const key of keys) addDocument(accumulator, key, [new Float32Array([1, 0])]);
       return finalizeMeanPool(accumulator).docKeys;
     };
     // Insertion order differs; output order must not, or every cached position
@@ -175,69 +187,6 @@ describe('mean pooling', () => {
     const pooled = finalizeMeanPool(createMeanPoolAccumulator(8));
     expect(pooled.rowCount).toBe(0);
     expect(pooled.matrix.length).toBe(0);
-  });
-});
-
-describe('incremental accumulation', () => {
-  // The full vec-table scan costs ~62s on the real corpus, so it must be paid
-  // once and then extended. These pin the round-trip and, more importantly, the
-  // guard against double-counting a re-indexed document.
-  const dimensions = 4;
-  const modelTag = 'bge-base@q8-cls';
-
-  function build(): MeanPoolAccumulator {
-    const accumulator = createMeanPoolAccumulator(dimensions);
-    accumulateVector(accumulator, 'doc-a', new Float32Array([1, 0, 0, 0]));
-    accumulateVector(accumulator, 'doc-a', new Float32Array([0, 1, 0, 0]));
-    accumulateVector(accumulator, 'doc-b', new Float32Array([0, 0, 1, 0]));
-    return accumulator;
-  }
-
-  it('round-trips sums and counts so a later pass can extend them', () => {
-    const indexedAt = new Map([['doc-a', '2026-09-01T00:00:00.000Z']]);
-    const serialized = serializeMeanPool(build(), 42, modelTag, indexedAt);
-    // Only the documents the accumulator holds, and only those with a time.
-    expect(serialized.indexedAtByDocKey).toEqual({ 'doc-a': '2026-09-01T00:00:00.000Z' });
-    const restored = deserializeMeanPool(serialized, dimensions, modelTag);
-    expect(restored).not.toBeNull();
-    expect(restored?.countsByDocKey.get('doc-a')).toBe(2);
-    expect(Array.from(restored!.sumsByDocKey.get('doc-a')!)).toEqual([1, 1, 0, 0]);
-
-    // Extending the restored accumulator must match a single uninterrupted pass.
-    accumulateVector(restored!, 'doc-a', new Float32Array([0, 0, 0, 2]));
-    const oneShot = build();
-    accumulateVector(oneShot, 'doc-a', new Float32Array([0, 0, 0, 2]));
-    expect(Array.from(finalizeMeanPool(restored!).matrix))
-      .toEqual(Array.from(finalizeMeanPool(oneShot).matrix));
-  });
-
-  it('refuses a cache built under a different model or width', () => {
-    // A model switch changes vector width AND meaning. Silently mixing them
-    // would produce a map that is wrong in a way nothing else would catch.
-    const serialized = serializeMeanPool(build(), 42, modelTag, new Map());
-    expect(deserializeMeanPool(serialized, dimensions, 'bge-large@q8-cls')).toBeNull();
-    expect(deserializeMeanPool(serialized, 768, modelTag)).toBeNull();
-    expect(deserializeMeanPool(serialized, dimensions, modelTag)).not.toBeNull();
-  });
-
-  it('forgetDocument drops a re-indexed doc so it cannot be double-counted', () => {
-    // `upsertDocument` re-indexes by deleting from the first divergent seq and
-    // reinserting, minting NEW chunk ids under the SAME doc key. An incremental
-    // pass keyed only on lastScannedChunkId would add the new chunks on top of
-    // the old ones' contribution. This is the escape hatch for that case.
-    const accumulator = build();
-    expect(accumulator.countsByDocKey.get('doc-a')).toBe(2);
-
-    forgetDocument(accumulator, 'doc-a');
-    expect(accumulator.countsByDocKey.has('doc-a')).toBe(false);
-    expect(accumulator.sumsByDocKey.has('doc-a')).toBe(false);
-
-    // Rescanned from scratch, doc-a reflects only its current chunks.
-    accumulateVector(accumulator, 'doc-a', new Float32Array([5, 0, 0, 0]));
-    const pooled = finalizeMeanPool(accumulator);
-    const rowIndex = pooled.docKeys.indexOf('doc-a');
-    expect(pooled.chunkCounts[rowIndex]).toBe(1);
-    expect(pooled.matrix[rowIndex * dimensions]).toBeCloseTo(1, 6);
   });
 });
 
