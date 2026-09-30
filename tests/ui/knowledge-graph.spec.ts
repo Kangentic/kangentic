@@ -2785,6 +2785,75 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  test('Reset view with no chat open clears the selection and centres the whole map', async () => {
+    // Reported: with a conversation selected and no chat open, Reset view flew
+    // home but kept the detail panel, so the map stayed framed beside it and
+    // the selection stayed lit. Reset view means the whole map again.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await openKnowledgeGraph(page);
+      const reset = page.locator('[data-testid="knowledge-graph-reset-view"]');
+      // Where the drawn titles centre, which is where the camera put the map.
+      const titleCentre = () => page.evaluate(() => {
+        const boxes = Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
+          .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0)
+          .map((element) => element.getBoundingClientRect());
+        if (boxes.length === 0) return null;
+        const left = Math.min(...boxes.map((box) => box.left));
+        const right = Math.max(...boxes.map((box) => box.right));
+        return (left + right) / 2;
+      });
+      // Polled until two reads agree, since Reset view is an animated fly.
+      const settledCentre = async () => {
+        let previous: number | null = null;
+        let settled = 0;
+        await expect.poll(async () => {
+          const current = await titleCentre();
+          const drift = current === null || previous === null ? Infinity : Math.abs(current - previous);
+          previous = current;
+          settled = current ?? 0;
+          return drift;
+        }, { timeout: 10_000 }).toBeLessThan(1);
+        return settled;
+      };
+
+      // The whole map with nothing selected, as Reset view frames it.
+      await reset.click();
+      const home = await settledCentre();
+
+      await selectVisibleNode(page);
+      await reset.click();
+
+      await expect(page.locator('[data-testid="knowledge-graph-detail"]')).toHaveCount(0);
+      // Framed for the pane the closed panel leaves, not the one beside it.
+      // Measured on this fixture: framed while the panel was still counted, the
+      // centre sat 154px from home.
+      expect(Math.abs((await settledCentre()) - home)).toBeLessThan(40);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Reset view keeps the selection while a chat is open', async () => {
+    // With a chat open the detail panel's Back is the way to the chat, so
+    // Reset view moves only the camera.
+    const { browser, page } = await launchWithState(conversationFixture());
+    try {
+      await openKnowledgeGraph(page);
+      await page.locator('[data-testid="knowledge-graph-search-input"]').fill('what was conversation 0?');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('[data-testid="knowledge-graph-chat-row"]')).toHaveCount(1);
+      const index = await selectVisibleNode(page);
+
+      await page.locator('[data-testid="knowledge-graph-reset-view"]').click();
+
+      await expect(page.locator('[data-testid="knowledge-graph-detail-title"]')).toHaveText(`Conversation ${index}`);
+      await expect(page.locator('[data-testid="knowledge-graph-detail-back"]')).toContainText('the chat');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('lists closest conversations without a similarity percentage', async () => {
     // Every row used to read "99% similar", which is the corpus rather than a
     // rounding accident: anisotropy puts >98% of top-10 pairs above 0.8 cosine,

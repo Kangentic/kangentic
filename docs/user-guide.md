@@ -939,7 +939,9 @@ rise and drop - you can fly right into a cluster and out the other side. The cam
 bottom centre of the map holds **Reset view**, which frames the whole map again so it is always
 possible to get un-lost, and **Controls**, which shows these keys. With regions switched off, Reset
 view frames what is left rather than the regions you hid, so resetting a scoped map fills the view
-instead of pulling it back out.
+instead of pulling it back out. With no chat open, Reset view also clears the selected conversation
+and its panel, and centres the map in the space the panel leaves. While a chat is open the selection
+stays, since its panel's Back is the way back to the chat.
 
 Every change to what the map shows moves the camera by flying, never by a cut: narrowing a filter
 or landing an answer flies to what is lit, clearing it or ending the chat flies back to the whole

@@ -743,6 +743,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
         framingIndices={framingIndices}
         selectedIndex={selectedIndex}
         onSelect={selectNode}
+        resetKeepsSelection={chatOpen}
         onActivate={(index) => {
           const node = projection.nodes[index];
           if (node) openConversationForNode(node, graphView.nodeProjectIds?.[index] ?? null);

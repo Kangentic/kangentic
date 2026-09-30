@@ -72,6 +72,13 @@ export interface KnowledgeGraphCanvasProps {
   highlighted?: ReadonlySet<number>;
   selectedIndex?: number | null;
   onSelect?: (index: number | null) => void;
+  /**
+   * Whether Reset view keeps the selected conversation. With no chat open,
+   * Reset view means the whole map again, so it clears the selection too; with
+   * one, the selection is how the reader gets back to the chat (the detail
+   * panel's Back), so it stays.
+   */
+  resetKeepsSelection?: boolean;
   onActivate?: (index: number) => void;
   showEdges?: boolean;
   showLabels?: boolean;
@@ -371,6 +378,7 @@ export function KnowledgeGraphCanvas({
   highlighted,
   selectedIndex = null,
   onSelect,
+  resetKeepsSelection = false,
   onActivate,
   showEdges = true,
   showLabels = true,
@@ -1233,6 +1241,21 @@ export function KnowledgeGraphCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [flyKey, frameNodes, resetView, graph.scene]);
 
+  /**
+   * Reset view, and with no chat open, the selection with it. Clearing the
+   * selection closes the detail panel, and the panels' space is re-measured a
+   * render later, so the fly waits a frame: framed at once, it would fit the
+   * map to the space beside a panel that is already gone, off centre.
+   */
+  const handleResetView = useCallback(() => {
+    if (selectedIndex !== null && !resetKeepsSelection && onSelect) {
+      onSelect(null);
+      requestAnimationFrame(() => resetView());
+      return;
+    }
+    resetView();
+  }, [selectedIndex, resetKeepsSelection, onSelect, resetView]);
+
   // ---- picking --------------------------------------------------------------
   const pickAt = useCallback((clientX: number, clientY: number): number | null => {
     const container = containerRef.current;
@@ -1478,7 +1501,7 @@ export function KnowledgeGraphCanvas({
       >
         <button
           type="button"
-          onClick={resetView}
+          onClick={handleResetView}
           onPointerDown={(event) => event.stopPropagation()}
           title="Fly back to the opening view"
           data-testid="knowledge-graph-reset-view"
