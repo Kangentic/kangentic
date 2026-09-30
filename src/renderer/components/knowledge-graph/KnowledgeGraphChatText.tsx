@@ -150,7 +150,39 @@ function rehypeKeepMarksWithPunctuation() {
   return (tree: { type: string }) => keepMarksWithPunctuation(tree as AnswerTreeNode);
 }
 
-const REHYPE_PLUGINS = [rehypeKeepMarksWithPunctuation];
+/**
+ * Let a path in inline code wrap at a folder. Chrome finds no break opportunity
+ * at a `/`, so in the narrow chat `src/main/retrieval/memory-search.ts` broke
+ * wherever `overflow-wrap: anywhere` cut it, mid-name. A `<wbr>` after each `/`
+ * is tried first; the overflow rule still cuts a single segment longer than the
+ * line. A fenced block is left alone, since it scrolls instead of wrapping.
+ */
+export function breakPathsAtSlashes(parent: AnswerTreeNode): void {
+  for (const child of parent.children ?? []) {
+    if (child.type !== 'element' || child.tagName === 'pre') continue;
+    if (child.tagName === 'code') {
+      child.children = child.children?.flatMap(splitAfterSlashes);
+      continue;
+    }
+    breakPathsAtSlashes(child);
+  }
+}
+
+function splitAfterSlashes(node: AnswerTreeNode): AnswerTreeNode[] {
+  if (node.type !== 'text' || !node.value?.includes('/')) return [node];
+  // After every `/` that has text following it: a trailing one needs no break.
+  return node.value.split(/(?<=\/)(?!$)/).flatMap((segment, index) => {
+    const text: AnswerTreeNode = { type: 'text', value: segment };
+    return index === 0 ? [text] : [{ type: 'element', tagName: 'wbr', properties: {}, children: [] }, text];
+  });
+}
+
+/** `breakPathsAtSlashes` as a rehype step. */
+function rehypeBreakPathsAtSlashes() {
+  return (tree: { type: string }) => breakPathsAtSlashes(tree as AnswerTreeNode);
+}
+
+const REHYPE_PLUGINS = [rehypeKeepMarksWithPunctuation, rehypeBreakPathsAtSlashes];
 
 export function KnowledgeGraphChatText({
   text,

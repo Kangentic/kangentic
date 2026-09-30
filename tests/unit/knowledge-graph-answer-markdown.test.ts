@@ -11,7 +11,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  KnowledgeGraphChatText,
+  breakPathsAtSlashes,
   keepMarksWithPunctuation,
   linkifyTickets,
   stripProtocolLine,
@@ -147,6 +151,50 @@ describe('keeping a mark on one line with its punctuation', () => {
     };
     keepMarksWithPunctuation(paragraph);
     expect(flatten(paragraph)).toBe('docs.');
+  });
+});
+
+describe('wrapping a path in inline code at a folder', () => {
+  // Seen in a real code answer: the narrow chat cut "memory-search.ts" in two,
+  // because Chrome finds no break at a `/` and `overflow-wrap: anywhere` cut it.
+  const text = (value: string): AnswerTreeNode => ({ type: 'text', value });
+  const element = (tagName: string, children: AnswerTreeNode[]): AnswerTreeNode => ({ type: 'element', tagName, children });
+  /** A node read back as text, with `|` for each break opportunity. */
+  const flatten = (node: AnswerTreeNode): string => {
+    if (node.type === 'text') return node.value ?? '';
+    if (node.tagName === 'wbr') return '|';
+    return (node.children ?? []).map(flatten).join('');
+  };
+
+  it('offers a break after each folder in inline code', () => {
+    const paragraph = element('p', [text('It lives in '), element('code', [text('src/main/retrieval/memory-search.ts')]), text('.')]);
+    breakPathsAtSlashes({ type: 'root', children: [paragraph] });
+    expect(flatten(paragraph)).toBe('It lives in src/|main/|retrieval/|memory-search.ts.');
+  });
+
+  it('adds nothing after a trailing slash or to code without one', () => {
+    const paragraph = element('p', [element('code', [text('src/main/')]), text(' and '), element('code', [text('withTaskLock')])]);
+    breakPathsAtSlashes({ type: 'root', children: [paragraph] });
+    expect(flatten(paragraph)).toBe('src/|main/ and withTaskLock');
+  });
+
+  it('leaves prose and fenced blocks alone', () => {
+    const paragraph = element('p', [text('and/or a path src/main/x.ts')]);
+    const fenced = element('pre', [element('code', [text('src/main/x.ts')])]);
+    breakPathsAtSlashes({ type: 'root', children: [paragraph, fenced] });
+    expect(flatten(paragraph)).toBe('and/or a path src/main/x.ts');
+    expect(flatten(fenced)).toBe('src/main/x.ts');
+  });
+
+  it('reaches the rendered answer through the markdown pipeline', () => {
+    const markup = renderToStaticMarkup(createElement(KnowledgeGraphChatText, {
+      text: 'It lives in `src/main/x.ts`.\n\n```\nsrc/main/y.ts\n```',
+      tasksByTicket: new Map(),
+      onOpenTask: () => undefined,
+      canOpenTask: () => false,
+    }));
+    expect(markup).toContain('<code>src/<wbr/>main/<wbr/>x.ts</code>');
+    expect(markup).toContain('src/main/y.ts');
   });
 });
 
