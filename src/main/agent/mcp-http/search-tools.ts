@@ -7,21 +7,19 @@ import { runSearchEverything } from '../../search/search-core';
 import type { SearchHit, Project } from '../../../shared/types';
 import { isAnswerCaller } from './caller-url';
 import { ANSWER_SEARCH_BUDGET, answerSearchProjects, claimAnswerSearch, isAnswerSearchWatched, publishAnswerSearch } from './answer-search-trace';
+import { PASSAGES_SHOWN, type RelatedWork, type RelatedWorkTask } from '../../retrieval/related-work';
+import { relatedQueryTexts } from '../../retrieval/related-query-text';
 import {
-  boardRecordTasks,
-  indexedConversationNodes,
-  readBoardTaskFacts,
-  searchRelatedWork,
-  PASSAGES_SHOWN,
-  type IndexedConversationNode,
-  type RelatedWork,
-  type RelatedWorkTask,
-} from '../../retrieval/related-work';
+  INDEX_RESTARTING,
+  rankRelatedWork,
+  searchCommitsIn,
+  searchConversations,
+} from '../../retrieval/retrieval-queries';
+import type { RankedRelatedWork } from '../../retrieval/worker/methods';
 import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { resolveTask } from '../commands/task-resolver';
-import { searchCommits, type CommitHit } from '../../retrieval/commit/commit-search';
-import { SummaryStore } from '../../retrieval/summary/summary-store';
+import type { CommitHit } from '../../retrieval/commit/commit-search';
 import type { BoardTaskFacts } from '../../retrieval/answer-tasks';
 import {
   KNOWLEDGE_GRAPH_TASK_FIELDS,
@@ -175,19 +173,14 @@ export function registerSearchTools(
           embedder,
           embedWaitMs: 5000,
           taskId,
+          search: searchConversations,
         },
       });
 
       // Commits, read from the index like the conversations, and skipped for a
       // "#N" ticket lookup, which asks for board tasks only.
       const commits = indexingEnabled && !TICKET_QUERY.test(query.trim())
-        ? projectsToScan.flatMap((entry) => {
-          try {
-            return searchCommits(getProjectDb(entry.id), query, { taskId }).map((hit) => ({ ...hit, projectName: entry.name }));
-          } catch {
-            return [];
-          }
-        })
+        ? await searchCommitsIn(projectsToScan, query, taskId)
         : [];
 
       const notes: string[] = [];
@@ -266,22 +259,21 @@ async function searchByTask(input: {
     return { content: [{ type: 'text' as const, text: 'Conversation indexing is off, so there are no conversations to rank tasks by.' }] };
   }
 
-  const nodes = indexedConversationNodes(input.projectId);
-  const related = await searchRelatedWork({
-    question: input.query,
+  // An answer run already holds every task's facts in its table and the handed
+  // tasks' summaries in its related work, so its rows stay lean.
+  const ranked = await rankRelatedWork({
     projectId: input.projectId,
-    nodes,
-    // Unscoped: every board task is in reach of its own record, so a task
-    // with no indexed conversation still ranks.
-    recordOnlyTasks: boardRecordTasks(input.projectId),
+    question: input.query,
     embedder: input.embedder,
+    vectorTexts: relatedQueryTexts(input.query, []),
     embedWaitMs: 5000,
+    withExtras: !input.callerSessionId,
   });
+  if (!ranked) return indexRestarting();
+  const { related } = ranked;
 
   if (input.callerSessionId) {
-    publishAnswerSearch(input.callerSessionId, { query: input.query, sessionIds: handedSessionIds(nodes, related.handed) });
-    // An answer run already holds every task's facts in its table and the
-    // handed tasks' summaries in its related work, so its rows stay lean.
+    publishAnswerSearch(input.callerSessionId, { query: input.query, sessionIds: handedSessionIds(ranked, related.handed) });
     return { content: [{ type: 'text' as const, text: formatRelatedTasks(input.query, related) }] };
   }
 
@@ -289,9 +281,14 @@ async function searchByTask(input: {
   return {
     content: [{
       type: 'text' as const,
-      text: formatRankedTasksForAgents(header, related.handed, related, readRankedTaskExtras(input.projectId, related.handed)),
+      text: formatRankedTasksForAgents(header, related.handed, related, ranked),
     }],
   };
+}
+
+/** The worker could not answer: said so, in words the agent acts on. */
+function indexRestarting(): McpToolResult {
+  return { content: [{ type: 'text' as const, text: INDEX_RESTARTING }], isError: true };
 }
 
 /** What an answer run's search returns once its question's budget is spent. */
@@ -305,10 +302,9 @@ function answerBudgetSpent(): McpToolResult {
 }
 
 /** The sessions a set of ranked tasks' conversations open, for the answer trace. */
-function handedSessionIds(nodes: ReadonlyArray<IndexedConversationNode>, handed: ReadonlyArray<RelatedWorkTask>): string[] {
-  const sessionByDocKey = new Map(nodes.map((node) => [node.docKey, node.sessionId]));
+function handedSessionIds(ranked: Pick<RankedRelatedWork, 'sessionIdByDocKey'>, handed: ReadonlyArray<RelatedWorkTask>): string[] {
   return [...new Set(handed.flatMap((task) => task.docKeys
-    .map((docKey) => sessionByDocKey.get(docKey))
+    .map((docKey) => ranked.sessionIdByDocKey.get(docKey))
     .filter((sessionId): sessionId is string => Boolean(sessionId))))];
 }
 
@@ -365,35 +361,24 @@ async function searchRelatedToTask(input: {
 
   const focus = input.query?.trim() ?? '';
   const text = `${focus ? `${focus}. ` : ''}${task.title}\n${task.description ?? ''}`.slice(0, RELATED_TO_TASK_TEXT_CHARS);
-  // The node and record reads come BEFORE the embedding, as they do for
-  // groupBy:"task". The embed is a round trip to the worker, so timers and IPC
-  // run between these reads and the vector scan; read after it, they ran back to
-  // back with the scan and held main for one merged 470 ms stall.
-  const targetId = task.id;
-  const nodes = indexedConversationNodes(input.project.id).filter((node) => node.taskId !== targetId);
-  const recordOnlyTasks = boardRecordTasks(input.project.id).filter((record) => record.taskId !== targetId);
-  let queryVectors: ReadonlyArray<Float32Array> = [];
-  if (input.embedder) {
-    try {
-      queryVectors = (await input.embedder.embed([text], { timeoutMs: 5000, isQuery: true })) ?? [];
-    } catch {
-      queryVectors = [];
-    }
-  }
-  const related = await searchRelatedWork({
+  // The task is left out of its own ranking, conversations and record both.
+  const ranked = await rankRelatedWork({
+    projectId: input.project.id,
     question: text,
     keywordText: `${focus} ${task.title}`,
-    projectId: input.project.id,
-    nodes,
-    recordOnlyTasks,
+    excludeTaskId: task.id,
     embedder: input.embedder,
-    queryVectors,
+    vectorTexts: [text],
     embedWaitMs: 5000,
+    rows: RELATED_TO_TASK_ROWS,
+    withExtras: !input.callerSessionId,
   });
+  if (!ranked) return indexRestarting();
+  const { related } = ranked;
   const handed = related.handed.slice(0, RELATED_TO_TASK_ROWS);
 
   if (input.callerSessionId) {
-    publishAnswerSearch(input.callerSessionId, { query: `related to #${task.display_id}`, sessionIds: handedSessionIds(nodes, handed) });
+    publishAnswerSearch(input.callerSessionId, { query: `related to #${task.display_id}`, sessionIds: handedSessionIds(ranked, handed) });
   }
   if (handed.length === 0) {
     return { content: [{ type: 'text' as const, text: `Nothing in the index is related to ${label}.` }] };
@@ -405,36 +390,15 @@ async function searchRelatedToTask(input: {
   return {
     content: [{
       type: 'text' as const,
-      text: formatRankedTasksForAgents(header, handed, related, readRankedTaskExtras(input.project.id, handed)),
+      text: formatRankedTasksForAgents(header, handed, related, ranked),
     }],
   };
 }
 
-/** Each ranked task's facts, and the strongest ones' summaries, by task id. */
-interface RankedTaskExtras {
-  factsByTaskId: Map<string, BoardTaskFacts>;
-  summaryByTaskId: Map<string, string>;
-}
-
-/**
- * The facts and summaries ranked rows carry. Written summaries show whatever
- * the Task summaries switch says: it stops new ones, and the written ones keep
- * helping, as they do in Ask. Either read failing leaves the rows without it.
- */
-function readRankedTaskExtras(projectId: string, handed: ReadonlyArray<RelatedWorkTask>): RankedTaskExtras {
-  const factsByTaskId = new Map(readBoardTaskFacts(projectId).map((facts) => [facts.taskId, facts]));
-  let summaryByTaskId = new Map<string, string>();
-  const withSummary = handed
-    .slice(0, PASSAGES_SHOWN)
-    .map((task) => task.taskId)
-    .filter((taskId): taskId is string => taskId !== null);
-  try {
-    summaryByTaskId = new SummaryStore(getProjectDb(projectId)).summariesFor(withSummary);
-  } catch {
-    // The rows stand without summaries.
-  }
-  return { factsByTaskId, summaryByTaskId };
-}
+/** Each ranked task's facts, and the strongest ones' summaries, by task id.
+ *  Read in the worker with the ranking (`related.rank`); either read failing
+ *  leaves the rows without it. */
+type RankedTaskExtras = Pick<RankedRelatedWork, 'factsByTaskId' | 'summaryByTaskId'>;
 
 /** Characters a ranked-task response stops at; the rest are counted, not shown. */
 export const RANKED_TASKS_RESPONSE_CHARS = 30_000;

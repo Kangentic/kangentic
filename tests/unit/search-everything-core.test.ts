@@ -4,7 +4,15 @@ import os from 'node:os';
 import fs from 'node:fs';
 import type Database from 'better-sqlite3';
 import { runSearchEverything } from '../../src/main/search/search-core';
+import { searchConversationMemory } from '../../src/main/retrieval/memory-search';
+import type { ConversationSearchRequest } from '../../src/main/retrieval/retrieval-queries';
 import type { Project } from '../../src/shared/types';
+
+/** The conversation search the worker runs, in process over the test database,
+ *  in place of the app's `searchConversations` (which calls the worker). */
+function inProcessSearch(db: Database.Database) {
+  return (request: ConversationSearchRequest) => searchConversationMemory({ ...request, getDb: () => db });
+}
 
 /**
  * Tests for the unified search core (`runSearchEverything`).
@@ -454,7 +462,7 @@ describe('runSearchEverything', () => {
       projects: [project],
       includeProjectHits: false,
       getDb: () => db,
-      conversationSearch: { enabled: true },
+      conversationSearch: { enabled: true, search: inProcessSearch(db) },
     });
 
     const conversationHits = hits.filter((hit) => hit.kind === 'conversation');
@@ -493,7 +501,7 @@ describe('runSearchEverything', () => {
       projects: [project],
       includeProjectHits: false,
       getDb: () => db,
-      conversationSearch: { enabled: true },
+      conversationSearch: { enabled: true, search: inProcessSearch(db) },
     });
 
     const conversationHits = hits.filter((hit) => hit.kind === 'conversation');

@@ -13,7 +13,7 @@
  */
 
 import type Database from 'better-sqlite3';
-import { configureProjectDbAccess, getProjectDb, setProjectDbInitializer } from '../../db/database';
+import { closeProjectDb, configureProjectDbAccess, getProjectDb, setProjectDbInitializer } from '../../db/database';
 import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
 import { loadVecExtensionFrom } from '../vec-support';
 import { retrievalHandlers, type WorkerContext } from './methods';
@@ -32,15 +32,21 @@ function post(message: FromWorkerMessage): void {
   parentPort.postMessage(message);
 }
 
+/** Why sqlite-vec last failed to load, for the status line. */
+let vecLoadError: string | null = null;
+
 function initialize(message: InitMessage): void {
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
   const vecLoadablePath = message.vecLoadablePath;
+  if (!vecLoadablePath) vecLoadError = 'the sqlite-vec extension was not found';
   setProjectDbInitializer((db: Database.Database) => {
     if (!vecLoadablePath) return;
     try {
       loadVecExtensionFrom(db, vecLoadablePath);
+      vecLoadError = null;
     } catch (error) {
-      // Lexical-only for this connection, as on main.
+      // Keywords only for this connection.
+      vecLoadError = error instanceof Error ? error.message : String(error);
       console.warn('[retrieval-worker] sqlite-vec unavailable, semantic search disabled:', error);
     }
   });
@@ -52,6 +58,8 @@ function initialize(message: InitMessage): void {
 
 const context: WorkerContext = {
   getDb: (projectId) => getProjectDb(projectId),
+  closeDb: (projectId) => closeProjectDb(projectId),
+  vecLoadError: () => vecLoadError,
   emit: (event: RetrievalEventName, projectId: string) => post({ type: 'event', event, projectId }),
 };
 

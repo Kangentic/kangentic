@@ -1,7 +1,9 @@
 import type Database from 'better-sqlite3';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { agentRegistry } from './agent-registry';
-import { RetrievalStore } from '../retrieval/retrieval-store';
+import { projectIdOfDb } from '../db/database';
+import { retrievalClient } from '../retrieval/retrieval-client';
+import type { StoredChunk } from '../retrieval/types';
 import { touchBounded, heldBytes } from './shared/bounded-lru';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import {
@@ -50,13 +52,35 @@ export interface ResolvedTaskTranscript {
   revision: number;
 }
 
+/** A conversation's indexed chunks, in order: the fields the fallback reads. */
+export type IndexedChunk = Pick<StoredChunk, 'id' | 'role' | 'text' | 'tsStart' | 'turnUuidStart'>;
+
+/**
+ * Reads a conversation's indexed chunks from a project's index. In the app
+ * that is the retrieval worker, which owns the index; the project is the one
+ * whose handle `db` is. Tests set an in-process reader.
+ */
+let readIndexedChunks = async (db: Database.Database, docId: string): Promise<IndexedChunk[]> => {
+  const projectId = projectIdOfDb(db);
+  if (!projectId) return [];
+  try {
+    return await retrievalClient.call('transcript.indexedChunks', { projectId, docId });
+  } catch {
+    // The index is restarting: nothing to fall back on this time.
+    return [];
+  }
+};
+
+export function setIndexedChunkReaderForTests(reader: typeof readIndexedChunks): void {
+  readIndexedChunks = reader;
+}
+
 /** Reconstruct lossy display entries from indexed chunks when the native
  *  history file is gone. Block structure is not recoverable, so each chunk maps
  *  to a single-block entry of its recorded role. */
-function entriesFromIndex(db: Database.Database, docId: string): TranscriptEntry[] {
-  const store = new RetrievalStore(db);
-  const chunks = store.getChunksForDoc('conversation', docId);
-  return chunks.map((chunk) => {
+async function entriesFromIndex(db: Database.Database, docId: string): Promise<TranscriptEntry[]> {
+  const chunks = await readIndexedChunks(db, docId);
+  return chunks.map((chunk): TranscriptEntry => {
     const uuid = chunk.turnUuidStart ?? `chunk-${chunk.id}`;
     const ts = chunk.tsStart ?? 0;
     const text = clampSpan(chunk.text);
@@ -129,7 +153,7 @@ export async function resolveSessionTranscript(
       return { ...base, source: 'live', sourcePath, entries, degraded: false };
     }
     // Native file located but empty/pruned: try the index fallback.
-    const indexed = entriesFromIndex(db, record.agent_session_id ?? record.id);
+    const indexed = await entriesFromIndex(db, record.agent_session_id ?? record.id);
     if (indexed.length > 0) {
       return { ...base, source: 'index', sourcePath, entries: indexed, degraded: true };
     }
@@ -144,7 +168,7 @@ export async function resolveSessionTranscript(
   }
 
   // No structured parser, or no agent_session_id yet: index fallback, else none.
-  const indexed = entriesFromIndex(db, record.agent_session_id ?? record.id);
+  const indexed = await entriesFromIndex(db, record.agent_session_id ?? record.id);
   if (indexed.length > 0) {
     return { ...base, source: 'index', sourcePath: null, entries: indexed, degraded: true };
   }

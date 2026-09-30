@@ -7,21 +7,21 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
-import { ConversationUsageStore } from '../../retrieval/conversation/conversation-usage-store';
+import { retrievalClient } from '../../retrieval/retrieval-client';
 import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
-import type { Task } from '../../../shared/types';
+import type { SubagentUsageTotals, Task, TaskFanOut } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
 /** Fan-out rows printed before collapsing the tail into a "+N more" line. The
  *  rows are heaviest-first, so the cap keeps the expensive ones. */
 const MAX_FAN_OUT_LINES = 5;
 
-export const handleGetTaskStats: CommandHandler = (
+export const handleGetTaskStats: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const taskId = params.taskId as string | null;
   const query = (params.query as string | null)?.toLowerCase() ?? null;
   const sortBy = (params.sortBy as string) || 'tokens';
@@ -53,14 +53,20 @@ export const handleGetTaskStats: CommandHandler = (
     // tokens again would double count. On a /code-review or /test task this is
     // most of the traffic, and it is the only place the board can answer which
     // subagent was expensive.
-    const usageStore = new ConversationUsageStore(db);
-    const bySubagentType = usageStore.getSubagentTotalsByType(null, null, task.id);
-    const subagentTurns = bySubagentType.reduce((total, row) => total + row.turnCount, 0);
-    // Grouped by the driver turn that STARTED each fan-out, which the per-type
-    // rollup above cannot express: a /code-review task spawns the same
+    //
+    // The fan-outs are grouped by the driver turn that STARTED each one, which
+    // the per-type rollup cannot express: a /code-review task spawns the same
     // `review-finder` type from several different turns, and "what did this one
-    // fan-out cost" is the question that distinguishes them.
-    const fanOuts = subagentTurns > 0 ? usageStore.getTaskFanOuts(task.id) : [];
+    // fan-out cost" is the question that distinguishes them. Both are read in
+    // the retrieval worker, which owns the ledger.
+    let bySubagentType: SubagentUsageTotals[] = [];
+    let fanOuts: TaskFanOut[] = [];
+    try {
+      ({ bySubagentType, fanOuts } = await retrievalClient.call('usage.taskSubagents', { projectId: context.projectId, taskId: task.id }));
+    } catch {
+      // The index is restarting: the stats print without the subagent lines.
+    }
+    const subagentTurns = bySubagentType.reduce((total, row) => total + row.turnCount, 0);
 
     const lines = [
       `Stats for "${task.title}":`,

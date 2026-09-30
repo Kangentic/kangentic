@@ -125,10 +125,11 @@ export interface CommandContext {
   /**
    * What the Knowledge Graph knows about some tasks (the summary, the commits
    * linked to each, the files its sessions changed), for the task reads, or
-   * `indexOn: false` while the index is switched off. Optional because test
-   * suites hand-build a context; without it the reads print no knowledge.
+   * `indexOn: false` while the index is switched off. Read in the retrieval
+   * worker, so it answers asynchronously. Optional because test suites
+   * hand-build a context; without it the reads print no knowledge.
    */
-  readTaskKnowledge?: (taskIds: string[]) => TaskKnowledgeRead;
+  readTaskKnowledge?: (taskIds: string[]) => Promise<TaskKnowledgeRead> | TaskKnowledgeRead;
 }
 
 /** The index's knowledge of some tasks, as `readTaskKnowledge` returns it. */

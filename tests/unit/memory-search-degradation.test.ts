@@ -235,40 +235,19 @@ function singleProjectConfig(): FakeDbConfig {
 
 const PROJECT_A = makeProject({ id: 'project-A', name: 'Proj A' });
 
-describe('searchConversationMemory - semantic_memory adoption signal', () => {
-  it('fires once per search when the query embedded', async () => {
+describe('searchConversationMemory - no analytics in the worker', () => {
+  // The search runs in the retrieval worker, which has no analytics. The
+  // semantic_memory signal is main's (retrieval-queries.test.ts).
+  it('sends no feature signal, whether or not the query embedded', async () => {
     mockTrackFeatureUsed.mockClear();
     const getDb = makeGetDb({ 'project-A': singleProjectConfig() });
-
     await searchConversationMemory({
       query: 'idle bug',
       projects: [PROJECT_A],
       embedder: new DeterministicFakeEmbedder('ok'),
       getDb,
     });
-
-    expect(mockTrackFeatureUsed).toHaveBeenCalledTimes(1);
-    expect(mockTrackFeatureUsed).toHaveBeenCalledWith('semantic_memory');
-  });
-
-  it('stays silent when the search fell back to lexical: no embedder, a null embed, or a throw', async () => {
-    mockTrackFeatureUsed.mockClear();
-    const getDb = makeGetDb({ 'project-A': singleProjectConfig() });
-
     await searchConversationMemory({ query: 'idle bug', projects: [PROJECT_A], getDb });
-    await searchConversationMemory({
-      query: 'idle bug',
-      projects: [PROJECT_A],
-      embedder: new DeterministicFakeEmbedder('null'),
-      getDb,
-    });
-    await searchConversationMemory({
-      query: 'idle bug',
-      projects: [PROJECT_A],
-      embedder: new DeterministicFakeEmbedder('throw'),
-      getDb,
-    });
-
     expect(mockTrackFeatureUsed).not.toHaveBeenCalled();
   });
 });

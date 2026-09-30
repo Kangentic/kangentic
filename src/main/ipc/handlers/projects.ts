@@ -28,6 +28,7 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { retrievalService } from '../../retrieval/retrieval-service';
+import { retrievalClient } from '../../retrieval/retrieval-client';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -114,6 +115,9 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
     console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} -- skipping filesystem cleanup`);
+    // The retrieval worker holds its own connection, and Windows will not
+    // unlink a file another process has open.
+    await retrievalClient.closeProject(projectId);
     closeProjectDb(projectId);
     const dbPath = PATHS.projectDb(projectId);
     try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
@@ -206,7 +210,9 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     }
   } catch { /* may not exist or not readable -- skip */ }
 
-  // 5. Close the project DB connection before deleting files
+  // 5. Close the project DB connections before deleting files: the retrieval
+  // worker's, then main's.
+  await retrievalClient.closeProject(projectId);
   closeProjectDb(projectId);
 
   // Steps 6-7 modify the project's .gitignore and .kangentic/ directory.
@@ -299,6 +305,7 @@ export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<v
     console.log(`[PRUNE] Removing ephemeral preview project: ${project.name} (${project.path})`);
 
     // Lightweight cleanup: only delete DB records, not worktree filesystem.
+    await retrievalClient.closeProject(project.id);
     closeProjectDb(project.id);
     const dbPath = PATHS.projectDb(project.id);
     try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }

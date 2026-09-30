@@ -72,9 +72,10 @@ vi.mock('../../src/main/ipc/handlers/strategy-propagation', () => ({
 // (task-knowledge-store.test.ts, against a real database). Here only the
 // context's gate around it is: the index switch, the summaries switch, and a
 // read that fails.
-const readTaskKnowledgeSpy = vi.hoisted(() => vi.fn());
-vi.mock('../../src/main/retrieval/task-knowledge', () => ({
-  readTaskKnowledge: readTaskKnowledgeSpy,
+// The read itself runs in the retrieval worker ('task.knowledge').
+const workerCallSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({
+  retrievalClient: { call: workerCallSpy },
 }));
 
 // RequestResolver is imported by mcp-project-context and called with `new`.
@@ -412,51 +413,48 @@ describe('buildCommandContextForProject - readTaskKnowledge', () => {
     return buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
   }
 
-  it('reads the index of the target project, and reports the summaries switch as on by default', () => {
+  it('reads the index of the target project, and reports the summaries switch as on by default', async () => {
     const byTask = new Map([['task-a', { summary: null, commits: [], commitCount: 0, changedFiles: [], changedFileCount: 0 }]]);
-    readTaskKnowledgeSpy.mockReturnValue(byTask);
-    const database = { projectDatabase: true };
-    vi.mocked(getProjectDb).mockReturnValueOnce(database as never);
+    workerCallSpy.mockResolvedValue(byTask);
     const context = makeKnowledgeContext({ knowledgeGraph: undefined });
 
-    const read = context.readTaskKnowledge!(['task-a']);
+    const read = await context.readTaskKnowledge!(['task-a']);
 
-    expect(getProjectDb).toHaveBeenCalledWith(DEFAULT_ID);
-    expect(readTaskKnowledgeSpy).toHaveBeenCalledWith(database, ['task-a']);
+    expect(workerCallSpy).toHaveBeenCalledWith('task.knowledge', { projectId: DEFAULT_ID, taskIds: ['task-a'] });
     expect(read).toEqual({ indexOn: true, summariesOn: true, byTask });
   });
 
-  it('does not read the index at all when indexing is off', () => {
+  it('does not read the index at all when indexing is off', async () => {
     const context = makeKnowledgeContext({ knowledgeGraph: { indexingEnabled: false } });
 
-    expect(context.readTaskKnowledge!(['task-a'])).toEqual({ indexOn: false });
-    expect(readTaskKnowledgeSpy).not.toHaveBeenCalled();
+    expect(await context.readTaskKnowledge!(['task-a'])).toEqual({ indexOn: false });
+    expect(workerCallSpy).not.toHaveBeenCalled();
   });
 
-  it('reads the index while only the Task summaries switch is off, and reports it off', () => {
-    readTaskKnowledgeSpy.mockReturnValue(new Map());
+  it('reads the index while only the Task summaries switch is off, and reports it off', async () => {
+    workerCallSpy.mockResolvedValue(new Map());
     const context = makeKnowledgeContext({ knowledgeGraph: { indexingEnabled: true, taskSummaries: false } });
 
-    const read = context.readTaskKnowledge!(['task-a']);
+    const read = await context.readTaskKnowledge!(['task-a']);
 
-    expect(readTaskKnowledgeSpy).toHaveBeenCalledOnce();
+    expect(workerCallSpy).toHaveBeenCalledOnce();
     expect(read).toMatchObject({ indexOn: true, summariesOn: false });
   });
 
-  it('treats a config that cannot be read as the defaults: index on, summaries on', () => {
-    readTaskKnowledgeSpy.mockReturnValue(new Map());
+  it('treats a config that cannot be read as the defaults: index on, summaries on', async () => {
+    workerCallSpy.mockResolvedValue(new Map());
     const context = makeKnowledgeContext(() => { throw new Error('config unreadable'); });
 
-    expect(context.readTaskKnowledge!(['task-a'])).toMatchObject({ indexOn: true, summariesOn: true });
+    expect(await context.readTaskKnowledge!(['task-a'])).toMatchObject({ indexOn: true, summariesOn: true });
   });
 
-  it('answers with no knowledge, and does not throw, when the index read fails', () => {
-    readTaskKnowledgeSpy.mockImplementation(() => { throw new Error('no such table: memory_chunks'); });
+  it('answers with no knowledge, and does not throw, when the index read fails or the worker is down', async () => {
+    workerCallSpy.mockRejectedValue(new Error('no such table: memory_chunks'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const context = makeKnowledgeContext({ knowledgeGraph: undefined });
 
-      const read = context.readTaskKnowledge!(['task-a']);
+      const read = await context.readTaskKnowledge!(['task-a']);
 
       expect(read).toEqual({ indexOn: true, summariesOn: true, byTask: new Map() });
       expect(warn).toHaveBeenCalledOnce();

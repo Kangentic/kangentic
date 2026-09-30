@@ -33,7 +33,7 @@ function commit(prefix: string, subject: string, committedAt: string): TaskKnowl
 }
 
 describe('taskKnowledgeLines', () => {
-  it('prints a finished task\'s written summary with the day it was written', () => {
+  it('prints a finished task\'s written summary with the day it was written', async () => {
     const lines = taskKnowledgeLines(
       knowledge({ summary: { text: 'Made the relay reconnect after a router restart.', writtenAt: '2026-09-20T18:30:00.000Z' } }),
       true,
@@ -42,17 +42,17 @@ describe('taskKnowledgeLines', () => {
     expect(lines).toContain('  summary (2026-09-20): Made the relay reconnect after a router restart.');
   });
 
-  it('says a finished task has no summary yet while summaries are on', () => {
+  it('says a finished task has no summary yet while summaries are on', async () => {
     expect(taskKnowledgeLines(knowledge(), true, true)).toContain('  summary: not written yet');
   });
 
-  it('says why a finished task has no summary while summaries are off', () => {
+  it('says why a finished task has no summary while summaries are off', async () => {
     expect(taskKnowledgeLines(knowledge(), true, false)).toContain(
       '  summary: none written (Task summaries are switched off in Settings > Knowledge Graph)',
     );
   });
 
-  it('prints a written summary whatever the switch says', () => {
+  it('prints a written summary whatever the switch says', async () => {
     // The switch stops new summaries; the ones already written keep helping.
     const lines = taskKnowledgeLines(
       knowledge({ summary: { text: 'Fixed the pairing code.', writtenAt: '2026-08-01T00:00:00.000Z' } }),
@@ -62,19 +62,19 @@ describe('taskKnowledgeLines', () => {
     expect(lines).toEqual(['  summary (2026-08-01): Fixed the pairing code.', '  commits: none linked to this task']);
   });
 
-  it('gives an unfinished task no summary line, written or not', () => {
+  it('gives an unfinished task no summary line, written or not', async () => {
     expect(taskKnowledgeLines(knowledge(), false, true)).toEqual([]);
     expect(taskKnowledgeLines(knowledge(), false, false)).toEqual([]);
     const written = knowledge({ summary: { text: 'Left over from an earlier Done.', writtenAt: '2026-08-01T00:00:00.000Z' } });
     expect(taskKnowledgeLines(written, false, true)).toEqual([]);
   });
 
-  it('says a finished task has no linked commits, and stays silent for an unfinished one', () => {
+  it('says a finished task has no linked commits, and stays silent for an unfinished one', async () => {
     expect(taskKnowledgeLines(knowledge(), true, true)).toContain('  commits: none linked to this task');
     expect(taskKnowledgeLines(knowledge(), false, true).join('\n')).not.toContain('commits');
   });
 
-  it('lists the commits newest first by ten-character sha, day and subject', () => {
+  it('lists the commits newest first by ten-character sha, day and subject', async () => {
     const lines = taskKnowledgeLines(
       knowledge({
         commits: [
@@ -91,7 +91,7 @@ describe('taskKnowledgeLines', () => {
     ]);
   });
 
-  it('counts the commits it does not list', () => {
+  it('counts the commits it does not list', async () => {
     const lines = taskKnowledgeLines(
       knowledge({
         commits: [
@@ -107,7 +107,7 @@ describe('taskKnowledgeLines', () => {
     expect(lines[0]).toMatch(/^ {2}commits linked by subject \(5, newest first\): .*three; and 2 more$/);
   });
 
-  it('lists the changed files most-changed first, and counts the ones it does not list', () => {
+  it('lists the changed files most-changed first, and counts the ones it does not list', async () => {
     const shown = ['src/a.ts', 'src/b.ts', 'README.md'];
     expect(taskKnowledgeLines(knowledge({ changedFiles: shown, changedFileCount: 3 }), false, true)).toEqual([
       '  changed files (3, most-changed first): src/a.ts, src/b.ts, README.md',
@@ -117,11 +117,11 @@ describe('taskKnowledgeLines', () => {
     ]);
   });
 
-  it('prints nothing for an unfinished task the index knows nothing about', () => {
+  it('prints nothing for an unfinished task the index knows nothing about', async () => {
     expect(taskKnowledgeLines(knowledge(), false, true)).toEqual([]);
   });
 
-  it('orders the lines summary, commits, changed files', () => {
+  it('orders the lines summary, commits, changed files', async () => {
     const lines = taskKnowledgeLines(
       knowledge({
         summary: { text: 'Done.', writtenAt: '2026-09-20T00:00:00.000Z' },
@@ -145,40 +145,40 @@ describe('taskKnowledgeFor', () => {
     return vi.fn((): TaskKnowledgeRead => ({ indexOn: true, summariesOn, byTask }));
   }
 
-  it('adds no lines and no notes when the context has no reader', () => {
-    const result = taskKnowledgeFor(undefined, tasks(2, true));
+  it('adds no lines and no notes when the context has no reader', async () => {
+    const result = await taskKnowledgeFor(undefined, tasks(2, true));
     expect(result.linesByTask.size).toBe(0);
     expect(result.knowledgeByTask.size).toBe(0);
     expect(result.notes).toEqual([]);
   });
 
-  it('does not read for an empty match list', () => {
+  it('does not read for an empty match list', async () => {
     const read = reading(new Map());
-    const result = taskKnowledgeFor(read, []);
+    const result = await taskKnowledgeFor(read, []);
     expect(read).not.toHaveBeenCalled();
     expect(result.notes).toEqual([]);
   });
 
-  it('keys each task\'s lines by its id, using the finished flag and the summaries switch', () => {
+  it('keys each task\'s lines by its id, using the finished flag and the summaries switch', async () => {
     const byTask = new Map([['task-0', knowledge()], ['task-1', knowledge()]]);
-    const on = taskKnowledgeFor(reading(byTask, true), [{ id: 'task-0', finished: true }, { id: 'task-1', finished: false }]);
+    const on = await taskKnowledgeFor(reading(byTask, true), [{ id: 'task-0', finished: true }, { id: 'task-1', finished: false }]);
     expect(on.linesByTask.get('task-0')).toEqual(['  summary: not written yet', '  commits: none linked to this task']);
     // Nothing to say about an unfinished task the index has nothing for.
     expect(on.linesByTask.has('task-1')).toBe(false);
     // ...but its knowledge is still handed back for the data object.
     expect(on.knowledgeByTask.get('task-1')).toBe(byTask.get('task-1'));
 
-    const off = taskKnowledgeFor(reading(byTask, false), [{ id: 'task-0', finished: true }]);
+    const off = await taskKnowledgeFor(reading(byTask, false), [{ id: 'task-0', finished: true }]);
     expect(off.linesByTask.get('task-0')?.[0]).toContain('switched off in Settings > Knowledge Graph');
   });
 
-  it('reads only the first five matches and says so for the rest', () => {
+  it('reads only the first five matches and says so for the rest', async () => {
     expect(TASK_KNOWLEDGE_MATCH_LIMIT).toBe(5);
     const all = tasks(6, true);
     const byTask = new Map(all.map((task) => [task.id, knowledge()]));
     const read = reading(byTask);
 
-    const result = taskKnowledgeFor(read, all);
+    const result = await taskKnowledgeFor(read, all);
 
     expect(read).toHaveBeenCalledWith(['task-0', 'task-1', 'task-2', 'task-3', 'task-4']);
     expect([...result.linesByTask.keys()]).toEqual(['task-0', 'task-1', 'task-2', 'task-3', 'task-4']);
@@ -188,16 +188,16 @@ describe('taskKnowledgeFor', () => {
     ]);
   });
 
-  it('adds no limit note at exactly five matches', () => {
+  it('adds no limit note at exactly five matches', async () => {
     const all = tasks(5, true);
-    const result = taskKnowledgeFor(reading(new Map(all.map((task) => [task.id, knowledge()]))), all);
+    const result = await taskKnowledgeFor(reading(new Map(all.map((task) => [task.id, knowledge()]))), all);
     expect(result.linesByTask.size).toBe(5);
     expect(result.notes).toEqual([]);
   });
 
-  it('says the index is off, and prints no lines, when the reader reports it off', () => {
+  it('says the index is off, and prints no lines, when the reader reports it off', async () => {
     const read = vi.fn((): TaskKnowledgeRead => ({ indexOn: false }));
-    const result = taskKnowledgeFor(read, tasks(6, true));
+    const result = await taskKnowledgeFor(read, tasks(6, true));
     expect(read).toHaveBeenCalledOnce();
     expect(result.linesByTask.size).toBe(0);
     expect(result.knowledgeByTask.size).toBe(0);
@@ -207,9 +207,9 @@ describe('taskKnowledgeFor', () => {
     ]);
   });
 
-  it('leaves a task the reader had no entry for without lines', () => {
+  it('leaves a task the reader had no entry for without lines', async () => {
     // The reader answers an empty map when the index read failed.
-    const result = taskKnowledgeFor(reading(new Map()), tasks(2, true));
+    const result = await taskKnowledgeFor(reading(new Map()), tasks(2, true));
     expect(result.linesByTask.size).toBe(0);
     expect(result.notes).toEqual([]);
   });

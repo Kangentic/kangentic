@@ -49,6 +49,9 @@ const MAX_CRASHES = 3;
  *  background jobs, and no step runs longer than a conversation KNN (under
  *  400 ms measured), so anything near this is a stuck worker. */
 export const INTERACTIVE_TIMEOUT_MS = 15_000;
+/** How long closing one project's database may take before the worker is
+ *  shut down instead. The close runs between a job's steps. */
+const CLOSE_PROJECT_TIMEOUT_MS = 3_000;
 
 /** The worker is not available: latched off after crashes, disposed, or it
  *  died or stuck mid-call. Callers answer with their degraded result. */
@@ -239,6 +242,33 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
       // The kill below is the real teardown.
     }
     child.kill();
+  }
+
+  /**
+   * Let go of a project's database in the worker, so its files can be deleted:
+   * Windows refuses to unlink a file another process holds open. Never forks a
+   * worker to do it. A worker that does not close it in time is shut down, and
+   * this waits for its exit, which closes every handle it had.
+   */
+  async closeProject(projectId: string): Promise<void> {
+    const child = this.child;
+    if (!child) return;
+    try {
+      await this.call('project.close', { projectId }, { timeoutMs: CLOSE_PROJECT_TIMEOUT_MS });
+      return;
+    } catch (error) {
+      console.warn(`[retrieval] the worker did not close project ${projectId}; shutting it down:`, error instanceof Error ? error.message : error);
+    }
+    const exited = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, CLOSE_PROJECT_TIMEOUT_MS);
+      timer.unref();
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    if (child === this.child) this.drop(new RetrievalUnavailableError('The retrieval worker was restarted to release a project'));
+    await exited;
   }
 
   /** Synchronous shutdown for the before-quit path. */

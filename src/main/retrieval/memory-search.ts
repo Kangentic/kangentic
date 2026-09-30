@@ -6,7 +6,6 @@ import { RetrievalStore } from './retrieval-store';
 import { CONVERSATION_CORPUS } from './corpora';
 import { escapeFtsMatchQuery } from './fts-query';
 import { reciprocalRankFusion } from './fusion';
-import { trackFeatureUsed } from '../analytics/usage';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import type { Embedder, StoredChunk } from './types';
 
@@ -43,7 +42,7 @@ export interface TranscriptSearchHit {
 export interface SearchConversationMemoryInput {
   /** Already-trimmed query. Empty short-circuits to []. */
   query: string;
-  projects: Project[];
+  projects: ReadonlyArray<Pick<Project, 'id' | 'name'>>;
   /** Total hits across all projects. Defaults to 20. */
   k?: number;
   /** Max ms to wait for a query embedding before falling back to lexical-only
@@ -111,10 +110,8 @@ export async function searchConversationMemory(
       queryVector = null;
     }
   }
-  // Adoption signal for the vector path only: a search that fell back to
-  // lexical (no embedder, or an embed that failed or timed out) is not a use
-  // of semantic memory. Main dedups to once per day.
-  if (queryVector) trackFeatureUsed('semantic_memory');
+  // The adoption signal for the vector path is main's to send: it made the
+  // query vector (`retrieval-queries.ts`), and this runs in the worker.
 
   const allHits: TranscriptSearchHit[] = [];
   for (const [projectIndex, project] of input.projects.entries()) {

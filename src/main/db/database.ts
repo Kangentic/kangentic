@@ -174,6 +174,16 @@ export function getOpenProjectDb(projectId: string): Database.Database | null {
   return projectDbs.get(projectId) ?? null;
 }
 
+/** Which project an open handle from `getProjectDb` belongs to, or null for a
+ *  handle this module did not open (a test double). One handle per project, so
+ *  the answer is exact. */
+export function projectIdOfDb(db: Database.Database): string | null {
+  for (const [projectId, handle] of projectDbs) {
+    if (handle === db) return projectId;
+  }
+  return null;
+}
+
 export function closeAll(): void {
   if (globalDb) {
     globalDb.close();

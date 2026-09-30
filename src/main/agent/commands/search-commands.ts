@@ -181,10 +181,10 @@ export const handleSearchTasks: CommandHandler = (
   };
 };
 
-export const handleFindTask: CommandHandler = (
+export const handleFindTask: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const displayId = typeof params.displayId === 'number' ? params.displayId : null;
   const taskId = typeof params.id === 'string' && params.id ? params.id : null;
   const branch = typeof params.branch === 'string' && params.branch ? params.branch : null;
@@ -244,7 +244,7 @@ export const handleFindTask: CommandHandler = (
   sections.push(`Found ${totalHits} match(es):`);
 
   const doneLaneIds = new Set(allSwimlanes.filter((swimlane) => swimlane.role === 'done').map((swimlane) => swimlane.id));
-  const knowledge = taskKnowledgeFor(
+  const knowledge = await taskKnowledgeFor(
     context.readTaskKnowledge,
     taskMatches.map((task) => ({ id: task.id, finished: task.archived_at !== null || doneLaneIds.has(task.swimlane_id) })),
   );
@@ -302,10 +302,10 @@ export const handleFindTask: CommandHandler = (
 
 const normalizePath = (value: string): string => value.replace(/\\/g, '/').toLowerCase();
 
-export const handleGetCurrentTask: CommandHandler = (
+export const handleGetCurrentTask: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const cwdRaw = typeof params.cwd === 'string' && params.cwd ? params.cwd : null;
   const branchRaw = typeof params.branch === 'string' && params.branch ? params.branch : null;
 
@@ -381,7 +381,7 @@ export const handleGetCurrentTask: CommandHandler = (
   // The agent reads the message, never `data`, so everything it needs is in the
   // text: the same task line find_task prints, then the Knowledge Graph's lines.
   const doneLaneIds = new Set(allSwimlanes.filter((swimlane) => swimlane.role === 'done').map((swimlane) => swimlane.id));
-  const knowledge = taskKnowledgeFor(
+  const knowledge = await taskKnowledgeFor(
     context.readTaskKnowledge,
     matches.map((task) => ({ id: task.id, finished: task.archived_at !== null || doneLaneIds.has(task.swimlane_id) })),
   );

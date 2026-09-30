@@ -67,6 +67,20 @@ vi.mock('../../src/main/retrieval/conversation/conversation-usage-store', () => 
   },
 }));
 
+// The ledger is read in the retrieval worker. Here a call runs the worker's own
+// handler in process, so the store mock above stands behind it as before.
+vi.mock('../../src/main/retrieval/retrieval-client', async () => {
+  const { retrievalHandlers } = await import('../../src/main/retrieval/worker/methods');
+  const context = { getDb: () => ({}), closeDb: () => undefined, emit: () => undefined, vecLoadError: () => null };
+  return {
+    retrievalClient: {
+      call: async (method: keyof typeof retrievalHandlers, params: unknown) => (
+        (retrievalHandlers[method] as (params: unknown, handlerContext: unknown) => unknown)(params, context)
+      ),
+    },
+  };
+});
+
 import { handleGetTaskStats } from '../../src/main/agent/commands/analytics-commands';
 
 const TASK = { id: 'task-uuid-1', title: 'Fix the flaky test', display_id: 42 };
@@ -105,14 +119,14 @@ beforeEach(() => {
 });
 
 describe('handleGetTaskStats subagent breakdown', () => {
-  it('folds bySubagentType into data and renders a summary line plus per-type lines when the task has subagent rows', () => {
+  it('folds bySubagentType into data and renders a summary line plus per-type lines when the task has subagent rows', async () => {
     const rows: SubagentUsageTotals[] = [
       { agentType: 'review-finder', inputTokens: 400, outputTokens: 800, cacheCreationTokens: 10, cacheReadTokens: 5000, turnCount: 7, subagentCount: 2, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
       { agentType: 'test-builder', inputTokens: 50, outputTokens: 60, cacheCreationTokens: 0, cacheReadTokens: 300, turnCount: 3, subagentCount: 1, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
     ];
     mockGetSubagentTotalsByType.mockReturnValue(rows);
 
-    const response = handleGetTaskStats({ taskId: TASK.id }, makeContext());
+    const response = await handleGetTaskStats({ taskId: TASK.id }, makeContext());
 
     expect(response.success).toBe(true);
     expect(mockGetSubagentTotalsByType).toHaveBeenCalledWith(null, null, TASK.id);
@@ -127,18 +141,18 @@ describe('handleGetTaskStats subagent breakdown', () => {
     expect(response.message).not.toContain('nested');
   });
 
-  it('names the nested count on the summary and the per-type line when depth 2 is present', () => {
+  it('names the nested count on the summary and the per-type line when depth 2 is present', async () => {
     mockGetSubagentTotalsByType.mockReturnValue([
       { agentType: 'review-finder', inputTokens: 400, outputTokens: 800, cacheCreationTokens: 10, cacheReadTokens: 5000, turnCount: 7, subagentCount: 3, nestedTurnCount: 2, nestedSubagentCount: 1, maxSpawnDepth: 2 },
     ] satisfies SubagentUsageTotals[]);
 
-    const response = handleGetTaskStats({ taskId: TASK.id }, makeContext());
+    const response = await handleGetTaskStats({ taskId: TASK.id }, makeContext());
 
     expect(response.message).toContain('Subagents: 3 across 7 turn(s), 1 nested');
     expect(response.message).toContain('(1 nested)');
   });
 
-  it('renders a Fan-outs section grouped by driver turn, and marks the unresolved bucket', () => {
+  it('renders a Fan-outs section grouped by driver turn, and marks the unresolved bucket', async () => {
     mockGetSubagentTotalsByType.mockReturnValue([
       { agentType: 'review-finder', inputTokens: 400, outputTokens: 800, cacheCreationTokens: 10, cacheReadTokens: 5000, turnCount: 7, subagentCount: 3, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
     ] satisfies SubagentUsageTotals[]);
@@ -147,7 +161,7 @@ describe('handleGetTaskStats subagent breakdown', () => {
       { driverTurnUuid: null, driverTs: null, inputTokens: 100, outputTokens: 200, cacheCreationTokens: 2, cacheReadTokens: 1000, turnCount: 2, subagentCount: 1, maxSpawnDepth: 1, agentTypes: ['review-finder'] },
     ]);
 
-    const response = handleGetTaskStats({ taskId: TASK.id }, makeContext());
+    const response = await handleGetTaskStats({ taskId: TASK.id }, makeContext());
 
     expect(response.message).toContain('Fan-outs: 2');
     expect(response.message).toContain('14:32 - review-finder x2');
@@ -170,8 +184,8 @@ describe('handleGetTaskStats subagent breakdown', () => {
       });
     });
 
-    it('starts each row with the task\'s #N, so an answer can name the task by its ticket', () => {
-      const response = handleGetTaskStats({}, makeContext());
+    it('starts each row with the task\'s #N, so an answer can name the task by its ticket', async () => {
+      const response = await handleGetTaskStats({}, makeContext());
 
       expect(response.success).toBe(true);
       const rows = (response.message ?? '').split('\n').filter((line) => line.startsWith('- '));
@@ -181,14 +195,14 @@ describe('handleGetTaskStats subagent breakdown', () => {
       expect(rows[1]).toMatch(/^- #7 Add relay pairing \[active\]: /);
     });
 
-    it('leaves out a task no session measured', () => {
-      const response = handleGetTaskStats({}, makeContext());
+    it('leaves out a task no session measured', async () => {
+      const response = await handleGetTaskStats({}, makeContext());
       expect(response.message).not.toContain('Never ran an agent');
       expect(response.message).toContain('2 task(s) with metrics');
     });
 
-    it('carries the ticket number in the data rows too', () => {
-      const response = handleGetTaskStats({}, makeContext());
+    it('carries the ticket number in the data rows too', async () => {
+      const response = await handleGetTaskStats({}, makeContext());
       const data = response.data as { tasks: Array<{ displayId: number; title: string }> };
       expect(data.tasks.map((task) => [task.displayId, task.title])).toEqual([
         [42, 'Fix the flaky test'],
@@ -197,10 +211,10 @@ describe('handleGetTaskStats subagent breakdown', () => {
     });
   });
 
-  it('omits the subagent block entirely for a task with zero subagent rows', () => {
+  it('omits the subagent block entirely for a task with zero subagent rows', async () => {
     mockGetSubagentTotalsByType.mockReturnValue([]);
 
-    const response = handleGetTaskStats({ taskId: TASK.id }, makeContext());
+    const response = await handleGetTaskStats({ taskId: TASK.id }, makeContext());
 
     expect(response.success).toBe(true);
     const data = response.data as { bySubagentType: SubagentUsageTotals[] };

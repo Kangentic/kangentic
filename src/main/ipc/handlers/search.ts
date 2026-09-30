@@ -3,8 +3,6 @@ import { createHash } from 'node:crypto';
 import { IPC } from '../../../shared/ipc-channels';
 import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
-import { searchConversationMemory } from '../../retrieval/memory-search';
-import { RetrievalStore } from '../../retrieval/retrieval-store';
 import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { graphService } from '../../retrieval/graph/graph-service';
@@ -42,6 +40,7 @@ import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
 import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
 import { SummaryStore } from '../../retrieval/summary/summary-store';
 import { retrievalClient } from '../../retrieval/retrieval-client';
+import { findPriorWork, searchConversations } from '../../retrieval/retrieval-queries';
 import type { ProjectIndexSummaryRow } from '../../retrieval/worker/methods';
 import type {
   SearchHit,
@@ -156,7 +155,7 @@ export function registerSearchHandlers(context: IpcContext): void {
       projects,
       includeProjectHits: request.scope === 'all',
       projectsForProjectHits: allProjects,
-      conversationSearch: { enabled: indexingEnabled, embedder },
+      conversationSearch: { enabled: indexingEnabled, embedder, search: searchConversations },
     });
   });
 
@@ -208,7 +207,7 @@ export function registerSearchHandlers(context: IpcContext): void {
   // (the map may show several), and only while summaries are switched on.
   ipcMain.handle(
     IPC.KNOWLEDGE_GRAPH_TASK_SUMMARY,
-    (_event, projectId: string, taskId: string): string | null => {
+    async (_event, projectId: string, taskId: string): Promise<string | null> => {
       if (typeof projectId !== 'string' || typeof taskId !== 'string') return null;
       if (!context.projectRepo.list().some((entry) => entry.id === projectId)) return null;
       return retrievalService.taskSummary(context, projectId, taskId);
@@ -703,61 +702,21 @@ export function registerSearchHandlers(context: IpcContext): void {
       const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
       if (!project) return [];
 
-      const db = getProjectDb(resolvedProjectId);
-      const task = new TaskRepository(db).getById(taskId);
+      const task = new TaskRepository(getProjectDb(resolvedProjectId)).getById(taskId);
       if (!task) return [];
 
       const query = `${task.title}\n${task.description ?? ''}`.trim().slice(0, RELATED_QUERY_BUDGET);
       if (query.length === 0) return [];
 
-      const embedder = retrievalService.getEmbedder(context);
-      const hits = await searchConversationMemory({
+      // The search runs in the retrieval worker; the query is embedded here.
+      return findPriorWork({
+        project,
+        taskId,
         query,
-        projects: [project],
-        embedder,
-        // Over-fetch: this task's own conversations are usually the strongest
-        // matches (its description IS the query), so they must be dropped after
-        // ranking, not before.
-        k: RELATED_OVERFETCH,
+        embedder: retrievalService.getEmbedder(context),
+        overfetch: RELATED_OVERFETCH,
+        rows: RELATED_RESULT_COUNT,
       });
-
-      const store = new RetrievalStore(db);
-      const docKeys = store.docKeysForChunks(hits.map((hit) => hit.chunkId));
-
-      // One row per TASK, not per session. `searchConversationMemory` collapses
-      // to one hit per session, but a task usually has several - so the raw
-      // list repeats the same task title back at the user, which reads as a
-      // bug. For "what have I already worked on", the task is the unit.
-      const seenTaskIds = new Set<string>();
-
-      return hits
-        .filter((hit) => {
-          if (hit.taskId === taskId) return false;
-          // Hits arrive score-ordered, so the first one kept per task is its
-          // strongest.
-          if (hit.taskId !== null) {
-            if (seenTaskIds.has(hit.taskId)) return false;
-            seenTaskIds.add(hit.taskId);
-          }
-          return true;
-        })
-        .slice(0, RELATED_RESULT_COUNT)
-        .flatMap((hit) => {
-          const docKey = docKeys.get(hit.chunkId);
-          if (docKey === undefined) return [];
-          return [{
-            docKey,
-            sessionId: hit.sessionId,
-            taskId: hit.taskId,
-            taskTitle: hit.taskTitle,
-            agentName: hit.agentName,
-            snippet: hit.snippet,
-            score: hit.score,
-            matchKind: hit.matchKind,
-            matchCount: hit.matchCount,
-            turnTs: hit.turnTs,
-          }];
-        });
     },
   );
 

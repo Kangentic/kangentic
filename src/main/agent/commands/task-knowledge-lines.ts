@@ -53,16 +53,16 @@ export function taskKnowledgeLines(knowledge: TaskKnowledge, finished: boolean, 
  * The lines for a list of matched tasks, keyed by task id, and the notes that
  * close the message: the index being off, or matches past the limit.
  */
-export function taskKnowledgeFor(
-  readTaskKnowledge: ((taskIds: string[]) => TaskKnowledgeRead) | undefined,
+export async function taskKnowledgeFor(
+  readTaskKnowledge: ((taskIds: string[]) => Promise<TaskKnowledgeRead> | TaskKnowledgeRead) | undefined,
   tasks: ReadonlyArray<{ id: string; finished: boolean }>,
-): { linesByTask: Map<string, string[]>; notes: string[]; knowledgeByTask: Map<string, TaskKnowledge> } {
+): Promise<{ linesByTask: Map<string, string[]>; notes: string[]; knowledgeByTask: Map<string, TaskKnowledge> }> {
   const linesByTask = new Map<string, string[]>();
   const knowledgeByTask = new Map<string, TaskKnowledge>();
   const notes: string[] = [];
   if (!readTaskKnowledge || tasks.length === 0) return { linesByTask, notes, knowledgeByTask };
   const shown = tasks.slice(0, TASK_KNOWLEDGE_MATCH_LIMIT);
-  const read = readTaskKnowledge(shown.map((task) => task.id));
+  const read = await readTaskKnowledge(shown.map((task) => task.id));
   if (!read.indexOn) {
     notes.push(`The Knowledge Graph index is off (${SETTINGS}), so no summary, linked commits or changed files are shown.`);
     return { linesByTask, notes, knowledgeByTask };

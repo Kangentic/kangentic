@@ -89,14 +89,14 @@ beforeEach(() => {
 });
 
 describe('handleGetCurrentTask', () => {
-  it('returns error when neither cwd nor branch is provided', () => {
-    const result = handleGetCurrentTask({}, context);
+  it('returns error when neither cwd nor branch is provided', async () => {
+    const result = await handleGetCurrentTask({}, context);
     expect(result.success).toBe(false);
     expect(result.error).toContain('cwd');
     expect(result.error).toContain('branch');
   });
 
-  it('matches by exact worktree_path (forward slashes)', () => {
+  it('matches by exact worktree_path (forward slashes)', async () => {
     taskFixtures.push(makeTask({
       id: 'task-a',
       display_id: 42,
@@ -104,7 +104,7 @@ describe('handleGetCurrentTask', () => {
       worktree_path: '/projects/example/.kangentic/worktrees/add-mcp-tool',
     }));
 
-    const result = handleGetCurrentTask(
+    const result = await handleGetCurrentTask(
       { cwd: '/projects/example/.kangentic/worktrees/add-mcp-tool' },
       context,
     );
@@ -115,14 +115,14 @@ describe('handleGetCurrentTask', () => {
     expect((result.data as { displayId: number }).displayId).toBe(42);
   });
 
-  it('matches by worktree slug when cwd is a subdirectory inside the worktree', () => {
+  it('matches by worktree slug when cwd is a subdirectory inside the worktree', async () => {
     taskFixtures.push(makeTask({
       id: 'task-b',
       display_id: 7,
       worktree_path: '/projects/example/.kangentic/worktrees/cool-feature-abc123',
     }));
 
-    const result = handleGetCurrentTask(
+    const result = await handleGetCurrentTask(
       { cwd: '/projects/example/.kangentic/worktrees/cool-feature-abc123/src/main' },
       context,
     );
@@ -131,13 +131,13 @@ describe('handleGetCurrentTask', () => {
     expect((result.data as { id: string }).id).toBe('task-b');
   });
 
-  it('normalizes Windows backslash paths', () => {
+  it('normalizes Windows backslash paths', async () => {
     taskFixtures.push(makeTask({
       id: 'task-c',
       worktree_path: 'C:/Users/dev/repo/.kangentic/worktrees/branch-slug',
     }));
 
-    const result = handleGetCurrentTask(
+    const result = await handleGetCurrentTask(
       { cwd: 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\branch-slug' },
       context,
     );
@@ -146,25 +146,25 @@ describe('handleGetCurrentTask', () => {
     expect((result.data as { id: string }).id).toBe('task-c');
   });
 
-  it('matches by branch name (case-insensitive)', () => {
+  it('matches by branch name (case-insensitive)', async () => {
     taskFixtures.push(makeTask({
       id: 'task-d',
       branch_name: 'feature/MCP-Tool',
     }));
 
-    const result = handleGetCurrentTask({ branch: 'feature/mcp-tool' }, context);
+    const result = await handleGetCurrentTask({ branch: 'feature/mcp-tool' }, context);
 
     expect(result.success).toBe(true);
     expect((result.data as { id: string }).id).toBe('task-d');
   });
 
-  it('returns null data when no task matches', () => {
+  it('returns null data when no task matches', async () => {
     taskFixtures.push(makeTask({
       id: 'task-e',
       worktree_path: '/projects/example/.kangentic/worktrees/other-slug',
     }));
 
-    const result = handleGetCurrentTask(
+    const result = await handleGetCurrentTask(
       { cwd: '/projects/example/.kangentic/worktrees/missing-slug' },
       context,
     );
@@ -174,7 +174,7 @@ describe('handleGetCurrentTask', () => {
     expect(result.message).toContain('No task found');
   });
 
-  it('returns array when multiple tasks match', () => {
+  it('returns array when multiple tasks match', async () => {
     taskFixtures.push(makeTask({
       id: 'task-f1',
       branch_name: 'shared-branch',
@@ -187,7 +187,7 @@ describe('handleGetCurrentTask', () => {
       worktree_path: '/projects/example/.kangentic/worktrees/slug-two',
     }));
 
-    const result = handleGetCurrentTask({ branch: 'shared-branch' }, context);
+    const result = await handleGetCurrentTask({ branch: 'shared-branch' }, context);
 
     expect(result.success).toBe(true);
     expect(Array.isArray(result.data)).toBe(true);
@@ -195,14 +195,14 @@ describe('handleGetCurrentTask', () => {
     expect(result.message).toContain('Ambiguous');
   });
 
-  it('does not match when worktree_path is null even if branch matches partially', () => {
+  it('does not match when worktree_path is null even if branch matches partially', async () => {
     taskFixtures.push(makeTask({
       id: 'task-g',
       worktree_path: null,
       branch_name: 'main',
     }));
 
-    const result = handleGetCurrentTask(
+    const result = await handleGetCurrentTask(
       { cwd: '/projects/example/.kangentic/worktrees/something' },
       context,
     );
@@ -211,14 +211,14 @@ describe('handleGetCurrentTask', () => {
     expect(result.data).toBeNull();
   });
 
-  it('finds archived tasks', () => {
+  it('finds archived tasks', async () => {
     taskFixtures.push(makeTask({
       id: 'task-h',
       branch_name: 'archived-branch',
       archived_at: '2026-03-01T00:00:00Z',
     }));
 
-    const result = handleGetCurrentTask({ branch: 'archived-branch' }, context);
+    const result = await handleGetCurrentTask({ branch: 'archived-branch' }, context);
 
     expect(result.success).toBe(true);
     expect((result.data as { id: string }).id).toBe('task-h');
@@ -253,10 +253,10 @@ describe('handleGetCurrentTask - the message the agent reads', () => {
     });
   }
 
-  it('prints the task line find_task prints, so the agent sees branch, base, worktree, PR and ids', () => {
+  it('prints the task line find_task prints, so the agent sees branch, base, worktree, PR and ids', async () => {
     taskFixtures.push(makeWorkingTask({ pr_url: 'https://example.com/pull/12' }));
 
-    const result = handleGetCurrentTask({ cwd: WORKTREE }, context);
+    const result = await handleGetCurrentTask({ cwd: WORKTREE }, context);
 
     expect(result.message).toBe([
       'Current task:',
@@ -264,15 +264,15 @@ describe('handleGetCurrentTask - the message the agent reads', () => {
     ].join('\n'));
   });
 
-  it('names the pull request by number when it has no url, and leaves out what the task lacks', () => {
+  it('names the pull request by number when it has no url, and leaves out what the task lacks', async () => {
     taskFixtures.push(makeTask({ id: 'task-a', display_id: 3, title: 'Bare task', branch_name: 'bare', pr_number: 12 }));
 
-    const result = handleGetCurrentTask({ branch: 'bare' }, context);
+    const result = await handleGetCurrentTask({ branch: 'bare' }, context);
 
     expect(result.message).toBe('Current task:\n- "Bare task" [In Progress] | branch: bare | PR #12 | #3, id: task-a');
   });
 
-  it('adds the commits and changed files under an unfinished task, and no summary line', () => {
+  it('adds the commits and changed files under an unfinished task, and no summary line', async () => {
     taskFixtures.push(makeWorkingTask());
     const { context: reading, readTaskKnowledge } = contextReading(new Map([[
       'task-a',
@@ -285,7 +285,7 @@ describe('handleGetCurrentTask - the message the agent reads', () => {
       }),
     ]]));
 
-    const result = handleGetCurrentTask({ cwd: WORKTREE }, reading);
+    const result = await handleGetCurrentTask({ cwd: WORKTREE }, reading);
 
     expect(readTaskKnowledge).toHaveBeenCalledWith(['task-a']);
     const lines = (result.message ?? '').split('\n');
@@ -295,51 +295,51 @@ describe('handleGetCurrentTask - the message the agent reads', () => {
     ]);
   });
 
-  it('adds the summary, or says there is none, under a task in a Done column', () => {
+  it('adds the summary, or says there is none, under a task in a Done column', async () => {
     swimlaneFixtures.push(makeSwimlane('swimlane-done', 'Done', 'done'));
     taskFixtures.push(makeWorkingTask({ swimlane_id: 'swimlane-done' }));
     const written = contextReading(new Map([[
       'task-a',
       knowledge({ summary: { text: 'Added the MCP tool.', writtenAt: '2026-09-20T18:30:00.000Z' } }),
     ]]));
-    expect(handleGetCurrentTask({ cwd: WORKTREE }, written.context).message).toContain(
+    expect((await handleGetCurrentTask({ cwd: WORKTREE }, written.context)).message).toContain(
       '\n  summary (2026-09-20): Added the MCP tool.\n  commits: none linked to this task',
     );
 
     const notYet = contextReading(new Map([['task-a', knowledge()]]));
-    expect(handleGetCurrentTask({ cwd: WORKTREE }, notYet.context).message).toContain('\n  summary: not written yet');
+    expect((await handleGetCurrentTask({ cwd: WORKTREE }, notYet.context)).message).toContain('\n  summary: not written yet');
 
     const off = contextReading(new Map([['task-a', knowledge()]]), false);
-    expect(handleGetCurrentTask({ cwd: WORKTREE }, off.context).message).toContain(
+    expect((await handleGetCurrentTask({ cwd: WORKTREE }, off.context)).message).toContain(
       '\n  summary: none written (Task summaries are switched off in Settings > Knowledge Graph)',
     );
   });
 
-  it('counts an archived task as finished, and names its column Done', () => {
+  it('counts an archived task as finished, and names its column Done', async () => {
     taskFixtures.push(makeWorkingTask({ archived_at: '2026-09-01T00:00:00.000Z' }));
     const { context: reading } = contextReading(new Map([['task-a', knowledge()]]));
 
-    const result = handleGetCurrentTask({ cwd: WORKTREE }, reading);
+    const result = await handleGetCurrentTask({ cwd: WORKTREE }, reading);
 
     expect(result.message).toContain('- "Add MCP tool" [Done] |');
     expect(result.message).toContain('\n  summary: not written yet');
   });
 
-  it('hands the same knowledge back in data, for a caller that reads the object', () => {
+  it('hands the same knowledge back in data, for a caller that reads the object', async () => {
     taskFixtures.push(makeWorkingTask());
     const taskKnowledge = knowledge({ changedFiles: ['src/a.ts'], changedFileCount: 1 });
     const { context: reading } = contextReading(new Map([['task-a', taskKnowledge]]));
 
-    const result = handleGetCurrentTask({ cwd: WORKTREE }, reading);
+    const result = await handleGetCurrentTask({ cwd: WORKTREE }, reading);
 
     expect((result.data as { knowledge: TaskKnowledge | null }).knowledge).toBe(taskKnowledge);
   });
 
-  it('says the index is off and prints no knowledge lines when the reader reports it off', () => {
+  it('says the index is off and prints no knowledge lines when the reader reports it off', async () => {
     taskFixtures.push(makeWorkingTask({ archived_at: '2026-09-01T00:00:00.000Z' }));
     const off = { ...context, readTaskKnowledge: vi.fn((): TaskKnowledgeRead => ({ indexOn: false })) } as CommandContext;
 
-    const result = handleGetCurrentTask({ cwd: WORKTREE }, off);
+    const result = await handleGetCurrentTask({ cwd: WORKTREE }, off);
 
     expect(result.message).toContain('Current task:\n- "Add MCP tool" [Done] |');
     expect(result.message).toContain(
@@ -349,7 +349,7 @@ describe('handleGetCurrentTask - the message the agent reads', () => {
     expect((result.data as { knowledge: unknown }).knowledge).toBeNull();
   });
 
-  it('lists every candidate with its own block when the match is ambiguous', () => {
+  it('lists every candidate with its own block when the match is ambiguous', async () => {
     taskFixtures.push(makeTask({ id: 'task-f1', display_id: 1, title: 'First', branch_name: 'shared-branch' }));
     taskFixtures.push(makeTask({ id: 'task-f2', display_id: 2, title: 'Second', branch_name: 'shared-branch' }));
     const { context: reading, readTaskKnowledge } = contextReading(new Map([
@@ -357,7 +357,7 @@ describe('handleGetCurrentTask - the message the agent reads', () => {
       ['task-f2', knowledge({ changedFiles: ['src/two.ts'], changedFileCount: 1 })],
     ]));
 
-    const result = handleGetCurrentTask({ branch: 'shared-branch' }, reading);
+    const result = await handleGetCurrentTask({ branch: 'shared-branch' }, reading);
 
     expect(readTaskKnowledge).toHaveBeenCalledWith(['task-f1', 'task-f2']);
     expect(result.message).toBe([
@@ -374,11 +374,11 @@ describe('handleGetCurrentTask - the message the agent reads', () => {
     ]);
   });
 
-  it('prints no knowledge lines and no notes when the context has no reader', () => {
+  it('prints no knowledge lines and no notes when the context has no reader', async () => {
     swimlaneFixtures.push(makeSwimlane('swimlane-done', 'Done', 'done'));
     taskFixtures.push(makeWorkingTask({ swimlane_id: 'swimlane-done' }));
 
-    const result = handleGetCurrentTask({ cwd: WORKTREE }, context);
+    const result = await handleGetCurrentTask({ cwd: WORKTREE }, context);
 
     expect((result.message ?? '').split('\n')).toHaveLength(2);
     expect(result.message).not.toContain('summary');

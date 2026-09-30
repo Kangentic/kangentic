@@ -28,12 +28,13 @@
 import { getProjectDb } from '../db/database';
 import { RetrievalStore } from './retrieval-store';
 import { hasVecSupport } from './vec-support';
-import { lastVecLoadError } from './vec-extension';
+import { retrievalClient } from './retrieval-client';
+import type { IndexStatus } from './worker/index-status';
 import { ConversationIndexer } from './conversation/conversation-indexer';
 import { sweepTaskRecords } from './task/task-indexer';
 import { sweepChangeRecords } from './change/change-indexer';
 import { sweepCommitRecords, type CommitSweepResult } from './commit/commit-indexer';
-import { indexedCodeBranch, purgeCodeRecords, sweepCodeRecords, type CodeSweepResult } from './code/code-indexer';
+import { purgeCodeRecords, sweepCodeRecords, type CodeSweepResult } from './code/code-indexer';
 import { codeStatus, createBranchSizes } from './code/code-status';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { graphService } from './graph/graph-service';
@@ -47,7 +48,6 @@ import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
 import { requiresUserInteraction } from '../../shared/activity-state';
-import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import { isEmbeddedCorpus, type MemoryCorpus } from './corpora';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
@@ -108,28 +108,6 @@ let modelDownloadState: 'idle' | 'downloading' | 'error' = 'idle';
 let modelDownloadProgress = 0;
 /** Which model id is currently downloading (a switch mid-download retriggers). */
 let downloadingModelId: string | null = null;
-
-/**
- * True when the currently open project's DB has sqlite-vec loaded. Read LIVE from
- * the connection - the extension is loaded by the project-DB initializer on every
- * `getProjectDb` open (see `setProjectDbInitializer(loadVecExtension)` in
- * index.ts) - rather than from a cached flag. A cached flag was wrong: it was only
- * set by `startForProject`, which runs from the `project:open` IPC handler but NOT
- * from `openProjectByPath` (the lighter path used by cold start and the ephemeral
- * dev preview). On those paths the DB is vec-capable yet the flag stayed false, so
- * the status reported "unavailable" while the model downloaded fine. embedEngine's
- * drain and query paths already gate on the live `hasVecSupport(db)`; this aligns
- * the status surface with them.
- */
-function currentProjectHasVec(context: IpcContext): boolean {
-  const projectId = context.currentProjectId;
-  if (!projectId) return false;
-  try {
-    return hasVecSupport(getProjectDb(projectId));
-  } catch {
-    return false;
-  }
-}
 
 function isIndexingEnabled(context: IpcContext): boolean {
   try {
@@ -528,92 +506,57 @@ function refreshSummaryChoice(context: IpcContext, options: { force?: boolean } 
  * with the switch off too: switching summaries on starts writing at once, so the
  * card gives the backfill's size before it is on.
  */
-function summaryStatusFor(context: IpcContext): KnowledgeGraphSummaryStatus | undefined {
+function summaryStatusFor(context: IpcContext, index: IndexStatus['summaries']): KnowledgeGraphSummaryStatus | undefined {
   const projectId = context.currentProjectId;
-  if (!projectId || !isIndexingEnabled(context) || !isSemanticEnabled(context)) return undefined;
-  try {
-    const db = getProjectDb(projectId);
-    const counts = new RetrievalStore(db).summaryCounts();
-    const summaries = new SummaryStore(db);
-    const scheduler = summaryScheduler.status(projectId);
-    // Never resolved yet this run (or waiting on a choice): resolve it for the
-    // next poll. A settings change refreshes it too.
-    if (summaryChoice === null) refreshSummaryChoice(context);
-    const skipped = summaryScheduler.skipped(projectId);
-    const awaitingRewrite = summaries.awaitingRewrite();
-    // What is left to write at the run's own rate: unwritten tasks the agent
-    // has not passed over, and summaries marked for rewriting.
-    const remaining = Math.max(0, counts.finishedTasks - counts.written - skipped) + awaitingRewrite;
-    const perMinute = summaryScheduler.writtenPerMinute(projectId);
-    return {
-      ...counts,
-      skipped,
-      state: scheduler.state,
-      retryInMs: scheduler.retryAtMs === null ? null : Math.max(0, scheduler.retryAtMs - Date.now()),
-      minutesLeft: perMinute && remaining > 0 ? remaining / perMinute : null,
-      writtenWith: summaries.writtenWith(),
-      choice: summaryChoice,
-      awaitingRewrite,
-    };
-  } catch {
-    return undefined;
-  }
+  if (!projectId || !index) return undefined;
+  const scheduler = summaryScheduler.status(projectId);
+  // Never resolved yet this run (or waiting on a choice): resolve it for the
+  // next poll. A settings change refreshes it too.
+  if (summaryChoice === null) refreshSummaryChoice(context);
+  const skipped = summaryScheduler.skipped(projectId);
+  // What is left to write at the run's own rate: unwritten tasks the agent
+  // has not passed over, and summaries marked for rewriting.
+  const remaining = Math.max(0, index.finishedTasks - index.written - skipped) + index.awaitingRewrite;
+  const perMinute = summaryScheduler.writtenPerMinute(projectId);
+  return {
+    written: index.written,
+    finishedTasks: index.finishedTasks,
+    skipped,
+    state: scheduler.state,
+    retryInMs: scheduler.retryAtMs === null ? null : Math.max(0, scheduler.retryAtMs - Date.now()),
+    minutesLeft: perMinute && remaining > 0 ? remaining / perMinute : null,
+    writtenWith: index.writtenWith,
+    choice: summaryChoice,
+    awaitingRewrite: index.awaitingRewrite,
+  };
 }
-
-/**
- * How long the Index card keeps a project's corpus totals before reading them
- * again. The totals are the Index panel's own read (`corpusTotals`, so the two
- * show the same counts), about 15 ms on a 94k-chunk index, and they move only
- * as documents are indexed. Keyed on the index's size instead, as the Index
- * panel is, they were read again after every embedding batch: 51 to 71 ms on
- * main on nearly every 1.5 s poll while embedding ran (the size check alone is
- * two full index counts). What moves by the second, the passages still
- * waiting, is read on every poll by a query that costs what is waiting.
- */
-const SOURCE_TOTALS_TTL_MS = 30_000;
-const sourceTotalsCache = new Map<string, { readAt: number; totals: ReturnType<RetrievalStore['corpusTotals']> }>();
 
 /**
  * The open project's always-indexed sources for their lines in the Index card:
  * conversations, tasks, commits. "Caught up" is decided here: an embedded
  * source waits while any passage lacks a vector for the current model, a
- * keyword-only one never does.
+ * keyword-only one never does. The worker keeps the totals for
+ * `SOURCE_TOTALS_TTL_MS` and reads what is waiting on every poll.
  */
-function sourcesStatusFor(context: IpcContext): KnowledgeGraphSourcesStatus | undefined {
-  const projectId = context.currentProjectId;
-  if (!projectId || !isIndexingEnabled(context)) return undefined;
-  try {
-    const store = new RetrievalStore(getProjectDb(projectId));
-    const now = Date.now();
-    let cached = sourceTotalsCache.get(projectId);
-    if (!cached || now - cached.readAt > SOURCE_TOTALS_TTL_MS) {
-      cached = { readAt: now, totals: timeSyncWork('status:source-totals', () => store.corpusTotals()) };
-      sourceTotalsCache.set(projectId, cached);
-    }
-    const totals = cached.totals;
-    const semanticOn = isSemanticEnabled(context);
-    const waitingByCorpus = semanticOn
-      ? timeSyncWork('status:source-waiting', () => store.countChunksNeedingEmbedding(selectedModel(context).modelTag))
-      : new Map<string, number>();
-    const perMinute = embedEngine.chunksPerMinute;
-    const sourceOf = (corpus: MemoryCorpus): KnowledgeGraphSourceStatus => {
-      const row = totals.find((entry) => entry.corpus === corpus);
-      const count = row?.documents ?? 0;
-      const waiting = isEmbeddedCorpus(corpus) ? waitingByCorpus.get(corpus) ?? 0 : 0;
-      if (waiting === 0) return { count, percent: null, minutesLeft: null };
-      // The totals can trail a fresh index by up to the cache's age, so the
-      // share is held under 100 while anything still waits.
-      const chunks = Math.max(row?.chunks ?? 0, waiting);
-      return {
-        count,
-        percent: Math.min(99, Math.floor(((chunks - waiting) / chunks) * 100)),
-        minutesLeft: perMinute ? waiting / perMinute : null,
-      };
+function sourcesStatusFor(index: IndexStatus['sources']): KnowledgeGraphSourcesStatus | undefined {
+  if (!index) return undefined;
+  const { totals, waitingByCorpus } = index;
+  const perMinute = embedEngine.chunksPerMinute;
+  const sourceOf = (corpus: MemoryCorpus): KnowledgeGraphSourceStatus => {
+    const row = totals.find((entry) => entry.corpus === corpus);
+    const count = row?.documents ?? 0;
+    const waiting = isEmbeddedCorpus(corpus) ? waitingByCorpus.get(corpus) ?? 0 : 0;
+    if (waiting === 0) return { count, percent: null, minutesLeft: null };
+    // The totals can trail a fresh index by up to the cache's age, so the
+    // share is held under 100 while anything still waits.
+    const chunks = Math.max(row?.chunks ?? 0, waiting);
+    return {
+      count,
+      percent: Math.min(99, Math.floor(((chunks - waiting) / chunks) * 100)),
+      minutesLeft: perMinute ? waiting / perMinute : null,
     };
-    return { conversations: sourceOf('conversation'), tasks: sourceOf('task'), commits: sourceOf('commit') };
-  } catch {
-    return undefined;
-  }
+  };
+  return { conversations: sourceOf('conversation'), tasks: sourceOf('task'), commits: sourceOf('commit') };
 }
 
 /** Default branch sizes for the Source code card, read in the background. */
@@ -626,24 +569,20 @@ const codeBranchSizes = createBranchSizes();
  * reading at most once a minute while nothing is indexed. Read on the Search
  * tab's status poll, only while semantic search is on.
  */
-function codeStatusFor(context: IpcContext): KnowledgeGraphCodeStatus | undefined {
+function codeStatusFor(context: IpcContext, index: IndexStatus['code']): KnowledgeGraphCodeStatus | undefined {
   const projectId = context.currentProjectId;
-  if (!projectId || !isIndexingEnabled(context) || !isSemanticEnabled(context)) return undefined;
+  if (!projectId || !index) return undefined;
   try {
     const on = codePlan(context) === 'index';
-    const store = new RetrievalStore(getProjectDb(projectId));
-    const progress = on
-      ? store.corpusProgress('code', selectedModel(context).modelTag)
-      : { documents: 0, chunks: 0, embedded: 0 };
     const projectPath = projectPathFor(context, projectId);
     // Git only while nothing is indexed: the index knows its own size after.
-    const branchSize = progress.documents === 0 && projectPath
+    const branchSize = index.progress.documents === 0 && projectPath
       ? codeBranchSizes.get(projectId, projectPath, baseBranchFor(context, projectPath))
       : undefined;
     return codeStatus({
       on,
-      progress,
-      indexedBranch: indexedCodeBranch(store),
+      progress: index.progress,
+      indexedBranch: index.indexedBranch,
       branchSize: projectPath ? branchSize : null,
       chunksPerMinute: embedEngine.chunksPerMinute,
     });
@@ -889,10 +828,10 @@ export const retrievalService = {
    * while task summaries are switched off, so the panel reads as it did before
    * summaries, and null when the task has none. One indexed read.
    */
-  taskSummary(context: IpcContext, projectId: string, taskId: string): string | null {
+  async taskSummary(context: IpcContext, projectId: string, taskId: string): Promise<string | null> {
     try {
       if (!taskSummariesOn(context.configManager.load().knowledgeGraph)) return null;
-      return new SummaryStore(getProjectDb(projectId)).summariesFor([taskId]).get(taskId) ?? null;
+      return await retrievalClient.call('summary.forTask', { projectId, taskId });
     } catch {
       return null;
     }
@@ -908,7 +847,7 @@ export const retrievalService = {
 
   /** Current conversation-memory status for the Search settings
    *  tab's index progress and model status line. */
-  getStatus(context: IpcContext): KnowledgeGraphStatus {
+  async getStatus(context: IpcContext): Promise<KnowledgeGraphStatus> {
     const indexingEnabled = isIndexingEnabled(context);
     const semanticOn = isSemanticEnabled(context);
     const model = selectedModel(context);
@@ -933,6 +872,25 @@ export const retrievalService = {
     const modelPresent = isEmbeddingModelPresent(model);
     const isDownloadingThis = modelDownloadState === 'downloading' && downloadingModelId === model.id;
 
+    // The index's half, read in the retrieval worker. Null while it is down,
+    // which reads as keywords only, with the worker's own reason.
+    const projectId = context.currentProjectId;
+    let index: (IndexStatus & { vecError: string | null }) | null = null;
+    if (projectId) {
+      try {
+        index = await retrievalClient.call('status.index', {
+          projectId,
+          modelTag: model.modelTag,
+          semantic: semanticOn,
+          summaries: indexingEnabled && semanticOn,
+          code: indexingEnabled && semanticOn ? { on: codePlan(context) === 'index' } : null,
+          sources: indexingEnabled,
+        });
+      } catch {
+        index = null;
+      }
+    }
+
     let semantic: KnowledgeGraphSemanticState;
     let workerError: string | undefined;
     if (!indexingEnabled || !semanticOn) {
@@ -948,7 +906,7 @@ export const retrievalService = {
       // why instead of only that it failed.
       semantic = 'error';
       workerError = embedEngine.workerCrashReason ?? undefined;
-    } else if (!currentProjectHasVec(context)) {
+    } else if (!index?.hasVec) {
       semantic = 'lexical';
     } else {
       semantic = 'hybrid';
@@ -966,7 +924,9 @@ export const retrievalService = {
       semantic,
       activeBackend: humanizeBackend(embedEngine.activeDevice),
       modelProgress: showProgress ? modelDownloadProgress : undefined,
-      vecError: semantic === 'lexical' ? lastVecLoadError() ?? undefined : undefined,
+      vecError: semantic === 'lexical'
+        ? (index ? index.vecError : retrievalClient.unavailableReason) ?? undefined
+        : undefined,
       workerError,
       model: {
         id: model.id,
@@ -977,9 +937,9 @@ export const retrievalService = {
         state: modelState,
         progress: showProgress ? modelDownloadProgress : undefined,
       },
-      summaries: summaryStatusFor(context),
-      code: codeStatusFor(context),
-      sources: sourcesStatusFor(context),
+      summaries: summaryStatusFor(context, index?.summaries ?? null),
+      code: codeStatusFor(context, index?.code ?? null),
+      sources: sourcesStatusFor(index?.sources ?? null),
     };
   },
 
@@ -988,17 +948,6 @@ export const retrievalService = {
   stop(projectId?: string): void {
     if (projectId != null && projectId !== activeSweepProjectId) return;
     activeSweepProjectId = null;
-  },
-
-  /** Clear one project's entire conversation index (Privacy "clear index"). */
-  purgeProjectIndex(projectId: string): void {
-    try {
-      new RetrievalStore(getProjectDb(projectId)).purgeAll();
-    } catch (error) {
-      console.warn('[retrieval] purge failed:', error);
-    }
-    // Or the Index card counts what was just cleared for up to 30 s.
-    sourceTotalsCache.delete(projectId);
   },
 
   /** Synchronous shutdown: stop scheduling, drop pending timers, dispose the

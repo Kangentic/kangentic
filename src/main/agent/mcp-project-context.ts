@@ -21,7 +21,8 @@ import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
 import { RequestResolver } from './mcp-http/project-resolver';
 import { prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '../pr/pr-linking';
-import { readTaskKnowledge, type TaskKnowledge } from '../retrieval/task-knowledge';
+import type { TaskKnowledge } from '../retrieval/task-knowledge';
+import { retrievalClient } from '../retrieval/retrieval-client';
 import { taskSummariesOn } from '../../shared/answer-agent';
 
 /**
@@ -284,7 +285,7 @@ export function buildCommandContextForProject(
     // switch stops new ones being written, and the ones already written keep
     // helping, as they do in search and Ask. The whole read waits on the index,
     // which is the switch that says whether the index may be read at all.
-    readTaskKnowledge: (taskIds) => {
+    readTaskKnowledge: async (taskIds) => {
       let knowledgeGraph: AppConfig['knowledgeGraph'];
       try {
         knowledgeGraph = ipcContext.configManager.load().knowledgeGraph;
@@ -294,9 +295,9 @@ export function buildCommandContextForProject(
       if (knowledgeGraph?.indexingEnabled === false) return { indexOn: false };
       let byTask: Map<string, TaskKnowledge>;
       try {
-        byTask = readTaskKnowledge(getProjectDb(projectId), taskIds);
+        byTask = await retrievalClient.call('task.knowledge', { projectId, taskIds });
       } catch (error) {
-        console.warn('[MCP] could not read task knowledge:', error);
+        console.warn('[MCP] could not read task knowledge:', error instanceof Error ? error.message : error);
         byTask = new Map();
       }
       return { indexOn: true, summariesOn: taskSummariesOn(knowledgeGraph), byTask };

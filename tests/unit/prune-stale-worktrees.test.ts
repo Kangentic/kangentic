@@ -41,6 +41,18 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
 }));
 
+// The retrieval worker holds its own handle on each project database; Windows
+// will not unlink a file another process has open.
+const { steps } = vi.hoisted(() => ({ steps: [] as string[] }));
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({
+  retrievalClient: {
+    closeProject: vi.fn(async (projectId: string) => {
+      await Promise.resolve();
+      steps.push(`worker closed ${projectId}`);
+    }),
+  },
+}));
+
 // --- Import the impl directly (bypasses requireContext() guard in register-all.ts) ---
 import { pruneStaleWorktreeProjects } from '../../src/main/ipc/handlers/projects';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -83,6 +95,22 @@ describe('pruneStaleWorktreeProjects', () => {
 
     expect(mockCloseProjectDb).toHaveBeenCalledWith('proj-1');
     expect(mockDelete).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('has the retrieval worker let go of the database before its files are deleted', async () => {
+    steps.length = 0;
+    mockList.mockReturnValue([
+      { id: 'proj-1', name: 'stale-preview', path: '/home/dev/my-app/.kangentic/worktrees/fix-bug-abc123' },
+    ]);
+    mockIsKangenticWorktree.mockReturnValue(true);
+    const fs = (await import('node:fs')).default;
+    vi.mocked(fs.unlinkSync).mockImplementation((target) => { steps.push(`unlink ${String(target)}`); });
+
+    await pruneStaleWorktreeProjects(mockContext);
+
+    expect(steps[0]).toBe('worker closed proj-1');
+    expect(steps.slice(1).every((step) => step.startsWith('unlink '))).toBe(true);
+    expect(steps).toHaveLength(4);
   });
 
   it('skips non-worktree projects', async () => {

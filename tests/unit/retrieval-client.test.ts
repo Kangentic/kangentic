@@ -192,6 +192,45 @@ describe('RetrievalClient', () => {
     client.dispose();
   });
 
+  it('closes a project in a running worker, and forks none to do it', async () => {
+    const idle = new RetrievalClient();
+    await idle.closeProject('project-1');
+    expect(forkedChildren).toHaveLength(0);
+
+    const client = new RetrievalClient();
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+    const closing = client.closeProject('project-1');
+    await flush();
+    const request = sent(child, 'request').find((message) => message.method === 'project.close');
+    expect(request).toMatchObject({ params: { projectId: 'project-1' } });
+    child.emit('message', { type: 'reply', id: request?.id, ok: true, result: undefined });
+    await closing;
+    expect(child.kill).not.toHaveBeenCalled();
+    client.dispose();
+  });
+
+  it('shuts down a worker that does not close the project, and waits for it to exit', async () => {
+    vi.useFakeTimers();
+    const client = new RetrievalClient();
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+    let closed = false;
+    const closing = client.closeProject('project-1').then(() => { closed = true; });
+    await flush();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(child.kill).toHaveBeenCalled();
+    expect(closed).toBe(false);
+    child.emit('exit', 1);
+    await closing;
+    expect(closed).toBe(true);
+    client.dispose();
+  });
+
   it('disposes synchronously: kills the worker, fails pending calls, and refuses new ones', async () => {
     const client = new RetrievalClient();
     const call = client.call('projects.summaries', { projectIds: [] });

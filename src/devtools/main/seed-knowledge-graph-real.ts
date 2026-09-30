@@ -299,7 +299,11 @@ export function seedKnowledgeGraphFromRealIndex(
 
     const targetDb = getProjectDb(projectId);
     const store = new RetrievalStore(targetDb);
-    store.ensureVecTable(dimensions);
+    // vec0 tables are fixed-width: a preview seeded before at another width
+    // (the synthetic seed is 768 wide) needs its tables made again, as the
+    // embed engine does on a model switch.
+    if (store.getMeta('vec_dims') !== String(dimensions)) store.resetVec(dimensions);
+    else store.ensureVecTable(dimensions);
     if (!store.hasVec) throw new Error('sqlite-vec is unavailable in this preview, so vectors cannot be mirrored');
     store.setMeta('vec_dims', String(dimensions));
     // `documents` is newest first, so the backlog is the newest chunks.

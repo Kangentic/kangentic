@@ -10,7 +10,8 @@ import type {
   SearchHit,
   Project,
 } from '../../shared/types';
-import { searchConversationMemory, type TranscriptSearchHit } from '../retrieval/memory-search';
+import type { TranscriptSearchHit } from '../retrieval/memory-search';
+import type { ConversationSearchRequest } from '../retrieval/retrieval-queries';
 import type { Embedder } from '../retrieval/types';
 import { parseTicketQuery, matchesTicketPrefix } from '../../shared/ticket-query';
 
@@ -478,6 +479,9 @@ export interface SearchEverythingInput {
     embedWaitMs?: number;
     /** Restrict conversation hits to one task's history (internal id). */
     taskId?: string;
+    /** Runs the search: `searchConversations` (the retrieval worker) in the
+     *  app, the in-process search over a test database in tests. */
+    search: (request: ConversationSearchRequest) => Promise<TranscriptSearchHit[]>;
   };
 }
 
@@ -577,12 +581,11 @@ export async function runSearchEverything(input: SearchEverythingInput): Promise
   const conversationScan = (async () => {
     if (!input.conversationSearch?.enabled) return;
     try {
-      const conversationHits = await searchConversationMemory({
+      const conversationHits = await input.conversationSearch.search({
         query,
         projects: input.projects,
         k: budget.conversation,
         embedWaitMs: input.conversationSearch.embedWaitMs ?? 400,
-        getDb,
         embedder: input.conversationSearch.embedder ?? null,
         taskId: input.conversationSearch.taskId,
       });

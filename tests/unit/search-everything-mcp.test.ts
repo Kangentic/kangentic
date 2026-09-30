@@ -80,6 +80,22 @@ vi.mock('../../src/main/retrieval/summary/summary-store', () => ({
   },
 }));
 
+// The index reads run in the retrieval worker. Here a call goes straight to
+// the worker's own handlers, in process, so the module mocks above stand in
+// for the index behind them exactly as they did before the move.
+vi.mock('../../src/main/retrieval/retrieval-client', async () => {
+  const { retrievalHandlers } = await import('../../src/main/retrieval/worker/methods');
+  const context = { getDb: mockGetProjectDb, closeDb: () => undefined, emit: () => undefined };
+  return {
+    RetrievalUnavailableError: class RetrievalUnavailableError extends Error {},
+    retrievalClient: {
+      call: async (method: keyof typeof retrievalHandlers, params: unknown) => (
+        (retrievalHandlers[method] as (params: unknown, handlerContext: unknown) => unknown)(params, context)
+      ),
+    },
+  };
+});
+
 import {
   factsInline,
   formatRankedTasksForAgents,
@@ -502,10 +518,15 @@ describe('kangentic_search MCP tool', () => {
       const result = await server.getHandler('kangentic_search')({ query: 'relay', groupBy: 'task' });
 
       expect(mockRunSearchEverything).not.toHaveBeenCalled();
-      expect(mockIndexedConversationNodes).toHaveBeenCalledWith(DEFAULT_PROJECT_ID);
+      expect(mockIndexedConversationNodes).toHaveBeenCalledWith(DEFAULT_PROJECT_ID, expect.any(Function));
       const input = mockSearchRelatedWork.mock.calls[0][0] as { question: string; projectId: string; nodes: unknown[]; embedder: unknown; recordOnlyTasks: unknown };
-      expect(input).toMatchObject({ question: 'relay', projectId: DEFAULT_PROJECT_ID, embedder: SENTINEL_EMBEDDER });
-      expect(input.nodes).toBe(NODES);
+      // The worker ranks with the vectors main made and the model's own fields.
+      expect(input).toMatchObject({
+        question: 'relay',
+        projectId: DEFAULT_PROJECT_ID,
+        embedder: { modelTag: SENTINEL_EMBEDDER.modelTag, noiseFloor: SENTINEL_EMBEDDER.noiseFloor },
+      });
+      expect(input.nodes).toEqual(NODES);
       // The tool ranks the whole project, so every board task is in reach of
       // its own record, conversations or not.
       expect(input.recordOnlyTasks).toEqual([{ taskId: 'task-quiet', displayId: 14, title: 'A task with no conversation' }]);
@@ -522,7 +543,7 @@ describe('kangentic_search MCP tool', () => {
 
       const result = await server.getHandler('kangentic_search')({ query: 'relay', groupBy: 'task' });
 
-      expect(mockReadBoardTaskFacts).toHaveBeenCalledWith(DEFAULT_PROJECT_ID);
+      expect(mockReadBoardTaskFacts).toHaveBeenCalledWith(DEFAULT_PROJECT_ID, expect.any(Function));
       // The conversation with no task has no id to read a summary by.
       expect(mockSummariesFor).toHaveBeenCalledWith(['task-561']);
       const text = result.content[0].text;
@@ -815,8 +836,8 @@ describe('kangentic_search MCP tool', () => {
       expect(input.projectId).toBe(DEFAULT_PROJECT_ID);
       expect(input.nodes.map((node) => node.taskId)).toEqual(['task-other']);
       expect(input.recordOnlyTasks.map((record) => record.taskId)).toEqual(['task-other', 'task-quiet']);
-      expect(mockIndexedConversationNodes).toHaveBeenCalledWith(DEFAULT_PROJECT_ID);
-      expect(mockBoardRecordTasks).toHaveBeenCalledWith(DEFAULT_PROJECT_ID);
+      expect(mockIndexedConversationNodes).toHaveBeenCalledWith(DEFAULT_PROJECT_ID, expect.any(Function));
+      expect(mockBoardRecordTasks).toHaveBeenCalledWith(DEFAULT_PROJECT_ID, expect.any(Function));
     });
 
     it('embeds the task once, as one query vector, and searches keywords by the query and title', async () => {
@@ -833,7 +854,9 @@ describe('kangentic_search MCP tool', () => {
       expect(input.question).toBe(text);
       // A long description would OR a hundred words into the keyword search, so it is the title.
       expect(input.keywordText).toBe('reconnect Relay config');
-      expect(input.embedder).toBe(model);
+      // The worker searches with the vector main made and the model's own
+      // fields (its noise floor calibrates relevance), never a second embed.
+      expect(input.embedder).toMatchObject({ modelTag: model.modelTag, noiseFloor: model.noiseFloor });
     });
 
     it('embeds the title and description alone when no query focuses it', async () => {
@@ -905,7 +928,7 @@ describe('kangentic_search MCP tool', () => {
       expect(text).toContain('  facts: $4.12, 2h 10m, 3.1M tokens, 4 conversations, 12 files, +340/-80 lines, Done, PR 417 merged');
       expect(text).toContain('  summary: Paired a phone with the relay.');
       expect(text).toContain('  passage: "passage 0"');
-      expect(mockReadBoardTaskFacts).toHaveBeenCalledWith(DEFAULT_PROJECT_ID);
+      expect(mockReadBoardTaskFacts).toHaveBeenCalledWith(DEFAULT_PROJECT_ID, expect.any(Function));
     });
 
     it('says nothing is related when nothing ranked', async () => {
