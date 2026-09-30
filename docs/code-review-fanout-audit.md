@@ -807,6 +807,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 734, pre-PR | 36f +1490 plus 1 new file | 248KB, 4510 lines | 9 (6) | 28 | 0 | 10 | 3 of 9 pack-carrying | 31 / 27 |
 | task 734, second pass | 32f +1824 plus 2 new files | 260KB, 4765 lines | 9 (5) | 25 | 0 | 10 | 6 of 9 pack-carrying | 31 / 20 |
 | task 734, third pass | 37f +2922 plus 2 new files | 317KB, 5814 lines | 7 (2) | 32 | 0 | 9 | 16 of 8 pack-carrying | 35 / 28 |
+| task 529, whole branch, pre-PR | 357f +51373 -3763 | 3508KB, 61990 lines | 4 (0) | 353 | 1 | 13, sharded by area | about 47 of 12 pack-carrying | about 94 / 38 applied |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -953,3 +954,25 @@ conversion never ran. The driver dropped 7 of 35 candidates: two duplicates of a
 write already self-healing on read, a speculative ASCII glyph fallback, a forced-probe cost that
 predates the change, a documented cold-start pass-through, an informational mock note, and a
 `closeMenu` extraction the effect deps rule out.
+
+The task 529 row is the first pack no finder could load. It reviewed a whole feature branch against
+`main`, and at 61,990 lines a full load is 31 Read calls at the skill's 2000-line sizing, several
+times what a finder's context holds. So the driver departed from the skill and sharded by AREA
+instead of by dimension. Eight area finders each applied every universal criterion, plus the
+removed-surface and red-green checks, to their own list of `offset`/`limit` ranges taken from the
+pack's table of contents (2,700 to 6,200 pack lines each). The four gated auditors got only the
+ranges their globs matched, and the integration finder got the signature delta as usual. The one
+stubbed file, `KnowledgeGraphCanvas.tsx` at 1,963 new lines, went to one area finder as a disk read
+counted inside its shard. Two things were lost, and both are worth knowing before this happens
+again. Coverage was answered by grepping `tests/` rather than by loading the roughly 22,000 lines of
+changed test sections, so the changed test files were not themselves reviewed line by line. And no
+finder saw the whole change, so a cross-area interaction reached review only through the
+integration finder's delta; it found nothing, and verification found none either. The reads
+column is a hand tally over twelve reports and is approximate. Most of the 47 were gaps in
+hunk-tier files that a finder's criterion needed (a sweep's timer lifetimes, a handler's dispose
+path), and one was a range outside the finder's own list, read by mistake and unused. Of about 94
+raised findings, 38 were applied, with tests written for each behavior fix. The rest were skipped
+with a reason or refuted; two refutations were a summary-pass retry loop that converges and a
+schema comment that contradicted a deliberate delete. The skill has no path for a pack this size,
+and the sharding here was improvised; a threshold (about 6,000 pack lines per finder) and the
+TOC-driven shard lists are the part worth writing into the skill.
