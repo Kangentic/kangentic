@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
+import { writeTransaction } from '../transaction';
 
 /**
  * One-row window aggregate of usage_history (SUM/COUNT/MIN/MAX pushed into
@@ -229,7 +230,7 @@ export class UsageHistoryRepository {
    * captureGitChurn) and must not be clobbered by a re-capture.
    */
   recordSessionUsage(input: RecordSessionUsageInput): void {
-    const write = this.db.transaction((usage: RecordSessionUsageInput) => {
+    const write = writeTransaction(this.db, (usage: RecordSessionUsageInput) => {
       this.db.prepare(`
         INSERT INTO usage_history
           (id, session_record_id, recorded_at, session_started_at, session_type,
@@ -325,7 +326,7 @@ export class UsageHistoryRepository {
    * the LATEST leg happened to have no billable usage.
    */
   setTaskGitStats(recordIds: string[], canonicalRecordId: string, stats: UsageHistoryGitStatsInput): void {
-    const write = this.db.transaction((allRecordIds: string[], canonicalId: string) => {
+    const write = writeTransaction(this.db, (allRecordIds: string[], canonicalId: string) => {
       const result = this.db.prepare(`
         UPDATE usage_history
            SET lines_added = ?, lines_removed = ?, files_changed = ?

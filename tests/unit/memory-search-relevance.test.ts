@@ -1,3 +1,4 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import type { Project } from '../../src/shared/types';
@@ -154,7 +155,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
         run: () => ({ changes: 0, lastInsertRowid: 0 }),
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 

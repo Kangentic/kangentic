@@ -7,6 +7,7 @@ import type {
   TranscriptEntry,
   TranscriptTurnUsage,
 } from '../../../shared/types';
+import { writeTransaction } from '../../db/transaction';
 
 /** One assistant turn's usage for recordTurns. */
 export interface TurnUsageInput {
@@ -196,7 +197,7 @@ export class ConversationUsageStore {
    */
   recordTurns(owner: TurnUsageOwner, turns: TurnUsageInput[], now: string): void {
     if (turns.length === 0) return;
-    const run = this.db.transaction(() => {
+    const run = writeTransaction(this.db, () => {
       const upsert = this.db.prepare(
         `INSERT INTO conversation_turn_usage
            (turn_uuid, agent_session_id, session_id, task_id, model, ts,
@@ -258,7 +259,7 @@ export class ConversationUsageStore {
    */
   recordSpawnLinks(links: SubagentSpawnLink[], now: string): void {
     if (links.length === 0) return;
-    const run = this.db.transaction(() => {
+    const run = writeTransaction(this.db, () => {
       const upsert = this.db.prepare(
         `INSERT INTO turn_spawn_links (tool_use_id, turn_uuid, recorded_at)
          VALUES (?, ?, ?)

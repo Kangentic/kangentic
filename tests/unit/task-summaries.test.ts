@@ -6,6 +6,7 @@
  * against a scripted `prepare()` that answers by SQL shape and records writes.
  */
 
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import {
@@ -233,7 +234,7 @@ function fakeBoard(state: {
         },
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
   return { db, calls };
 }

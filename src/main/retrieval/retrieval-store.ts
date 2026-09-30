@@ -11,6 +11,7 @@ import type {
   SemanticHit,
   StoredChunk,
 } from './types';
+import { writeTransaction } from '../db/transaction';
 
 /** Ids per `IN (...)` in `getChunkPlacements`. */
 const PLACEMENT_BATCH = 500;
@@ -121,7 +122,7 @@ export class RetrievalStore {
     ref: CorpusDocumentRef,
     chunks: ChunkInput[],
   ): { insertedIds: number[]; deletedIds: number[] } {
-    const run = this.db.transaction(() => {
+    const run = writeTransaction(this.db, () => {
       const existing = this.db
         .prepare(
           'SELECT id, seq, content_hash, turn_uuid_start, turn_uuid_end FROM memory_chunks WHERE corpus = ? AND doc_id = ? ORDER BY seq ASC',
@@ -239,7 +240,7 @@ export class RetrievalStore {
   }
 
   deleteDocument(corpus: string, docId: string): void {
-    const run = this.db.transaction(() => {
+    const run = writeTransaction(this.db, () => {
       const ids = (
         this.db
           .prepare('SELECT id FROM memory_chunks WHERE corpus = ? AND doc_id = ?')
@@ -257,7 +258,7 @@ export class RetrievalStore {
    *  its region names (the `graph_` meta keys), which carry titles, cost and
    *  task ids read from the cleared chunks. */
   purgeAll(): void {
-    const run = this.db.transaction(() => {
+    const run = writeTransaction(this.db, () => {
       this.db.prepare('DELETE FROM memory_chunks').run();
       this.db.prepare('DELETE FROM memory_index_state').run();
       this.db.prepare('DELETE FROM memory_task_summaries').run();
@@ -274,7 +275,7 @@ export class RetrievalStore {
   purgeCorpora(corpora: ReadonlyArray<MemoryCorpus>): void {
     if (corpora.length === 0) return;
     const placeholders = corpusPlaceholders(corpora);
-    const run = this.db.transaction(() => {
+    const run = writeTransaction(this.db, () => {
       this.db.prepare(`DELETE FROM memory_chunks WHERE corpus IN (${placeholders})`).run(...corpora);
       this.db.prepare(`DELETE FROM memory_index_state WHERE corpus IN (${placeholders})`).run(...corpora);
       for (const corpus of corpora) {
@@ -630,7 +631,7 @@ export class RetrievalStore {
    *  vec0 tables are fixed-width, so a dimension change requires a full reset. */
   resetVec(dimensions: number): void {
     if (!hasVecSupport(this.db)) return;
-    const run = this.db.transaction(() => {
+    const run = writeTransaction(this.db, () => {
       for (const corpus of MEMORY_CORPORA) this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
       for (const corpus of EMBEDDED_CORPORA) {
         this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} USING vec0(embedding float[${dimensions}])`);
@@ -667,7 +668,7 @@ export class RetrievalStore {
     modelTag: string,
   ): void {
     if (this.vecTables.size === 0 || rows.length === 0) return;
-    const run = this.db.transaction(() => {
+    const run = writeTransaction(this.db, () => {
       // vec0 virtual tables do NOT support UPSERT - an
       // `INSERT ... ON CONFLICT DO UPDATE` throws "UPSERT not implemented for
       // virtual table". Re-embedding a chunk (a model switch, or a rowid reused

@@ -40,27 +40,7 @@ try {
 
 const describeWithSqlite = sqlite ? describe : describe.skip;
 
-/** See worktree-folder-migration.test.ts - same adapter, same non-nesting caveat. */
-function adaptDatabase(database: InstanceType<SqliteModule['DatabaseSync']>): DatabaseType.Database {
-  const adapter = {
-    exec: (sql: string) => database.exec(sql),
-    prepare: (sql: string) => database.prepare(sql),
-    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
-    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
-      (...args: Args): Result => {
-        database.exec('BEGIN');
-        try {
-          const result = body(...args);
-          database.exec('COMMIT');
-          return result;
-        } catch (error) {
-          database.exec('ROLLBACK');
-          throw error;
-        }
-      },
-  };
-  return adapter as unknown as DatabaseType.Database;
-}
+import { adaptDatabase } from './helpers/node-sqlite-database';
 
 interface Board {
   db: DatabaseType.Database;

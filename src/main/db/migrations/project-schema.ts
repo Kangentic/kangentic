@@ -6,6 +6,7 @@ import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
 import { runAutomationsMigration } from './automations-migration';
 import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
 import { SWIMLANE_ROLES } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 export function runProjectMigrations(db: Database.Database): void {
   db.exec(`
@@ -230,7 +231,7 @@ export function runProjectMigrations(db: Database.Database): void {
     ).all() as Array<{ to_swimlane_id: string; action_id: string; execution_order: number }>;
 
     if (existing.length > 0) {
-      const tx = db.transaction(() => {
+      const tx = writeTransaction(db, () => {
         db.prepare('DELETE FROM swimlane_transitions').run();
         const insert = db.prepare(
           'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, action_id, execution_order) VALUES (?, ?, ?, ?, ?)'
@@ -543,7 +544,7 @@ export function runProjectMigrations(db: Database.Database): void {
     // Backfill existing tasks with sequential display IDs ordered by creation time
     const existingTasks = db.prepare('SELECT id FROM tasks ORDER BY created_at ASC').all() as Array<{ id: string }>;
     const updateDisplayId = db.prepare('UPDATE tasks SET display_id = ? WHERE id = ?');
-    const backfillTransaction = db.transaction(() => {
+    const backfillTransaction = writeTransaction(db, () => {
       let counter = 1;
       for (const task of existingTasks) {
         updateDisplayId.run(counter, task.id);
@@ -586,7 +587,7 @@ export function runProjectMigrations(db: Database.Database): void {
     // and the column is write-once, so a task whose worktree_path is later nulled
     // by a Done move would lose its folder name permanently. Same reasoning, and
     // the same shape, as the run_mode migration further down this file.
-    const addWorktreeFolderTransaction = db.transaction(() => {
+    const addWorktreeFolderTransaction = writeTransaction(db, () => {
       db.exec('ALTER TABLE tasks ADD COLUMN worktree_folder TEXT DEFAULT NULL');
       const tasksWithWorktree = db
         .prepare('SELECT id, worktree_path FROM tasks WHERE worktree_path IS NOT NULL')
@@ -1280,7 +1281,7 @@ export function runProjectMigrations(db: Database.Database): void {
            lines_added, lines_removed, files_changed, agent, effort)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      const transaction = db.transaction(() => {
+      const transaction = writeTransaction(db, () => {
         for (const row of sourceRows) {
           insertBackfill.run(
             uuidv4(),
@@ -1341,7 +1342,7 @@ export function runProjectMigrations(db: Database.Database): void {
   const hasUsageHistoryConversationId = (db.pragma('table_info(usage_history)') as Array<{ name: string }>)
     .some((column) => column.name === 'conversation_id');
   if (!hasUsageHistoryConversationId) {
-    const addLineageColumns = db.transaction(() => {
+    const addLineageColumns = writeTransaction(db, () => {
       db.exec('ALTER TABLE usage_history ADD COLUMN conversation_id TEXT');
       db.exec('ALTER TABLE usage_history ADD COLUMN cumulative_cost_usd REAL');
       db.exec('ALTER TABLE usage_history ADD COLUMN cumulative_duration_ms INTEGER');
@@ -1493,7 +1494,7 @@ export function runProjectMigrations(db: Database.Database): void {
   const hasTaskRunMode = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
     .some((column) => column.name === 'run_mode');
   if (!hasTaskRunMode) {
-    const addRunModeTransaction = db.transaction(() => {
+    const addRunModeTransaction = writeTransaction(db, () => {
       db.exec("ALTER TABLE tasks ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'column_settings'");
       db.exec(`UPDATE tasks SET run_mode = 'agent_override'
         WHERE profile_id IS NULL

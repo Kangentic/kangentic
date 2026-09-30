@@ -1,3 +1,4 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
@@ -15,33 +16,7 @@ try {
 const describeWithSqlite = sqlite ? describe : describe.skip;
 type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
 
-/** node:sqlite behind the slice of better-sqlite3 the store uses, with nested
- *  transactions as savepoints. */
-function adaptDatabase(database: NodeDatabase): Database.Database {
-  let depth = 0;
-  const adapter = {
-    exec: (sql: string) => database.exec(sql),
-    prepare: (sql: string) => database.prepare(sql),
-    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
-    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
-      (...args: Args): Result => {
-        const savepoint = `sp_${depth}`;
-        database.exec(depth === 0 ? 'BEGIN' : `SAVEPOINT ${savepoint}`);
-        depth += 1;
-        try {
-          const result = body(...args);
-          depth -= 1;
-          database.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
-          return result;
-        } catch (error) {
-          depth -= 1;
-          database.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
-          throw error;
-        }
-      },
-  };
-  return adapter as unknown as Database.Database;
-}
+import { adaptDatabase } from './helpers/node-sqlite-database';
 
 /**
  * better-sqlite3 cannot load under vitest's system Node, so the store's SQL is
@@ -89,7 +64,7 @@ function makeRecordingDb(handlers: {
       };
     },
     // transaction(fn) returns a callable that runs fn and returns its value.
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
   return { db, calls };
 }

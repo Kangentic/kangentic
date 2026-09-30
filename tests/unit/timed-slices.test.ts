@@ -6,16 +6,17 @@ vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({
 }));
 
 import { SLICE_BUDGET_MS, writeInTimedSlices } from '../../src/main/retrieval/timed-slices';
+import { passThroughTransaction } from './helpers/transaction-double';
 
 /** A database whose transactions record which items each one wrote. */
 function fakeDb(): { db: Database.Database; transactions: number[][]; current: number[] } {
   const state = { transactions: [] as number[][], current: [] as number[] };
   const db = {
-    transaction: (work: (from: number) => number) => (from: number) => {
+    transaction: (work: (from: number) => number) => passThroughTransaction((from: number) => {
       state.current = [];
       state.transactions.push(state.current);
       return work(from);
-    },
+    }),
   } as unknown as Database.Database;
   return { db, get transactions() { return state.transactions; }, get current() { return state.current; } };
 }
@@ -105,9 +106,9 @@ describe('writeInTimedSlices', () => {
     // console.warn silenced for the tests after it.
     try {
       const db = {
-        transaction: () => () => {
+        transaction: () => passThroughTransaction(() => {
           throw new Error('disk I/O error');
-        },
+        }),
       } as unknown as Database.Database;
       const writeOne = vi.fn();
 

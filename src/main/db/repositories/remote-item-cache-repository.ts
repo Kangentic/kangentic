@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { ExternalIssue, ExternalSource } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 /**
  * Canonicalize a provider timestamp to UTC ISO 8601 before it becomes a
@@ -136,7 +137,7 @@ export class RemoteItemCacheRepository {
         payload = excluded.payload,
         fetched_at = excluded.fetched_at
     `);
-    const runAll = this.db.transaction((list: ExternalIssue[]) => {
+    const runAll = writeTransaction(this.db, (list: ExternalIssue[]) => {
       for (const issue of list) {
         // Track ids as they land, so a duplicate inside one batch counts as an
         // update on its second appearance rather than a second insert. The
@@ -171,7 +172,7 @@ export class RemoteItemCacheRepository {
     const statement = this.db.prepare(
       'DELETE FROM remote_item_cache WHERE external_source = ? AND repository = ? AND external_id = ?',
     );
-    const runAll = this.db.transaction((ids: string[]) => {
+    const runAll = writeTransaction(this.db, (ids: string[]) => {
       for (const id of ids) statement.run(source, repository, id);
     });
     runAll(toDelete);

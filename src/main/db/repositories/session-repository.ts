@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { PerToolStat, SessionRecord, SessionRecordStatus, SessionSummary, SuspendedBy } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 /**
  * Fields accepted by insert(). Caller must provide `id` (the PTY session ID)
@@ -426,7 +427,7 @@ export class SessionRepository {
    * (`deleteByTaskId`), so the canonical UPDATE always matches a row.
    */
   setTaskGitStats(recordIds: string[], canonicalRecordId: string, stats: { linesAdded: number; linesRemoved: number; filesChanged: number }): void {
-    const write = this.db.transaction((allRecordIds: string[], canonicalId: string) => {
+    const write = writeTransaction(this.db, (allRecordIds: string[], canonicalId: string) => {
       this.db.prepare(`
         UPDATE sessions SET lines_added = ?, lines_removed = ?, files_changed = ?
         WHERE id = ?

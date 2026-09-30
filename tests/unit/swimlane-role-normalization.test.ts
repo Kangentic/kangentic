@@ -20,7 +20,6 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
 
 // Hand applyBoardConfigToDb the in-memory DB built per-test, so the real (unmocked)
 // SwimlaneRepository runs against it. Same shape as apply-config-column-delete.test.ts,
@@ -46,31 +45,7 @@ try {
 
 const describeWithSqlite = sqlite ? describe : describe.skip;
 
-/**
- * Adapt node:sqlite's DatabaseSync to the slice of better-sqlite3's surface the
- * migrations use. Same shim as default-swimlanes-seed-parity.test.ts, including its
- * caveat: `transaction` is raw BEGIN/COMMIT and does not nest.
- */
-function adaptDatabase(database: InstanceType<SqliteModule['DatabaseSync']>): DatabaseType.Database {
-  const adapter = {
-    exec: (sql: string) => database.exec(sql),
-    prepare: (sql: string) => database.prepare(sql),
-    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
-    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
-      (...args: Args): Result => {
-        database.exec('BEGIN');
-        try {
-          const result = body(...args);
-          database.exec('COMMIT');
-          return result;
-        } catch (error) {
-          database.exec('ROLLBACK');
-          throw error;
-        }
-      },
-  };
-  return adapter as unknown as DatabaseType.Database;
-}
+import { adaptDatabase } from './helpers/node-sqlite-database';
 
 function makeSwimlane(overrides: Partial<Swimlane>): Swimlane {
   return {

@@ -7,6 +7,7 @@
  * against a scripted `prepare()` that answers by SQL shape and records writes.
  */
 
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
 import {
@@ -159,7 +160,7 @@ function fakeIndex(state: {
         },
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
   return { db, calls };
 }

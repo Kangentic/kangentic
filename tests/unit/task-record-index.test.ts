@@ -7,6 +7,7 @@
  * write, the way `retrieval-store-sql.test.ts` does.
  */
 
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
 import { taskRecordChunks, parseLabels, recordChangedMs, TASK_RECORD_VERSION } from '../../src/main/retrieval/task/task-record';
@@ -108,7 +109,7 @@ function fakeProject(board: {
         },
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
   return { db, calls };
 }

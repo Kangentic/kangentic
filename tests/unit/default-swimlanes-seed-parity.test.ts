@@ -29,7 +29,6 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { ICON_REGISTRY } from '../../src/renderer/utils/swimlane-icons';
-import type DatabaseType from 'better-sqlite3';
 
 type SqliteModule = typeof import('node:sqlite');
 let sqlite: SqliteModule | null = null;
@@ -45,36 +44,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const MOCK_FILE = path.join(REPO_ROOT, 'tests/ui/mock-electron-api.js');
 const SEED_FILE = 'src/main/db/migrations/default-data.ts';
 
-/**
- * Adapt node:sqlite's DatabaseSync to the slice of better-sqlite3's surface the migrations use.
- *
- * CAVEAT (same as worktree-folder-migration.test.ts and task-ordering-sql.test.ts, which carry
- * their own copies of this shim): `transaction` here is raw BEGIN/COMMIT, so unlike
- * better-sqlite3's savepoint-based version it does NOT nest. Nothing nests today - every
- * `db.transaction(...)` in the migration path is a leaf - but a future nested call would fail
- * with "cannot start a transaction within a transaction" in tests only, which is a confusing
- * thing to debug cold. Switch to SAVEPOINT if that happens.
- */
-function adaptDatabase(database: InstanceType<SqliteModule['DatabaseSync']>): DatabaseType.Database {
-  const adapter = {
-    exec: (sql: string) => database.exec(sql),
-    prepare: (sql: string) => database.prepare(sql),
-    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
-    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
-      (...args: Args): Result => {
-        database.exec('BEGIN');
-        try {
-          const result = body(...args);
-          database.exec('COMMIT');
-          return result;
-        } catch (error) {
-          database.exec('ROLLBACK');
-          throw error;
-        }
-      },
-  };
-  return adapter as unknown as DatabaseType.Database;
-}
+import { adaptDatabase } from './helpers/node-sqlite-database';
 
 interface SeededLaneRow {
   id: string;

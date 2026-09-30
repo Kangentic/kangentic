@@ -1,3 +1,4 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import {
@@ -197,7 +198,7 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
   }));
   const db = {
     prepare,
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
   return { db, table, prepare };
 }
@@ -473,7 +474,7 @@ function makeIndexerFakeDb(state: FakeIndexerDbState): Database.Database {
         },
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 

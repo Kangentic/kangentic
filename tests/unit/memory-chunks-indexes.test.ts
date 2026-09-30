@@ -33,31 +33,7 @@ const describeWithSqlite = sqlite ? describe : describe.skip;
 
 type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
 
-/** node:sqlite behind the slice of better-sqlite3 the migrations and store use,
- *  recording every statement prepared. Raw BEGIN/COMMIT: no nesting. */
-function adaptDatabase(database: NodeDatabase, prepared: string[]): DatabaseType.Database {
-  const adapter = {
-    exec: (sql: string) => database.exec(sql),
-    prepare: (sql: string) => {
-      prepared.push(sql);
-      return database.prepare(sql);
-    },
-    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
-    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
-      (...args: Args): Result => {
-        database.exec('BEGIN');
-        try {
-          const result = body(...args);
-          database.exec('COMMIT');
-          return result;
-        } catch (error) {
-          database.exec('ROLLBACK');
-          throw error;
-        }
-      },
-  };
-  return adapter as unknown as DatabaseType.Database;
-}
+import { adaptDatabase } from './helpers/node-sqlite-database';
 
 function migrated(): { database: NodeDatabase; adapted: DatabaseType.Database; prepared: string[] } {
   const database = new sqlite!.DatabaseSync(':memory:');

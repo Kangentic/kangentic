@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
+import { writeTransaction } from '../transaction';
 
 /** Raw row from SQLite - labels stored as JSON string. */
 interface TaskRow extends Omit<Task, 'labels'> {
@@ -228,7 +229,7 @@ export class TaskRepository {
     worktreeFolder: string,
     resolvedBaseBranch?: string | null,
   ): void {
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       this.update({
         id,
         worktree_path: worktreePath,
@@ -287,7 +288,7 @@ export class TaskRepository {
   }
 
   create(input: TaskCreateInput): Task {
-    return this.db.transaction(() => this.createWithinTransaction(input))();
+    return writeTransaction(this.db, () => this.createWithinTransaction(input))();
   }
 
   /**
@@ -450,7 +451,7 @@ export class TaskRepository {
     const task = this.getById(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
 
-    const tx = this.db.transaction(() => {
+    const tx = writeTransaction(this.db, () => {
       // Remove from old position - shift down tasks above in old swimlane
       this.db.prepare('UPDATE tasks SET position = position - 1 WHERE swimlane_id = ? AND position > ?')
         .run(task.swimlane_id, task.position);
@@ -516,7 +517,7 @@ export class TaskRepository {
     const updatePositionStatement = this.db.prepare(
       'UPDATE tasks SET position = ? WHERE id = ? AND swimlane_id = ? AND position != ?',
     );
-    const tx = this.db.transaction(() => {
+    const tx = writeTransaction(this.db, () => {
       orderedTaskIds.forEach((taskId, index) => {
         updatePositionStatement.run(index, taskId, swimlaneId, index);
       });
@@ -665,7 +666,7 @@ export class TaskRepository {
     const now = new Date().toISOString();
     const updateStatement = this.db.prepare('UPDATE tasks SET labels = ?, updated_at = ? WHERE id = ?');
 
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       for (const row of allRows) {
         let labels: string[];
         try { labels = JSON.parse(row.labels); } catch { continue; }
@@ -688,7 +689,7 @@ export class TaskRepository {
     const now = new Date().toISOString();
     const updateStatement = this.db.prepare('UPDATE tasks SET labels = ?, updated_at = ? WHERE id = ?');
 
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       for (const row of allRows) {
         let labels: string[];
         try { labels = JSON.parse(row.labels); } catch { continue; }
@@ -706,7 +707,7 @@ export class TaskRepository {
     const task = this.getById(id);
     if (!task) return;
 
-    const tx = this.db.transaction(() => {
+    const tx = writeTransaction(this.db, () => {
       this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
       // Shift down tasks above the deleted one
       this.db.prepare('UPDATE tasks SET position = position - 1 WHERE swimlane_id = ? AND position > ?')

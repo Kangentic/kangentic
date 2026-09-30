@@ -17,6 +17,7 @@
  * and asserts on the input object the repository was handed.
  */
 
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SwimlaneCreateInput } from '../../src/shared/types';
 
@@ -62,7 +63,7 @@ const DONE_LANE = {
  */
 function makeDb() {
   return {
-    transaction: (body: () => unknown) => () => body(),
+    transaction: passThroughTransaction,
     prepare: vi.fn(() => ({ run: vi.fn(), get: vi.fn(), all: vi.fn(() => []) })),
   };
 }

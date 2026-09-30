@@ -38,8 +38,15 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/main/db/database', () => ({
-  // A fake db: transaction(fn) returns a callable that runs fn synchronously.
-  getProjectDb: vi.fn(() => ({ transaction: (fn: (...a: unknown[]) => unknown) => (...a: unknown[]) => fn(...a) })),
+  // A fake db: transaction(fn) returns a callable that runs fn synchronously,
+  // with the `.immediate` variant writeTransaction calls. Inline rather than the
+  // shared helper, because a vi.mock factory runs before imports.
+  getProjectDb: vi.fn(() => ({
+    transaction: (fn: (...a: unknown[]) => unknown) => {
+      const run = (...a: unknown[]) => fn(...a);
+      return Object.assign(run, { immediate: run });
+    },
+  })),
 }));
 
 vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({

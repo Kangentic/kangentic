@@ -45,32 +45,7 @@ try {
 
 const describeWithSqlite = sqlite ? describe : describe.skip;
 
-/**
- * Adapt node:sqlite's DatabaseSync to the slice of better-sqlite3's surface
- * the migrations and repositories use. Mirrors the adapter in
- * worktree-folder-migration.test.ts so both suites share one known-good
- * shape rather than drifting two implementations of the same shim.
- */
-function adaptDatabase(database: InstanceType<SqliteModule['DatabaseSync']>): DatabaseType.Database {
-  const adapter = {
-    exec: (sql: string) => database.exec(sql),
-    prepare: (sql: string) => database.prepare(sql),
-    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
-    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
-      (...args: Args): Result => {
-        database.exec('BEGIN');
-        try {
-          const result = body(...args);
-          database.exec('COMMIT');
-          return result;
-        } catch (error) {
-          database.exec('ROLLBACK');
-          throw error;
-        }
-      },
-  };
-  return adapter as unknown as DatabaseType.Database;
-}
+import { adaptDatabase } from './helpers/node-sqlite-database';
 
 function migratedDatabase(): DatabaseType.Database {
   const database = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));

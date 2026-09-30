@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
+import { writeTransaction } from '../db/transaction';
 
 /** Main-thread time one slice of a background index write may take before it
  *  commits and yields. An item's cost follows its size (a change document reads
@@ -36,7 +37,7 @@ export async function writeInTimedSlices<Item>(
   shouldContinue: () => boolean,
   deps: TimedSliceDeps,
 ): Promise<boolean> {
-  const writeSlice = db.transaction((from: number): number => {
+  const writeSlice = writeTransaction(db, (from: number): number => {
     const startedMs = deps.clock();
     let next = from;
     while (next < items.length) {

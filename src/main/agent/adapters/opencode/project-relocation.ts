@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { replacePathPrefix } from '../../../../shared/paths';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
+import { writeTransaction } from '../../../db/transaction';
 
 /**
  * Migrate OpenCode's per-project session data when a Kangentic project is
@@ -70,7 +71,7 @@ export async function migrateOpenCodeProjectData(oldProjectPath: string, newProj
       return columns.some((column) => column.name === target.column);
     });
 
-    const migrate = db.transaction(() => {
+    const migrate = writeTransaction(db, () => {
       for (const { table, column } of applicable) {
         const rows = db!
           .prepare(`SELECT rowid AS rowid, "${column}" AS value FROM "${table}" WHERE "${column}" IS NOT NULL`)

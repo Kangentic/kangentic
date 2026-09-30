@@ -7,6 +7,7 @@ import { normalizeSwimlaneRole } from '../../../shared/types';
 import { CURRENT_VERSION, validateBoardConfig } from './config-helpers';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { configDeclaresAutomations, configIsAutomationAware, planColumnAutomations } from './apply-automations';
+import { writeTransaction } from '../../db/transaction';
 
 /**
  * Apply a BoardConfig (already loaded + merged from kangentic.json and
@@ -53,7 +54,7 @@ export function applyBoardConfigToDb(
     warnings.push(`kangentic.json uses version ${config.version}. Some features may not be supported.`);
   }
 
-  const transaction = db.transaction(() => {
+  const transaction = writeTransaction(db, () => {
     const existingLanes = swimlaneRepo.list();
 
     // Normalize legacy role: "backlog" → "todo" (backlog is now a separate view).

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getGlobalDb } from '../database';
 import type { Project, ProjectCreateInput } from '../../../shared/types';
 import { DEFAULT_AGENT } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 export class ProjectRepository {
   list(): Project[] {
@@ -31,7 +32,7 @@ export class ProjectRepository {
       last_opened: now,
       created_at: now,
     };
-    const tx = db.transaction(() => {
+    const tx = writeTransaction(db, () => {
       // Shift all existing projects down to make room at position 0
       db.prepare('UPDATE projects SET position = position + 1').run();
       db.prepare(
@@ -56,7 +57,7 @@ export class ProjectRepository {
 
   delete(id: string): void {
     const db = getGlobalDb();
-    const tx = db.transaction(() => {
+    const tx = writeTransaction(db, () => {
       // Return this project's dev-server ports to the pool. Inside the
       // transaction because both tables live in the GLOBAL database, and here
       // rather than at the three delete call sites because this is the one path
@@ -108,7 +109,7 @@ export class ProjectRepository {
 
   reorder(ids: string[]): void {
     const db = getGlobalDb();
-    const tx = db.transaction(() => {
+    const tx = writeTransaction(db, () => {
       const stmt = db.prepare('UPDATE projects SET position = ? WHERE id = ?');
       ids.forEach((id, index) => {
         stmt.run(index, id);

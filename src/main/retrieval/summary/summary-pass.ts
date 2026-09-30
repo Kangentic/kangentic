@@ -4,6 +4,7 @@ import { buildSummaryPrompt, SUMMARY_BATCH_SIZE, parseSummaryReply } from './sum
 import { readSummaryCandidates } from './summary-sources';
 import { SummaryStore } from './summary-store';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { writeTransaction } from '../../db/transaction';
 
 /** Writes one batch's summaries: the search agent's read-only answer run. */
 export interface SummaryWriter {
@@ -97,7 +98,7 @@ export async function runSummaryPass(
   // The pass's writes in ONE transaction. Each commit appends every page it
   // touched to the WAL, so thirty separate ones write the same table and index
   // pages thirty times over (see timed-slices.ts for the measured cost).
-  const writeReplies = db.transaction(() => {
+  const writeReplies = writeTransaction(db, () => {
     for (const { batch, reply } of replies) {
       if (reply === null) {
         result.failed = true;

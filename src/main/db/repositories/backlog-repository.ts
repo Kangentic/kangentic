@@ -5,6 +5,7 @@ import type {
   BacklogTaskCreateInput,
   BacklogTaskUpdateInput,
 } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 /**
  * How many external ids one dedup query binds. The clause binds two parameters
@@ -140,7 +141,7 @@ export class BacklogRepository {
   delete(id: string): void {
     const item = this.getById(id);
     if (!item) return;
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       this.db.prepare('DELETE FROM backlog_tasks WHERE id = ?').run(id);
       // Shift positions down for tasks after the deleted one
       this.db.prepare(
@@ -153,7 +154,7 @@ export class BacklogRepository {
     const updatePosition = this.db.prepare(
       'UPDATE backlog_tasks SET position = ? WHERE id = ?'
     );
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       ids.forEach((id, index) => {
         updatePosition.run(index, id);
       });
@@ -162,7 +163,7 @@ export class BacklogRepository {
 
   bulkDelete(ids: string[]): void {
     if (ids.length === 0) return;
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       const deleteStmt = this.db.prepare('DELETE FROM backlog_tasks WHERE id = ?');
       for (const id of ids) {
         deleteStmt.run(id);
@@ -192,7 +193,7 @@ export class BacklogRepository {
       'UPDATE backlog_tasks SET labels = ?, updated_at = ? WHERE id = ?'
     );
 
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       for (const row of allItems) {
         let labels: string[];
         try { labels = JSON.parse(row.labels); } catch { continue; }
@@ -221,7 +222,7 @@ export class BacklogRepository {
       'UPDATE backlog_tasks SET labels = ?, updated_at = ? WHERE id = ?'
     );
 
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       for (const row of allItems) {
         let labels: string[];
         try { labels = JSON.parse(row.labels); } catch { continue; }
@@ -247,7 +248,7 @@ export class BacklogRepository {
       'UPDATE backlog_tasks SET priority = ?, updated_at = ? WHERE id = ?'
     );
 
-    this.db.transaction(() => {
+    writeTransaction(this.db, () => {
       for (const row of allItems) {
         const newPriority = mapping[row.priority];
         if (newPriority !== undefined && newPriority !== row.priority) {

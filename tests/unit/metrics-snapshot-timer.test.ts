@@ -18,6 +18,7 @@
  * up via stopMetricsSnapshotTimer() in afterEach.
  */
 
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Session } from '../../src/shared/types';
 import type { SessionManager } from '../../src/main/pty/session-manager';
@@ -31,11 +32,12 @@ import type { SessionManager } from '../../src/main/pty/session-manager';
 // better-sqlite3's `db.transaction(fn)` returns a callable that runs `fn` inside
 // a transaction. The mock mirrors that: transaction(fn) => fn, so calling the
 // returned function synchronously runs the batch body.
-const makeMockDb = () => ({ transaction: (fn: () => void) => fn });
+const makeMockDb = () => ({ transaction: passThroughTransaction });
 
 const { mockCaptureSessionMetrics, mockGetProjectDb, mockGetLatestForTask } = vi.hoisted(() => ({
   mockCaptureSessionMetrics: vi.fn(),
-  mockGetProjectDb: vi.fn(() => ({ transaction: (fn: () => void) => fn })),
+  // Inline rather than the shared helper: vi.hoisted runs before imports.
+  mockGetProjectDb: vi.fn(() => ({ transaction: (fn: () => void) => Object.assign(fn, { immediate: fn }) })),
   /** Shared getLatestForTask stub - re-configured per test in beforeEach. */
   mockGetLatestForTask: vi.fn(),
 }));
@@ -355,7 +357,7 @@ describe('snapshotRunningSessions filter', () => {
     // multiple running sessions opens the DB once and runs one transaction.
     let transactionCalls = 0;
     mockGetProjectDb.mockImplementation(() => ({
-      transaction: (fn: () => void) => () => { transactionCalls += 1; fn(); },
+      transaction: (fn: () => void) => passThroughTransaction(() => { transactionCalls += 1; fn(); }),
     }));
 
     const sessions = [

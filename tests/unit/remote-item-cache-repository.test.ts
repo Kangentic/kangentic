@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type Database from 'better-sqlite3';
 import type { ExternalIssue } from '../../src/shared/types';
 import { RemoteItemCacheRepository } from '../../src/main/db/repositories/remote-item-cache-repository';
+import { passThroughTransaction } from './helpers/transaction-double';
 
 interface CacheRow {
   external_source: string;
@@ -87,9 +88,7 @@ function createFakeDb(): Database.Database {
         },
       };
     },
-    transaction<T extends (arg: never) => unknown>(fn: T): T {
-      return fn;
-    },
+    transaction: passThroughTransaction,
   };
   return db as unknown as Database.Database;
 }

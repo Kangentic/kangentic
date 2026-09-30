@@ -14,7 +14,6 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { indexedConversationNodes } from '../../src/main/retrieval/related-work';
@@ -30,36 +29,7 @@ try {
 const describeWithSqlite = sqlite ? describe : describe.skip;
 type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
 
-/** node:sqlite behind the slice of better-sqlite3 the store uses, recording
- *  every statement prepared, with nested transactions as savepoints. */
-function adaptDatabase(database: NodeDatabase, prepared: string[]): Database.Database {
-  let depth = 0;
-  const adapter = {
-    exec: (sql: string) => database.exec(sql),
-    prepare: (sql: string) => {
-      prepared.push(sql);
-      return database.prepare(sql);
-    },
-    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
-    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
-      (...args: Args): Result => {
-        const savepoint = `sp_${depth}`;
-        database.exec(depth === 0 ? 'BEGIN' : `SAVEPOINT ${savepoint}`);
-        depth += 1;
-        try {
-          const result = body(...args);
-          depth -= 1;
-          database.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
-          return result;
-        } catch (error) {
-          depth -= 1;
-          database.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
-          throw error;
-        }
-      },
-  };
-  return adapter as unknown as Database.Database;
-}
+import { adaptDatabase } from './helpers/node-sqlite-database';
 
 const CREATED_AT = '2026-09-30T00:00:00.000Z';
 

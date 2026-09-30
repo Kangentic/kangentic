@@ -38,6 +38,7 @@ import { toForwardSlash } from '../../shared/paths';
 import type { DevSeedKnowledgeGraphRealResult } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { buildKnowledgeGraphNow } from './build-knowledge-graph-now';
+import { writeTransaction } from '../../main/db/transaction';
 
 const WORKTREE_MARKER = '/.kangentic/worktrees/';
 /**
@@ -489,7 +490,7 @@ export function seedKnowledgeGraphFromRealIndex(
        WHERE id = (SELECT id FROM sessions WHERE task_id = ? ORDER BY started_at LIMIT 1)`,
     );
     const writePullRequest = targetDb.prepare('UPDATE tasks SET pr_number = ?, pr_state = ? WHERE id = ?');
-    const copyTaskFacts = targetDb.transaction(() => {
+    const copyTaskFacts = writeTransaction(targetDb, () => {
       for (const churn of sourceChurn) {
         const previewTaskId = previewTaskIdBySourceTaskId.get(churn.taskId);
         if (!previewTaskId) continue;
@@ -513,7 +514,7 @@ export function seedKnowledgeGraphFromRealIndex(
     // index holds throughout, and it leaves the real ids free to land in any
     // order. Tasks with no source ticket (the orphaned-conversations holder)
     // come back on the high side rather than staying negative.
-    const restampTickets = targetDb.transaction(() => {
+    const restampTickets = writeTransaction(targetDb, () => {
       targetDb.exec('UPDATE tasks SET display_id = -display_id WHERE display_id > 0');
       const setTicket = targetDb.prepare('UPDATE tasks SET display_id = ? WHERE id = ?');
       let highest = 0;
