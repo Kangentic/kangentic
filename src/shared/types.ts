@@ -5540,8 +5540,8 @@ export interface DevSeedKnowledgeGraphResult {
   documents: number;
   /** Chunks written across those conversations. */
   chunks: number;
-  /** Whether the chunks were given vectors; false leaves them for the embedding drain. */
-  embedded: boolean;
+  /** The newest of those chunks, left without vectors for the embedding drain. */
+  pendingChunks: number;
   /** Planted topic clusters the documents were drawn from. The Knowledge Graph
    *  layout is expected to recover these, which is what makes the seeded
    *  corpus a ground truth rather than just filler. */
@@ -5562,8 +5562,10 @@ export interface DevSeedKnowledgeGraphRealResult {
   chunks: number;
   tasks: number;
   dimensions: number;
-  /** Whether the vectors were copied; false leaves the chunks for the embedding drain. */
-  embedded: boolean;
+  /** The embedding model tag the copied vectors carry, the source's own. */
+  modelTag: string;
+  /** The newest chunks, copied without their vectors for the embedding drain. */
+  pendingChunks: number;
 }
 
 /** A real-index mirror that had nothing to copy: no real project, or no embedded
@@ -5658,21 +5660,22 @@ export interface ElectronAPI {
     /**
      * Seed a cluster-structured synthetic conversation corpus, the fallback
      * for a machine with no real index to mirror. Vectors are written
-     * directly rather than inferred; `withoutVectors` leaves every chunk
-     * pending instead, a backlog for the embedding drain.
+     * directly rather than inferred, all but the newest `embeddingBacklog`
+     * chunks' (1,000 by default), which are left for the embedding drain.
      */
     seedKnowledgeGraph: (options: {
-      documentCount?: number; chunksPerDocument?: number; withoutVectors?: boolean;
+      documentCount?: number; chunksPerDocument?: number; embeddingBacklog?: number;
     }) => Promise<DevSeedKnowledgeGraphResult>;
     /**
      * Mirror the REAL parent project's conversation index (chunks, vectors,
      * titles) into this preview, so the Knowledge Graph can be judged against
-     * actual work. A copy, not a re-embed; `withoutVectors` leaves every chunk
-     * pending instead, the backlog a model switch creates. Answers
-     * `{ unavailable }` when there is no real index here to copy.
+     * actual work. A copy, not a re-embed, of all but the newest
+     * `embeddingBacklog` chunks' vectors (1,000 by default), which are left for
+     * the embedding drain. Answers `{ unavailable }` when there is no real index
+     * here to copy.
      */
     seedKnowledgeGraphReal: (options: {
-      documentLimit?: number; sourceProject?: string; withoutVectors?: boolean;
+      documentLimit?: number; sourceProject?: string; embeddingBacklog?: number;
     }) => Promise<DevSeedKnowledgeGraphRealResult | DevSeedKnowledgeGraphRealUnavailable>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;

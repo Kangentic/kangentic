@@ -23,6 +23,28 @@
  */
 export const CLUSTER_NOISE = 0.55;
 
+/**
+ * Chunks a seed leaves without vectors: the newest ones, so the embedding
+ * drain has real work the moment the seed lands, as it does behind a live
+ * conversation, while the map is built from everything else. At the drain's
+ * measured 430 chunks a minute this is a few minutes of work.
+ */
+export const EMBEDDING_BACKLOG_CHUNKS = 1000;
+
+/**
+ * How many of each document's newest chunks to leave without vectors, given
+ * the documents' chunk counts newest first: the backlog is taken from the
+ * newest document's tail, then the next newest, until it is spent.
+ */
+export function pendingChunkCounts(chunkCountsNewestFirst: ReadonlyArray<number>, backlog: number): number[] {
+  let left = Math.max(0, backlog);
+  return chunkCountsNewestFirst.map((chunkCount) => {
+    const pending = Math.min(left, chunkCount);
+    left -= pending;
+    return pending;
+  });
+}
+
 /** Extra drift for individual chunks around their document's vector, so
  *  mean-pooling has something real to average out. Same magnitude semantics. */
 export const CHUNK_NOISE = 0.35;

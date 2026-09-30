@@ -11,7 +11,8 @@
  * titles and real text are the only way to see whether the surface is useful.
  *
  * No inference is involved: the source project's embeddings already exist, so
- * this is a copy, not a re-embed.
+ * this is a copy, not a re-embed. All but the newest chunks, which are left
+ * for the embedding drain (`EMBEDDING_BACKLOG_CHUNKS`).
  *
  * Build-excluded from production (`__KANGENTIC_DEV__`); see
  * `.claude/rules/dev-tooling-build-exclusion.md`.
@@ -38,6 +39,7 @@ import { toForwardSlash } from '../../shared/paths';
 import type { DevSeedKnowledgeGraphRealResult, DevSeedKnowledgeGraphRealUnavailable } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { buildKnowledgeGraphNow } from './build-knowledge-graph-now';
+import { EMBEDDING_BACKLOG_CHUNKS, pendingChunkCounts } from './seed-knowledge-graph-vectors';
 import { writeTransaction } from '../../main/db/transaction';
 
 const WORKTREE_MARKER = '/.kangentic/worktrees/';
@@ -117,11 +119,12 @@ export interface SeedKnowledgeGraphRealOptions {
    */
   sourceProject?: string;
   /**
-   * Copy the chunks without their vectors, leaving every one pending: the
-   * backlog a model switch creates, for exercising the embedding drain at real
-   * scale. The map stays empty until the drain has embedded enough to build it.
+   * How many of the newest chunks to copy without their vectors, for the
+   * embedding drain. `EMBEDDING_BACKLOG_CHUNKS` by default; 0 copies every
+   * vector, and a count above the index's size leaves all of it pending, the
+   * backlog a model switch creates.
    */
-  withoutVectors?: boolean;
+  embeddingBacklog?: number;
 }
 
 /** Thrown when there is no real index here to copy; the handler turns it into
@@ -164,8 +167,6 @@ export function seedKnowledgeGraphFromRealIndex(
       ? `No real project matches "${options.sourceProject}" (by id or name) in the real index.db`
       : 'No real parent project for this preview in the real index.db');
   }
-  const withVectors = options.withoutVectors !== true;
-
   const documentLimit = options.documentLimit ?? DEFAULT_DOCUMENT_LIMIT;
   const sourceDb = new Database(source.dbPath, { readonly: true, fileMustExist: true });
   const sourceHasVec = loadVecExtension(sourceDb);
@@ -298,11 +299,14 @@ export function seedKnowledgeGraphFromRealIndex(
 
     const targetDb = getProjectDb(projectId);
     const store = new RetrievalStore(targetDb);
-    if (withVectors) {
-      store.ensureVecTable(dimensions);
-      if (!store.hasVec) throw new Error('sqlite-vec is unavailable in this preview, so vectors cannot be mirrored');
-      store.setMeta('vec_dims', String(dimensions));
-    }
+    store.ensureVecTable(dimensions);
+    if (!store.hasVec) throw new Error('sqlite-vec is unavailable in this preview, so vectors cannot be mirrored');
+    store.setMeta('vec_dims', String(dimensions));
+    // `documents` is newest first, so the backlog is the newest chunks.
+    const pendingByDocument = pendingChunkCounts(
+      documents.map((document) => document.chunkCount),
+      options.embeddingBacklog ?? EMBEDDING_BACKLOG_CHUNKS,
+    );
 
     const targetLanes = new SwimlaneRepository(targetDb).list();
     const todoSwimlane = targetLanes.find((lane) => lane.role === 'todo');
@@ -392,7 +396,8 @@ export function seedKnowledgeGraphFromRealIndex(
     };
 
     let copiedChunks = 0;
-    for (const document of documents) {
+    let pendingChunks = 0;
+    for (const [documentIndex, document] of documents.entries()) {
       const previewTaskId = ensureTask(document.taskId);
       const sourceFacts = document.sessionId ? sessionFactsById.get(document.sessionId) : undefined;
       const previewSessionId = mirrorSession(previewTaskId, sourceFacts, document.docId);
@@ -433,30 +438,33 @@ export function seedKnowledgeGraphFromRealIndex(
         })),
       );
 
-      let chunkCount = sourceChunks.length;
-      if (withVectors) {
-        // Vectors are matched by CONTENT HASH, not by position: `upsertDocument`
-        // assigns fresh rowids in the target DB, and a chunk skipped for any
-        // reason would silently shift every later vector onto the wrong chunk.
-        const sourceVectorByHash = new Map<string, Buffer>();
-        for (const chunk of sourceChunks) {
-          const row = readVector.get(chunk.id) as { embedding: Buffer } | undefined;
-          if (row) sourceVectorByHash.set(chunk.contentHash, row.embedding);
-        }
-
-        const storedChunks = store.getChunksForDoc('conversation', document.docId);
-        const writes: Array<{ chunkId: number; vector: Float32Array; contentHash: string }> = [];
-        for (const stored of storedChunks) {
-          const embedding = sourceVectorByHash.get(stored.contentHash);
-          if (!embedding) continue;
-          const vector = new Float32Array(embedding.byteLength / 4);
-          vector.set(new Float32Array(embedding.buffer, embedding.byteOffset, embedding.byteLength / 4));
-          writes.push({ chunkId: stored.id, vector, contentHash: stored.contentHash });
-        }
-        store.writeEmbeddings(writes, mirroredTag);
-        chunkCount = writes.length;
+      // The newest chunks of the newest documents stay pending for the drain.
+      const pending = pendingByDocument[documentIndex];
+      const vectorChunks = sourceChunks.slice(0, sourceChunks.length - pending);
+      const firstPendingSeq = pending > 0 ? sourceChunks[sourceChunks.length - pending].seq : Number.POSITIVE_INFINITY;
+      // Vectors are matched by CONTENT HASH, not by position: `upsertDocument`
+      // assigns fresh rowids in the target DB, and a chunk skipped for any
+      // reason would silently shift every later vector onto the wrong chunk.
+      const sourceVectorByHash = new Map<string, Buffer>();
+      for (const chunk of vectorChunks) {
+        const row = readVector.get(chunk.id) as { embedding: Buffer } | undefined;
+        if (row) sourceVectorByHash.set(chunk.contentHash, row.embedding);
       }
-      copiedChunks += chunkCount;
+
+      const storedChunks = store.getChunksForDoc('conversation', document.docId);
+      const writes: Array<{ chunkId: number; vector: Float32Array; contentHash: string }> = [];
+      for (const stored of storedChunks) {
+        if (stored.seq >= firstPendingSeq) continue;
+        const embedding = sourceVectorByHash.get(stored.contentHash);
+        if (!embedding) continue;
+        const vector = new Float32Array(embedding.byteLength / 4);
+        vector.set(new Float32Array(embedding.buffer, embedding.byteOffset, embedding.byteLength / 4));
+        writes.push({ chunkId: stored.id, vector, contentHash: stored.contentHash });
+      }
+      store.writeEmbeddings(writes, mirroredTag);
+      copiedChunks += sourceChunks.length;
+      pendingChunks += sourceChunks.length - writes.length;
+      const chunkCount = sourceChunks.length;
 
       store.setIndexState({
         corpus: 'conversation',
@@ -562,7 +570,8 @@ export function seedKnowledgeGraphFromRealIndex(
       chunks: copiedChunks,
       tasks: previewTaskIdBySourceTaskId.size,
       dimensions,
-      embedded: withVectors,
+      modelTag: mirroredTag,
+      pendingChunks,
     };
   } finally {
     sourceDb.close();
@@ -593,9 +602,9 @@ export function registerSeedKnowledgeGraphRealDevIpc(getContext: () => IpcContex
         // Build the map before returning, so the click lands on the surface
         // rather than on a "Building the map" spinner. See
         // `build-knowledge-graph-now.ts` for why this is safe to run unthrottled
-        // here and nowhere else. With no vectors there is nothing to build: the
-        // drain embeds the mirror first.
-        if (seeded.embedded) await buildKnowledgeGraphNow(context.currentProjectId);
+        // here and nowhere else. The pending chunks join it as the drain embeds
+        // them (marked dirty below).
+        await buildKnowledgeGraphNow(context.currentProjectId);
         // The mirrored tasks' own records, the `task` corpus, indexed now so a
         // first question searches them; the embedding drain picks them up in
         // the background, as it would on a real install.

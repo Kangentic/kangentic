@@ -22,8 +22,25 @@ import {
   buildClusterCentroids,
   createSeededRandom,
   jitterUnitVector,
+  pendingChunkCounts,
   randomUnitVector,
 } from '../../src/devtools/main/seed-knowledge-graph-vectors';
+
+describe('the embedding backlog a seed leaves', () => {
+  it('takes the newest document\'s tail first, then the next newest, until it is spent', () => {
+    expect(pendingChunkCounts([300, 500, 400, 200], 1000)).toEqual([300, 500, 200, 0]);
+  });
+
+  it('leaves the newest document on the map when it alone is larger than the backlog', () => {
+    // A long live conversation: only its newest chunks wait, its earlier ones keep vectors.
+    expect(pendingChunkCounts([6400, 50], 1000)).toEqual([1000, 0]);
+  });
+
+  it('leaves nothing pending for a backlog of 0, and everything for one larger than the index', () => {
+    expect(pendingChunkCounts([10, 20], 0)).toEqual([0, 0]);
+    expect(pendingChunkCounts([10, 20], 1_000_000)).toEqual([10, 20]);
+  });
+});
 
 /** Every shipping embedding width. The seeder must work at all three, since the
  *  model is user-selectable and the vec table is built from its dimensions. */

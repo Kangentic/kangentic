@@ -22,6 +22,8 @@ import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
 import { useSessionStore } from '../../renderer/stores/session-store';
 import { useUsageDashboardStore } from '../../renderer/stores/usage-dashboard-store';
+import { useConfigStore } from '../../renderer/stores/config-store';
+import { EMBEDDING_MODELS } from '../../shared/embedding-models';
 
 /** The app title bar's height (`top-10`). It is an OS drag region, so the panel
  *  must never be draggable into it - see handleDragPointerMove. */
@@ -144,7 +146,6 @@ export function TestHarness() {
   const [seedingConversation, setSeedingConversation] = useState(false);
   const [seedingUsage, setSeedingUsage] = useState(false);
   const [seedingKnowledgeGraph, setSeedingKnowledgeGraph] = useState(false);
-  const [seedNeedingEmbedding, setSeedNeedingEmbedding] = useState(false);
 
   // Draggable so the panel can be moved off whatever it is covering. Position
   // is session-only BY DESIGN (never persisted): every launch starts at the
@@ -346,33 +347,46 @@ export function TestHarness() {
   // project's index is mirrored when this machine has one, because synthetic
   // text makes every product question unanswerable (you cannot judge a cluster
   // label or a result card against word salad); a synthetic corpus in planted
-  // clusters is the fallback. "Needing embedding" leaves the chunks pending
-  // instead of copying vectors, which is the backlog a model switch creates.
+  // clusters is the fallback. Either way the newest chunks are seeded without
+  // vectors, so the embedding drain has real work the moment the map is up.
   const handleSeedKnowledgeGraph = async () => {
     const dev = window.electronAPI.dev;
     if (!dev) {
       useToastStore.getState().addToast({ message: 'Seeding the knowledge graph is dev-preview only', variant: 'warning' });
       return;
     }
-    const withoutVectors = seedNeedingEmbedding;
-    const pendingNote = withoutVectors ? ', left for the embedding drain' : '';
+    const pendingNote = (pendingChunks: number) => (pendingChunks > 0
+      ? `, the newest ${pendingChunks} left for the embedding drain`
+      : '');
+    // A fresh preview has semantic search off. Turn it on with the model the
+    // seeded vectors came from, through the Settings panel's own path, so
+    // search reads them and the drain embeds the backlog with the same model.
+    // An unknown tag changes nothing: another model's width would reset the
+    // vectors just seeded.
+    const searchWithSeededModel = async (modelTag: string) => {
+      const model = EMBEDDING_MODELS.find((entry) => entry.modelTag === modelTag);
+      if (!model) return;
+      await useConfigStore.getState().updateConfig({ knowledgeGraph: { enabled: true, localModel: model.id } });
+    };
     setSeedingKnowledgeGraph(true);
     try {
-      const mirrored = await dev.seedKnowledgeGraphReal({ withoutVectors });
+      const mirrored = await dev.seedKnowledgeGraphReal({});
       if (!('unavailable' in mirrored)) {
+        await searchWithSeededModel(mirrored.modelTag);
         await useBoardStore.getState().loadBoard();
         useToastStore.getState().addToast({
           message: `Mirrored ${mirrored.documents} conversations / ${mirrored.chunks} chunks `
-            + `from "${mirrored.sourceProject}"${pendingNote}`,
+            + `from "${mirrored.sourceProject}"${pendingNote(mirrored.pendingChunks)}`,
           variant: 'success',
         });
         return;
       }
-      const synthetic = await dev.seedKnowledgeGraph({ documentCount: KNOWLEDGE_GRAPH_SEED_DOCUMENTS, withoutVectors });
+      const synthetic = await dev.seedKnowledgeGraph({ documentCount: KNOWLEDGE_GRAPH_SEED_DOCUMENTS });
+      await searchWithSeededModel(synthetic.modelTag);
       await useBoardStore.getState().loadBoard();
       useToastStore.getState().addToast({
         message: `${mirrored.unavailable}. Seeded ${synthetic.documents} synthetic conversations / `
-          + `${synthetic.chunks} chunks in ${synthetic.clusters} clusters instead${pendingNote}`,
+          + `${synthetic.chunks} chunks in ${synthetic.clusters} clusters instead${pendingNote(synthetic.pendingChunks)}`,
         variant: 'success',
       });
     } catch (error) {
@@ -471,23 +485,11 @@ export function TestHarness() {
         disabled={seedingKnowledgeGraph}
         className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
         data-testid="dev-seed-knowledge-graph"
-        title={`Mirror this project's real index (conversations, vectors, tasks) into the preview, or seed ${KNOWLEDGE_GRAPH_SEED_DOCUMENTS} synthetic conversations when this machine has none`}
+        title={`Mirror this project's real index (conversations, vectors, tasks) into the preview, or seed ${KNOWLEDGE_GRAPH_SEED_DOCUMENTS} synthetic conversations when this machine has none. The newest chunks are left for the embedding drain.`}
       >
         <Brain size={16} />
         {seedingKnowledgeGraph ? 'Seeding...' : 'Seed Knowledge Graph'}
       </button>
-      <label
-        className="flex cursor-pointer select-none items-center gap-1.5 px-3.5 pb-1 text-[12px] text-fg-secondary"
-        title="Seed the chunks without vectors, so the embedding drain has a real backlog to work through"
-      >
-        <input
-          type="checkbox"
-          checked={seedNeedingEmbedding}
-          onChange={(event) => setSeedNeedingEmbedding(event.target.checked)}
-          data-testid="dev-seed-knowledge-graph-needing-embedding"
-        />
-        Needing embedding
-      </label>
     </div>
   );
 }

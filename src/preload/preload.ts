@@ -841,9 +841,9 @@ if (__KANGENTIC_DEV__) {
     seedGitChanges: (targetPaths: string[]) => ipcRenderer.invoke(IPC.DEV_SEED_GIT_CHANGES, targetPaths),
     seedLargeConversation: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_LARGE_CONVERSATION, count),
     seedUsageData: (days: number) => ipcRenderer.invoke(IPC.DEV_SEED_USAGE_DATA, days),
-    seedKnowledgeGraph: (options: { documentCount?: number; chunksPerDocument?: number; withoutVectors?: boolean }) =>
+    seedKnowledgeGraph: (options: { documentCount?: number; chunksPerDocument?: number; embeddingBacklog?: number }) =>
       ipcRenderer.invoke(IPC.DEV_SEED_KNOWLEDGE_GRAPH, options),
-    seedKnowledgeGraphReal: (options: { documentLimit?: number; sourceProject?: string; withoutVectors?: boolean }) =>
+    seedKnowledgeGraphReal: (options: { documentLimit?: number; sourceProject?: string; embeddingBacklog?: number }) =>
       ipcRenderer.invoke(IPC.DEV_SEED_KNOWLEDGE_GRAPH_REAL, options),
     isEphemeralPreview,
     previewTaskTitle,
