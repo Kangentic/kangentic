@@ -1000,8 +1000,14 @@ export class RetrievalStore {
    * Without this a node is an opaque hash, which is exactly what made the first
    * version unusable - you could see the shape of the index but not what any
    * point in it was. `sessionId` is what lets a click open the real transcript.
+   *
+   * Paged by document: the conversations after `afterDocId`, at most `limit` of
+   * them (all when negative), in doc id order. Grouping every chunk row in one
+   * statement held main for about 270 ms on 1,005 conversations. Ordered by the
+   * UNIQUE(corpus, doc_id, seq) index, a page streams its groups and stops at
+   * the limit, so 50 conversations cost at most about 38 ms there.
    */
-  documentMetadata(): Array<{
+  documentMetadata(afterDocId = '', limit = -1): Array<{
     corpus: string;
     docId: string;
     sessionId: string | null;
@@ -1067,10 +1073,15 @@ export class RetrievalStore {
          LEFT JOIN sessions s ON s.id = c.session_id
          -- Conversations only: they are the map's nodes. A task record or a
          -- session's changes is looked up through its task, not drawn.
-         WHERE c.corpus = 'conversation'
-         GROUP BY c.corpus, c.doc_id`,
+         WHERE c.corpus = 'conversation' AND c.doc_id > ?
+         GROUP BY c.corpus, c.doc_id
+         -- Both columns, in the index's order. Ordered by doc_id alone the
+         -- planner sorted every remaining group before applying the limit,
+         -- so each page cost as much as the whole read.
+         ORDER BY c.corpus, c.doc_id
+         LIMIT ?`,
       )
-      .all() as Array<{
+      .all(afterDocId, limit) as Array<{
         corpus: string;
         docId: string;
         sessionId: string | null;

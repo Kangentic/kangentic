@@ -37,7 +37,7 @@ import {
   serializeMeanPool,
   deserializeMeanPool,
   forgetDocument,
-  embedNeighborGraph,
+  embedNeighborGraphSteps,
   fitLayoutToPercentileBoxN,
   type MeanPoolAccumulator,
   type SerializedMeanPool,
@@ -47,10 +47,11 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import {
   assignClusters,
-  chooseClusterCount,
+  chooseClusterCountSteps,
   labelClusters,
   REGION_SIZE_BANDS,
 } from './cluster-labels';
+import { runInSlices } from './stepwise';
 
 /** `memory_meta` keys. Versioned so a format change invalidates rather than
  *  mis-parses an old blob.
@@ -92,6 +93,12 @@ const SCAN_BATCH = 400;
 /** Rows of kNN computed between yields. kNN is O(n*d) per row; at 1024
  *  dimensions this keeps a slice near a millisecond. */
 const NEIGHBOR_CHUNK = 32;
+/** Longest a stepwise phase (the layout, a region-count sweep) runs before it
+ *  pauses. Under a frame at 60 Hz. */
+const SLICE_MS = 12;
+/** Conversations per page of the metadata read: at most about 38 ms a page on
+ *  1,005 conversations, where the whole read in one statement was 270 ms. */
+const METADATA_PAGE_DOCUMENTS = 50;
 /** Share of wall time the pass may occupy. Matches `EMBED_DUTY_CYCLE`. */
 const DUTY_CYCLE = 0.2;
 /** Neighbours per document for the layout and the edge list. Measured: 10
@@ -233,7 +240,8 @@ export async function runProjectionPass(
     liveIndexTimes.set(`conversation::${docId}`, indexedAt);
   }
 
-  const cachedSums = readJson<SerializedMeanPool>(store, PROJECTION_SUMS_KEY);
+  // A 19 MB blob on 1,005 conversations, about 30 ms to parse.
+  const cachedSums = timeSyncWork('graph:read-sums', () => readJson<SerializedMeanPool>(store, PROJECTION_SUMS_KEY));
   const { accumulator, resumeFrom, documentsToRead } = planScan(
     cachedSums, dimensions, modelTag, liveCounts, liveIndexTimes,
   );
@@ -282,29 +290,44 @@ export async function runProjectionPass(
   const neighbors = await computeNeighborsChunked(pooled.matrix, pooled.rowCount, dimensions, delay, dutyCycle, aborted);
   if (neighbors === null) return null;
 
+  // Everything below is paced like the scan: no single step may hold main for
+  // more than a slice. Before, the layout, the metadata read and the region
+  // sweep ran back to back and held it for 602 ms on 1,005 conversations, on
+  // every rebuild, including one over an unchanged index.
+  const pace = (workedMs: number): Promise<void> => delay(computeProjectionSleepMs(workedMs, dutyCycle));
+
   // ONE layout, in three components. Measured on the real 638-document corpus,
   // the third axis is worth having on its own terms: neighbourhood preservation
   // is 33.1% against 28.1% for the same embedder flattened to two, because some
   // of what flattening loses is simply recoverable with another axis. It costs
-  // ~82ms, against a cold pass measured in minutes.
+  // about 145 ms on 1,005 conversations, so it runs in slices of epochs.
   //
   // There was briefly a second, 2D run seeded into this one, to keep the two
   // views orientated alike. The surface is spatial-only now, so there is no
   // second view to stay aligned with and the seeding has no job left.
-  const positions = fitLayoutToPercentileBoxN(
-    embedNeighborGraph(neighbors, pooled.rowCount, { components: LAYOUT_COMPONENTS }),
-    pooled.rowCount,
-    LAYOUT_COMPONENTS,
+  const embedded = await runInSlices(
+    embedNeighborGraphSteps(neighbors, pooled.rowCount, { components: LAYOUT_COMPONENTS }),
+    SLICE_MS,
+    pace,
+    aborted,
   );
+  if (embedded === null) return null;
+  const positions = fitLayoutToPercentileBoxN(embedded, pooled.rowCount, LAYOUT_COMPONENTS);
 
   // Metadata is what turns a point into something worth clicking: a title to
-  // read, a session to open, a timestamp to colour by.
-  // One statement that groups every conversation chunk row, so it is timed:
-  // about 370 ms on a 94k-chunk index.
-  const metadataByDocKey = new Map(
-    timeSyncWork('graph:document-metadata', () => store.documentMetadata())
-      .map((row) => [`${row.corpus}::${row.docId}`, row]),
-  );
+  // read, a session to open, a timestamp to colour by. Read a page of
+  // conversations at a time (see `documentMetadata`).
+  const metadataByDocKey = new Map<string, ReturnType<RetrievalStore['documentMetadata']>[number]>();
+  let afterDocId = '';
+  for (;;) {
+    if (aborted()) return null;
+    const startedAt = Date.now();
+    const page = timeSyncWork('graph:document-metadata', () => store.documentMetadata(afterDocId, METADATA_PAGE_DOCUMENTS));
+    if (page.length === 0) break;
+    for (const row of page) metadataByDocKey.set(`${row.corpus}::${row.docId}`, row);
+    afterDocId = page[page.length - 1].docId;
+    await pace(Date.now() - startedAt);
+  }
 
   // Clustered in the SAME space the map is drawn in, so a label always names the
   // blob the eye sees. While a flat view existed this had to be done in 2D and
@@ -318,28 +341,30 @@ export async function runProjectionPass(
   // switching costs nothing: this is milliseconds of k-means over a layout that
   // already exists, against a full projection rebuild behind a display control.
   const labelSources = pooled.docKeys.map((docKey) => metadataByDocKey.get(docKey)?.title ?? '');
-  const clusterings = KNOWLEDGE_GRAPH_GRANULARITIES.map((granularity) => {
-    const assignment = assignClusters(
-      positions,
-      pooled.rowCount,
-      // The LAYOUT is handed in so the count is chosen by clustering at each
-      // candidate and measuring the regions it actually produces. Without it
-      // this can only guess from the size, which is what carved nine regions out
-      // of 150 conversations because there were 150 of them.
-      chooseClusterCount(
-        pooled.rowCount,
-        positions,
-        LAYOUT_COMPONENTS,
-        REGION_SIZE_BANDS[granularity],
-      ),
-      LAYOUT_COMPONENTS,
+  const clusterings: Array<{
+    granularity: typeof KNOWLEDGE_GRAPH_GRANULARITIES[number];
+    assignment: ReturnType<typeof assignClusters>;
+    regions: ReturnType<typeof labelClusters>;
+  }> = [];
+  for (const granularity of KNOWLEDGE_GRAPH_GRANULARITIES) {
+    // The LAYOUT is handed in so the count is chosen by clustering at each
+    // candidate and measuring the regions it actually produces. Without it
+    // this can only guess from the size, which is what carved nine regions out
+    // of 150 conversations because there were 150 of them. The coarse sweep
+    // alone is about 84 ms, so it runs in slices of candidates.
+    const clusterCount = await runInSlices(
+      chooseClusterCountSteps(pooled.rowCount, positions, LAYOUT_COMPONENTS, REGION_SIZE_BANDS[granularity]),
+      SLICE_MS,
+      pace,
+      aborted,
     );
-    return {
-      granularity,
-      assignment,
-      regions: labelClusters(assignment, labelSources, positions, LAYOUT_COMPONENTS),
-    };
-  });
+    if (clusterCount === null) return null;
+    const startedAt = Date.now();
+    const assignment = assignClusters(positions, pooled.rowCount, clusterCount, LAYOUT_COMPONENTS);
+    const regions = labelClusters(assignment, labelSources, positions, LAYOUT_COMPONENTS);
+    clusterings.push({ granularity, assignment, regions });
+    await pace(Date.now() - startedAt);
+  }
 
   const nodes: GraphNodePosition[] = pooled.docKeys.map((docKey, row) => {
     const metadata = metadataByDocKey.get(docKey);
@@ -407,7 +432,8 @@ export async function runProjectionPass(
     builtAt: new Date().toISOString(),
   };
 
-  return { projection, sums: serializeMeanPool(accumulator, cursor, modelTag, liveIndexTimes) };
+  const sums = timeSyncWork('graph:serialize-sums', () => serializeMeanPool(accumulator, cursor, modelTag, liveIndexTimes));
+  return { projection, sums };
 }
 
 /**
@@ -512,13 +538,18 @@ export function readCachedProjection(store: RetrievalStore): GraphProjection | n
   return readJson<GraphProjection>(store, PROJECTION_CACHE_KEY);
 }
 
+/**
+ * Store a finished pass. Timed per write: the sums are one JSON blob, about
+ * 19 MB and 63 ms to stringify on 1,005 conversations, which a binary format
+ * would cut and nothing here can split.
+ */
 export function writeProjectionCache(
   store: RetrievalStore,
   projection: GraphProjection,
   sums: SerializedMeanPool,
 ): void {
-  store.setMeta(PROJECTION_CACHE_KEY, JSON.stringify(projection));
-  store.setMeta(PROJECTION_SUMS_KEY, JSON.stringify(sums));
+  timeSyncWork('graph:write-projection', () => store.setMeta(PROJECTION_CACHE_KEY, JSON.stringify(projection)));
+  timeSyncWork('graph:write-sums', () => store.setMeta(PROJECTION_SUMS_KEY, JSON.stringify(sums)));
 }
 
 /** Whether a cached projection still describes the corpus. */

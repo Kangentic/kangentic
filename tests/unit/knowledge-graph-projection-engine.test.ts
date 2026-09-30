@@ -73,6 +73,8 @@ function scriptedStore(
   let listCalls = 0;
   /** Chunk ids asked of `readVectors`: the cost the incremental pass exists to cut. */
   let vectorReads = 0;
+  /** Calls to `documentMetadata`, one per page the pass read. */
+  let metadataPages = 0;
 
   // The newest chunk of each document has text but no vector yet - the ordinary
   // state while the embed backfill is still catching up. Modelling it here is
@@ -145,10 +147,16 @@ function scriptedStore(
     maxChunkId() {
       return chunks.reduce((highest, chunk) => Math.max(highest, chunk.id), 0);
     },
-    documentMetadata() {
+    // Paged the way the real query is: the documents after `afterDocId`, in doc
+    // id order, at most `limit` of them (all when negative).
+    documentMetadata(afterDocId = '', limit = -1) {
+      metadataPages += 1;
       const byDoc = new Map<string, { corpus: string; docId: string }>();
       for (const chunk of chunks) byDoc.set(`${chunk.corpus}::${chunk.docId}`, chunk);
-      return [...byDoc.values()].map((chunk) => ({
+      const after = [...byDoc.values()]
+        .filter((chunk) => chunk.docId > afterDocId)
+        .sort((first, second) => (first.docId < second.docId ? -1 : first.docId > second.docId ? 1 : 0));
+      return (limit < 0 ? after : after.slice(0, limit)).map((chunk) => ({
         corpus: chunk.corpus,
         docId: chunk.docId,
         sessionId: `session-${chunk.docId}`,
@@ -183,7 +191,13 @@ function scriptedStore(
     },
   };
 
-  return { store: store as unknown as RetrievalStore, meta, listCalls: () => listCalls, vectorReads: () => vectorReads };
+  return {
+    store: store as unknown as RetrievalStore,
+    meta,
+    listCalls: () => listCalls,
+    vectorReads: () => vectorReads,
+    metadataPages: () => metadataPages,
+  };
 }
 
 function makeChunks(documentCount: number, chunksPerDocument: number): ScriptedChunk[] {
@@ -361,8 +375,9 @@ describe('projection pass', () => {
     // Two distinct halves: a title every document shares would be excluded by
     // the corpus ceiling (correctly - it distinguishes nothing) and the test
     // would pass vacuously against "unlabelled".
-    (store as unknown as { documentMetadata: () => unknown[] }).documentMetadata = () =>
-      (original() as Array<{ title: string }>).map((row, index) => ({
+    // The page arguments pass through: the pass reads in pages until one is empty.
+    (store as unknown as { documentMetadata: (afterDocId?: string, limit?: number) => unknown[] }).documentMetadata = (afterDocId, limit) =>
+      (original(afterDocId, limit) as Array<{ title: string }>).map((row, index) => ({
         ...row,
         title: index % 2 === 0 ? 'pruneOrphanedDirectories cleanup' : 'spawn_agent routing',
       }));
@@ -384,8 +399,8 @@ describe('projection pass', () => {
     const chunks = makeChunks(24, 2);
     const { store } = scriptedStore(chunks);
     const original = store.documentMetadata.bind(store);
-    (store as unknown as { documentMetadata: () => unknown[] }).documentMetadata = () =>
-      (original() as Array<{ title: string; docId: string }>).map((row, index) => ({
+    (store as unknown as { documentMetadata: (afterDocId?: string, limit?: number) => unknown[] }).documentMetadata = (afterDocId, limit) =>
+      (original(afterDocId, limit) as Array<{ title: string; docId: string }>).map((row, index) => ({
         ...row,
         // "agent project" in EVERY title; the distinctive half varies.
         title: `agent project ${index % 2 === 0 ? 'terminal scrollback' : 'sqlite migration'}`,
@@ -641,6 +656,21 @@ describe('projection pass', () => {
       });
       await expect(pass).resolves.toBeNull();
     });
+  });
+
+  it('reads the node metadata a page at a time, and names every node', async () => {
+    // One statement that grouped every chunk row held main for about 270 ms on
+    // 1,005 real conversations. Read in pages, no page is more than a slice.
+    const scripted = scriptedStore(makeChunks(120, 2));
+    const result = await runProjectionPass({
+      store: scripted.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay,
+    });
+    expect(result!.projection.nodes).toHaveLength(120);
+    for (const node of result!.projection.nodes) {
+      expect(node.title).toBe(`Title for ${node.docKey.slice('conversation::'.length)}`);
+    }
+    // More than a single read and its empty follow-up.
+    expect(scripted.metadataPages()).toBeGreaterThanOrEqual(3);
   });
 
   it('does NOT double-count a re-indexed document', async () => {

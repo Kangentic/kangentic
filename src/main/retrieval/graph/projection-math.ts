@@ -16,6 +16,8 @@
  * the shape the batched vec reader produces.
  */
 
+import { runToCompletion, type Stepwise } from './stepwise';
+
 /** Accumulates a running per-document vector sum without holding every chunk
  *  vector resident. The whole point of mean-pooling at read time: the corpus is
  *  ~200 MiB of chunk vectors but only ~5 MiB of document means. */
@@ -328,6 +330,19 @@ export function embedNeighborGraph(
   rowCount: number,
   options: EmbedOptions = {},
 ): Float32Array {
+  return runToCompletion(embedNeighborGraphSteps(lists, rowCount, options));
+}
+
+/**
+ * `embedNeighborGraph`, yielding after each epoch, so the projection pass can
+ * run it in slices. On 1,005 conversations the whole layout is about 145 ms, far
+ * past a frame, and an epoch is under a millisecond.
+ */
+export function* embedNeighborGraphSteps(
+  lists: ReadonlyArray<EmbedNeighborInput>,
+  rowCount: number,
+  options: EmbedOptions = {},
+): Stepwise<Float32Array> {
   const epochs = options.epochs ?? DEFAULT_EPOCHS;
   const negativeSamples = options.negativeSamples ?? DEFAULT_NEGATIVE_SAMPLES;
   const components = options.components ?? 2;
@@ -430,6 +445,7 @@ export function embedNeighborGraph(
         }
       }
     }
+    yield;
   }
 
   return positions;

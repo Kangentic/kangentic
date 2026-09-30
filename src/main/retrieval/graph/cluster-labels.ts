@@ -17,6 +17,8 @@
  * labelled "fix add update".
  */
 
+import { runToCompletion, type Stepwise } from './stepwise';
+
 /**
  * Grammar, never content. These may not appear in a label at all, alone or
  * inside a phrase.
@@ -351,6 +353,21 @@ export function chooseClusterCount(
   components = DEFAULT_COMPONENTS,
   band: RegionSizeBand = REGION_SIZE_BANDS.balanced,
 ): number {
+  return runToCompletion(chooseClusterCountSteps(rowCount, points, components, band));
+}
+
+/**
+ * `chooseClusterCount`, yielding after each candidate count, so the projection
+ * pass can run the sweep in slices. The coarse sweep clusters the whole map at
+ * each candidate, about 84 ms in all on 1,005 conversations; one candidate is
+ * about 6 ms.
+ */
+export function* chooseClusterCountSteps(
+  rowCount: number,
+  points?: Float32Array,
+  components = DEFAULT_COMPONENTS,
+  band: RegionSizeBand = REGION_SIZE_BANDS.balanced,
+): Stepwise<number> {
   if (rowCount < 6) return Math.max(1, Math.min(rowCount, 2));
 
   // The band, then the score within it.
@@ -388,6 +405,7 @@ export function chooseClusterCount(
       fewestViolations = violations;
       bestCount = candidate;
     }
+    yield;
   }
   return bestCount;
 }

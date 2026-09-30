@@ -631,6 +631,12 @@ export function KnowledgeGraphCanvas({
    * Runs inside the frame callback, so it writes styles directly and never
    * touches React. The one text write is guarded on the text actually
    * changing, since writing `textContent` invalidates layout.
+   *
+   * It projects and sorts every titled node each rendered frame. Measured on the
+   * real 1,005-conversation map during a Reset view fly, with titles moving on
+   * 179 of 216 frames: 6.9 ms median frame, 7.1 ms worst, none over 16.7 ms. So
+   * the sort stays rather than a spatial index that would have to be kept in
+   * step with the camera.
    */
   const positionTitles = useCallback((scene: KnowledgeGraphScene) => {
     const container = containerRef.current;
@@ -1025,6 +1031,11 @@ export function KnowledgeGraphCanvas({
     [degrees],
   );
 
+  // Rebuilt for every node on a hover change, on purpose. Measured on the real
+  // 1,005-conversation map: a hover that changes the node took 13.8 ms median to
+  // the second frame against 13.9 ms for a move that changes nothing, two frames
+  // at 144 Hz either way. Patching one node's style would add a second path that
+  // has to agree with this one, for no time anyone can see.
   const styles = useMemo<SceneNodeStyle[]>(() => {
     const hasHighlight = highlighted !== undefined && highlighted.size > 0;
     const accentTriplet = toLinearTriplet(accentColor);

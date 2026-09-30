@@ -221,6 +221,32 @@ describeWithSqlite('memory_chunks indexes', () => {
     expect(planOf(database, totalsSql!, ['conversation'])).toContain('COVERING INDEX idx_memory_chunks_doc_embedded');
   });
 
+  it('pages the graph\'s document metadata in index order, with no sort, and loses no document', () => {
+    // Ordered by doc_id alone, each page sorted every remaining group before its
+    // LIMIT, so a page cost as much as the whole read (365 ms on 1,005 real
+    // conversations). In the index's order a page streams and stops.
+    const { database, adapted, prepared } = migrated();
+    for (const docId of ['agent-c', 'agent-a', 'agent-b']) insertChunk(database, 'conversation', docId, `text of ${docId}`);
+    insertChunk(database, 'task', 'task-1', 'a task record, not drawn');
+    const store = new RetrievalStore(adapted);
+
+    const whole = store.documentMetadata().map((row) => row.docId);
+    const paged: string[] = [];
+    let after = '';
+    for (let page = store.documentMetadata(after, 1); page.length > 0; page = store.documentMetadata(after, 1)) {
+      paged.push(...page.map((row) => row.docId));
+      after = page[page.length - 1].docId;
+    }
+
+    expect(whole).toEqual(['agent-a', 'agent-b', 'agent-c']);
+    expect(paged).toEqual(whole);
+    const metadataSql = prepared.find((sql) => sql.includes('AS outcome'));
+    expect(metadataSql).toBeDefined();
+    const plan = planOf(database, metadataSql!, ['', 1]);
+    expect(plan).toContain('sqlite_autoindex_memory_chunks_1');
+    expect(plan).not.toContain('TEMP B-TREE');
+  });
+
   it('reads one task\'s chunk ids from an index, never the whole table', () => {
     const { database, adapted, prepared } = migrated();
 
