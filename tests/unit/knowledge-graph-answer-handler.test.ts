@@ -132,7 +132,9 @@ vi.mock('../../src/main/retrieval/related-work', async (importActual) => {
 
 /** Board tasks as `RetrievalStore.boardTaskFacts` reads them, per test. */
 let mockBoardTasks: unknown[] = [];
-vi.mock('../../src/main/retrieval/retrieval-store', () => ({
+vi.mock('../../src/main/retrieval/retrieval-store', async (importActual) => ({
+  // Its constants stay real (the worker's code indexer reads one at import).
+  ...(await importActual<typeof import('../../src/main/retrieval/retrieval-store')>()),
   RetrievalStore: class {
     boardTaskFacts() { return mockBoardTasks; }
     boardTaskTitles() {
@@ -147,16 +149,37 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
 }));
 vi.mock('../../src/main/retrieval/graph/graph-service', () => {
   const getSnapshot = vi.fn();
-  return {
-    graphService: {
-      getSnapshot,
-      // Ask reads the map alone; each test sets it through the snapshot.
-      getProjection: (projectId: string) => getSnapshot(projectId, '')?.projection ?? null,
-      requestRefresh: vi.fn(),
-      markDirty: vi.fn(),
-      setOnChanged: vi.fn(),
-    },
+  const markDirty = vi.fn();
+  const graphService = {
+    getSnapshot,
+    // Ask reads the map alone; each test sets it through the snapshot.
+    getProjection: (projectId: string) => getSnapshot(projectId, '')?.projection ?? null,
+    // The wire read hands back what `getSnapshot` answers, whole.
+    getSnapshotWire: (projectId: string, modelTag: string) => getSnapshot(projectId, modelTag),
+    markDirty,
+    requestRegionNames: vi.fn(),
+    setSummaryNamesOn: vi.fn(),
+    setOnChanged: vi.fn(),
   };
+  // The retrieval worker makes its own instance; here it is the same double.
+  return { graphService, createGraphService: () => graphService };
+});
+
+// The map, the board table and the related work are read in the retrieval
+// worker. Here a call runs the worker's own handlers in process, so the module
+// doubles above stand behind them as they did before the move.
+vi.mock('../../src/main/retrieval/retrieval-client', async () => {
+  const { retrievalHandlers } = await import('../../src/main/retrieval/worker/methods');
+  const { getProjectDb } = await import('../../src/main/db/database');
+  const context = { getDb: getProjectDb, closeDb: () => undefined, emit: () => undefined, vecLoadError: () => null };
+  class RetrievalUnavailableError extends Error {}
+  const retrievalClient = {
+    on: () => undefined,
+    call: async (method: keyof typeof retrievalHandlers, params: unknown) => (
+      (retrievalHandlers[method] as (params: unknown, handlerContext: unknown) => unknown)(params, context)
+    ),
+  };
+  return { RetrievalUnavailableError, retrievalClient };
 });
 vi.mock('../../src/main/search/search-core', () => ({ runSearchEverything: vi.fn() }));
 vi.mock('../../src/main/pop-out/window-broadcast', () => ({ broadcast: vi.fn() }));

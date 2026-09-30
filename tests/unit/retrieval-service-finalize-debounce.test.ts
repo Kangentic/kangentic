@@ -79,9 +79,9 @@ const graphServiceMock = vi.hoisted(() => ({
   notifyChanged: vi.fn(),
   setSummariesSkipped: vi.fn(),
   setSummaryNamesOn: vi.fn(),
-  setProjectExists: vi.fn(),
+  setProjectIds: vi.fn(),
 }));
-vi.mock('../../src/main/retrieval/graph/graph-service', () => ({ graphService: graphServiceMock }));
+vi.mock('../../src/main/retrieval/graph-facade', () => ({ graphService: graphServiceMock }));
 const changeIndexerMock = vi.hoisted(() => ({
   sweepChangeRecords: vi.fn(async () => ({ indexed: 0 })),
 }));

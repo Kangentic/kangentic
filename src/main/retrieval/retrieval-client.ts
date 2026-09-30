@@ -190,7 +190,11 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
       this.emit('event', record.event, record.projectId);
       return;
     }
-    if (record.type === 'slow-span') recordSyncSpan(`worker:${record.label}`, record.ms);
+    if (record.type === 'slow-span') {
+      recordSyncSpan(`worker:${record.label}`, record.ms);
+      return;
+    }
+    if (record.type === 'log') logFromWorker(record.level, record.text);
   }
 
   private settle(requestId: number, error: Error | null, result?: unknown): void {
@@ -276,6 +280,14 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     this.disposed = true;
     this.drop(new RetrievalUnavailableError('The retrieval worker was shut down'));
   }
+}
+
+/** A worker log line into main's log. An error also went to the worker's
+ *  stderr, which a dev build already passes through, so it is printed here only
+ *  in a packaged build, where nothing else would show it. */
+function logFromWorker(level: 'log' | 'info' | 'warn' | 'error', text: string): void {
+  if (level === 'error' && !app.isPackaged) return;
+  console[level](`[retrieval-worker] ${text}`);
 }
 
 function vecLoadablePathOrNull(): string | null {

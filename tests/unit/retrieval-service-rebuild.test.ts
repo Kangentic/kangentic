@@ -75,13 +75,13 @@ vi.mock('../../src/main/retrieval/code/code-indexer', () => ({
   purgeCodeRecords: sweepers.purgeCodeRecords,
   indexedCodeBranch: vi.fn(() => null),
 }));
-vi.mock('../../src/main/retrieval/graph/graph-service', () => ({
+vi.mock('../../src/main/retrieval/graph-facade', () => ({
   graphService: {
     notifyChanged: vi.fn(),
     setSummariesSkipped: vi.fn(),
     setSummaryNamesOn: vi.fn(),
     requestRegionNames: vi.fn(),
-    setProjectExists: vi.fn(),
+    setProjectIds: vi.fn(),
   },
 }));
 

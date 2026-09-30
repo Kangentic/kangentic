@@ -12,6 +12,7 @@
  * `tests/unit/retrieval-out-of-process-boundary.test.ts`.
  */
 
+import { format } from 'node:util';
 import type Database from 'better-sqlite3';
 import { closeProjectDb, configureProjectDbAccess, getProjectDb, setProjectDbInitializer } from '../../db/database';
 import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
@@ -30,6 +31,21 @@ const parentPort = process.parentPort;
 
 function post(message: FromWorkerMessage): void {
   parentPort.postMessage(message);
+}
+
+// The worker's stdout is not captured and its stderr is kept for crash
+// reports, so what it logs goes to main's log as messages. An error still
+// writes to stderr too, where a crash report reads it.
+for (const level of ['log', 'info', 'warn', 'error'] as const) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    try {
+      post({ type: 'log', level, text: format(...args) });
+    } catch {
+      // The port is gone: the worker is exiting.
+    }
+    if (level === 'error') original(...args);
+  };
 }
 
 /** Why sqlite-vec last failed to load, for the status line. */

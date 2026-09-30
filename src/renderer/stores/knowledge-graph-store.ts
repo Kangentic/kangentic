@@ -24,8 +24,10 @@
 import { create } from 'zustand';
 import type {
   KnowledgeGraphAnswerHistoryTurn,
+  KnowledgeGraphProjection,
   KnowledgeGraphProjectSummary,
   KnowledgeGraphSnapshot,
+  KnowledgeGraphSnapshotWire,
   KnowledgeGraphRelatedTask,
 } from '../../shared/types';
 
@@ -193,6 +195,44 @@ const scopeReadsPending = new Set<string>();
  */
 // hmr-safe: losing it across a Fast Refresh ends one chain of rebuilds at most, and the next open asks again
 const rebuildsAsked = new Set<string>();
+
+/**
+ * A snapshot from what `graphSnapshot` sent: the map parsed from its JSON, the
+ * map already held when main says it has not changed, or the map sent whole
+ * (the mocks). Undefined when main said "unchanged" and nothing is held for
+ * the key, which the caller answers by reading again without one.
+ */
+export function snapshotFromWire(
+  wire: KnowledgeGraphSnapshotWire | null,
+  held: KnowledgeGraphSnapshot | null | undefined,
+): KnowledgeGraphSnapshot | null | undefined {
+  if (!wire) return null;
+  // Sent whole (the mocks): already a snapshot, kept as the same object.
+  if (sentWhole(wire)) return wire;
+  const { projectionJson, projectionUnchanged, projection: _projection, ...rest } = wire;
+  if (projectionUnchanged) {
+    if (!held || held.projectionKey !== wire.projectionKey) return undefined;
+    return { ...rest, projection: held.projection };
+  }
+  if (projectionJson !== undefined) return { ...rest, projection: JSON.parse(projectionJson) as KnowledgeGraphProjection };
+  return { ...rest, projection: null };
+}
+
+function sentWhole(wire: KnowledgeGraphSnapshotWire): wire is KnowledgeGraphSnapshotWire & KnowledgeGraphSnapshot {
+  return wire.projection !== undefined && wire.projectionJson === undefined && !wire.projectionUnchanged;
+}
+
+/** Read a project's snapshot, sending the key of the map already held so an
+ *  unchanged map is not sent again. */
+async function readSnapshot(
+  projectId: string | null,
+  held: KnowledgeGraphSnapshot | null | undefined,
+): Promise<KnowledgeGraphSnapshot | null> {
+  const wire = await window.electronAPI.knowledgeGraph.graphSnapshot(projectId, held?.projectionKey ?? null);
+  const snapshot = snapshotFromWire(wire, held);
+  if (snapshot !== undefined) return snapshot;
+  return snapshotFromWire(await window.electronAPI.knowledgeGraph.graphSnapshot(projectId, null), null) ?? null;
+}
 
 /** Ask main to rebuild a stale map: always on a read the reader caused, and on
  *  a push only to carry on a rebuild this surface asked for. */
@@ -453,7 +493,9 @@ function createKnowledgeGraphStore() {
         }
         scopeReadsInFlight.add(projectId);
         try {
-          const snapshot = await window.electronAPI.knowledgeGraph.graphSnapshot(projectId);
+          const own = get().snapshot;
+          const held = get().scopeSnapshots[projectId] ?? (own?.projectId === projectId ? own : null);
+          const snapshot = await readSnapshot(projectId, held);
           // Dropped once the project has left the scope, or the graph closed.
           if (!get().scopeProjectIds?.includes(projectId)) return;
           set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: snapshot } }));
@@ -571,7 +613,14 @@ function createKnowledgeGraphStore() {
 
         const request = (async () => {
           try {
-            const snapshot = await window.electronAPI.knowledgeGraph.graphSnapshot(targetProjectId);
+            // The map held for the project asked for, whose key lets main skip
+            // sending it again. With no project named, main resolves one, and a
+            // key from another project's map simply does not match.
+            const own = get().snapshot;
+            const held = targetProjectId === null || own?.projectId === targetProjectId
+              ? own
+              : get().scopeSnapshots[targetProjectId] ?? null;
+            const snapshot = await readSnapshot(targetProjectId, held);
             // A newer fetch already landed: dropping this one keeps a slow reply
             // from overwriting fresher state.
             if (ordinal !== fetchOrdinal) return;

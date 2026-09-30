@@ -51,7 +51,7 @@ interface PendingRead {
 let pendingReads: PendingRead[] = [];
 let streamListeners: Array<(event: KnowledgeGraphAnswerStreamPush) => void> = [];
 
-const graphSnapshotMock = vi.fn<(projectId?: string | null) => Promise<KnowledgeGraphSnapshot | null>>();
+const graphSnapshotMock = vi.fn<(projectId?: string | null, knownProjectionKey?: string | null) => Promise<KnowledgeGraphSnapshot | null>>();
 const refreshGraphMock = vi.fn<(projectId?: string | null) => Promise<void>>();
 const answerFromGraphMock = vi.fn<(...args: unknown[]) => Promise<KnowledgeGraphAnswerResult>>();
 const prewarmMock = vi.fn<(options: { chatId: string; projectId: string | null }) => void>();
@@ -162,7 +162,7 @@ describe('knowledge-graph-store loadSnapshot while a read is in flight', () => {
     // A landing starts the read asked for meanwhile, and the caller that asked
     // for it is still waiting: its promise is B's, not A's.
     expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
-    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B', null);
     expect(secondSettled).toBe(false);
 
     const snapshotB = makeSnapshot('B');
@@ -188,7 +188,7 @@ describe('knowledge-graph-store loadSnapshot while a read is in flight', () => {
     // The read in flight was started before the push, so it cannot show what
     // the push announced. One more read runs, for the same project.
     expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
-    expect(graphSnapshotMock).toHaveBeenLastCalledWith('A');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('A', null);
     resolveRead('A');
     await flush();
     expect(store.getState().loading).toBe(false);
@@ -224,7 +224,7 @@ describe('knowledge-graph-store loadSnapshot while a read is in flight', () => {
     await flush();
 
     expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
-    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B', null);
   });
 
   it('lets a reader replace a push that was waiting', async () => {
@@ -237,7 +237,7 @@ describe('knowledge-graph-store loadSnapshot while a read is in flight', () => {
     await flush();
 
     expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
-    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B', null);
   });
 
   it('keeps the reader\'s right to start a rebuild when a push follows it', async () => {
@@ -268,7 +268,7 @@ describe('knowledge-graph-store loadSnapshot while a read is in flight', () => {
     await first;
     await flush();
 
-    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B', null);
     resolveRead('B');
     await second;
     expect(store.getState().projectId).toBe('B');
@@ -369,7 +369,7 @@ describe('knowledge-graph-store setScope', () => {
 
     store.getState().setScope(['A', 'B']);
     expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
-    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B', null);
     resolveRead('B', staleIsland);
     await flush();
     expect(store.getState().scopeSnapshots.B).toBe(staleIsland);
@@ -381,7 +381,7 @@ describe('knowledge-graph-store setScope', () => {
     store.getState().setScope(['A', 'B']);
 
     expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
-    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B', null);
     // The old island stays on screen while the read is in flight.
     expect(store.getState().scopeSnapshots.B).toBe(staleIsland);
 
@@ -401,7 +401,7 @@ describe('knowledge-graph-store setScope', () => {
 
     // B was already in the previous scope: its island is kept without a read.
     expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
-    expect(graphSnapshotMock).toHaveBeenLastCalledWith('C');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('C', null);
   });
 
   it('does not read the open project when it rejoins the scope, its map is seeded', async () => {
@@ -584,5 +584,50 @@ describe('knowledge-graph-store loadScopeSnapshot when a read fails', () => {
     // A project with nothing yet is marked empty (null), not left as "loading".
     expect('B' in store.getState().scopeSnapshots).toBe(true);
     expect(store.getState().scopeSnapshots.B).toBeNull();
+  });
+});
+
+describe('knowledge-graph-store map key: an unchanged map is not sent again', () => {
+  const projection = { signature: 'sig-1', nodes: [], edges: [], clusterings: [] } as unknown as NonNullable<KnowledgeGraphSnapshot['projection']>;
+
+  it('parses a map sent as JSON, keeps its key, and sends that key with the next read', async () => {
+    const { projection: _unused, ...shell } = makeSnapshot('A');
+    const first = store.getState().loadSnapshot('A');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('A', null);
+    takePendingRead('A').resolve({ ...shell, projectionKey: 'key-1', projectionJson: JSON.stringify(projection) } as unknown as KnowledgeGraphSnapshot);
+    await first;
+    expect(store.getState().snapshot?.projection).toEqual(projection);
+    expect(store.getState().snapshot?.projectionKey).toBe('key-1');
+
+    // Main answers the next read "unchanged": the held map stays, the same object.
+    const held = store.getState().snapshot?.projection;
+    const second = store.getState().loadSnapshot('A');
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('A', 'key-1');
+    takePendingRead('A').resolve({ ...shell, stale: true, projectionKey: 'key-1', projectionUnchanged: true } as unknown as KnowledgeGraphSnapshot);
+    await second;
+    expect(store.getState().snapshot?.projection).toBe(held);
+    // Everything around the map is this read's.
+    expect(store.getState().snapshot?.stale).toBe(true);
+  });
+
+  it('reads again without a key when main says unchanged but nothing is held for it', async () => {
+    const { projection: _unused, ...shell } = makeSnapshot('A');
+    const read = store.getState().loadSnapshot('A');
+    takePendingRead('A').resolve({ ...shell, projectionKey: 'key-9', projectionUnchanged: true } as unknown as KnowledgeGraphSnapshot);
+    await flush();
+    // The follow-up read sends no key, so main sends the map.
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('A', null);
+    takePendingRead('A').resolve({ ...shell, projectionKey: 'key-9', projectionJson: JSON.stringify(projection) } as unknown as KnowledgeGraphSnapshot);
+    await read;
+    expect(store.getState().snapshot?.projection).toEqual(projection);
+  });
+
+  it('keeps a map sent whole (the mocks) as the same object', async () => {
+    const whole = makeSnapshot('A', { projection });
+    const read = store.getState().loadSnapshot('A');
+    resolveRead('A', whole);
+    await read;
+    expect(store.getState().snapshot).toBe(whole);
   });
 });

@@ -5,48 +5,38 @@ import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
-import { graphService } from '../../retrieval/graph/graph-service';
+import { graphService } from '../../retrieval/graph-facade';
 import { buildAnswerPrompt, buildFollowUpPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
 import { answerSessionPool, type PooledAnswerSession, type PrimedAnswerChat } from '../../retrieval/answer-session-pool';
 import { AnswerSessionError } from '../../agent/shared/answer-session/stdin-json-session';
 import { runCliForChat, stopCliRunsForChat, type AnswerStreamEvent } from '../../agent/shared/auto-name';
 import {
-  buildAnswerTaskTable,
-  mergeAnswerTaskTables,
   refPrefixFor,
   taskRef,
   type AnswerTaskRow,
   type AnswerTaskTable,
 } from '../../retrieval/answer-tasks';
-import {
-  PASSAGES_SHOWN,
-  passageKey,
-  searchRelatedWork,
-  searchRelatedWorkAcross,
-  toProjectRelatedWork,
-  boardRecordTasks,
-  readBoardTaskFacts,
-  type ProjectRelatedWork,
-  type ProjectRelatedWorkTask,
-} from '../../retrieval/related-work';
+import type { ProjectRelatedWorkTask } from '../../retrieval/related-work';
 import { searchDocKeys, watchAnswerSearches } from '../../agent/mcp-http/answer-search-trace';
 import { estimateTokens } from '../../retrieval/token-estimate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveEmbeddingModel } from '../../../shared/embedding-models';
-import { codeIndexOn } from '../../../shared/answer-agent';
+import { codeIndexOn, taskSummariesOn } from '../../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
 import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
 import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
-import { SummaryStore } from '../../retrieval/summary/summary-store';
-import { retrievalClient } from '../../retrieval/retrieval-client';
-import { findPriorWork, searchConversations } from '../../retrieval/retrieval-queries';
+import { retrievalClient, RetrievalUnavailableError } from '../../retrieval/retrieval-client';
+import { findPriorWork, INDEX_RESTARTING, searchConversations } from '../../retrieval/retrieval-queries';
+import { embedQueryTexts } from '../../retrieval/query-vectors';
+import { passageKey, PASSAGES_SHOWN, relatedQueryTexts } from '../../retrieval/related-query-text';
 import type { ProjectIndexSummaryRow } from '../../retrieval/worker/methods';
+import type { PreparedAnswer } from '../../retrieval/worker/answer-prepare';
 import type {
   SearchHit,
   SearchRequest,
   KnowledgeGraphStatus,
-  KnowledgeGraphSnapshot,
+  KnowledgeGraphSnapshotWire,
   KnowledgeGraphProjectSummary,
   KnowledgeGraphRebuildPlan,
   KnowledgeGraphQueryHit,
@@ -63,9 +53,10 @@ import type {
 const HISTORY_TURNS = 3;
 /** How long a question waits for its embedding before searching by keyword alone. */
 const RELATED_EMBED_WAIT_MS = 5_000;
-/** A project in a question's scope whose map has not been built yet: it brings
- *  its board tasks and no conversations. */
-const EMPTY_PROJECTION = { nodes: [], clusterings: [] };
+/** Ask's reads in the retrieval worker: one conversation scan per query vector
+ *  and project (340 to 370 ms each on a large index), so a question across
+ *  several projects runs past the default interactive budget. */
+const ANSWER_PREPARE_TIMEOUT_MS = 30_000;
 
 /** A chat or request id goes into the answer run's MCP URL path
  *  (`appendAnswerCaller`), so only an id's shape passes. The renderer mints UUIDs. */
@@ -225,16 +216,17 @@ export function registerSearchHandlers(context: IpcContext): void {
 
   ipcMain.handle(
     IPC.KNOWLEDGE_GRAPH_SNAPSHOT,
-    async (_event, projectId?: string | null): Promise<KnowledgeGraphSnapshot | null> => {
+    async (_event, projectId?: string | null, knownProjectionKey?: string | null): Promise<KnowledgeGraphSnapshotWire | null> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!resolvedProjectId) return null;
-      // A scope or a pop-out can still hold a deleted project's id, and opening
-      // its store would create an empty database for it again.
+      // A scope or a pop-out can still hold a deleted project's id, and asking
+      // for its map would only fail.
       if (!context.projectRepo.list().some((entry) => entry.id === resolvedProjectId)) return null;
       const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
-      // Cheap by construction: reads the cache, never runs the pass. Timed as a
-      // whole, since an open graph re-reads it on every push.
-      return timeSyncWork('ipc:graph-snapshot', () => graphService.getSnapshot(resolvedProjectId, model.modelTag));
+      // Read in the retrieval worker, which never runs the pass for it. The map
+      // comes back as JSON, and only when the reader's key is stale; main
+      // passes the string through without parsing it.
+      return graphService.getSnapshotWire(resolvedProjectId, model.modelTag, typeof knownProjectionKey === 'string' ? knownProjectionKey : null);
     },
   );
 
@@ -300,20 +292,6 @@ export function registerSearchHandlers(context: IpcContext): void {
         if (!resolvedRun.ok) return resolvedRun.failure;
         const { adapter, answerFromContext, cliPath, model: configuredModel, effort, retrieval } = resolvedRun.run;
 
-        // The board: EVERY task inside the map's filters, not a retrieved
-        // subset. This is what makes "what was the most expensive" answerable at
-        // all - an agent shown 24 of 347 tasks answers confidently about 24.
-        // Read from the cached projection alone (`getProjection`), without the
-        // coverage a snapshot also computes, since that grouping over every chunk
-        // was most of a 267 ms main-thread read per project.
-        //
-        // Across projects, each project's table is built on its own (its own
-        // regions, its own board) and the tables merged, every ticket outside
-        // the open project carrying its project's prefix: ticket numbers repeat
-        // between projects. A project whose map has not been built yet still
-        // brings its board tasks.
-        const scope = answerContext.scopeDocKeys ? new Set(answerContext.scopeDocKeys) : null;
-
         // The chat's warm session, when the agent has one. Under the scope its
         // first turn was asked in, a follow-up reuses that turn's table (the
         // session already holds it) and sends only what is new; any other
@@ -342,30 +320,59 @@ export function registerSearchHandlers(context: IpcContext): void {
         // With the open project's left bare, an agent read a Kangentic task
         // about the mobile app as "mobile#432": the prefix looked like a topic.
         // A ref that always names its project leaves nothing to infer.
-        const parts = scopeProjects.map((entry) => {
-          const projection = graphService.getProjection(entry.id);
+        const projectsInScope = scopeProjects.map((entry) => {
           const refPrefix = acrossProjects ? refPrefixFor(entry.name, takenPrefixes) : null;
           if (refPrefix) takenPrefixes.add(refPrefix);
-          return { project: entry, projection, refPrefix };
+          return { id: entry.id, name: entry.name, refPrefix };
         });
-        if (parts.every((part) => !part.projection)) return { ok: false, reason: 'the map is still building' };
-        const buildTaskTable = () => {
-          const tables = parts.map((part) => {
-            const boardTasks = timeSyncWork('answer:board-tasks', () => readBoardTaskFacts(part.project.id));
-            return timeSyncWork('answer:table', () => buildAnswerTaskTable(part.projection ?? EMPTY_PROJECTION, granularity, scope, boardTasks));
-          });
-          return acrossProjects
-            ? mergeAnswerTaskTables(parts.map((part, index) => ({
-              table: tables[index],
-              projectId: part.project.id,
-              name: part.project.name,
-              refPrefix: part.refPrefix,
-            })))
-            : tables[0];
-        };
+
+        // A desktop edit of a task's text, and a live conversation's latest
+        // changes, reach the index here, for the next question; nothing waits.
+        for (const entry of scopeProjects) retrievalService.refreshRecords(context, entry.id);
+
+        // A follow-up searches the same subject (the earlier questions ride
+        // along) and keeps the tasks the turn before was about, or "of those"
+        // has no referent.
+        const history = (answerContext.history ?? []).slice(-HISTORY_TURNS);
+        const previousTurn = history[history.length - 1];
+        const anchorQuestions = history.map((turn) => turn.question);
+        // Only main embeds (the embed engine lives here), so the question's
+        // vectors go to the worker with the call.
+        const queryVectors = await embedQueryTexts(
+          retrievalService.getEmbedder(context),
+          relatedQueryTexts(trimmed, anchorQuestions),
+          RELATED_EMBED_WAIT_MS,
+        );
+
+        // The board, the conversations inside the map's filters, the related
+        // work and the handed tasks' summaries, read in the retrieval worker.
+        // The board is EVERY task inside the filters, not a retrieved subset:
+        // that is what makes "what was the most expensive" answerable at all.
+        // Across projects each project's table is built on its own and the
+        // tables merged. It stops before searching when no map in scope is
+        // built yet, or when there is nothing to answer from.
+        let prepared: PreparedAnswer;
+        try {
+          prepared = await retrievalClient.call('answer.prepare', {
+            projects: projectsInScope,
+            granularity,
+            scopeDocKeys: answerContext.scopeDocKeys ?? null,
+            question: trimmed,
+            anchorQuestions,
+            pinnedKeys: previousTurn?.taskKeys ?? [],
+            queryVectors,
+            code: codeIndexed,
+            primed: primedTable !== null,
+            summaryNamesOn: taskSummariesOn(context.configManager.load().knowledgeGraph),
+          }, { timeoutMs: ANSWER_PREPARE_TIMEOUT_MS });
+        } catch (error) {
+          if (error instanceof RetrievalUnavailableError) return { ok: false, reason: INDEX_RESTARTING };
+          throw error;
+        }
+        if (prepared.status === 'map-building') return { ok: false, reason: 'the map is still building' };
         // Built every turn, for the facts: a follow-up that read them from the
         // session's first table showed a running task's cost as it was then.
-        const freshTable = buildTaskTable();
+        const freshTable = prepared.table;
         // The refs are the table the session was primed with, the one in its
         // context: rows sort by cost, so a fresh build numbers `C<n>` differently
         // while an agent runs.
@@ -420,51 +427,10 @@ export function registerSearchHandlers(context: IpcContext): void {
           broadcast(context.mainWindow, IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM, { requestId, ...event });
         };
 
-        // The related work, found before the agent starts. A follow-up searches
-        // the same subject (the earlier questions ride along) and keeps the
-        // tasks the turn before was about, or "of those" has no referent.
-        const history = (answerContext.history ?? []).slice(-HISTORY_TURNS);
-        const previousTurn = history[history.length - 1];
-        // Unscoped, a task's own record reaches it even when none of its
-        // conversations was indexed; the map's filters select conversations,
-        // so under a filter only tasks with one inside it count (the board
-        // table's rule).
-        const projectNodes = parts.map((part) => ({
-          projectId: part.project.id,
-          nodes: (part.projection?.nodes ?? []).filter((node) => !scope || scope.has(node.docKey)),
-          ...(scope ? {} : { recordOnlyTasks: timeSyncWork('answer:record-tasks', () => boardRecordTasks(part.project.id)) }),
-        }));
-        const nodesInScope = projectNodes.flatMap((entry) => entry.nodes);
-        // A desktop edit of a task's text, and a live conversation's latest
-        // changes, reach the index here, for the next question; nothing waits.
-        for (const part of parts) retrievalService.refreshRecords(context, part.project.id);
-        // A failed search costs the related work, not the answer: the table
-        // still settles every board question, and the agent can still search.
-        let related: ProjectRelatedWork;
-        try {
-          const searchInput = {
-            question: trimmed,
-            anchorQuestions: history.map((turn) => turn.question),
-            embedder: retrievalService.getEmbedder(context),
-            pinnedKeys: new Set(previousTurn?.taskKeys ?? []),
-            embedWaitMs: RELATED_EMBED_WAIT_MS,
-            code: codeIndexed,
-          };
-          related = acrossProjects
-            ? await searchRelatedWorkAcross({ ...searchInput, projects: projectNodes })
-            : toProjectRelatedWork(
-              await searchRelatedWork({
-                ...searchInput,
-                projectId: homeProject.id,
-                nodes: nodesInScope,
-                recordOnlyTasks: projectNodes[0]?.recordOnlyTasks,
-              }),
-              homeProject.id,
-            );
-        } catch (error) {
-          console.warn('[knowledge-graph] related work search failed, answering from the table:', error);
-          related = { ranked: [], handed: [], passages: new Map(), code: [], semantic: false, elapsedMs: 0 };
-        }
+        // The related work, found before the agent starts, and the
+        // conversations inside the filters, for the search trace below.
+        const related = prepared.related;
+        const nodesInScope = prepared.nodesInScope;
         // A task created since the session's first turn has no ref in the
         // table it holds, so the related work could not name it and it was
         // dropped. Start the session over on this turn's table instead.
@@ -489,27 +455,8 @@ export function registerSearchHandlers(context: IpcContext): void {
         const handedWire = related.handed.map(toWire);
         emit({ kind: 'set', related: handedWire, handedCount: related.handed.length });
 
-        // Each handed task's summary, read per project: a task id belongs to one.
-        const summaryByTask = timeSyncWork('answer:summaries', () => {
-          const summaries = new Map<string, string>();
-          const taskIdsByProject = new Map<string, string[]>();
-          for (const task of related.handed) {
-            if (!task.taskId) continue;
-            const list = taskIdsByProject.get(task.projectId) ?? [];
-            list.push(task.taskId);
-            taskIdsByProject.set(task.projectId, list);
-          }
-          for (const [projectId, taskIds] of taskIdsByProject) {
-            try {
-              for (const [taskId, summary] of new SummaryStore(getProjectDb(projectId)).summariesFor(taskIds)) {
-                summaries.set(`${projectId}:${taskId}`, summary);
-              }
-            } catch {
-              // The related work stands without its summaries.
-            }
-          }
-          return summaries;
-        });
+        // Each handed task's summary, read with the related work.
+        const summaryByTask = prepared.summaries;
         const relatedForPrompt = related.handed.flatMap((task, index) => {
           const ref = refByKey.get(task.key);
           if (!ref) return [];

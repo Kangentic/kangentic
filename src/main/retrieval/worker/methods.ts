@@ -27,12 +27,40 @@ import { SummaryStore } from '../summary/summary-store';
 import { readTaskKnowledge, type TaskKnowledge } from '../task-knowledge';
 import type { BoardTaskFacts } from '../answer-tasks';
 import type { Embedder, StoredChunk } from '../types';
-import type { KnowledgeGraphQueryHit, SubagentUsageTotals, TaskFanOut } from '../../../shared/types';
+import type { KnowledgeGraphQueryHit, KnowledgeGraphSnapshotWire, SubagentUsageTotals, TaskFanOut } from '../../../shared/types';
 import { ConversationUsageStore } from '../conversation/conversation-usage-store';
 import type { RetrievalEventName } from './protocol';
 import { createIndexStatusReader, type IndexStatus, type IndexStatusParams } from './index-status';
+import { createGraphService } from '../graph/graph-service';
+import { prepareAnswer, type AnswerPrepareParams, type PreparedAnswer } from './answer-prepare';
 
 const indexStatus = createIndexStatusReader();
+
+type GraphService = ReturnType<typeof createGraphService>;
+
+/**
+ * The Knowledge Graph's map service, one per worker context (the worker has
+ * one; a test may make several). It runs the passes and names the regions on
+ * its own timers, so the config those read is the last value main sent:
+ * `summaryNamesOn` rides on every call that can start naming.
+ */
+const graphs = new WeakMap<WorkerContext, { service: GraphService; summaryNamesOn: boolean }>();
+
+/** The context's graph service, with the naming setting main just sent. */
+function graphFor(context: WorkerContext, summaryNamesOn: boolean): GraphService {
+  let holder = graphs.get(context);
+  if (!holder) {
+    const created: { service: GraphService; summaryNamesOn: boolean } = {
+      service: createGraphService({ getDb: context.getDb, onChanged: (projectId) => context.emit('graph-changed', projectId) }),
+      summaryNamesOn,
+    };
+    created.service.setSummaryNamesOn(() => created.summaryNamesOn);
+    graphs.set(context, created);
+    holder = created;
+  }
+  holder.summaryNamesOn = summaryNamesOn;
+  return holder.service;
+}
 
 /** A project as a search names it. */
 export interface ProjectRef {
@@ -63,6 +91,35 @@ export interface RetrievalMethods {
   /** Let go of a project's database before main deletes its files. */
   'project.close': {
     params: { projectId: string };
+    result: void;
+  };
+  /** The Knowledge Graph's snapshot, with the map as JSON only when the
+   *  caller's key does not match (`graphService.getSnapshotWire`). Never runs
+   *  the pass. */
+  'graph.snapshot': {
+    params: {
+      projectId: string;
+      modelTag: string;
+      summaryNamesOn: boolean;
+      summariesSkipped: number;
+      knownProjectionKey: string | null;
+    };
+    result: KnowledgeGraphSnapshotWire;
+  };
+  /** Start a background map pass unless one is running. Returns at once: a
+   *  cold pass runs for a minute, and its end arrives as `graph-changed`. */
+  'graph.refresh': {
+    params: { projectId: string; modelTag: string; dimensions: number; summaryNamesOn: boolean };
+    result: void;
+  };
+  /** Ask's reads before its agent starts (`answer-prepare.ts`). */
+  'answer.prepare': {
+    params: AnswerPrepareParams & { summaryNamesOn: boolean };
+    result: PreparedAnswer;
+  };
+  /** Summaries were written: name the regions again (urgent when caught up). */
+  'graph.requestRegionNames': {
+    params: { projectId: string; urgent: boolean; summaryNamesOn: boolean };
     result: void;
   };
   /** The index's half of the status poll (`index-status.ts`). */
@@ -184,6 +241,21 @@ export const retrievalHandlers: RetrievalHandlers = {
   'project.close': ({ projectId }, context) => {
     context.closeDb(projectId);
     indexStatus.forget(projectId);
+  },
+  'graph.snapshot': ({ projectId, modelTag, summaryNamesOn, summariesSkipped, knownProjectionKey }, context) => (
+    graphFor(context, summaryNamesOn).getSnapshotWire(projectId, modelTag, { summariesSkipped, knownProjectionKey })
+  ),
+  'graph.refresh': ({ projectId, modelTag, dimensions, summaryNamesOn }, context) => {
+    graphFor(context, summaryNamesOn).markDirty(projectId, modelTag, dimensions);
+  },
+  'answer.prepare': ({ summaryNamesOn, ...params }, context) => {
+    // Each map named as the reader sees it, so an answer names a region the
+    // way the map does.
+    const graph = graphFor(context, summaryNamesOn);
+    return prepareAnswer(params, context.getDb, (projectId) => graph.getProjection(projectId));
+  },
+  'graph.requestRegionNames': ({ projectId, urgent, summaryNamesOn }, context) => {
+    graphFor(context, summaryNamesOn).requestRegionNames(projectId, urgent);
   },
   'status.index': (params, context) => ({ ...indexStatus.read(context.getDb(params.projectId), params), vecError: context.vecLoadError() }),
   'summary.forTask': ({ projectId, taskId }, context) => new SummaryStore(context.getDb(projectId)).summariesFor([taskId]).get(taskId) ?? null,

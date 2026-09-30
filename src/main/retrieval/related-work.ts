@@ -87,9 +87,9 @@ import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import { toBoardTaskFacts } from './board-task-facts';
 import type { BoardTaskFacts } from './answer-tasks';
 import type { ChunkPlacement, Embedder } from './types';
-import { contentWords, relatedQueryTexts } from './related-query-text';
+import { contentWords, passageKey, PASSAGES_SHOWN, relatedQueryTexts } from './related-query-text';
 
-export { contentWords, relatedQueryTexts };
+export { contentWords, passageKey, PASSAGES_SHOWN, relatedQueryTexts };
 
 /** Nearest chunks read per query vector. */
 const SEMANTIC_POOL = 1_000;
@@ -119,8 +119,6 @@ const LEXICAL_RANK_SPAN = 200;
 const RELATED_FLOOR = 0.6;
 export const MIN_HANDED = 12;
 export const MAX_HANDED = 80;
-/** Handed tasks that carry their best passage into the prompt; the rest carry facts only. */
-export const PASSAGES_SHOWN = 12;
 /** Characters of a passage, enough to judge relevance by. */
 const PASSAGE_CHARS = 220;
 /** Nearest code chunks read for the question: enough to fill the passages two to a file. */
@@ -644,11 +642,6 @@ export interface ProjectRelatedWork {
   elapsedMs: number;
 }
 
-/** Where a task's best passage is kept in `ProjectRelatedWork.passages`. */
-export function passageKey(projectId: string, chunkId: number): string {
-  return `${projectId}:${chunkId}`;
-}
-
 /** One project's related work, stamped with that project. */
 export function toProjectRelatedWork(work: RelatedWork, projectId: string): ProjectRelatedWork {
   const stamp = (task: RelatedWorkTask): ProjectRelatedWorkTask => ({ ...task, projectId });
@@ -662,7 +655,7 @@ export function toProjectRelatedWork(work: RelatedWork, projectId: string): Proj
   };
 }
 
-export interface SearchRelatedWorkAcrossInput extends Omit<SearchRelatedWorkInput, 'projectId' | 'nodes' | 'queryVectors' | 'recordOnlyTasks'> {
+export interface SearchRelatedWorkAcrossInput extends Omit<SearchRelatedWorkInput, 'projectId' | 'nodes' | 'recordOnlyTasks'> {
   /** Each project in the question's scope, with its nodes inside the map's
    *  filters and the board tasks its records may reach. */
   projects: ReadonlyArray<{
@@ -686,7 +679,8 @@ export interface SearchRelatedWorkAcrossInput extends Omit<SearchRelatedWorkInpu
 export async function searchRelatedWorkAcross(input: SearchRelatedWorkAcrossInput): Promise<ProjectRelatedWork> {
   const started = Date.now();
   const anchorQuestions = input.anchorQuestions ?? [];
-  const vectors = await embedQuery(input.embedder, relatedQueryTexts(input.question, anchorQuestions), input.embedWaitMs);
+  const vectors = input.queryVectors
+    ?? await embedQuery(input.embedder, relatedQueryTexts(input.question, anchorQuestions), input.embedWaitMs);
 
   const ranked: ProjectRelatedWorkTask[] = [];
   const passages = new Map<string, string>();

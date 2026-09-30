@@ -24,7 +24,14 @@ import { SummaryStore } from '../summary/summary-store';
 import { CONVERSATION_CORPUS, isEmbeddedCorpus, MEMORY_CORPORA } from '../corpora';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import type { KnowledgeGraphGranularity, KnowledgeGraphProjection, KnowledgeGraphSnapshot, KnowledgeGraphIndexSummary } from '../../../shared/types';
+import { createHash } from 'node:crypto';
+import type {
+  KnowledgeGraphGranularity,
+  KnowledgeGraphIndexSummary,
+  KnowledgeGraphProjection,
+  KnowledgeGraphSnapshot,
+  KnowledgeGraphSnapshotWire,
+} from '../../../shared/types';
 import {
   runProjectionPass,
   readCachedProjection,
@@ -98,6 +105,12 @@ interface NamingState {
   againUrgent: boolean;
 }
 
+export interface SnapshotOptions {
+  /** How many finished tasks the summary scheduler passed over, which the
+   *  Index row reports. Sent with the read by main, which runs the scheduler. */
+  summariesSkipped?: number;
+}
+
 /** One event-loop turn, so a long job never holds main in one piece. */
 function yieldTurn(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
@@ -135,6 +148,8 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   const summariesFor = deps.summaries ?? ((projectId: string): SummarySource => new SummaryStore(getDb(projectId)));
   const now = deps.now ?? Date.now;
   const naming = new Map<string, NamingState>();
+  /** Each project's named map as JSON, and its key (`getSnapshotWire`). */
+  const projectionJson = new Map<string, { key: string; json: string }>();
 
   function storeFor(projectId: string): RetrievalStore {
     return new RetrievalStore(getDb(projectId));
@@ -158,13 +173,29 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
    * while new ones wait their turn.
    */
   function named(projectId: string, store: RetrievalStore, projection: KnowledgeGraphProjection | null): KnowledgeGraphProjection | null {
-    if (!projection) return projection;
+    return namedWithKey(projectId, store, projection).projection;
+  }
+
+  /**
+   * `named`, and the key that identifies what it returned: the map's signature
+   * and the names laid over it. Two reads with one key return the same map, so
+   * a caller holding it need not be sent it again.
+   */
+  function namedWithKey(
+    projectId: string,
+    store: RetrievalStore,
+    projection: KnowledgeGraphProjection | null,
+  ): { projection: KnowledgeGraphProjection | null; key: string | null } {
+    if (!projection) return { projection, key: null };
     const summaries = summaryKeyFor(projectId);
-    const stored = parseStoredRegionNames(store.getMeta(REGION_NAMES_KEY));
+    const rawNames = store.getMeta(REGION_NAMES_KEY);
+    const stored = parseStoredRegionNames(rawNames);
     if (!regionNamesCurrent(stored, projection.signature, summaries)) {
       scheduleRegionNames(projectId, !regionNamesUsable(stored, projection.signature, summaries));
     }
-    return withRegionNames(projection, stored, summaries);
+    const shownNames = regionNamesUsable(stored, projection.signature, summaries) ? rawNames ?? '' : '';
+    const key = createHash('sha1').update(projection.signature).update('\0').update(shownNames).digest('hex');
+    return { projection: withRegionNames(projection, stored, summaries), key };
   }
 
   /**
@@ -282,6 +313,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     store: RetrievalStore,
     projection: GraphSnapshot['projection'],
     dimensions: number,
+    summariesSkippedCount: number | undefined,
   ): KnowledgeGraphIndexSummary {
     const fingerprint = store.corpusFingerprint();
     let cached = corpusCache.get(projectId);
@@ -309,21 +341,49 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       .reduce((total, entry) => total + entry.embeddedChunks, 0);
     return {
       corpora,
-      summaries: summaryCounts(projectId, store),
+      summaries: summaryCounts(projectId, store, summariesSkippedCount),
       storageBytes: (projection?.storageBytes ?? 0) + cached.otherTextBytes + otherEmbedded * dimensions * 4,
       lastIndexedAt: store.lastIndexedAt(),
     };
   }
 
   /** Summaries written, of the finished tasks: two small reads, never cached, so
-   *  the row moves as the background backfill writes. */
-  function summaryCounts(projectId: string, store: RetrievalStore): KnowledgeGraphIndexSummary['summaries'] {
-    const skipped = summariesSkipped?.(projectId) ?? 0;
+   *  the row moves as the background backfill writes. The count passed over is
+   *  the summary scheduler's, which runs on main and sends it with the read. */
+  function summaryCounts(projectId: string, store: RetrievalStore, skippedCount: number | undefined): KnowledgeGraphIndexSummary['summaries'] {
+    const skipped = skippedCount ?? summariesSkipped?.(projectId) ?? 0;
     try {
       return { ...store.summaryCounts(), skipped };
     } catch {
       return { written: 0, finishedTasks: 0, skipped };
     }
+  }
+
+  /** The snapshot, and the key of the map inside it (`namedWithKey`). */
+  function snapshotWithKey(
+    projectId: string,
+    modelTag: string,
+    options: SnapshotOptions,
+  ): { snapshot: GraphSnapshot; key: string | null } {
+    const store = storeFor(projectId);
+    const coverage = coverageFor(projectId, store);
+    const { projection, key } = namedWithKey(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
+    const embedding = resolveEmbedding(store, modelTag, 0);
+    const snapshot: GraphSnapshot = {
+      projectId,
+      projection,
+      coverage,
+      index: indexSummaryFor(projectId, store, projection, embedding.dimensions, options.summariesSkipped),
+      building: running.has(projectId),
+      stale: !isProjectionFresh(
+        projection,
+        embedding.modelTag,
+        coverage.totalEmbeddedChunks,
+        store.maxChunkId('conversation'),
+      ),
+      semanticAvailable: store.hasVec,
+    };
+    return { snapshot, key };
   }
 
   /**
@@ -412,25 +472,35 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     },
 
     /** Cheap read. Never runs the pass. */
-    getSnapshot(projectId: string, modelTag: string): GraphSnapshot {
-      const store = storeFor(projectId);
-      const coverage = coverageFor(projectId, store);
-      const projection = named(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
-      const embedding = resolveEmbedding(store, modelTag, 0);
-      return {
-        projectId,
-        projection,
-        coverage,
-        index: indexSummaryFor(projectId, store, projection, embedding.dimensions),
-        building: running.has(projectId),
-        stale: !isProjectionFresh(
-          projection,
-          embedding.modelTag,
-          coverage.totalEmbeddedChunks,
-          store.maxChunkId('conversation'),
-        ),
-        semanticAvailable: store.hasVec,
-      };
+    getSnapshot(projectId: string, modelTag: string, options: SnapshotOptions = {}): GraphSnapshot {
+      return snapshotWithKey(projectId, modelTag, options).snapshot;
+    },
+
+    /**
+     * The snapshot as it crosses to the renderer: the map as JSON, and only
+     * when the caller does not already hold it (`knownProjectionKey`). A map is
+     * about 1 MB, and an open graph re-reads its snapshot on every push, most
+     * of which leave the map as it was. The JSON is kept per project, so a map
+     * that did change is serialized once however many windows ask for it.
+     */
+    getSnapshotWire(
+      projectId: string,
+      modelTag: string,
+      options: SnapshotOptions & { knownProjectionKey?: string | null } = {},
+    ): KnowledgeGraphSnapshotWire {
+      const { snapshot, key } = snapshotWithKey(projectId, modelTag, options);
+      const { projection, ...rest } = snapshot;
+      if (!projection || key === null) {
+        projectionJson.delete(projectId);
+        return { ...rest, projection: null, projectionKey: null };
+      }
+      if (options.knownProjectionKey === key) return { ...rest, projectionKey: key, projectionUnchanged: true };
+      let cached = projectionJson.get(projectId);
+      if (!cached || cached.key !== key) {
+        cached = { key, json: timeSyncWork('graph:projection-json', () => JSON.stringify(projection)) };
+        projectionJson.set(projectId, cached);
+      }
+      return { ...rest, projectionKey: key, projectionJson: cached.json };
     },
 
     /** Schedule a paced background pass unless one is already running for this

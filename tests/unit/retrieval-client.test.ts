@@ -182,6 +182,24 @@ describe('RetrievalClient', () => {
     client.dispose();
   });
 
+  it('prints what the worker logged into main\'s log, leaving errors to the dev stderr passthrough', async () => {
+    const client = new RetrievalClient();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+      lastChild().emit('message', { type: 'log', level: 'log', text: '[knowledge-graph] map rebuilt: 300 conversations' });
+      lastChild().emit('message', { type: 'log', level: 'error', text: 'boom' });
+      expect(log).toHaveBeenCalledWith('[retrieval-worker] [knowledge-graph] map rebuilt: 300 conversations');
+      // Not packaged here: the worker's stderr already reached the terminal.
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+      client.dispose();
+    }
+  });
+
   it('relays worker events', async () => {
     const client = new RetrievalClient();
     const events: Array<[string, string]> = [];

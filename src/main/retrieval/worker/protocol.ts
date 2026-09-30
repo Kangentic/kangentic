@@ -73,4 +73,12 @@ export interface SlowSpanMessage {
   ms: number;
 }
 
-export type FromWorkerMessage = ReadyMessage | ReplyMessage | EventMessage | SlowSpanMessage;
+/** A line the worker logged. Its stdout goes nowhere and its stderr is kept
+ *  for crash reports, so its console reaches main's log this way. */
+export interface LogMessage {
+  type: 'log';
+  level: 'log' | 'info' | 'warn' | 'error';
+  text: string;
+}
+
+export type FromWorkerMessage = ReadyMessage | ReplyMessage | EventMessage | SlowSpanMessage | LogMessage;

@@ -7,8 +7,8 @@ import { runSearchEverything } from '../../search/search-core';
 import type { SearchHit, Project } from '../../../shared/types';
 import { isAnswerCaller } from './caller-url';
 import { ANSWER_SEARCH_BUDGET, answerSearchProjects, claimAnswerSearch, isAnswerSearchWatched, publishAnswerSearch } from './answer-search-trace';
-import { PASSAGES_SHOWN, type RelatedWork, type RelatedWorkTask } from '../../retrieval/related-work';
-import { relatedQueryTexts } from '../../retrieval/related-query-text';
+import type { RelatedWork, RelatedWorkTask } from '../../retrieval/related-work';
+import { PASSAGES_SHOWN, relatedQueryTexts } from '../../retrieval/related-query-text';
 import {
   INDEX_RESTARTING,
   rankRelatedWork,

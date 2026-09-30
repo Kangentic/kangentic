@@ -37,7 +37,7 @@ import { sweepCommitRecords, type CommitSweepResult } from './commit/commit-inde
 import { purgeCodeRecords, sweepCodeRecords, type CodeSweepResult } from './code/code-indexer';
 import { codeStatus, createBranchSizes } from './code/code-status';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
-import { graphService } from './graph/graph-service';
+import { graphService } from './graph-facade';
 import { createSummaryScheduler } from './summary/summary-scheduler';
 import { readSummaryFingerprint } from './summary/summary-sources';
 import { SummaryStore } from './summary/summary-store';
@@ -661,7 +661,15 @@ export const retrievalService = {
         return false;
       }
     });
-    graphService.setProjectExists((projectId) => projectStillExists(context, projectId));
+    // A restarted worker has lost any pass it was running, so every
+    // registered project's map is read again.
+    graphService.setProjectIds(() => {
+      try {
+        return context.projectRepo.list().map((project) => project.id);
+      } catch {
+        return [];
+      }
+    });
     if (attached) return;
     attached = true;
     context.sessionManager.on('exit', (sessionId: string) => {

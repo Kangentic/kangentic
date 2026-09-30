@@ -26,7 +26,8 @@ function readEsbuildExternals(): string[] {
   return [...(match?.[1] ?? '').matchAll(/'([^']+)'/g)].map((entry) => entry[1]);
 }
 
-async function bundleInputs(entry: string): Promise<esbuild.Metafile['inputs']> {
+/** The bundle's code, unminified so declarations keep their names. */
+async function bundledText(entry: string, devBuild: boolean): Promise<string> {
   const result = await esbuild.build({
     bundle: true,
     platform: 'node',
@@ -37,7 +38,27 @@ async function bundleInputs(entry: string): Promise<esbuild.Metafile['inputs']> 
     define: {
       MAIN_WINDOW_VITE_DEV_SERVER_URL: JSON.stringify(''),
       MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
-      __KANGENTIC_DEV__: 'true',
+      __KANGENTIC_DEV__: devBuild ? 'true' : 'false',
+    },
+    entryPoints: [path.join(REPO_ROOT, entry)],
+    write: false,
+    logLevel: 'silent',
+  });
+  return result.outputFiles[0].text;
+}
+
+async function bundleInputs(entry: string, devBuild = true): Promise<esbuild.Metafile['inputs']> {
+  const result = await esbuild.build({
+    bundle: true,
+    platform: 'node',
+    target: 'node24',
+    format: 'cjs',
+    external: readEsbuildExternals(),
+    conditions: ['require'],
+    define: {
+      MAIN_WINDOW_VITE_DEV_SERVER_URL: JSON.stringify(''),
+      MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
+      __KANGENTIC_DEV__: devBuild ? 'true' : 'false',
     },
     entryPoints: [path.join(REPO_ROOT, entry)],
     write: false,
@@ -85,6 +106,32 @@ describe('retrieval out-of-process boundary', () => {
     // Not vacuous: the worker does bundle the retrieval store.
     expect(Object.keys(inputs).some((input) => input.replace(/\\/g, '/').endsWith('src/main/retrieval/retrieval-store.ts'))).toBe(true);
   }, 30_000);
+
+  it('keeps the map, the searches and their readers out of the shipped main bundle', async () => {
+    // A value import of any of these from main-resident code would put a
+    // second copy on main: a map pass, or a scan of every vector. Types are
+    // erased, so main may still name their shapes. A production build, since
+    // the dev seeders run projection code on main until indexing moves; the
+    // residue their static imports leave (esbuild's module init calls, pure
+    // constant sets) declares no function, so the check is on functions.
+    const text = await bundledText('src/main/index.ts', false);
+    const workerOnly = [
+      'createGraphService',
+      'runProjectionPass',
+      'searchConversationMemory',
+      'searchRelatedWork',
+      'searchRelatedWorkAcross',
+      'searchCommits',
+      'readTaskKnowledge',
+      'prepareAnswer',
+      'createIndexStatusReader',
+    ];
+    const shipped = workerOnly.filter((name) => new RegExp(`function\\s+${name}\\s*\\(`).test(text));
+    expect(shipped, `Main bundles retrieval-worker code. Trace the import of each from src/main/index.ts: ${shipped.join(', ')}`).toEqual([]);
+    // Not vacuous: main does bundle its side of the worker, declarations named.
+    expect(text).toMatch(/class RetrievalClient\b|RetrievalClient = class\b/);
+    expect(text).toMatch(/function\s+embedQueryTexts\s*\(/);
+  }, 60_000);
 
   it('constructs RetrievalClient only in retrieval-client.ts', () => {
     const offenders: string[] = [];

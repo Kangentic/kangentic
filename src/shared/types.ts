@@ -6688,8 +6688,10 @@ export interface ElectronAPI {
      */
     taskSummary: (projectId: string, taskId: string) => Promise<string | null>;
     /** Cheap read of the cached Knowledge Graph projection plus its coverage
-     *  strip. Never triggers the projection pass. */
-    graphSnapshot: (projectId?: string | null) => Promise<KnowledgeGraphSnapshot | null>;
+     *  strip. Never triggers the projection pass. `knownProjectionKey` is the
+     *  key of the map the caller holds, so an unchanged one is not sent again
+     *  (see `KnowledgeGraphSnapshotWire`). */
+    graphSnapshot: (projectId?: string | null, knownProjectionKey?: string | null) => Promise<KnowledgeGraphSnapshotWire | null>;
     /** Every project with its indexed conversation count and last indexing
      *  time, for the Projects picker. Cheap: an index-only count per project. */
     graphProjects: () => Promise<KnowledgeGraphProjectSummary[]>;
@@ -7262,6 +7264,25 @@ export interface KnowledgeGraphSnapshot {
   /** Stale projections are still served: a slightly old map beats a blank one. */
   stale: boolean;
   semanticAvailable: boolean;
+  /** Identifies `projection` (its signature and the region names laid over it);
+   *  null with no map. The renderer sends it back with its next read, so an
+   *  unchanged map is not sent again. */
+  projectionKey?: string | null;
+}
+
+/**
+ * A snapshot as `graphSnapshot` returns it. The map is about 1 MB and an open
+ * graph re-reads its snapshot on every push, so main sends the map as JSON, and
+ * only when the reader does not already hold it; the renderer store turns this
+ * back into a `KnowledgeGraphSnapshot`. `projection` may also come whole (the
+ * UI tier's and the web demo's mock), and `null` there means no map yet.
+ */
+export interface KnowledgeGraphSnapshotWire extends Omit<KnowledgeGraphSnapshot, 'projection'> {
+  projection?: KnowledgeGraphProjection | null;
+  /** The map as JSON, when the reader's key did not match. */
+  projectionJson?: string;
+  /** The reader's key still matches: keep the map it holds. */
+  projectionUnchanged?: boolean;
 }
 
 export interface KnowledgeGraphStatus {

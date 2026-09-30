@@ -788,7 +788,7 @@ const api: ElectronAPI = {
     rebuildPlan: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REBUILD_PLAN),
     rebuildIndex: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REBUILD_INDEX),
     taskSummary: (projectId, taskId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_TASK_SUMMARY, projectId, taskId),
-    graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_SNAPSHOT, projectId),
+    graphSnapshot: (projectId, knownProjectionKey) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_SNAPSHOT, projectId, knownProjectionKey),
     graphProjects: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_PROJECTS),
     refreshGraph: (projectId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REFRESH, projectId),
     answerFromGraph: (

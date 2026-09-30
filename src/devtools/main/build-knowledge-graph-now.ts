@@ -28,7 +28,7 @@ import {
   runProjectionPass,
   writeProjectionCache,
 } from '../../main/retrieval/graph/projection-engine';
-import { graphService } from '../../main/retrieval/graph/graph-service';
+import { graphService } from '../../main/retrieval/graph-facade';
 
 export interface BuildKnowledgeGraphNowResult {
   nodes: number;

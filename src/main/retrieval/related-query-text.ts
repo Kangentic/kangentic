@@ -1,13 +1,22 @@
 /**
- * The text a related-work search runs on: the question's content words, and
- * the texts its query vectors are embedded from.
+ * The parts of related work both processes need: the text a search runs on
+ * (the question's content words, and the texts its query vectors are embedded
+ * from) and how its results are keyed.
  *
- * Pure, and kept apart from `related-work.ts` because both processes need it:
- * main embeds `relatedQueryTexts` before it calls the retrieval worker (only
- * main embeds), and the worker's search reads the same words for its keyword
- * query. One definition keeps the texts main embeds and the texts the search
- * asks for identical.
+ * Pure, and kept apart from `related-work.ts`, which reads the index and runs
+ * only in the retrieval worker: main embeds `relatedQueryTexts` before it calls
+ * the worker (only main embeds), and the worker's search reads the same words
+ * for its keyword query. One definition keeps the texts main embeds and the
+ * texts the search asks for identical.
  */
+
+/** Handed tasks that carry their best passage into the prompt; the rest carry facts only. */
+export const PASSAGES_SHOWN = 12;
+
+/** Where a task's best passage is kept in `ProjectRelatedWork.passages`. */
+export function passageKey(projectId: string, chunkId: number): string {
+  return `${projectId}:${chunkId}`;
+}
 
 /**
  * Words that shape a question without saying what it is about. Removed before
