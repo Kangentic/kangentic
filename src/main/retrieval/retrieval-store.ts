@@ -495,6 +495,39 @@ export class RetrievalStore {
   }
 
   /**
+   * The default-branch commits linked to one task, newest first: sha, text and
+   * commit time. The link is where the subject was first written (see
+   * commit-record.ts), not a merge record. One `idx_memory_chunks_task` lookup.
+   */
+  commitsForTask(taskId: string): Array<{ sha: string; text: string; committedMs: number }> {
+    return this.db
+      .prepare(
+        `SELECT doc_id AS sha, text, ts_start AS committedMs FROM memory_chunks
+         WHERE task_id = ? AND corpus = 'commit' AND seq = 0
+         ORDER BY ts_start DESC`,
+      )
+      .all(taskId) as Array<{ sha: string; text: string; committedMs: number }>;
+  }
+
+  /**
+   * Commits whose sha starts with a prefix, newest first, with the task each is
+   * linked to. A range on the document key, so it uses the corpus/doc index;
+   * the full-text index never holds a sha.
+   */
+  commitsByShaPrefix(prefix: string, limit: number): Array<{ sha: string; text: string; committedMs: number; taskId: string | null }> {
+    const lower = prefix.toLowerCase();
+    // The first key past every sha with this prefix: 'g' follows 'f' in ASCII.
+    const upper = `${lower}g`;
+    return this.db
+      .prepare(
+        `SELECT doc_id AS sha, text, ts_start AS committedMs, task_id AS taskId FROM memory_chunks
+         WHERE corpus = 'commit' AND seq = 0 AND doc_id >= ? AND doc_id < ?
+         ORDER BY ts_start DESC LIMIT ?`,
+      )
+      .all(lower, upper, limit) as Array<{ sha: string; text: string; committedMs: number; taskId: string | null }>;
+  }
+
+  /**
    * Where each chunk sits, without its text.
    *
    * The related-work rollup reads well over a thousand of these per question,

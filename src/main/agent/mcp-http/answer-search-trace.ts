@@ -16,9 +16,27 @@ export interface AnswerSearchEvent {
   query: string;
   /** Sessions whose conversations the search returned. */
   sessionIds: string[];
+  /** Tasks the search's commit hits are linked to, whose conversations the
+   *  map rings too. */
+  taskIds?: string[];
 }
 
 type Listener = (event: AnswerSearchEvent) => void;
+
+/**
+ * The map documents a search found, to ring: the conversations of the sessions
+ * it returned and of the tasks its commit hits are linked to, each once.
+ */
+export function searchDocKeys(
+  event: AnswerSearchEvent,
+  docKeysBySession: ReadonlyMap<string, ReadonlyArray<string>>,
+  docKeysByTask: ReadonlyMap<string, ReadonlyArray<string>>,
+): string[] {
+  return [...new Set([
+    ...event.sessionIds.flatMap((sessionId) => docKeysBySession.get(sessionId) ?? []),
+    ...(event.taskIds ?? []).flatMap((taskId) => docKeysByTask.get(taskId) ?? []),
+  ])];
+}
 
 /**
  * Searches one question may make.

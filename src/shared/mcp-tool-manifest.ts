@@ -55,8 +55,8 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_create_task', label: 'Create Task', blurb: 'add a task to any board column or the backlog', category: 'tasks' },
   { name: 'kangentic_list_tasks', label: 'List Tasks', blurb: 'browse tasks, optionally filtered by column', category: 'tasks' },
   { name: 'kangentic_search_tasks', label: 'Search Tasks', blurb: 'keyword search across board and backlog tasks', category: 'tasks' },
-  { name: 'kangentic_find_task', label: 'Find Task', blurb: 'look up a task by ID, branch, title, or PR number', category: 'tasks' },
-  { name: 'kangentic_get_current_task', label: 'Current Task', blurb: 'resolve the task for the current directory or branch', category: 'tasks' },
+  { name: 'kangentic_find_task', label: 'Find Task', blurb: 'look up a task by ID, branch, title, or PR number, with its summary, linked commits, and changed files', category: 'tasks' },
+  { name: 'kangentic_get_current_task', label: 'Current Task', blurb: 'resolve the task for the current directory or branch, with its branch, PR, and what the Knowledge Graph knows about it', category: 'tasks' },
   { name: 'kangentic_get_task_stats', label: 'Task Stats', blurb: 'token usage, cost, duration, lines changed, and the subagent-type breakdown per task', category: 'tasks' },
   { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description (full, in-place find/replace, or append), PR info, agent, model, effort, permission mode, run mode, priority, labels, base branch, worktree, and attachments', category: 'tasks' },
   { name: 'kangentic_move_task', label: 'Move Task', blurb: 'move a task between columns and place it at a slot, running the same lifecycle as a drag', category: 'tasks' },
@@ -87,7 +87,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_update_backlog_item', label: 'Update Backlog Item', blurb: 'edit a backlog item title, description, priority, labels, or attachments', category: 'board' },
   { name: 'kangentic_delete_backlog_item', label: 'Delete Backlog Item', blurb: 'permanently remove a backlog item and its attachments', category: 'board' },
   { name: 'kangentic_list_projects', label: 'List Projects', blurb: 'every Kangentic project registered on this machine', category: 'board' },
-  { name: 'kangentic_search', label: 'Search', blurb: 'unified search across tasks, backlog, session events, projects, and past conversations (keyword or semantic), or tasks ranked by how much their conversations match', category: 'board' },
+  { name: 'kangentic_search', label: 'Search', blurb: 'unified search across tasks, backlog, session events, projects, past conversations (by meaning or keyword), and commits, or tasks ranked by a topic or by how like one task they are', category: 'board' },
 
   // ── Sessions (session-tools.ts, steering-tools.ts) - per-task session history,
   //    transcripts, handoff, and the one write-side tool that steers a live session ──

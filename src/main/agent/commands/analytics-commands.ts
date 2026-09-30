@@ -128,6 +128,7 @@ export const handleGetTaskStats: CommandHandler = (
     task.description.toLowerCase().includes(query);
 
   const taskStats: Array<{
+    displayId: number;
     title: string;
     status: string;
     totalTokens: number;
@@ -151,6 +152,7 @@ export const handleGetTaskStats: CommandHandler = (
     const isCompleted = task.archived_at !== null;
 
     taskStats.push({
+      displayId: task.display_id,
       title: task.title,
       status: isCompleted ? 'completed' : 'active',
       totalTokens: tokens,
@@ -194,7 +196,7 @@ export const handleGetTaskStats: CommandHandler = (
   for (const stat of taskStats.slice(0, 20)) {
     const statusTag = stat.status === 'completed' ? '[done]' : '[active]';
     lines.push(
-      `- ${stat.title} ${statusTag}: ${stat.totalTokens.toLocaleString()} tokens, $${stat.cost.toFixed(4)}, ${Math.round(stat.duration / 1000)}s, ${stat.toolCalls} tool calls, ${stat.linesChanged} lines changed`,
+      `- #${stat.displayId} ${stat.title} ${statusTag}: ${stat.totalTokens.toLocaleString()} tokens, $${stat.cost.toFixed(4)}, ${Math.round(stat.duration / 1000)}s, ${stat.toolCalls} tool calls, ${stat.linesChanged} lines changed`,
     );
   }
   if (taskStats.length > 20) {

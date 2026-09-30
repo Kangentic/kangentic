@@ -25,6 +25,19 @@ export class SummaryStore {
     return summaries;
   }
 
+  /** The summaries of some tasks with when each was written, by task id. A
+   *  task with none is absent. One primary-key lookup per task. */
+  entriesFor(taskIds: ReadonlyArray<string>): Map<string, { summary: string; createdAt: string }> {
+    const entries = new Map<string, { summary: string; createdAt: string }>();
+    if (taskIds.length === 0) return entries;
+    const statement = this.db.prepare('SELECT summary, created_at AS createdAt FROM memory_task_summaries WHERE task_id = ?');
+    for (const taskId of taskIds) {
+      const row = statement.get(taskId) as { summary: string; createdAt: string } | undefined;
+      if (row) entries.set(taskId, row);
+    }
+    return entries;
+  }
+
   /** Every summary with when it was written, for the task records that carry them. */
   all(): Map<string, { summary: string; createdAt: string }> {
     const rows = this.db

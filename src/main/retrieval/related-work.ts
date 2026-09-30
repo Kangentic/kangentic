@@ -84,6 +84,8 @@ import { CONVERSATION_CORPUS, type MemoryCorpus } from './corpora';
 import { SEMANTIC_RELEVANCE_CUTOFF } from './memory-search';
 import { namesCodeIdentifier } from './code/code-record';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
+import { toBoardTaskFacts } from './board-task-facts';
+import type { BoardTaskFacts } from './answer-tasks';
 import type { ChunkPlacement, Embedder } from './types';
 
 /** Nearest chunks read per query vector. */
@@ -436,6 +438,13 @@ export interface SearchRelatedWorkInput {
   queryVectors?: ReadonlyArray<Float32Array>;
   /** Whether source code is indexed (`codeIndexOn`), so code passages are searched. */
   code?: boolean;
+  /**
+   * The text the keyword search runs on, when it should not be the question.
+   * Related work for a task embeds the task's whole title and description but
+   * searches keywords by its title: a long description ORs together a hundred
+   * words and matches everything.
+   */
+  keywordText?: string;
 }
 
 export interface RelatedWork {
@@ -581,7 +590,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
 
   // Keyword matches, each corpus ranked on its own so a record's rank 1 earns
   // what a conversation's does. A task keeps its best rank of them.
-  const keywordQuery = relatedKeywordQuery(`${input.question} ${anchors}`);
+  const keywordQuery = relatedKeywordQuery(input.keywordText ?? `${input.question} ${anchors}`);
   let lexical: Array<{ chunkId: number; rank: number }> = [];
   if (keywordQuery) {
     await yieldToEventLoop();
@@ -762,6 +771,23 @@ export function boardRecordTasks(
 ): RelatedWorkRecordTask[] {
   try {
     return new RetrievalStore(getDb(projectId)).boardTaskTitles();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Every board task with its facts (cost, duration, tokens, sessions, churn,
+ * outcome, pull request), for Ask's task table and the rows `kangentic_search`
+ * ranks. Empty when the project database cannot be read, which leaves the
+ * caller to the indexed conversations rather than failing it.
+ */
+export function readBoardTaskFacts(
+  projectId: string,
+  getDb: (projectId: string) => Database.Database = getProjectDb,
+): BoardTaskFacts[] {
+  try {
+    return new RetrievalStore(getDb(projectId)).boardTaskFacts().map(toBoardTaskFacts);
   } catch {
     return [];
   }

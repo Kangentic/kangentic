@@ -19,24 +19,45 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { SessionSummary, SubagentUsageTotals } from '../../src/shared/types';
 
-const { mockGetById, mockGetSummaryForTask, mockGetSubagentTotalsByType, mockGetTaskFanOuts } = vi.hoisted(() => ({
+const {
+  mockGetById,
+  mockGetSummaryForTask,
+  mockGetSubagentTotalsByType,
+  mockGetTaskFanOuts,
+  mockListArchived,
+  mockList,
+  mockListAllSummaries,
+} = vi.hoisted(() => ({
   mockGetById: vi.fn(),
   mockGetSummaryForTask: vi.fn(),
   mockGetSubagentTotalsByType: vi.fn(),
   mockGetTaskFanOuts: vi.fn(),
+  mockListArchived: vi.fn(),
+  mockList: vi.fn(),
+  mockListAllSummaries: vi.fn(),
 }));
 
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
     getById = mockGetById;
     getByDisplayId = vi.fn();
+    list = mockList;
+    listArchived = mockListArchived;
   },
 }));
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     getSummaryForTask = mockGetSummaryForTask;
+    listAllSummaries = mockListAllSummaries;
   },
+}));
+
+// The aggregate branch walks the board's lanes for its active tasks.
+vi.mock('../../src/main/agent/commands/column-resolver', () => ({
+  listActiveSwimlanes: () => [{ id: 'lane-work', name: 'In Progress' }],
+  listBoardColumns: vi.fn(),
+  isBoardColumn: vi.fn(),
 }));
 
 vi.mock('../../src/main/retrieval/conversation/conversation-usage-store', () => ({
@@ -133,6 +154,47 @@ describe('handleGetTaskStats subagent breakdown', () => {
     // The unresolved group is reported, not dropped: its tokens are real and
     // the rows have to keep summing to the per-type totals above.
     expect(response.message).toContain('(unlinked) - review-finder x1');
+  });
+
+  describe('aggregate rows', () => {
+    const ARCHIVED_TASK = { id: 'task-archived', title: 'Fix the flaky test', description: '', display_id: 42, archived_at: '2026-09-01T00:00:00.000Z' };
+    const ACTIVE_TASK = { id: 'task-active', title: 'Add relay pairing', description: '', display_id: 7, archived_at: null };
+    const UNMEASURED_TASK = { id: 'task-unmeasured', title: 'Never ran an agent', description: '', display_id: 9, archived_at: null };
+
+    beforeEach(() => {
+      mockListArchived.mockReturnValue([ARCHIVED_TASK]);
+      mockList.mockReturnValue([ACTIVE_TASK, UNMEASURED_TASK]);
+      mockListAllSummaries.mockReturnValue({
+        [ARCHIVED_TASK.id]: makeSummary({ totalInputTokens: 9000, totalOutputTokens: 1000 }),
+        [ACTIVE_TASK.id]: makeSummary({ totalInputTokens: 100, totalOutputTokens: 50 }),
+      });
+    });
+
+    it('starts each row with the task\'s #N, so an answer can name the task by its ticket', () => {
+      const response = handleGetTaskStats({}, makeContext());
+
+      expect(response.success).toBe(true);
+      const rows = (response.message ?? '').split('\n').filter((line) => line.startsWith('- '));
+      expect(rows).toHaveLength(2);
+      // Sorted by tokens, most first.
+      expect(rows[0]).toMatch(/^- #42 Fix the flaky test \[done\]: /);
+      expect(rows[1]).toMatch(/^- #7 Add relay pairing \[active\]: /);
+    });
+
+    it('leaves out a task no session measured', () => {
+      const response = handleGetTaskStats({}, makeContext());
+      expect(response.message).not.toContain('Never ran an agent');
+      expect(response.message).toContain('2 task(s) with metrics');
+    });
+
+    it('carries the ticket number in the data rows too', () => {
+      const response = handleGetTaskStats({}, makeContext());
+      const data = response.data as { tasks: Array<{ displayId: number; title: string }> };
+      expect(data.tasks.map((task) => [task.displayId, task.title])).toEqual([
+        [42, 'Fix the flaky test'],
+        [7, 'Add relay pairing'],
+      ]);
+    });
   });
 
   it('omits the subagent block entirely for a task with zero subagent rows', () => {

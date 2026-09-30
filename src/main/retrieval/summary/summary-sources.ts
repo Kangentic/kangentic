@@ -51,6 +51,37 @@ export function changedFilesOf(changeText: string): string[] {
 }
 
 /**
+ * A task's changed files, most-changed first: counted by how many of its
+ * sessions changed each one. `changeTexts` is each session's changes document.
+ * Read by a summary's input and by the task reads agents make over MCP.
+ */
+export function rankChangedFiles(changeTexts: ReadonlyArray<string>): string[] {
+  const fileSessions = new Map<string, number>();
+  for (const text of changeTexts) {
+    for (const file of new Set(changedFilesOf(text))) fileSessions.set(file, (fileSessions.get(file) ?? 0) + 1);
+  }
+  return [...fileSessions].sort((left, right) => right[1] - left[1]).map(([file]) => file);
+}
+
+/**
+ * Reads one task's changes documents, one per agent session, newest session
+ * first as a summary's input reads them, so the two rank tied files the same
+ * way. A resumed session shares its transcript, so each document counts once.
+ * Every read is an index lookup: sessions by task, then chunks by document.
+ */
+export function createTaskChangeTextsReader(db: Database.Database): (taskId: string) => string[] {
+  const sessionsOf = db.prepare(
+    `SELECT agent_session_id AS docId FROM sessions
+     WHERE task_id = ? AND agent_session_id IS NOT NULL
+     ORDER BY started_at DESC`,
+  );
+  const changeTextOf = db.prepare("SELECT text FROM memory_chunks WHERE corpus = 'change' AND doc_id = ? ORDER BY seq");
+  return (taskId) => [...new Set((sessionsOf.all(taskId) as Array<{ docId: string }>).map((session) => session.docId))]
+    .map((docId) => (changeTextOf.all(docId) as Array<{ text: string }>).map((row) => row.text).join('\n'))
+    .filter((text) => text.length > 0);
+}
+
+/**
  * What every finished task's summary is written from, summed up in one read, so
  * a pass can tell nothing has changed without reading every input.
  *
@@ -135,15 +166,8 @@ export async function readSummaryCandidates(
         return Number.isNaN(at) ? latest : Math.max(latest, at);
       }, 0);
 
-      const fileSessions = new Map<string, number>();
-      for (const docId of docIds) {
-        const text = (changeTextOf.all(docId) as Array<{ text: string }>).map((row) => row.text).join('\n');
-        for (const file of new Set(changedFilesOf(text))) fileSessions.set(file, (fileSessions.get(file) ?? 0) + 1);
-      }
-      const changedFiles = [...fileSessions]
-        .sort((left, right) => right[1] - left[1])
-        .slice(0, CHANGED_FILES)
-        .map(([file]) => file);
+      const changeTexts = docIds.map((docId) => (changeTextOf.all(docId) as Array<{ text: string }>).map((row) => row.text).join('\n'));
+      const changedFiles = rankChangedFiles(changeTexts).slice(0, CHANGED_FILES);
 
       const closingMessages: string[] = [];
       for (const docId of docIds.slice(0, CLOSING_SESSIONS)) {

@@ -68,6 +68,15 @@ vi.mock('../../src/main/ipc/handlers/strategy-propagation', () => ({
   buildColumnStrategyChanges: vi.fn(() => []),
 }));
 
+// The task reads' Knowledge Graph lookup is tested where it lives
+// (task-knowledge-store.test.ts, against a real database). Here only the
+// context's gate around it is: the index switch, the summaries switch, and a
+// read that fails.
+const readTaskKnowledgeSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/retrieval/task-knowledge', () => ({
+  readTaskKnowledge: readTaskKnowledgeSpy,
+}));
+
 // RequestResolver is imported by mcp-project-context and called with `new`.
 // Track constructor calls via a hoisted spy variable that the test body can
 // inspect after each call.
@@ -82,6 +91,7 @@ vi.mock('../../src/main/agent/mcp-http/project-resolver', () => {
 });
 
 import { createRequestResolver, buildCommandContextForProject } from '../../src/main/agent/mcp-project-context';
+import { getProjectDb } from '../../src/main/db/database';
 import {
   propagateStrategyToLiveSessions,
   buildColumnStrategyChanges,
@@ -374,6 +384,85 @@ describe('buildCommandContextForProject - getPrResolveOptions', () => {
     const { ipcContext } = makeOptionsContext(() => { throw new Error('config unreadable'); });
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
     expect(context!.getPrRepollInFlight!()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readTaskKnowledge
+//
+// What `kangentic_find_task` and `kangentic_get_current_task` print under a
+// task comes through this gate. The index switch decides whether the index may
+// be read at all. The Task summaries switch only stops NEW summaries, so a
+// written one is still shown: it is reported to the printer, never applied
+// here. A failed read must never fail the task lookup it decorates.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - readTaskKnowledge', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeKnowledgeContext(config: (() => unknown) | unknown) {
+    const project = makeProject({ id: DEFAULT_ID });
+    const load = vi.fn(() => (typeof config === 'function' ? (config as () => unknown)() : config));
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      configManager: { load },
+    } as unknown as IpcContext;
+    return buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+  }
+
+  it('reads the index of the target project, and reports the summaries switch as on by default', () => {
+    const byTask = new Map([['task-a', { summary: null, commits: [], commitCount: 0, changedFiles: [], changedFileCount: 0 }]]);
+    readTaskKnowledgeSpy.mockReturnValue(byTask);
+    const database = { projectDatabase: true };
+    vi.mocked(getProjectDb).mockReturnValueOnce(database as never);
+    const context = makeKnowledgeContext({ knowledgeGraph: undefined });
+
+    const read = context.readTaskKnowledge!(['task-a']);
+
+    expect(getProjectDb).toHaveBeenCalledWith(DEFAULT_ID);
+    expect(readTaskKnowledgeSpy).toHaveBeenCalledWith(database, ['task-a']);
+    expect(read).toEqual({ indexOn: true, summariesOn: true, byTask });
+  });
+
+  it('does not read the index at all when indexing is off', () => {
+    const context = makeKnowledgeContext({ knowledgeGraph: { indexingEnabled: false } });
+
+    expect(context.readTaskKnowledge!(['task-a'])).toEqual({ indexOn: false });
+    expect(readTaskKnowledgeSpy).not.toHaveBeenCalled();
+  });
+
+  it('reads the index while only the Task summaries switch is off, and reports it off', () => {
+    readTaskKnowledgeSpy.mockReturnValue(new Map());
+    const context = makeKnowledgeContext({ knowledgeGraph: { indexingEnabled: true, taskSummaries: false } });
+
+    const read = context.readTaskKnowledge!(['task-a']);
+
+    expect(readTaskKnowledgeSpy).toHaveBeenCalledOnce();
+    expect(read).toMatchObject({ indexOn: true, summariesOn: false });
+  });
+
+  it('treats a config that cannot be read as the defaults: index on, summaries on', () => {
+    readTaskKnowledgeSpy.mockReturnValue(new Map());
+    const context = makeKnowledgeContext(() => { throw new Error('config unreadable'); });
+
+    expect(context.readTaskKnowledge!(['task-a'])).toMatchObject({ indexOn: true, summariesOn: true });
+  });
+
+  it('answers with no knowledge, and does not throw, when the index read fails', () => {
+    readTaskKnowledgeSpy.mockImplementation(() => { throw new Error('no such table: memory_chunks'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const context = makeKnowledgeContext({ knowledgeGraph: undefined });
+
+      const read = context.readTaskKnowledge!(['task-a']);
+
+      expect(read).toEqual({ indexOn: true, summariesOn: true, byTask: new Map() });
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

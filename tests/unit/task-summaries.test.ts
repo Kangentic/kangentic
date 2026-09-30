@@ -16,7 +16,12 @@ import {
   SUMMARY_BATCH_SIZE,
   type SummaryInput,
 } from '../../src/main/retrieval/summary/summary-prompt';
-import { changedFilesOf, lastAssistantMessage } from '../../src/main/retrieval/summary/summary-sources';
+import {
+  changedFilesOf,
+  lastAssistantMessage,
+  rankChangedFiles,
+  readSummaryCandidates,
+} from '../../src/main/retrieval/summary/summary-sources';
 import { runSummaryPass } from '../../src/main/retrieval/summary/summary-pass';
 import { createSummaryScheduler } from '../../src/main/retrieval/summary/summary-scheduler';
 import { SummaryStore } from '../../src/main/retrieval/summary/summary-store';
@@ -118,10 +123,67 @@ describe('reading a finished task', () => {
   });
 });
 
+describe('ranking a task\'s changed files', () => {
+  /** A session-changes document: a header line, then a file per line. */
+  const changes = (...files: string[]): string => `Files changed:\n${files.join('\n')}`;
+
+  it('puts the file the most sessions changed first', () => {
+    expect(rankChangedFiles([
+      changes('src/a.ts', 'src/b.ts'),
+      changes('src/b.ts'),
+      changes('src/b.ts', 'src/c.ts'),
+    ])[0]).toBe('src/b.ts');
+  });
+
+  it('counts a file once per session, however many times the session lists it', () => {
+    // src/a.ts is listed three times in one session and src/b.ts once in each
+    // of two: b was changed by more sessions, so it ranks first.
+    expect(rankChangedFiles([
+      changes('src/a.ts', 'src/a.ts', 'src/a.ts', 'src/b.ts'),
+      changes('src/b.ts'),
+    ])).toEqual(['src/b.ts', 'src/a.ts']);
+  });
+
+  it('keeps first-seen order among files the same number of sessions changed', () => {
+    expect(rankChangedFiles([
+      changes('src/z.ts', 'src/y.ts'),
+      changes('src/x.ts'),
+    ])).toEqual(['src/z.ts', 'src/y.ts', 'src/x.ts']);
+    // The tie is first seen, not alphabetical: a later two-session file jumps ahead of it.
+    expect(rankChangedFiles([
+      changes('src/z.ts'),
+      changes('src/y.ts'),
+      changes('src/y.ts'),
+    ])).toEqual(['src/y.ts', 'src/z.ts']);
+  });
+
+  it('reads a file without the words a session-changes document appends to it', () => {
+    expect(rankChangedFiles([
+      changes('src/a.ts (a relay client)'),
+      changes('src/a.ts', 'README.md'),
+    ])).toEqual(['src/a.ts', 'README.md']);
+  });
+
+  it('ranks nothing for no sessions, and never takes the header line for a file', () => {
+    expect(rankChangedFiles([])).toEqual([]);
+    expect(rankChangedFiles(['Files changed:'])).toEqual([]);
+    expect(rankChangedFiles([changes('src/a.ts')])).not.toContain('Files changed:');
+  });
+});
+
 interface Call { sql: string; args: unknown[] }
 
-/** A board of finished tasks and the summaries already written, by SQL shape. */
-function fakeBoard(state: { finished: string[]; summaries?: Array<{ taskId: string; inputHash: string }> }) {
+/**
+ * A board of finished tasks and the summaries already written, by SQL shape.
+ * `sessionDocIds` are the transcripts every task's sessions share the names of,
+ * and `changes` is each one's session-changes chunks by document id.
+ */
+function fakeBoard(state: {
+  finished: string[];
+  summaries?: Array<{ taskId: string; inputHash: string }>;
+  sessionDocIds?: string[];
+  changes?: Record<string, string[]>;
+}) {
   const calls: Call[] = [];
   const db = {
     prepare(sql: string) {
@@ -130,7 +192,10 @@ function fakeBoard(state: { finished: string[]; summaries?: Array<{ taskId: stri
         if (sql.includes("WHERE w.role = 'done'")) {
           return state.finished.map((taskId) => ({ taskId, title: `Task ${taskId}`, description: 'Body.' }));
         }
-        if (sql.includes('FROM sessions WHERE task_id = ?')) return [{ docId: `agent-${String(args[0])}`, at: '2026-09-20T00:00:00.000Z' }];
+        if (sql.includes('FROM sessions WHERE task_id = ?')) {
+          return (state.sessionDocIds ?? [`agent-${String(args[0])}`]).map((docId) => ({ docId, at: '2026-09-20T00:00:00.000Z' }));
+        }
+        if (sql.includes("corpus = 'change'")) return (state.changes?.[String(args[0])] ?? []).map((text) => ({ text }));
         if (sql.includes("corpus = 'conversation'")) return [{ text: 'Assistant: Finished.' }];
         if (sql.includes('SELECT task_id AS taskId, input_hash AS inputHash')) return state.summaries ?? [];
         return [];
@@ -151,6 +216,46 @@ function fakeBoard(state: { finished: string[]; summaries?: Array<{ taskId: stri
 
 const passDeps = (db: Database.Database) => ({ getDb: () => db, now: () => '2026-09-28T00:00:00.000Z', yieldToEventLoop: async () => undefined });
 const summaryWrites = (calls: Call[]) => calls.filter((call) => call.sql.includes('INSERT INTO memory_task_summaries'));
+
+describe('the changed files a summary is written from', () => {
+  it('ranks them by sessions, keeps first-seen order among ties, and reads the eight most changed', async () => {
+    // Ten files in the first transcript, two of them changed again in the second.
+    const firstTranscript = `Files changed:\n${Array.from({ length: 10 }, (_unused, index) => `src/file-${index}.ts`).join('\n')}`;
+    const secondTranscript = 'Files changed:\nsrc/file-9.ts\nsrc/file-8.ts';
+    const { db } = fakeBoard({
+      finished: ['t1'],
+      sessionDocIds: ['doc-1', 'doc-2'],
+      changes: { 'doc-1': [firstTranscript], 'doc-2': [secondTranscript] },
+    });
+
+    const [candidate] = await readSummaryCandidates(db, async () => undefined);
+
+    expect(candidate.input.changedFiles).toEqual([
+      'src/file-8.ts', 'src/file-9.ts', 'src/file-0.ts', 'src/file-1.ts',
+      'src/file-2.ts', 'src/file-3.ts', 'src/file-4.ts', 'src/file-5.ts',
+    ]);
+  });
+
+  it('reads a resumed session\'s shared transcript once', async () => {
+    // Two session rows name one transcript. Counted twice, src/b.ts would
+    // outrank src/a.ts instead of tying it behind it.
+    const { db } = fakeBoard({
+      finished: ['t1'],
+      sessionDocIds: ['doc-other', 'doc-shared', 'doc-shared'],
+      changes: { 'doc-other': ['Files changed:\nsrc/a.ts'], 'doc-shared': ['Files changed:\nsrc/b.ts'] },
+    });
+
+    const [candidate] = await readSummaryCandidates(db, async () => undefined);
+
+    expect(candidate.input.changedFiles).toEqual(['src/a.ts', 'src/b.ts']);
+  });
+
+  it('names no files for a task whose sessions changed none', async () => {
+    const { db } = fakeBoard({ finished: ['t1'] });
+    const [candidate] = await readSummaryCandidates(db, async () => undefined);
+    expect(candidate.input.changedFiles).toEqual([]);
+  });
+});
 
 describe('a summary pass', () => {
   it('writes a summary for each finished task the reply covers, ten to a call', async () => {

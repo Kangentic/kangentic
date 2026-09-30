@@ -5,7 +5,6 @@ import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { searchConversationMemory } from '../../retrieval/memory-search';
 import { RetrievalStore } from '../../retrieval/retrieval-store';
-import { toBoardTaskFacts } from '../../retrieval/board-task-facts';
 import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { graphService } from '../../retrieval/graph/graph-service';
@@ -19,7 +18,6 @@ import {
   refPrefixFor,
   taskRef,
   type AnswerTaskRow,
-  type BoardTaskFacts,
 } from '../../retrieval/answer-tasks';
 import {
   PASSAGES_SHOWN,
@@ -28,10 +26,11 @@ import {
   searchRelatedWorkAcross,
   toProjectRelatedWork,
   boardRecordTasks,
+  readBoardTaskFacts,
   type ProjectRelatedWork,
   type ProjectRelatedWorkTask,
 } from '../../retrieval/related-work';
-import { watchAnswerSearches } from '../../agent/mcp-http/answer-search-trace';
+import { searchDocKeys, watchAnswerSearches } from '../../agent/mcp-http/answer-search-trace';
 import { estimateTokens } from '../../retrieval/token-estimate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { broadcast } from '../../pop-out/window-broadcast';
@@ -78,19 +77,6 @@ const RELATED_OVERFETCH = 24;
 /** Shown. Short enough to read at a glance while reading the task. */
 const RELATED_RESULT_COUNT = 5;
 import type { IpcContext } from '../ipc-context';
-
-/**
- * Every board task with its facts, for the Knowledge Graph's task table. Empty
- * when the project database cannot be read, which leaves the table to the
- * indexed conversations rather than failing the question.
- */
-function readBoardTasks(projectId: string): BoardTaskFacts[] {
-  try {
-    return new RetrievalStore(getProjectDb(projectId)).boardTaskFacts().map(toBoardTaskFacts);
-  } catch {
-    return [];
-  }
-}
 
 /**
  * The chat's warm session under this run, or null when the agent has none.
@@ -403,7 +389,7 @@ export function registerSearchHandlers(context: IpcContext): void {
         if (parts.every((part) => !part.projection)) return { ok: false, reason: 'the map is still building' };
         const buildTaskTable = () => {
           const tables = parts.map((part) => {
-            const boardTasks = timeSyncWork('answer:board-tasks', () => readBoardTasks(part.project.id));
+            const boardTasks = timeSyncWork('answer:board-tasks', () => readBoardTaskFacts(part.project.id));
             return timeSyncWork('answer:table', () => buildAnswerTaskTable(part.projection ?? EMPTY_PROJECTION, granularity, scope, boardTasks));
           });
           return acrossProjects
@@ -597,18 +583,25 @@ export function registerSearchHandlers(context: IpcContext): void {
         // The agent's own searches, shown as they happen: a step line in the
         // chat and rings on the map.
         const docKeysBySession = new Map<string, string[]>();
+        const docKeysByTask = new Map<string, string[]>();
         for (const node of nodesInScope) {
-          if (!node.sessionId) continue;
-          const list = docKeysBySession.get(node.sessionId) ?? [];
-          list.push(node.docKey);
-          docKeysBySession.set(node.sessionId, list);
+          if (node.sessionId) {
+            const list = docKeysBySession.get(node.sessionId) ?? [];
+            list.push(node.docKey);
+            docKeysBySession.set(node.sessionId, list);
+          }
+          if (node.taskId) {
+            const list = docKeysByTask.get(node.taskId) ?? [];
+            list.push(node.docKey);
+            docKeysByTask.set(node.taskId, list);
+          }
         }
         const stopTrace = retrieval
           ? watchAnswerSearches(`${ANSWER_CALLER_PREFIX}${callerChat}`, (search) => {
             emit({
               kind: 'search',
               query: search.query,
-              docKeys: search.sessionIds.flatMap((sessionId) => docKeysBySession.get(sessionId) ?? []),
+              docKeys: searchDocKeys(search, docKeysBySession, docKeysByTask),
             });
           })
           : () => {};

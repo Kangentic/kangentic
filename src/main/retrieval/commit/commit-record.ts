@@ -113,3 +113,12 @@ export function commitSubjectOf(text: string): string {
   const newline = text.indexOf('\n');
   return (newline === -1 ? text : text.slice(0, newline)).trim();
 }
+
+/**
+ * A subject as an agent is shown it: a squash-merge's trailing `(#812)` spelled
+ * `(PR 812)`. A `#N` reads as a task everywhere an agent writes, and the Ask
+ * answer parser would take the pull request's number for a task's.
+ */
+export function subjectForAgents(subject: string): string {
+  return subject.replace(/\(#(\d+)\)/g, '(PR $1)');
+}

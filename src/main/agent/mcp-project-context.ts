@@ -21,6 +21,8 @@ import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
 import { RequestResolver } from './mcp-http/project-resolver';
 import { prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '../pr/pr-linking';
+import { readTaskKnowledge, type TaskKnowledge } from '../retrieval/task-knowledge';
+import { taskSummariesOn } from '../../shared/answer-agent';
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -277,6 +279,28 @@ export function buildCommandContextForProject(
     // row, and the task's current state rather than the state at failure time.
     onRunAutomation: (automationId, taskId) =>
       runAutomationAgain(ipcContext, projectId, taskId, automationId),
+
+    // Written summaries show whatever the Task summaries switch says: the
+    // switch stops new ones being written, and the ones already written keep
+    // helping, as they do in search and Ask. The whole read waits on the index,
+    // which is the switch that says whether the index may be read at all.
+    readTaskKnowledge: (taskIds) => {
+      let knowledgeGraph: AppConfig['knowledgeGraph'];
+      try {
+        knowledgeGraph = ipcContext.configManager.load().knowledgeGraph;
+      } catch {
+        knowledgeGraph = undefined;
+      }
+      if (knowledgeGraph?.indexingEnabled === false) return { indexOn: false };
+      let byTask: Map<string, TaskKnowledge>;
+      try {
+        byTask = readTaskKnowledge(getProjectDb(projectId), taskIds);
+      } catch (error) {
+        console.warn('[MCP] could not read task knowledge:', error);
+        byTask = new Map();
+      }
+      return { indexOn: true, summariesOn: taskSummariesOn(knowledgeGraph), byTask };
+    },
   };
 }
 

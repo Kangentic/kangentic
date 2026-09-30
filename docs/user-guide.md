@@ -863,7 +863,9 @@ Keyword (full-text) search is always available while indexing is on. Turning on 
 
 - The [Search Palette](#search-palette) shows a **Conversations** group of keyword matches; a hit opens the viewer at the matched turn.
 - The **View conversation** pill in the [Task Detail Dialog](#task-detail-dialog) opens the task's newest session directly, no search needed.
-- Agents can recall past conversations themselves via the `kangentic_search` MCP tool (`mode: "hybrid"` for semantic) and drill into a cited turn with `kangentic_get_transcript` - see [mcp-server.md](mcp-server.md).
+- Agents read what the Knowledge Graph knows over MCP - see [mcp-server.md](mcp-server.md):
+  - `kangentic_search` recalls past conversations by meaning (the default) and finds the commits a query matches, each with the task it came from. It ranks tasks by a topic (`groupBy: "task"`, with each task's facts and summary) or by how like one task they are (`relatedToTask`). An agent drills into a cited turn with `kangentic_get_transcript`.
+  - `kangentic_find_task` and `kangentic_get_current_task` carry a finished task's summary, the commits linked to it, and the files its sessions changed.
 
 ### The Conversation Viewer
 

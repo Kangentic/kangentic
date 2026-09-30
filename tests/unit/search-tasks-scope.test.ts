@@ -47,7 +47,8 @@ vi.mock('../../src/main/agent/commands/column-resolver', () => ({
 // ---------------------------------------------------------------------------
 
 import { handleSearchTasks, handleFindTask } from '../../src/main/agent/commands/search-commands';
-import type { CommandContext } from '../../src/main/agent/commands/types';
+import type { CommandContext, TaskKnowledgeRead } from '../../src/main/agent/commands/types';
+import type { TaskKnowledge } from '../../src/main/retrieval/task-knowledge';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -461,5 +462,112 @@ describe('handleFindTask - backlog widening', () => {
     // Slow path: list() must have been called; getById() must NOT have been called for backlog
     expect(mockBacklogRepoList).toHaveBeenCalled();
     expect(mockBacklogRepoGetById).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleFindTask - Knowledge Graph lines
+//
+// The agent reads the message text, never the data object, so the summary, the
+// linked commits and the changed files have to be printed under each task.
+// ---------------------------------------------------------------------------
+
+describe('handleFindTask - Knowledge Graph lines', () => {
+  function emptyKnowledge(overrides: Partial<TaskKnowledge> = {}): TaskKnowledge {
+    return { summary: null, commits: [], commitCount: 0, changedFiles: [], changedFileCount: 0, ...overrides };
+  }
+
+  function contextReading(byTask: Map<string, TaskKnowledge>, summariesOn = true) {
+    const readTaskKnowledge = vi.fn((): TaskKnowledgeRead => ({ indexOn: true, summariesOn, byTask }));
+    return { context: { ...makeContext(), readTaskKnowledge } as CommandContext, readTaskKnowledge };
+  }
+
+  it('prints each matched task\'s lines under its own task line', () => {
+    const { context, readTaskKnowledge } = contextReading(new Map([
+      ['task-beta', emptyKnowledge({ summary: { text: 'Finished the beta work.', writtenAt: '2026-09-20T18:30:00.000Z' } })],
+      ['task-alpha', emptyKnowledge({ changedFiles: ['src/alpha.ts'], changedFileCount: 1 })],
+    ]));
+
+    const result = handleFindTask({ title: 'alpha-search' }, context);
+
+    expect(readTaskKnowledge).toHaveBeenCalledWith(['task-alpha']);
+    expect(result.message).toContain([
+      '- "alpha-search board task" [To Do] | #1, id: task-alpha',
+      '  changed files (1, most-changed first): src/alpha.ts',
+    ].join('\n'));
+    // The backlog item sits in its own section, with no knowledge under it.
+    expect(result.message).toContain('Backlog (1):\n- "alpha-search backlog item" (Medium) (id: backlog-gamma)');
+  });
+
+  it('treats an archived task as finished, so it says whether it has a summary', () => {
+    const { context } = contextReading(new Map([
+      ['task-beta', emptyKnowledge({ summary: { text: 'Finished the beta work.', writtenAt: '2026-09-20T18:30:00.000Z' } })],
+    ]));
+
+    const result = handleFindTask({ displayId: 2 }, context);
+
+    expect(result.message).toContain([
+      '- "beta unrelated" [Done] | #2, id: task-beta',
+      '  summary (2026-09-20): Finished the beta work.',
+      '  commits: none linked to this task',
+    ].join('\n'));
+  });
+
+  it('says why a finished task has no summary when the summaries switch is off', () => {
+    const { context } = contextReading(new Map([['task-beta', emptyKnowledge()]]), false);
+    const result = handleFindTask({ displayId: 2 }, context);
+    expect(result.message).toContain('  summary: none written (Task summaries are switched off in Settings > Knowledge Graph)');
+  });
+
+  it('reads the first five matches only, and ends the message with how to look up the rest', () => {
+    const manyTasks = Array.from({ length: 6 }, (_unused, index) => ({
+      id: `task-many-${index}`,
+      display_id: 100 + index,
+      title: `many-match task ${index}`,
+      description: '',
+      swimlane_id: 'lane-todo',
+      archived_at: null,
+      labels: [],
+    }));
+    mockTaskRepoList.mockImplementation((swimlaneId: string) => (swimlaneId === SWIMLANE_TODO.id ? manyTasks : []));
+    mockTaskRepoListArchived.mockReturnValue([]);
+    const { context, readTaskKnowledge } = contextReading(new Map(manyTasks.map((task) => [
+      task.id,
+      emptyKnowledge({ changedFiles: [`src/${task.id}.ts`], changedFileCount: 1 }),
+    ])));
+
+    const result = handleFindTask({ title: 'many-match' }, context);
+
+    expect(readTaskKnowledge).toHaveBeenCalledOnce();
+    expect(readTaskKnowledge).toHaveBeenCalledWith(manyTasks.slice(0, 5).map((task) => task.id));
+    expect(result.message).toContain('src/task-many-4.ts');
+    expect(result.message).not.toContain('src/task-many-5.ts');
+    // Every match is still listed; only the knowledge stops at five.
+    expect(result.message).toContain('#105, id: task-many-5');
+    const lines = (result.message ?? '').split('\n');
+    expect(lines[lines.length - 1]).toBe(
+      'Summaries, commits and changed files show for the first 5 matches. Look one up by displayId for its details.',
+    );
+  });
+
+  it('says the index is off, and prints no lines, when the reader reports it off', () => {
+    const context = { ...makeContext(), readTaskKnowledge: vi.fn((): TaskKnowledgeRead => ({ indexOn: false })) } as CommandContext;
+
+    const result = handleFindTask({ displayId: 2 }, context);
+
+    expect(result.message).toContain('- "beta unrelated" [Done] | #2, id: task-beta');
+    expect(result.message).toContain('The Knowledge Graph index is off (Settings > Knowledge Graph), so no summary, linked commits or changed files are shown.');
+    expect(result.message).not.toContain('  summary');
+  });
+
+  it('prints only the task line when the context has no reader', () => {
+    const result = handleFindTask({ displayId: 2 }, makeContext());
+    expect(result.message).toBe('Found 1 match(es):\n- "beta unrelated" [Done] | #2, id: task-beta');
+  });
+
+  it('does not read the index for a lookup that matches no board task', () => {
+    const { context, readTaskKnowledge } = contextReading(new Map());
+    handleFindTask({ id: 'backlog-gamma' }, context);
+    expect(readTaskKnowledge).not.toHaveBeenCalled();
   });
 });

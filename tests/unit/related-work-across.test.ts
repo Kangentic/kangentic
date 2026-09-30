@@ -24,6 +24,8 @@ interface MockIndex {
 let mockIndexes: Record<string, MockIndex> = {};
 /** The project of every code search the fake store served, in order. */
 let codeSearches: string[] = [];
+/** The MATCH text of every keyword search the fake store served, in order. */
+let keywordQueries: string[] = [];
 
 vi.mock('../../src/main/retrieval/retrieval-store', () => ({
   RetrievalStore: class {
@@ -40,7 +42,10 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
       codeSearches.push(this.projectId);
       return this.index.code?.hits ?? [];
     }
-    searchLexical(): [] { return []; }
+    searchLexical(matchQuery: string): [] {
+      keywordQueries.push(matchQuery);
+      return [];
+    }
     getChunkPlacements(ids: number[]): ChunkPlacement[] {
       return this.index.placements.filter((placement) => ids.includes(placement.id));
     }
@@ -156,6 +161,49 @@ describe('related work across projects', () => {
     // No vectors, so the semantic hits are never asked for.
     expect(work.semantic).toBe(false);
     expect(work.ranked).toEqual([]);
+  });
+});
+
+describe('the text the keyword search runs on', () => {
+  const QUESTION = 'terminal renderer flicker';
+
+  function search(extra: { keywordText?: string } = {}) {
+    mockIndexes = { a: { semantic: [hit(1, 0.8)], placements: [placement(1, 'a1')], texts: {} } };
+    keywordQueries = [];
+    const model = embedder();
+    const work = searchRelatedWork({
+      question: QUESTION,
+      projectId: 'a',
+      nodes: [node('a1', 'task-a1', 5)],
+      embedder: model,
+      getDb,
+      ...extra,
+    });
+    return { work, model };
+  }
+
+  it('is the question when no keywordText is given', async () => {
+    await search().work;
+    expect(keywordQueries).toEqual(['"terminal" OR "renderer" OR "flicker"']);
+  });
+
+  it('is keywordText instead of the question when one is given', async () => {
+    await search({ keywordText: 'relay backoff' }).work;
+    // The words only the question has stay out of it, the words only keywordText has are in.
+    expect(keywordQueries).toEqual(['"relay" OR "backoff"']);
+  });
+
+  it('runs no keyword search when keywordText has nothing to search, whatever the question says', async () => {
+    await search({ keywordText: 'which tasks were the most expensive?' }).work;
+    expect(keywordQueries).toEqual([]);
+  });
+
+  it('leaves the semantic side on the question: the vector is embedded from it, not from keywordText', async () => {
+    const { work, model } = search({ keywordText: 'relay backoff' });
+    await work;
+    expect(model.embed).toHaveBeenCalledOnce();
+    expect(model.embed.mock.calls[0][0]).toContain(QUESTION);
+    expect(model.embed.mock.calls[0][0]).not.toContain('relay backoff');
   });
 });
 
