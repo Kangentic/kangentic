@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import type { TranscriptEntry } from '../../shared/types';
 import { touchBounded } from './shared/bounded-lru';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
 
 /** Per-block/content clamp so a multi-MB transcript never ships whole over IPC
  *  into React state. Individual spans over this are truncated with a marker.
@@ -132,7 +133,7 @@ export async function getCachedTranscript(
   }
 
   const parsed = await parse();
-  const truncatedEntries = truncateEntries(parsed.entries);
+  const truncatedEntries = timeSyncWork('transcript:truncate', () => truncateEntries(parsed.entries));
 
   if (parsed.sourcePath) {
     try {

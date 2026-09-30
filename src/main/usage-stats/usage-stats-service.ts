@@ -19,6 +19,7 @@ import {
   type UsageWindowTotals,
 } from '../db/repositories/usage-history-repository';
 import { agentRegistry } from '../agent/agent-registry';
+import { recordSyncSpan } from '../diagnostics/event-loop-lag';
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
 import { ConversationUsageStore, type GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
 import {
@@ -322,6 +323,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       // DB file: legitimately zero usage, NOT an error - and opening it via
       // getProjectDb would mint an empty database.
       if (!deps.projectDbExists(project.id)) continue;
+      const projectReadStartedAt = performance.now();
       try {
         const reader = deps.openReader(project.id);
         const totals = reader.getUsageTotals(sinceIso, untilIso);
@@ -390,6 +392,9 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       } catch (error) {
         console.warn(`[usage-stats] Skipping unreadable project DB ${project.id}:`, error);
         skippedProjects.push({ projectId: project.id, projectName: project.name });
+      } finally {
+        // One project's reads run back to back with no await between them.
+        recordSyncSpan('usage:project', performance.now() - projectReadStartedAt);
       }
     }
 

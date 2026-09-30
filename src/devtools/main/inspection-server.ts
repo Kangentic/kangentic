@@ -42,6 +42,7 @@ import {
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { getProcessMetrics } from '../../main/diagnostics/process-metrics';
 import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
+import { getStallProfiles, isStallProfilerRunning } from './stall-profiler';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
 import { readTerminalTrace } from '../../main/pty/terminal-trace';
@@ -592,7 +593,11 @@ async function respondEventLoopLag(
       renderer = { error: error instanceof Error ? error.message : String(error) };
     }
   }
-  respondJson(response, 200, { ts: new Date().toISOString(), main, renderer });
+  const stallProfiler = {
+    running: isStallProfilerRunning(),
+    profiles: getStallProfiles(),
+  };
+  respondJson(response, 200, { ts: new Date().toISOString(), main, stallProfiler, renderer });
 }
 
 /** Per-session terminal output-pipeline stats (in-process). Diagnoses

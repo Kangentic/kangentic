@@ -11,6 +11,7 @@ import type {
 } from '../../../../shared/types';
 import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
 import { touchBounded, heldBytes } from '../../shared/bounded-lru';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import {
   parseWindowBytes,
   prependTruncationMarker,
@@ -429,10 +430,12 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
       const combined = Buffer.concat([previous.carry, appended]);
       const { completeLinesText, carry } = splitCompleteLines(combined);
       if (completeLinesText.length > 0) {
-        for (const line of completeLinesText.split('\n')) {
-          if (line.length === 0) continue;
-          parseTranscriptLine(line, previous.entries, previous.usageAttributedMessageIds);
-        }
+        timeSyncWork('transcript:parse-append', () => {
+          for (const line of completeLinesText.split('\n')) {
+            if (line.length === 0) continue;
+            parseTranscriptLine(line, previous.entries, previous.usageAttributedMessageIds);
+          }
+        });
       }
       previous.mtimeMs = stat.mtimeMs;
       previous.size = stat.size;
@@ -459,10 +462,12 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
 
   const entries: TranscriptEntry[] = [];
   const usageAttributedMessageIds = new Set<string>();
-  for (const line of window.text.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    parseTranscriptLine(line, entries, usageAttributedMessageIds);
-  }
+  timeSyncWork('transcript:parse-tail', () => {
+    for (const line of window.text.split(/\r?\n/)) {
+      if (line.length === 0) continue;
+      parseTranscriptLine(line, entries, usageAttributedMessageIds);
+    }
+  });
 
   // Report the omission in-band rather than dropping turns silently. The
   // viewer already renders `system` entries, so this needs no new response
@@ -549,10 +554,12 @@ export async function parseClaudeTranscriptWindow(
 ): Promise<{ entries: TranscriptEntry[]; nextByteOffset: number; totalBytes: number }> {
   const window = await readJsonlWindow(filePath, { startByte, maxBytes });
   const entries: TranscriptEntry[] = [];
-  for (const line of window.text.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    parseTranscriptLine(line, entries, attributedMessageIds);
-  }
+  timeSyncWork('transcript:parse-walk', () => {
+    for (const line of window.text.split(/\r?\n/)) {
+      if (line.length === 0) continue;
+      parseTranscriptLine(line, entries, attributedMessageIds);
+    }
+  });
   // Prune to the most recent ids. A Set iterates in insertion order, so the
   // front is the oldest - and the oldest is the safest to drop, because a
   // message id is only ever at risk of straddling the seam that immediately

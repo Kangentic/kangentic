@@ -3334,6 +3334,13 @@ export interface AppConfig {
      * `previewInspectionServer` is also on. Dev-only.
      */
     previewEvalEnabled?: boolean;
+    /**
+     * Run a rolling CPU profile of the main process and keep the windows that
+     * held a stall (`src/devtools/main/stall-profiler.ts`), so a stall no label
+     * covers still names its functions in the event-loop lag report. Dev-only;
+     * defaults on in `/preview` and off for `npm start`.
+     */
+    stallProfiler?: boolean;
   };
 
   /**

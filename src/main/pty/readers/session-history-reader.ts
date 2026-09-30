@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { FileWatcher } from './file-watcher';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { Activity } from '../../../shared/types';
 import type {
   SessionUsage,
@@ -192,13 +193,13 @@ export class SessionHistoryReader {
 
       state.watcher = new FileWatcher({
         filePath: resolvedPath,
-        onChange: () => this.processChange(sessionId, state),
+        onChange: () => timeSyncWork('history:change', () => this.processChange(sessionId, state)),
       });
       this.states.set(sessionId, state);
 
       // Trigger an initial read immediately - FileWatcher only fires on
       // subsequent changes, but the file likely has content already.
-      this.processChange(sessionId, state);
+      timeSyncWork('history:initial', () => this.processChange(sessionId, state));
     } finally {
       this.pending.delete(sessionId);
       this.cancelled.delete(sessionId);

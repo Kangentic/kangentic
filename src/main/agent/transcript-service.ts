@@ -3,6 +3,7 @@ import { SessionRepository } from '../db/repositories/session-repository';
 import { agentRegistry } from './agent-registry';
 import { RetrievalStore } from '../retrieval/retrieval-store';
 import { touchBounded, heldBytes } from './shared/bounded-lru';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import {
   clampSpan,
   getCachedTranscript,
@@ -443,50 +444,52 @@ export async function resolveTaskTranscript(
     entry: TranscriptEntry;
     sessionId: string;
   }
-  const tagged: TaggedEntry[] = [];
-  const seenUuids = new Set<string>();
-  for (const { session, resolved } of resolvedBySession) {
-    for (const entry of resolved.entries) {
-      if (seenUuids.has(entry.uuid)) continue; // a resume replays parent turns verbatim
-      seenUuids.add(entry.uuid);
-      tagged.push({
-        entry: entry.kind === 'assistant' ? { ...entry, agentName: resolved.agentName } : entry,
-        sessionId: session.id,
-      });
-    }
-  }
-
-  // Merge chronologically by each turn's own ts (stable: equal-ts turns keep
-  // oldest-session-first order via the index tiebreaker), then walk the sorted
-  // turns emitting a boundary at every session crossing.
-  const orderedTagged = tagged
-    .map((item, index) => ({ item, index }))
-    .sort((a, b) => a.item.entry.ts - b.item.entry.ts || a.index - b.index)
-    .map((wrapped) => wrapped.item);
-
   const entries: TranscriptEntry[] = [];
-  const enteredSessions = new Set<string>();
-  let previousSessionId: string | null = null;
-  for (const item of orderedTagged) {
-    if (previousSessionId !== null && item.sessionId !== previousSessionId) {
-      // "Resumed" when the timeline crosses back into a session it already
-      // showed (a suspended session picked back up); "New" the first time a
-      // session appears.
-      const resumed = enteredSessions.has(item.sessionId);
-      entries.push({
-        kind: 'system',
-        // Unique per crossing: the same session can be re-entered (main ->
-        // isolated -> main), so the entered session id alone is not unique.
-        uuid: `session-boundary-${item.sessionId}-${item.entry.uuid}`,
-        ts: item.entry.ts,
-        subtype: 'session_boundary',
-        text: resumed ? 'Resumed session' : 'New session',
-      });
+  timeSyncWork('transcript:stitch', () => {
+    const tagged: TaggedEntry[] = [];
+    const seenUuids = new Set<string>();
+    for (const { session, resolved } of resolvedBySession) {
+      for (const entry of resolved.entries) {
+        if (seenUuids.has(entry.uuid)) continue; // a resume replays parent turns verbatim
+        seenUuids.add(entry.uuid);
+        tagged.push({
+          entry: entry.kind === 'assistant' ? { ...entry, agentName: resolved.agentName } : entry,
+          sessionId: session.id,
+        });
+      }
     }
-    enteredSessions.add(item.sessionId);
-    entries.push(item.entry);
-    previousSessionId = item.sessionId;
-  }
+
+    // Merge chronologically by each turn's own ts (stable: equal-ts turns keep
+    // oldest-session-first order via the index tiebreaker), then walk the sorted
+    // turns emitting a boundary at every session crossing.
+    const orderedTagged = tagged
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => a.item.entry.ts - b.item.entry.ts || a.index - b.index)
+      .map((wrapped) => wrapped.item);
+
+    const enteredSessions = new Set<string>();
+    let previousSessionId: string | null = null;
+    for (const item of orderedTagged) {
+      if (previousSessionId !== null && item.sessionId !== previousSessionId) {
+        // "Resumed" when the timeline crosses back into a session it already
+        // showed (a suspended session picked back up); "New" the first time a
+        // session appears.
+        const resumed = enteredSessions.has(item.sessionId);
+        entries.push({
+          kind: 'system',
+          // Unique per crossing: the same session can be re-entered (main ->
+          // isolated -> main), so the entered session id alone is not unique.
+          uuid: `session-boundary-${item.sessionId}-${item.entry.uuid}`,
+          ts: item.entry.ts,
+          subtype: 'session_boundary',
+          text: resumed ? 'Resumed session' : 'New session',
+        });
+      }
+      enteredSessions.add(item.sessionId);
+      entries.push(item.entry);
+      previousSessionId = item.sessionId;
+    }
+  });
 
   const revision = taskId ? (stitchMemoByTaskId.get(taskId)?.revision ?? 0) + 1 : 0;
   if (taskId) {

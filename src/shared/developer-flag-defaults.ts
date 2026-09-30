@@ -29,6 +29,11 @@
  *     session runs for days, so it stays opt-in there to avoid unbounded
  *     trace accumulation the user did not ask for.
  *
+ *   'stallProfiler' -> ON only for the ephemeral `/preview` instance, in a dev
+ *     build, for the same reason as 'recordIpcTraffic': a sampling profiler at
+ *     1 kHz costs CPU all the time, and the npm start dogfooding session runs
+ *     for days, so there it stays opt-in.
+ *
  *   'activityDebugOverlay' -> always OFF by default. It has a visible cost
  *     the user should opt into deliberately.
  *
@@ -41,7 +46,8 @@ export type DeveloperFlagKey =
   | 'persistConsoleLogs'
   | 'recordIpcTraffic'
   | 'previewInspectionServer'
-  | 'previewEvalEnabled';
+  | 'previewEvalEnabled'
+  | 'stallProfiler';
 
 export function defaultDeveloperFlag(
   key: DeveloperFlagKey,
@@ -50,6 +56,6 @@ export function defaultDeveloperFlag(
 ): boolean {
   if (key === 'previewInspectionServer' || key === 'previewEvalEnabled') return isDevBuild;
   if (key === 'persistConsoleLogs') return isDevBuild;
-  if (key === 'recordIpcTraffic') return isDevBuild && isEphemeralPreview;
+  if (key === 'recordIpcTraffic' || key === 'stallProfiler') return isDevBuild && isEphemeralPreview;
   return false;
 }

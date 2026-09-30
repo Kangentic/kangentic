@@ -168,6 +168,10 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
   // `/preview` without a manual toggle. Localhost-only and excluded from
   // production builds. An explicit stored value still wins.
   const evalEnabled = developerConfig.previewEvalEnabled ?? __KANGENTIC_DEV__;
+  // On by default only in /preview, mirroring `defaultDeveloperFlag`: a 1 kHz
+  // sampling profiler costs CPU all the time, and npm start runs for days.
+  const stallProfilerEnabled =
+    developerConfig.stallProfiler ?? (__KANGENTIC_DEV__ && window.electronAPI.dev?.isEphemeralPreview === true);
 
   return (
     <>
@@ -197,6 +201,16 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
           }
           checked={evalEnabled}
           onChange={(value) => updateGlobal({ developer: { previewEvalEnabled: value } })}
+        />
+        <CardToggleRow
+          label="Stall profiler"
+          description={
+            'Profiles the main process and, when main stalls, saves the profile and names the stall\'s heaviest '
+            + 'functions in the kangentic_devtools_event_loop_lag report. Costs CPU while on, so it is on by '
+            + 'default only in /preview.'
+          }
+          checked={stallProfilerEnabled}
+          onChange={(value) => updateGlobal({ developer: { stallProfiler: value } })}
         />
       </SettingsCard>
 

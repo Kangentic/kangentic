@@ -12,6 +12,7 @@ import type {
 } from '../../agent/agent-adapter';
 import type { SessionRecord, TranscriptEntry } from '../../../shared/types';
 import { RetrievalStore } from '../retrieval-store';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { ChunkInput, IndexStateRow } from '../types';
 import { chunkTranscript, CHUNKER_VERSION } from './transcript-chunker';
 import {
@@ -501,7 +502,7 @@ export class ConversationIndexer {
           agentSessionId, cwd, offset, INDEX_WINDOW_BYTES, attributedMessageIds,
         );
         sourcePath = window.sourcePath ?? sourcePath;
-        collect(window.entries);
+        timeSyncWork('index:chunk-window', () => collect(window.entries));
         if (window.nextByteOffset <= offset) break;
         offset = window.nextByteOffset;
         if (offset >= window.totalBytes) break;

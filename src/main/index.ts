@@ -209,6 +209,7 @@ if (__KANGENTIC_DEV__) {
     getIpcContext: () => getOptionalIpcContext() ?? null,
     getInspectionServerEnabled: () => safeReadDeveloperFlag('previewInspectionServer'),
     getEvalEnabled: () => safeReadDeveloperFlag('previewEvalEnabled'),
+    getStallProfilerEnabled: () => safeReadDeveloperFlag('stallProfiler'),
   });
 }
 
