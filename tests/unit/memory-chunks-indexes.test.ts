@@ -20,6 +20,7 @@ import { describe, it, expect } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+import { ensureRetrievalIndexes, RETRIEVAL_INDEXES } from '../../src/main/retrieval/index-builds';
 
 type SqliteModule = typeof import('node:sqlite');
 let sqlite: SqliteModule | null = null;
@@ -35,11 +36,14 @@ type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
 
 import { adaptDatabase } from './helpers/node-sqlite-database';
 
+/** A database migrated by main and opened by the retrieval worker, which
+ *  builds the index's own indexes (`index-builds.ts`). */
 function migrated(): { database: NodeDatabase; adapted: DatabaseType.Database; prepared: string[] } {
   const database = new sqlite!.DatabaseSync(':memory:');
   const prepared: string[] = [];
   const adapted = adaptDatabase(database, prepared);
   runProjectMigrations(adapted);
+  ensureRetrievalIndexes(adapted);
   return { database, adapted, prepared };
 }
 
@@ -174,6 +178,20 @@ describeWithSqlite('memory_chunks full-text triggers', () => {
 });
 
 describeWithSqlite('memory_chunks indexes', () => {
+  it('leaves the index\'s own indexes out of the migrations, and the worker builds each once', () => {
+    // A migration runs on main, and building one of these over a full table
+    // reads all of it inside a write transaction.
+    const database = new sqlite!.DatabaseSync(':memory:');
+    const adapted = adaptDatabase(database);
+    runProjectMigrations(adapted);
+    const names = RETRIEVAL_INDEXES.map((index) => index.name);
+    for (const name of names) expect(indexNames(database), name).not.toContain(name);
+
+    expect(ensureRetrievalIndexes(adapted).map((built) => built.name)).toEqual(names);
+    for (const name of names) expect(indexNames(database), name).toContain(name);
+    expect(ensureRetrievalIndexes(adapted)).toEqual([]);
+  });
+
   it('carries embedded_model in a per-document index and drops the duplicate of the unique index', () => {
     const { database } = migrated();
 

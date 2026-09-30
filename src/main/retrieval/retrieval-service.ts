@@ -756,6 +756,8 @@ export const retrievalService = {
         const jobId = `open-${sweepJobCounter}`;
         activeSweepJobId = jobId;
         const result = await sweepInWorker(project.id, {
+          // The index's own indexes, built once after an upgrade adds one.
+          ensureIndexes: true,
           // Vectors orphaned while the extension was unavailable.
           reconcileVec: true,
           // Deleted sessions' documents, found by their chunks too.

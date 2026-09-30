@@ -835,26 +835,13 @@ export function runProjectMigrations(db: Database.Database): void {
   // A document's chunks in seq order come from the table's own UNIQUE(corpus,
   // doc_id, seq) index. `idx_memory_chunks_doc` on the same three columns
   // duplicated it (every read kept the same plan and time without it) at the
-  // cost of a second index write per chunk, so it is dropped. In its place a
-  // covering index for the per-document chunk and embedded totals the graph's
-  // coverage groups by: with embedded_model in the index the count never reads
-  // the table, 266 ms to 10 ms on 93k chunks. Built once, about 300 ms there.
+  // cost of a second index write per chunk, so it is dropped. The indexes over
+  // this table added since are built by the retrieval worker, not here
+  // (`retrieval/index-builds.ts`): each reads the whole table, and a migration
+  // runs on main.
   db.exec('DROP INDEX IF EXISTS idx_memory_chunks_doc');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_doc_embedded ON memory_chunks(corpus, doc_id, embedded_model)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_session ON memory_chunks(session_id)');
-  // A search scoped to one task narrows its semantic hits to that task's chunk
-  // ids. Without this the read scanned every chunk: 184 ms to 0.5 ms on 99k
-  // chunks, and no other chunk read changed plan (built once, about 200 ms).
-  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_task ON memory_chunks(task_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_embedded ON memory_chunks(embedded_model)');
-  // Per-corpus reads (conversations, task records, session changes). SQLite
-  // appends rowid to every index, so `(corpus)` answers MAX(id) and an id-range
-  // page within one corpus as a seek, and `(embedded_model, corpus)` hands the
-  // embedding drain its next never-embedded chunks of one corpus in id order.
-  // Measured on 92k chunks: a projection page 142 ms without it and 0.2 ms with,
-  // and the drain's "anything pending?" read 214 ms against 0.01 ms.
-  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_corpus ON memory_chunks(corpus)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_pending ON memory_chunks(embedded_model, corpus)');
 
   // FTS5 external-content index over memory_chunks.text. FTS5 is compiled into
   // the shipped better-sqlite3, so this is always safe. External content (not
