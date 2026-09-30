@@ -580,8 +580,6 @@ export const IPC = {
   /** Push: a projection pass finished for a project. Declared in that surface's
    *  POP_OUT_SURFACES `channels` too, or a detached window never updates. */
   KNOWLEDGE_GRAPH_CHANGED: 'knowledgeGraph:graphChanged',
-  /** Run the existing fusion search and map its hits onto graph nodes. */
-  KNOWLEDGE_GRAPH_QUERY: 'knowledgeGraph:graphQuery',
   KNOWLEDGE_GRAPH_ANSWER: 'knowledgeGraph:graphAnswer',
   /** Push: progress on an answer in flight - text as the agent writes it, a
    *  tool call as it starts, and a terminal `done`. Keyed by the renderer's

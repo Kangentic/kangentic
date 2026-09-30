@@ -12,16 +12,16 @@
  * answer a question the user has moved past.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import type { AnswerSession } from '../../agent-adapter';
 import {
   ANSWER_STREAM_OUTPUT_BUDGET,
   ANSWER_TIMEOUT_MS,
   cleanAnswerOutput,
-  cliRunsThroughShell,
   spawnCli,
   stderrExcerpt,
+  stopCli,
   type AnswerStreamEvent,
 } from '../auto-name';
 
@@ -185,16 +185,8 @@ export function openStdinJsonSession(options: StdinJsonSessionOptions): AnswerSe
     } catch {
       // Already closed.
     }
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    if (cliRunsThroughShell(options.cliPath) && child.pid) {
-      // Killing cmd.exe would leave the CLI it launched running. `/T` takes
-      // the tree. Fire and forget: dispose runs on the quit path.
-      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
-        .on('error', () => undefined)
-        .unref();
-      return;
-    }
-    child.kill();
+    // Fire and forget: dispose runs on the quit path.
+    stopCli(child, options.cliPath);
   }
 
   return {

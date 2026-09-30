@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -587,14 +587,19 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
     const chunkDecoder = new StringDecoder('utf8');
     const stderrChunks: Buffer[] = [];
     let terminated = false;
+    let timedOut = false;
+    let exitWait: ReturnType<typeof setTimeout> | null = null;
 
+    // A timed-out run rejects once the CLI is gone, or after EXIT_WAIT_MS if it
+    // will not go. Rejecting at once let the caller remove the run directory
+    // while the CLI still held it, and a directory Windows cannot remove keeps
+    // the MCP config and its live token on disk.
     const timer = setTimeout(() => {
+      timedOut = true;
       terminated = true;
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        if (!child.killed) child.kill('SIGKILL');
-      }, 1000).unref();
-      reject(new Error('summarize timed out'));
+      stopCli(child, cliPath);
+      exitWait = setTimeout(() => reject(new Error('summarize timed out')), EXIT_WAIT_MS);
+      exitWait.unref();
     }, timeoutMs);
     timer.unref();
 
@@ -602,7 +607,7 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
       stdoutSize += chunk.length;
       if (stdoutSize > outputBudget) {
         terminated = true;
-        child.kill('SIGTERM');
+        stopCli(child, cliPath);
       } else {
         stdoutChunks.push(chunk);
         // Forwarded as it lands, so a streaming consumer sees the text while
@@ -653,6 +658,12 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
 
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (timedOut) {
+        // A timeout is a failure whatever the CLI wrote before it was stopped.
+        if (exitWait) clearTimeout(exitWait);
+        reject(new Error('summarize timed out'));
+        return;
+      }
       const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
       finish(stdout, code, terminated);
     });
@@ -672,6 +683,39 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
 /** Whether `spawnCli` runs this CLI through cmd.exe: a Windows `.cmd` or `.bat` shim. */
 export function cliRunsThroughShell(cliPath: string): boolean {
   return process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath);
+}
+
+/** How long a CLI stopped with SIGTERM has to exit before it gets SIGKILL. */
+const CLI_KILL_GRACE_MS = 1_000;
+/** How long a timed-out run waits for its CLI to exit before rejecting anyway. */
+const EXIT_WAIT_MS = 3_000;
+
+/**
+ * Stop a CLI `spawnCli` started, and what it launched.
+ *
+ * A `.cmd` shim runs the CLI as a child of cmd.exe, so killing cmd.exe left the
+ * CLI running with its working directory and every file it was handed by path,
+ * a live MCP token among them. `taskkill /T /F` takes the whole tree. Anything
+ * else is the CLI itself: SIGTERM, then SIGKILL if it has not exited within the
+ * grace. The check reads the exit code and signal, not `child.killed`, which
+ * turns true when a signal is SENT and so never let the SIGKILL fire.
+ */
+export function stopCli(child: ChildProcess, cliPath: string): void {
+  if (cliHasExited(child)) return;
+  if (cliRunsThroughShell(cliPath) && child.pid) {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+      .on('error', () => undefined)
+      .unref();
+    return;
+  }
+  child.kill('SIGTERM');
+  setTimeout(() => {
+    if (!cliHasExited(child)) child.kill('SIGKILL');
+  }, CLI_KILL_GRACE_MS).unref();
+}
+
+function cliHasExited(child: ChildProcess): boolean {
+  return typeof child.exitCode === 'number' || typeof child.signalCode === 'string';
 }
 
 /**

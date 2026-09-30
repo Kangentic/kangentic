@@ -34,16 +34,72 @@ export const ANSWER_RUN_DIRECTORY_PREFIX = 'kangentic-answer-';
  */
 export const ANSWER_HOME_DIRECTORY_NAME = 'kangentic-ask-home';
 
-/** The one working directory every answer run starts in. */
-export function answerHomeDirectory(): string {
-  return path.join(os.tmpdir(), ANSWER_HOME_DIRECTORY_NAME);
+/** This user's id where the platform has one (not Windows). */
+function currentUserId(): number | null {
+  return typeof process.getuid === 'function' ? process.getuid() : null;
 }
 
-/** The answer home, created if a temp cleaner removed it. */
-export async function ensureAnswerHomeDirectory(): Promise<string> {
-  const directory = answerHomeDirectory();
-  await fs.promises.mkdir(directory, { recursive: true });
-  return directory;
+/**
+ * The one working directory every answer run starts in. Windows gives each user
+ * a temp folder of their own; Linux shares `/tmp` between users, so there the
+ * name carries the user id and `ensureAnswerHomeDirectory` checks the folder
+ * before use.
+ */
+export function answerHomeDirectory(root: string = os.tmpdir()): string {
+  const userId = currentUserId();
+  return path.join(root, userId === null ? ANSWER_HOME_DIRECTORY_NAME : `${ANSWER_HOME_DIRECTORY_NAME}-${userId}`);
+}
+
+/** A private home used instead of a fixed one someone else controls, one per launch. */
+const fallbackHomes = new Map<string, Promise<string>>();
+
+/**
+ * The answer home, created if a temp cleaner removed it.
+ *
+ * In a temp folder other users can write to, the fixed name can be taken first:
+ * another user creates it, plants a CLI's workspace config in it, and every
+ * answer run starts there. So on POSIX the home is made private to this user
+ * (0700), and an existing one is used only when it is a real directory, owned
+ * by this user and writable by no one else. One that fails that is never used;
+ * a fresh private folder takes its place for the rest of the launch, so each
+ * CLI still keeps one state entry per launch, not one per question.
+ */
+export async function ensureAnswerHomeDirectory(options: { root?: string } = {}): Promise<string> {
+  const directory = answerHomeDirectory(options.root);
+  if (currentUserId() === null) {
+    await fs.promises.mkdir(directory, { recursive: true });
+    return directory;
+  }
+  if (await isPrivateToThisUser(directory)) return directory;
+  let fallback = fallbackHomes.get(directory);
+  if (!fallback) {
+    fallback = fs.promises.mkdtemp(`${directory}-`);
+    fallbackHomes.set(directory, fallback);
+  }
+  return fallback;
+}
+
+/**
+ * Create `directory` private to this user, or confirm an existing one is. A
+ * directory only its owner can write to holds nothing anyone else put there, so
+ * one this user made with looser read bits is closed and kept; one another user
+ * owns, a link, or one others can write to is refused.
+ */
+async function isPrivateToThisUser(directory: string): Promise<boolean> {
+  try {
+    await fs.promises.mkdir(directory, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) return false;
+  }
+  try {
+    const stats = await fs.promises.lstat(directory);
+    if (!stats.isDirectory() || stats.uid !== currentUserId()) return false;
+    if ((stats.mode & 0o022) !== 0) return false;
+    if ((stats.mode & 0o077) !== 0) await fs.promises.chmod(directory, 0o700);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** A run directory untouched this long belongs to no live run: a session's
@@ -70,12 +126,16 @@ export async function sweepStaleAnswerRunDirectories(
   } catch {
     return 0;
   }
+  const userId = currentUserId();
   for (const name of names) {
     if (!name.startsWith(ANSWER_RUN_DIRECTORY_PREFIX)) continue;
     const directory = path.join(root, name);
     try {
-      const stats = await fs.promises.stat(directory);
-      if (!stats.isDirectory() || nowMs - stats.mtimeMs < STALE_ANSWER_RUN_DIRECTORY_MS) continue;
+      // `lstat`, and only this user's own: in a temp folder users share, an
+      // entry with the prefix may be another user's run, or a link to anywhere.
+      const stats = await fs.promises.lstat(directory);
+      if (!stats.isDirectory() || (userId !== null && stats.uid !== userId)) continue;
+      if (nowMs - stats.mtimeMs < STALE_ANSWER_RUN_DIRECTORY_MS) continue;
       await fs.promises.rm(directory, { recursive: true, force: true });
       removed += 1;
     } catch {

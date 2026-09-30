@@ -6691,16 +6691,11 @@ export interface ElectronAPI {
     /** Push subscription: fires when a projection pass finishes. Returns an
      *  unsubscribe closure. */
     onGraphChanged: (callback: (projectId: string) => void) => () => void;
-    /** Retrieval only: local, free, and instant. Runs the same fusion search
-     *  the palette uses and maps each hit onto its graph node. */
-    queryGraph: (query: string, projectId?: string | null) => Promise<KnowledgeGraphQueryResult>;
     /**
-     * Ask: the SAME retrieval, read by an agent that answers from it.
-     *
-     * Costs a real CLI call, where `queryGraph` is local and free - which is why
-     * they are two controls rather than one box with a hidden mode. Every
-     * failure comes back as `{ ok: false, reason }` rather than throwing, so the
-     * surface can say what went wrong instead of showing an empty answer.
+     * Ask: the local retrieval, read by an agent that answers from it. Costs a
+     * real CLI call. Every failure comes back as `{ ok: false, reason }` rather
+     * than throwing, so the surface can say what went wrong instead of showing
+     * an empty answer.
      */
     answerFromGraph: (
       question: string,
@@ -7078,7 +7073,7 @@ export interface KnowledgeGraphIndexSummary {
   lastIndexedAt?: string | null;
 }
 
-/** One conversation matched by a Knowledge Graph query. */
+/** One conversation a task window's prior work lists. */
 export interface KnowledgeGraphQueryHit {
   /** `${corpus}::${docId}` - the graph node this hit belongs to, so the canvas
    *  can light it without the renderer re-deriving the join. */
@@ -7093,14 +7088,6 @@ export interface KnowledgeGraphQueryHit {
   /** How many chunks in this conversation matched. */
   matchCount: number;
   turnTs: number | null;
-}
-
-export interface KnowledgeGraphQueryResult {
-  query: string;
-  hits: KnowledgeGraphQueryHit[];
-  /** False when the semantic layer was unavailable, so the UI can say the
-   *  search was lexical-only rather than silently returning worse results. */
-  semantic: boolean;
 }
 
 /**

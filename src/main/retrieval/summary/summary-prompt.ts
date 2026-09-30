@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { SUMMARY_BATCH_SIZE } from '../../../shared/task-summaries';
+import { defusePromptTags, promptTagPattern } from '../prompt-tags';
 
 /**
  * Task summaries: one or two sentences per finished task, written by the summary
@@ -66,10 +67,18 @@ export function summaryInputHash(input: SummaryInput): string {
   return crypto.createHash('sha1').update(`v${TASK_SUMMARY_VERSION}\n${summaryInputBlock(input)}`).digest('hex');
 }
 
+/**
+ * The tag each task's block is framed in. A title, description, commit subject
+ * or closing message carrying `</task>` would otherwise end its block early and
+ * speak for the next label (`prompt-tags.ts`). Defused here rather than in
+ * `summaryInputBlock`, so no written summary's input hash moves.
+ */
+const SUMMARY_TAG_PATTERN = promptTagPattern(['task']);
+
 /** One call's prompt: the rules, then each task under a label `D1`, `D2`, ... */
 export function buildSummaryPrompt(inputs: ReadonlyArray<SummaryInput>): string {
   const tasks = inputs
-    .map((input, index) => `<task label="D${index + 1}">\n${summaryInputBlock(input)}\n</task>`)
+    .map((input, index) => `<task label="D${index + 1}">\n${defusePromptTags(summaryInputBlock(input), SUMMARY_TAG_PATTERN)}\n</task>`)
     .join('\n\n');
   return [
     'You write short summaries of finished software tasks, for search.',

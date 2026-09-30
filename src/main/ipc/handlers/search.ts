@@ -47,7 +47,6 @@ import type {
   KnowledgeGraphSnapshot,
   KnowledgeGraphProjectSummary,
   KnowledgeGraphRebuildPlan,
-  KnowledgeGraphQueryResult,
   KnowledgeGraphQueryHit,
   KnowledgeGraphAnswerResult,
   KnowledgeGraphAnswerContext,
@@ -66,8 +65,6 @@ const RELATED_EMBED_WAIT_MS = 5_000;
  *  its board tasks and no conversations. */
 const EMPTY_PROJECTION = { nodes: [], clusterings: [] };
 
-/** Conversations a graph query may match. See the call site for why it is high. */
-const GRAPH_QUERY_LIMIT = 300;
 
 /** Characters of the task's title + description used as the recall query.
  *  Enough to carry the task's meaning; past this the embedding blurs. */
@@ -226,58 +223,6 @@ export function registerSearchHandlers(context: IpcContext): void {
     },
   );
 
-  // Retrieval, deliberately reusing `searchConversationMemory` rather than
-  // reimplementing it: it already fuses lexical + semantic and collapses to one
-  // hit per conversation, which is exactly one graph node. The only work here is
-  // translating chunk ids to node keys.
-  ipcMain.handle(
-    IPC.KNOWLEDGE_GRAPH_QUERY,
-    async (_event, query: string, projectId?: string | null): Promise<KnowledgeGraphQueryResult> => {
-      const trimmed = (query ?? '').trim();
-      const resolvedProjectId = projectId ?? context.currentProjectId;
-      if (!trimmed || !resolvedProjectId) return { query: trimmed, hits: [], semantic: false };
-
-      const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
-      if (!project) return { query: trimmed, hits: [], semantic: false };
-
-      // The embedder comes from the retrieval service, never a fresh
-      // EmbedClient: a live user query preempts the background drain in the
-      // shared worker (`.claude/rules/central-embedding-engine.md`).
-      const embedder = retrievalService.getEmbedder(context);
-      // Deliberately generous. This is the SAME hybrid lexical+semantic retrieval
-      // the agents' `kangentic_search` reaches through `runSearchEverything` - not
-      // a transcript text scan - but the graph uses it as a FILTER rather than as
-      // a top-N list, so a cap of 40 would silently hide matching conversations
-      // from the map on any real corpus.
-      const hits = await searchConversationMemory({ query: trimmed, projects: [project], embedder, k: GRAPH_QUERY_LIMIT });
-
-      const store = new RetrievalStore(getProjectDb(resolvedProjectId));
-      const docKeys = store.docKeysForChunks(hits.map((hit) => hit.chunkId));
-
-      return {
-        query: trimmed,
-        semantic: embedder !== null,
-        hits: hits.flatMap((hit) => {
-          const docKey = docKeys.get(hit.chunkId);
-          // A hit whose chunk vanished between search and lookup has no node to
-          // light, and a card pointing at nothing is worse than one fewer card.
-          if (docKey === undefined) return [];
-          return [{
-            docKey,
-            sessionId: hit.sessionId,
-            taskId: hit.taskId,
-            taskTitle: hit.taskTitle,
-            agentName: hit.agentName,
-            snippet: hit.snippet,
-            score: hit.score,
-            matchKind: hit.matchKind,
-            matchCount: hit.matchCount,
-            turnTs: hit.turnTs,
-          }];
-        }),
-      };
-    },
-  );
 
   /**
    * Ask: find the work a question is about, show it, and have an agent answer.

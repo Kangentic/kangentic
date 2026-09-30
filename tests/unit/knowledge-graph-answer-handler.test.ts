@@ -146,6 +146,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 import { registerSearchHandlers } from '../../src/main/ipc/handlers/search';
 import { answerSessionPool } from '../../src/main/retrieval/answer-session-pool';
 import { AnswerSessionError } from '../../src/main/agent/shared/answer-session/stdin-json-session';
+import { answerHomeDirectory } from '../../src/main/agent/shared/answer-run-directory';
 import { graphService } from '../../src/main/retrieval/graph/graph-service';
 import { broadcast } from '../../src/main/pop-out/window-broadcast';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -411,7 +412,9 @@ describe('the Ask handler', () => {
 
     await ask('anything');
     await ask('anything else');
-    expect(seen[0].cwd).toBe(path.join(os.tmpdir(), 'kangentic-ask-home'));
+    // The per-user name on POSIX, the plain one on Windows.
+    expect(seen[0].cwd).toBe(answerHomeDirectory());
+    expect(path.dirname(seen[0].cwd)).toBe(os.tmpdir());
     expect(seen[1].cwd).toBe(seen[0].cwd);
     expect(fs.existsSync(seen[0].cwd)).toBe(true);
     expect(path.basename(seen[0].runDirectory)).toMatch(/^kangentic-answer-/);

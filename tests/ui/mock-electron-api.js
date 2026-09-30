@@ -81,8 +81,6 @@
   // Per-project snapshots for a multi-project scope, keyed by project id.
   // A project missing here falls back to knowledgeGraphSnapshot.
   let knowledgeGraphSnapshotsByProject = {};
-  // Knowledge Graph retrieval fixture; null yields an empty result set.
-  let knowledgeGraphQueryResult = null;
   let knowledgeGraphAnswerResult = null;
   // Proactive-recall fixture for task detail; empty means the panel renders
   // nothing at all, which is the common case and must stay silent.
@@ -4654,17 +4652,6 @@
         }
         return Promise.resolve();
       },
-      queryGraph: function (query, projectId) {
-        if (typeof window !== 'undefined') {
-          if (!window.__mockGraphQueryCalls) window.__mockGraphQueryCalls = [];
-          window.__mockGraphQueryCalls.push({ query: query, projectId: projectId === undefined ? null : projectId });
-        }
-        return Promise.resolve(
-          knowledgeGraphQueryResult
-            ? JSON.parse(JSON.stringify(knowledgeGraphQueryResult))
-            : { query: query, hits: [], semantic: true },
-        );
-      },
       answerFromGraph: function (question, projectId, granularity, requestId, context) {
         if (typeof window !== 'undefined') {
           if (!window.__mockGraphAnswerCalls) window.__mockGraphAnswerCalls = [];
@@ -5233,9 +5220,6 @@
     }
     if (result && result.knowledgeGraphSnapshotsByProject && typeof result.knowledgeGraphSnapshotsByProject === 'object') {
       knowledgeGraphSnapshotsByProject = result.knowledgeGraphSnapshotsByProject;
-    }
-    if (result && result.knowledgeGraphQueryResult && typeof result.knowledgeGraphQueryResult === 'object') {
-      knowledgeGraphQueryResult = result.knowledgeGraphQueryResult;
     }
     if (result && result.knowledgeGraphAnswerResult && typeof result.knowledgeGraphAnswerResult === 'object') {
       knowledgeGraphAnswerResult = result.knowledgeGraphAnswerResult;

@@ -792,8 +792,6 @@ const api: ElectronAPI = {
     graphSnapshot: (projectId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_SNAPSHOT, projectId),
     graphProjects: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_PROJECTS),
     refreshGraph: (projectId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REFRESH, projectId),
-    queryGraph: (query: string, projectId?: string | null) =>
-      ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_QUERY, query, projectId),
     answerFromGraph: (
       question: string,
       projectId?: string | null,

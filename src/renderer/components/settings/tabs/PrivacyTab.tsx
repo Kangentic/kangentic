@@ -64,7 +64,10 @@ export function PrivacyTab() {
           <p className="text-sm text-fg-muted leading-relaxed">
             Indexing and the local model that finds by meaning live in the{' '}
             <span className="text-fg-secondary">Knowledge Graph</span> tab, and run on your device with
-            no API key. Only a question you ask, or a task summary, goes to the agent you choose there.
+            no API key. When you ask a question, the agent you choose there receives it with the
+            board&apos;s task list, the conversation passages and code found for it, and the chat so far.
+            To write a task summary, it receives that task&apos;s title, description, commits, changed
+            files and closing messages.
           </p>
         </CardTile>
       </SettingsCard>

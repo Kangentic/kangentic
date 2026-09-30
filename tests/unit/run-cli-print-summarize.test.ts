@@ -159,57 +159,101 @@ describe('runCliPrintSummarize - OUTPUT_BUDGET termination (#2)', () => {
 });
 
 describe('runCliPrintSummarize - timeout path (#3)', () => {
-  it('rejects with "summarize timed out" when the child stalls past timeoutMs', async () => {
+  function startStalledRun(cliPath = '/usr/bin/fake'): Promise<string> {
+    return runCliPrintSummarize({ cliPath, args: [], prompt: 'prompt', cwd: '/tmp', timeoutMs: 500 });
+  }
+
+  it('rejects only once the stopped child closes, so its run directory is free to remove', async () => {
     const child = makeFakeChild();
     mockSpawn.mockReturnValue(child);
+    const settled = vi.fn();
+    const resultPromise = startStalledRun();
+    resultPromise.then(settled, settled);
 
-    const resultPromise = runCliPrintSummarize({
-      cliPath: '/usr/bin/fake',
-      args: [],
-      prompt: 'prompt',
-      cwd: '/tmp',
-      timeoutMs: 500,
-    });
-
-    // Advance past the timeout without emitting close
     vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(settled).not.toHaveBeenCalled();
+
+    child.emit('close', null);
+    await expect(resultPromise).rejects.toThrow('summarize timed out');
+  });
+
+  it('rejects as timed out even when the child wrote output before it was stopped', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+    const resultPromise = startStalledRun();
+
+    child.stdout.emit('data', Buffer.from('Half An Answ'));
+    vi.advanceTimersByTime(600);
+    child.emit('close', null);
 
     await expect(resultPromise).rejects.toThrow('summarize timed out');
   });
 
-  it('attempts SIGKILL 1 second after the initial SIGTERM', async () => {
+  it('rejects after the exit wait when the stopped child never closes', async () => {
     const child = makeFakeChild();
     mockSpawn.mockReturnValue(child);
+    const resultPromise = startStalledRun();
 
-    const resultPromise = runCliPrintSummarize({
-      cliPath: '/usr/bin/fake',
-      args: [],
-      prompt: 'prompt',
-      cwd: '/tmp',
-      timeoutMs: 500,
+    vi.advanceTimersByTime(600 + 3_100);
+
+    await expect(resultPromise).rejects.toThrow('summarize timed out');
+  });
+
+  it('sends SIGKILL a second after SIGTERM while the child is still running, although child.killed is already true', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+    const resultPromise = startStalledRun();
+
+    vi.advanceTimersByTime(600);
+    // Node sets `killed` as soon as a signal is sent, whether or not the process exited.
+    expect(child.killed).toBe(true);
+    vi.advanceTimersByTime(1_100);
+
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    child.emit('close', null);
+    await resultPromise.catch(() => { /* expected */ });
+  });
+
+  it('sends no SIGKILL once the child has exited', async () => {
+    const child = makeFakeChild() as FakeChild & { exitCode: number | null };
+    child.exitCode = null;
+    mockSpawn.mockReturnValue(child);
+    const resultPromise = startStalledRun();
+
+    vi.advanceTimersByTime(600);
+    child.exitCode = 1;
+    vi.advanceTimersByTime(1_100);
+
+    expect(child.kill).not.toHaveBeenCalledWith('SIGKILL');
+    child.emit('close', 1);
+    await resultPromise.catch(() => { /* expected */ });
+  });
+
+  describe('a CLI launched through cmd.exe', () => {
+    const originalPlatform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
     });
 
-    // Advance to trigger the timeout timer (SIGTERM)
-    vi.advanceTimersByTime(600);
+    it('takes the whole process tree with taskkill instead of killing cmd.exe alone', async () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      const child = makeFakeChild() as FakeChild & { pid: number };
+      child.pid = 4242;
+      const taskkill = { on: vi.fn(), unref: vi.fn() };
+      taskkill.on.mockReturnValue(taskkill);
+      mockSpawn.mockImplementation((command: string) => (command === 'taskkill' ? taskkill : child));
+      const resultPromise = startStalledRun('C:\\tools\\fake.cmd');
 
-    // The first kill call happens at timeout
-    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+      vi.advanceTimersByTime(600);
 
-    // Simulate the child NOT dying after SIGTERM (killed stays false)
-    child.killed = false;
-
-    // Advance past the 1-second SIGKILL fallback timer
-    vi.advanceTimersByTime(1100);
-
-    // SIGKILL should have been sent
-    const killCalls = (child.kill as ReturnType<typeof vi.fn>).mock.calls;
-    const sigkillCall = killCalls.find(
-      (callArgs: string[]) => callArgs[0] === 'SIGKILL',
-    );
-    expect(sigkillCall).toBeDefined();
-
-    // Consume the rejection so the test doesn't warn about unhandled rejections
-    await resultPromise.catch(() => { /* expected */ });
+      expect(mockSpawn).toHaveBeenCalledWith('taskkill', ['/pid', '4242', '/T', '/F'], expect.objectContaining({ windowsHide: true }));
+      expect(taskkill.unref).toHaveBeenCalled();
+      expect(child.kill).not.toHaveBeenCalled();
+      child.emit('close', null);
+      await expect(resultPromise).rejects.toThrow('summarize timed out');
+    });
   });
 });
 

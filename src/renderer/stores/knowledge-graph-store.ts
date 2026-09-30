@@ -122,9 +122,6 @@ interface KnowledgeGraphState {
   endChat: () => void;
 
   loadSnapshot: (projectId?: string | null, options?: SnapshotReadOptions) => Promise<void>;
-  /** Point the surface at a different project without a rebuild: the cached
-   *  projection for that project is served immediately if it exists. */
-  pointAt: (projectId: string | null) => Promise<void>;
 
   /** Every project the Projects picker can offer. Loaded when the graph opens. */
   projects: KnowledgeGraphProjectSummary[];
@@ -603,17 +600,6 @@ function createKnowledgeGraphStore() {
 
         inFlight = request;
         return request;
-      },
-
-      pointAt: async (projectId) => {
-        if (projectId === get().projectId) return;
-        // Clear the old projection so the canvas never renders one project's map
-        // labelled as another's while the new snapshot is in flight, and end
-        // the chat, whose tasks belong to the old project.
-        set({ snapshot: null, projectId, loaded: false, followsCurrentProject: projectId === null });
-        // After the switch, so the next chat's session warms for the new project.
-        get().endChat();
-        await get().loadSnapshot(projectId);
       },
     };
   });

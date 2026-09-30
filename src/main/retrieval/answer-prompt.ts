@@ -18,6 +18,24 @@ import { ANSWER_SEARCH_BUDGET } from '../agent/mcp-http/answer-search-trace';
 import type { AnswerTaskTable } from './answer-tasks';
 import { formatTaskFieldGlossary, formatTaskTable, summarizeTaskTable } from './answer-tasks';
 import { KNOWLEDGE_GRAPH_TASK_FIELDS, type KnowledgeGraphTaskFacts, type KnowledgeGraphTaskFieldKey } from '../../shared/knowledge-graph-task-fields';
+import { defusePromptTags, promptTagPattern } from './prompt-tags';
+
+/**
+ * Every tag Ask's prompt frames a block with. Text from the index, the board or
+ * the chat is defused against these (`prompt-tags.ts`) wherever it goes in, so a
+ * passage can never close a block and write rules of its own. A block added to
+ * the prompt joins this list; a test fails on a tag the builders emit that is
+ * not here.
+ */
+export const ANSWER_PROMPT_TAGS = [
+  'task_summary', 'column_glossary', 'task_table', 'related_work', 'source_code', 'conversation_so_far',
+] as const;
+const ANSWER_PROMPT_TAG_PATTERN = promptTagPattern(ANSWER_PROMPT_TAGS);
+
+/** Text from outside the prompt, unable to open or close one of its blocks. */
+function outside(text: string): string {
+  return defusePromptTags(text, ANSWER_PROMPT_TAG_PATTERN);
+}
 
 /** One task of the related work, as the prompt states it. */
 export interface RelatedPromptTask {
@@ -188,7 +206,7 @@ function formatSpan(table: AnswerTaskTable, nowMs: number): string {
 /** The related work as a compact table, strongest first. */
 export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): string {
   if (related.length === 0) return 'Nothing in the recorded conversations matched this question.';
-  const quote = (text: string): string => `"${text.replace(/\|/g, '/').replace(/"/g, '\'')}"`;
+  const quote = (text: string): string => `"${outside(text).replace(/\|/g, '/').replace(/"/g, '\'')}"`;
   const header = [
     'ref', 'task', 'strength', 'matches', 'first', 'last',
     ...RELATED_FACT_FIELDS.map((field) => field.key),
@@ -197,7 +215,7 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
   ].join('|');
   const rows = related.map((task) => [
     task.ref,
-    task.title.replace(/\|/g, '/'),
+    outside(task.title).replace(/\|/g, '/'),
     task.strength.toFixed(2),
     String(task.matches),
     isoDate(task.firstMs),
@@ -219,19 +237,19 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
  *  empty block is never read as the code having nothing on the subject. */
 export function formatCodePassages(passages: ReadonlyArray<CodePromptPassage>): string {
   if (passages.length === 0) return 'No source code matched this question.';
-  return passages
+  return outside(passages
     .map((passage) => `--- ${passage.project ? `${passage.project}: ` : ''}${passage.path}\n${passage.text}`)
-    .join('\n\n');
+    .join('\n\n'));
 }
 
 function formatHistory(history: ReadonlyArray<AnswerHistoryTurn>): string {
-  return history.map((turn) => {
+  return outside(history.map((turn) => {
     const answer = turn.answer.length > HISTORY_ANSWER_CHARS
       ? `${turn.answer.slice(0, HISTORY_ANSWER_CHARS)}...`
       : turn.answer;
     const about = turn.refs.length > 0 ? `\nTasks it was about: ${turn.refs.join(', ')}` : '';
     return `Q: ${turn.question}\nA: ${answer}${about}`;
-  }).join('\n\n');
+  }).join('\n\n'));
 }
 
 /**
@@ -255,11 +273,12 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
         + ' the work a search found related to the question, and the chat so far.',
     '',
     `<task_summary>\n${formatSpan(context.tasks, context.nowMs)}\n\n`
-      + `${summarizeTaskTable(context.tasks)}\n</task_summary>`,
+      + `${outside(summarizeTaskTable(context.tasks))}\n</task_summary>`,
     '',
     `<column_glossary>\n${formatTaskFieldGlossary(context.tasks)}\n</column_glossary>`,
     '',
-    `<task_table>\n${formatTaskTable(context.tasks)}\n</task_table>`,
+    // Titles, labels, column and region names are the user's own text.
+    `<task_table>\n${outside(formatTaskTable(context.tasks))}\n</task_table>`,
     '',
     rules(context),
     '',
@@ -269,7 +288,7 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
     '',
     finalReminder(context.canSearch, context.code !== undefined),
     '',
-    `Question: ${question.trim()}`,
+    `Question: ${outside(question.trim())}`,
   ].join('\n');
 }
 
@@ -304,7 +323,7 @@ export function buildFollowUpPrompt(
     '',
     finalReminder(context.canSearch, context.code !== undefined),
     '',
-    `Question: ${question.trim()}`,
+    `Question: ${outside(question.trim())}`,
   ].join('\n');
 }
 
