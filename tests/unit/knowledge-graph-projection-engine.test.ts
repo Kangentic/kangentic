@@ -61,12 +61,13 @@ const FIRST_INDEXED_AT = '2026-09-01T00:00:00.000Z';
 /**
  * Minimal store double: only the reads the pass actually performs.
  * `indexedAtByDocId` overrides a document's index time, which is how a test
- * says a document was rewritten without its count moving.
+ * says a document was rewritten without its count moving; null says it has no
+ * index-state row at all.
  */
 function scriptedStore(
   chunks: ScriptedChunk[],
   meta = new Map<string, string>(),
-  indexedAtByDocId: Record<string, string> = {},
+  indexedAtByDocId: Record<string, string | null> = {},
 ) {
   const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
   let listCalls = 0;
@@ -135,7 +136,9 @@ function scriptedStore(
     documentIndexTimes(corpus: string) {
       const times = new Map<string, string>();
       for (const chunk of chunks) {
-        if (chunk.corpus === corpus) times.set(chunk.docId, indexedAtByDocId[chunk.docId] ?? FIRST_INDEXED_AT);
+        if (chunk.corpus !== corpus) continue;
+        const indexedAt = chunk.docId in indexedAtByDocId ? indexedAtByDocId[chunk.docId] : FIRST_INDEXED_AT;
+        if (indexedAt !== null) times.set(chunk.docId, indexedAt);
       }
       return times;
     },
@@ -575,6 +578,25 @@ describe('projection pass', () => {
       expect(result!.sums.sumsByDocKey).toEqual(fromScratch!.sums.sumsByDocKey);
       // doc-005's two embedded chunks, and no other document's.
       expect(incremental.vectorReads()).toBe(2);
+    });
+
+    it('reads nothing while Rebuild index has cleared the index times', async () => {
+      // Rebuild deletes every index-state row, then re-indexes. A pass in between
+      // finds no index time for any document, which says nothing changed.
+      const chunks = makeChunks(6, 3);
+      const shared = new Map<string, string>();
+      const initial = await runProjectionPass({
+        store: scriptedStore(chunks, shared).store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      shared.set(PROJECTION_SUMS_KEY, JSON.stringify(initial!.sums));
+
+      const cleared = Object.fromEntries(chunks.map((chunk) => [chunk.docId, null]));
+      const midRebuild = scriptedStore(chunks, shared, cleared);
+      await runProjectionPass({
+        store: midRebuild.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      expect(midRebuild.vectorReads()).toBe(0);
+      expect(midRebuild.listCalls()).toBe(0);
     });
 
     it('reads a cache written before index times were kept again whole, then resumes', async () => {

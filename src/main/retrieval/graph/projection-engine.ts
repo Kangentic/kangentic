@@ -169,6 +169,12 @@ export interface ProjectionPassDeps {
  * time moved is read again too. `liveIndexTimes` is read before any vector, so
  * a re-index that lands while this pass yields stamps a later time than the one
  * recorded, and the next pass reads that document again.
+ *
+ * A document with no index time at all has not moved by it. Rebuild index
+ * deletes every index-state row and then re-indexes, so a pass in between
+ * would otherwise read every vector again. Once the rebuild has re-stamped
+ * them, the next pass does read every document again, once: the stamps say
+ * each was indexed, not whether its chunks changed.
  */
 function planScan(
   cached: SerializedMeanPool | null,
@@ -191,9 +197,9 @@ function planScan(
     // A document gone from the index, or with nothing embedded any more, is
     // forgotten; one whose count or index time moved is forgotten and read
     // again below.
-    if (liveCounts.get(docKey) !== cachedCount || liveIndexTimes.get(docKey) !== cachedIndexTimes[docKey]) {
-      forgetDocument(restored, docKey);
-    }
+    const liveIndexTime = liveIndexTimes.get(docKey);
+    const indexTimeMoved = liveIndexTime !== undefined && liveIndexTime !== cachedIndexTimes[docKey];
+    if (liveCounts.get(docKey) !== cachedCount || indexTimeMoved) forgetDocument(restored, docKey);
   }
   // Every live document the accumulator no longer holds: the changed ones, and
   // any new since the cache was written.
