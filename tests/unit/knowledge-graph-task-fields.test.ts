@@ -356,11 +356,14 @@ describe('source code in the prompt', () => {
     expect(prompt).toMatch(/an answer from the code alone ends "SELECTED: none"/);
     const reminder = prompt.slice(prompt.indexOf('Reply in two to four plain sentences'));
     expect(reminder).toMatch(/Name a file by its path/);
-    // Measured: a code answer ran to seven sentences and 20 s with the length
-    // stated only once, above the passages, and "the same few sentences" still
-    // gave 8 and 9 on the how-does-it-work questions, which walked each step.
-    expect(reminder).toMatch(/An answer about code is four sentences at most: what it does and where, never each step/);
+    // Measured: a code answer ran to seven sentences and 20 s walking each step.
+    // The walk-through is what the rule stops, not the length: a fixed cap of
+    // four came back as 5, 7, 7 and 4, with the extra sentences real detail, so
+    // the rule asks for what and where first and only as much as the question needs.
+    expect(reminder).toMatch(/An answer about code says what it does and where first, never each step/);
+    expect(prompt).toMatch(/then goes only as far as the question asks/);
     expect(prompt).toMatch(/Quote a constant only when the question asks for it, and never walk through the steps one by one/);
+    expect(prompt).not.toMatch(/four sentences at most/);
     // Outside knowledge is still out; the code passages are in.
     expect(prompt).toMatch(/do not add anything you know from outside these sources, about this code or about the world/);
     expect(prompt).not.toMatch(/not about this codebase/);

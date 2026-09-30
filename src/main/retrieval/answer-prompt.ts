@@ -113,9 +113,9 @@ function rules(context: AnswerPromptContext): string {
           + ' to the question, each under its file\'s path. Use them to say how something works or where it lives,'
           + ' and name a file by its path. A passage is part of a file, so never say the code lacks something'
           + ' because no passage shows it, and ignore passages that only share a word with the question. A file is'
-          + ' not a task: an answer from the code alone ends "SELECTED: none". An answer about code is four sentences'
-          + ' at most: what it does, and where it lives. Quote a constant only when the question asks for it, and'
-          + ' never walk through the steps one by one.',
+          + ' not a task: an answer from the code alone ends "SELECTED: none". An answer about code says what it'
+          + ' does and where it lives first, then goes only as far as the question asks. Quote a constant only when'
+          + ' the question asks for it, and never walk through the steps one by one.',
       ]
       : []),
     '<task_table> is complete and its numbers are exact: every task in scope is listed, and costs, durations'
@@ -327,7 +327,7 @@ function finalReminder(canSearch: boolean, withCode: boolean): string {
     + ' "biggest" or "most", one measure you name, and never an "if instead you mean" second answer. Name at most'
     + ' three tasks, by ref alone and never with their'
     + ' titles.'
-    + (withCode ? ' Name a file by its path. An answer about code is four sentences at most: what it does and where, never each step.' : '')
+    + (withCode ? ' Name a file by its path. An answer about code says what it does and where first, never each step.' : '')
     + ' Work the answer out before you write it: every word appears to the reader as you write it, so'
     + ' never correct yourself in the reply.'
     + (canSearch ? ' If what you need is not here, search before saying so.' : '')

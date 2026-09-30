@@ -287,6 +287,21 @@ test.describe('Knowledge Graph card', () => {
       // Indexing off: it names its own prerequisite.
       await setKnowledgeGraph(page, { indexingEnabled: false });
       await expect(card).toContainText('Needs indexing');
+
+      // Still switchable, never a dead end: it reads off while the index is
+      // off, and turning it on turns the index on in the same write.
+      const graphSwitch = page.getByRole('switch', { name: 'Knowledge Graph' });
+      await setKnowledgeGraph(page, { enabled: true });
+      await expect(graphSwitch).toHaveAttribute('aria-checked', 'false');
+      await expect(graphSwitch).toBeEnabled();
+      await graphSwitch.click();
+      await expect.poll(() => page.evaluate(async () => {
+        const config = (await window.electronAPI.config.get()).knowledgeGraph;
+        return { enabled: config?.enabled, indexingEnabled: config?.indexingEnabled };
+      })).toEqual({ enabled: true, indexingEnabled: true });
+      await expect(card).not.toContainText('Needs indexing');
+      await expect(graphSwitch).toHaveAttribute('aria-checked', 'true');
+      await expect(qualityRow).toBeVisible();
     } finally {
       await browser.close();
     }

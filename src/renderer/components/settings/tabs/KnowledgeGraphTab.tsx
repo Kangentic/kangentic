@@ -206,14 +206,16 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
         icon={<Brain size={16} />}
         {...settingProps('knowledgeGraph.enabled')}
         searchIds={['knowledgeGraph.localModel', 'knowledgeGraph.acceleration', 'knowledgeGraph.agent', 'knowledgeGraph.model', 'knowledgeGraph.effort']}
-        checked={semanticEnabled}
-        onChange={(value) => updateGlobal({ knowledgeGraph: { enabled: value } })}
+        // Reads off while the index is off, since it cannot run then, and turning
+        // it on turns the index on too, in one write: the index's switch is
+        // further down the tab.
+        checked={semanticReady}
+        onChange={(value) => updateGlobal({ knowledgeGraph: value ? { enabled: true, indexingEnabled: true } : { enabled: false } })}
         requirement={indexingEnabled ? undefined : 'Needs indexing'}
         testId="knowledge-graph-card"
       >
-        {/* Gated on indexingEnabled too, so turning indexing off (which
-            disables the switch) hides these rather than leaving them
-            interactive with no way to switch the Knowledge Graph back off. */}
+        {/* Gated on indexingEnabled too: with the index off the Knowledge
+            Graph cannot run, so its rows stay hidden until the index is back. */}
         {semanticReady ? (
           <>
             {/* The local model: it finds by meaning and draws the map. */}

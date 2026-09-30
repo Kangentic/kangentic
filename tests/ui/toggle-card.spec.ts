@@ -314,7 +314,7 @@ test.describe('Settings card header', () => {
     await closeSettings();
   });
 
-  test('a header whose prerequisite is off does not flip on a click', async () => {
+  test('a header whose prerequisite is off still flips, and turns the prerequisite on', async () => {
     await setGlobalConfigAndSync({ knowledgeGraph: { indexingEnabled: false, enabled: false } });
     await openTab('Knowledge Graph');
 
@@ -322,8 +322,10 @@ test.describe('Settings card header', () => {
     // The description stays; a tag after the title names the prerequisite.
     await expect(card).toContainText('Needs indexing');
     await expect(card).toContainText('Finds your work by meaning and answers questions.');
+    // Never a dead end: a click on the header turns the feature and its index on.
     await card.locator('h3').click();
-    await expect(page.getByRole('switch', { name: 'Knowledge Graph' })).toHaveAttribute('aria-checked', 'false');
+    await expect(page.getByRole('switch', { name: 'Knowledge Graph' })).toHaveAttribute('aria-checked', 'true');
+    await expect(card).not.toContainText('Needs indexing');
 
     await setGlobalConfigAndSync({ knowledgeGraph: { indexingEnabled: true, enabled: false } });
     await closeSettings();

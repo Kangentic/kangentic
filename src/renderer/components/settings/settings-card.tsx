@@ -126,10 +126,13 @@ interface SettingsCardProps {
   info?: string;
   /**
    * The prerequisite that is still off, as a short tag after the title
-   * ("Needs indexing"). While it is set the icon, title and description dim,
-   * the switch is disabled, and the caller leaves the body out. The
-   * description stays as it is, so the card still says what the feature is;
-   * the tag alone says what it is waiting for, and stays at full strength.
+   * ("Needs indexing"). While it is set the icon, title and description dim
+   * and the caller leaves the body out. The description stays as it is, so the
+   * card still says what the feature is; the tag alone says what it is waiting
+   * for, and stays at full strength. The switch stays usable, as a waiting
+   * Index line's does, so the card is never a dead end: the caller's onChange
+   * turns the prerequisite on with the feature (the Knowledge Graph turns the
+   * index on).
    */
   requirement?: string;
   /**
@@ -155,7 +158,7 @@ export function SettingsCard({
   const unavailable = requirement !== undefined;
   // Dims what the card is, never the tag that says what it needs.
   const dimmed = unavailable ? 'opacity-50' : '';
-  const toggle = checked !== undefined && onChange !== undefined && !unavailable
+  const toggle = checked !== undefined && onChange !== undefined
     ? () => onChange(!checked)
     : undefined;
 
@@ -205,7 +208,6 @@ export function SettingsCard({
             <ToggleSwitch
               checked={checked}
               onChange={onChange}
-              disabled={unavailable}
               ariaLabel={label}
               // The switch, not the card, carries `setting-row-<id>`: that id
               // named the role="switch" element before cards existed, and tests
