@@ -41,6 +41,8 @@ import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory'
 import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
 import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
 import { SummaryStore } from '../../retrieval/summary/summary-store';
+import { retrievalClient } from '../../retrieval/retrieval-client';
+import type { ProjectIndexSummaryRow } from '../../retrieval/worker/methods';
 import type {
   SearchHit,
   SearchRequest,
@@ -763,26 +765,30 @@ export function registerSearchHandlers(context: IpcContext): void {
    * Every project, for the Knowledge Graph's Projects picker: its name, how many
    * conversations its map would draw, and when its index last took one in.
    *
-   * Opens each project's database, which Quick Find's cross-project search
-   * already does, and reads an index-only count from each (12ms across 19 real
-   * projects, warm). A project whose database cannot be read lists as having
-   * nothing indexed rather than failing the whole list.
+   * The retrieval worker reads an index-only count from each project's
+   * database (12ms across 19 real projects, warm). A project whose database
+   * cannot be read, or every project while the worker is down, lists as
+   * having nothing indexed rather than failing the whole list.
    */
-  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_PROJECTS, (): KnowledgeGraphProjectSummary[] => {
-    return context.projectRepo.list().map((project) => {
-      try {
-        const summary = new RetrievalStore(getProjectDb(project.id)).projectIndexSummary();
-        const lastActivityMs = summary.lastIndexedAt ? Date.parse(summary.lastIndexedAt) : Number.NaN;
-        return {
-          id: project.id,
-          name: project.name,
-          conversations: summary.conversations,
-          taskRecords: summary.taskRecords,
-          lastActivityMs: Number.isNaN(lastActivityMs) ? null : lastActivityMs,
-        };
-      } catch {
-        return { id: project.id, name: project.name, conversations: 0, taskRecords: 0, lastActivityMs: null };
-      }
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_PROJECTS, async (): Promise<KnowledgeGraphProjectSummary[]> => {
+    const projects = context.projectRepo.list();
+    let summaries: Array<ProjectIndexSummaryRow | null> = [];
+    try {
+      summaries = await retrievalClient.call('projects.summaries', { projectIds: projects.map((project) => project.id) });
+    } catch {
+      // Listed with nothing indexed, below.
+    }
+    return projects.map((project, index) => {
+      const summary = summaries[index] ?? null;
+      if (!summary) return { id: project.id, name: project.name, conversations: 0, taskRecords: 0, lastActivityMs: null };
+      const lastActivityMs = summary.lastIndexedAt ? Date.parse(summary.lastIndexedAt) : Number.NaN;
+      return {
+        id: project.id,
+        name: project.name,
+        conversations: summary.conversations,
+        taskRecords: summary.taskRecords,
+        lastActivityMs: Number.isNaN(lastActivityMs) ? null : lastActivityMs,
+      };
     });
   });
 

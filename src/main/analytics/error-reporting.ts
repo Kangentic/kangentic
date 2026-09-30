@@ -359,7 +359,8 @@ export function initErrorReporting(): void {
         // breadcrumb AFTER the capture, so the event can never say WHICH
         // process died and no beforeSend can recover it. Electron's own
         // utility processes (network, audio, storage) are un-actionable for us,
-        // and our two (kangentic-embeddings, kangentic-line-count) now report
+        // and ours (kangentic-embeddings, kangentic-line-count,
+        // kangentic-dictation, kangentic-retrieval) report
         // themselves from their own exit handlers, where the service name,
         // exit code, and crash count are all known. Scoped to 'Utility'
         // deliberately: the same SDK integration reports renderer crashes as

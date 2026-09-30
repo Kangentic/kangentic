@@ -75,6 +75,7 @@ import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from './git/git-fetch-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
+import { retrievalClient } from './retrieval/retrieval-client';
 import { setProjectDbInitializer } from './db/database';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
@@ -2369,6 +2370,10 @@ function getShutdownDependencies() {
       // Stop conversation-memory indexing synchronously: drop pending finalize
       // timers and abandon any in-flight sweep (recovered on next open).
       retrievalService.dispose();
+      // Synchronously kill the retrieval worker (if spawned). Its in-flight
+      // calls reject as unavailable, and an index write it was making is left
+      // for the next open to finish, as a crash mid-write already is.
+      retrievalClient.dispose();
       // Synchronously kill the line-count worker (if spawned); in-flight
       // counts abandon and their callers fall back to inline counting.
       lineCountClient.dispose();

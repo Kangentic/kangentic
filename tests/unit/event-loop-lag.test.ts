@@ -322,4 +322,22 @@ describe('timeSyncWork attribution ring', () => {
     expect(report.recentSlowSyncWork[0].label).toBe('span-1');
     expect(report.recentSlowSyncWork[199].label).toBe('span-200');
   });
+
+  it('relays slow spans with no monitor running, as a worker does, and records nothing locally', async () => {
+    const { timeSyncWork, recordSyncSpan, relaySlowSyncSpans, getEventLoopLagReport } = await loadMonitor();
+    const relayed: Array<[string, number]> = [];
+    relaySlowSyncSpans((label, elapsedMs) => relayed.push([label, elapsedMs]));
+    try {
+      stepClock(10);
+      timeSyncWork('fast', () => undefined);
+      stepClock(20);
+      expect(timeSyncWork('graph:vectors', () => 'value')).toBe('value');
+      recordSyncSpan('search:knn', 120);
+      recordSyncSpan('search:fast', 3);
+    } finally {
+      relaySlowSyncSpans(null);
+    }
+    expect(relayed).toEqual([['graph:vectors', 20], ['search:knn', 120]]);
+    expect(getEventLoopLagReport().recentSlowSyncWork).toHaveLength(0);
+  });
 });

@@ -9,6 +9,19 @@ import type Database from 'better-sqlite3';
  */
 const vecCapableConnections = new WeakSet<Database.Database>();
 
+/**
+ * Load the sqlite-vec extension from `loadablePath` into a connection and mark
+ * it vec-capable. The path is resolved by the caller: main resolves it from the
+ * `sqlite-vec` package (`vec-extension.ts`), and the retrieval worker is handed
+ * the same path in its init message, since resolving it needs `electron`'s
+ * `app`. Throws on failure; the caller decides how to degrade.
+ */
+export function loadVecExtensionFrom(db: Database.Database, loadablePath: string): void {
+  if (hasVecSupport(db)) return;
+  db.loadExtension(loadablePath);
+  markVecCapable(db);
+}
+
 export function markVecCapable(db: Database.Database): void {
   vecCapableConnections.add(db);
 }

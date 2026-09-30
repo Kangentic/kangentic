@@ -445,8 +445,17 @@ async function build() {
       entryPoints: [path.join(projectDir, 'src/main/transcription/dictation-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/dictation-worker.js'),
     }),
+    // The retrieval index (search, the Knowledge Graph's map, indexing) runs
+    // in an Electron utilityProcess (see src/main/retrieval/retrieval-client.ts),
+    // so none of its database work blocks the main process. `better-sqlite3`
+    // stays external, resolved from the unpacked node_modules at runtime.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/retrieval/worker/retrieval-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/retrieval-worker.js'),
+    }),
   ]);
-  console.log('[build] Main + preload + embed worker + line-count worker + dictation worker built');
+  console.log('[build] Main + preload + embed, line-count, dictation and retrieval workers built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
   // esbuild bundle as raw .js/.mjs and must sit next to the bundle. The copy

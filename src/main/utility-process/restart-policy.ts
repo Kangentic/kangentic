@@ -4,9 +4,10 @@ import { summarizeStderrTail, type StderrSource } from './stderr-tail';
 
 /**
  * Restart policy shared by the utility processes we own
- * (`kangentic-embeddings`, `kangentic-line-count`).
+ * (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`,
+ * `kangentic-retrieval`).
  *
- * Both clients used to re-fork immediately on the next request, bounded only by
+ * The first two clients used to re-fork immediately on the next request, bounded only by
  * a crash cap. A worker that dies on startup therefore burned its whole cap in
  * a few milliseconds: three exits inside four seconds, then the subsystem was
  * permanently dead for the rest of the app run, silently. That signature is

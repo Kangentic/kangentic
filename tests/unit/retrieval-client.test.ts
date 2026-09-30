@@ -1,0 +1,208 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
+
+/**
+ * RetrievalClient lifecycle: the init handshake, calls queued behind `ready`,
+ * replies and worker errors, a timed-out call killing a stuck worker, an exit
+ * failing every pending call, the respawn event, and a synchronous dispose.
+ * 'electron' is mocked with a fork that returns a controllable child, as in
+ * line-count-client.test.ts.
+ */
+
+const { mockFork } = vi.hoisted(() => ({ mockFork: vi.fn() }));
+
+vi.mock('electron', () => ({
+  app: { isPackaged: false },
+  utilityProcess: { fork: mockFork },
+}));
+
+import { RetrievalClient, RetrievalUnavailableError, INTERACTIVE_TIMEOUT_MS } from '../../src/main/retrieval/retrieval-client';
+import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
+
+interface FakeChild extends EventEmitter {
+  postMessage: ReturnType<typeof vi.fn>;
+  kill: ReturnType<typeof vi.fn>;
+}
+
+const forkedChildren: FakeChild[] = [];
+
+function lastChild(): FakeChild {
+  return forkedChildren[forkedChildren.length - 1];
+}
+
+/** The messages a child was sent, by type. */
+function sent(child: FakeChild, type: string): Array<Record<string, unknown>> {
+  return child.postMessage.mock.calls.map((call) => call[0] as Record<string, unknown>).filter((message) => message.type === type);
+}
+
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe('RetrievalClient', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    forkedChildren.length = 0;
+    mockFork.mockImplementation(() => {
+      const child = new EventEmitter() as FakeChild;
+      child.postMessage = vi.fn();
+      child.kill = vi.fn();
+      forkedChildren.push(child);
+      return child;
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('sends init with the projects directory, and holds a call until the worker is ready', async () => {
+    const client = new RetrievalClient();
+    const call = client.call('projects.summaries', { projectIds: ['project-1'] });
+    const child = lastChild();
+
+    expect(sent(child, 'init')).toEqual([expect.objectContaining({ projectsDir: expect.any(String) })]);
+    await flush();
+    expect(sent(child, 'request')).toEqual([]);
+
+    child.emit('message', { type: 'ready' });
+    await flush();
+    const [request] = sent(child, 'request');
+    expect(request).toMatchObject({ method: 'projects.summaries', params: { projectIds: ['project-1'] } });
+
+    const rows = [{ projectId: 'project-1', conversations: 3, taskRecords: 1, lastIndexedAt: null }];
+    child.emit('message', { type: 'reply', id: request.id, ok: true, result: rows });
+    await expect(call).resolves.toEqual(rows);
+    client.dispose();
+  });
+
+  it('rejects with the worker\'s own error when its handler threw', async () => {
+    const client = new RetrievalClient();
+    const call = client.call('projects.summaries', { projectIds: [] });
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+    const [request] = sent(child, 'request');
+    child.emit('message', { type: 'reply', id: request.id, ok: false, error: 'no such table: memory_chunks' });
+    await expect(call).rejects.toThrow('no such table: memory_chunks');
+    client.dispose();
+  });
+
+  it('kills a worker that does not answer in time, and counts it as a crash', async () => {
+    vi.useFakeTimers();
+    const policy = new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 3 });
+    const recordCrash = vi.spyOn(policy, 'recordCrash');
+    const client = new RetrievalClient(policy);
+    const call = client.call('projects.summaries', { projectIds: [] });
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+
+    vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+    await expect(call).rejects.toBeInstanceOf(RetrievalUnavailableError);
+    expect(child.kill).toHaveBeenCalled();
+
+    child.emit('exit', 1);
+    expect(recordCrash).toHaveBeenCalledTimes(1);
+    client.dispose();
+  });
+
+  it('gives a background job no budget', async () => {
+    vi.useFakeTimers();
+    const client = new RetrievalClient();
+    const call = client.call('projects.summaries', { projectIds: [] }, { timeoutMs: null });
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+    vi.advanceTimersByTime(10 * INTERACTIVE_TIMEOUT_MS);
+    expect(child.kill).not.toHaveBeenCalled();
+    const [request] = sent(child, 'request');
+    child.emit('message', { type: 'reply', id: request.id, ok: true, result: [] });
+    await expect(call).resolves.toEqual([]);
+    client.dispose();
+  });
+
+  it('fails every pending call when the worker exits, and announces the next worker', async () => {
+    const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+    const respawned = vi.fn();
+    client.on('respawned', respawned);
+    const first = client.call('projects.summaries', { projectIds: [] });
+    const firstChild = lastChild();
+    firstChild.emit('message', { type: 'ready' });
+    await flush();
+    expect(respawned).not.toHaveBeenCalled();
+    firstChild.emit('exit', 3);
+    await expect(first).rejects.toBeInstanceOf(RetrievalUnavailableError);
+
+    const second = client.call('projects.summaries', { projectIds: [] });
+    const secondChild = lastChild();
+    expect(secondChild).not.toBe(firstChild);
+    secondChild.emit('message', { type: 'ready' });
+    await flush();
+    expect(respawned).toHaveBeenCalledTimes(1);
+    const [request] = sent(secondChild, 'request');
+    secondChild.emit('message', { type: 'reply', id: request.id, ok: true, result: [] });
+    await expect(second).resolves.toEqual([]);
+    client.dispose();
+  });
+
+  it('latches off after repeated crashes and says why', async () => {
+    const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 2, backoffMs: [0] }));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const call = client.call('projects.summaries', { projectIds: [] });
+      lastChild().emit('exit', 1);
+      await expect(call).rejects.toBeInstanceOf(RetrievalUnavailableError);
+    }
+    await expect(client.call('projects.summaries', { projectIds: [] })).rejects.toBeInstanceOf(RetrievalUnavailableError);
+    expect(forkedChildren).toHaveLength(2);
+    expect(client.unavailableReason).toMatch(/stopped/);
+    client.dispose();
+  });
+
+  it('ignores the exit of a worker it already replaced', async () => {
+    vi.useFakeTimers();
+    const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+    const first = client.call('projects.summaries', { projectIds: [] });
+    const firstChild = lastChild();
+    firstChild.emit('message', { type: 'ready' });
+    await flush();
+    vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+    await expect(first).rejects.toBeInstanceOf(RetrievalUnavailableError);
+    // The stuck worker's exit is still pending when a new call forks again.
+    const second = client.call('projects.summaries', { projectIds: [] });
+    const secondChild = lastChild();
+    expect(secondChild).not.toBe(firstChild);
+    firstChild.emit('exit', 1);
+    secondChild.emit('message', { type: 'ready' });
+    await flush();
+    const [request] = sent(secondChild, 'request');
+    secondChild.emit('message', { type: 'reply', id: request.id, ok: true, result: [] });
+    await expect(second).resolves.toEqual([]);
+    client.dispose();
+  });
+
+  it('relays worker events', async () => {
+    const client = new RetrievalClient();
+    const events: Array<[string, string]> = [];
+    client.on('event', (event, projectId) => events.push([event, projectId]));
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+    lastChild().emit('message', { type: 'event', event: 'graph-changed', projectId: 'project-1' });
+    expect(events).toEqual([['graph-changed', 'project-1']]);
+    client.dispose();
+  });
+
+  it('disposes synchronously: kills the worker, fails pending calls, and refuses new ones', async () => {
+    const client = new RetrievalClient();
+    const call = client.call('projects.summaries', { projectIds: [] });
+    const child = lastChild();
+    client.dispose();
+    expect(child.kill).toHaveBeenCalled();
+    expect(sent(child, 'shutdown')).toHaveLength(1);
+    await expect(call).rejects.toBeInstanceOf(RetrievalUnavailableError);
+    await expect(client.call('projects.summaries', { projectIds: [] })).rejects.toBeInstanceOf(RetrievalUnavailableError);
+    // The disposal kill is not a crash.
+    child.emit('exit', 0);
+    expect(forkedChildren).toHaveLength(1);
+  });
+});

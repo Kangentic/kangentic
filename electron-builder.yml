@@ -79,9 +79,17 @@ asarUnpack:
   - "node_modules/@img/**"
   - "node_modules/detect-libc/**"
   - "node_modules/semver/**"
+  # The retrieval worker opens the project databases itself, so better-sqlite3
+  # and the two packages it loads its native addon through must resolve from
+  # the unpacked tree it runs in. It takes the sqlite-vec binary's path from
+  # main, so the sqlite-vec root package can stay inside the asar.
+  - "node_modules/better-sqlite3/**"
+  - "node_modules/bindings/**"
+  - "node_modules/file-uri-to-path/**"
   - ".vite/build/embed-worker.js"
   - ".vite/build/line-count-worker.js"
   - ".vite/build/dictation-worker.js"
+  - ".vite/build/retrieval-worker.js"
   - ".vite/build/event-bridge.js"
   - ".vite/build/status-bridge.js"
   - ".vite/build/plugins/**"

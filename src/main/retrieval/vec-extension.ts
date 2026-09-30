@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import type Database from 'better-sqlite3';
-import { hasVecSupport, markVecCapable } from './vec-support';
+import { hasVecSupport, loadVecExtensionFrom } from './vec-support';
 
 /**
  * Loads the sqlite-vec loadable extension into a better-sqlite3 connection. The
@@ -36,20 +36,25 @@ export function lastVecLoadError(): string | null {
   return lastLoadError;
 }
 
+/**
+ * Where the sqlite-vec binary is, outside the asar in a packaged app. Throws
+ * when the package or its platform binary is missing. The retrieval worker is
+ * handed this path, since it cannot ask `app` itself.
+ */
+export function resolveVecLoadablePath(): string {
+  // Lazy require (not a top-level import) so a missing package degrades to
+  // lexical-only instead of crashing at boot. `sqlite-vec` is an esbuild
+  // external, so this stays a runtime require of node_modules.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const sqliteVec = require('sqlite-vec') as SqliteVecModule;
+  const loadablePath = sqliteVec.getLoadablePath();
+  return app.isPackaged ? loadablePath.replace('app.asar', 'app.asar.unpacked') : loadablePath;
+}
+
 export function loadVecExtension(db: Database.Database): boolean {
   if (hasVecSupport(db)) return true;
   try {
-    // Lazy require (not a top-level import) so a missing package degrades to
-    // lexical-only instead of crashing at boot. `sqlite-vec` is an esbuild
-    // external, so this stays a runtime require of node_modules.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const sqliteVec = require('sqlite-vec') as SqliteVecModule;
-    let loadablePath = sqliteVec.getLoadablePath();
-    if (app.isPackaged) {
-      loadablePath = loadablePath.replace('app.asar', 'app.asar.unpacked');
-    }
-    db.loadExtension(loadablePath);
-    markVecCapable(db);
+    loadVecExtensionFrom(db, resolveVecLoadablePath());
     lastLoadError = null;
     return true;
   } catch (error) {

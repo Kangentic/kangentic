@@ -172,6 +172,8 @@ let spikeCount = 0;
 const recentSpikes: EventLoopLagSpike[] = [];
 const recentSlowSyncWork: SlowSyncWork[] = [];
 const syncWorkByLabel = new Map<string, SyncWorkStats>();
+/** Where a process with no monitor of its own sends its slow spans (see `relaySlowSyncSpans`). */
+let spanRelay: ((label: string, elapsedMs: number) => void) | null = null;
 const lagAtLeastMs = emptyEdgeCounts();
 let delayHistogram: IntervalHistogram | null = null;
 let delayWindowTimer: ReturnType<typeof setInterval> | null = null;
@@ -201,6 +203,7 @@ function recordSpan(label: string, elapsed: number): void {
  * measured by its caller.
  */
 export function recordSyncSpan(label: string, elapsedMs: number): void {
+  if (spanRelay !== null && elapsedMs >= SLOW_SYNC_THRESHOLD_MS) spanRelay(label, elapsedMs);
   if (timer === null) return;
   recordSpan(label, elapsedMs);
 }
@@ -256,13 +259,25 @@ export function slowSyncWorkSince(sinceMs: number): SlowSyncWork[] {
  * loop exactly as long as a slow success.
  */
 export function timeSyncWork<T>(label: string, work: () => T): T {
-  if (timer === null) return work();
+  if (timer === null && spanRelay === null) return work();
   const startedAt = performance.now();
   try {
     return work();
   } finally {
-    recordSpan(label, performance.now() - startedAt);
+    const elapsed = performance.now() - startedAt;
+    if (timer !== null) recordSpan(label, elapsed);
+    if (spanRelay !== null && elapsed >= SLOW_SYNC_THRESHOLD_MS) spanRelay(label, elapsed);
   }
+}
+
+/**
+ * Hand every span `timeSyncWork` measures at `SLOW_SYNC_THRESHOLD_MS` or more
+ * to `relay`, in a process that runs no monitor. The retrieval worker forwards
+ * them to main (dev builds only), whose report counts them under a `worker:`
+ * label, so work that left main stays visible in the one report.
+ */
+export function relaySlowSyncSpans(relay: ((label: string, elapsedMs: number) => void) | null): void {
+  spanRelay = relay;
 }
 
 export function startEventLoopLagMonitor(): void {

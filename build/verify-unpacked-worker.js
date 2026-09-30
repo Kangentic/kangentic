@@ -59,6 +59,17 @@ const DICTATION_WORKER_EXTERNALS = ['sherpa-onnx-node'];
 const DICTATION_WORKER_PROBE_DEPENDENCIES = [];
 
 /**
+ * The retrieval worker's esbuild external (src/main/retrieval/worker/retrieval-worker.ts).
+ * better-sqlite3 loads its native addon through `bindings`, which requires
+ * `file-uri-to-path`, so both are probed. Requiring better-sqlite3's entry does
+ * not load the addon (the Database constructor does), so this resolution probe
+ * runs under plain Node; `verifyRetrievalWorkerLoads` below loads the addon
+ * for real under the packaged Electron binary.
+ */
+const RETRIEVAL_WORKER_EXTERNALS = ['better-sqlite3'];
+const RETRIEVAL_WORKER_PROBE_DEPENDENCIES = ['bindings', 'file-uri-to-path'];
+
+/**
  * The script the probe child runs. Everything it needs is inlined, since it is
  * handed to `node -e` and cannot import from this file.
  */
@@ -115,7 +126,7 @@ function verifyUnpackedWorkerModules({
       const stderr = error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
       throw new Error(
         `[afterPack] ${moduleName} does not load from the unpacked tree at ${unpackedRoot} (${runtime}). ` +
-          'The packaged embed worker would exit 1 on every fork. ' +
+          'The packaged worker that imports it would exit 1 on every fork. ' +
           'Add the missing package to both `files` and `asarUnpack` in electron-builder.yml.\n' +
           (stderr || String(error)),
       );
@@ -127,11 +138,73 @@ function verifyUnpackedWorkerModules({
   }
 }
 
+/**
+ * The script the retrieval load probe runs under the packaged Electron binary.
+ * Fenced to the unpacked root like `buildProbeScript`, then it does what the
+ * worker does at startup: opens a database with the unpacked better-sqlite3
+ * (Electron's ABI, which plain Node cannot load) and loads the unpacked
+ * sqlite-vec binary into it.
+ */
+function buildRetrievalLoadScript(unpackedRoot) {
+  return [
+    "const Module = require('module');",
+    "const path = require('path');",
+    "const fs = require('fs');",
+    `const root = fs.realpathSync(${JSON.stringify(unpackedRoot)});`,
+    'const originalNodeModulePaths = Module._nodeModulePaths;',
+    'Module._nodeModulePaths = function fencedNodeModulePaths(from) {',
+    '  return originalNodeModulePaths.call(Module, from).filter((candidate) => candidate.startsWith(root));',
+    '};',
+    'Module.globalPaths = [];',
+    "const modulesDir = path.join(root, 'node_modules');",
+    "const Database = require(path.join(modulesDir, 'better-sqlite3'));",
+    "const db = new Database(':memory:');",
+    "const vecPackage = fs.readdirSync(modulesDir).find((name) => name.startsWith('sqlite-vec-'));",
+    "if (!vecPackage) throw new Error('no sqlite-vec platform package in ' + modulesDir);",
+    'const vecBinary = fs.readdirSync(path.join(modulesDir, vecPackage)).find((name) => /^vec0\\.(dll|so|dylib)$/.test(name));',
+    "if (!vecBinary) throw new Error('no vec0 binary in ' + vecPackage);",
+    'db.loadExtension(path.join(modulesDir, vecPackage, vecBinary));',
+    "process.stdout.write('better-sqlite3 opened, sqlite-vec ' + db.prepare('SELECT vec_version() AS version').get().version + ' loaded\\n');",
+    'db.close();',
+  ].join('\n');
+}
+
+/**
+ * Run the retrieval load probe with the packaged Electron binary as Node
+ * (`ELECTRON_RUN_AS_NODE`), which is possible only before `flipFuses` turns
+ * that off, so afterPack calls this first. Throws with the child's stderr on
+ * failure; logs the verified branch on success.
+ */
+function verifyRetrievalWorkerLoads({ unpackedRoot, electronBinaryPath, spawn = execFileSync, log = console.log }) {
+  let stdout;
+  try {
+    stdout = spawn(electronBinaryPath, ['-e', buildRetrievalLoadScript(unpackedRoot)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60_000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+  } catch (error) {
+    const stderr = error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
+    throw new Error(
+      `[afterPack] the retrieval worker's native modules do not load from ${unpackedRoot} under ${electronBinaryPath}. ` +
+        'The packaged retrieval worker could not open a project database. ' +
+        'Check better-sqlite3, bindings, file-uri-to-path and sqlite-vec-* in `asarUnpack` in electron-builder.yml.\n' +
+        (stderr || String(error)),
+    );
+  }
+  log(`[afterPack] retrieval worker: ${String(stdout).trim()}`);
+}
+
 module.exports = {
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
   DICTATION_WORKER_EXTERNALS,
   DICTATION_WORKER_PROBE_DEPENDENCIES,
+  RETRIEVAL_WORKER_EXTERNALS,
+  RETRIEVAL_WORKER_PROBE_DEPENDENCIES,
   buildProbeScript,
+  buildRetrievalLoadScript,
   verifyUnpackedWorkerModules,
+  verifyRetrievalWorkerLoads,
 };

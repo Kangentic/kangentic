@@ -1,9 +1,36 @@
+import path from 'node:path';
 import Database from 'better-sqlite3';
 import { PATHS, ensureDirs } from '../config/paths';
 import { runGlobalMigrations, runProjectMigrations } from './migrations';
 
 let globalDb: Database.Database | null = null;
 const projectDbs = new Map<string, Database.Database>();
+
+/**
+ * How this process opens project databases. Main opens, creates and migrates
+ * them (the default). The retrieval worker (`src/main/retrieval/worker/`) opens
+ * a second connection to a database main has already opened: the file must
+ * exist, and it runs no migrations, which are unversioned check-then-ALTER
+ * steps that two processes opening one file at once would race on ("duplicate
+ * column"). Main also names the projects directory, since a worker is forked
+ * with no arguments and so cannot see a `--data-dir` override.
+ */
+interface ProjectDbAccess {
+  projectsDir: string | null;
+  migrate: boolean;
+}
+
+let projectDbAccess: ProjectDbAccess = { projectsDir: null, migrate: true };
+
+export function configureProjectDbAccess(access: ProjectDbAccess): void {
+  projectDbAccess = access;
+}
+
+function projectDbPath(projectId: string): string {
+  return projectDbAccess.projectsDir
+    ? path.join(projectDbAccess.projectsDir, `${projectId}.db`)
+    : PATHS.projectDb(projectId);
+}
 
 /**
  * Optional per-project-DB initializer, run once per connection right after
@@ -100,15 +127,15 @@ export function resetGlobalDb(): void {
 export function getProjectDb(projectId: string): Database.Database {
   let db = projectDbs.get(projectId);
   if (!db) {
-    ensureDirs();
-    db = new Database(PATHS.projectDb(projectId));
+    if (projectDbAccess.migrate) ensureDirs();
+    db = new Database(projectDbPath(projectId), { fileMustExist: !projectDbAccess.migrate });
     try {
       // busy_timeout before the WAL switch, for the same reason as the global
       // database above.
       db.pragma('busy_timeout = 5000');
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');
-      runProjectMigrations(db);
+      if (projectDbAccess.migrate) runProjectMigrations(db);
       // Load optional extensions (sqlite-vec) after migrations. Never throws:
       // the initializer swallows a load failure and the engine falls back to
       // lexical-only search.
@@ -129,9 +156,22 @@ export function getProjectDb(projectId: string): Database.Database {
 export function closeProjectDb(projectId: string): void {
   const db = projectDbs.get(projectId);
   if (db) {
-    db.close();
     projectDbs.delete(projectId);
+    closeQuietly(db);
   }
+}
+
+/** The project databases this process has open, by id: what a checkpoint pass
+ *  walks. Opens nothing. */
+export function openProjectDbIds(): string[] {
+  return [...projectDbs.keys()];
+}
+
+/** A project's database only if this process already has it open. Never opens,
+ *  creates or migrates one, so a caller that must not resurrect a deleted
+ *  project's file (a late transcript flush) can use it safely. */
+export function getOpenProjectDb(projectId: string): Database.Database | null {
+  return projectDbs.get(projectId) ?? null;
 }
 
 export function closeAll(): void {

@@ -27,11 +27,15 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const {
   verifyUnpackedWorkerModules,
+  verifyRetrievalWorkerLoads,
   buildProbeScript,
+  buildRetrievalLoadScript,
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
   DICTATION_WORKER_EXTERNALS,
   DICTATION_WORKER_PROBE_DEPENDENCIES,
+  RETRIEVAL_WORKER_EXTERNALS,
+  RETRIEVAL_WORKER_PROBE_DEPENDENCIES,
 } = require('../../build/verify-unpacked-worker.js');
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -298,5 +302,66 @@ describe('dictation worker closure parity (DESKTOP-X)', () => {
     const files = filesMatch?.[1] ?? '';
     expect(files).toContain('"node_modules/sherpa-onnx-node/**"');
     expect(files).toContain('"node_modules/sherpa-onnx-*/**"');
+  });
+});
+
+describe('retrieval worker gate', () => {
+  it('runs the load probe under the given Electron binary as Node, and throws with its stderr on failure', () => {
+    const spawn = vi.fn(() => {
+      const error: SpawnError = new Error('Command failed');
+      error.stderr = 'Error: The module was compiled against a different Node.js version';
+      throw error;
+    });
+    const binary = path.join(path.sep, 'mock', 'Kangentic.exe');
+    expect(() => verifyRetrievalWorkerLoads({ unpackedRoot: MOCK_ROOT, electronBinaryPath: binary, spawn, log: vi.fn() }))
+      .toThrow(/retrieval worker's native modules do not load[\s\S]*compiled against a different Node\.js version/);
+    expect(spawn).toHaveBeenCalledWith(
+      binary,
+      ['-e', expect.stringContaining('vec_version()')],
+      expect.objectContaining({ env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }) }),
+    );
+  });
+
+  it('logs what the probe loaded on success', () => {
+    const log = vi.fn();
+    const spawn = vi.fn(() => 'better-sqlite3 opened, sqlite-vec v0.1.9 loaded\n');
+    verifyRetrievalWorkerLoads({ unpackedRoot: MOCK_ROOT, electronBinaryPath: 'electron', spawn, log });
+    expect(log).toHaveBeenCalledWith('[afterPack] retrieval worker: better-sqlite3 opened, sqlite-vec v0.1.9 loaded');
+  });
+
+  it('fences the load probe to the unpacked root', () => {
+    const script = buildRetrievalLoadScript(MOCK_ROOT);
+    expect(script).toContain('candidate.startsWith(root)');
+    expect(script).toContain('Module.globalPaths = [];');
+    expect(script).toContain(JSON.stringify(MOCK_ROOT));
+  });
+
+  it('the load probe opens a database and loads sqlite-vec for real, under this checkout\'s Electron', () => {
+    // The repo root has the same layout as the unpacked tree (node_modules
+    // with better-sqlite3 built for Electron and the sqlite-vec platform
+    // package), so the real script runs against it. Plain Node cannot load
+    // an Electron-ABI addon, which is why the gate runs the packaged binary.
+    // A worktree's node_modules can be a junction to the main checkout's, and
+    // the fence compares real paths, so the root is where it really lives.
+    const installRoot = path.dirname(fs.realpathSync(path.join(REPO_ROOT, 'node_modules')));
+    const electronBinary = require('electron') as unknown as string;
+    const log = vi.fn();
+    verifyRetrievalWorkerLoads({ unpackedRoot: installRoot, electronBinaryPath: electronBinary, log });
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[afterPack\] retrieval worker: better-sqlite3 opened, sqlite-vec v\d/));
+  }, 60_000);
+
+  it('the worker imports only better-sqlite3 from outside the bundle, and it and its addon loaders are unpacked', () => {
+    const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf8');
+    const externals = [...(buildSource.match(/external:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
+    expect(RETRIEVAL_WORKER_EXTERNALS).toEqual(['better-sqlite3']);
+    for (const name of RETRIEVAL_WORKER_EXTERNALS) expect(externals).toContain(name);
+
+    const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
+    const asarUnpack = config.match(/\nasarUnpack:\n([\s\S]*?)\nextraResources:/)?.[1] ?? '';
+    expect(asarUnpack).toContain('.vite/build/retrieval-worker.js');
+    for (const name of [...RETRIEVAL_WORKER_EXTERNALS, ...RETRIEVAL_WORKER_PROBE_DEPENDENCIES]) {
+      expect(asarUnpack).toContain(`"node_modules/${name}/**"`);
+    }
+    expect(asarUnpack).toContain('"node_modules/sqlite-vec-*/**"');
   });
 });
