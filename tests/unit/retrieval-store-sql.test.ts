@@ -855,10 +855,11 @@ describeWithSqlite('RetrievalStore document sums (real database)', () => {
     })]);
     expect(written).toBe(1);
     const prefix = () => store.docSumPrefix('conversation', ref.docId);
+    const fullSum = () => store.docSumsPage('conversation', '', 10)[0].fullSum;
     const setModel = (seq: number, modelTag: string | null) =>
       database.prepare('UPDATE memory_chunks SET embedded_model = ? WHERE seq = ?').run(modelTag, seq);
     const deleteSeq = (seq: number) => database.prepare('DELETE FROM memory_chunks WHERE seq = ?').run(seq);
-    return { database, store, prefix, setModel, deleteSeq };
+    return { database, store, prefix, fullSum, setModel, deleteSeq };
   }
 
   it('stores a new row at version 0 and reads it back', () => {
@@ -872,33 +873,45 @@ describeWithSqlite('RetrievalStore document sums (real database)', () => {
     expect(row.fullSum).toEqual(new Float64Array([5, 1]));
   });
 
-  it('empties the prefix when a chunk in it is deleted, and not for a chunk after it', () => {
-    const { prefix, deleteSeq } = project();
+  it('clears the full sum when any chunk is deleted, and empties the prefix only for a chunk in it', () => {
+    const { prefix, fullSum, deleteSeq } = project();
     deleteSeq(3);
-    expect(prefix()).toMatchObject({ version: 0, prefixThroughSeq: 2 });
+    expect(fullSum()).toBeNull();
+    expect(prefix()).toMatchObject({ version: 1, prefixThroughSeq: 2, prefixCount: 3, prefixSum: new Float64Array([3, 0.5]) });
+    // Nothing left to clear: a later delete after the prefix rewrites nothing.
+    deleteSeq(4);
+    expect(prefix()).toMatchObject({ version: 1 });
     deleteSeq(2);
-    expect(prefix()).toMatchObject({ version: 1, prefixThroughSeq: -1, prefixCount: 0, prefixTextBytes: 0, prefixSum: null });
+    expect(prefix()).toMatchObject({ version: 2, prefixThroughSeq: -1, prefixCount: 0, prefixTextBytes: 0, prefixSum: null });
   });
 
-  it('empties the prefix when a chunk in it loses its vector or is embedded again, and not when one is embedded first', () => {
+  it('clears the full sum when a vector is lost or replaced, and the prefix only for a chunk in it', () => {
     const lost = project();
     lost.setModel(1, null);
+    expect(lost.fullSum()).toBeNull();
     expect(lost.prefix()).toMatchObject({ version: 1, prefixThroughSeq: -1 });
 
     const switched = project();
     switched.setModel(0, 'model-b');
     expect(switched.prefix()).toMatchObject({ version: 1, prefixThroughSeq: -1 });
 
+    // A vector replaced after the prefix moves no count and no index time, so
+    // the cleared full sum is the only thing that tells the next pass.
     const after = project();
     after.setModel(4, 'model-b');
-    expect(after.prefix()).toMatchObject({ version: 0, prefixThroughSeq: 2 });
+    expect(after.fullSum()).toBeNull();
+    expect(after.prefix()).toMatchObject({ version: 1, prefixThroughSeq: 2 });
+  });
 
-    // A chunk with no vector gaining one is the drain's ordinary write.
-    const first = project();
-    first.database.prepare('UPDATE memory_chunks SET embedded_model = NULL WHERE seq = 4').run();
-    expect(first.prefix()).toMatchObject({ version: 0 });
-    first.setModel(4, 'model-a');
-    expect(first.prefix()).toMatchObject({ version: 0, prefixThroughSeq: 2 });
+  it('touches nothing when a chunk with no vector gains one', () => {
+    // The drain's ordinary write: the counts move instead.
+    const { database, fullSum, prefix, setModel } = project();
+    setModel(4, null);
+    database.prepare('UPDATE memory_doc_sums SET full_sum = ?').run(Buffer.from(new Float64Array([5, 1]).buffer));
+    const version = prefix()!.version;
+    setModel(4, 'model-a');
+    expect(prefix()!.version).toBe(version);
+    expect(fullSum()).toEqual(new Float64Array([5, 1]));
   });
 
   it('writes only when the row, the counts and the index time are still what the pass read', () => {

@@ -715,6 +715,34 @@ describeWithSqlite('projection pass', () => {
       expect(index.vectorReads()).toBe(4 * PREFIX_TAIL_MARGIN);
     });
 
+    it('reads a document again when a vector is replaced without its counts or index time moving', async () => {
+      // The drain re-embeds a chunk under a new model of the same width: one
+      // UPDATE of `embedded_model`, no count and no index time moves. Above the
+      // prefix only the newest chunks are read; inside it the whole document.
+      const index = corpus(2, 10, true);
+      await pass(index);
+      const replace = (target: TestIndex, seq: number) => target.database
+        .prepare("UPDATE memory_chunks SET embedded_model = ? WHERE doc_id = 'doc-001' AND seq = ?")
+        .run(OTHER_MODEL_TAG, seq);
+      const fromScratch = (seqs: number[]) => (fresh: TestIndex) => {
+        for (const docId of ['doc-000', 'doc-001']) fresh.indexDocument(docId, textsOf(docId, 10));
+        fresh.embedAll();
+        for (const seq of seqs) replace(fresh, seq);
+      };
+
+      replace(index, 9);
+      index.resetCounts();
+      await pass(index);
+      expect(index.vectorReads()).toBe(PREFIX_TAIL_MARGIN);
+      await expectSameAsFromScratch(index, fromScratch([9]));
+
+      replace(index, 3);
+      index.resetCounts();
+      await pass(index);
+      expect(index.vectorReads()).toBe(10);
+      await expectSameAsFromScratch(index, fromScratch([9, 3]));
+    });
+
     it('reads every document again after a model switch, and ends where a pass from scratch does', async () => {
       const index = corpus(4, 6, true);
       await pass(index);

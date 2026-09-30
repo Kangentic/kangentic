@@ -950,25 +950,40 @@ export function runProjectMigrations(db: Database.Database): void {
       PRIMARY KEY (corpus, doc_id)
     )
   `);
-  // A chunk leaving the prefix, by delete or by losing its vector, empties the
-  // prefix, whatever deleted it: the store's own writes, a trigger cascade from
-  // a session delete, or anything written later. Triggers rather than store
-  // code, so no path can be missed. The pass then reads that document whole.
+  // A chunk deleted, or its vector lost or replaced, clears the document's
+  // `full_sum`, and empties the prefix when the chunk is in it, whatever wrote
+  // it: the store's own writes, a trigger cascade from a session delete, or
+  // anything written later. Triggers rather than store code, so no path can be
+  // missed. The full sum has to go even for a chunk above the prefix: a vector
+  // replaced under a new model of the same width moves no count and no index
+  // time, so nothing else would tell the pass. The pass then reads the document
+  // again from what is left of its prefix. Every right-hand side of an UPDATE
+  // reads the row as it was, so each CASE tests the prefix before this write.
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_doc_sums_ad AFTER DELETE ON memory_chunks BEGIN
       UPDATE memory_doc_sums
-         SET prefix_through_seq = -1, prefix_count = 0, prefix_text_bytes = 0, prefix_sum = NULL,
+         SET full_sum = NULL,
+             prefix_through_seq = CASE WHEN prefix_through_seq >= old.seq THEN -1 ELSE prefix_through_seq END,
+             prefix_count = CASE WHEN prefix_through_seq >= old.seq THEN 0 ELSE prefix_count END,
+             prefix_text_bytes = CASE WHEN prefix_through_seq >= old.seq THEN 0 ELSE prefix_text_bytes END,
+             prefix_sum = CASE WHEN prefix_through_seq >= old.seq THEN NULL ELSE prefix_sum END,
              version = version + 1
-       WHERE corpus = old.corpus AND doc_id = old.doc_id AND prefix_through_seq >= old.seq;
+       WHERE corpus = old.corpus AND doc_id = old.doc_id
+         AND (full_sum IS NOT NULL OR prefix_through_seq >= old.seq);
     END
   `);
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_doc_sums_au AFTER UPDATE OF embedded_model ON memory_chunks
     WHEN old.embedded_model IS NOT NULL AND (new.embedded_model IS NULL OR new.embedded_model <> old.embedded_model) BEGIN
       UPDATE memory_doc_sums
-         SET prefix_through_seq = -1, prefix_count = 0, prefix_text_bytes = 0, prefix_sum = NULL,
+         SET full_sum = NULL,
+             prefix_through_seq = CASE WHEN prefix_through_seq >= old.seq THEN -1 ELSE prefix_through_seq END,
+             prefix_count = CASE WHEN prefix_through_seq >= old.seq THEN 0 ELSE prefix_count END,
+             prefix_text_bytes = CASE WHEN prefix_through_seq >= old.seq THEN 0 ELSE prefix_text_bytes END,
+             prefix_sum = CASE WHEN prefix_through_seq >= old.seq THEN NULL ELSE prefix_sum END,
              version = version + 1
-       WHERE corpus = old.corpus AND doc_id = old.doc_id AND prefix_through_seq >= old.seq;
+       WHERE corpus = old.corpus AND doc_id = old.doc_id
+         AND (full_sum IS NOT NULL OR prefix_through_seq >= old.seq);
     END
   `);
 

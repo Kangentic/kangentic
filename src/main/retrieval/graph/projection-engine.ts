@@ -82,9 +82,9 @@ const LAYOUT_COMPONENTS = 3;
  *  the longest real conversation (4,832 chunks), where one read of it all took
  *  58 ms. */
 const SCAN_BATCH = 400;
-/** Vectors read per page. vec0 decodes each one: a 400-row page took about
- *  450 ms on the real index. */
-const VECTOR_PAGE = 100;
+/** Vectors read per page. vec0 decodes each one: on the real index a page of
+ *  100 took 16 to 39 ms, so a page of 40 stays under a frame on main. */
+const VECTOR_PAGE = 40;
 /** Stored document sums read per page, each carrying its 8 KB sum at 1,024
  *  dimensions. */
 const SUMS_PAGE = 100;
@@ -186,7 +186,9 @@ interface LiveDocument {
  * chunk grows in place and is embedded again), which the index time catches.
  * A document with no index time at all has not moved by it: Rebuild index
  * deletes every index-state row and then re-indexes, and a pass in between
- * would otherwise read every vector again.
+ * would otherwise read every vector again. Neither catches a vector replaced
+ * under a new model of the same width, so the schema's triggers clear the
+ * full sum for that, and a row without one does not hold.
  */
 function storedRowHolds(
   row: DocSumRow,
