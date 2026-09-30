@@ -3,7 +3,7 @@ import { getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
 import { RetrievalStore } from '../retrieval-store';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import { SLICE_BUDGET_MS, writeInTimedSlices } from '../timed-slices';
+import { PREPARE_BUDGET_MS, writeInSlices, type PreparedWrite } from '../timed-slices';
 import {
   CHANGE_RECORD_VERSION,
   changedFilesFromChunkTexts,
@@ -110,7 +110,7 @@ export async function sweepChangeRecords(
   const sessionTypeStatement = db.prepare('SELECT session_type AS sessionType FROM sessions WHERE id = ?');
   let sliceStartedMs = deps.clock();
   const pauseIfSpent = async (): Promise<void> => {
-    if (deps.clock() - sliceStartedMs < SLICE_BUDGET_MS) return;
+    if (deps.clock() - sliceStartedMs < PREPARE_BUDGET_MS) return;
     await deps.yieldToEventLoop();
     sliceStartedMs = deps.clock();
   };
@@ -173,37 +173,43 @@ export async function sweepChangeRecords(
     await pauseIfSpent();
   }
 
-  const writeChange = (change: DerivedChange): void => {
+  const prepareChange = (change: DerivedChange): PreparedWrite => {
     const { conversation, sessionId, taskId, byPath } = change;
-    try {
-      const changeChunks = changeRecordChunks(
-        [...byPath].map(([path, changes]) => ({ path, changes })),
-        change.lastMs,
-      );
-      // Written even when empty: an empty upsert clears a stale document, and
-      // the state row keeps a session that changed nothing from being re-read.
-      store.upsertDocument(
-        { corpus: CORPUS, docId: conversation.docId, sessionId, taskId, agentSessionId: conversation.docId, metaJson: null },
-        changeChunks,
-      );
-      const indexedMs = Date.parse(conversation.indexedAt);
-      store.setIndexState({
-        corpus: CORPUS,
-        docId: conversation.docId,
-        sessionId,
-        sourcePath: RECORD_SOURCE,
-        sourceMtimeMs: Number.isNaN(indexedMs) ? null : indexedMs,
-        sourceSize: byPath.size,
-        entryCount: byPath.size,
-        chunkCount: changeChunks.length,
-        status: 'ok',
-        indexedAt: deps.now(),
-      });
-      result.indexed += 1;
-    } catch (error) {
-      console.warn(`[retrieval] session changes for ${conversation.docId} failed to index:`, error);
-    }
+    const changeChunks = changeRecordChunks(
+      [...byPath].map(([path, changes]) => ({ path, changes })),
+      change.lastMs,
+    );
+    return {
+      rows: changeChunks.length + 1,
+      bytes: changeChunks.reduce((total, chunk) => total + chunk.text.length, 0),
+      write: () => {
+        try {
+          // Written even when empty: an empty upsert clears a stale document, and
+          // the state row keeps a session that changed nothing from being re-read.
+          store.upsertDocument(
+            { corpus: CORPUS, docId: conversation.docId, sessionId, taskId, agentSessionId: conversation.docId, metaJson: null },
+            changeChunks,
+          );
+          const indexedMs = Date.parse(conversation.indexedAt);
+          store.setIndexState({
+            corpus: CORPUS,
+            docId: conversation.docId,
+            sessionId,
+            sourcePath: RECORD_SOURCE,
+            sourceMtimeMs: Number.isNaN(indexedMs) ? null : indexedMs,
+            sourceSize: byPath.size,
+            entryCount: byPath.size,
+            chunkCount: changeChunks.length,
+            status: 'ok',
+            indexedAt: deps.now(),
+          });
+          result.indexed += 1;
+        } catch (error) {
+          console.warn(`[retrieval] session changes for ${conversation.docId} failed to index:`, error);
+        }
+      },
+    };
   };
-  await writeInTimedSlices(db, derived, writeChange, 'records:change-slice', shouldContinue, deps);
+  await writeInSlices(db, derived, prepareChange, 'records:change-slice', shouldContinue, deps);
   return result;
 }

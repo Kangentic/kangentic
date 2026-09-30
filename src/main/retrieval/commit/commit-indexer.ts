@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
-import { writeInTimedSlices } from '../timed-slices';
+import { writeInSlices, type PreparedWrite } from '../timed-slices';
 import { readBranchHead, runGit, type BranchHead } from '../branch-git';
 import {
   COMMIT_LOG_FORMAT,
@@ -26,7 +26,7 @@ import {
  * (a force push, a different default branch) is read whole and reconciled, so a
  * commit no longer on it leaves the index. The first sweep of a project links
  * every commit, about 2 ms a subject: 2,419 of them took 4.4 s of reads in
- * total, written in timed slices.
+ * total, each made before its slice's write transaction begins.
  */
 
 const CORPUS = 'commit';
@@ -167,50 +167,63 @@ export async function sweepCommitRecords(
 
     const signatures = store.indexSignatures(CORPUS);
     const fresh = commits.filter((commit) => signatures.get(commit.sha)?.sourcePath !== RECORD_SOURCE);
-    const writeCommit = (commit: CommitEntry): void => {
-      try {
-        const chunks = commitChunks(commit);
-        const phrase = commitLinkPhrase(commit.subject);
-        const taskId = phrase ? store.firstTaskMentioning(phrase, commit.committedMs + LINK_GRACE_MS) : null;
-        store.upsertDocument(
-          { corpus: CORPUS, docId: commit.sha, sessionId: null, taskId, agentSessionId: null, metaJson: null },
-          chunks,
-        );
-        store.setIndexState({
-          corpus: CORPUS,
-          docId: commit.sha,
-          sessionId: null,
-          sourcePath: RECORD_SOURCE,
-          sourceMtimeMs: commit.committedMs,
-          sourceSize: chunks.reduce((total, chunk) => total + chunk.text.length, 0),
-          // Whether it found its task: the relink pass reads it back.
-          entryCount: taskId ? 1 : 0,
-          chunkCount: chunks.length,
-          status: 'ok',
-          indexedAt: new Date(deps.now()).toISOString(),
-        });
-        result.indexed += 1;
-      } catch (error) {
-        console.warn(`[retrieval] commit ${commit.sha} failed to index:`, error);
-      }
+    // The task lookup is a full-text read of about 2 ms a subject, so it runs
+    // here, outside the write transaction.
+    const prepareCommit = (commit: CommitEntry): PreparedWrite => {
+      const chunks = commitChunks(commit);
+      const phrase = commitLinkPhrase(commit.subject);
+      const taskId = phrase ? store.firstTaskMentioning(phrase, commit.committedMs + LINK_GRACE_MS) : null;
+      const textBytes = chunks.reduce((total, chunk) => total + chunk.text.length, 0);
+      return {
+        rows: chunks.length + 1,
+        bytes: textBytes,
+        write: () => {
+          try {
+            store.upsertDocument(
+              { corpus: CORPUS, docId: commit.sha, sessionId: null, taskId, agentSessionId: null, metaJson: null },
+              chunks,
+            );
+            store.setIndexState({
+              corpus: CORPUS,
+              docId: commit.sha,
+              sessionId: null,
+              sourcePath: RECORD_SOURCE,
+              sourceMtimeMs: commit.committedMs,
+              sourceSize: textBytes,
+              // Whether it found its task: the relink pass reads it back.
+              entryCount: taskId ? 1 : 0,
+              chunkCount: chunks.length,
+              status: 'ok',
+              indexedAt: new Date(deps.now()).toISOString(),
+            });
+            result.indexed += 1;
+          } catch (error) {
+            console.warn(`[retrieval] commit ${commit.sha} failed to index:`, error);
+          }
+        },
+      };
     };
     // Oldest first, so an interrupted first sweep leaves a contiguous history.
-    if (!await writeInTimedSlices(db, [...fresh].reverse(), writeCommit, 'records:commit-slice', shouldContinue, deps)) {
+    if (!await writeInSlices(db, [...fresh].reverse(), prepareCommit, 'records:commit-slice', shouldContinue, deps)) {
       return result;
     }
 
     if (!incremental) {
       const onBranch = new Set(commits.map((commit) => commit.sha));
-      for (const docId of new Set([...signatures.keys(), ...store.documentIds(CORPUS)])) {
-        if (onBranch.has(docId)) continue;
-        if (!shouldContinue()) return result;
-        try {
-          store.deleteDocument(CORPUS, docId);
-          result.removed += 1;
-        } catch (error) {
-          console.warn(`[retrieval] commit ${docId} failed to remove:`, error);
-        }
-      }
+      const gone = [...new Set([...signatures.keys(), ...store.documentIds(CORPUS)])].filter((docId) => !onBranch.has(docId));
+      const prepareRemoval = (docId: string): PreparedWrite => ({
+        rows: store.documentChunkCount(CORPUS, docId) + 1,
+        bytes: 0,
+        write: () => {
+          try {
+            store.deleteDocument(CORPUS, docId);
+            result.removed += 1;
+          } catch (error) {
+            console.warn(`[retrieval] commit ${docId} failed to remove:`, error);
+          }
+        },
+      });
+      if (!await writeInSlices(db, gone, prepareRemoval, 'records:commit-remove', shouldContinue, deps)) return result;
     }
     store.setMeta(HEAD_META_KEY, JSON.stringify({ ref: head.ref, sha: head.sha, version: COMMIT_RECORD_VERSION }));
   }
@@ -262,21 +275,28 @@ async function relinkYoungCommits(
   // `indexed_at` moves too: the task's summary reads its commits, and the
   // summary pass's fingerprint watches that column.
   const markLinked = db.prepare("UPDATE memory_index_state SET entry_count = 1, indexed_at = ? WHERE corpus = 'commit' AND doc_id = ?");
-  const relink = (commit: { docId: string; committedMs: number }): void => {
-    try {
-      const text = (subjectOf.get(commit.docId) as { text: string } | undefined)?.text ?? '';
-      const phrase = commitLinkPhrase(text.split('\n')[0] ?? '');
-      const taskId = phrase ? store.firstTaskMentioning(phrase, commit.committedMs + LINK_GRACE_MS) : null;
-      if (!taskId) return;
-      store.setDocumentTask(CORPUS, commit.docId, taskId);
-      markLinked.run(new Date(deps.now()).toISOString(), commit.docId);
-      relinked += 1;
-    } catch (error) {
-      console.warn(`[retrieval] commit ${commit.docId} failed to relink:`, error);
-    }
+  const prepareRelink = (commit: { docId: string; committedMs: number }): PreparedWrite | null => {
+    const text = (subjectOf.get(commit.docId) as { text: string } | undefined)?.text ?? '';
+    const phrase = commitLinkPhrase(text.split('\n')[0] ?? '');
+    const taskId = phrase ? store.firstTaskMentioning(phrase, commit.committedMs + LINK_GRACE_MS) : null;
+    if (!taskId) return null;
+    return {
+      // A commit is one chunk, and its state row.
+      rows: 2,
+      bytes: 0,
+      write: () => {
+        try {
+          store.setDocumentTask(CORPUS, commit.docId, taskId);
+          markLinked.run(new Date(deps.now()).toISOString(), commit.docId);
+          relinked += 1;
+        } catch (error) {
+          console.warn(`[retrieval] commit ${commit.docId} failed to relink:`, error);
+        }
+      },
+    };
   };
   // Only a finished pass is remembered, so one cut short runs again next time.
-  if (await writeInTimedSlices(db, unlinked, relink, 'records:commit-relink', shouldContinue, deps)) {
+  if (await writeInSlices(db, unlinked, prepareRelink, 'records:commit-relink', shouldContinue, deps)) {
     store.setMeta(RELINK_MARKER_KEY, marker);
   }
   return relinked;

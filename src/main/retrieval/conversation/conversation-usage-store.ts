@@ -90,6 +90,10 @@ interface TurnUsageRow {
  */
 const MAIN_THREAD_ONLY = 'subagent_id IS NULL';
 
+/** Ledger rows upserted per write transaction. The index and the rest of the
+ *  app write the same database one at a time, so each transaction stays short. */
+export const TURNS_PER_TRANSACTION = 200;
+
 /**
  * How many spawn hops `getTaskFanOuts` will walk before it gives up and leaves a
  * subagent unresolved. Headroom, not a product limit: the deepest nesting ever
@@ -194,54 +198,77 @@ export class ConversationUsageStore {
    * turn (a resumed session replaying it) re-points attribution to the latest owner
    * and refreshes the (identical) token counts. No-op on an empty batch - no SQL is
    * prepared, so a session with no usage-bearing turns touches nothing.
+   *
+   * A turn whose stored row already says the same writes nothing, so
+   * `recorded_at` is when a row last CHANGED. The indexer hands this every turn
+   * of the transcript on every settled turn, and rewriting them all held the
+   * database's write lock for the whole ledger. Written
+   * `TURNS_PER_TRANSACTION` at a time for the same reason.
    */
   recordTurns(owner: TurnUsageOwner, turns: TurnUsageInput[], now: string): void {
     if (turns.length === 0) return;
-    const run = writeTransaction(this.db, () => {
-      const upsert = this.db.prepare(
-        `INSERT INTO conversation_turn_usage
-           (turn_uuid, agent_session_id, session_id, task_id, model, ts,
-            input_tokens, output_tokens, cache_creation_input_tokens,
-            cache_read_input_tokens, recorded_at,
-            subagent_id, agent_type, spawn_depth, parent_tool_use_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(turn_uuid) DO UPDATE SET
-           agent_session_id = excluded.agent_session_id,
-           session_id = excluded.session_id,
-           task_id = excluded.task_id,
-           model = excluded.model,
-           ts = excluded.ts,
-           input_tokens = excluded.input_tokens,
-           output_tokens = excluded.output_tokens,
-           cache_creation_input_tokens = excluded.cache_creation_input_tokens,
-           cache_read_input_tokens = excluded.cache_read_input_tokens,
-           recorded_at = excluded.recorded_at,
-           subagent_id = excluded.subagent_id,
-           agent_type = excluded.agent_type,
-           spawn_depth = excluded.spawn_depth,
-           parent_tool_use_id = excluded.parent_tool_use_id`,
-      );
-      for (const turn of turns) {
-        upsert.run(
-          turn.turnUuid,
-          owner.agentSessionId,
-          owner.sessionId,
-          owner.taskId,
-          turn.model,
-          turn.ts,
-          turn.usage.inputTokens,
-          turn.usage.outputTokens,
-          turn.usage.cacheCreationInputTokens,
-          turn.usage.cacheReadInputTokens,
-          now,
-          turn.subagentId ?? null,
-          turn.agentType ?? null,
-          turn.spawnDepth ?? null,
-          turn.parentToolUseId ?? null,
-        );
-      }
-    });
-    run();
+    const upsert = this.db.prepare(
+      `INSERT INTO conversation_turn_usage
+         (turn_uuid, agent_session_id, session_id, task_id, model, ts,
+          input_tokens, output_tokens, cache_creation_input_tokens,
+          cache_read_input_tokens, recorded_at,
+          subagent_id, agent_type, spawn_depth, parent_tool_use_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(turn_uuid) DO UPDATE SET
+         agent_session_id = excluded.agent_session_id,
+         session_id = excluded.session_id,
+         task_id = excluded.task_id,
+         model = excluded.model,
+         ts = excluded.ts,
+         input_tokens = excluded.input_tokens,
+         output_tokens = excluded.output_tokens,
+         cache_creation_input_tokens = excluded.cache_creation_input_tokens,
+         cache_read_input_tokens = excluded.cache_read_input_tokens,
+         recorded_at = excluded.recorded_at,
+         subagent_id = excluded.subagent_id,
+         agent_type = excluded.agent_type,
+         spawn_depth = excluded.spawn_depth,
+         parent_tool_use_id = excluded.parent_tool_use_id
+       WHERE agent_session_id IS NOT excluded.agent_session_id
+         OR session_id IS NOT excluded.session_id
+         OR task_id IS NOT excluded.task_id
+         OR model IS NOT excluded.model
+         OR ts IS NOT excluded.ts
+         OR input_tokens IS NOT excluded.input_tokens
+         OR output_tokens IS NOT excluded.output_tokens
+         OR cache_creation_input_tokens IS NOT excluded.cache_creation_input_tokens
+         OR cache_read_input_tokens IS NOT excluded.cache_read_input_tokens
+         OR subagent_id IS NOT excluded.subagent_id
+         OR agent_type IS NOT excluded.agent_type
+         OR spawn_depth IS NOT excluded.spawn_depth
+         OR parent_tool_use_id IS NOT excluded.parent_tool_use_id`,
+    );
+    for (let start = 0; start < turns.length; start += TURNS_PER_TRANSACTION) {
+      const batch = turns.slice(start, start + TURNS_PER_TRANSACTION);
+      writeTransaction(this.db, () => {
+        for (const turn of batch) this.upsertTurn(upsert, owner, turn, now);
+      })();
+    }
+  }
+
+  private upsertTurn(upsert: Database.Statement, owner: TurnUsageOwner, turn: TurnUsageInput, now: string): void {
+    upsert.run(
+      turn.turnUuid,
+      owner.agentSessionId,
+      owner.sessionId,
+      owner.taskId,
+      turn.model,
+      turn.ts,
+      turn.usage.inputTokens,
+      turn.usage.outputTokens,
+      turn.usage.cacheCreationInputTokens,
+      turn.usage.cacheReadInputTokens,
+      now,
+      turn.subagentId ?? null,
+      turn.agentType ?? null,
+      turn.spawnDepth ?? null,
+      turn.parentToolUseId ?? null,
+    );
   }
 
   /**
@@ -259,19 +286,21 @@ export class ConversationUsageStore {
    */
   recordSpawnLinks(links: SubagentSpawnLink[], now: string): void {
     if (links.length === 0) return;
-    const run = writeTransaction(this.db, () => {
-      const upsert = this.db.prepare(
-        `INSERT INTO turn_spawn_links (tool_use_id, turn_uuid, recorded_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(tool_use_id) DO UPDATE SET
-           turn_uuid = excluded.turn_uuid,
-           recorded_at = excluded.recorded_at`,
-      );
-      for (const link of links) {
-        upsert.run(link.toolUseId, link.turnUuid, now);
-      }
-    });
-    run();
+    // As with the turns: an unchanged link writes nothing, in short transactions.
+    const upsert = this.db.prepare(
+      `INSERT INTO turn_spawn_links (tool_use_id, turn_uuid, recorded_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(tool_use_id) DO UPDATE SET
+         turn_uuid = excluded.turn_uuid,
+         recorded_at = excluded.recorded_at
+       WHERE turn_uuid IS NOT excluded.turn_uuid`,
+    );
+    for (let start = 0; start < links.length; start += TURNS_PER_TRANSACTION) {
+      const batch = links.slice(start, start + TURNS_PER_TRANSACTION);
+      writeTransaction(this.db, () => {
+        for (const link of batch) upsert.run(link.toolUseId, link.turnUuid, now);
+      })();
+    }
   }
 
   /** A task's MAIN-THREAD per-turn usage, oldest turn first (for a

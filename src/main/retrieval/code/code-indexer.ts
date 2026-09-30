@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
-import { writeInTimedSlices } from '../timed-slices';
+import { writeInSlices, type PreparedWrite } from '../timed-slices';
 import { listTree, readBlobs, readBranchHead, type BranchHead, type TreeEntry } from '../branch-git';
 import { CODE_MAX_FILE_BYTES, CODE_RECORD_VERSION, codeChunks, isIndexableCodePath } from './code-record';
 
@@ -150,44 +150,54 @@ export async function sweepCodeRecords(
     }
     if (!shouldContinue()) return result;
 
-    const writeFile = (entry: TreeEntry): void => {
+    const prepareFile = (entry: TreeEntry): PreparedWrite | null => {
       const content = contents.get(entry.blob);
-      if (!content) return;
-      try {
-        const chunks = codeChunks(entry.path, content.toString('utf8'));
-        store.upsertDocument(
-          { corpus: CORPUS, docId: entry.path, sessionId: null, taskId: null, agentSessionId: null, metaJson: null },
-          chunks,
-        );
-        store.setIndexState({
-          corpus: CORPUS,
-          docId: entry.path,
-          sessionId: null,
-          sourcePath: `${SOURCE_PREFIX}${entry.blob}`,
-          sourceMtimeMs: null,
-          sourceSize: entry.size,
-          entryCount: 1,
-          chunkCount: chunks.length,
-          status: 'ok',
-          indexedAt: new Date(deps.now()).toISOString(),
-        });
-        result.indexed += 1;
-      } catch (error) {
-        console.warn(`[retrieval] ${entry.path} failed to index:`, error);
-      }
+      if (!content) return null;
+      const chunks = codeChunks(entry.path, content.toString('utf8'));
+      return {
+        rows: chunks.length + 1,
+        bytes: entry.size,
+        write: () => {
+          try {
+            store.upsertDocument(
+              { corpus: CORPUS, docId: entry.path, sessionId: null, taskId: null, agentSessionId: null, metaJson: null },
+              chunks,
+            );
+            store.setIndexState({
+              corpus: CORPUS,
+              docId: entry.path,
+              sessionId: null,
+              sourcePath: `${SOURCE_PREFIX}${entry.blob}`,
+              sourceMtimeMs: null,
+              sourceSize: entry.size,
+              entryCount: 1,
+              chunkCount: chunks.length,
+              status: 'ok',
+              indexedAt: new Date(deps.now()).toISOString(),
+            });
+            result.indexed += 1;
+          } catch (error) {
+            console.warn(`[retrieval] ${entry.path} failed to index:`, error);
+          }
+        },
+      };
     };
-    if (!await writeInTimedSlices(db, batch, writeFile, 'records:code-slice', shouldContinue, deps)) return result;
+    if (!await writeInSlices(db, batch, prepareFile, 'records:code-slice', shouldContinue, deps)) return result;
   }
 
-  const removeFile = (docId: string): void => {
-    try {
-      store.deleteDocument(CORPUS, docId);
-      result.removed += 1;
-    } catch (error) {
-      console.warn(`[retrieval] ${docId} failed to remove:`, error);
-    }
-  };
-  if (!await writeInTimedSlices(db, gone, removeFile, 'records:code-remove', shouldContinue, deps)) return result;
+  const prepareRemoval = (docId: string): PreparedWrite => ({
+    rows: store.documentChunkCount(CORPUS, docId) + 1,
+    bytes: 0,
+    write: () => {
+      try {
+        store.deleteDocument(CORPUS, docId);
+        result.removed += 1;
+      } catch (error) {
+        console.warn(`[retrieval] ${docId} failed to remove:`, error);
+      }
+    },
+  });
+  if (!await writeInSlices(db, gone, prepareRemoval, 'records:code-remove', shouldContinue, deps)) return result;
 
   store.setMeta(HEAD_META_KEY, JSON.stringify({ ref: head.ref, sha: head.sha, version: CODE_RECORD_VERSION }));
   return result;

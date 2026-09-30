@@ -22,7 +22,19 @@ interface ExistingChunkRow {
   content_hash: string;
   turn_uuid_start: string | null;
   turn_uuid_end: string | null;
+  session_id: string | null;
+  task_id: string | null;
 }
+
+/**
+ * Chunks inserted per write transaction, and chunk ids deleted per one. The
+ * index and the rest of the app write the same database, and SQLite lets one
+ * connection write at a time, so every index write transaction stays short:
+ * 64 chunks with their full-text rows take about 2 ms (30 task records of three
+ * chunks committed in 2.7 ms as one transaction).
+ */
+export const CHUNKS_PER_TRANSACTION = 64;
+export const DELETES_PER_TRANSACTION = 256;
 
 interface StoredChunkRow {
   id: number;
@@ -117,52 +129,45 @@ export class RetrievalStore {
    * session's re-finalize); from the first divergent seq onward, old rows are
    * deleted and the new chunks inserted. UNIQUE(corpus, doc_id, seq) is the
    * hard backstop against duplicates.
+   *
+   * Written in short transactions, not one: the prefix's anchors and owners
+   * first, then the diverged tail deleted `DELETES_PER_TRANSACTION` ids at a
+   * time, then the new chunks inserted `CHUNKS_PER_TRANSACTION` at a time. A
+   * first index of a long conversation is thousands of chunks, and one
+   * transaction would hold the database's write lock for all of them. Between
+   * transactions a reader can see the document part-written; the caller writes
+   * its index state last, so a crash part-way leaves it stale and the next pass
+   * finishes the job. Inside a caller's own transaction these nest as
+   * savepoints, as before.
    */
   upsertDocument(
     ref: CorpusDocumentRef,
     chunks: ChunkInput[],
   ): { insertedIds: number[]; deletedIds: number[] } {
-    const run = writeTransaction(this.db, () => {
-      const existing = this.db
-        .prepare(
-          'SELECT id, seq, content_hash, turn_uuid_start, turn_uuid_end FROM memory_chunks WHERE corpus = ? AND doc_id = ? ORDER BY seq ASC',
-        )
-        .all(ref.corpus, ref.docId) as ExistingChunkRow[];
-      const existingBySeq = new Map<number, ExistingChunkRow>();
-      for (const row of existing) existingBySeq.set(row.seq, row);
+    const existing = this.db
+      .prepare(
+        `SELECT id, seq, content_hash, turn_uuid_start, turn_uuid_end, session_id, task_id
+         FROM memory_chunks WHERE corpus = ? AND doc_id = ? ORDER BY seq ASC`,
+      )
+      .all(ref.corpus, ref.docId) as ExistingChunkRow[];
+    const existingBySeq = new Map<number, ExistingChunkRow>();
+    for (const row of existing) existingBySeq.set(row.seq, row);
 
-      // First seq where new content diverges from stored content.
-      let divergence = 0;
-      const maxLen = Math.max(existing.length, chunks.length);
-      for (; divergence < maxLen; divergence++) {
-        const incoming = chunks[divergence];
-        const stored = existingBySeq.get(divergence);
-        if (!incoming || !stored || incoming.contentHash !== stored.content_hash) break;
-      }
+    // First seq where new content diverges from stored content.
+    let divergence = 0;
+    const maxLen = Math.max(existing.length, chunks.length);
+    for (; divergence < maxLen; divergence++) {
+      const incoming = chunks[divergence];
+      const stored = existingBySeq.get(divergence);
+      if (!incoming || !stored || incoming.contentHash !== stored.content_hash) break;
+    }
 
-      const deletedIds: number[] = [];
-      for (const row of existing) {
-        if (row.seq >= divergence) deletedIds.push(row.id);
-      }
-      if (deletedIds.length > 0) {
-        const placeholders = deletedIds.map(() => '?').join(',');
-        // FTS rows are removed by the AFTER DELETE trigger; vec rows are not
-        // (no trigger may touch the vec table), so remove them in-code.
-        this.deleteVecRows(deletedIds, ref.corpus);
-        this.db
-          .prepare(`DELETE FROM memory_chunks WHERE id IN (${placeholders})`)
-          .run(...deletedIds);
-      }
+    const deletedIds: number[] = [];
+    for (const row of existing) {
+      if (row.seq >= divergence) deletedIds.push(row.id);
+    }
 
-      const insertedIds: number[] = [];
-      const now = new Date().toISOString();
-      const insert = this.db.prepare(
-        `INSERT INTO memory_chunks
-          (corpus, doc_id, seq, session_id, task_id, agent_session_id, role, text,
-           content_hash, token_estimate, ts_start, ts_end, turn_uuid_start, turn_uuid_end,
-           embedded_model, meta_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-      );
+    {
       // Re-anchor the identical leading prefix. Those rows are left in place to
       // preserve their embeddings, but `content_hash` is `sha1(text)` only, so a
       // chunk whose TEXT is unchanged while its turn uuids changed looks
@@ -181,9 +186,7 @@ export class RetrievalStore {
       // `entriesFromIndex` is exactly what serves those stale anchors to the
       // viewer. Both populations degrade gracefully (an unresolvable anchor
       // opens the full transcript), but neither self-heals.
-      const reanchor = this.db.prepare(
-        'UPDATE memory_chunks SET turn_uuid_start = ?, turn_uuid_end = ? WHERE id = ?',
-      );
+      const reanchors: Array<{ id: number; start: string | null; end: string | null }> = [];
       for (const chunk of chunks) {
         if (chunk.seq >= divergence) continue;
         const stored = existingBySeq.get(chunk.seq);
@@ -191,30 +194,7 @@ export class RetrievalStore {
         if (stored.turn_uuid_start === chunk.turnUuidStart && stored.turn_uuid_end === chunk.turnUuidEnd) {
           continue;
         }
-        reanchor.run(chunk.turnUuidStart, chunk.turnUuidEnd, stored.id);
-      }
-
-      for (const chunk of chunks) {
-        if (chunk.seq < divergence) continue;
-        const result = insert.run(
-          ref.corpus,
-          ref.docId,
-          chunk.seq,
-          ref.sessionId,
-          ref.taskId,
-          ref.agentSessionId,
-          chunk.role,
-          chunk.text,
-          chunk.contentHash,
-          chunk.tokenEstimate,
-          chunk.tsStart,
-          chunk.tsEnd,
-          chunk.turnUuidStart,
-          chunk.turnUuidEnd,
-          ref.metaJson,
-          now,
-        );
-        insertedIds.push(Number(result.lastInsertRowid));
+        reanchors.push({ id: stored.id, start: chunk.turnUuidStart, end: chunk.turnUuidEnd });
       }
 
       // Refresh ownership of the identical leading prefix. That prefix is left
@@ -226,31 +206,93 @@ export class RetrievalStore {
       // on session_id - tracks the live session instead of leaving orphans or
       // wiping a still-active conversation. Updating these columns does not fire
       // the FTS 'AFTER UPDATE OF text' trigger and does not touch embeddings.
-      if (divergence > 0) {
-        this.db
-          .prepare(
-            'UPDATE memory_chunks SET session_id = ?, task_id = ? WHERE corpus = ? AND doc_id = ? AND seq < ?',
-          )
-          .run(ref.sessionId, ref.taskId, ref.corpus, ref.docId, divergence);
-      }
+      // Only when some prefix row's owner actually differs: on an ordinary turn
+      // none does, and this rewrote every earlier chunk of the conversation.
+      const reown = existing.some((row) => row.seq < divergence
+        && (row.session_id !== ref.sessionId || row.task_id !== ref.taskId));
 
-      return { insertedIds, deletedIds };
-    });
-    return run();
+      if (reanchors.length > 0 || reown) {
+        writeTransaction(this.db, () => {
+          const reanchor = this.db.prepare(
+            'UPDATE memory_chunks SET turn_uuid_start = ?, turn_uuid_end = ? WHERE id = ?',
+          );
+          for (const row of reanchors) reanchor.run(row.start, row.end, row.id);
+          if (reown) {
+            this.db
+              .prepare(
+                `UPDATE memory_chunks SET session_id = ?, task_id = ?
+                 WHERE corpus = ? AND doc_id = ? AND seq < ? AND (session_id IS NOT ? OR task_id IS NOT ?)`,
+              )
+              .run(ref.sessionId, ref.taskId, ref.corpus, ref.docId, divergence, ref.sessionId, ref.taskId);
+          }
+        })();
+      }
+    }
+
+    // FTS rows are removed by the AFTER DELETE trigger; vec rows are not (no
+    // trigger may touch the vec table), so `deleteChunks` removes them in-code.
+    this.deleteChunks(deletedIds, ref.corpus);
+
+    const insertedIds: number[] = [];
+    const now = new Date().toISOString();
+    const tail = chunks.filter((chunk) => chunk.seq >= divergence);
+    for (let start = 0; start < tail.length; start += CHUNKS_PER_TRANSACTION) {
+      const batch = tail.slice(start, start + CHUNKS_PER_TRANSACTION);
+      writeTransaction(this.db, () => {
+        const insert = this.db.prepare(
+          `INSERT INTO memory_chunks
+            (corpus, doc_id, seq, session_id, task_id, agent_session_id, role, text,
+             content_hash, token_estimate, ts_start, ts_end, turn_uuid_start, turn_uuid_end,
+             embedded_model, meta_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+        );
+        for (const chunk of batch) {
+          const result = insert.run(
+            ref.corpus,
+            ref.docId,
+            chunk.seq,
+            ref.sessionId,
+            ref.taskId,
+            ref.agentSessionId,
+            chunk.role,
+            chunk.text,
+            chunk.contentHash,
+            chunk.tokenEstimate,
+            chunk.tsStart,
+            chunk.tsEnd,
+            chunk.turnUuidStart,
+            chunk.turnUuidEnd,
+            ref.metaJson,
+            now,
+          );
+          insertedIds.push(Number(result.lastInsertRowid));
+        }
+      })();
+    }
+
+    return { insertedIds, deletedIds };
   }
 
+  /** One document gone, its chunks deleted `DELETES_PER_TRANSACTION` at a time
+   *  and its index state last. */
   deleteDocument(corpus: string, docId: string): void {
-    const run = writeTransaction(this.db, () => {
-      const ids = (
-        this.db
-          .prepare('SELECT id FROM memory_chunks WHERE corpus = ? AND doc_id = ?')
-          .all(corpus, docId) as Array<{ id: number }>
-      ).map((row) => row.id);
-      this.deleteVecRows(ids, corpus);
-      this.db.prepare('DELETE FROM memory_chunks WHERE corpus = ? AND doc_id = ?').run(corpus, docId);
+    const ids = (
+      this.db
+        .prepare('SELECT id FROM memory_chunks WHERE corpus = ? AND doc_id = ?')
+        .all(corpus, docId) as Array<{ id: number }>
+    ).map((row) => row.id);
+    this.deleteChunks(ids, corpus);
+    writeTransaction(this.db, () => {
       this.db.prepare('DELETE FROM memory_index_state WHERE corpus = ? AND doc_id = ?').run(corpus, docId);
-    });
-    run();
+    })();
+  }
+
+  /** The chunks one document holds: what deleting it writes. */
+  documentChunkCount(corpus: string, docId: string): number {
+    const row = this.db
+      .prepare('SELECT count(*) AS chunks FROM memory_chunks WHERE corpus = ? AND doc_id = ?')
+      .get(corpus, docId) as { chunks: number };
+    return row.chunks;
   }
 
   /** Every corpus, and what was derived from it, gone: the Privacy "clear
@@ -258,31 +300,51 @@ export class RetrievalStore {
    *  its region names (the `graph_` meta keys), which carry titles, cost and
    *  task ids read from the cleared chunks. */
   purgeAll(): void {
-    const run = writeTransaction(this.db, () => {
-      this.db.prepare('DELETE FROM memory_chunks').run();
+    this.purgeCorpora(MEMORY_CORPORA);
+    writeTransaction(this.db, () => {
       this.db.prepare('DELETE FROM memory_index_state').run();
       this.db.prepare('DELETE FROM memory_task_summaries').run();
       this.db.prepare("DELETE FROM memory_meta WHERE key LIKE 'graph\\_%' ESCAPE '\\'").run();
-      for (const corpus of this.vecTables) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
-    });
-    run();
+    })();
   }
 
   /**
    * Some corpora gone, the rest untouched. A chunker change invalidates the
    * conversation chunks (and what is derived from them), not the task records.
+   * Their chunks go `DELETES_PER_TRANSACTION` at a time: a whole corpus is tens
+   * of thousands of rows, each with a full-text delete behind it.
    */
   purgeCorpora(corpora: ReadonlyArray<MemoryCorpus>): void {
     if (corpora.length === 0) return;
-    const placeholders = corpusPlaceholders(corpora);
-    const run = writeTransaction(this.db, () => {
-      this.db.prepare(`DELETE FROM memory_chunks WHERE corpus IN (${placeholders})`).run(...corpora);
-      this.db.prepare(`DELETE FROM memory_index_state WHERE corpus IN (${placeholders})`).run(...corpora);
-      for (const corpus of corpora) {
-        if (this.vecTables.has(corpus)) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
+    // One corpus at a time, so each page is a seek on `(corpus)` in id order
+    // rather than a sort of every remaining row.
+    const page = this.db.prepare(`SELECT id FROM memory_chunks WHERE corpus = ? ORDER BY id LIMIT ${DELETES_PER_TRANSACTION}`);
+    for (const corpus of corpora) {
+      for (;;) {
+        const ids = (page.all(corpus) as Array<{ id: number }>).map((row) => row.id);
+        if (ids.length === 0) break;
+        this.deleteChunks(ids, corpus);
       }
-    });
-    run();
+    }
+    writeTransaction(this.db, () => {
+      this.db.prepare(`DELETE FROM memory_index_state WHERE corpus IN (${corpusPlaceholders(corpora)})`).run(...corpora);
+      // Any vector left without a chunk; the table is otherwise empty by now.
+      for (const corpus of corpora) {
+        if (this.hasVecTable(corpus)) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
+      }
+    })();
+  }
+
+  /** Chunks gone by id, `DELETES_PER_TRANSACTION` at a time, with their
+   *  vectors; the full-text rows follow by trigger. */
+  private deleteChunks(ids: number[], corpus: string): void {
+    for (let start = 0; start < ids.length; start += DELETES_PER_TRANSACTION) {
+      const batch = ids.slice(start, start + DELETES_PER_TRANSACTION);
+      writeTransaction(this.db, () => {
+        this.deleteVecRows(batch, corpus);
+        this.db.prepare(`DELETE FROM memory_chunks WHERE id IN (${batch.map(() => '?').join(',')})`).run(...batch);
+      })();
+    }
   }
 
   /** Clear the per-session index-state signatures WITHOUT touching the chunks or
@@ -292,7 +354,14 @@ export class RetrievalStore {
    *  chunks. This is what makes "Rebuild index" non-destructive: it re-derives
    *  from the transcripts while never dropping a past conversation. */
   resetIndexState(): void {
-    this.db.prepare('DELETE FROM memory_index_state').run();
+    // A few thousand rows across every corpus, cleared in short transactions.
+    const clearPage = this.db.prepare(
+      `DELETE FROM memory_index_state WHERE rowid IN (SELECT rowid FROM memory_index_state LIMIT ${DELETES_PER_TRANSACTION})`,
+    );
+    for (;;) {
+      const cleared = writeTransaction(this.db, () => clearPage.run().changes)();
+      if (cleared === 0) break;
+    }
   }
 
   // --- Index-state bookkeeping ---------------------------------------------
@@ -631,14 +700,32 @@ export class RetrievalStore {
    *  vec0 tables are fixed-width, so a dimension change requires a full reset. */
   resetVec(dimensions: number): void {
     if (!hasVecSupport(this.db)) return;
-    const run = writeTransaction(this.db, () => {
+    // Every embedded chunk back to pending, its vector deleted with it, a page
+    // at a time: one statement over the whole index rewrote about 95k rows
+    // while holding the database's write lock.
+    for (const corpus of MEMORY_CORPORA) {
+      const page = this.db.prepare(
+        `SELECT id FROM memory_chunks WHERE embedded_model IS NOT NULL AND corpus = ? LIMIT ${DELETES_PER_TRANSACTION}`,
+      );
+      for (;;) {
+        const ids = (page.all(corpus) as Array<{ id: number }>).map((row) => row.id);
+        if (ids.length === 0) break;
+        writeTransaction(this.db, () => {
+          this.deleteVecRows(ids, corpus);
+          this.db.prepare(`UPDATE memory_chunks SET embedded_model = NULL WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+        })();
+      }
+    }
+    // The tables themselves, at the new width. Dropping a vec0 table frees its
+    // storage in one statement even once its rows are gone, since vec0 keeps a
+    // table's vector blocks allocated. It runs once per model switch that
+    // changes the width, which the user asks for.
+    writeTransaction(this.db, () => {
       for (const corpus of MEMORY_CORPORA) this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
       for (const corpus of EMBEDDED_CORPORA) {
         this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} USING vec0(embedding float[${dimensions}])`);
       }
-      this.db.prepare('UPDATE memory_chunks SET embedded_model = NULL').run();
-    });
-    run();
+    })();
     this.vecTables.clear();
     for (const corpus of EMBEDDED_CORPORA) this.vecTables.add(corpus);
   }
@@ -1366,9 +1453,14 @@ export class RetrievalStore {
    *  that belongs to another corpus's chunk goes too. */
   reconcileVecOrphans(): void {
     for (const corpus of this.vecTables) {
-      this.db
-        .prepare(`DELETE FROM ${vecTableName(corpus)} WHERE rowid NOT IN (SELECT id FROM memory_chunks WHERE corpus = ?)`)
-        .run(corpus);
+      // Found by a read, deleted in short transactions.
+      const orphans = (this.db
+        .prepare(`SELECT rowid AS id FROM ${vecTableName(corpus)} WHERE rowid NOT IN (SELECT id FROM memory_chunks WHERE corpus = ?)`)
+        .all(corpus) as Array<{ id: number | bigint }>).map((row) => Number(row.id));
+      for (let start = 0; start < orphans.length; start += DELETES_PER_TRANSACTION) {
+        const batch = orphans.slice(start, start + DELETES_PER_TRANSACTION);
+        writeTransaction(this.db, () => this.deleteVecRows(batch, corpus))();
+      }
     }
   }
 

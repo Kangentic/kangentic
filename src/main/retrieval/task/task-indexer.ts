@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import { writeInTimedSlices } from '../timed-slices';
+import { writeInSlices, type PreparedWrite } from '../timed-slices';
 import { parseLabels, recordChangedMs, taskRecordChunks, TASK_RECORD_VERSION, type TaskRecordSource } from './task-record';
 
 /**
@@ -116,45 +116,55 @@ export async function sweepTaskRecords(
       || signature.sourceMtimeMs !== recordChangedMs(source);
   });
 
-  const writeRecord = (source: TaskRecordSource): void => {
+  const prepareRecord = (source: TaskRecordSource): PreparedWrite => {
     const chunks = taskRecordChunks(source);
-    try {
-      store.upsertDocument(
-        { corpus: CORPUS, docId: source.docId, sessionId: null, taskId: source.taskId, agentSessionId: null, metaJson: null },
-        chunks,
-      );
-      store.setIndexState({
-        corpus: CORPUS,
-        docId: source.docId,
-        sessionId: null,
-        sourcePath: RECORD_SOURCE,
-        sourceMtimeMs: recordChangedMs(source),
-        sourceSize: chunks.reduce((total, chunk) => total + chunk.text.length, 0),
-        entryCount: 1,
-        chunkCount: chunks.length,
-        status: 'ok',
-        indexedAt: deps.now(),
-      });
-      result.indexed += 1;
-    } catch (error) {
-      console.warn(`[retrieval] task record ${source.docId} failed to index:`, error);
-    }
+    const textBytes = chunks.reduce((total, chunk) => total + chunk.text.length, 0);
+    return {
+      rows: chunks.length + 1,
+      bytes: textBytes,
+      write: () => {
+        try {
+          store.upsertDocument(
+            { corpus: CORPUS, docId: source.docId, sessionId: null, taskId: source.taskId, agentSessionId: null, metaJson: null },
+            chunks,
+          );
+          store.setIndexState({
+            corpus: CORPUS,
+            docId: source.docId,
+            sessionId: null,
+            sourcePath: RECORD_SOURCE,
+            sourceMtimeMs: recordChangedMs(source),
+            sourceSize: textBytes,
+            entryCount: 1,
+            chunkCount: chunks.length,
+            status: 'ok',
+            indexedAt: deps.now(),
+          });
+          result.indexed += 1;
+        } catch (error) {
+          console.warn(`[retrieval] task record ${source.docId} failed to index:`, error);
+        }
+      },
+    };
   };
-  if (!await writeInTimedSlices(db, stale, writeRecord, 'records:task-slice', shouldContinue, deps)) return result;
+  if (!await writeInSlices(db, stale, prepareRecord, 'records:task-slice', shouldContinue, deps)) return result;
 
   // Records whose task or backlog item is gone: deleted, or promoted from the
   // backlog (which gives the task a new id and removes the backlog row).
   const live = new Set(sources.map((source) => source.docId));
-  const indexed = new Set([...signatures.keys(), ...store.documentIds(CORPUS)]);
-  for (const docId of indexed) {
-    if (live.has(docId)) continue;
-    if (!shouldContinue()) return result;
-    try {
-      store.deleteDocument(CORPUS, docId);
-      result.removed += 1;
-    } catch (error) {
-      console.warn(`[retrieval] task record ${docId} failed to remove:`, error);
-    }
-  }
+  const gone = [...new Set([...signatures.keys(), ...store.documentIds(CORPUS)])].filter((docId) => !live.has(docId));
+  const prepareRemoval = (docId: string): PreparedWrite => ({
+    rows: store.documentChunkCount(CORPUS, docId) + 1,
+    bytes: 0,
+    write: () => {
+      try {
+        store.deleteDocument(CORPUS, docId);
+        result.removed += 1;
+      } catch (error) {
+        console.warn(`[retrieval] task record ${docId} failed to remove:`, error);
+      }
+    },
+  });
+  await writeInSlices(db, gone, prepareRemoval, 'records:task-remove', shouldContinue, deps);
   return result;
 }

@@ -98,6 +98,11 @@ function fakeProject(board: {
         if (sql.includes('FROM backlog_tasks')) return (board.backlog ?? []).map(recordRow);
         if (sql.includes('FROM memory_index_state WHERE corpus = ?')) return board.signatures ?? [];
         if (sql.includes('SELECT DISTINCT doc_id')) return (board.indexedDocIds ?? []).map((docId) => ({ docId }));
+        // One chunk per indexed document.
+        if (sql.includes('SELECT count(*) AS chunks FROM memory_chunks')) return [{ chunks: 1 }];
+        if (sql.includes('SELECT id FROM memory_chunks WHERE corpus = ? AND doc_id = ?')) {
+          return [{ id: (board.indexedDocIds ?? []).indexOf(args[1] as string) + 1 }];
+        }
         return [];
       };
       return {
@@ -197,9 +202,12 @@ describe('sweepTaskRecords', () => {
 
     expect(result).toEqual({ indexed: 0, removed: 2 });
     const removedDocs = calls
-      .filter((call) => call.sql.startsWith('DELETE FROM memory_chunks WHERE corpus = ? AND doc_id = ?'))
+      .filter((call) => call.sql.startsWith('DELETE FROM memory_index_state WHERE corpus = ? AND doc_id = ?'))
       .map((call) => call.args[1]);
     expect(removedDocs).toEqual(['task-deleted', `${BACKLOG_DOC_PREFIX}promoted`]);
+    // Each document's chunks, by id.
+    const chunkDeletes = calls.filter((call) => call.sql.startsWith('DELETE FROM memory_chunks WHERE id IN'));
+    expect(chunkDeletes.map((call) => call.args)).toEqual([[2], [3]]);
   });
 
   it('stops at a project switch without finishing the sweep', async () => {

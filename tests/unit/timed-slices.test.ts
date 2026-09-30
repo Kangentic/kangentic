@@ -5,99 +5,186 @@ vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({
   timeSyncWork: <T>(_label: string, work: () => T): T => work(),
 }));
 
-import { SLICE_BUDGET_MS, writeInTimedSlices } from '../../src/main/retrieval/timed-slices';
+import {
+  PREPARE_BUDGET_MS,
+  SLICE_BYTES,
+  SLICE_ROWS,
+  writeInSlices,
+  type PreparedWrite,
+} from '../../src/main/retrieval/timed-slices';
 import { passThroughTransaction } from './helpers/transaction-double';
 
-/** A database whose transactions record which items each one wrote. */
-function fakeDb(): { db: Database.Database; transactions: number[][]; current: number[] } {
-  const state = { transactions: [] as number[][], current: [] as number[] };
+/** A database that records which items each transaction wrote, and which were
+ *  written with no transaction around them. */
+function fakeDb() {
+  const state = {
+    inTransaction: false,
+    transactions: [] as string[][],
+    alone: [] as string[],
+    preparedInTransaction: 0,
+  };
   const db = {
-    transaction: (work: (from: number) => number) => passThroughTransaction((from: number) => {
-      state.current = [];
-      state.transactions.push(state.current);
-      return work(from);
+    transaction: (body: () => unknown) => passThroughTransaction(() => {
+      state.inTransaction = true;
+      state.transactions.push([]);
+      try {
+        return body();
+      } finally {
+        state.inTransaction = false;
+      }
     }),
   } as unknown as Database.Database;
-  return { db, get transactions() { return state.transactions; }, get current() { return state.current; } };
+  const record = (item: string): void => {
+    if (state.inTransaction) state.transactions[state.transactions.length - 1].push(item);
+    else state.alone.push(item);
+  };
+  /** A prepare that writes `item` with the given size, and notes whether it ran
+   *  inside a transaction. */
+  const prepareSized = (size: (item: string) => { rows: number; bytes: number }) => (item: string): PreparedWrite => {
+    if (state.inTransaction) state.preparedInTransaction += 1;
+    return { ...size(item), write: () => record(item) };
+  };
+  return { db, state, prepareSized };
 }
 
-describe('writeInTimedSlices', () => {
-  it('writes everything in one transaction while the budget holds', async () => {
+const neverSpent = { clock: () => 0, yieldToEventLoop: async () => undefined };
+
+describe('writeInSlices', () => {
+  it('writes small items in one transaction, prepared outside it', async () => {
     const fake = fakeDb();
     const yields = vi.fn(async () => undefined);
 
-    const finished = await writeInTimedSlices(fake.db, [1, 2, 3, 4], (item) => fake.current.push(item), 'test', () => true, {
-      clock: () => 0,
-      yieldToEventLoop: yields,
-    });
+    const finished = await writeInSlices(
+      fake.db,
+      ['a', 'b', 'c', 'd'],
+      fake.prepareSized(() => ({ rows: 2, bytes: 100 })),
+      'test',
+      () => true,
+      { clock: () => 0, yieldToEventLoop: yields },
+    );
 
     expect(finished).toBe(true);
-    expect(fake.transactions).toEqual([[1, 2, 3, 4]]);
+    expect(fake.state.transactions).toEqual([['a', 'b', 'c', 'd']]);
+    expect(fake.state.preparedInTransaction).toBe(0);
     expect(yields).toHaveBeenCalledTimes(1);
   });
 
-  it('commits and yields once a slice has used its budget, whatever the item count', async () => {
+  it('starts a new transaction before the rows would pass the cap', async () => {
+    const fake = fakeDb();
+    // Three items fit under the row cap; a fourth would pass it.
+    const rows = Math.floor(SLICE_ROWS / 3);
+
+    await writeInSlices(
+      fake.db,
+      ['1', '2', '3', '4', '5', '6', '7'],
+      fake.prepareSized(() => ({ rows, bytes: 0 })),
+      'test',
+      () => true,
+      neverSpent,
+    );
+
+    expect(fake.state.transactions).toEqual([['1', '2', '3'], ['4', '5', '6'], ['7']]);
+    expect(fake.state.alone).toEqual([]);
+  });
+
+  it('starts a new transaction before the text would pass the cap', async () => {
+    const fake = fakeDb();
+
+    await writeInSlices(
+      fake.db,
+      ['1', '2', '3', '4', '5'],
+      fake.prepareSized(() => ({ rows: 1, bytes: SLICE_BYTES / 2 })),
+      'test',
+      () => true,
+      neverSpent,
+    );
+
+    expect(fake.state.transactions).toEqual([['1', '2'], ['3', '4'], ['5']]);
+  });
+
+  it('writes an item over a cap alone, with no transaction around it', async () => {
+    const fake = fakeDb();
+
+    await writeInSlices(
+      fake.db,
+      ['small', 'large', 'last'],
+      fake.prepareSized((item) => ({ rows: item === 'large' ? SLICE_ROWS * 10 : 2, bytes: 0 })),
+      'test',
+      () => true,
+      neverSpent,
+    );
+
+    // The store splits an oversized write into bounded transactions itself;
+    // wrapped in one here, those would nest into a single long one.
+    expect(fake.state.alone).toEqual(['large']);
+    expect(fake.state.transactions).toEqual([['small'], ['last']]);
+  });
+
+  it('writes and yields once a slice has spent its preparing budget', async () => {
     const fake = fakeDb();
     let nowMs = 0;
     const yields = vi.fn(async () => undefined);
-    // Each item costs just over a third of the budget, so a slice holds three.
-    const itemCostMs = Math.ceil(SLICE_BUDGET_MS / 3);
+    const prepareSmall = fake.prepareSized(() => ({ rows: 1, bytes: 0 }));
 
-    const finished = await writeInTimedSlices(
+    await writeInSlices(
       fake.db,
-      [1, 2, 3, 4, 5, 6, 7],
+      ['1', '2', '3', '4', '5', '6', '7'],
       (item) => {
-        nowMs += itemCostMs;
-        fake.current.push(item);
+        // Each item takes just over a third of the budget to prepare.
+        nowMs += Math.ceil(PREPARE_BUDGET_MS / 3);
+        return prepareSmall(item);
       },
       'test',
       () => true,
       { clock: () => nowMs, yieldToEventLoop: yields },
     );
 
-    expect(finished).toBe(true);
-    expect(fake.transactions).toEqual([[1, 2, 3], [4, 5, 6], [7]]);
+    expect(fake.state.transactions).toEqual([['1', '2', '3'], ['4', '5', '6'], ['7']]);
     expect(yields).toHaveBeenCalledTimes(3);
   });
 
-  it('still writes an item larger than the whole budget, alone in its slice', async () => {
-    const fake = fakeDb();
-    let nowMs = 0;
+  it('skips an item whose prepare throws or returns nothing, and writes the rest', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const fake = fakeDb();
+      const prepareSmall = fake.prepareSized(() => ({ rows: 1, bytes: 0 }));
 
-    await writeInTimedSlices(
-      fake.db,
-      ['large', 'small'],
-      (item) => {
-        nowMs += item === 'large' ? SLICE_BUDGET_MS * 4 : 1;
-        fake.current.push(item === 'large' ? 1 : 2);
-      },
-      'test',
-      () => true,
-      { clock: () => nowMs, yieldToEventLoop: async () => undefined },
-    );
+      const finished = await writeInSlices(
+        fake.db,
+        ['1', 'bad', 'skip', '4'],
+        (item) => {
+          if (item === 'bad') throw new Error('unreadable');
+          if (item === 'skip') return null;
+          return prepareSmall(item);
+        },
+        'test',
+        () => true,
+        neverSpent,
+      );
 
-    expect(fake.transactions).toEqual([[1], [2]]);
+      expect(finished).toBe(true);
+      expect(fake.state.transactions).toEqual([['1', '4']]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('stops between slices when asked, leaving the rest unwritten', async () => {
     const fake = fakeDb();
-    let nowMs = 0;
     let slicesAllowed = 1;
 
-    const finished = await writeInTimedSlices(
+    const finished = await writeInSlices(
       fake.db,
-      [1, 2, 3],
-      (item) => {
-        nowMs += SLICE_BUDGET_MS;
-        fake.current.push(item);
-      },
+      ['1', '2', '3'],
+      fake.prepareSized(() => ({ rows: SLICE_ROWS, bytes: 0 })),
       'test',
       () => slicesAllowed-- > 0,
-      { clock: () => nowMs, yieldToEventLoop: async () => undefined },
+      neverSpent,
     );
 
     expect(finished).toBe(false);
-    expect(fake.transactions).toEqual([[1]]);
+    expect(fake.state.transactions).toEqual([['1']]);
   });
 
   it('ends the run when a slice fails to commit', async () => {
@@ -110,12 +197,9 @@ describe('writeInTimedSlices', () => {
           throw new Error('disk I/O error');
         }),
       } as unknown as Database.Database;
-      const writeOne = vi.fn();
+      const write = vi.fn();
 
-      const finished = await writeInTimedSlices(db, [1, 2], writeOne, 'test', () => true, {
-        clock: () => 0,
-        yieldToEventLoop: async () => undefined,
-      });
+      const finished = await writeInSlices(db, [1, 2], () => ({ rows: SLICE_ROWS, bytes: 0, write }), 'test', () => true, neverSpent);
 
       expect(finished).toBe(false);
       expect(warn).toHaveBeenCalledTimes(1);

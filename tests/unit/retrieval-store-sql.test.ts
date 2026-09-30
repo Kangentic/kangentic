@@ -2,7 +2,7 @@ import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
-import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+import { CHUNKS_PER_TRANSACTION, RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { markVecCapable } from '../../src/main/retrieval/vec-support';
 import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/types';
 
@@ -146,10 +146,52 @@ describe('RetrievalStore.upsertDocument diff', () => {
     // the untouched prefix must follow it so the Terminal/History badge and the
     // session-delete trigger (which keys on session_id) track the live session.
     const ownershipUpdate = findRun(calls, 'UPDATE memory_chunks SET session_id');
-    expect(ownershipUpdate?.args).toEqual(['session-1', 'task-1', 'conversation', 'doc-1', 2]);
+    expect(ownershipUpdate?.args).toEqual(['session-1', 'task-1', 'conversation', 'doc-1', 2, 'session-1', 'task-1']);
+    // Rows that already have the owner are left alone.
+    expect(ownershipUpdate?.sql).toContain('AND (session_id IS NOT ? OR task_id IS NOT ?)');
 
     // The anchors already match, so nothing is re-anchored.
     expect(findRun(calls, 'UPDATE memory_chunks SET turn_uuid_start')).toBeUndefined();
+  });
+
+  it('writes nothing for a prefix that already has its owner and anchors', () => {
+    // An ordinary turn of a live conversation: the earlier chunks are
+    // unchanged, and rewriting their owner each turn rewrote the whole document.
+    const existing = [
+      { id: 10, seq: 0, content_hash: 'hashA', turn_uuid_start: 'u0', turn_uuid_end: 'u0', session_id: 'session-1', task_id: 'task-1' },
+      { id: 11, seq: 1, content_hash: 'hashB', turn_uuid_start: 'u1', turn_uuid_end: 'u1', session_id: 'session-1', task_id: 'task-1' },
+    ];
+    const { db, calls } = makeRecordingDb({
+      all: (sql) => (sql.includes('content_hash') ? existing : []),
+    });
+
+    new RetrievalStore(db).upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
+
+    expect(calls.filter((call) => call.method === 'run')).toEqual([]);
+  });
+
+  it('inserts a long document in transactions of CHUNKS_PER_TRANSACTION chunks', () => {
+    const { db, calls } = makeRecordingDb({
+      all: () => [],
+      run: () => ({ lastInsertRowid: 1, changes: 1 }),
+    });
+    // Each transaction run notes how many inserts it wrote.
+    const insertsPerTransaction: number[] = [];
+    const countingDb = {
+      prepare: db.prepare.bind(db),
+      transaction: (body: () => unknown) => passThroughTransaction(() => {
+        const before = calls.length;
+        const value = body();
+        insertsPerTransaction.push(calls.slice(before).filter((call) => call.sql.includes('INSERT INTO memory_chunks')).length);
+        return value;
+      }),
+    } as unknown as Database.Database;
+
+    const chunks = Array.from({ length: CHUNKS_PER_TRANSACTION * 2 + 3 }, (_, seq) => chunk(seq, `hash${seq}`));
+    const result = new RetrievalStore(countingDb).upsertDocument(ref, chunks);
+
+    expect(result.insertedIds).toHaveLength(chunks.length);
+    expect(insertsPerTransaction).toEqual([CHUNKS_PER_TRANSACTION, CHUNKS_PER_TRANSACTION, 3]);
   });
 
   it('re-anchors an identical prefix whose turn uuids changed, without touching its embeddings', () => {
@@ -541,12 +583,24 @@ describe('RetrievalStore corpus reads', () => {
     expect(stateRead?.sql).toContain("corpus = 'conversation'");
   });
 
-  it('purges only the corpora named, vectors included', () => {
-    const { store, calls } = vecStore({});
+  it('purges only the corpora named, vectors included, a page of ids at a time', () => {
+    // Each corpus holds one page of chunks, then none.
+    const pagesServed = new Map<string, number>();
+    const { store, calls } = vecStore({
+      all: (sql, args) => {
+        if (!sql.includes('SELECT id FROM memory_chunks WHERE corpus = ?')) return [];
+        const corpus = args[0] as string;
+        const served = pagesServed.get(corpus) ?? 0;
+        pagesServed.set(corpus, served + 1);
+        return served === 0 ? [{ id: corpus === 'conversation' ? 1 : 2 }] : [];
+      },
+    });
 
     store.purgeCorpora(['conversation', 'change']);
 
-    expect(findRun(calls, 'DELETE FROM memory_chunks WHERE corpus IN')?.args).toEqual(['conversation', 'change']);
+    const chunkDeletes = calls.filter((call) => call.method === 'run' && call.sql.startsWith('DELETE FROM memory_chunks WHERE id IN'));
+    expect(chunkDeletes.map((call) => call.args)).toEqual([[1], [2]]);
+    expect(findRun(calls, 'DELETE FROM memory_index_state WHERE corpus IN')?.args).toEqual(['conversation', 'change']);
     expect(findRun(calls, 'DELETE FROM memory_chunks_vec')).toBeDefined();
     expect(findRun(calls, 'DELETE FROM memory_vec_change')).toBeDefined();
     expect(findRun(calls, 'DELETE FROM memory_vec_task')).toBeUndefined();

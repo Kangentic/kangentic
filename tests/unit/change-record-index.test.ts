@@ -18,7 +18,7 @@ import {
   CHANGE_RECORD_VERSION,
 } from '../../src/main/retrieval/change/change-record';
 import { sweepChangeRecords } from '../../src/main/retrieval/change/change-indexer';
-import { SLICE_BUDGET_MS } from '../../src/main/retrieval/timed-slices';
+import { PREPARE_BUDGET_MS } from '../../src/main/retrieval/timed-slices';
 
 const TOOLS = [
   { tool: 'Edit', pathField: 'file_path' },
@@ -226,7 +226,7 @@ describe('sweepChangeRecords', () => {
       chunkText,
       chunkCount: 5000,
       // Each page costs half a slice's budget, so a slice holds two.
-      onPageRead: () => { nowMs += SLICE_BUDGET_MS / 2; },
+      onPageRead: () => { nowMs += PREPARE_BUDGET_MS / 2; },
     });
     let yields = 0;
 
