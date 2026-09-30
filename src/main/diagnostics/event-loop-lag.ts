@@ -204,7 +204,7 @@ function recordSpan(label: string, elapsed: number): void {
  */
 export function recordSyncSpan(label: string, elapsedMs: number): void {
   if (spanRelay !== null && elapsedMs >= SLOW_SYNC_THRESHOLD_MS) spanRelay(label, elapsedMs);
-  if (timer === null) return;
+  if (timer === null && spanRelay === null) return;
   recordSpan(label, elapsedMs);
 }
 
@@ -265,7 +265,9 @@ export function timeSyncWork<T>(label: string, work: () => T): T {
     return work();
   } finally {
     const elapsed = performance.now() - startedAt;
-    if (timer !== null) recordSpan(label, elapsed);
+    // A relaying process counts every span too, for its own counters
+    // (`getSyncWorkByLabel`), which show what the relay's threshold hides.
+    if (timer !== null || spanRelay !== null) recordSpan(label, elapsed);
     if (spanRelay !== null && elapsed >= SLOW_SYNC_THRESHOLD_MS) spanRelay(label, elapsed);
   }
 }
@@ -274,10 +276,22 @@ export function timeSyncWork<T>(label: string, work: () => T): T {
  * Hand every span `timeSyncWork` measures at `SLOW_SYNC_THRESHOLD_MS` or more
  * to `relay`, in a process that runs no monitor. The retrieval worker forwards
  * them to main (dev builds only), whose report counts them under a `worker:`
- * label, so work that left main stays visible in the one report.
+ * label, so work that left main stays visible in the one report. The process
+ * also counts every span under its label, read with `getSyncWorkByLabel`.
  */
 export function relaySlowSyncSpans(relay: ((label: string, elapsedMs: number) => void) | null): void {
   spanRelay = relay;
+}
+
+/** Every span counted so far, per label: count, total, worst, and how many
+ *  reached each edge. */
+export function getSyncWorkByLabel(): Record<string, SyncWorkStats> {
+  return Object.fromEntries([...syncWorkByLabel].map(([label, stats]) => [label, {
+    count: stats.count,
+    totalMs: Math.round(stats.totalMs),
+    maxMs: Math.round(stats.maxMs),
+    atLeastMs: { ...stats.atLeastMs },
+  }]));
 }
 
 export function startEventLoopLagMonitor(): void {
@@ -342,12 +356,7 @@ export function getEventLoopLagReport(): EventLoopLagReport {
     recentSpikes: [...recentSpikes],
     slowSyncThresholdMs: SLOW_SYNC_THRESHOLD_MS,
     recentSlowSyncWork: [...recentSlowSyncWork],
-    syncWorkByLabel: Object.fromEntries([...syncWorkByLabel].map(([label, stats]) => [label, {
-      count: stats.count,
-      totalMs: Math.round(stats.totalMs),
-      maxMs: Math.round(stats.maxMs),
-      atLeastMs: { ...stats.atLeastMs },
-    }])),
+    syncWorkByLabel: getSyncWorkByLabel(),
     lagAtLeastMs: { ...lagAtLeastMs },
     delayResolutionMs: DELAY_RESOLUTION_MS,
     delayWindowMs: DELAY_WINDOW_MS,

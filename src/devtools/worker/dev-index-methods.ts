@@ -15,6 +15,7 @@ import { RetrievalStore } from '../../main/retrieval/retrieval-store';
 import { loadVecExtensionFrom } from '../../main/retrieval/vec-support';
 import { runProjectionPass, writeProjectionCache } from '../../main/retrieval/graph/projection-engine';
 import { ConversationUsageStore, type TurnUsageInput } from '../../main/retrieval/conversation/conversation-usage-store';
+import { getSyncWorkByLabel, type SyncWorkStats } from '../../main/diagnostics/event-loop-lag';
 import type { ChunkInput, CorpusDocumentRef } from '../../main/retrieval/types';
 import type { MemoryCorpus } from '../../main/retrieval/corpora';
 import type { WorkerContext } from '../../main/retrieval/worker/methods';
@@ -66,6 +67,12 @@ export interface DevIndexMethods {
   'dev.purgeCorpora': {
     params: { projectId: string; corpora: MemoryCorpus[] };
     result: void;
+  };
+  /** The worker's own span counters, every span per label (main's report
+   *  sees only the relayed ones, 16 ms and over). */
+  'dev.syncWork': {
+    params: Record<string, never>;
+    result: Record<string, SyncWorkStats>;
   };
   /** Record seeded turns in the token usage ledger. */
   'dev.recordTurns': {
@@ -251,6 +258,8 @@ export const devIndexHandlers: DevIndexHandlers = {
   },
 
   'dev.buildGraphNow': ({ projectId }, context) => buildGraphNow(projectId, context),
+
+  'dev.syncWork': () => getSyncWorkByLabel(),
 
   'dev.purgeCorpora': ({ projectId, corpora }, context) => {
     new RetrievalStore(context.getDb(projectId)).purgeCorpora(corpora);

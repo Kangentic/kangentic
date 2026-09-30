@@ -23,7 +23,7 @@ export interface PreparedWrite {
  * never counts the commit, and one large item overran a 25 ms budget alone.
  */
 export const SLICE_ROWS = CHUNKS_PER_TRANSACTION;
-export const SLICE_BYTES = 256 * 1024;
+export const SLICE_BYTES = 64 * 1024;
 
 /** Time a slice may spend preparing before it writes and yields, so a long run
  *  of reads and chunking still gives way to other work. */

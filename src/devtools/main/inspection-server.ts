@@ -42,6 +42,7 @@ import {
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { getProcessMetrics } from '../../main/diagnostics/process-metrics';
 import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
+import { retrievalClient } from '../../main/retrieval/retrieval-client';
 import { getStallProfiles, isStallProfilerRunning } from './stall-profiler';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
@@ -597,7 +598,18 @@ async function respondEventLoopLag(
     running: isStallProfilerRunning(),
     profiles: getStallProfiles(),
   };
-  respondJson(response, 200, { ts: new Date().toISOString(), main, stallProfiler, renderer });
+  // The retrieval worker's own counters, every span per label (main's
+  // `worker:` labels are only the spans relayed at 16 ms and over). Never
+  // forks a worker to ask.
+  let worker: unknown = { unavailable: 'not-running' };
+  if (retrievalClient.running) {
+    try {
+      worker = { syncWorkByLabel: await retrievalClient.call('dev.syncWork', {}) };
+    } catch (error) {
+      worker = { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  respondJson(response, 200, { ts: new Date().toISOString(), main, worker, stallProfiler, renderer });
 }
 
 /** Per-session terminal output-pipeline stats (in-process). Diagnoses

@@ -323,8 +323,8 @@ describe('timeSyncWork attribution ring', () => {
     expect(report.recentSlowSyncWork[199].label).toBe('span-200');
   });
 
-  it('relays slow spans with no monitor running, as a worker does, and records nothing locally', async () => {
-    const { timeSyncWork, recordSyncSpan, relaySlowSyncSpans, getEventLoopLagReport } = await loadMonitor();
+  it('relays slow spans with no monitor running, as a worker does, and counts every span locally', async () => {
+    const { timeSyncWork, recordSyncSpan, relaySlowSyncSpans, getSyncWorkByLabel } = await loadMonitor();
     const relayed: Array<[string, number]> = [];
     relaySlowSyncSpans((label, elapsedMs) => relayed.push([label, elapsedMs]));
     try {
@@ -337,7 +337,19 @@ describe('timeSyncWork attribution ring', () => {
     } finally {
       relaySlowSyncSpans(null);
     }
+    // Only the slow ones cross to main...
     expect(relayed).toEqual([['graph:vectors', 20], ['search:knn', 120]]);
-    expect(getEventLoopLagReport().recentSlowSyncWork).toHaveLength(0);
+    // ...and the worker's own counters hold all of them, for the dev report.
+    const counted = getSyncWorkByLabel();
+    expect(Object.keys(counted).sort()).toEqual(['fast', 'graph:vectors', 'search:fast', 'search:knn']);
+    expect(counted['search:fast']).toMatchObject({ count: 1, maxMs: 3 });
+    expect(counted['graph:vectors'].atLeastMs['16']).toBe(1);
+  });
+
+  it('counts nothing while neither monitoring nor relaying', async () => {
+    const { timeSyncWork, getSyncWorkByLabel } = await loadMonitor();
+    stepClock(20);
+    timeSyncWork('graph:vectors', () => undefined);
+    expect(getSyncWorkByLabel()).toEqual({});
   });
 });

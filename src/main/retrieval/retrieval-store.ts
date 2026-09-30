@@ -29,20 +29,42 @@ interface ExistingChunkRow {
 /**
  * Chunks inserted per write transaction, and chunk ids deleted per one. The
  * index and the rest of the app write the same database, and SQLite lets one
- * connection write at a time, so every index write transaction stays short:
- * 64 chunks with their full-text rows take about 2 ms (30 task records of three
- * chunks committed in 2.7 ms as one transaction).
+ * connection write at a time, so a main commit that lands during an index
+ * write waits for it, on main's thread (better-sqlite3's busy wait sleeps in
+ * place). The target is under 5 ms a transaction. 64 chunks with their
+ * full-text rows took about 2 ms in a node:sqlite rig, but a slice of that size
+ * took 16 to 39 ms in the app on real task text, hence 16.
  */
-export const CHUNKS_PER_TRANSACTION = 64;
-export const DELETES_PER_TRANSACTION = 256;
+export const CHUNKS_PER_TRANSACTION = 16;
+export const DELETES_PER_TRANSACTION = 64;
+
+/**
+ * Vectors per vec0 storage chunk. vec0 allocates a whole chunk, zero-filled,
+ * when the first vector lands in it: at its default of 1,024 and 1,024
+ * dimensions that is a 4 MB write inside the embedding write's transaction,
+ * which held the write lock 23 to 76 ms about once per thousand vectors. At
+ * 128 it is 512 KB (measured on 30k real vectors: no batch of 8 at 16 ms or
+ * more, against 30 of 3,750 at 1,024; a k=1000 KNN 115 ms against 122).
+ *
+ * Set when a table is created. A table made at the old size keeps it until its
+ * next reset (a model switch that changes the width): vec0 0.1.9 has no rename,
+ * so a rebuild in place would copy every vector at 1.3 ms each into a table
+ * under another name, which every read and write would then have to follow.
+ */
+const VEC_CHUNK_SIZE = 128;
+
+/** The column and chunk size of an embedded corpus's vec0 table. */
+function vecTableDefinition(dimensions: number): string {
+  return `USING vec0(embedding float[${dimensions}], chunk_size=${VEC_CHUNK_SIZE})`;
+}
 
 /**
  * Bytes of document sums written per transaction, and sums rows deleted per
  * one. A row holds two Float64 sums, 16 KB at 1,024 dimensions, so the cap is
- * the same 256 KB a record slice may write (`timed-slices.ts`).
+ * the same 64 KB a record slice may write (`timed-slices.ts`).
  */
-const SUM_BYTES_PER_TRANSACTION = 256 * 1024;
-const DOC_SUMS_DELETED_PER_TRANSACTION = 16;
+const SUM_BYTES_PER_TRANSACTION = 64 * 1024;
+const DOC_SUMS_DELETED_PER_TRANSACTION = 4;
 
 interface StoredChunkRow {
   id: number;
@@ -836,9 +858,7 @@ export class RetrievalStore {
     if (!hasVecSupport(this.db)) return;
     for (const corpus of EMBEDDED_CORPORA) {
       try {
-        this.db.exec(
-          `CREATE VIRTUAL TABLE IF NOT EXISTS ${vecTableName(corpus)} USING vec0(embedding float[${dimensions}])`,
-        );
+        this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${vecTableName(corpus)} ${vecTableDefinition(dimensions)}`);
         this.vecTables.add(corpus);
       } catch (error) {
         console.warn(`[retrieval] vec table create failed for ${corpus}, lexical-only:`, error);
@@ -875,7 +895,7 @@ export class RetrievalStore {
     writeTransaction(this.db, () => {
       for (const corpus of MEMORY_CORPORA) this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
       for (const corpus of EMBEDDED_CORPORA) {
-        this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} USING vec0(embedding float[${dimensions}])`);
+        this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} ${vecTableDefinition(dimensions)}`);
       }
     })();
     this.vecTables.clear();

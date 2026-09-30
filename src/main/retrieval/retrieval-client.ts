@@ -274,6 +274,11 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
    * worker to do it. A worker that does not close it in time is shut down, and
    * this waits for its exit, which closes every handle it had.
    */
+  /** A worker process exists now (up, or starting). */
+  get running(): boolean {
+    return this.child !== null;
+  }
+
   /** Tell a running worker something that matters only to a running worker
    *  (a job to stop). Forks none, and never rejects. */
   notifyRunning<Method extends RetrievalMethod>(method: Method, params: MethodParams<Method>): void {
