@@ -25,22 +25,15 @@
  * boundary.
  */
 
-import { getProjectDb } from '../db/database';
-import { RetrievalStore } from './retrieval-store';
-import { hasVecSupport } from './vec-support';
 import { retrievalClient } from './retrieval-client';
 import type { IndexStatus } from './worker/index-status';
-import { ConversationIndexer } from './conversation/conversation-indexer';
-import { sweepTaskRecords } from './task/task-indexer';
-import { sweepChangeRecords } from './change/change-indexer';
-import { sweepCommitRecords, type CommitSweepResult } from './commit/commit-indexer';
-import { purgeCodeRecords, sweepCodeRecords, type CodeSweepResult } from './code/code-indexer';
+import type { IndexSweepResult, IndexSweepSteps } from './worker/index-methods';
+import { collectRemoteTargets } from './remote-targets';
+import { agentRegistry } from '../agent/agent-registry';
 import { codeStatus, createBranchSizes } from './code/code-status';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { graphService } from './graph-facade';
 import { createSummaryScheduler } from './summary/summary-scheduler';
-import { readSummaryFingerprint } from './summary/summary-sources';
-import { SummaryStore } from './summary/summary-store';
 import { resolveAnswerRun } from './answer-run';
 import { codeSweepPlan, taskSummariesOn, type CodeSweepPlan } from '../../shared/answer-agent';
 import { withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
@@ -83,11 +76,12 @@ const BRANCH_FULL_READ_DELAY_MS = 60_000;
 /** When whole-branch reads may start. This module loads at launch. */
 const branchFullReadsFrom = Date.now() + BRANCH_FULL_READ_DELAY_MS;
 
-const indexer = new ConversationIndexer();
-
 let attached = false;
 let disposed = false;
 let activeSweepProjectId: string | null = null;
+/** The project-open sweep running in the worker, so a switch can stop it. */
+let activeSweepJobId: string | null = null;
+let sweepJobCounter = 0;
 /** Serial job chain: one INDEXING job runs at a time. Embedding is no longer
  *  chained here - it is owned entirely by embedEngine's own drain loop. */
 let jobChain: Promise<void> = Promise.resolve();
@@ -160,6 +154,43 @@ function onChain(job: () => Promise<unknown>): Promise<void> {
   return run;
 }
 
+/**
+ * Some of a project's sweeps, run by the retrieval worker (`index.sweep`).
+ * Always awaited on the job chain, so two sweeps of one project never
+ * interleave: a commit sweep that did would delete what a newer one wrote.
+ * A background job, so it has no call budget.
+ */
+function sweepInWorker(projectId: string, steps: IndexSweepSteps, jobId?: string): Promise<IndexSweepResult> {
+  return retrievalClient.call(
+    'index.sweep',
+    { ...steps, projectId, jobId, remoteTargets: collectRemoteTargets(agentRegistry) },
+    { timeoutMs: null },
+  );
+}
+
+/** One session's conversation re-read by the worker (`index.session`). */
+function indexSessionInWorker(
+  context: IpcContext,
+  projectId: string,
+  sessionId: string,
+  finished: boolean,
+): Promise<unknown> {
+  return retrievalClient.call('index.session', {
+    projectId,
+    sessionId,
+    subagents: finished,
+    changes: finished ? { projectPath: projectPathFor(context, projectId) } : null,
+    remoteTargets: collectRemoteTargets(agentRegistry),
+  }, { timeoutMs: null });
+}
+
+/** Stop the project-open sweep the worker is running, if any. */
+function cancelActiveSweep(): void {
+  if (!activeSweepJobId) return;
+  retrievalClient.notifyRunning('job.cancel', { jobId: activeSweepJobId });
+  activeSweepJobId = null;
+}
+
 function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;
   // Per-session TRAILING debounce, like scheduleLiveIndex below. One suspend
@@ -183,16 +214,12 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!projectId) return;
     chain(async () => {
-      await indexer.indexSession(projectId, sessionId);
-      // Subagent token usage is walked HERE and in the project-open sweep, never
-      // on the live turn-boundary path: a running fan-out rewrites its subagent
-      // directory on every driver turn, so doing it there would re-walk on each
-      // one. The session has just finished, so this is the walk that actually
-      // captures the whole fan-out.
-      await indexer.indexSubagentUsage(projectId, sessionId);
-      // The files the finished session changed, read from what was just
-      // indexed. Only conversations re-indexed since their last read are read.
-      await sweepChangeRecords(projectId, projectPathFor(context, projectId), () => !disposed);
+      // Finished: the worker also walks the subagents' token usage, which
+      // happens HERE and in the project-open sweep, never on the live
+      // turn-boundary path (a running fan-out rewrites its subagent directory
+      // on every driver turn, so doing it there would re-walk on each one),
+      // and reads the files the session changed from what it just indexed.
+      await indexSessionInWorker(context, projectId, sessionId, true);
       // Flag the project dirty; embedEngine's own drain loop embeds the
       // freshly indexed chunks in the background, duty-cycle throttled. This
       // does NOT embed inline - that is the whole point of the split.
@@ -233,7 +260,7 @@ function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!projectId) return;
     chain(async () => {
-      await indexer.indexSession(projectId, sessionId);
+      await indexSessionInWorker(context, projectId, sessionId, false);
       embedEngine.markDirty(projectId);
     });
   }, LIVE_INDEX_DEBOUNCE_MS);
@@ -261,24 +288,16 @@ function projectPathFor(context: IpcContext, projectId: string): string | null {
 }
 
 /**
- * A project's commits on its default branch, brought up to date. The branch is
- * the one a task's worktree branches from (board default, config default,
- * `main`). One `git rev-parse` when the branch has not moved. A read of the
- * whole branch waits until a minute after launch, then runs on its own.
+ * The commit sweep's step: a project's commits on its default branch, brought
+ * up to date. The branch is the one a task's worktree branches from (board
+ * default, config default, `main`). One `git rev-parse` when the branch has
+ * not moved. A read of the whole branch waits until a minute after launch
+ * (decided here, since a restarted worker would start that minute again),
+ * then runs on its own (`afterSweep`).
  */
-async function sweepProjectCommits(
-  context: IpcContext,
-  projectId: string,
-  projectPath: string | null,
-  shouldContinue: () => boolean,
-): Promise<CommitSweepResult> {
-  if (!projectPath) return { indexed: 0, removed: 0, relinked: 0, deferred: false };
-  const result = await sweepCommitRecords(projectId, projectPath, baseBranchFor(context, projectPath), {
-    shouldContinue,
-    allowFullRead: Date.now() >= branchFullReadsFrom,
-  });
-  if (result.deferred) sweepAgainAfterStartup(context, projectId);
-  return result;
+function commitStep(context: IpcContext, projectPath: string | null): IndexSweepSteps['commits'] {
+  if (!projectPath) return undefined;
+  return { projectPath, baseBranch: baseBranchFor(context, projectPath), allowFullRead: Date.now() >= branchFullReadsFrom };
 }
 
 /** What a sweep does with the source code index (`codeSweepPlan`). */
@@ -287,27 +306,24 @@ function codePlan(context: IpcContext): CodeSweepPlan {
 }
 
 /**
- * A project's source code, brought up to date with its default branch while
- * source code is switched on, and cleared when it is switched off. One
+ * The source code sweep's step: brought up to date with the default branch
+ * while source code is switched on, and cleared when it is switched off. One
  * `git rev-parse` when the branch has not moved; the first fill waits until a
  * minute after launch, like a whole-branch commit read.
  */
-async function sweepProjectCode(
-  context: IpcContext,
-  projectId: string,
-  projectPath: string | null,
-  shouldContinue: () => boolean,
-): Promise<CodeSweepResult> {
-  const none: CodeSweepResult = { indexed: 0, removed: 0, deferred: false };
+function codeStep(context: IpcContext, projectPath: string | null): IndexSweepSteps['code'] {
   const plan = codePlan(context);
-  if (plan === 'clear') return purgeCodeRecords(projectId) ? { ...none, removed: 1 } : none;
-  if (plan === 'keep' || !projectPath) return none;
-  const result = await sweepCodeRecords(projectId, projectPath, baseBranchFor(context, projectPath), {
-    shouldContinue,
+  return {
+    plan,
+    projectPath,
+    baseBranch: plan === 'index' && projectPath ? baseBranchFor(context, projectPath) : 'main',
     allowFullRead: Date.now() >= branchFullReadsFrom,
-  });
-  if (result.deferred) sweepAgainAfterStartup(context, projectId);
-  return result;
+  };
+}
+
+/** A whole-branch read the sweep put off runs once it may. */
+function afterSweep(context: IpcContext, projectId: string, result: IndexSweepResult): void {
+  if (result.commits?.deferred || result.code?.deferred) sweepAgainAfterStartup(context, projectId);
 }
 
 /** The branch a project's commits and code are read from: the one a task's
@@ -362,17 +378,23 @@ function queueRecordSweeps(context: IpcContext, projectId: string): void {
     // database would create an empty one again.
     if (!projectStillExists(context, projectId)) return;
     const projectPath = projectPathFor(context, projectId);
-    // A deleted task or session leaves its conversation in the index until
-    // here; the delete itself touches no index row.
-    const purged = await indexer.purgeDeletedSessions(projectId, () => !disposed);
-    const tasks = await sweepTaskRecords(projectId, () => !disposed);
-    const changes = await sweepChangeRecords(projectId, projectPath, () => !disposed);
-    const commits = await sweepProjectCommits(context, projectId, projectPath, () => !disposed);
-    const code = await sweepProjectCode(context, projectId, projectPath, () => !disposed);
-    if (tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0 || code.indexed > 0) embedEngine.markDirty(projectId);
-    if (purged > 0 || tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0
-      || commits.indexed > 0 || commits.removed > 0 || commits.relinked > 0
-      || code.indexed > 0 || code.removed > 0) {
+    const result = await sweepInWorker(projectId, {
+      // A deleted task or session leaves its documents in the index until
+      // here; the delete itself touches no index row.
+      purge: 'state',
+      tasks: true,
+      changes: { projectPath },
+      commits: commitStep(context, projectPath),
+      code: codeStep(context, projectPath),
+    });
+    afterSweep(context, projectId, result);
+    const { purged, tasks, changes, commits, code } = result;
+    if ((tasks?.indexed ?? 0) > 0 || (tasks?.removed ?? 0) > 0 || (changes?.indexed ?? 0) > 0 || (code?.indexed ?? 0) > 0) {
+      embedEngine.markDirty(projectId);
+    }
+    if (purged > 0 || (tasks?.indexed ?? 0) > 0 || (tasks?.removed ?? 0) > 0 || (changes?.indexed ?? 0) > 0
+      || (commits?.indexed ?? 0) > 0 || (commits?.removed ?? 0) > 0 || (commits?.relinked ?? 0) > 0
+      || (code?.indexed ?? 0) > 0 || (code?.removed ?? 0) > 0) {
       // An open Knowledge Graph re-reads its snapshot, so the Index panel
       // counts what was just indexed. The map itself does not move.
       graphService.notifyChanged(projectId);
@@ -403,7 +425,9 @@ const summaryScheduler = createSummaryScheduler<IpcContext>({
   // nothing: a board-change timer or a retry can fire after the delete, and
   // opening its database would create an empty one again.
   readFingerprint: (context, projectId) => (
-    projectStillExists(context, projectId) ? readSummaryFingerprint(getProjectDb(projectId)) : null
+    projectStillExists(context, projectId)
+      ? retrievalClient.call('summary.fingerprint', { projectId }, { timeoutMs: null })
+      : null
   ),
   resolveWriter: async (context, projectId) => {
     if (!projectStillExists(context, projectId)) return null;
@@ -438,9 +462,9 @@ const summaryScheduler = createSummaryScheduler<IpcContext>({
   // up no other indexing.
   beforePass: async (context, projectId) => {
     const projectPath = projectPathFor(context, projectId);
-    await onChain(() => sweepChangeRecords(projectId, projectPath, () => !disposed));
+    await onChain(() => sweepInWorker(projectId, { changes: { projectPath } }));
     await untilBranchFullReads();
-    await onChain(() => sweepProjectCommits(context, projectId, projectPath, () => !disposed));
+    await onChain(async () => afterSweep(context, projectId, await sweepInWorker(projectId, { commits: commitStep(context, projectPath) })));
   },
 });
 
@@ -675,6 +699,18 @@ export const retrievalService = {
     });
     if (attached) return;
     attached = true;
+    // A restarted retrieval worker lost the job it was running and every
+    // index event while it was down: the open project is swept again, which
+    // replays from the sources' signatures and writes only what changed.
+    retrievalClient.on('respawned', () => {
+      if (disposed || !context.currentProjectId) return;
+      try {
+        const project = context.projectRepo.getById(context.currentProjectId);
+        if (project) retrievalService.startForProject(context, project);
+      } catch (error) {
+        console.warn('[retrieval] could not sweep the open project after a worker restart:', error);
+      }
+    });
     context.sessionManager.on('exit', (sessionId: string) => {
       scheduleFinalizeIndex(context, sessionId);
     });
@@ -704,34 +740,37 @@ export const retrievalService = {
   startForProject(context: IpcContext, project: Project): void {
     if (disposed) return;
     this.attach(context);
+    // Only one project's open sweep runs: another project's stops.
+    if (activeSweepProjectId !== project.id) cancelActiveSweep();
     activeSweepProjectId = project.id;
     setImmediate(() => {
       if (disposed) return;
       if (context.currentProjectId !== project.id) return;
       if (!isIndexingEnabled(context)) return;
 
-      // Reconcile any vec rows orphaned while the extension was unavailable.
-      try {
-        const db = getProjectDb(project.id);
-        if (hasVecSupport(db)) new RetrievalStore(db).reconcileVecOrphans();
-      } catch {
-        // sqlite-vec unavailable for this DB; the engine runs lexical-only.
-      }
-
       if (isSemanticEnabled(context)) ensureModelDownload(context);
 
       chain(async () => {
-        const stillThisProject = (): boolean =>
-          !disposed && context.currentProjectId === project.id && activeSweepProjectId === project.id;
-        await indexer.purgeDeletedSessions(project.id, stillThisProject);
-        await indexer.sweepProject(project.id, stillThisProject);
-        // The board's own records, the files each conversation changed, and
-        // the default branch's commits: each cheap once caught up, and
-        // complete on the first open.
-        await sweepTaskRecords(project.id, stillThisProject);
-        await sweepChangeRecords(project.id, project.path, stillThisProject);
-        await sweepProjectCommits(context, project.id, project.path, stillThisProject);
-        await sweepProjectCode(context, project.id, project.path, stillThisProject);
+        if (disposed || context.currentProjectId !== project.id || activeSweepProjectId !== project.id) return;
+        sweepJobCounter += 1;
+        const jobId = `open-${sweepJobCounter}`;
+        activeSweepJobId = jobId;
+        const result = await sweepInWorker(project.id, {
+          // Vectors orphaned while the extension was unavailable.
+          reconcileVec: true,
+          // Deleted sessions' documents, found by their chunks too.
+          purge: 'chunks',
+          conversations: true,
+          // The board's own records, the files each conversation changed,
+          // the default branch's commits and its code: each cheap once
+          // caught up, and complete on the first open.
+          tasks: true,
+          changes: { projectPath: project.path },
+          commits: commitStep(context, project.path),
+          code: codeStep(context, project.path),
+        }, jobId);
+        if (activeSweepJobId === jobId) activeSweepJobId = null;
+        afterSweep(context, project.id, result);
         // Covers project open, the startup backlog, AND crash-resume: the
         // sweep re-indexed whatever changed, and this flags it for the
         // background drain regardless of whether anything actually changed
@@ -786,15 +825,10 @@ export const retrievalService = {
   async rebuildPlan(context: IpcContext): Promise<KnowledgeGraphRebuildPlan> {
     const choice = await resolveRewriteChoice(context);
     if (!choice) return { summariesToRewrite: 0 };
-    let summariesToRewrite = 0;
-    for (const project of context.projectRepo.list()) {
-      try {
-        summariesToRewrite += new SummaryStore(getProjectDb(project.id)).countNotWrittenWith(choice);
-      } catch (error) {
-        console.warn(`[retrieval] rebuild plan could not read project=${project.id}:`, error);
-      }
-    }
-    return { summariesToRewrite };
+    return retrievalClient.call('index.rebuildPlan', {
+      projectIds: context.projectRepo.list().map((project) => project.id),
+      choice,
+    });
   },
 
   /**
@@ -812,19 +846,19 @@ export const retrievalService = {
   async rebuildEverything(context: IpcContext): Promise<KnowledgeGraphRebuildPlan> {
     if (disposed) return { summariesToRewrite: 0 };
     const choice = await resolveRewriteChoice(context);
+    const projectIds = context.projectRepo.list().map((project) => project.id);
+    // On the job chain: a sweep mid-write would put back the state this clears.
+    // A running open sweep stops at its next step rather than hold Rebuild up;
+    // the open project is swept again below.
+    cancelActiveSweep();
     let summariesToRewrite = 0;
-    for (const project of context.projectRepo.list()) {
-      try {
-        const db = getProjectDb(project.id);
-        new RetrievalStore(db).resetIndexState();
-        if (choice) summariesToRewrite += new SummaryStore(db).markForRewrite(choice);
-        // Nothing on the board moved, so the fingerprint would call it caught up.
-        summaryScheduler.invalidate(project.id);
-      } catch (error) {
-        console.warn(`[retrieval] rebuild could not reset project=${project.id}:`, error);
-      }
-    }
-    console.log(`[retrieval] rebuild projects=${context.projectRepo.list().length} summaries marked for rewrite=${summariesToRewrite}`);
+    let reset: string[] = [];
+    await onChain(async () => {
+      ({ summariesToRewrite, reset } = await retrievalClient.call('index.rebuild', { projectIds, choice }, { timeoutMs: null }));
+    });
+    // Nothing on the board moved, so the fingerprint would call it caught up.
+    for (const projectId of reset) summaryScheduler.invalidate(projectId);
+    console.log(`[retrieval] rebuild projects=${projectIds.length} summaries marked for rewrite=${summariesToRewrite}`);
     const openProjectId = context.currentProjectId;
     const openProject = openProjectId ? context.projectRepo.getById(openProjectId) : null;
     if (openProject) {
@@ -960,6 +994,7 @@ export const retrievalService = {
   stop(projectId?: string): void {
     if (projectId != null && projectId !== activeSweepProjectId) return;
     activeSweepProjectId = null;
+    cancelActiveSweep();
   },
 
   /** Synchronous shutdown: stop scheduling, drop pending timers, dispose the

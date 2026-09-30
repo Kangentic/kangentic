@@ -31,34 +31,34 @@
  *
  * The DB is the durable queue (`chunksNeedingEmbedding` / `embedded_model`),
  * so a crash mid-drain just leaves chunks pending; the next markDirty (or the
- * getStatus safety-net re-mark) resumes them - nothing is lost.
+ * getStatus safety-net re-mark) resumes them - nothing is lost. Its reads and
+ * writes run in the retrieval worker (`embed-store-access.ts`); this loop
+ * embeds and paces.
  */
 
-import type Database from 'better-sqlite3';
-import { getProjectDb } from '../../db/database';
-import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import { RetrievalStore } from '../retrieval-store';
-import { hasVecSupport } from '../vec-support';
 import { CONVERSATION_CORPUS } from '../corpora';
 import { EmbedClient } from './embed-client';
 import { EMBED_DRAIN_BATCH, EMBED_DUTY_CYCLE, resolveEmbeddingModel, type EmbeddingModelDef } from './embedding-config';
 import { isEmbeddingModelPresent } from './embedding-model';
+import { retrievalClient, RetrievalUnavailableError } from '../retrieval-client';
+import type { EmbedStoreAccess } from './embed-store-access';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Embedder, StoredChunk } from '../types';
 import type { KnowledgeGraphAcceleration } from '../../../shared/types';
 
-/** The narrow slice of RetrievalStore the engine actually uses. Structural
- *  (not the concrete class) so unit tests inject a plain fake object without
- *  having to satisfy RetrievalStore's private fields. */
-export interface EmbedStore {
-  getMeta(key: string): string | undefined;
-  setMeta(key: string, value: string): void;
-  resetVec(dimensions: number): void;
-  ensureVecTable(dimensions: number): void;
-  readonly hasVec: boolean;
-  chunksNeedingEmbedding(modelTag: string, limit: number): StoredChunk[];
-  writeEmbeddings(rows: Array<{ chunkId: number; vector: Float32Array; contentHash: string }>, modelTag: string): void;
-}
+export type { EmbedStore } from './embed-store-access';
+
+/** The drain's database steps, run by the retrieval worker. */
+const workerEmbedStoreAccess: EmbedStoreAccess = {
+  // No call budget: a first batch after a model switch resets the vec
+  // tables, which pages through every vector.
+  nextBatch: (projectId, model, limit) => retrievalClient.call(
+    'embed.nextBatch',
+    { projectId, dimensions: model.dimensions, modelTag: model.modelTag, limit },
+    { timeoutMs: null },
+  ),
+  write: (projectId, rows, modelTag) => retrievalClient.call('embed.write', { projectId, rows, modelTag }),
+};
 
 /** The narrow slice of EmbedClient the engine actually uses. Structural, for
  *  the same reason as EmbedStore. Extends `Embedder` (dimensions/modelTag/
@@ -111,8 +111,7 @@ function defaultDelay(ms: number): Promise<void> {
 }
 
 export interface EmbedEngineDeps {
-  getDb: (projectId: string) => Database.Database;
-  createStore: (db: Database.Database) => EmbedStore;
+  store: EmbedStoreAccess;
   createClient: (model: EmbeddingModelDef, acceleration: KnowledgeGraphAcceleration) => EmbedWorkerClient;
   delay: (ms: number) => Promise<void>;
   dutyCycle: number;
@@ -135,8 +134,7 @@ export const RECORD_PROGRESS_INTERVAL_MS = 30_000;
 export const RATE_MIN_BATCHES = 3;
 
 const defaultDeps: EmbedEngineDeps = {
-  getDb: getProjectDb,
-  createStore: (db) => new RetrievalStore(db),
+  store: workerEmbedStoreAccess,
   createClient: (model, acceleration) => new EmbedClient(model, acceleration),
   delay: defaultDelay,
   dutyCycle: EMBED_DUTY_CYCLE,
@@ -313,22 +311,6 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     wake();
   }
 
-  /** Vec-table dimension sync for one project, moved verbatim from the old
-   *  embedPass. A dimension change (a different model) needs a full reset;
-   *  same-dimension model switches are handled by the model-tag re-embed in
-   *  chunksNeedingEmbedding. Returns false when the project has no usable vec
-   *  table (structurally lexical-only), so the drain should skip it. */
-  function syncVecTable(store: EmbedStore, model: EmbeddingModelDef): boolean {
-    const storedDims = store.getMeta('vec_dims');
-    if (storedDims !== String(model.dimensions)) {
-      store.resetVec(model.dimensions);
-      store.setMeta('vec_dims', String(model.dimensions));
-    } else {
-      store.ensureVecTable(model.dimensions);
-    }
-    return store.hasVec;
-  }
-
   /** Pop the next dirty project in round-robin order (insertion order of a
    *  Set). runLoop deletes the popped id before draining and re-adds it (at
    *  the back) only when more work remains, which is what makes this an
@@ -354,16 +336,6 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     const model = selectedModel(context);
     if (!isEmbeddingModelPresent(model)) return 'drained';
 
-    let db;
-    try {
-      db = deps.getDb(projectId);
-    } catch {
-      return 'drained';
-    }
-    if (!hasVecSupport(db)) return 'drained';
-    const store = deps.createStore(db);
-    if (!syncVecTable(store, model)) return 'drained';
-
     const resolvedClient = getClientFor(model, selectedAcceleration(context));
 
     if (resolvedClient.crashed) {
@@ -376,7 +348,20 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       return 'crashed';
     }
 
-    const batch = store.chunksNeedingEmbedding(model.modelTag, deps.drainBatchSize);
+    // The vec tables are put at the model's width first (a different width
+    // resets them). Null: the project cannot hold vectors, lexical only.
+    let batch: StoredChunk[] | null;
+    try {
+      batch = await deps.store.nextBatch(projectId, model, deps.drainBatchSize);
+    } catch (error) {
+      // The retrieval worker is restarting: keep the project for later.
+      if (error instanceof RetrievalUnavailableError) {
+        await deps.delay(deps.transientBackoffMs);
+        return 'transient';
+      }
+      return 'drained';
+    }
+    if (batch === null) return 'drained';
     if (batch.length === 0) {
       const run = drainRuns.get(projectId);
       if (run) {
@@ -428,13 +413,19 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       return 'transient';
     }
 
-    // Synchronous sqlite-vec write on the main thread, and the one part of the
-    // drain that can contend with a task write under the 5s busy timeout: the
-    // dev lag monitor records it when it runs long (see event-loop-lag.ts).
-    timeSyncWork('embed:writeEmbeddings', () => store.writeEmbeddings(
-      batch.map((chunk, index) => ({ chunkId: chunk.id, vector: vectors[index], contentHash: chunk.contentHash })),
-      model.modelTag,
-    ));
+    // Written by the retrieval worker. A batch lost to a worker restart is
+    // still pending in the database and is embedded again.
+    try {
+      await deps.store.write(
+        projectId,
+        batch.map((chunk, index) => ({ chunkId: chunk.id, vector: vectors[index], contentHash: chunk.contentHash })),
+        model.modelTag,
+      );
+    } catch (error) {
+      if (!(error instanceof RetrievalUnavailableError)) throw error;
+      await deps.delay(deps.transientBackoffMs);
+      return 'transient';
+    }
 
     const sleepMs = computeEmbedSleepMs(batchMs, deps.dutyCycle);
     const run = drainRuns.get(projectId);

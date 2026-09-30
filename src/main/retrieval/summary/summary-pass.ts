@@ -1,10 +1,7 @@
-import type Database from 'better-sqlite3';
-import { getProjectDb } from '../../db/database';
 import { buildSummaryPrompt, SUMMARY_BATCH_SIZE, parseSummaryReply } from './summary-prompt';
-import { readSummaryCandidates } from './summary-sources';
-import { SummaryStore } from './summary-store';
-import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import { writeTransaction } from '../../db/transaction';
+import type { SummaryCandidate } from './summary-sources';
+import type { SummaryPassStore, SummaryRow } from './summary-pass-store';
+import { retrievalClient } from '../retrieval-client';
 
 /** Writes one batch's summaries: the search agent's read-only answer run. */
 export interface SummaryWriter {
@@ -27,15 +24,20 @@ export interface SummaryPassResult {
 }
 
 export interface SummaryPassDeps {
-  getDb: (projectId: string) => Database.Database;
+  store: SummaryPassStore;
   now: () => string;
-  yieldToEventLoop: () => Promise<void>;
 }
 
+/** The pass's reads and writes, run by the retrieval worker. A pass is a
+ *  background job, so neither has a call budget. */
+const workerSummaryPassStore: SummaryPassStore = {
+  candidates: (projectId, skip) => retrievalClient.call('summary.candidates', { projectId, skip: [...skip] }, { timeoutMs: null }),
+  save: (projectId, rows) => retrievalClient.call('summary.save', { projectId, rows: [...rows] }, { timeoutMs: null }),
+};
+
 const defaultDeps: SummaryPassDeps = {
-  getDb: getProjectDb,
+  store: workerSummaryPassStore,
   now: () => new Date().toISOString(),
-  yieldToEventLoop: () => new Promise((resolve) => setImmediate(resolve)),
 };
 
 /**
@@ -59,25 +61,16 @@ export async function runSummaryPass(
   deps: SummaryPassDeps = defaultDeps,
 ): Promise<SummaryPassResult> {
   const result: SummaryPassResult = { written: 0, remaining: 0, unanswered: [], failed: false };
-  let db: Database.Database;
-  let store: SummaryStore;
-  let stale: Awaited<ReturnType<typeof readSummaryCandidates>>;
+  let stale: SummaryCandidate[];
   try {
-    db = deps.getDb(projectId);
-    store = new SummaryStore(db);
-    store.removeOrphans();
-    const hashes = store.inputHashes();
-    const skip = options.skip ?? new Set<string>();
-    stale = (await readSummaryCandidates(db, deps.yieldToEventLoop))
-      .filter((candidate) => hashes.get(candidate.input.taskId) !== candidate.hash && !skip.has(candidate.input.taskId))
-      .sort((left, right) => right.lastActivityMs - left.lastActivityMs);
+    stale = await deps.store.candidates(projectId, [...(options.skip ?? [])]);
   } catch (error) {
     console.warn('[retrieval] summary pass could not read the board:', error);
     result.failed = true;
     return result;
   }
 
-  const batches: Array<typeof stale> = [];
+  const batches: SummaryCandidate[][] = [];
   for (let start = 0; batches.length < options.maxBatches && start < stale.length; start += SUMMARY_BATCH_SIZE) {
     batches.push(stale.slice(start, start + SUMMARY_BATCH_SIZE));
   }
@@ -95,45 +88,38 @@ export async function runSummaryPass(
   }));
 
   let attempted = 0;
-  // The pass's writes in ONE transaction. Each commit appends every page it
-  // touched to the WAL, so thirty separate ones write the same table and index
-  // pages thirty times over (see timed-slices.ts for the measured cost).
-  const writeReplies = writeTransaction(db, () => {
-    for (const { batch, reply } of replies) {
-      if (reply === null) {
-        result.failed = true;
-        continue;
-      }
-      attempted += batch.length;
-      const summaries = parseSummaryReply(reply, batch.length);
-      batch.forEach((candidate, position) => {
-        const summary = summaries.get(position);
-        if (!summary) {
-          result.unanswered.push(candidate.input.taskId);
-          return;
-        }
-        try {
-          store.write({
-            taskId: candidate.input.taskId,
-            summary,
-            inputHash: candidate.hash,
-            agent: writer.agent,
-            model: writer.model,
-            effort: writer.effort,
-            createdAt: deps.now(),
-          });
-          result.written += 1;
-        } catch (error) {
-          console.warn(`[retrieval] summary for ${candidate.input.taskId} failed to save:`, error);
-        }
-      });
+  const rows: SummaryRow[] = [];
+  for (const { batch, reply } of replies) {
+    if (reply === null) {
+      result.failed = true;
+      continue;
     }
-  });
-  try {
-    timeSyncWork('summaries:write', () => writeReplies());
-  } catch (error) {
-    console.warn('[retrieval] summaries failed to save:', error);
-    result.failed = true;
+    attempted += batch.length;
+    const summaries = parseSummaryReply(reply, batch.length);
+    batch.forEach((candidate, position) => {
+      const summary = summaries.get(position);
+      if (!summary) {
+        result.unanswered.push(candidate.input.taskId);
+        return;
+      }
+      rows.push({
+        taskId: candidate.input.taskId,
+        summary,
+        inputHash: candidate.hash,
+        agent: writer.agent,
+        model: writer.model,
+        effort: writer.effort,
+        createdAt: deps.now(),
+      });
+    });
+  }
+  if (rows.length > 0) {
+    try {
+      result.written = await deps.store.save(projectId, rows);
+    } catch (error) {
+      console.warn('[retrieval] summaries failed to save:', error);
+      result.failed = true;
+    }
   }
   result.remaining = stale.length - attempted;
   return result;

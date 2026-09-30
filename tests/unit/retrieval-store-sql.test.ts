@@ -806,6 +806,46 @@ describeWithSqlite('a deleted session leaves the index by the sweep, not by trig
     expect(count(`SELECT COUNT(*) AS count FROM memory_chunks WHERE doc_id = 'agent-kept'`)).toBe(1);
     expect(store.deletedSessionDocuments(100)).toEqual([]);
   });
+
+  it('finds a deleted session\'s chunks with no index state only when asked to read the chunks, and spares a document a live session owns', async () => {
+    const database = new sqlite!.DatabaseSync(':memory:');
+    const db = adaptDatabase(database);
+    runProjectMigrations(db);
+    const store = new RetrievalStore(db);
+    const count = (sql: string): number => (database.prepare(sql).get() as { count: number }).count;
+    database.exec(`INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, '2026-09-30T00:00:00.000Z')`);
+    database.exec(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at)
+      VALUES ('task-1', 1, 'task-1', '', 'lane-1', 0, '2026-09-30T00:00:00.000Z', '2026-09-30T00:00:00.000Z')`);
+    database.exec(`INSERT INTO sessions (id, task_id, session_type, command, cwd, status, started_at)
+      VALUES ('session-live', 'task-1', 'claude_agent', 'claude', '/mock', 'exited', '2026-09-30T00:00:00.000Z')`);
+    // A writer died after its chunks and before its state row.
+    store.upsertDocument({ ...ref, docId: 'agent-stateless', sessionId: 'session-gone' }, [chunk(0, 'hashA')]);
+    // A live conversation with one chunk still naming its old, deleted owner.
+    store.upsertDocument({ ...ref, docId: 'agent-live', sessionId: 'session-live' }, [chunk(0, 'hashB')]);
+    store.setIndexState(stateFor('agent-live', 'session-live'));
+    database.exec(`UPDATE memory_chunks SET session_id = 'session-old' WHERE doc_id = 'agent-live'`);
+
+    const indexer = new ConversationIndexer({ getDb: () => db });
+    await expect(indexer.purgeDeletedSessions('project-1', () => true)).resolves.toBe(0);
+    await expect(indexer.purgeDeletedSessions('project-1', () => true, { fromChunks: true })).resolves.toBe(1);
+    expect(count(`SELECT COUNT(*) AS count FROM memory_chunks WHERE doc_id = 'agent-stateless'`)).toBe(0);
+    expect(count(`SELECT COUNT(*) AS count FROM memory_chunks WHERE doc_id = 'agent-live'`)).toBe(1);
+  });
+});
+
+describeWithSqlite('a vec table this connection cannot open (real database)', () => {
+  it('refuses to delete chunks rather than leave their vectors behind', () => {
+    const database = new sqlite!.DatabaseSync(':memory:');
+    const db = adaptDatabase(database);
+    runProjectMigrations(db);
+    const store = new RetrievalStore(db);
+    store.upsertDocument(ref, [chunk(0, 'hashA')]);
+    // The vec table exists (created by a connection that loaded sqlite-vec),
+    // and this one never loaded it.
+    database.exec('CREATE TABLE memory_chunks_vec (rowid INTEGER PRIMARY KEY, embedding BLOB)');
+    expect(() => store.deleteDocument(ref.corpus, ref.docId)).toThrow(/sqlite-vec is not loaded/);
+    expect((database.prepare('SELECT COUNT(*) AS count FROM memory_chunks').get() as { count: number }).count).toBe(1);
+  });
 });
 
 describeWithSqlite('RetrievalStore.purgeAll (real database)', () => {

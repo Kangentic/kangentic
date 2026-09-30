@@ -379,6 +379,29 @@ export class RetrievalStore {
     ).all(limit) as Array<{ corpus: string; docId: string }>;
   }
 
+  /**
+   * Documents holding chunks of a deleted session, read from the chunks rather
+   * than the index state: a document whose writer died between its chunk
+   * batches and its state row (written last) has no state to find it by. A
+   * scan of the covering `idx_memory_chunks_session` index (7 ms on 36k
+   * chunks), so it runs at project open, not on every board change. A document
+   * whose index state names a live session is someone's, whatever one stale
+   * chunk says (an owner rewrite in flight), and is left alone.
+   */
+  deletedSessionChunkDocuments(limit: number): Array<{ corpus: string; docId: string }> {
+    return this.prepared(
+      `SELECT DISTINCT chunk.corpus, chunk.doc_id AS docId FROM memory_chunks AS chunk
+        WHERE chunk.session_id IN (
+          SELECT DISTINCT session_id FROM memory_chunks AS orphan
+           WHERE session_id IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = orphan.session_id))
+          AND NOT EXISTS (
+            SELECT 1 FROM memory_index_state AS state JOIN sessions ON sessions.id = state.session_id
+             WHERE state.corpus = chunk.corpus AND state.doc_id = chunk.doc_id)
+        LIMIT ?`,
+    ).all(limit) as Array<{ corpus: string; docId: string }>;
+  }
+
   /** How many of one document's chunks sit below `seq`: equal to `seq` while
    *  a resumed walk's untouched prefix is intact. A range count on the
    *  UNIQUE(corpus, doc_id, seq) index. */
@@ -667,6 +690,16 @@ export class RetrievalStore {
       )
       .get(phrase, atOrBeforeMs) as { taskId: string; firstMs: number } | undefined;
     return row?.taskId ?? null;
+  }
+
+  /** Commits linked to a task that has since been deleted. A probe of `tasks`
+   *  per linked commit chunk (one chunk per commit), a few thousand at most. */
+  commitsOfDeletedTasks(): string[] {
+    return (this.prepared(
+      `SELECT doc_id AS docId FROM memory_chunks AS chunk
+        WHERE corpus = 'commit' AND task_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = chunk.task_id)`,
+    ).all() as Array<{ docId: string }>).map((row) => row.docId);
   }
 
   /** Point one document's chunks at a task, text and embeddings untouched. */
@@ -1654,20 +1687,24 @@ export class RetrievalStore {
    * Whether `corpus`'s vec table exists, looked up again when this store has
    * not seen it. Another store on the same connection (the embedding drain's)
    * can create it after this one was built, and a delete that skipped it would
-   * leave a vector behind for a chunk id SQLite may hand out again.
+   * leave a vector behind for a chunk id SQLite may hand out again
+   * (`memory_chunks.id` is not AUTOINCREMENT, so a deleted top id is reused).
+   *
+   * Throws when the table exists but this connection cannot open it (sqlite-vec
+   * did not load here), so the delete's transaction rolls back rather than
+   * leaving that vector behind.
    */
   private hasVecTable(corpus: MemoryCorpus): boolean {
     if (this.vecTables.has(corpus)) return true;
-    if (!EMBEDDED_CORPORA.includes(corpus) || !hasVecSupport(this.db)) return false;
-    try {
-      const exists = this.db
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-        .get(vecTableName(corpus));
-      if (exists === undefined) return false;
-      this.vecTables.add(corpus);
-      return true;
-    } catch {
-      return false;
+    if (!EMBEDDED_CORPORA.includes(corpus)) return false;
+    const exists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(vecTableName(corpus));
+    if (exists === undefined) return false;
+    if (!hasVecSupport(this.db)) {
+      throw new Error(`${vecTableName(corpus)} exists but sqlite-vec is not loaded on this connection; its vectors cannot be deleted`);
     }
+    this.vecTables.add(corpus);
+    return true;
   }
 }

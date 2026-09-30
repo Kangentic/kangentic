@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { writeInSlices, type PreparedWrite } from '../timed-slices';
+import { writeTransaction } from '../../db/transaction';
 import { readBranchHead, runGit, type BranchHead } from '../branch-git';
 import {
   COMMIT_LOG_FORMAT,
@@ -228,8 +229,40 @@ export async function sweepCommitRecords(
     store.setMeta(HEAD_META_KEY, JSON.stringify({ ref: head.ref, sha: head.sha, version: COMMIT_RECORD_VERSION }));
   }
 
-  result.relinked = await relinkYoungCommits(db, store, shouldContinue, deps);
+  // Both change which task a commit rolls up under.
+  result.relinked = unlinkCommitsOfDeletedTasks(db, store, deps) + await relinkYoungCommits(db, store, shouldContinue, deps);
   return result;
+}
+
+/**
+ * Commits whose task was deleted, unlinked: they read as found by no task, and
+ * a young one can then find another task that mentions it (`relinkYoungCommits`
+ * runs next). Left linked, they rolled up under a task id nothing on the board
+ * holds. Almost always nothing to do; a task delete unlinks a handful. Returns
+ * how many were unlinked.
+ */
+function unlinkCommitsOfDeletedTasks(db: Database.Database, store: RetrievalStore, deps: CommitIndexerDeps): number {
+  try {
+    const orphaned = store.commitsOfDeletedTasks();
+    if (orphaned.length === 0) return 0;
+    const markUnlinked = db.prepare("UPDATE memory_index_state SET entry_count = 0, indexed_at = ? WHERE corpus = 'commit' AND doc_id = ?");
+    // One commit is one chunk and its state row, so even a large task's
+    // commits fit one short transaction.
+    writeTransaction(db, () => {
+      const now = new Date(deps.now()).toISOString();
+      for (const docId of orphaned) {
+        store.setDocumentTask(CORPUS, docId, null);
+        markUnlinked.run(now, docId);
+      }
+    })();
+    // The relink pass reads only when a conversation was indexed since its
+    // last run; these commits are new candidates whatever the marker says.
+    store.setMeta(RELINK_MARKER_KEY, '');
+    return orphaned.length;
+  } catch (error) {
+    console.warn('[retrieval] commits of deleted tasks could not be unlinked:', error);
+    return 0;
+  }
 }
 
 /**

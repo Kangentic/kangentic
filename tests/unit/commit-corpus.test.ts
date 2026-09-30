@@ -91,8 +91,19 @@ function project() {
   runProjectMigrations(db);
   const store = new RetrievalStore(db);
   let conversationCount = 0;
+  // A conversation belongs to a task on the board, as every real one does: a
+  // commit linked to a task that is gone is unlinked by the sweep.
+  database.exec(`INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, '2026-09-30T00:00:00.000Z')`);
+  let taskCount = 0;
+  const ensureTask = (taskId: string): void => {
+    if (database.prepare('SELECT 1 FROM tasks WHERE id = ?').get(taskId)) return;
+    taskCount += 1;
+    database.prepare(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at)
+      VALUES (?, ?, ?, '', 'lane-1', 0, '2026-09-30T00:00:00.000Z', '2026-09-30T00:00:00.000Z')`).run(taskId, taskCount, taskId);
+  };
   /** A conversation's text, without the index bookkeeping a real indexing pass writes. */
   const mentionTextOnly = (taskId: string, text: string, atMs: number): string => {
+    ensureTask(taskId);
     conversationCount += 1;
     const docId = `agent-${conversationCount}`;
     store.upsertDocument(
@@ -226,6 +237,26 @@ describeWithSqlite('sweepCommitRecords', () => {
 
     expect(result.relinked).toBe(1);
     expect(fixture.taskOf(sha(1))).toBe('task-late');
+  });
+
+  it('unlinks a commit whose task was deleted, and ties it to another task that wrote it', async () => {
+    const fixture = project();
+    const landed = NOW - DAY;
+    fixture.mention('task-first', 'git commit -m "fix(graph): keep region names across a relabel"', landed - 60_000);
+    fixture.git.commits = [commit(1, 'fix(graph): keep region names across a relabel', landed)];
+    await fixture.sweep();
+    expect(fixture.taskOf(sha(1))).toBe('task-first');
+    // The task is deleted; its conversations leave with it (the purge). A
+    // second task had also written that subject.
+    fixture.database.exec(`DELETE FROM memory_chunks WHERE corpus = 'conversation' AND task_id = 'task-first'`);
+    fixture.database.exec(`DELETE FROM tasks WHERE id = 'task-first'`);
+    fixture.mention('task-second', 'Tool: Bash {"command":"git commit -m \\"fix(graph): keep region names across a relabel\\""}', landed - 30_000);
+
+    const result = await fixture.sweep();
+
+    expect(fixture.taskOf(sha(1))).toBe('task-second');
+    // Unlinked from the deleted task, then tied to the other one.
+    expect(result.relinked).toBe(2);
   });
 
   it('does not retry an unlinked commit until a conversation has been indexed since the last try', async () => {

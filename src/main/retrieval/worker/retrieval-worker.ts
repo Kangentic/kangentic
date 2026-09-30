@@ -50,10 +50,12 @@ for (const level of ['log', 'info', 'warn', 'error'] as const) {
 
 /** Why sqlite-vec last failed to load, for the status line. */
 let vecLoadError: string | null = null;
+/** Where sqlite-vec loads from, as main resolved it. */
+let vecLoadablePath: string | null = null;
 
 function initialize(message: InitMessage): void {
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
-  const vecLoadablePath = message.vecLoadablePath;
+  vecLoadablePath = message.vecLoadablePath;
   if (!vecLoadablePath) vecLoadError = 'the sqlite-vec extension was not found';
   setProjectDbInitializer((db: Database.Database) => {
     if (!vecLoadablePath) return;
@@ -76,6 +78,7 @@ const context: WorkerContext = {
   getDb: (projectId) => getProjectDb(projectId),
   closeDb: (projectId) => closeProjectDb(projectId),
   vecLoadError: () => vecLoadError,
+  vecLoadablePath: () => vecLoadablePath,
   emit: (event: RetrievalEventName, projectId: string) => post({ type: 'event', event, projectId }),
 };
 

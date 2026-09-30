@@ -373,6 +373,17 @@ export interface AgentAdapter {
   readonly remoteExecution?: {
     readonly info: AgentRemoteExecutionInfo;
     probeServer(server: AgentExecutionServer): Promise<RemoteServerStatus>;
+    /**
+     * The remote servers this adapter's spawns ran against, by the cwd each
+     * spawn passed, for an adapter whose transcript reads branch on them.
+     * Main's copy of the adapter learns them at spawn; the retrieval worker
+     * holds its own copy of every adapter, which is handed them with each
+     * index job (`adoptTargets`) so it reads a remote session's transcript
+     * from the same server.
+     */
+    knownTargets?(): Array<[cwd: string, target: ResolvedExecutionTarget]>;
+    /** Take the targets another copy of this adapter learned (`knownTargets`). */
+    adoptTargets?(targets: ReadonlyArray<[cwd: string, target: ResolvedExecutionTarget]>): void;
   };
 
   /**

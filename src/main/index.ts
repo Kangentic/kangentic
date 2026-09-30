@@ -77,14 +77,12 @@ import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
 import { retrievalClient } from './retrieval/retrieval-client';
 import { attachCheckpointDriver } from './retrieval/checkpoint-driver';
-import { setProjectDbInitializer } from './db/database';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
 import { setSyncWriteFailureNotifier } from './config/write-failure-notice';
 import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
-import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed, isEmbeddedBrowserPermissionAllowed } from './permission-policy';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../shared/external-url';
@@ -1624,12 +1622,10 @@ Menu.setApplicationMenu(
 app.whenReady().then(async () => {
   mark('app_ready');
 
-  // Load the sqlite-vec extension into every project DB as it opens (after
-  // migrations). Registered before any project opens so the semantic search
-  // layer is available; a load failure degrades to lexical-only.
-  setProjectDbInitializer(loadVecExtension);
-  // While the retrieval worker is up it checkpoints the project databases'
-  // WAL and main's own auto-checkpoint is off (see checkpoint-driver.ts).
+  // sqlite-vec is loaded by the retrieval worker alone, the only process that
+  // reads or writes the index. While the worker is up it also checkpoints the
+  // project databases' WAL, and main's own auto-checkpoint is off (see
+  // checkpoint-driver.ts).
   attachCheckpointDriver();
 
   // Let agent adapters drop per-directory state for a worktree Kangentic just

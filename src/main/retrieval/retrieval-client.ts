@@ -147,6 +147,10 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     if (this.disposed || !this.restartPolicy.maySpawn()) return null;
 
     const workerPath = unpacked(path.join(__dirname, 'retrieval-worker.js'));
+    // The worker inherits main's environment as it is now, and its commit and
+    // code sweeps run `git` from PATH. Startup extends PATH from the login
+    // shell (`restoreShellEnv`, macOS and Linux) before it creates the window,
+    // and every call that forks comes after that.
     let child: UtilityProcess;
     try {
       child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });
@@ -270,6 +274,13 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
    * worker to do it. A worker that does not close it in time is shut down, and
    * this waits for its exit, which closes every handle it had.
    */
+  /** Tell a running worker something that matters only to a running worker
+   *  (a job to stop). Forks none, and never rejects. */
+  notifyRunning<Method extends RetrievalMethod>(method: Method, params: MethodParams<Method>): void {
+    if (!this.child) return;
+    void this.call(method, params).catch(() => undefined);
+  }
+
   async closeProject(projectId: string): Promise<void> {
     const child = this.child;
     if (!child) return;

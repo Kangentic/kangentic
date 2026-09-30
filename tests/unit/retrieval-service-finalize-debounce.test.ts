@@ -30,15 +30,15 @@ import { EventEmitter } from 'node:events';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import { BoardEventBus } from '../../src/main/mobile-bridge/board-event-bus';
 
-// retrieval-service.ts's other direct imports that would otherwise drag in
-// electron (vec-extension.ts) or a native module built for Electron's Node
-// ABI (better-sqlite3, via db/database.ts) - neither is exercised by the
-// finalize-debounce path, so both are stubbed rather than pulled in for real.
+// db/database.ts would otherwise drag in a native module built for Electron's
+// Node ABI (better-sqlite3), which the finalize-debounce path never exercises,
+// so it is stubbed rather than pulled in for real.
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
-vi.mock('../../src/main/retrieval/vec-extension', () => ({
-  lastVecLoadError: vi.fn(() => null),
-  loadVecExtension: vi.fn(() => false),
-}));
+// Indexing runs in the retrieval worker; its handlers run here, in process,
+// against the indexer mocks below.
+vi.mock('../../src/main/retrieval/retrieval-client', async () => (
+  (await import('./helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
+));
 
 const conversationIndexerMock = vi.hoisted(() => ({
   indexSession: vi.fn(async () => ({})),
@@ -220,7 +220,7 @@ describe('retrievalService - per-session finalize debounce', () => {
     expect(conversationIndexerMock.indexSubagentUsage).toHaveBeenCalledTimes(1);
     expect(conversationIndexerMock.indexSubagentUsage).toHaveBeenCalledWith('proj-1', 'sess-1');
     // And the files it changed, read from what was just indexed.
-    expect(changeIndexerMock.sweepChangeRecords).toHaveBeenCalledWith('proj-1', null, expect.any(Function));
+    expect(changeIndexerMock.sweepChangeRecords).toHaveBeenCalledWith('proj-1', null);
   });
 
   it('does NOT walk subagent usage on the live turn-boundary (activity) path', async () => {

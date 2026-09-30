@@ -34,6 +34,11 @@ import { createIndexStatusReader, type IndexStatus, type IndexStatusParams } fro
 import { createGraphService } from '../graph/graph-service';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { prepareAnswer, type AnswerPrepareParams, type PreparedAnswer } from './answer-prepare';
+import { indexHandlers, type IndexMethods } from './index-methods';
+import { devIndexHandlers, type DevIndexMethods } from '../../../devtools/worker/dev-index-methods';
+import { localEmbedStoreAccess, type EmbeddingRow } from '../embedder/embed-store-access';
+import { localSummaryPassStore, type SummaryRow } from '../summary/summary-pass-store';
+import { readSummaryFingerprint, type SummaryCandidate } from '../summary/summary-sources';
 
 const indexStatus = createIndexStatusReader();
 
@@ -88,6 +93,8 @@ export interface WorkerContext {
   closeDb(projectId: string): void;
   /** Why sqlite-vec last failed to load into a connection, or null. */
   vecLoadError(): string | null;
+  /** Where sqlite-vec loads from, for a connection a dev seeder opens itself. */
+  vecLoadablePath?(): string | null;
   /** Tell main something changed that it did not ask about. */
   emit(event: RetrievalEventName, projectId: string): void;
 }
@@ -100,7 +107,33 @@ export interface ProjectIndexSummaryRow {
   lastIndexedAt: string | null;
 }
 
-export interface RetrievalMethods {
+export interface RetrievalMethods extends IndexMethods, DevIndexMethods {
+  /** The embedding drain's read: the next chunks without a vector from this
+   *  model, the vec tables put at its width first. Null: no vectors here. */
+  'embed.nextBatch': {
+    params: { projectId: string; dimensions: number; modelTag: string; limit: number };
+    result: StoredChunk[] | null;
+  };
+  /** The embedding drain's write: one batch's vectors. */
+  'embed.write': {
+    params: { projectId: string; rows: EmbeddingRow[]; modelTag: string };
+    result: void;
+  };
+  /** What a summary pass skips on when unchanged since it caught up. */
+  'summary.fingerprint': {
+    params: { projectId: string };
+    result: string;
+  };
+  /** The summary pass's inputs (`SummaryPassStore.candidates`). */
+  'summary.candidates': {
+    params: { projectId: string; skip: string[] };
+    result: SummaryCandidate[];
+  };
+  /** The summary pass's writes, one transaction; how many were saved. */
+  'summary.save': {
+    params: { projectId: string; rows: SummaryRow[] };
+    result: number;
+  };
   /** Let go of a project's database before main deletes its files. */
   'project.close': {
     params: { projectId: string };
@@ -254,11 +287,48 @@ function vectorsOf(queryVectors: QueryVectors | null): { embedder: Embedder | nu
 
 type Handler<Params, Result> = (params: Params, context: WorkerContext) => Result | Promise<Result>;
 
+/** Every product method has a handler; the dev seeders' methods exist only in
+ *  a dev build, and the worker answers a missing one as unknown. */
 export type RetrievalHandlers = {
-  [Method in keyof RetrievalMethods]: Handler<RetrievalMethods[Method]['params'], RetrievalMethods[Method]['result']>;
+  [Method in Exclude<keyof RetrievalMethods, keyof DevIndexMethods>]: Handler<RetrievalMethods[Method]['params'], RetrievalMethods[Method]['result']>;
+} & {
+  [Method in keyof DevIndexMethods]?: Handler<DevIndexMethods[Method]['params'], DevIndexMethods[Method]['result']>;
 };
 
+/** The drain's and the summary pass's steps on the worker's own connections,
+ *  one of each per worker context. */
+const embedStores = new WeakMap<WorkerContext, ReturnType<typeof localEmbedStoreAccess>>();
+const summaryStores = new WeakMap<WorkerContext, ReturnType<typeof localSummaryPassStore>>();
+
+function embedStoreFor(context: WorkerContext): ReturnType<typeof localEmbedStoreAccess> {
+  let access = embedStores.get(context);
+  if (!access) {
+    access = localEmbedStoreAccess(context.getDb, (db) => new RetrievalStore(db));
+    embedStores.set(context, access);
+  }
+  return access;
+}
+
+function summaryStoreFor(context: WorkerContext): ReturnType<typeof localSummaryPassStore> {
+  let store = summaryStores.get(context);
+  if (!store) {
+    store = localSummaryPassStore(context.getDb);
+    summaryStores.set(context, store);
+  }
+  return store;
+}
+
 export const retrievalHandlers: RetrievalHandlers = {
+  // Folded to `{}` in a production build, which drops the dev module.
+  ...(__KANGENTIC_DEV__ ? devIndexHandlers : {}),
+  ...indexHandlers,
+  'embed.nextBatch': ({ projectId, dimensions, modelTag, limit }, context) => (
+    embedStoreFor(context).nextBatch(projectId, { dimensions, modelTag }, limit)
+  ),
+  'embed.write': ({ projectId, rows, modelTag }, context) => embedStoreFor(context).write(projectId, rows, modelTag),
+  'summary.fingerprint': ({ projectId }, context) => readSummaryFingerprint(context.getDb(projectId)),
+  'summary.candidates': ({ projectId, skip }, context) => summaryStoreFor(context).candidates(projectId, skip),
+  'summary.save': ({ projectId, rows }, context) => summaryStoreFor(context).save(projectId, rows),
   'project.close': ({ projectId }, context) => {
     context.closeDb(projectId);
     indexStatus.forget(projectId);

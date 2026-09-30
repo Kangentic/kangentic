@@ -23,6 +23,10 @@
  * every chunk), because `sessions.task_id` is the graph's structural skeleton -
  * a corpus without it would exercise the semantic layer and none of the edges.
  *
+ * The tasks and sessions are written here on main and committed first; the
+ * chunks and vectors are written by the retrieval worker (`dev.writeDocuments`),
+ * the only process that loads sqlite-vec.
+ *
  * Build-excluded from production: imported only behind `__KANGENTIC_DEV__`
  * guards (src/main/index.ts), so esbuild dead-code elimination drops this
  * module from prod bundles. See `.claude/rules/dev-tooling-build-exclusion.md`.
@@ -32,7 +36,7 @@ import crypto from 'node:crypto';
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../../main/db/database';
-import { RetrievalStore } from '../../main/retrieval/retrieval-store';
+import { retrievalClient } from '../../main/retrieval/retrieval-client';
 import { TaskRepository } from '../../main/db/repositories/task-repository';
 import { SessionRepository } from '../../main/db/repositories/session-repository';
 import { SwimlaneRepository } from '../../main/db/repositories/swimlane-repository';
@@ -49,7 +53,7 @@ import {
 import type { ChunkInput } from '../../main/retrieval/types';
 import type { DevSeedKnowledgeGraphResult } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
-import { buildKnowledgeGraphNow } from './build-knowledge-graph-now';
+import type { SeedDocument } from '../worker/dev-index-methods';
 import { embedEngine } from '../../main/retrieval/embedder/embed-engine';
 
 /** The real corpus name on purpose. The Knowledge Graph reads
@@ -113,10 +117,10 @@ export interface SeedKnowledgeGraphOptions {
  * sessions, embedded but for the newest `embeddingBacklog` chunks. Throws when
  * no project is open.
  */
-export function seedKnowledgeGraph(
+export async function seedKnowledgeGraph(
   context: IpcContext,
   options: SeedKnowledgeGraphOptions = {},
-): DevSeedKnowledgeGraphResult {
+): Promise<DevSeedKnowledgeGraphResult> {
   const projectId = context.currentProjectId;
   const projectPath = context.currentProjectPath;
   if (!projectId || !projectPath) throw new Error('Open a project first to seed the knowledge graph');
@@ -129,18 +133,11 @@ export function seedKnowledgeGraph(
     options.embeddingBacklog ?? EMBEDDING_BACKLOG_CHUNKS,
   ).reverse();
 
+  // The vec tables are normally made by the embedding path (it alone knows
+  // the model's width). Nothing has embedded yet in a fresh preview, so the
+  // worker makes them at the SELECTED model's width - never a hardcoded one.
   const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
   const db = getProjectDb(projectId);
-  const store = new RetrievalStore(db);
-
-  // The vec table is normally created by the embedding path (it alone knows
-  // the model's width). Nothing has embedded yet in a fresh preview, so create
-  // it here at the SELECTED model's dimension - never a hardcoded width.
-  store.ensureVecTable(model.dimensions);
-  if (!store.hasVec) {
-    throw new Error('sqlite-vec is unavailable, so embeddings cannot be seeded (lexical-only build)');
-  }
-  store.setMeta('vec_dims', String(model.dimensions));
 
   const todoSwimlane = new SwimlaneRepository(db).list().find((lane) => lane.role === 'todo');
   if (!todoSwimlane) throw new Error('No To Do column to seed knowledge-graph tasks into');
@@ -167,8 +164,7 @@ export function seedKnowledgeGraph(
   }
 
   const now = new Date().toISOString();
-  let writtenChunks = 0;
-  let pendingChunks = 0;
+  const documents: SeedDocument[] = [];
 
   for (let documentIndex = 0; documentIndex < documentCount; documentIndex += 1) {
     // A document's topic comes from its TASK, not from its own index. Keying
@@ -224,8 +220,14 @@ export function seedKnowledgeGraph(
     // `sessions.id` matches 0 rows, to `sessions.agent_session_id` matches all
     // of them. Seeding under the Kangentic session id instead would leave the
     // preview exercising a doc-to-session join shape production never takes.
-    store.upsertDocument(
-      {
+    //
+    // The vectors are the one step that departs from the real pipeline, and
+    // it is the whole point: no ONNX inference, so a populated graph is one
+    // click away instead of many minutes. The document's newest chunks, if any
+    // are in the backlog, stay pending (a null vector).
+    const embeddedThrough = chunksPerDocument - pendingByDocument[documentIndex];
+    documents.push({
+      ref: {
         corpus: CORPUS,
         docId: agentSessionId,
         sessionId,
@@ -234,44 +236,24 @@ export function seedKnowledgeGraph(
         metaJson: JSON.stringify({ ...DEV_SEED_MARKER, cluster: CLUSTER_TOPICS[clusterIndex].label }),
       },
       chunks,
-    );
-
-    // Read the rowids back and write vectors directly. This is the one step
-    // that departs from the real pipeline, and it is the whole point: no ONNX
-    // inference, so a populated graph is one click away instead of many
-    // minutes.
-    // The document's newest chunks, if any are in the backlog, stay pending.
-    const stored = store.getChunksForDoc(CORPUS, agentSessionId);
-    const embeddedThrough = chunksPerDocument - pendingByDocument[documentIndex];
-    store.writeEmbeddings(
-      stored.filter((chunk) => chunk.seq < embeddedThrough).map((chunk) => ({
-        chunkId: chunk.id,
-        vector: jitterUnitVector(documentVector, CHUNK_NOISE, random),
-        contentHash: chunk.contentHash,
-      })),
-      model.modelTag,
-    );
-    writtenChunks += stored.length;
-    pendingChunks += pendingByDocument[documentIndex];
-
-    store.setIndexState({
-      corpus: CORPUS,
-      docId: agentSessionId,
-      sessionId,
-      sourcePath: null,
-      sourceMtimeMs: null,
-      sourceSize: null,
-      entryCount: chunksPerDocument,
-      chunkCount: stored.length,
+      vectors: chunks.map((chunk) => (chunk.seq < embeddedThrough ? jitterUnitVector(documentVector, CHUNK_NOISE, random) : null)),
       status: 'ok',
-      indexedAt: now,
+      entryCount: chunksPerDocument,
     });
   }
 
+  // Every task and session is committed; now the index half.
+  const written = await retrievalClient.call('dev.writeDocuments', {
+    projectId,
+    dimensions: model.dimensions,
+    modelTag: model.modelTag,
+    documents,
+  }, { timeoutMs: null });
+
   return {
     documents: documentCount,
-    chunks: writtenChunks,
-    pendingChunks,
+    chunks: written.chunks,
+    pendingChunks: written.pendingChunks,
     clusters: clusterCount,
     tasks: taskIds.length,
     dimensions: model.dimensions,
@@ -291,14 +273,15 @@ export function registerSeedKnowledgeGraphDevIpc(getContext: () => IpcContext | 
     async (_event, options: SeedKnowledgeGraphOptions): Promise<DevSeedKnowledgeGraphResult> => {
       const context = getContext();
       if (!context) throw new Error('IPC not initialized');
-      const seeded = seedKnowledgeGraph(context, options ?? {});
-      if (context.currentProjectId) {
+      const seeded = await seedKnowledgeGraph(context, options ?? {});
+      const projectId = context.currentProjectId;
+      if (projectId) {
         // Build the map before returning, so the click lands on the surface
-        // rather than on a "Building the map" spinner. See
-        // `build-knowledge-graph-now.ts` for why this is safe to run unthrottled
-        // here and nowhere else. The pending chunks go to the drain.
-        await buildKnowledgeGraphNow(context.currentProjectId);
-        embedEngine.markDirty(context.currentProjectId);
+        // rather than on a "Building the map" spinner. See `buildGraphNow` in
+        // `dev-index-methods.ts` for why this is safe to run unthrottled here
+        // and nowhere else. The pending chunks go to the drain.
+        await retrievalClient.call('dev.buildGraphNow', { projectId }, { timeoutMs: null });
+        embedEngine.markDirty(projectId);
       }
       return seeded;
     },

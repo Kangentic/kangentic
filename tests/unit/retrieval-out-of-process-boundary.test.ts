@@ -107,15 +107,15 @@ describe('retrieval out-of-process boundary', () => {
     expect(Object.keys(inputs).some((input) => input.replace(/\\/g, '/').endsWith('src/main/retrieval/retrieval-store.ts'))).toBe(true);
   }, 30_000);
 
-  it('keeps the map, the searches and their readers out of the shipped main bundle', async () => {
+  it('keeps the index code out of the main bundle, dev seeders included', async () => {
     // A value import of any of these from main-resident code would put a
-    // second copy on main: a map pass, or a scan of every vector. Types are
-    // erased, so main may still name their shapes. A production build, since
-    // the dev seeders run projection code on main until indexing moves; the
-    // residue their static imports leave (esbuild's module init calls, pure
-    // constant sets) declares no function, so the check is on functions.
-    const text = await bundledText('src/main/index.ts', false);
-    const workerOnly = [
+    // second copy on main: a map pass, a scan of every vector, an index write.
+    // Types are erased, so main may still name their shapes. Checked on the
+    // dev build too: the seeders run on main and hand the index half to the
+    // worker. esbuild's module init calls and pure constant sets can survive
+    // tree shaking, but they declare no function or class, so the check is on
+    // declarations.
+    const workerOnlyFunctions = [
       'createGraphService',
       'runProjectionPass',
       'searchConversationMemory',
@@ -125,12 +125,48 @@ describe('retrieval out-of-process boundary', () => {
       'readTaskKnowledge',
       'prepareAnswer',
       'createIndexStatusReader',
+      'sweepTaskRecords',
+      'sweepChangeRecords',
+      'sweepCommitRecords',
+      'sweepCodeRecords',
+      'purgeCodeRecords',
+      'readSummaryCandidates',
+      'readSummaryFingerprint',
+      'localEmbedStoreAccess',
+      'localSummaryPassStore',
+      'loadVecExtensionFrom',
     ];
-    const shipped = workerOnly.filter((name) => new RegExp(`function\\s+${name}\\s*\\(`).test(text));
-    expect(shipped, `Main bundles retrieval-worker code. Trace the import of each from src/main/index.ts: ${shipped.join(', ')}`).toEqual([]);
-    // Not vacuous: main does bundle its side of the worker, declarations named.
-    expect(text).toMatch(/class RetrievalClient\b|RetrievalClient = class\b/);
-    expect(text).toMatch(/function\s+embedQueryTexts\s*\(/);
+    // Class methods cannot be found by name, so the classes that own the
+    // index's reads and writes are checked whole.
+    const workerOnlyClasses = ['RetrievalStore', 'ConversationIndexer', 'SummaryStore'];
+    for (const devBuild of [false, true]) {
+      const text = await bundledText('src/main/index.ts', devBuild);
+      const shipped = [
+        ...workerOnlyFunctions.filter((name) => new RegExp(`function\\s+${name}\\s*\\(`).test(text)),
+        ...workerOnlyClasses.filter((name) => new RegExp(`class ${name}\\b|\\b${name} = class\\b`).test(text)),
+      ];
+      expect(
+        shipped,
+        `Main's ${devBuild ? 'dev' : 'production'} bundle carries retrieval-worker code. Trace the import of each `
+          + `from src/main/index.ts: ${shipped.join(', ')}`,
+      ).toEqual([]);
+      // Not vacuous: main does bundle its side of the worker, declarations named.
+      expect(text).toMatch(/class RetrievalClient\b|RetrievalClient = class\b/);
+      expect(text).toMatch(/function\s+embedQueryTexts\s*\(/);
+    }
+  }, 120_000);
+
+  it('keeps the dev seeders\' index methods out of a production worker bundle', async () => {
+    const production = await bundledText(WORKER_ENTRY, false);
+    const dev = await bundledText(WORKER_ENTRY, true);
+    expect(production).not.toContain('dev.mirrorIndex');
+    expect(dev).toContain('dev.mirrorIndex');
+    // The worker is where the index classes live, which is also what shows the
+    // declaration patterns the main-bundle check relies on still match.
+    for (const name of ['RetrievalStore', 'ConversationIndexer', 'SummaryStore']) {
+      expect(production, name).toMatch(new RegExp(`class ${name}\\b|\\b${name} = class\\b`));
+    }
+    expect(production).toMatch(/function\s+sweepTaskRecords\s*\(/);
   }, 60_000);
 
   it('constructs RetrievalClient only in retrieval-client.ts', () => {

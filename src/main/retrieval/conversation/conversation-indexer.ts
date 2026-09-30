@@ -669,10 +669,16 @@ export class ConversationIndexer {
    * subagent walk, the files it changed), one document at a time with a yield
    * between, `DELETES_PER_TRANSACTION` chunks per transaction. This used to be
    * a trigger on `sessions`, which deleted a whole conversation inside the
-   * session delete's own transaction. Returns how many documents went; never
-   * throws.
+   * session delete's own transaction. `fromChunks` also finds them by their
+   * chunks (`deletedSessionChunkDocuments`), for a document whose index state
+   * was never written; project open asks for it. Returns how many documents
+   * went; never throws.
    */
-  async purgeDeletedSessions(projectId: string, shouldContinue: () => boolean): Promise<number> {
+  async purgeDeletedSessions(
+    projectId: string,
+    shouldContinue: () => boolean,
+    options: { fromChunks?: boolean } = {},
+  ): Promise<number> {
     let removed = 0;
     let store: RetrievalStore;
     try {
@@ -685,6 +691,7 @@ export class ConversationIndexer {
       let documents: Array<{ corpus: string; docId: string }>;
       try {
         documents = store.deletedSessionDocuments(ORPHAN_PAGE);
+        if (documents.length === 0 && options.fromChunks) documents = store.deletedSessionChunkDocuments(ORPHAN_PAGE);
       } catch {
         return removed;
       }

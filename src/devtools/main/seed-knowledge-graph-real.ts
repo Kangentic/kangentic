@@ -14,6 +14,12 @@
  * this is a copy, not a re-embed. All but the newest chunks, which are left
  * for the embedding drain (`EMBEDDING_BACKLOG_CHUNKS`).
  *
+ * The board half (tasks, sessions, churn, ticket numbers) is written here on
+ * main and committed first; the index half, chunks and vectors, is copied by
+ * the retrieval worker (`dev.mirrorIndex`), the only process that loads
+ * sqlite-vec. This side reads the source through a plain connection and never
+ * touches a vector.
+ *
  * Build-excluded from production (`__KANGENTIC_DEV__`); see
  * `.claude/rules/dev-tooling-build-exclusion.md`.
  */
@@ -26,19 +32,17 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../../main/db/database';
 import { getPlatformConfigDir } from '../../main/config/paths';
-import { loadVecExtension } from '../../main/retrieval/vec-extension';
-import { RetrievalStore } from '../../main/retrieval/retrieval-store';
 import { parseLabels } from '../../main/retrieval/task/task-record';
-import { sweepTaskRecords } from '../../main/retrieval/task/task-indexer';
 import { embedEngine } from '../../main/retrieval/embedder/embed-engine';
 import { retrievalService } from '../../main/retrieval/retrieval-service';
+import { retrievalClient } from '../../main/retrieval/retrieval-client';
 import { TaskRepository } from '../../main/db/repositories/task-repository';
 import { SessionRepository } from '../../main/db/repositories/session-repository';
 import { SwimlaneRepository } from '../../main/db/repositories/swimlane-repository';
 import { toForwardSlash } from '../../shared/paths';
 import type { DevSeedKnowledgeGraphRealResult, DevSeedKnowledgeGraphRealUnavailable } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
-import { buildKnowledgeGraphNow } from './build-knowledge-graph-now';
+import type { MirrorDocument } from '../worker/dev-index-methods';
 import { EMBEDDING_BACKLOG_CHUNKS, pendingChunkCounts } from './seed-knowledge-graph-vectors';
 import { writeTransaction } from '../../main/db/transaction';
 
@@ -153,10 +157,10 @@ interface SourceSessionFacts {
  * index state, and the tasks/sessions they hang off - from the real parent
  * project into the currently open (preview) project.
  */
-export function seedKnowledgeGraphFromRealIndex(
+export async function seedKnowledgeGraphFromRealIndex(
   context: IpcContext,
   options: SeedKnowledgeGraphRealOptions = {},
-): DevSeedKnowledgeGraphRealResult {
+): Promise<DevSeedKnowledgeGraphRealResult> {
   const projectId = context.currentProjectId;
   const projectPath = context.currentProjectPath;
   if (!projectId || !projectPath) throw new Error('Open a project first to mirror the real index');
@@ -168,14 +172,17 @@ export function seedKnowledgeGraphFromRealIndex(
       : 'No real parent project for this preview in the real index.db');
   }
   const documentLimit = options.documentLimit ?? DEFAULT_DOCUMENT_LIMIT;
+  // A plain connection: the board half reads rows, never a vector.
   const sourceDb = new Database(source.dbPath, { readonly: true, fileMustExist: true });
-  const sourceHasVec = loadVecExtension(sourceDb);
 
   try {
     const dimensionsRow = sourceDb
       .prepare(`SELECT value FROM memory_meta WHERE key = 'vec_dims'`)
       .get() as { value: string } | undefined;
     const dimensions = dimensionsRow ? Number(dimensionsRow.value) : 0;
+    const sourceHasVec = sourceDb
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_chunks_vec'")
+      .get() !== undefined;
     if (!sourceHasVec || !dimensions) {
       throw new NoRealIndexError('The real project has no embedded index to mirror (semantic search may never have run there)');
     }
@@ -298,14 +305,6 @@ export function seedKnowledgeGraphFromRealIndex(
     }
 
     const targetDb = getProjectDb(projectId);
-    const store = new RetrievalStore(targetDb);
-    // vec0 tables are fixed-width: a preview seeded before at another width
-    // (the synthetic seed is 768 wide) needs its tables made again, as the
-    // embed engine does on a model switch.
-    if (store.getMeta('vec_dims') !== String(dimensions)) store.resetVec(dimensions);
-    else store.ensureVecTable(dimensions);
-    if (!store.hasVec) throw new Error('sqlite-vec is unavailable in this preview, so vectors cannot be mirrored');
-    store.setMeta('vec_dims', String(dimensions));
     // `documents` is newest first, so the backlog is the newest chunks.
     const pendingByDocument = pendingChunkCounts(
       documents.map((document) => document.chunkCount),
@@ -343,15 +342,6 @@ export function seedKnowledgeGraphFromRealIndex(
       previewTaskIdBySourceTaskId.set(key, created.id);
       return created.id;
     };
-
-    const readChunks = sourceDb.prepare(
-      `SELECT id, seq, role, text, content_hash AS contentHash, token_estimate AS tokenEstimate,
-              ts_start AS tsStart, ts_end AS tsEnd, turn_uuid_start AS turnUuidStart, turn_uuid_end AS turnUuidEnd
-       FROM memory_chunks
-       WHERE corpus = 'conversation' AND doc_id = ? AND embedded_model IS NOT NULL
-       ORDER BY seq ASC`,
-    );
-    const readVector = sourceDb.prepare('SELECT embedding FROM memory_chunks_vec WHERE rowid = ?');
 
     /** One exited preview session carrying a source session's facts. */
     const mirrorSession = (
@@ -399,92 +389,15 @@ export function seedKnowledgeGraphFromRealIndex(
       return previewSessionId;
     };
 
-    let copiedChunks = 0;
-    let pendingChunks = 0;
-    for (const [documentIndex, document] of documents.entries()) {
+    // A preview task and session for each conversation, committed before the
+    // worker copies its chunks: a chunk whose session row does not exist yet is
+    // what the record sweep's purge of deleted sessions removes.
+    const mirrorPlan: MirrorDocument[] = documents.map((document, documentIndex) => {
       const previewTaskId = ensureTask(document.taskId);
       const sourceFacts = document.sessionId ? sessionFactsById.get(document.sessionId) : undefined;
       const previewSessionId = mirrorSession(previewTaskId, sourceFacts, document.docId);
-
-      const sourceChunks = readChunks.all(document.docId) as Array<{
-        id: number;
-        seq: number;
-        role: string;
-        text: string;
-        contentHash: string;
-        tokenEstimate: number;
-        tsStart: number | null;
-        tsEnd: number | null;
-        turnUuidStart: string | null;
-        turnUuidEnd: string | null;
-      }>;
-      if (sourceChunks.length === 0) continue;
-
-      store.upsertDocument(
-        {
-          corpus: 'conversation',
-          docId: document.docId,
-          sessionId: previewSessionId,
-          taskId: previewTaskId,
-          agentSessionId: document.docId,
-          metaJson: JSON.stringify({ devSeed: 'knowledge-graph-real', sourceProject: source.name }),
-        },
-        sourceChunks.map((chunk) => ({
-          seq: chunk.seq,
-          text: chunk.text,
-          contentHash: chunk.contentHash,
-          tokenEstimate: chunk.tokenEstimate,
-          role: chunk.role,
-          tsStart: chunk.tsStart,
-          tsEnd: chunk.tsEnd,
-          turnUuidStart: chunk.turnUuidStart,
-          turnUuidEnd: chunk.turnUuidEnd,
-        })),
-      );
-
-      // The newest chunks of the newest documents stay pending for the drain.
-      const pending = pendingByDocument[documentIndex];
-      const vectorChunks = sourceChunks.slice(0, sourceChunks.length - pending);
-      const firstPendingSeq = pending > 0 ? sourceChunks[sourceChunks.length - pending].seq : Number.POSITIVE_INFINITY;
-      // Vectors are matched by CONTENT HASH, not by position: `upsertDocument`
-      // assigns fresh rowids in the target DB, and a chunk skipped for any
-      // reason would silently shift every later vector onto the wrong chunk.
-      const sourceVectorByHash = new Map<string, Buffer>();
-      for (const chunk of vectorChunks) {
-        const row = readVector.get(chunk.id) as { embedding: Buffer } | undefined;
-        if (row) sourceVectorByHash.set(chunk.contentHash, row.embedding);
-      }
-
-      const storedChunks = store.getChunksForDoc('conversation', document.docId);
-      const writes: Array<{ chunkId: number; vector: Float32Array; contentHash: string }> = [];
-      for (const stored of storedChunks) {
-        if (stored.seq >= firstPendingSeq) continue;
-        const embedding = sourceVectorByHash.get(stored.contentHash);
-        if (!embedding) continue;
-        const vector = new Float32Array(embedding.byteLength / 4);
-        vector.set(new Float32Array(embedding.buffer, embedding.byteOffset, embedding.byteLength / 4));
-        writes.push({ chunkId: stored.id, vector, contentHash: stored.contentHash });
-      }
-      store.writeEmbeddings(writes, mirroredTag);
-      copiedChunks += sourceChunks.length;
-      pendingChunks += sourceChunks.length - writes.length;
-      const chunkCount = sourceChunks.length;
-
-      store.setIndexState({
-        corpus: 'conversation',
-        docId: document.docId,
-        sessionId: previewSessionId,
-        sourcePath: null,
-        sourceMtimeMs: null,
-        sourceSize: null,
-        entryCount: sourceChunks.length,
-        chunkCount,
-        // The mirrored transcript file does not exist in the preview, which is
-        // exactly the real corpus's dominant state and worth exercising.
-        status: 'missing-source',
-        indexedAt: now,
-      });
-    }
+      return { docId: document.docId, previewSessionId, previewTaskId, pending: pendingByDocument[documentIndex] };
+    });
 
     // Every other board task too, with its sessions' facts and no conversation.
     // A preview holding only the tasks whose conversations were mirrored is a
@@ -568,14 +481,23 @@ export function seedKnowledgeGraphFromRealIndex(
     });
     restampTickets();
 
+    const copied = await retrievalClient.call('dev.mirrorIndex', {
+      projectId,
+      sourceDbPath: source.dbPath,
+      sourceName: source.name,
+      dimensions,
+      modelTag: mirroredTag,
+      documents: mirrorPlan,
+    }, { timeoutMs: null });
+
     return {
       sourceProject: source.name,
       documents: documents.length,
-      chunks: copiedChunks,
+      chunks: copied.chunks,
       tasks: previewTaskIdBySourceTaskId.size,
       dimensions,
       modelTag: mirroredTag,
-      pendingChunks,
+      pendingChunks: copied.pendingChunks,
     };
   } finally {
     sourceDb.close();
@@ -597,29 +519,30 @@ export function registerSeedKnowledgeGraphRealDevIpc(getContext: () => IpcContex
       if (!context) throw new Error('IPC not initialized');
       let seeded: DevSeedKnowledgeGraphRealResult;
       try {
-        seeded = seedKnowledgeGraphFromRealIndex(context, options ?? {});
+        seeded = await seedKnowledgeGraphFromRealIndex(context, options ?? {});
       } catch (error) {
         if (error instanceof NoRealIndexError) return { unavailable: error.message };
         throw error;
       }
-      if (context.currentProjectId) {
+      const projectId = context.currentProjectId;
+      if (projectId) {
         // Build the map before returning, so the click lands on the surface
-        // rather than on a "Building the map" spinner. See
-        // `build-knowledge-graph-now.ts` for why this is safe to run unthrottled
-        // here and nowhere else. The pending chunks join it as the drain embeds
+        // rather than on a "Building the map" spinner. See `buildGraphNow` in
+        // `dev-index-methods.ts` for why this is safe to run unthrottled here
+        // and nowhere else. The pending chunks join it as the drain embeds
         // them (marked dirty below).
-        await buildKnowledgeGraphNow(context.currentProjectId);
+        await retrievalClient.call('dev.buildGraphNow', { projectId }, { timeoutMs: null });
         // The mirrored tasks' own records, the `task` corpus, indexed now so a
         // first question searches them; the embedding drain picks them up in
         // the background, as it would on a real install.
-        await sweepTaskRecords(context.currentProjectId);
-        embedEngine.markDirty(context.currentProjectId);
+        await retrievalClient.call('index.sweep', { projectId, tasks: true, remoteTargets: [] }, { timeoutMs: null });
+        embedEngine.markDirty(projectId);
         // The project-open sweep read the branch's commits against an index
         // with no conversations yet, so none found its task. Read them again
         // now that the mirrored conversations are here (a real install indexes
         // conversations first, on the same chain).
-        new RetrievalStore(getProjectDb(context.currentProjectId)).purgeCorpora(['commit']);
-        retrievalService.refreshRecords(context, context.currentProjectId);
+        await retrievalClient.call('dev.purgeCorpora', { projectId, corpora: ['commit'] }, { timeoutMs: null });
+        retrievalService.refreshRecords(context, projectId);
       }
       return seeded;
     },

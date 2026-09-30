@@ -31,7 +31,7 @@ export interface SummarySchedulerDeps<Context> {
    * pass last caught up at is skipped before anything else runs: no writer, no
    * change sweep, no input read. Omitted, every request runs a pass.
    */
-  readFingerprint?: (context: Context, projectId: string) => string | null;
+  readFingerprint?: (context: Context, projectId: string) => Promise<string | null> | string | null;
   /** The search agent's read-only summary run, or null while none is chosen. */
   resolveWriter: (context: Context, projectId: string) => Promise<SummaryWriter | null>;
   /**
@@ -111,10 +111,10 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
    *  started, and how many summaries it has written. */
   const runs = new Map<string, { startedAt: number; written: number }>();
 
-  const fingerprintOf = (context: Context, projectId: string): string | null => {
+  const fingerprintOf = async (context: Context, projectId: string): Promise<string | null> => {
     if (!deps.readFingerprint) return null;
     try {
-      return deps.readFingerprint(context, projectId);
+      return await deps.readFingerprint(context, projectId);
     } catch {
       return null;
     }
@@ -140,7 +140,7 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
       // Nothing a summary reads has changed since this project last caught up:
       // skip the writer, the change sweep and the input read. This is what a
       // board change costs on a caught-up board, about 5 ms.
-      const before = fingerprintOf(context, projectId);
+      const before = await fingerprintOf(context, projectId);
       const unchanged = before !== null && caughtUpAt.get(projectId) === before;
       const writer = unchanged ? null : await deps.resolveWriter(context, projectId);
       if (writer && !disposed && deps.isEnabled(context)) {
@@ -148,7 +148,7 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
         // Read again after the change sweep, and before the inputs are: a
         // change that lands while the pass runs then moves the fingerprint
         // past this one, so the next request does not skip it.
-        const passFingerprint = fingerprintOf(context, projectId);
+        const passFingerprint = await fingerprintOf(context, projectId);
         const skip = skipByProject.get(projectId) ?? new Set<string>();
         skipByProject.set(projectId, skip);
         result = await runPass(projectId, writer, {

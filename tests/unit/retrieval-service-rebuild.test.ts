@@ -27,11 +27,12 @@ vi.mock('../../src/main/db/database', () => ({
     return { projectId };
   }),
 }));
-vi.mock('../../src/main/retrieval/vec-extension', () => ({
-  lastVecLoadError: vi.fn(() => null),
-  loadVecExtension: vi.fn(() => false),
-}));
 vi.mock('../../src/main/retrieval/vec-support', () => ({ hasVecSupport: vi.fn(() => true) }));
+// Indexing and Rebuild run in the retrieval worker; its handlers run here, in
+// process, against the store and sweeper mocks below.
+vi.mock('../../src/main/retrieval/retrieval-client', async () => (
+  (await import('./helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
+));
 vi.mock('../../src/main/retrieval/embedder/embedding-model', () => ({
   isEmbeddingModelPresent: vi.fn(() => true),
   downloadEmbeddingModel: vi.fn(async () => {}),

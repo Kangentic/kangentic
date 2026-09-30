@@ -151,7 +151,9 @@ export class OpenCodeAdapter implements AgentAdapter {
   // AgentAdapter interface change - adapters have no other way to reach
   // Kangentic's AppConfig (see agent-adapters-boundary.md). Known limitation:
   // empty after an app restart, so a remote session's transcript falls back
-  // to the (empty) local SQLite lookup until the task is resumed again.
+  // to the (empty) local SQLite lookup until the task is resumed again. The
+  // retrieval worker's copy of this adapter is handed main's entries with each
+  // index job (`knownTargets` / `adoptTargets`).
   private readonly remoteTargetsByCwd = new Map<string, ResolvedExecutionTarget>();
 
   /** Declares OpenCode's own dialect of the generic remote-execution capability. */
@@ -166,6 +168,13 @@ export class OpenCodeAdapter implements AgentAdapter {
         + 'OpenCode sessions - attach has no way to push local config into an already-running server.',
     },
     probeServer: probeOpenCodeServer,
+    knownTargets: (): Array<[string, ResolvedExecutionTarget]> => [...this.remoteTargetsByCwd],
+    adoptTargets: (targets: ReadonlyArray<[string, ResolvedExecutionTarget]>): void => {
+      // Main's entries are the whole truth: a cwd main cleared (a local
+      // respawn) is cleared here too.
+      this.remoteTargetsByCwd.clear();
+      for (const [cwd, target] of targets) this.remoteTargetsByCwd.set(cwd, target);
+    },
   };
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {

@@ -18,6 +18,8 @@ import {
   type EmbedWorkerClient,
 } from '../../src/main/retrieval/embedder/embed-engine';
 import { markVecCapable } from '../../src/main/retrieval/vec-support';
+import { localEmbedStoreAccess } from '../../src/main/retrieval/embedder/embed-store-access';
+import { RetrievalUnavailableError } from '../../src/main/retrieval/retrieval-client';
 import { isEmbeddingModelPresent } from '../../src/main/retrieval/embedder/embedding-model';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { StoredChunk } from '../../src/main/retrieval/types';
@@ -159,8 +161,7 @@ describe('createEmbedEngine drain loop', () => {
     ]);
 
     const engine = createEmbedEngine({
-      getDb: (projectId) => dbs.get(projectId)!,
-      createStore: (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!,
+      store: localEmbedStoreAccess((projectId) => dbs.get(projectId)!, (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
       drainBatchSize: 1,
@@ -197,8 +198,7 @@ describe('createEmbedEngine drain loop', () => {
     });
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
       drainBatchSize: 1,
@@ -219,8 +219,7 @@ describe('createEmbedEngine drain loop', () => {
       const db = { name: `proj-rate-${chunkCount}` } as unknown as Database.Database;
       markVecCapable(db);
       const engine = createEmbedEngine({
-        getDb: () => db,
-        createStore: () => store,
+        store: localEmbedStoreAccess(() => db, () => store),
         createClient: () => makeFakeClient(),
         delay: immediateDelay,
         drainBatchSize: 1,
@@ -234,6 +233,47 @@ describe('createEmbedEngine drain loop', () => {
     };
     expect(await drain(RATE_MIN_BATCHES - 1)).toBeNull();
     expect(await drain(RATE_MIN_BATCHES)).toBeGreaterThan(0);
+  });
+
+  it('keeps a project dirty while the retrieval worker restarts, and drains it once the worker answers', async () => {
+    const store = new FakeStore('proj-restart', [makeChunk(20), makeChunk(21)], []);
+    const db = { name: 'proj-restart' } as unknown as Database.Database;
+    markVecCapable(db);
+    const local = localEmbedStoreAccess(() => db, () => store);
+    let readsRefused = 0;
+    let writesRefused = 0;
+    const engine = createEmbedEngine({
+      store: {
+        // The worker is down for the first read and the first write.
+        nextBatch: async (projectId, model, limit) => {
+          if (readsRefused === 0) {
+            readsRefused += 1;
+            throw new RetrievalUnavailableError('The retrieval worker exited');
+          }
+          return local.nextBatch(projectId, model, limit);
+        },
+        write: async (projectId, rows, modelTag) => {
+          if (writesRefused === 0) {
+            writesRefused += 1;
+            throw new RetrievalUnavailableError('The retrieval worker exited');
+          }
+          return local.write(projectId, rows, modelTag);
+        },
+      },
+      createClient: () => makeFakeClient(),
+      delay: immediateDelay,
+      drainBatchSize: 1,
+    });
+
+    engine.attach(makeContext({ currentProjectId: 'proj-restart' }));
+    engine.markDirty('proj-restart');
+
+    await vi.waitFor(() => expect(store.remaining).toBe(0));
+    expect(readsRefused).toBe(1);
+    expect(writesRefused).toBe(1);
+    // The batch whose write was refused is embedded again, not lost.
+    expect(store.written.map((row) => row.chunkId)).toEqual([20, 21]);
+    engine.dispose();
   });
 
   it('keeps a project dirty and retries after a transient embed failure, then finishes draining (crash-resume)', async () => {
@@ -253,8 +293,7 @@ describe('createEmbedEngine drain loop', () => {
     });
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
       drainBatchSize: 2,
@@ -277,8 +316,7 @@ describe('createEmbedEngine drain loop', () => {
     const client = makeFakeClient({ crashed: true });
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -322,8 +360,7 @@ describe('createEmbedEngine drain loop', () => {
     });
 
     const engine = createEmbedEngine({
-      getDb: (projectId) => dbs.get(projectId)!,
-      createStore: (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!,
+      store: localEmbedStoreAccess((projectId) => dbs.get(projectId)!, (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!),
       createClient: () => client,
       delay: immediateDelay,
       drainBatchSize: 1,
@@ -355,8 +392,7 @@ describe('createEmbedEngine drain loop', () => {
     const client = makeFakeClient();
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -393,8 +429,7 @@ describe('createEmbedEngine drain loop', () => {
     const drained: string[] = [];
 
     const engine = createEmbedEngine({
-      getDb: (projectId) => dbs.get(projectId)!,
-      createStore: (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!,
+      store: localEmbedStoreAccess((projectId) => dbs.get(projectId)!, (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
       drainBatchSize: 1,
@@ -437,8 +472,7 @@ describe('createEmbedEngine drain loop', () => {
     const reports: Array<{ projectId: string; remaining: number }> = [];
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
       drainBatchSize: 1,
@@ -470,8 +504,7 @@ describe('createEmbedEngine drain loop', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -494,8 +527,7 @@ describe('createEmbedEngine drain loop', () => {
     const client = makeFakeClient();
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -514,8 +546,7 @@ describe('createEmbedEngine drain loop', () => {
 describe('createEmbedEngine getEmbedder (resolveClient)', () => {
   it('returns null when semantic search is disabled, even with a project open', () => {
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-disabled', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-disabled', [], [])),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
     });
@@ -528,8 +559,7 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
     vi.mocked(isEmbeddingModelPresent).mockReturnValueOnce(false);
 
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-missing-model', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-missing-model', [], [])),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
     });
@@ -541,8 +571,7 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
   it('returns null when the shared client has crashed past MAX_CRASHES', () => {
     const crashedClient = makeFakeClient({ crashed: true });
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-crashed', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-crashed', [], [])),
       createClient: () => crashedClient,
       delay: immediateDelay,
     });
@@ -554,8 +583,7 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
   it('returns the shared client for the interactive query path when semantic is enabled, the model is present, and the client is healthy, without holding it', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-healthy', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-healthy', [], [])),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -571,8 +599,7 @@ describe('createEmbedEngine prewarm', () => {
   it('warms the client when semantic is on and the model is present, and never when disabled, model absent, or crashed', () => {
     const healthy = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-prewarm', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-prewarm', [], [])),
       createClient: () => healthy,
       delay: immediateDelay,
     });
@@ -591,8 +618,7 @@ describe('createEmbedEngine prewarm', () => {
 
     const crashed = makeFakeClient({ crashed: true });
     const crashedEngine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-prewarm-crashed', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-prewarm-crashed', [], [])),
       createClient: () => crashed,
       delay: immediateDelay,
     });
@@ -612,8 +638,7 @@ describe('createEmbedEngine workerCrashReason', () => {
   // silently went blank.
   it('is null before any client has been resolved', () => {
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-unresolved', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-unresolved', [], [])),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
     });
@@ -627,8 +652,7 @@ describe('createEmbedEngine workerCrashReason', () => {
       crashReason: "exited with code 1: Error: Cannot find module 'sharp'",
     });
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-crashed', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-crashed', [], [])),
       createClient: () => crashedClient,
       delay: immediateDelay,
     });
@@ -646,8 +670,7 @@ describe('createEmbedEngine reconcile', () => {
   it('leaves the existing client alone (no dispose, no hold) when semantic is enabled and a project is open', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-warm', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-warm', [], [])),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -672,8 +695,7 @@ describe('createEmbedEngine reconcile', () => {
   it('disposes the cached client and drops it when semantic becomes disabled', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-cold', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-cold', [], [])),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -691,8 +713,7 @@ describe('createEmbedEngine reconcile', () => {
   it('disposes the cached client and drops it when no project is open, even with semantic enabled', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-none', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-none', [], [])),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -715,8 +736,7 @@ describe('createEmbedEngine reconcile', () => {
     const client = makeFakeClient();
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -768,8 +788,7 @@ describe('createEmbedEngine getClientFor model/acceleration switch', () => {
     });
 
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-model-switch', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-model-switch', [], [])),
       createClient,
       delay: immediateDelay,
     });
@@ -801,8 +820,7 @@ describe('createEmbedEngine getClientFor model/acceleration switch', () => {
     });
 
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-accel-switch', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-accel-switch', [], [])),
       createClient,
       delay: immediateDelay,
     });

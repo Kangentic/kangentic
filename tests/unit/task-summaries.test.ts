@@ -26,6 +26,7 @@ import {
 } from '../../src/main/retrieval/summary/summary-sources';
 import { CHANGE_HEADER, changeRecordChunks } from '../../src/main/retrieval/change/change-record';
 import { runSummaryPass } from '../../src/main/retrieval/summary/summary-pass';
+import { localSummaryPassStore } from '../../src/main/retrieval/summary/summary-pass-store';
 import { createSummaryScheduler } from '../../src/main/retrieval/summary/summary-scheduler';
 import { SummaryStore } from '../../src/main/retrieval/summary/summary-store';
 
@@ -239,7 +240,10 @@ function fakeBoard(state: {
   return { db, calls };
 }
 
-const passDeps = (db: Database.Database) => ({ getDb: () => db, now: () => '2026-09-28T00:00:00.000Z', yieldToEventLoop: async () => undefined });
+const passDeps = (db: Database.Database) => ({
+  store: localSummaryPassStore(() => db, async () => undefined),
+  now: () => '2026-09-28T00:00:00.000Z',
+});
 const summaryWrites = (calls: Call[]) => calls.filter((call) => call.sql.includes('INSERT INTO memory_task_summaries'));
 
 describe('the changed files a summary is written from', () => {
