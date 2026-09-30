@@ -852,6 +852,39 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  test('the ask glyph\'s tip opens on keyboard focus and closes when focus leaves', async () => {
+    // The tip used to open on pointer enter only, so someone tabbing to the
+    // glyph was told nothing about who answers. Focus now opens it and blur
+    // closes it, and the words are ALSO in the trigger for a reader with
+    // neither a pointer nor sight of the tip, which is only mounted while open.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await openKnowledgeGraph(page);
+      const input = page.locator('[data-testid="knowledge-graph-search-input"]');
+      const ask = page.locator('[data-testid="knowledge-graph-ask"]');
+      const tip = page.locator('[data-testid="knowledge-graph-ask-tip"]');
+
+      await input.fill('sphere fit');
+      await expect(ask).toBeVisible();
+      await expect(tip).toHaveCount(0);
+      // Closed, the words are still in the trigger (the button's sibling).
+      await expect(ask.locator('xpath=..')).toContainText('It reads the related work');
+
+      // Tab from the box lands on the glyph, and the tip follows focus.
+      await input.press('Tab');
+      await expect(ask).toBeFocused();
+      await expect(tip).toBeVisible();
+      await expect(tip).toContainText('related work');
+
+      // Shift+Tab back to the box moves focus off the glyph, and the tip goes.
+      await page.keyboard.press('Shift+Tab');
+      await expect(input).toBeFocused();
+      await expect(tip).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('asking moves the question into a chat, and the related set lands before the answer', async () => {
     const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
       ${answeredScript('The settled answer, about #103.', [chatRow(3)], 'window.__mockHoldAnswer = true;')}`;
@@ -2289,6 +2322,133 @@ test.describe('knowledge graph', () => {
       await page.keyboard.press('Escape');
       await expect(legend).toHaveCount(0);
       await expect(page.locator('[data-testid="knowledge-graph-page"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
+   * Rebuild the open map the way main does after a pass: every later snapshot
+   * read answers with `change` applied to the projection, then a completion
+   * push makes the store read it. The signature moves, as a rebuilt map's does.
+   *
+   * `keepNodes` truncates to the first N conversations (and the links and
+   * neighbour lists that pointed past them). `renameTo` retitles every
+   * conversation while leaving its position, so the same node index now
+   * carries different words.
+   */
+  async function rebuildMap(page: Page, change: { keepNodes?: number; renameTo?: string }): Promise<void> {
+    await page.evaluate((requested) => {
+      type Neighbor = { index: number; similarity: number };
+      type Projection = {
+        signature: string;
+        nodes: Array<{ title?: string | null }>;
+        edges: Array<{ source: number; target: number }>;
+        nodeNeighbors: Neighbor[][];
+      };
+      type Snapshot = { projection: Projection | null };
+      const holder = window as unknown as {
+        electronAPI: { knowledgeGraph: { graphSnapshot: () => Promise<Snapshot | null> } };
+        __mockFireGraphChanged: (projectId: string) => void;
+      };
+      const api = holder.electronAPI.knowledgeGraph;
+      const previous = api.graphSnapshot.bind(api);
+      api.graphSnapshot = async () => {
+        const snapshot = await previous();
+        if (!snapshot || !snapshot.projection) return snapshot;
+        const projection = snapshot.projection;
+        const keep = requested.keepNodes ?? projection.nodes.length;
+        const rebuilt: Projection = {
+          ...projection,
+          signature: 'sig-rebuilt',
+          nodes: projection.nodes.slice(0, keep).map((node, index) => (
+            requested.renameTo ? { ...node, title: `${requested.renameTo} ${index}` } : node
+          )),
+          edges: projection.edges.filter((edge) => edge.source < keep && edge.target < keep),
+          nodeNeighbors: projection.nodeNeighbors.slice(0, keep).map((list) => list.filter((neighbor) => neighbor.index < keep)),
+        };
+        return { ...snapshot, projection: rebuilt };
+      };
+      holder.__mockFireGraphChanged('project-1');
+    }, change);
+  }
+
+  test('a smaller map swapped in under a resting cursor leaves the graph standing', async () => {
+    // The hover card indexed the projection by the hovered node's INDEX. A
+    // rebuild (or a scope change) can swap in a smaller map while the pointer
+    // rests, so that index then names no node: the card threw while rendering
+    // and unmounted the whole graph.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    try {
+      await openKnowledgeGraph(page);
+      const canvas = page.locator('[data-testid="knowledge-graph-canvas"]');
+      const card = page.locator('[data-testid="knowledge-graph-hover-card"]');
+      await expect(canvas).toHaveAttribute('data-drawn-count', '30');
+
+      // Rest the cursor on a drawn title whose conversation sits past index 1, so
+      // a map cut to that many conversations no longer holds it. Aimed at the
+      // title's start, where its node is, and clear of the floating panels.
+      await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
+      const point = await page.evaluate(() => {
+        const candidates = Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
+          .map((element) => ({ element: element as HTMLElement, rect: element.getBoundingClientRect() }))
+          .filter(({ element }) => Number(element.style.opacity || '0') > 0)
+          .map(({ element, rect }) => ({
+            index: Number(/Conversation (\d+)/.exec(element.textContent ?? '')?.[1] ?? -1),
+            x: rect.left + Math.min(12, rect.width / 2),
+            y: rect.top + rect.height / 2,
+          }))
+          .filter((candidate) => candidate.index >= 2 && candidate.x > 280 && candidate.x < window.innerWidth - 440 && candidate.y > 60);
+        // The highest index, so a hit that lands on a neighbouring node (font
+        // metrics move a title's left edge) is still well past index 1.
+        candidates.sort((left, right) => right.index - left.index);
+        return candidates[0] ?? null;
+      });
+      if (!point) throw new Error('no drawn conversation past index 1, clear of the panels');
+      await page.mouse.move(point.x, point.y);
+      await expect(card).toBeVisible();
+      // Which node the pointer resolved to is read back, not assumed: the map's
+      // own hit test decides whether the node or its title was under it.
+      const hoveredIndex = Number(/Conversation (\d+)/.exec(await card.innerText())?.[1] ?? -1);
+      expect(hoveredIndex).toBeGreaterThanOrEqual(2);
+
+      // Cut the map to hoveredIndex conversations: indices 0..hoveredIndex-1, so
+      // the hovered index is now one past the end. The mouse does not move again.
+      await rebuildMap(page, { keepNodes: hoveredIndex });
+      await expect(canvas).toHaveAttribute('data-drawn-count', String(hoveredIndex));
+
+      await expect(page.locator('[data-testid="knowledge-graph-page"]')).toBeVisible();
+      await expect(canvas).toBeVisible();
+      // No card for a node the map no longer holds. The error boundary catches a
+      // render throw, so the canvas staying mounted above is the guard; this
+      // only adds an uncaught error, should one ever escape it.
+      await expect(card).toHaveCount(0);
+      expect(pageErrors).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a rebuilt map retitles the chips when the same node index carries new words', async () => {
+    // The title chips are a pool, reassigned every frame. They rewrote their
+    // text only when the NODE INDEX assigned to a chip changed, so a rebuilt map
+    // that put a different title at the same index kept the old map's words on
+    // the chip until the camera moved that node out of the pool.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await openKnowledgeGraph(page);
+      await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
+      expect((await visibleNodeTitles(page)).every((title) => /^Conversation \d+$/.test(title))).toBe(true);
+
+      await rebuildMap(page, { renameTo: 'Renamed' });
+
+      // Every chip on screen carries the rebuilt map's words, none the old.
+      await expect.poll(async () => {
+        const titles = await visibleNodeTitles(page);
+        return titles.length > 0 && titles.every((title) => /^Renamed \d+$/.test(title));
+      }).toBe(true);
     } finally {
       await browser.close();
     }

@@ -147,10 +147,11 @@ export function buildAnswerTaskTable(
 ): AnswerTaskTable {
   const clustering = projection.clusterings.find((entry) => entry.granularity === granularity)
     ?? projection.clusterings[0];
+  // By region id: `regions` is ordered largest first, so a position is not an id.
+  const labelsByRegionId = new Map((clustering?.regions ?? []).map((region) => [region.id, region.label]));
   const regionLabel = (node: KnowledgeGraphNode): string | null => {
     if (!clustering) return null;
-    const regionIndex = node.clusters[clustering.granularity];
-    return clustering.regions[regionIndex]?.label ?? null;
+    return labelsByRegionId.get(node.clusters[clustering.granularity]) ?? null;
   };
 
   const byTask = new Map<string, AnswerTaskRow>();

@@ -124,7 +124,13 @@ export function parseStoredRegionNames(raw: string | undefined): StoredRegionNam
   if (raw === undefined) return null;
   try {
     const parsed = JSON.parse(raw) as StoredRegionNames;
-    return typeof parsed?.signature === 'string' && typeof parsed.summaries === 'string' ? parsed : null;
+    // `names` too: a blob without it passed, and reading `names[granularity]`
+    // then threw inside every snapshot read.
+    return typeof parsed?.signature === 'string'
+      && typeof parsed.summaries === 'string'
+      && typeof parsed.names === 'object' && parsed.names !== null
+      ? parsed
+      : null;
   } catch {
     return null;
   }

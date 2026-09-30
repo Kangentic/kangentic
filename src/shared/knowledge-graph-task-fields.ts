@@ -347,7 +347,7 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
     label: 'Region',
     kind: 'dimension',
     selectable: true,
-    describe: 'the labelled area of the memory map the task sits in, which is '
+    describe: 'the labelled area of the Knowledge Graph map the task sits in, which is '
       + 'derived from what its conversations are about.',
     cell: (facts) => facts.region ?? '',
     display: (facts) => facts.region ?? null,

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 const PROMPT_BUDGET = 4000; // characters of input we forward to the CLI
 const OUTPUT_BUDGET = 2048; // bytes of stdout we accept before terminating
@@ -520,8 +521,17 @@ export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise
       extractRaw, env, outputBudget, shape, onChunk,
     });
   } finally {
-    // `force` because Windows may still hold the handle for a beat after exit.
-    if (promptFilePath) fs.rmSync(promptFilePath, { force: true });
+    // `force` covers a file already gone. A Windows handle the CLI still holds
+    // (a timed-out run is still alive) throws EBUSY or EPERM instead, and a
+    // throw here would replace the answer or the real error with a cleanup
+    // one. The next run overwrites the file, and its owner removes the folder.
+    if (promptFilePath) {
+      try {
+        fs.rmSync(promptFilePath, { force: true });
+      } catch {
+        // Left for the directory's owner.
+      }
+    }
   }
 }
 
@@ -572,6 +582,9 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
 
     let stdoutSize = 0;
     const stdoutChunks: Buffer[] = [];
+    // Holds a character split across two pipe reads until its last byte lands,
+    // so the streamed text never shows U+FFFD where the buffered copy is whole.
+    const chunkDecoder = new StringDecoder('utf8');
     const stderrChunks: Buffer[] = [];
     let terminated = false;
 
@@ -595,7 +608,10 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
         // Forwarded as it lands, so a streaming consumer sees the text while
         // the CLI is still writing. The buffered copy above is still what the
         // returned value is assembled from.
-        onChunk?.(chunk.toString('utf-8'));
+        if (onChunk) {
+          const text = chunkDecoder.write(chunk);
+          if (text) onChunk(text);
+        }
       }
     });
 

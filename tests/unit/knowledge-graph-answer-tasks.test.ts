@@ -53,7 +53,7 @@ function projection(nodes: KnowledgeGraphNode[]): KnowledgeGraphProjection {
     edges: [],
     clusterings: [{
       granularity: 'balanced',
-      regions: [{ label: 'terminal / pty', size: nodes.length, x: 0, y: 0, z: 0 }],
+      regions: [{ id: 0, label: 'terminal / pty', size: nodes.length, x: 0, y: 0, z: 0 }],
     }],
   } as unknown as KnowledgeGraphProjection;
 }
@@ -166,6 +166,30 @@ describe('rolling conversations up into tasks', () => {
       node({ docKey: 'a', taskId: 't1' }),
     ]), 'fine');
     expect(table.rows[0].region).toBe('terminal / pty');
+  });
+
+  it('names a task\'s region by region id, not by position in the list', () => {
+    // `labelClusters` orders regions largest first, so region 2 can sit at
+    // position 0. Looking a node's cluster id up by position named the wrong
+    // region for every task outside the largest one.
+    const table = buildAnswerTaskTable({
+      nodes: [
+        node({ docKey: 'a', taskId: 't-big', clusters: { coarse: 2, balanced: 2, fine: 2 } }),
+        node({ docKey: 'b', taskId: 't-small', clusters: { coarse: 0, balanced: 0, fine: 0 } }),
+      ],
+      edges: [],
+      clusterings: [{
+        granularity: 'balanced',
+        regions: [
+          { id: 2, label: 'git / worktrees', size: 30, x: 0, y: 0, z: 0 },
+          { id: 0, label: 'terminal / pty', size: 20, x: 0, y: 0, z: 0 },
+          { id: 1, label: 'settings / ui', size: 10, x: 0, y: 0, z: 0 },
+        ],
+      }],
+    } as unknown as KnowledgeGraphProjection, 'balanced');
+    const regionOf = (taskId: string) => table.rows.find((row) => row.taskId === taskId)?.region;
+    expect(regionOf('t-big')).toBe('git / worktrees');
+    expect(regionOf('t-small')).toBe('terminal / pty');
   });
 });
 

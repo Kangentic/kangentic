@@ -72,13 +72,11 @@ interface SegmentedControlProps<T extends string> {
    */
   labelClassName?: string;
   /**
-   * Narrower horizontal padding, the same height. For four short options in a
+   * Narrower horizontal padding, the same height. For short options in a
    * narrow column (the Knowledge Graph's time and status filters), where the
-   * default 12px a side alone pushed the row past its 224px: measured, "Any,
-   * 7 days, 30 days, 90 days" needed 260px at the default and 185px quiet with
-   * 6px a side. It is 4px a side so the widest status label ("Finished") also
-   * fits a quarter of the row: a label wider than its share takes space from
-   * its neighbours, and the time and status rows stop lining up in columns.
+   * default 12px a side pushed a row past its 224px. It is 4px a side so each
+   * label fits its share of the row: a label wider than its share takes space
+   * from its neighbours, and the time and status rows stop lining up in columns.
    */
   tight?: boolean;
   /** Stretch to fill the container, options sharing the width equally. */

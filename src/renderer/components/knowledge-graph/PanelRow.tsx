@@ -40,7 +40,7 @@ export function InfoHint({ text }: { text: string }) {
 export interface PanelRowProps {
   label: string;
   value: React.ReactNode;
-  /** `problem` is amber, `ok` is the active accent. Default is plain. */
+  /** `problem` is the attention tone, `ok` is the active accent. Default is plain. */
   tone?: 'neutral' | 'ok' | 'problem';
   hint?: string;
   /** Numeric values align on their digits; prose should not. */
@@ -48,7 +48,9 @@ export interface PanelRowProps {
 }
 
 export function PanelRow({ label, value, tone = 'neutral', hint, numeric = false }: PanelRowProps) {
-  const toneClass = tone === 'problem' ? 'text-amber-300' : tone === 'ok' ? 'text-active' : 'text-fg';
+  // The theme's attention token, as the coverage strip uses: a fixed amber
+  // shade was unreadable on a light theme.
+  const toneClass = tone === 'problem' ? 'text-attention' : tone === 'ok' ? 'text-active' : 'text-fg';
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">
       <dt className="flex flex-shrink-0 items-center gap-1.5 text-[11px] text-fg-muted">

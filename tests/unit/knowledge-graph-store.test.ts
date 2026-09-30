@@ -1,0 +1,353 @@
+/**
+ * Unit tests for src/renderer/stores/knowledge-graph-store.ts.
+ *
+ * tests/ui/knowledge-graph.spec.ts drives this store through the real surface,
+ * but the mock bridge answers a snapshot read in the same tick, so a read is
+ * never still in flight when the next one is asked for. That ordering is the
+ * whole of what this file pins, by handing a read's promise to the test and
+ * resolving it by hand:
+ *  - a read asked for while another is in flight is not dropped: one more runs
+ *    when the first lands, so a later read for another project (or a completion
+ *    push) is never lost and the store cannot end on the older project,
+ *  - the promise a mid-read caller gets settles only after that follow-up read
+ *    lands, not when the older read does,
+ *  - a reader's ask outranks a push that follows it (the pending read keeps the
+ *    reader's project id and may start a rebuild a push may not), while a push
+ *    that was waiting yields to a reader,
+ *  - the read asked for meanwhile still runs when the first one fails,
+ *  - the answer stream is gated on the active turn's request id, and
+ *  - a scope of just the open project is not a scope.
+ *
+ * window.electronAPI is stubbed globally and the store is imported fresh for
+ * every test (vi.resetModules): its in-flight read, pending read, stream
+ * subscription and active request id are module-scope, so a shared instance
+ * would carry one test's unresolved read into the next.
+ */
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type {
+  KnowledgeGraphAnswerResult,
+  KnowledgeGraphAnswerStreamPush,
+  KnowledgeGraphCoverageBucket,
+  KnowledgeGraphSnapshot,
+} from '../../src/shared/types';
+
+type KnowledgeGraphStore = typeof import('../../src/renderer/stores/knowledge-graph-store').useKnowledgeGraphStore;
+
+interface PendingRead {
+  projectId: string | null;
+  resolve: (snapshot: KnowledgeGraphSnapshot | null) => void;
+  reject: (error: Error) => void;
+}
+
+let pendingReads: PendingRead[] = [];
+let streamListeners: Array<(event: KnowledgeGraphAnswerStreamPush) => void> = [];
+
+const graphSnapshotMock = vi.fn<(projectId?: string | null) => Promise<KnowledgeGraphSnapshot | null>>();
+const refreshGraphMock = vi.fn<(projectId?: string | null) => Promise<void>>();
+const answerFromGraphMock = vi.fn<(...args: unknown[]) => Promise<KnowledgeGraphAnswerResult>>();
+
+function installWindowStub(): void {
+  (globalThis as Record<string, unknown>).window = {
+    electronAPI: {
+      config: { onChanged: vi.fn(() => () => undefined) },
+      knowledgeGraph: {
+        graphSnapshot: graphSnapshotMock,
+        refreshGraph: refreshGraphMock,
+        graphProjects: vi.fn(async () => []),
+        onGraphChanged: vi.fn(() => () => undefined),
+        onAnswerStream: vi.fn((callback: (event: KnowledgeGraphAnswerStreamPush) => void) => {
+          streamListeners.push(callback);
+          return () => undefined;
+        }),
+        answerFromGraph: answerFromGraphMock,
+        prewarm: vi.fn(),
+        endChat: vi.fn(),
+      },
+    },
+  };
+}
+
+function makeBucket(): KnowledgeGraphCoverageBucket {
+  return { documents: 0, chunks: 0, tone: 'ok' };
+}
+
+function makeSnapshot(projectId: string, overrides: Partial<KnowledgeGraphSnapshot> = {}): KnowledgeGraphSnapshot {
+  return {
+    projectId,
+    projection: null,
+    coverage: {
+      indexed: makeBucket(),
+      sourceMissingButSearchable: makeBucket(),
+      empty: makeBucket(),
+      failed: makeBucket(),
+      notYetIndexed: makeBucket(),
+      totalDocumentsWithChunks: 0,
+      totalChunks: 0,
+      totalEmbeddedChunks: 0,
+      embeddedFraction: 0,
+      knownDocumentIdsMatched: 0,
+    },
+    index: { corpora: [], summaries: { written: 0, finishedTasks: 0 }, storageBytes: 0 },
+    building: false,
+    stale: false,
+    semanticAvailable: true,
+    ...overrides,
+  };
+}
+
+/** Take the oldest unanswered read for `projectId` off the bridge. Throws when
+ *  there is none, so a read the store never made fails here by name instead of
+ *  hanging the test on a promise nothing will settle. */
+function takePendingRead(projectId: string | null): PendingRead {
+  const index = pendingReads.findIndex((read) => read.projectId === projectId);
+  if (index < 0) {
+    const pending = pendingReads.map((read) => String(read.projectId)).join(', ') || 'none';
+    throw new Error(`no read pending for ${String(projectId)}; pending: ${pending}`);
+  }
+  return pendingReads.splice(index, 1)[0];
+}
+
+function resolveRead(projectId: string, snapshot: KnowledgeGraphSnapshot | null = makeSnapshot(projectId)): void {
+  takePendingRead(projectId).resolve(snapshot);
+}
+
+/** Let every microtask (and the timer queue) run, for asserting that something
+ *  has NOT settled. */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function fireStream(event: KnowledgeGraphAnswerStreamPush): void {
+  for (const listener of streamListeners.slice()) listener(event);
+}
+
+let store: KnowledgeGraphStore;
+
+beforeEach(async () => {
+  vi.resetModules();
+  vi.clearAllMocks();
+  pendingReads = [];
+  streamListeners = [];
+  graphSnapshotMock.mockImplementation((projectId) => new Promise((resolve, reject) => {
+    pendingReads.push({ projectId: projectId ?? null, resolve, reject });
+  }));
+  refreshGraphMock.mockResolvedValue(undefined);
+  installWindowStub();
+  ({ useKnowledgeGraphStore: store } = await import('../../src/renderer/stores/knowledge-graph-store'));
+});
+
+describe('knowledge-graph-store loadSnapshot while a read is in flight', () => {
+  it('runs a read for another project when the first lands, and ends on that project', async () => {
+    const first = store.getState().loadSnapshot('A');
+    let secondSettled = false;
+    const second = store.getState().loadSnapshot('B').then(() => { secondSettled = true; });
+    // Only A has been asked of main so far: B waits for A rather than racing it.
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+
+    resolveRead('A');
+    await first;
+    await flush();
+
+    // A landing starts the read asked for meanwhile, and the caller that asked
+    // for it is still waiting: its promise is B's, not A's.
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    expect(secondSettled).toBe(false);
+
+    const snapshotB = makeSnapshot('B');
+    resolveRead('B', snapshotB);
+    await second;
+
+    expect(secondSettled).toBe(true);
+    expect(store.getState().projectId).toBe('B');
+    expect(store.getState().snapshot).toBe(snapshotB);
+    expect(store.getState().loading).toBe(false);
+  });
+
+  it('does not lose a completion push that arrives mid-read', async () => {
+    store.setState({ projectId: 'A' });
+    const first = store.getState().loadSnapshot('A');
+    void store.getState().loadSnapshot('A', { fromPush: true });
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+
+    resolveRead('A');
+    await first;
+    await flush();
+
+    // The read in flight was started before the push, so it cannot show what
+    // the push announced. One more read runs, for the same project.
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('A');
+    resolveRead('A');
+    await flush();
+    expect(store.getState().loading).toBe(false);
+  });
+
+  it('runs exactly one follow-up for any number of reads asked for meanwhile', async () => {
+    const first = store.getState().loadSnapshot('A');
+    void store.getState().loadSnapshot('B');
+    void store.getState().loadSnapshot('B');
+    void store.getState().loadSnapshot('B');
+
+    resolveRead('A');
+    await first;
+    await flush();
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+
+    resolveRead('B');
+    await flush();
+    // Nothing further was asked for, so nothing further is read.
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(pendingReads).toHaveLength(0);
+  });
+
+  it('keeps a reader\'s project when a push arrives after it', async () => {
+    const first = store.getState().loadSnapshot('A');
+    void store.getState().loadSnapshot('B');
+    // A following-mode push names no project (main resolves it), and must not
+    // turn the reader's request for B into a read of "whatever is current".
+    void store.getState().loadSnapshot(null, { fromPush: true });
+
+    resolveRead('A');
+    await first;
+    await flush();
+
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+  });
+
+  it('lets a reader replace a push that was waiting', async () => {
+    const first = store.getState().loadSnapshot('A');
+    void store.getState().loadSnapshot(null, { fromPush: true });
+    void store.getState().loadSnapshot('B');
+
+    resolveRead('A');
+    await first;
+    await flush();
+
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+  });
+
+  it('keeps the reader\'s right to start a rebuild when a push follows it', async () => {
+    store.setState({ projectId: 'A' });
+    // `building` makes the first read ask for no rebuild of its own.
+    const first = store.getState().loadSnapshot('A');
+    void store.getState().loadSnapshot('A');
+    void store.getState().loadSnapshot('A', { fromPush: true });
+
+    resolveRead('A', makeSnapshot('A', { building: true }));
+    await first;
+    await flush();
+    expect(refreshGraphMock).not.toHaveBeenCalled();
+
+    // The follow-up is the reader's read, of a map with no projection yet. A
+    // reader's read asks main to build it; a push's read would not have.
+    resolveRead('A', makeSnapshot('A', { projection: null, stale: true }));
+    await flush();
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+    expect(refreshGraphMock).toHaveBeenCalledWith('A');
+  });
+
+  it('still runs the read asked for meanwhile when the first read fails', async () => {
+    const first = store.getState().loadSnapshot('A');
+    const second = store.getState().loadSnapshot('B');
+
+    takePendingRead('A').reject(new Error('main is busy'));
+    await first;
+    await flush();
+
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B');
+    resolveRead('B');
+    await second;
+    expect(store.getState().projectId).toBe('B');
+    expect(store.getState().loading).toBe(false);
+  });
+
+  it('reads once when nothing else was asked for', async () => {
+    const only = store.getState().loadSnapshot('A');
+    resolveRead('A');
+    await only;
+    await flush();
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('knowledge-graph-store answer stream', () => {
+  it('applies a stream event only to the turn in flight', async () => {
+    store.getState().attach();
+    expect(streamListeners).toHaveLength(1);
+
+    answerFromGraphMock.mockResolvedValueOnce({
+      ok: true,
+      agentName: 'Test Agent',
+      answer: 'first answer',
+      rows: [],
+      related: [],
+      handedCount: 0,
+      promptTokens: 1,
+    });
+    await store.getState().askQuestion('first question');
+    const firstTurn = store.getState().thread[0];
+    expect(firstTurn.status).toBe('done');
+
+    let releaseSecond: (result: KnowledgeGraphAnswerResult) => void = () => undefined;
+    answerFromGraphMock.mockImplementationOnce(() => new Promise((resolve) => { releaseSecond = resolve; }));
+    const secondAsk = store.getState().askQuestion('second question');
+    const secondTurn = store.getState().thread[1];
+
+    // A turn that is in the thread but is not the one in flight: its late
+    // event names a real turn, so only the gate stops it being applied.
+    fireStream({ requestId: firstTurn.id, kind: 'text', text: 'NOT THIS' });
+    expect(store.getState().thread[0].text).toBe('first answer');
+    expect(store.getState().thread[1].text).toBe('');
+
+    // The same event for the turn in flight lands, so the check above cannot
+    // pass merely because the listener was never wired.
+    fireStream({ requestId: secondTurn.id, kind: 'text', text: 'streaming ' });
+    expect(store.getState().thread[1].text).toBe('streaming ');
+    expect(store.getState().thread[1].status).toBe('answering');
+
+    releaseSecond({
+      ok: true,
+      agentName: 'Test Agent',
+      answer: 'second answer',
+      rows: [],
+      related: [],
+      handedCount: 0,
+      promptTokens: 1,
+    });
+    await secondAsk;
+    expect(store.getState().thread[1].text).toBe('second answer');
+
+    // Once no turn is in flight nothing is wanted, its own id included.
+    fireStream({ requestId: secondTurn.id, kind: 'text', text: 'TOO LATE' });
+    expect(store.getState().thread[1].text).toBe('second answer');
+  });
+});
+
+describe('knowledge-graph-store setScope', () => {
+  it('treats just the open project as no scope', () => {
+    store.setState({ projectId: 'A', scopeProjectIds: ['A', 'B'] });
+
+    store.getState().setScope(['A']);
+    expect(store.getState().scopeProjectIds).toBeNull();
+
+    store.setState({ scopeProjectIds: ['A', 'B'] });
+    store.getState().setScope(['A', 'A']);
+    expect(store.getState().scopeProjectIds).toBeNull();
+  });
+
+  it('keeps a scope that names another project, alone or with the open one', () => {
+    store.setState({ projectId: 'A' });
+
+    store.getState().setScope(['A', 'B']);
+    expect(store.getState().scopeProjectIds).toEqual(['A', 'B']);
+
+    store.getState().setScope(['B']);
+    expect(store.getState().scopeProjectIds).toEqual(['B']);
+
+    store.getState().setScope(null);
+    expect(store.getState().scopeProjectIds).toBeNull();
+  });
+});

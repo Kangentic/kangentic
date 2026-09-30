@@ -26,8 +26,16 @@ export const knowledgeGraphSurface: SurfaceDescriptor<'knowledge-graph'> = {
     signal.addEventListener('abort', () => useKnowledgeGraphStore.getState().close());
   },
 
+  // The same re-sync as App.tsx's: the Projects list and every scoped project
+  // are main-process truth here too.
   hmrResync: () => {
-    void useKnowledgeGraphStore.getState().loadSnapshot();
+    const knowledgeGraph = useKnowledgeGraphStore.getState();
+    const asRefresh = { fromPush: true };
+    void knowledgeGraph.loadSnapshot(knowledgeGraph.followsCurrentProject ? null : knowledgeGraph.projectId, asRefresh);
+    void knowledgeGraph.loadProjects();
+    for (const scopedProjectId of knowledgeGraph.scopeProjectIds ?? []) {
+      if (scopedProjectId !== knowledgeGraph.projectId) void knowledgeGraph.loadScopeSnapshot(scopedProjectId, asRefresh);
+    }
     void useConfigStore.getState().loadAgentList();
   },
 

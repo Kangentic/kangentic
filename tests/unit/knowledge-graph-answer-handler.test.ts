@@ -132,6 +132,7 @@ vi.mock('../../src/main/retrieval/graph/graph-service', () => {
       // Ask reads the map alone; each test sets it through the snapshot.
       getProjection: (projectId: string) => getSnapshot(projectId, '')?.projection ?? null,
       requestRefresh: vi.fn(),
+      markDirty: vi.fn(),
       setOnChanged: vi.fn(),
     },
   };
@@ -178,7 +179,7 @@ const MOCK_PROJECTION = {
     graphNode('conversation::doc-3', 'task-2', 564, 'Terminal scrollback repaint', 4),
   ],
   edges: [],
-  clusterings: [{ granularity: 'balanced', regions: [{ label: 'framing', size: 3, x: 0, y: 0, z: 0 }] }],
+  clusterings: [{ granularity: 'balanced', regions: [{ id: 0, label: 'framing', size: 3, x: 0, y: 0, z: 0 }] }],
 };
 
 /** The related work the search "found": task-1, strongest, with a passage. */
@@ -247,6 +248,70 @@ async function ask(
   if (!handler) throw new Error('knowledgeGraph:graphAnswer handler not registered');
   return handler(undefined, question, 'project-1', 'balanced', requestId, answerContext) as Promise<KnowledgeGraphAnswerResult>;
 }
+
+/**
+ * A scope or a pop-out can still hold the id of a project that was deleted, and
+ * opening that project's store would create an empty database for it again. Both
+ * handlers answer a project the repository does not list with nothing, before
+ * they reach the graph service.
+ */
+describe('the graph snapshot and refresh handlers', () => {
+  const snapshot = {
+    projectId: 'project-1',
+    projection: null,
+    coverage: {},
+    building: false,
+    stale: false,
+    semanticAvailable: true,
+  } as unknown as ReturnType<typeof graphService.getSnapshot>;
+
+  function handlerFor(channel: string): (...args: unknown[]) => Promise<unknown> {
+    const handler = capturedHandlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler not registered`);
+    return handler as (...args: unknown[]) => Promise<unknown>;
+  }
+
+  beforeEach(() => {
+    capturedHandlers.clear();
+    vi.mocked(graphService.getSnapshot).mockClear();
+    vi.mocked(graphService.getSnapshot).mockReturnValue(snapshot);
+    vi.mocked(graphService.markDirty).mockClear();
+    knowledgeGraphConfig = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+    registerSearchHandlers(makeContext() as any);
+  });
+
+  it('returns no snapshot for a project the repository does not list, without touching its store', async () => {
+    const result = await handlerFor(IPC.KNOWLEDGE_GRAPH_SNAPSHOT)(undefined, 'deleted-project');
+
+    expect(result).toBeNull();
+    expect(graphService.getSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('returns the snapshot for a listed project, named or defaulted to the open one', async () => {
+    const named = await handlerFor(IPC.KNOWLEDGE_GRAPH_SNAPSHOT)(undefined, 'project-1');
+    const defaulted = await handlerFor(IPC.KNOWLEDGE_GRAPH_SNAPSHOT)(undefined, null);
+
+    expect(named).toBe(snapshot);
+    expect(defaulted).toBe(snapshot);
+    expect(graphService.getSnapshot).toHaveBeenCalledTimes(2);
+    expect(graphService.getSnapshot).toHaveBeenCalledWith('project-1', expect.any(String));
+  });
+
+  it('starts no pass for a project the repository does not list', async () => {
+    await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, 'deleted-project');
+
+    expect(graphService.markDirty).not.toHaveBeenCalled();
+  });
+
+  it('asks for a pass for a listed project, named or defaulted to the open one', async () => {
+    await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, 'project-1');
+    await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, undefined);
+
+    expect(graphService.markDirty).toHaveBeenCalledTimes(2);
+    expect(graphService.markDirty).toHaveBeenCalledWith('project-1', expect.any(String), expect.any(Number));
+  });
+});
 
 describe('the Ask handler', () => {
   beforeEach(() => {
@@ -737,7 +802,7 @@ describe('the Ask handler', () => {
     const OTHER_PROJECTION = {
       nodes: [graphNode('conversation::m-1', 'task-9', 561, 'Relay pairing', 7)],
       edges: [],
-      clusterings: [{ granularity: 'balanced', regions: [{ label: 'relay', size: 1, x: 0, y: 0, z: 0 }] }],
+      clusterings: [{ granularity: 'balanced', regions: [{ id: 0, label: 'relay', size: 1, x: 0, y: 0, z: 0 }] }],
     };
 
     function twoProjectContext() {
@@ -1000,6 +1065,19 @@ describe('the Ask handler', () => {
       expect(answerSpy).toHaveBeenCalledTimes(1);
       expect(answerSpy.mock.calls[0][0]).toMatch(/<task_table>\n/);
       expect(sessions[0].disposed).toBe(true);
+    });
+
+    it('does not retry a turn whose session was stopped on purpose', async () => {
+      // The chat ended or the pool let the session go mid-turn: nobody is
+      // waiting for this answer, so a fresh run would only spend tokens on it.
+      const answerSpy = vi.fn(async () => 'fresh run');
+      mockAdapters = [sessionAdapter(answerSpy, [new AnswerSessionError('the answering process was stopped', 'disposed', true)])];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      const result = await ask('anything', 'req-1', { chatId: 'chat-1' });
+      expect(result).toMatchObject({ ok: false, reason: 'the answering process was stopped' });
+      expect(answerSpy).not.toHaveBeenCalled();
     });
 
     it('shows an agent error as the answer\'s failure, without a retry', async () => {

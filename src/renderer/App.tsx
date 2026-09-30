@@ -1185,13 +1185,17 @@ if (import.meta.hot) {
     // Memory graph Pattern B: re-read the cached projection + coverage from
     // main-process truth (no-ops while the surface is closed).
     // The Projects list and every project in a scope are main-process truth too.
+    // Marked as pushes: a save is a refresh, not the reader acting, so it never
+    // starts a rebuild of a stale map on its own. A window following the main
+    // one re-reads with null, as its own pushes do, so it keeps following.
     if (useKnowledgeGraphStore.getState().graphOpen) {
       const knowledgeGraph = useKnowledgeGraphStore.getState();
-      void knowledgeGraph.loadSnapshot();
+      const asRefresh = { fromPush: true };
+      void knowledgeGraph.loadSnapshot(knowledgeGraph.followsCurrentProject ? null : knowledgeGraph.projectId, asRefresh);
       void knowledgeGraph.loadProjects();
       // The open project's island comes from loadSnapshot above.
       for (const scopedProjectId of knowledgeGraph.scopeProjectIds ?? []) {
-        if (scopedProjectId !== knowledgeGraph.projectId) void knowledgeGraph.loadScopeSnapshot(scopedProjectId);
+        if (scopedProjectId !== knowledgeGraph.projectId) void knowledgeGraph.loadScopeSnapshot(scopedProjectId, asRefresh);
       }
     }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.

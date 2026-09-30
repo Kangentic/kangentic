@@ -203,7 +203,7 @@ export function registerSearchHandlers(context: IpcContext): void {
   );
 
   // A projection pass finishing is pushed rather than polled: the pass can take
-  // a minute on a cold corpus, and KnowledgeGraphTab already polls memory status on an
+  // a minute on a cold corpus, and KnowledgeGraphTab already polls the index status on an
   // interval - a second poller for the same subsystem is what this avoids.
   // `broadcast`, not webContents.send, or a detached pop-out never updates.
   graphService.setOnChanged((projectId: string) => {
@@ -216,6 +216,9 @@ export function registerSearchHandlers(context: IpcContext): void {
     async (_event, projectId?: string | null): Promise<KnowledgeGraphSnapshot | null> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!resolvedProjectId) return null;
+      // A scope or a pop-out can still hold a deleted project's id, and opening
+      // its store would create an empty database for it again.
+      if (!context.projectRepo.list().some((entry) => entry.id === resolvedProjectId)) return null;
       const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
       // Cheap by construction: reads the cache, never runs the pass. Timed as a
       // whole, since an open graph re-reads it on every push.
@@ -806,6 +809,9 @@ export function registerSearchHandlers(context: IpcContext): void {
     async (_event, projectId?: string | null): Promise<void> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!resolvedProjectId) return;
+      // A scope or a pop-out can still hold a deleted project's id, and opening
+      // its store would create an empty database for it again.
+      if (!context.projectRepo.list().some((entry) => entry.id === resolvedProjectId)) return;
       const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
       // Returns immediately. The pass is self-paced in the background, so a
       // handler never performs the scan or the vector math itself.

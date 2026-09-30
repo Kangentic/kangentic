@@ -13,6 +13,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import type { AnswerSession } from '../../agent-adapter';
 import {
   ANSWER_STREAM_OUTPUT_BUDGET,
@@ -24,8 +25,13 @@ import {
   type AnswerStreamEvent,
 } from '../auto-name';
 
-/** Why a turn failed. Only `exited` before any text is worth a silent retry. */
-export type AnswerSessionFailure = 'exited' | 'timeout' | 'budget' | 'agent' | 'busy';
+/**
+ * Why a turn failed. Only `exited` before any text is worth a silent retry.
+ * `disposed` is a stop someone asked for (the chat ended, the pool let the
+ * session go, the app is quitting), so nobody is waiting for its answer and a
+ * retry would only spend a fresh run on it.
+ */
+export type AnswerSessionFailure = 'exited' | 'disposed' | 'timeout' | 'budget' | 'agent' | 'busy';
 
 export class AnswerSessionError extends Error {
   constructor(
@@ -137,8 +143,12 @@ export function openStdinJsonSession(options: StdinJsonSessionOptions): AnswerSe
     if (options.isTurnEnd(line)) finishTurn();
   };
 
+  // One decoder per stream: a character split across two pipe reads is held
+  // until its last byte lands, where decoding each chunk alone made it U+FFFD.
+  const stdoutDecoder = new StringDecoder('utf8');
+  const stderrDecoder = new StringDecoder('utf8');
   child.stdout.on('data', (chunk: Buffer) => {
-    partialLine += chunk.toString('utf-8');
+    partialLine += stdoutDecoder.write(chunk);
     let newline = partialLine.indexOf('\n');
     while (newline !== -1) {
       const line = partialLine.slice(0, newline).replace(/\r$/, '');
@@ -148,7 +158,7 @@ export function openStdinJsonSession(options: StdinJsonSessionOptions): AnswerSe
     }
   });
   child.stderr.on('data', (chunk: Buffer) => {
-    stderrTail = (stderrTail + chunk.toString('utf-8')).slice(-STDERR_TAIL_CHARS);
+    stderrTail = (stderrTail + stderrDecoder.write(chunk)).slice(-STDERR_TAIL_CHARS);
   });
   // A write to a process that just died raises EPIPE on stdin; the exit
   // handler below is what reports it.
@@ -169,7 +179,7 @@ export function openStdinJsonSession(options: StdinJsonSessionOptions): AnswerSe
     if (disposed) return;
     disposed = true;
     alive = false;
-    failTurn('exited', 'the answering process was stopped');
+    failTurn('disposed', 'the answering process was stopped');
     try {
       child.stdin.end();
     } catch {
@@ -197,7 +207,7 @@ export function openStdinJsonSession(options: StdinJsonSessionOptions): AnswerSe
       return turn !== null;
     },
     ask(prompt, onEvent) {
-      if (!alive) return Promise.reject(new AnswerSessionError('the answering process has ended', 'exited', true));
+      if (!alive) return Promise.reject(new AnswerSessionError('the answering process has ended', disposed ? 'disposed' : 'exited', true));
       if (turn) return Promise.reject(new AnswerSessionError('a question is already in flight', 'busy', true));
       return new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {

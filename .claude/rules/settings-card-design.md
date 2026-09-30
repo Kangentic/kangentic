@@ -34,7 +34,7 @@ stated here and held by the components.
   element in a body, and never give a `CardTile` its own fill or padding (its `className` is for
   layout only). The one exception is `wideBody`, for a grid with no label column (MCP Server's
   tool list).
-- **A status is one `CardStatusRow`, whatever it reports.** The state is the label ("Model",
+- **A status is one `CardStatusRow`, whatever it reports.** The state is the label ("Local model",
   "Downloading", "Download failed"), the figure sits at the switches' right edge, and a running
   state passes `percent` for the track. `tone` is the only styling: `ready` puts a check beside the
   value, `caution` and `failure` tint the label and put a warning icon in the tile's gutter, and

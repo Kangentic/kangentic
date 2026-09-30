@@ -184,6 +184,38 @@ describe('gitFetchScheduler', () => {
     mockLastFetchAt.mockResolvedValue(null);
   });
 
+  // A config save restarts the project the user is already on. The project id
+  // still matches afterwards, and the timer is null while a tick reads the
+  // clock, so neither guard can tell a tick the restart started from one that
+  // outlived it. The generation counter can.
+  it('a tick reading the clock when the same project restarts with auto-fetch off neither sweeps nor re-arms', async () => {
+    const git = { autoFetch: true };
+    const context = {
+      currentProjectId: 'p1',
+      configManager: { getEffectiveConfig: () => ({ git }) },
+    } as unknown as IpcContext;
+    let releaseClock: (lastFetchAt: number | null) => void = () => undefined;
+    mockLastFetchAt.mockImplementationOnce(() => new Promise<number | null>((resolve) => { releaseClock = resolve; }));
+
+    gitFetchScheduler.startForProject(context, makeProject('p1'));
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    // The 5-minute wake is waiting on the clock, and only the on-load sweep ran.
+    expect(mockLastFetchAt).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    git.autoFetch = false;
+    gitFetchScheduler.startForProject(context, makeProject('p1'));
+    // An old stamp: were the stale tick still live, the repo would read as due.
+    releaseClock(Date.now() - 10 * FIVE_MIN);
+    await vi.advanceTimersByTimeAsync(3 * FIVE_MIN);
+
+    // The on-load sweep of the first start, and the restart's own. Nothing from
+    // the tick that outlived the restart, and no timer it could have re-armed.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls.map((call) => call[0])).toEqual(['/mock/repo/p1', '/mock/repo/p1']);
+    expect(mockLastFetchAt).toHaveBeenCalledTimes(1);
+  });
+
   // A failed fetch stamps nothing, so the clock also counts from the
   // scheduler's own attempt; otherwise an offline repo would retry every wake.
   it('waits a full interval after a sweep even when that fetch left no stamp', async () => {

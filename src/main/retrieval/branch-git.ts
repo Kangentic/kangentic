@@ -123,6 +123,10 @@ export function readBlobs(projectPath: string, blobs: ReadonlyArray<string>): Pr
       }
       resolve(parseBatch(Buffer.concat(parts)));
     });
+    // A git that exits before reading (not a repository, a broken one) raises
+    // EPIPE on stdin. Unheard, that is an uncaught exception in main; the
+    // `close` handler above already reports the failure.
+    child.stdin.on('error', () => undefined);
     child.stdin.end(`${blobs.join('\n')}\n`);
   });
 }

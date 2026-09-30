@@ -257,6 +257,16 @@ function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
 }
 
 /** A project's root, so a changed file in its main checkout reads repo-relative. */
+/** False once a project is deleted. A context that cannot say counts it as
+ *  present, so a missing repository never silently stops indexing. */
+function projectStillExists(context: IpcContext, projectId: string): boolean {
+  try {
+    return context.projectRepo.getById(projectId) != null;
+  } catch {
+    return true;
+  }
+}
+
 function projectPathFor(context: IpcContext, projectId: string): string | null {
   try {
     return context.projectRepo.getById(projectId)?.path ?? null;
@@ -362,6 +372,10 @@ function untilBranchFullReads(): Promise<void> {
 function queueRecordSweeps(context: IpcContext, projectId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;
   chain(async () => {
+    // Checked when the job runs, not when it was queued: a board-change or
+    // startup timer can fire after the project was deleted, and opening its
+    // database would create an empty one again.
+    if (!projectStillExists(context, projectId)) return;
     const projectPath = projectPathFor(context, projectId);
     const tasks = await sweepTaskRecords(projectId, () => !disposed);
     const changes = await sweepChangeRecords(projectId, projectPath, () => !disposed);
@@ -953,6 +967,8 @@ export const retrievalService = {
     } catch (error) {
       console.warn('[retrieval] purge failed:', error);
     }
+    // Or the Index card counts what was just cleared for up to 30 s.
+    sourceTotalsCache.delete(projectId);
   },
 
   /** Synchronous shutdown: stop scheduling, drop pending timers, dispose the

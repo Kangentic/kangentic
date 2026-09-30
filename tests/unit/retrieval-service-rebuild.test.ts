@@ -289,3 +289,55 @@ describe('retrievalService.rebuildEverything', () => {
     expect(storeCalls.resets).toEqual([]);
   });
 });
+
+/**
+ * A record sweep runs on the serial job chain, and a board-change or startup
+ * timer can queue one for a project that is deleted before the job gets its
+ * turn. Opening that project's database would create an empty one again, so the
+ * job asks whether the project still exists when it RUNS, not when it was queued.
+ * `refreshRecords` is the plain public way to queue one.
+ */
+describe('retrievalService.refreshRecords', () => {
+  let retrievalService: typeof import('../../src/main/retrieval/retrieval-service')['retrievalService'];
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    unopenableProjects.clear();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.resetModules();
+    ({ retrievalService } = await import('../../src/main/retrieval/retrieval-service'));
+  });
+
+  afterEach(() => {
+    retrievalService.dispose();
+    vi.restoreAllMocks();
+  });
+
+  it('skips a project deleted before its queued sweep runs, and still sweeps a registered one', async () => {
+    const context = makeContext({ openProjectId: 'proj-a', projects: [makeProject('proj-a')] });
+
+    // The jobs run in order, so by the time the registered project's sweep
+    // starts, the deleted project's job has already had its turn.
+    retrievalService.refreshRecords(context, 'proj-deleted');
+    retrievalService.refreshRecords(context, 'proj-a');
+    await vi.waitFor(() => {
+      expect(sweepers.sweepTaskRecords).toHaveBeenCalledWith('proj-a', expect.any(Function));
+    });
+
+    expect(sweepers.sweepTaskRecords.mock.calls.map((call) => call[0])).toEqual(['proj-a']);
+    expect(sweptProjects()).not.toContain('proj-deleted');
+  });
+
+  it('still sweeps when the project repository cannot say whether the project exists', async () => {
+    const context = makeContext({ openProjectId: 'proj-a', projects: [makeProject('proj-a')] });
+    (context.projectRepo as unknown as { getById: () => never }).getById = () => {
+      throw new Error('repository unavailable');
+    };
+
+    retrievalService.refreshRecords(context, 'proj-a');
+    await vi.waitFor(() => {
+      expect(sweepers.sweepTaskRecords).toHaveBeenCalledWith('proj-a', expect.any(Function));
+    });
+  });
+});

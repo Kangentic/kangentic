@@ -49,7 +49,7 @@ function projection(nodes: KnowledgeGraphNode[]): KnowledgeGraphProjection {
     edges: [],
     clusterings: [{
       granularity: 'balanced',
-      regions: [{ label: 'terminal / pty', size: nodes.length, x: 0, y: 0, z: 0 }],
+      regions: [{ id: 0, label: 'terminal / pty', size: nodes.length, x: 0, y: 0, z: 0 }],
     }],
   } as unknown as KnowledgeGraphProjection;
 }

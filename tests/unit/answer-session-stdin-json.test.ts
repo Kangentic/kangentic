@@ -108,6 +108,49 @@ describe('openStdinJsonSession', () => {
     await expect(answer).resolves.toBe('Split across chunks.');
   });
 
+  // A pipe read can end anywhere, including between the bytes of one character.
+  // Decoding each read alone turned the two halves into U+FFFD, and the damage
+  // was kept in the turn's lines and so in the final answer.
+  it.each([
+    ['a two-byte character', 'é', 1],
+    ['a three-byte character after its first byte', '→', 1],
+    ['a three-byte character after its second byte', '→', 2],
+  ])('keeps %s whole when a stdout read ends inside it', async (_label, character, bytesBeforeSplit) => {
+    const { child, session } = open();
+    const answer = session.ask('q');
+    await flush();
+    const answerText = `Route: caf${character} done`;
+    const bytes = Buffer.from(`${result(answerText)}\n`, 'utf-8');
+    const splitAt = bytes.indexOf(Buffer.from(character, 'utf-8')) + bytesBeforeSplit;
+
+    child.stdout.write(bytes.subarray(0, splitAt));
+    await flush();
+    // Nothing is a whole line yet.
+    expect(session.busy).toBe(true);
+    child.stdout.write(bytes.subarray(splitAt));
+
+    const resolved = await answer;
+    expect(resolved).toBe(answerText);
+    expect(resolved).not.toContain('�');
+  });
+
+  it('streams a character split across stdout reads whole in the text event', async () => {
+    const { child, session } = open();
+    const events: unknown[] = [];
+    const answer = session.ask('q', (event) => events.push(event));
+    await flush();
+    const streamedText = 'Ship → done';
+    const bytes = Buffer.from(`${delta(streamedText)}\n${result(streamedText)}\n`, 'utf-8');
+    const splitAt = bytes.indexOf(Buffer.from('→', 'utf-8')) + 2;
+
+    child.stdout.write(bytes.subarray(0, splitAt));
+    await flush();
+    child.stdout.write(bytes.subarray(splitAt));
+
+    await expect(answer).resolves.toBe(streamedText);
+    expect(events).toEqual([{ kind: 'text', text: streamedText }]);
+  });
+
   it('answers turn after turn, each with its own reducer', async () => {
     const { child, session } = open();
     const first = session.ask('one');
@@ -180,12 +223,13 @@ describe('openStdinJsonSession', () => {
     await flush();
     session.dispose();
     session.dispose();
-    await expect(answer).rejects.toMatchObject({ failure: 'exited' });
+    // `disposed`, not `exited`: a stop someone asked for is never retried.
+    await expect(answer).rejects.toMatchObject({ failure: 'disposed' });
     expect(child.killed).toBe(true);
     expect(child.stdin.writableEnded).toBe(true);
     expect(session.alive).toBe(false);
     await expect(session.exited).resolves.toBeUndefined();
-    await expect(session.ask('again')).rejects.toMatchObject({ failure: 'exited' });
+    await expect(session.ask('again')).rejects.toMatchObject({ failure: 'disposed' });
   });
 
   it('cuts a turn that runs past its output budget', async () => {

@@ -235,4 +235,80 @@ describe('prRefreshScheduler', () => {
     await vi.advanceTimersByTimeAsync(PR_REFRESH_INTERVAL_MS * 2);
     expect(mockLinkPR).not.toHaveBeenCalled();
   });
+
+  describe('a config save that restarts the SAME project', () => {
+    // A save restarts the project the user is already on. The project id and the
+    // current-project check both still match afterwards, and the timer is null
+    // while a check or a sweep runs, so those guards alone cannot tell work the
+    // restart started from work that outlived it. The generation counter can.
+
+    /** A context whose switch can be flipped between two starts of one project. */
+    function makeFlippableContext(): { context: IpcContext; git: { prAutoRefresh: boolean } } {
+      const git = { prAutoRefresh: true };
+      const context = {
+        currentProjectId: 'p1',
+        configManager: { getEffectiveConfig: () => ({ git }) },
+      } as unknown as IpcContext;
+      return { context, git };
+    }
+
+    it('does not re-arm the queue from a check that was in flight when the switch went off', async () => {
+      eligibleIds = ['a'];
+      const { context, git } = makeFlippableContext();
+      let finishCheck: () => void = () => undefined;
+      mockLinkPR.mockImplementationOnce(async (_context, options) => {
+        await new Promise<void>((resolve) => { finishCheck = resolve; });
+        checkStamps.set((options as { taskId: string }).taskId, Date.now());
+        return { status: 'unchanged', task: null } as never;
+      });
+
+      prRefreshScheduler.startForProject(context, makeProject('p1'));
+      await vi.advanceTimersByTimeAsync(PR_REFRESH_INTERVAL_MS + PR_REFRESH_MIN_GAP_MS);
+      // The queue reached its first check and it is still running.
+      expect(mockLinkPR).toHaveBeenCalledTimes(1);
+
+      git.prAutoRefresh = false;
+      prRefreshScheduler.startForProject(context, makeProject('p1'));
+      finishCheck();
+      await vi.advanceTimersByTimeAsync(PR_REFRESH_INTERVAL_MS * 3);
+
+      // Off runs the restart's own on-open sweep and no queue: the check that
+      // outlived the restart must not have armed one.
+      expect(mockLinkPR).toHaveBeenCalledTimes(1);
+      expect(mockSweep).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not hand over to the queue from a sweep that was in flight when the switch went off', async () => {
+      eligibleIds = ['a'];
+      const { context, git } = makeFlippableContext();
+      let finishSweep: () => void = () => undefined;
+      mockSweep.mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => { finishSweep = resolve; });
+        checkStamps.set('a', Date.now());
+      });
+
+      prRefreshScheduler.startForProject(context, makeProject('p1'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockSweep).toHaveBeenCalledTimes(1);
+
+      git.prAutoRefresh = false;
+      prRefreshScheduler.startForProject(context, makeProject('p1'));
+      finishSweep();
+      await vi.advanceTimersByTimeAsync(PR_REFRESH_INTERVAL_MS * 3);
+
+      expect(mockSweep).toHaveBeenCalledTimes(2);
+      expect(mockLinkPR).not.toHaveBeenCalled();
+    });
+
+    it('sweeps once, not twice, when the restart lands before the deferred on-open sweep runs', async () => {
+      const { context, git } = makeFlippableContext();
+
+      prRefreshScheduler.startForProject(context, makeProject('p1'));
+      git.prAutoRefresh = false;
+      prRefreshScheduler.startForProject(context, makeProject('p1'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockSweep).toHaveBeenCalledTimes(1);
+    });
+  });
 });

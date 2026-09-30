@@ -40,6 +40,13 @@ export const PR_REFRESH_MIN_GAP_MS = 10_000;
 
 let activeTimer: NodeJS.Timeout | null = null;
 let activeProjectId: string | null = null;
+/**
+ * Bumped by every `stop`. A config save restarts the SAME project, so the
+ * project id alone cannot tell a check that outlived the restart from one the
+ * restart started: without this, a check in flight when the switch went off
+ * re-armed the queue it had just been told to stop.
+ */
+let generation = 0;
 
 /** Whether the project keeps its PRs current in the background. */
 function autoRefreshEnabled(context: IpcContext, projectPath: string): boolean {
@@ -65,6 +72,7 @@ function arm(context: IpcContext, project: Project, delayMs: number): void {
 async function tick(context: IpcContext, project: Project): Promise<void> {
   activeTimer = null;
   if (!isActive(context, project)) return;
+  const tickGeneration = generation;
 
   const eligibleTaskIds = listRefreshEligibleTasks(context, project.id).map((task) => task.id);
   // Stamps for tasks that left the queue (merged, moved to To Do, deleted)
@@ -88,13 +96,13 @@ async function tick(context: IpcContext, project: Project): Promise<void> {
     console.error('[pr-refresh] check failed:', error);
   });
   // Stopped, switched, or restarted while the check ran.
-  if (!isActive(context, project) || activeTimer) return;
+  if (generation !== tickGeneration || !isActive(context, project) || activeTimer) return;
   arm(context, project, PR_REFRESH_MIN_GAP_MS);
 }
 
 /** Check every eligible PR once, then hand over to the queue when it is on. */
-function openSweep(context: IpcContext, project: Project, queueEnabled: boolean): void {
-  if (!isActive(context, project)) return;
+function openSweep(context: IpcContext, project: Project, queueEnabled: boolean, sweepGeneration: number): void {
+  if (generation !== sweepGeneration || !isActive(context, project)) return;
   const sweep = runWithProjectLogContext(project.name, () => refreshProjectPRs(context, project.id));
   // The handlers attach OUTSIDE the run on purpose: a promise reaction takes the
   // async context current when it is attached, and the timer `arm` creates must
@@ -106,7 +114,7 @@ function openSweep(context: IpcContext, project: Project, queueEnabled: boolean)
     .finally(() => {
       // Armed only after the sweep, so the queue never races it for the same
       // unchecked PR.
-      if (queueEnabled && isActive(context, project) && !activeTimer) {
+      if (queueEnabled && generation === sweepGeneration && isActive(context, project) && !activeTimer) {
         arm(context, project, PR_REFRESH_MIN_GAP_MS);
       }
     });
@@ -125,10 +133,11 @@ export const prRefreshScheduler = {
     prRefreshScheduler.stop();
     activeProjectId = project.id;
     const queueEnabled = autoRefreshEnabled(context, project.path);
+    const startGeneration = generation;
 
     // Defer the first sweep so PROJECT_OPEN is not delayed; the switch-guard
     // mirrors the deferred board-config block in handlers/projects.ts.
-    setImmediate(() => openSweep(context, project, queueEnabled));
+    setImmediate(() => openSweep(context, project, queueEnabled, startGeneration));
   },
 
   /**
@@ -138,6 +147,7 @@ export const prRefreshScheduler = {
    */
   stop(projectId?: string): void {
     if (projectId != null && projectId !== activeProjectId) return;
+    generation += 1;
     if (activeTimer) {
       clearTimeout(activeTimer);
       activeTimer = null;

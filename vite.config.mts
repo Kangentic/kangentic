@@ -199,8 +199,8 @@ export default defineConfig(({ mode }) => ({
           if (id.includes('recharts')) return 'recharts';
           // three + camera-controls, grouped so assertVendorChunksLazy has a
           // stable name to check. Both are reachable ONLY through
-          // LazyMemoryGraph; the name match cannot hit first-party sources,
-          // which live under components/memory/.
+          // LazyKnowledgeGraph; the name match cannot hit first-party sources,
+          // which live under components/knowledge-graph/.
           if (/node_modules[\\/](three|camera-controls)[\\/]/.test(id)) return 'three';
         },
       },

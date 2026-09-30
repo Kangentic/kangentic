@@ -307,6 +307,7 @@ function readCssColor(element: HTMLElement, token: string, fallback: string): st
  * it back returns `#rrggbb`. Module scope so this is one allocation for the
  * renderer's lifetime rather than one per colour.
  */
+// hmr-safe: a lazily built scratch context; a reset only builds it again
 let colorParser: CanvasRenderingContext2D | null = null;
 
 /** Scratch vectors reused by the per-frame label projection. Module scope
@@ -380,6 +381,8 @@ export function KnowledgeGraphCanvas({
   const regionOf = clustering.regionOf;
 
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  // Undefined when the index outlived the map it was taken from.
+  const hoveredNode: KnowledgeGraphNode | undefined = hoveredIndex !== null ? projection.nodes[hoveredIndex] : undefined;
   /** Region pill under the cursor, when no node or title is. */
   const [hoveredRegion, setHoveredRegion] = useState<number | null>(null);
   /** Cursor position, in container coordinates, for the hover card. */
@@ -458,9 +461,6 @@ export function KnowledgeGraphCanvas({
     showTitlesRef.current = showTitles;
   });
   const titleRefs = useRef<Array<HTMLDivElement | null>>([]);
-  /** Which node each pooled label currently shows, so its text is rewritten
-   *  only when the assignment actually changes rather than every frame. */
-  const titleAssignments = useRef<Int32Array>(new Int32Array(NODE_LABEL_POOL).fill(-1));
   /**
    * Screen boxes of the labels placed this frame, and the node each belongs to.
    *
@@ -604,8 +604,8 @@ export function KnowledgeGraphCanvas({
    * names, never an unreadable pile of them.
    *
    * Runs inside the frame callback, so it writes styles directly and never
-   * touches React. The one text write is guarded on the assignment actually
-   * changing, since `textContent` invalidates layout.
+   * touches React. The one text write is guarded on the text actually
+   * changing, since writing `textContent` invalidates layout.
    */
   const positionTitles = useCallback((scene: KnowledgeGraphScene) => {
     const container = containerRef.current;
@@ -627,7 +627,6 @@ export function KnowledgeGraphCanvas({
     placedTitles.clear();
 
     const elements = titleRefs.current;
-    const assignments = titleAssignments.current;
     if (!showTitlesRef.current) {
       for (let slot = 0; slot < elements.length; slot += 1) {
         const element = elements[slot];
@@ -696,10 +695,10 @@ export function KnowledgeGraphCanvas({
 
       const element = elements[slot];
       if (element) {
-        if (assignments[slot] !== candidate.index) {
-          element.textContent = clipped;
-          assignments[slot] = candidate.index;
-        }
+        // Compared by TEXT, not by node index: a rebuilt map can put a
+        // different title at the same index, and an index match kept the old
+        // map's words on the chip.
+        if (element.textContent !== clipped) element.textContent = clipped;
         element.style.transform =
           `translate3d(${candidate.x}px, ${candidate.y}px, 0) translate(-50%, -50%)`;
         // Capped BELOW full strength on purpose: even the nearest title stays
@@ -1315,16 +1314,24 @@ export function KnowledgeGraphCanvas({
           if (hit !== hoveredIndex) setHoveredIndex(hit);
           if (region !== hoveredRegion) setHoveredRegion(region);
         }}
-        onPointerUp={() => {
+        onPointerUp={(event) => {
           // Selection is decided once, by the whole gesture: what the press
           // landed on, and whether the pointer then travelled. A drag is camera
           // work and changes nothing; a clean click selects what it hit, or
-          // clears when it hit nothing.
+          // clears when it hit nothing. Only the primary button selects: a
+          // right or middle press is the camera's pan and zoom, even when it
+          // barely moves.
           const press = pressRef.current;
           pressRef.current = null;
           setIsDragging(false);
-          if (!press || didDragRef.current) return;
+          if (!press || didDragRef.current || event.button !== 0) return;
           onSelect?.(press.hit);
+        }}
+        // The browser took the gesture (a touch scroll, a lost capture): end the
+        // press, or hover stays suppressed until the next up or leave.
+        onPointerCancel={() => {
+          pressRef.current = null;
+          setIsDragging(false);
         }}
         onPointerLeave={() => {
           pressRef.current = null;
@@ -1407,12 +1414,13 @@ export function KnowledgeGraphCanvas({
         />
       ) : null}
 
-      {hoveredIndex !== null ? (
+      {/* Guarded on the node, not the index: a rebuild or a scope change can
+          swap in a smaller map while the cursor rests, and the stale index then
+          names no node, which threw and unmounted the whole graph. */}
+      {hoveredNode ? (
         <HoverCard
-          node={projection.nodes[hoveredIndex]}
-          cluster={regions.find(
-            (entry) => entry.id === regionOf(projection.nodes[hoveredIndex]),
-          ) ?? null}
+          node={hoveredNode}
+          cluster={regions.find((entry) => entry.id === regionOf(hoveredNode)) ?? null}
           x={pointer.x}
           y={pointer.y}
           containerWidth={pointer.containerWidth}

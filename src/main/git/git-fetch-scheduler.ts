@@ -54,6 +54,12 @@ let activeTimer: NodeJS.Timeout | null = null;
 let activeProjectId: string | null = null;
 /** When this scheduler last started a sweep, for the failed-fetch case above. */
 let lastAttemptAt = 0;
+/**
+ * Bumped by every `stop`. A config save restarts the SAME project, so a tick
+ * still reading the clock when the switch went off would otherwise sweep and
+ * re-arm the timer the restart decided against.
+ */
+let generation = 0;
 
 /** Whether the project keeps its remotes current in the background. */
 function autoFetchEnabled(context: IpcContext, projectPath: string): boolean {
@@ -97,9 +103,10 @@ function arm(context: IpcContext, project: Project, delayMs: number): void {
 async function tick(context: IpcContext, project: Project): Promise<void> {
   activeTimer = null;
   if (activeProjectId !== project.id) return;
+  const tickGeneration = generation;
   const lastFetchAt = await lastAllRemotesFetchAt(project.path).catch(() => null);
-  // Stopped or switched while the clock was being read.
-  if (activeProjectId !== project.id || activeTimer) return;
+  // Stopped, switched, or restarted while the clock was being read.
+  if (generation !== tickGeneration || activeProjectId !== project.id || activeTimer) return;
   const dueAt = Math.max(lastFetchAt ?? 0, lastAttemptAt) + AUTO_FETCH_INTERVAL_MS;
   const waitMs = dueAt - Date.now();
   if (waitMs > 0) {
@@ -137,6 +144,7 @@ export const gitFetchScheduler = {
    */
   stop(projectId?: string): void {
     if (projectId != null && projectId !== activeProjectId) return;
+    generation += 1;
     if (activeTimer) {
       clearTimeout(activeTimer);
       activeTimer = null;

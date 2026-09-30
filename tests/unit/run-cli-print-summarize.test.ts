@@ -532,6 +532,69 @@ describe('runCliPrintAnswer - the answer shape', () => {
   });
 });
 
+/**
+ * The streamed text (`onChunk`).
+ *
+ * A pipe read can end between the bytes of one character. The returned value is
+ * assembled from the raw buffers and was always whole, but each chunk forwarded
+ * to a streaming consumer was decoded alone, so a split character reached the
+ * screen as U+FFFD.
+ */
+describe('runCliPrintAnswer - the streamed text', () => {
+  it('forwards a character split across stdout chunks whole, and the buffered answer agrees', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+    const chunks: string[] = [];
+
+    const resultPromise = runCliPrintAnswer({
+      cliPath: '/usr/bin/fake',
+      args: [],
+      prompt: 'question',
+      cwd: '/tmp',
+      onChunk: (text) => chunks.push(text),
+    });
+
+    const whole = 'Route: café → done';
+    const bytes = Buffer.from(whole, 'utf-8');
+    // One read ends after the first byte of the two-byte character, the next
+    // after the second byte of the three-byte one.
+    const firstSplit = bytes.indexOf(Buffer.from('é', 'utf-8')) + 1;
+    const secondSplit = bytes.indexOf(Buffer.from('→', 'utf-8')) + 2;
+    child.stdout.emit('data', bytes.subarray(0, firstSplit));
+    child.stdout.emit('data', bytes.subarray(firstSplit, secondSplit));
+    child.stdout.emit('data', bytes.subarray(secondSplit));
+    child.emit('close', 0);
+
+    expect(await resultPromise).toBe(whole);
+    expect(chunks.join('')).toBe(whole);
+    expect(chunks.join('')).not.toContain('�');
+  });
+
+  it('holds back a chunk that is only the start of a character, rather than forwarding a replacement', async () => {
+    const child = makeFakeChild();
+    mockSpawn.mockReturnValue(child);
+    const chunks: string[] = [];
+
+    const resultPromise = runCliPrintAnswer({
+      cliPath: '/usr/bin/fake',
+      args: [],
+      prompt: 'question',
+      cwd: '/tmp',
+      onChunk: (text) => chunks.push(text),
+    });
+
+    const arrow = Buffer.from('→', 'utf-8');
+    child.stdout.emit('data', arrow.subarray(0, 1));
+    // Nothing to show yet: the character is not whole.
+    expect(chunks).toEqual([]);
+    child.stdout.emit('data', arrow.subarray(1));
+    expect(chunks).toEqual(['→']);
+
+    child.emit('close', 0);
+    expect(await resultPromise).toBe('→');
+  });
+});
+
 describe('runCliPrintSummarize - a prompt delivered through a file', () => {
   // For a CLI that reads its prompt from a file and not from stdin (Grok's
   // `--prompt-file`, Aider's `--message-file`). An answer prompt runs to about

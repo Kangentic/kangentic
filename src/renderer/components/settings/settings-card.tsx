@@ -119,7 +119,7 @@ interface SettingsCardProps {
   searchId?: string;
   /** Registry ids of the rows inside, so a search hit on any of them keeps the card. */
   searchIds?: string[];
-  /** The master switch. Omit for a header-only card (Branches, Pull requests, Knowledge Graph). */
+  /** The master switch. Omit for a header-only card (Branches, Pull requests). */
   checked?: boolean;
   onChange?: (value: boolean) => void;
   /** A longer note behind an info icon on the title, e.g. MCP Server's "How it works". */

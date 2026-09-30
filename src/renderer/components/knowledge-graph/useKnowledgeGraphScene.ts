@@ -279,11 +279,20 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
       // otherwise hand the camera one enormous step and teleport it.
       const delta = Math.min((now - previousTime) / 1000, 0.1);
       previousTime = now;
-      const flying = applyKeyboardFlight(controls, heldKeysRef.current, delta);
-      const cameraMoved = controls.update(delta);
-
-      onFrameRef.current?.(scene);
-      const easing = scene.renderFrame();
+      let flying: boolean;
+      let cameraMoved: boolean;
+      let easing: boolean;
+      try {
+        flying = applyKeyboardFlight(controls, heldKeysRef.current, delta);
+        cameraMoved = controls.update(delta);
+        onFrameRef.current?.(scene);
+        easing = scene.renderFrame();
+      } catch (error) {
+        // A frame that throws must not leave the loop marked as running, or
+        // requestRender refuses every later frame and the map stays frozen.
+        frameRef.current = null;
+        throw error;
+      }
 
       // Keep going only while something is still moving: the camera, or a style
       // change easing in. When both settle this stops, and the surface goes back
@@ -515,6 +524,10 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
     const heldKeys = heldKeysRef.current;
 
     const onKeyDown = (event: KeyboardEvent): void => {
+      // A chord is an app shortcut (Mod+S, Mod+Shift+D), not flight. macOS also
+      // sends no keyup for a letter released while Cmd is held, so a chord that
+      // started flight would never stop it.
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       const key = event.key.toLowerCase();
       if (!FLY_KEYS.has(key)) return;
       event.preventDefault();

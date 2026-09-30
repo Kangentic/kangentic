@@ -38,6 +38,7 @@ import {
   SUMMARIES_OFF,
   REGION_NAMES_KEY,
   nameRegions,
+  parseStoredRegionNames,
   regionNamesCurrent,
   regionNamesUsable,
   withRegionNames,
@@ -164,6 +165,33 @@ describe('stored region names', () => {
     expect(withSummaries[0]).toContain('wheel scroll');
     expect(titlesOnly[0]).not.toContain('wheel scroll');
   });
+
+  describe('as read back from memory_meta', () => {
+    it('round-trips a blob the service wrote', () => {
+      expect(parseStoredRegionNames(JSON.stringify(stored))).toEqual(stored);
+    });
+
+    it('reads nothing from an absent, unparseable, or wrongly shaped blob', () => {
+      expect(parseStoredRegionNames(undefined)).toBeNull();
+      expect(parseStoredRegionNames('not json')).toBeNull();
+      expect(parseStoredRegionNames('null')).toBeNull();
+      expect(parseStoredRegionNames(JSON.stringify({ ...stored, signature: 7 }))).toBeNull();
+      expect(parseStoredRegionNames(JSON.stringify({ ...stored, summaries: null }))).toBeNull();
+    });
+
+    it('reads nothing from a blob with no names object, so laying names over a map cannot throw', () => {
+      // A signature and summaries with no `names` used to be accepted, and
+      // `withRegionNames` then threw reading `stored.names[granularity]`.
+      const withoutNames = JSON.stringify({ signature: 'sig-1', labellerVersion: LABELLER_VERSION, summaries: SUMMARIES_OFF });
+      const withNullNames = JSON.stringify({ signature: 'sig-1', labellerVersion: LABELLER_VERSION, summaries: SUMMARIES_OFF, names: null });
+      expect(parseStoredRegionNames(withoutNames)).toBeNull();
+      expect(parseStoredRegionNames(withNullNames)).toBeNull();
+
+      const map = projection();
+      expect(() => withRegionNames(map, parseStoredRegionNames(withoutNames), SUMMARIES_OFF)).not.toThrow();
+      expect(withRegionNames(map, parseStoredRegionNames(withoutNames), SUMMARIES_OFF)).toBe(map);
+    });
+  });
 });
 
 describe('the graph service names regions in the background', () => {
@@ -260,6 +288,25 @@ describe('the graph service names regions in the background', () => {
     // Milliseconds, not the five-minute wait a pass that has not caught up gets.
     await vi.advanceTimersByTimeAsync(10);
     expect(stored()?.summaries).toBe('12:2026-09-28T01:02:00.000Z');
+  });
+
+  it('serves the map and makes the names again when the stored blob has no names object', async () => {
+    // The blob names the current map, labeller and summary setting, so only its
+    // missing `names` stands between it and being shown. That used to throw out
+    // of every snapshot read.
+    state.meta.set(REGION_NAMES_KEY, JSON.stringify({
+      signature: 'sig-1',
+      labellerVersion: LABELLER_VERSION,
+      summaries: SUMMARIES_OFF,
+    }));
+    const graph = service();
+
+    expect(() => graph.getProjection('project')).not.toThrow();
+    expect(regionLabel(graph)).toBe('build terminal');
+
+    await vi.runAllTimersAsync();
+    expect(stored()?.names).toBeDefined();
+    expect(regionLabel(graph)).not.toBe('build terminal');
   });
 
   it('drops names made for a map rebuilt while they were being made', async () => {

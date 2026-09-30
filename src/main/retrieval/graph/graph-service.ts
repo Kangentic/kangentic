@@ -462,12 +462,17 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
           onChanged?.(projectId);
         } catch (error) {
           console.error('[knowledge-graph] projection pass failed:', error);
-        } finally {
-          running.delete(projectId);
         }
       })();
 
       running.set(projectId, { signal, promise });
+      // Cleared once the pass settles, never from inside it: a pass that exits
+      // before its first await (no vec extension, a store that fails to open)
+      // would run that cleanup synchronously, BEFORE the set above, and leave
+      // the project marked as building forever, refusing every later pass.
+      void promise.finally(() => {
+        if (running.get(projectId)?.promise === promise) running.delete(projectId);
+      });
     },
 
   };

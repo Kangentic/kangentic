@@ -2,7 +2,7 @@
  * A hover label that cannot be clipped by whatever it happens to sit inside.
  *
  * The app's hover text has been native `title` almost everywhere, which is
- * unstyled and slow to appear. The one place that needed better - the Memory
+ * unstyled and slow to appear. The one place that needed better - the Knowledge
  * Graph's camera legend - grew its own absolutely-positioned chip and
  * immediately hit both failure modes an in-flow tooltip has:
  *
@@ -91,15 +91,21 @@ export function HoverTip({
     });
   }, [open, label]);
 
+  const close = (): void => {
+    setOpen(false);
+    setStyle({ visibility: 'hidden' });
+  };
+
   return (
     <span
       ref={triggerRef}
       className={className}
       onPointerEnter={() => setOpen(true)}
-      onPointerLeave={() => {
-        setOpen(false);
-        setStyle({ visibility: 'hidden' });
-      }}
+      onPointerLeave={close}
+      // Focus too, so a sighted keyboard user tabbing to the wrapped control
+      // sees what a pointer user sees. React's focus events bubble from it.
+      onFocus={() => setOpen(true)}
+      onBlur={close}
     >
       {children}
       <span className="sr-only">{label}</span>

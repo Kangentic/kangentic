@@ -166,6 +166,9 @@ let unsubscribeChanged: (() => void) | null = import.meta.hot?.data?.knowledgeGr
 let unsubscribeConfig: (() => void) | null = import.meta.hot?.data?.knowledgeGraphUnsubscribeConfig ?? null;
 // @ts-expect-error -- Vite handles import.meta.hot
 let fetchOrdinal: number = import.meta.hot?.data?.knowledgeGraphFetchOrdinal ?? 0;
+// The snapshot read asked for while one was in flight, run when that one lands.
+// @ts-expect-error -- Vite handles import.meta.hot
+let pendingSnapshotRead: { projectId: string | null; fromPush: boolean } | null = import.meta.hot?.data?.knowledgeGraphPendingSnapshotRead ?? null;
 // @ts-expect-error -- Vite handles import.meta.hot
 let unsubscribeStream: (() => void) | null = import.meta.hot?.data?.knowledgeGraphUnsubscribeStream ?? null;
 // The turn whose stream events are wanted. An event carrying any other id is
@@ -215,6 +218,7 @@ if (import.meta.hot) {
     data.knowledgeGraphUnsubscribe = unsubscribeChanged;
     data.knowledgeGraphUnsubscribeConfig = unsubscribeConfig;
     data.knowledgeGraphFetchOrdinal = fetchOrdinal;
+    data.knowledgeGraphPendingSnapshotRead = pendingSnapshotRead;
     data.knowledgeGraphUnsubscribeStream = unsubscribeStream;
     data.knowledgeGraphActiveRequestId = activeRequestId;
     data.knowledgeGraphChatId = chatId;
@@ -532,8 +536,20 @@ function createKnowledgeGraphStore() {
       },
 
       loadSnapshot: async (projectId, options) => {
+        if (inFlight) {
+          // Asked for mid-read: a completion push, a config change, or a read
+          // for another project. The read in flight was for what was current
+          // when it started, so one more runs when it lands. Returning the old
+          // read alone lost the push, or showed the old project. A reader's ask
+          // outranks a push that follows it, since it names what the reader
+          // wants to see and may start a rebuild a push may not.
+          const fromPush = options?.fromPush === true;
+          if (!fromPush || pendingSnapshotRead === null || pendingSnapshotRead.fromPush) {
+            pendingSnapshotRead = { projectId: projectId ?? null, fromPush };
+          }
+          return inFlight.then(() => inFlight ?? undefined);
+        }
         const targetProjectId = projectId ?? get().projectId;
-        if (inFlight) return inFlight;
 
         fetchOrdinal += 1;
         const ordinal = fetchOrdinal;
@@ -579,6 +595,9 @@ function createKnowledgeGraphStore() {
             if (ordinal === fetchOrdinal) set({ loading: false, loaded: true });
           } finally {
             inFlight = null;
+            const next = pendingSnapshotRead;
+            pendingSnapshotRead = null;
+            if (next) void get().loadSnapshot(next.projectId, { fromPush: next.fromPush });
           }
         })();
 

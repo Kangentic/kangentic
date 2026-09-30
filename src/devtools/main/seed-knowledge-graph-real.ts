@@ -117,12 +117,6 @@ export interface SeedKnowledgeGraphRealOptions {
   sourceProject?: string;
 }
 
-/**
- * Copy the most recent `documentLimit` indexed conversations (all of them by
- * default) - chunks, vectors,
- * index state, and the tasks/sessions they hang off - from the real parent
- * project into the currently open (preview) project.
- */
 /** What the mirror needs from a source session row to make a preview node
  *  look like the real thing in the detail panel. */
 interface SourceSessionFacts {
@@ -139,6 +133,12 @@ interface SourceSessionFacts {
   readonly toolCalls: number | null;
 }
 
+/**
+ * Copy the most recent `documentLimit` indexed conversations (all of them by
+ * default) - chunks, vectors,
+ * index state, and the tasks/sessions they hang off - from the real parent
+ * project into the currently open (preview) project.
+ */
 export function seedKnowledgeGraphFromRealIndex(
   context: IpcContext,
   options: SeedKnowledgeGraphRealOptions = {},

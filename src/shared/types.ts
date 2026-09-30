@@ -3377,7 +3377,7 @@ export interface AppConfig {
   };
 
   /**
-   * Conversation knowledgeGraph: local index over agent conversation transcripts for
+   * The Knowledge Graph: local index over agent conversation transcripts for
    * search and recall. GLOBAL/shared scope (below the settings separator, in
    * the Knowledge Graph tab). Works offline with no API key.
    */
@@ -3432,7 +3432,7 @@ export interface AppConfig {
      * without this field the agent's own default is the only option.
      *
      * An ADAPTER-SPECIFIC model id (Claude `haiku`, `opus`), so it is cleared
-     * whenever `answerAgent` changes - an id from one CLI means nothing to
+     * whenever `agent` changes - an id from one CLI means nothing to
      * another. Required when the agent's answer run takes a model
      * (`AnswerCapabilities.model`); there is no "agent default" to fall back on,
      * for the same reason the agent has none.
@@ -3443,7 +3443,7 @@ export interface AppConfig {
      * reports. Optional, unlike the model: unset runs at the adapter's
      * recommended level (`AnswerCapabilities.defaultEffort`). Summaries ignore it
      * and always run at that recommended level (`agentJobChoice`). Cleared with
-     * the model whenever `answerAgent` changes, since levels are per CLI
+     * the model whenever `agent` changes, since levels are per CLI
      * (Claude's `max` is not Grok's).
      */
     effort?: string | null;
@@ -3469,7 +3469,7 @@ export interface AppConfig {
      * ON unless switched off. The first fill embeds every passage in the
      * background (about 12k for this repository: half an hour on a GPU, a
      * couple of hours on a CPU) and keeps about 4 KB of vectors per passage, so
-     * it waits for the Knowledge Graph (`semanticEnabled`) and a Knowledge Graph
+     * it waits for the Knowledge Graph (`enabled`) and a Knowledge Graph
      * agent, the only reader of the code index. Read through `codeIndexOn`
      * (`src/shared/answer-agent.ts`). Switching it off clears the code index,
      * which the branch can always rebuild.
@@ -7209,7 +7209,7 @@ export type KnowledgeGraphAnswerResult =
     /**
      * Set when the question could not run because the answering agent or its
      * model has not been chosen yet. The surface takes the user to Settings >
-     * Memory instead of showing an error, since nothing failed.
+     * Knowledge Graph instead of showing an error, since nothing failed.
      */
     setup?: AnswerSetupGap;
   };
