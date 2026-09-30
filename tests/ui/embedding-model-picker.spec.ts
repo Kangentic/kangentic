@@ -464,13 +464,52 @@ test.describe('Index card', () => {
       await expect(confirm).toContainText('Conversations, tasks, commits, summaries and source code are all rebuilt, in every project.');
       await expect(confirm).toContainText('The 674 summaries written with an earlier model are rewritten, about 68 calls in the background.');
       await expect(confirm).not.toContainText(/Sonnet|Opus/);
-      await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0))
+      // A rebuild that skipped the confirm would have gone out on the click
+      // itself, so with the dialog showing, one read is the whole check. A poll
+      // for zero passes on its first sample and only looks like a wait.
+      expect(await page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0))
         .toBe(0);
 
       await confirm.getByRole('button', { name: 'Rebuild' }).click();
       await expect(confirm).toHaveCount(0);
       await expect.poll(() => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0))
         .toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Cancel on the Rebuild confirm closes it and rebuilds nothing', async () => {
+    const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
+    const opus = { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' };
+    const summaries = { ...SUMMARIES, written: 674, choice: opus, writtenWith: [{ ...sonnet, count: 674 }] };
+    const { browser, page } = await launchWithState(makePreConfig('ready', undefined, summaries, CODE, SOURCES));
+    const rebuildCalls = () => page.evaluate(() => (window as unknown as { __mockRebuildIndexCalls?: number[] }).__mockRebuildIndexCalls?.length ?? 0);
+    try {
+      await setKnowledgeGraph(page, { agent: 'claude', model: 'claude-opus-5-5', taskSummaries: true });
+      await openKnowledgeGraphTab(page);
+      const rebuildButton = page.getByTestId('knowledge-graph-rebuild-index');
+      const confirm = page.getByTestId('rebuild-confirm');
+
+      await rebuildButton.click();
+      await expect(confirm).toContainText('Rebuild everything?');
+      await confirm.getByRole('button', { name: 'Cancel' }).click();
+      await expect(confirm).toHaveCount(0);
+
+      // The rebuild request goes out synchronously from the confirm's own click
+      // handler, so once the dialog is gone the count is final: no poll needed.
+      expect(await rebuildCalls()).toBe(0);
+      // Nothing is left running: the button is back to its idle label and enabled.
+      await expect(rebuildButton).toHaveText('Rebuild');
+      await expect(rebuildButton).toBeEnabled();
+
+      // Cancelling forgot nothing and locked nothing: asking again asks again,
+      // and confirming that one is the only rebuild there is.
+      await rebuildButton.click();
+      await expect(confirm).toBeVisible();
+      await confirm.getByRole('button', { name: 'Rebuild' }).click();
+      await expect(confirm).toHaveCount(0);
+      expect(await rebuildCalls()).toBe(1);
     } finally {
       await browser.close();
     }

@@ -205,6 +205,49 @@ describeWithSqlite('sweepCodeRecords', () => {
     expect(fixture.git.listCalls).toBe(0);
   });
 
+  it('reads the branch again after Rebuild cleared the index state, though its head did not move', async () => {
+    const fixture = project();
+    fixture.files.set('src/pacer.ts', 'export const one = 1;\n');
+    fixture.files.set('docs/pacing.md', '# Pacing\n');
+    await fixture.sweep();
+    // Passages already embedded: Rebuild keeps them, and so must the refill.
+    fixture.database.exec("UPDATE memory_chunks SET embedded_model = 'model@1' WHERE corpus = 'code'");
+    // Rebuild forgets what each source was read from and keeps the passages. The
+    // stored head, which a cleared index leaves behind, still matches the branch.
+    fixture.store.resetIndexState();
+    fixture.git.listCalls = 0;
+    fixture.git.blobReads.length = 0;
+
+    const result = await fixture.sweep();
+
+    expect(result).toEqual({ indexed: 2, removed: 0, deferred: false });
+    expect(fixture.git.listCalls).toBe(1);
+    expect(fixture.git.blobReads.flat()).toHaveLength(2);
+    // The passages were never dropped, so the refill neither duplicates nor re-embeds them.
+    expect(fixture.paths()).toEqual(['docs/pacing.md', 'src/pacer.ts']);
+    expect(fixture.store.corpusProgress('code', 'model@1')).toEqual({ documents: 2, chunks: 2, embedded: 2 });
+
+    // Read once more, so the next sweep on the same head is the free check again.
+    fixture.git.listCalls = 0;
+    expect(await fixture.sweep()).toEqual({ indexed: 0, removed: 0, deferred: false });
+    expect(fixture.git.listCalls).toBe(0);
+  });
+
+  it('fills the index again when source code is switched back on, though the branch did not move', async () => {
+    const fixture = project();
+    fixture.files.set('src/pacer.ts', 'export const one = 1;\n');
+    await fixture.sweep();
+    // Switched off: the corpus is cleared, and the stored head stays behind.
+    expect(purgeCodeRecords('project', () => fixture.db)).toBe(true);
+    expect(fixture.paths()).toEqual([]);
+    fixture.git.listCalls = 0;
+
+    expect(await fixture.sweep()).toEqual({ indexed: 1, removed: 0, deferred: false });
+
+    expect(fixture.git.listCalls).toBe(1);
+    expect(fixture.paths()).toEqual(['src/pacer.ts']);
+  });
+
   it('re-reads only the files whose content changed when the branch moves', async () => {
     const fixture = project();
     fixture.files.set('src/pacer.ts', 'export const one = 1;\n');
