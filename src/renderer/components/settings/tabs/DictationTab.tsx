@@ -277,9 +277,16 @@ export function DictationTab({
       <SettingsCard
         icon={<Mic size={16} />}
         {...settingProps('dictation.enabled')}
-        // The Transcription card's settings too: that card is not rendered while
-        // dictation is off, so a search for one of them finds this switch.
-        searchIds={['dictation.releaseBufferMs', 'dictation.autoSubmit', 'dictation.language', 'dictation.punctuation', 'dictation.remote']}
+        // Its own rows, and while dictation is off the Transcription card's
+        // settings too: that card is not rendered then, so a search for one of
+        // them finds this switch. While it is on, that card answers for its own
+        // settings, and listing them here would pull this card's rows into
+        // their results.
+        searchIds={[
+          'dictation.releaseBufferMs',
+          'dictation.autoSubmit',
+          ...(enabled ? [] : ['dictation.language', 'dictation.punctuation', 'dictation.remote']),
+        ]}
         checked={enabled}
         onChange={(value) => updateGlobal({ dictation: { enabled: value } })}
       >
@@ -454,8 +461,9 @@ export function DictationTab({
               )}
               {/* The models this setup runs and whether they are on disk, under
                   the rows that pick them: Mode for a preset, the two pickers in
-                  Custom. A cloud-only setup has none to show. */}
-              {pickedModelIds.length > 0 ? (
+                  Custom. A cloud-only setup has none to show, and a stopped
+                  worker downloads nothing, which the tile above already says. */}
+              {pickedModelIds.length > 0 && !info.workerUnavailable ? (
                 <DictationModelStatus
                   names={pickedModelNames}
                   state={modelState}

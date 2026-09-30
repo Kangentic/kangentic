@@ -407,6 +407,9 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
     controls.addEventListener('controlstart', takeOver);
     canvas.addEventListener('pointerdown', wake);
     canvas.addEventListener('wheel', takeOver, { passive: true });
+    // three restores its own state after a GPU reset, but frames are drawn on
+    // demand, so an idle map stays blank until something asks for one.
+    canvas.addEventListener('webglcontextrestored', wake);
 
     // The size the fit above was made for. The observer reports once as soon as
     // it starts watching, at that same size. That report still re-aims, since
@@ -441,6 +444,7 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
       controls.removeEventListener('controlstart', takeOver);
       canvas.removeEventListener('pointerdown', wake);
       canvas.removeEventListener('wheel', takeOver);
+      canvas.removeEventListener('webglcontextrestored', wake);
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
         frameRef.current = null;

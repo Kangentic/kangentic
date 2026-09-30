@@ -101,20 +101,25 @@ describe('writeInTimedSlices', () => {
 
   it('ends the run when a slice fails to commit', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const db = {
-      transaction: () => () => {
-        throw new Error('disk I/O error');
-      },
-    } as unknown as Database.Database;
-    const writeOne = vi.fn();
+    // Restored whatever the assertions do, so a failure here cannot leave
+    // console.warn silenced for the tests after it.
+    try {
+      const db = {
+        transaction: () => () => {
+          throw new Error('disk I/O error');
+        },
+      } as unknown as Database.Database;
+      const writeOne = vi.fn();
 
-    const finished = await writeInTimedSlices(db, [1, 2], writeOne, 'test', () => true, {
-      clock: () => 0,
-      yieldToEventLoop: async () => undefined,
-    });
+      const finished = await writeInTimedSlices(db, [1, 2], writeOne, 'test', () => true, {
+        clock: () => 0,
+        yieldToEventLoop: async () => undefined,
+      });
 
-    expect(finished).toBe(false);
-    expect(warn).toHaveBeenCalledTimes(1);
-    warn.mockRestore();
+      expect(finished).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

@@ -444,7 +444,9 @@ test.describe('knowledge graph', () => {
       await expect(rows).not.toContainText('Chunks');
       await expect(rows).not.toContainText('Embedded');
       // Whether the numbers are current, and where to act on them.
-      await expect(page.locator('[data-testid="knowledge-graph-index-updated"]')).toHaveText('Updated 3 minutes ago');
+      // The fixture's clock starts at init, so a slow runner can round the
+      // three minutes up to four before this renders.
+      await expect(page.locator('[data-testid="knowledge-graph-index-updated"]')).toHaveText(/^Updated [34] minutes ago$/);
       await page.locator('[data-testid="knowledge-graph-index-settings"]').click();
       await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
       await expect(page.locator('[data-testid="settings-tab-knowledgeGraph"]')).toHaveClass(/font-medium/);
@@ -1385,6 +1387,41 @@ test.describe('knowledge graph', () => {
       await expect(page.locator('[data-testid="knowledge-graph-chat"]')).toHaveCount(0);
       // The question waits in the graph's box for when the user comes back.
       await expect(page.locator('[data-testid="knowledge-graph-search-input"]')).toHaveValue('what changed the renderer?');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a question queued from Quick Find while an answer is running is asked when that answer lands', async () => {
+    // A turn still answering refuses a new question. The queued one used to be
+    // taken (and so cleared) the moment it arrived, then refused, and was lost.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(12) })}
+      ${answeredScript('The first answer.', [chatRow(0)], 'window.__mockHoldAnswer = true;')}`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openKnowledgeGraph(page);
+      await askInBox(page, 'first question');
+      await expect.poll(async () => (await answerCalls(page)).length).toBe(1);
+
+      // What Quick Find's Ask row calls: it queues the question and opens the
+      // graph, which is already open here. Called directly, since the palette
+      // would have to be layered over the graph to reach it by keyboard.
+      await page.evaluate(() => (window as unknown as {
+        __zustandStores: { knowledgeGraph: { getState: () => { askInGraph: (question: string, projectId: string | null) => void } } };
+      }).__zustandStores.knowledgeGraph.getState().askInGraph('second question', null));
+      // Not asked over the answer that is still running.
+      expect((await answerCalls(page)).map((call) => call.question)).toEqual(['first question']);
+
+      // The first answer lands, and the queued question follows it.
+      await page.evaluate(() => {
+        const scope = window as unknown as { __mockHoldAnswer: boolean; __mockReleaseAnswer: () => void };
+        scope.__mockHoldAnswer = false;
+        scope.__mockReleaseAnswer();
+      });
+      await expect
+        .poll(async () => (await answerCalls(page)).map((call) => call.question))
+        .toEqual(['first question', 'second question']);
+      await expect(page.locator('[data-testid="knowledge-graph-chat-question"]')).toHaveCount(2);
     } finally {
       await browser.close();
     }
@@ -2384,6 +2421,138 @@ test.describe('knowledge graph', () => {
     }, change);
   }
 
+  /**
+   * Rebuild the open map so its conversations sit at different positions, the
+   * way a re-cluster or a scope change reorders them, then push it.
+   *
+   * `reverse` lists the conversations back to front, with the links and the
+   * neighbour lists remapped so each still joins the same two conversations, and
+   * retitles "Conversation k" as "Rebuilt k". The number stays with the
+   * conversation and the word changes, so a panel still reading "Conversation k"
+   * has not seen the rebuild yet, and one reading "Rebuilt j" for a j that is not
+   * the conversation it was showing has followed the position instead of the
+   * conversation. With an even node count no position maps to itself.
+   *
+   * `replaceDocKey` swaps that conversation for a newcomer, titled
+   * "Replacement", at the same position.
+   */
+  async function reshapeMap(page: Page, change: { reverse?: boolean; replaceDocKey?: string }): Promise<void> {
+    await page.evaluate((requested) => {
+      type Neighbor = { index: number; similarity: number };
+      type MapNode = { docKey: string; title?: string | null };
+      type Projection = {
+        signature: string;
+        nodes: MapNode[];
+        edges: Array<{ source: number; target: number }>;
+        nodeNeighbors: Neighbor[][];
+      };
+      type Snapshot = { projection: Projection | null };
+      const holder = window as unknown as {
+        electronAPI: { knowledgeGraph: { graphSnapshot: () => Promise<Snapshot | null> } };
+        __mockFireGraphChanged: (projectId: string) => void;
+      };
+      const api = holder.electronAPI.knowledgeGraph;
+      const previous = api.graphSnapshot.bind(api);
+      api.graphSnapshot = async () => {
+        const snapshot = await previous();
+        if (!snapshot || !snapshot.projection) return snapshot;
+        const projection = snapshot.projection;
+        const count = projection.nodes.length;
+        const positionOf = (index: number): number => (requested.reverse ? count - 1 - index : index);
+        const nodes: MapNode[] = new Array(count);
+        const nodeNeighbors: Neighbor[][] = new Array(count);
+        projection.nodes.forEach((node, index) => {
+          nodes[positionOf(index)] = requested.replaceDocKey === node.docKey
+            ? { ...node, docKey: 'conversation::doc-replacement', title: 'Replacement' }
+            : requested.reverse
+              ? { ...node, title: (node.title ?? '').replace('Conversation', 'Rebuilt') }
+              : node;
+        });
+        projection.nodeNeighbors.forEach((list, index) => {
+          nodeNeighbors[positionOf(index)] = list.map((entry) => ({ ...entry, index: positionOf(entry.index) }));
+        });
+        return {
+          ...snapshot,
+          projection: {
+            ...projection,
+            signature: 'sig-reshaped',
+            nodes,
+            edges: projection.edges.map((edge) => ({ ...edge, source: positionOf(edge.source), target: positionOf(edge.target) })),
+            nodeNeighbors,
+          },
+        };
+      };
+      holder.__mockFireGraphChanged('project-1');
+    }, change);
+  }
+
+  test('keeps showing the same conversation, and the way back to the one before, when a rebuild reorders the map', async () => {
+    // The selection and the trail of followed neighbours are positions in the
+    // map's node list. A rebuild re-clusters and reorders it, so carried by
+    // position the panel showed another conversation under the same selection.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await openKnowledgeGraph(page);
+      const start = await selectVisibleNode(page);
+      const hopped = (start + 1) % 30;
+      const title = page.locator('[data-testid="knowledge-graph-detail-title"]');
+      // The fixture makes a node's nearest neighbour the next one. Following it
+      // puts the conversation it came from on the trail.
+      await page.locator('[data-testid="knowledge-graph-neighbor"]').first().click();
+      await expect(title).toHaveText(`Conversation ${hopped}`);
+
+      await reshapeMap(page, { reverse: true });
+
+      // The same conversation, in the rebuilt map's words.
+      await expect(title).toHaveText(`Rebuilt ${hopped}`);
+      // And Back still names the conversation the trail came from, and goes there.
+      const back = page.locator('[data-testid="knowledge-graph-detail-back"]');
+      await expect(back).toContainText(new RegExp(`Rebuilt ${start}\\b`));
+      await back.click();
+      await expect(title).toHaveText(`Rebuilt ${start}`);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('keeps exploring the same neighbourhood when a rebuild reorders the map', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await openKnowledgeGraph(page);
+      const index = await selectVisibleNode(page);
+      await page.locator('[data-testid="knowledge-graph-explore-from"]').click();
+      const chip = page.locator('[data-testid="knowledge-graph-explore-chip"]');
+      await expect(chip).toContainText(new RegExp(`Conversation ${index}\\b`));
+
+      await reshapeMap(page, { reverse: true });
+
+      // Still around the conversation the reader chose, whatever position it took.
+      await expect(chip).toContainText(new RegExp(`Rebuilt ${index}\\b`));
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('drops the selection when its conversation has left the map', async () => {
+    // The map is rebuilt without the selected conversation, and another one
+    // takes its position. Carried by position, the panel went on showing that
+    // other conversation as if it were the one the reader had chosen.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await openKnowledgeGraph(page);
+      const index = await selectVisibleNode(page);
+      const detail = page.locator('[data-testid="knowledge-graph-detail"]');
+      await expect(detail).toBeVisible();
+
+      await reshapeMap(page, { replaceDocKey: `conversation::doc-${index}` });
+
+      await expect(detail).toHaveCount(0);
+      await expect(page.locator('[data-testid="knowledge-graph-page"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a smaller map swapped in under a resting cursor leaves the graph standing', async () => {
     // The hover card indexed the projection by the hovered node's INDEX. A
     // rebuild (or a scope change) can swap in a smaller map while the pointer
@@ -2473,9 +2642,9 @@ test.describe('knowledge graph', () => {
     // area's height against the 0.88 an unfiltered map gets. Reset view was
     // therefore the one control that pulled the view further OUT after a filter.
     //
-    // Two well-separated blocks, because the fixture's own clustering is
-    // INTERLEAVED (`i % 2` over a grid), so hiding a region there leaves the
-    // same spatial extent and the assertion could not fail.
+    // Two well-separated blocks, because the fixture's own regions are
+    // contiguous slices of a 20-column grid that sit side by side, so hiding
+    // one there barely moves the extent and the assertion could hardly fail.
     const separated = `(function () {
       var base = ${projectionLiteral(40)};
       base.nodes.forEach(function (node, i) {

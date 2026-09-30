@@ -3,6 +3,7 @@ import { browserPaneRegistry } from './browser/browser-pane-registry';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { answerSessionPool } from './retrieval/answer-session-pool';
+import { stopAllCliRuns } from './agent/shared/auto-name';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
@@ -111,6 +112,11 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
     // End every warm Knowledge Graph answering process. Synchronous: each is a
     // child process killed in place, and its run directory removed.
     runCleanupStep('answerSessionPool.disposeAll', () => answerSessionPool.disposeAll());
+
+    // And every headless agent CLI still running outside the pool: a one-shot
+    // answer, a task summary, a title. Each runs detached (POSIX) or outlives
+    // the app (Windows), so one left here keeps running after the quit.
+    runCleanupStep('stopAllCliRuns', () => stopAllCliRuns());
 
     // Close active project's file watchers before killing sessions
     runCleanupStep('boardConfigManager.detach', () => dependencies.getBoardConfigManager().detach());

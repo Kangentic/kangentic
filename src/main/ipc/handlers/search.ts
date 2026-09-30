@@ -66,6 +66,11 @@ const RELATED_EMBED_WAIT_MS = 5_000;
  *  its board tasks and no conversations. */
 const EMPTY_PROJECTION = { nodes: [], clusterings: [] };
 
+/** A chat or request id goes into the answer run's MCP URL path
+ *  (`appendAnswerCaller`), so only an id's shape passes. The renderer mints UUIDs. */
+function isCallerSegment(value: unknown): value is string {
+  return typeof value === 'string' && /^[\w-]{1,64}$/.test(value);
+}
 
 /** Characters of the task's title + description used as the recall query.
  *  Enough to carry the task's meaning; past this the embedding blurs. */
@@ -164,7 +169,7 @@ export function registerSearchHandlers(context: IpcContext): void {
   // no model call, so this costs a process and nothing else.
   ipcMain.on(IPC.KNOWLEDGE_GRAPH_PREWARM, (_event, chat?: KnowledgeGraphAnswerPrewarm) => {
     retrievalService.prewarmEmbedWorker(context);
-    if (!chat?.chatId) return;
+    if (!chat || !isCallerSegment(chat.chatId)) return;
     const homeProjectId = chat.projectId ?? context.currentProjectId;
     if (!homeProjectId) return;
     // A pop-out can still hold a deleted project's id, and a warm agent pointed
@@ -184,7 +189,7 @@ export function registerSearchHandlers(context: IpcContext): void {
   // closed. The next question in a kept chat opens a fresh one carrying the
   // chat so far.
   ipcMain.on(IPC.KNOWLEDGE_GRAPH_END_CHAT, (_event, chatId: string) => {
-    if (typeof chatId === 'string' && chatId) answerSessionPool.end(chatId);
+    if (isCallerSegment(chatId)) answerSessionPool.end(chatId);
   });
 
   // The Index card's Rebuild, for every source in every project. Global, like
@@ -226,7 +231,6 @@ export function registerSearchHandlers(context: IpcContext): void {
       return timeSyncWork('ipc:graph-snapshot', () => graphService.getSnapshot(resolvedProjectId, model.modelTag));
     },
   );
-
 
   /**
    * Ask: find the work a question is about, show it, and have an agent answer.
@@ -285,7 +289,7 @@ export function registerSearchHandlers(context: IpcContext): void {
         // the open project when it is in scope.
         const homeProject = scopeProjects.find((entry) => entry.id === openProjectId) ?? scopeProjects[0];
 
-        const callerChat = answerContext.chatId || requestId || 'oneshot';
+        const callerChat = [answerContext.chatId, requestId].find(isCallerSegment) ?? 'oneshot';
         const resolvedRun = await resolveAnswerRun(context, homeProject.id, callerChat);
         if (!resolvedRun.ok) return resolvedRun.failure;
         const { adapter, answerFromContext, cliPath, model: configuredModel, effort, retrieval } = resolvedRun.run;
@@ -465,7 +469,7 @@ export function registerSearchHandlers(context: IpcContext): void {
           taskTable = freshTable;
           ({ refByKey, keyByRef } = indexRefs(taskTable));
         }
-        const toWire =(task: ProjectRelatedWorkTask): KnowledgeGraphRelatedTask => ({
+        const toWire = (task: ProjectRelatedWorkTask): KnowledgeGraphRelatedTask => ({
           key: task.key,
           taskId: task.taskId,
           displayId: task.displayId,

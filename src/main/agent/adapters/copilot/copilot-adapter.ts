@@ -305,8 +305,12 @@ export class CopilotAdapter implements AgentAdapter {
     const onEvent = options?.onEvent;
     const sessionId = randomUUID();
     const searchArgs: string[] = [];
+    // A run directory goes with its run. Without one the config lands in the
+    // shared answer home, so this run removes it, token and all, when it ends.
+    let strayConfigPath: string | null = null;
     if (retrieval) {
       const configPath = path.join(options?.runDirectory ?? cwd, 'copilot-answer-mcp.json');
+      if (!options?.runDirectory) strayConfigPath = configPath;
       // sync-write-ok: the run names this file in --additional-mcp-config and
       // cannot search without it. The throw reaches the KNOWLEDGE_GRAPH_ANSWER
       // handler's catch, which shows it as the answer's failure.
@@ -347,6 +351,7 @@ export class CopilotAdapter implements AgentAdapter {
     } finally {
       await fs.promises.rm(path.join(os.homedir(), '.copilot', 'session-state', sessionId), { recursive: true, force: true })
         .catch(() => undefined);
+      if (strayConfigPath) await fs.promises.rm(strayConfigPath, { force: true }).catch(() => undefined);
     }
   }
 

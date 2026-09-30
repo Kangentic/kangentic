@@ -140,7 +140,7 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
   };
 });
 
-import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession, cancelPendingVerdictRepolls, prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '../../src/main/pr/pr-linking';
+import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession, cancelPendingVerdictRepolls, prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig, clearPRCheckStamps, lastPRCheckAt } from '../../src/main/pr/pr-linking';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -1273,6 +1273,35 @@ describe('linkPRForTask throttle (auto triggers only)', () => {
     const second = await linkPRForTask(task.id, depsFor(task, { force: false }));
     expect(second.status).toBe('unchanged');
     expect(conn.calls.length).toBe(callsAfterFirst); // no new resolver calls
+  });
+
+  it('counts a coalesced resolve as a check for a task whose check stamp was cleared, stamped with the resolve it coalesced into', async () => {
+    // The refresh queue counts each PR's interval from its check stamp. A
+    // scheduler restart clears the stamps but not the 60 s coalesce window, and
+    // a task left with no stamp is picked first on every tick until that window
+    // ends, which starves the rest of the queue.
+    conn.byBranch = resolved(81);
+    const task = worktreeTask();
+    const now = vi.spyOn(Date, 'now');
+    try {
+      now.mockReturnValue(1_000_000);
+      await linkPRForTask(task.id, depsFor(task, { force: false }));
+      expect(lastPRCheckAt(task.id)).toBe(1_000_000);
+      clearPRCheckStamps();
+      expect(lastPRCheckAt(task.id)).toBeUndefined();
+      const callsAfterFirst = conn.calls.length;
+
+      // Ten seconds on: inside the window, so the resolve coalesces.
+      now.mockReturnValue(1_010_000);
+      const second = await linkPRForTask(task.id, depsFor(task, { force: false }));
+
+      expect(second.status).toBe('unchanged');
+      expect(conn.calls.length).toBe(callsAfterFirst); // no resolver call: it coalesced
+      // The check it coalesced into is the one it is dated by, not the moment it was asked.
+      expect(lastPRCheckAt(task.id)).toBe(1_000_000);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('bypassThrottle: the PR-command signal resolves inside the TTL window an idle resolve stamped', async () => {

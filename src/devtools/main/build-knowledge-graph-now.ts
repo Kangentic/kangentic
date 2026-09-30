@@ -15,7 +15,7 @@
  * moves the cost into the seed click, where the user is already waiting and can
  * see it, and leaves the map ready the moment the button returns.
  *
- * Crucially this changes NOTHING about shipped behaviour: it lives under
+ * This changes NOTHING about shipped behaviour: it lives under
  * `src/devtools/`, which is build-excluded via `__KANGENTIC_DEV__`, and it drives
  * the REAL engine through the real store rather than reimplementing it. A seeder
  * that computed its own layout would validate the seeder instead of the code that

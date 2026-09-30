@@ -16,7 +16,7 @@ import { CODE_MAX_FILE_BYTES, CODE_RECORD_VERSION, codeChunks, isIndexableCodePa
  * alike, the way Cursor's hash tree finds the files it must re-embed. A sweep
  * whose branch has not moved since the last one costs a single `rev-parse`;
  * one that moved lists the tree (one `git ls-tree`) and reads only the changed
- * blobs, through one `git cat-file --batch` process. An unchanged passage in a
+ * blobs, through one `git cat-file --batch` process per 16 MB batch. An unchanged passage in a
  * changed file keeps its vector (the diff-upsert keys on content).
  */
 
@@ -63,6 +63,28 @@ const defaultDeps: CodeIndexerDeps = {
 /** The files of a tree the index holds. */
 export function indexableEntries(entries: ReadonlyArray<TreeEntry>): TreeEntry[] {
   return entries.filter((entry) => entry.size <= CODE_MAX_FILE_BYTES && isIndexableCodePath(entry.path));
+}
+
+/** File bytes one `git cat-file` read brings into main before they are written.
+ *  A file is at most `CODE_MAX_FILE_BYTES`, so a batch overshoots by one file at most. */
+const BLOB_BATCH_BYTES = 16 * 1024 * 1024;
+
+/** Entries in order, cut into runs whose sizes sum to at most `limitBytes`. */
+export function batchesBySize(entries: ReadonlyArray<TreeEntry>, limitBytes: number): TreeEntry[][] {
+  const batches: TreeEntry[][] = [];
+  let current: TreeEntry[] = [];
+  let currentBytes = 0;
+  for (const entry of entries) {
+    if (current.length > 0 && currentBytes + entry.size > limitBytes) {
+      batches.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(entry);
+    currentBytes += entry.size;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
 }
 
 /**
@@ -116,42 +138,46 @@ export async function sweepCodeRecords(
   const onBranch = new Set(entries.map((entry) => entry.path));
   const gone = [...new Set([...signatures.keys(), ...store.documentIds(CORPUS)])].filter((docId) => !onBranch.has(docId));
 
-  let contents: Map<string, Buffer>;
-  try {
-    contents = await deps.readBlobs(projectPath, [...new Set(changed.map((entry) => entry.blob))]);
-  } catch (error) {
-    console.warn('[retrieval] code sweep could not read the branch\'s files:', error);
-    return result;
-  }
-  if (!shouldContinue()) return result;
-
-  const writeFile = (entry: TreeEntry): void => {
-    const content = contents.get(entry.blob);
-    if (!content) return;
+  // Read and written a batch at a time, so a first sweep of a large tree holds
+  // one batch of file contents in main, never the whole changed set at once.
+  for (const batch of batchesBySize(changed, BLOB_BATCH_BYTES)) {
+    let contents: Map<string, Buffer>;
     try {
-      const chunks = codeChunks(entry.path, content.toString('utf8'));
-      store.upsertDocument(
-        { corpus: CORPUS, docId: entry.path, sessionId: null, taskId: null, agentSessionId: null, metaJson: null },
-        chunks,
-      );
-      store.setIndexState({
-        corpus: CORPUS,
-        docId: entry.path,
-        sessionId: null,
-        sourcePath: `${SOURCE_PREFIX}${entry.blob}`,
-        sourceMtimeMs: null,
-        sourceSize: entry.size,
-        entryCount: 1,
-        chunkCount: chunks.length,
-        status: 'ok',
-        indexedAt: new Date(deps.now()).toISOString(),
-      });
-      result.indexed += 1;
+      contents = await deps.readBlobs(projectPath, [...new Set(batch.map((entry) => entry.blob))]);
     } catch (error) {
-      console.warn(`[retrieval] ${entry.path} failed to index:`, error);
+      console.warn('[retrieval] code sweep could not read the branch\'s files:', error);
+      return result;
     }
-  };
-  if (!await writeInTimedSlices(db, changed, writeFile, 'records:code-slice', shouldContinue, deps)) return result;
+    if (!shouldContinue()) return result;
+
+    const writeFile = (entry: TreeEntry): void => {
+      const content = contents.get(entry.blob);
+      if (!content) return;
+      try {
+        const chunks = codeChunks(entry.path, content.toString('utf8'));
+        store.upsertDocument(
+          { corpus: CORPUS, docId: entry.path, sessionId: null, taskId: null, agentSessionId: null, metaJson: null },
+          chunks,
+        );
+        store.setIndexState({
+          corpus: CORPUS,
+          docId: entry.path,
+          sessionId: null,
+          sourcePath: `${SOURCE_PREFIX}${entry.blob}`,
+          sourceMtimeMs: null,
+          sourceSize: entry.size,
+          entryCount: 1,
+          chunkCount: chunks.length,
+          status: 'ok',
+          indexedAt: new Date(deps.now()).toISOString(),
+        });
+        result.indexed += 1;
+      } catch (error) {
+        console.warn(`[retrieval] ${entry.path} failed to index:`, error);
+      }
+    };
+    if (!await writeInTimedSlices(db, batch, writeFile, 'records:code-slice', shouldContinue, deps)) return result;
+  }
 
   const removeFile = (docId: string): void => {
     try {

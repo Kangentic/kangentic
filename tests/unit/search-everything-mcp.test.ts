@@ -936,6 +936,28 @@ describe('kangentic_search MCP tool', () => {
       }
     });
 
+    it('spends exactly one of an answer run\'s searches on a ranking that runs, and refuses the next once the budget is spent', async () => {
+      const handler = registerServer(resolver, 'answer-related-budget-1');
+      const stop = watchAnswerSearches('answer-related-budget-1', () => undefined);
+      try {
+        for (let search = 0; search < ANSWER_SEARCH_BUDGET; search += 1) {
+          const result = await handler({ relatedToTask: '#561' });
+          expect(result.isError).toBeUndefined();
+          expect(result.content[0].text).not.toContain('answer now from what you have already found');
+        }
+        expect(mockSearchRelatedWork).toHaveBeenCalledTimes(ANSWER_SEARCH_BUDGET);
+
+        const overBudget = await handler({ relatedToTask: '#561' });
+
+        expect(overBudget.isError).toBeUndefined();
+        expect(overBudget.content[0].text).toContain('answer now from what you have already found');
+        // Refused before the ranking: nothing ran.
+        expect(mockSearchRelatedWork).toHaveBeenCalledTimes(ANSWER_SEARCH_BUDGET);
+      } finally {
+        stop();
+      }
+    });
+
     it('names the project and how to find the task when it does not exist', async () => {
       const result = await server.getHandler('kangentic_search')({ relatedToTask: '#999' });
       expect(result.isError).toBe(true);
@@ -1219,6 +1241,29 @@ describe('kangentic_search MCP tool', () => {
       }
     });
 
+    it('spends none of the question\'s searches on a related-task call that names a task that does not exist', async () => {
+      // Nothing is on the board as #999 here. More such calls than the budget:
+      // were each one to claim a search, none would be left for a real one.
+      const handler = registerServer(resolver, 'answer-budget-related-1');
+      const stop = watchAnswerSearches('answer-budget-related-1', () => undefined);
+      try {
+        for (let attempt = 0; attempt <= ANSWER_SEARCH_BUDGET + 1; attempt += 1) {
+          const refused = await handler({ relatedToTask: '#999' });
+          expect(refused.isError).toBe(true);
+          expect(refused.content[0].text).toContain('No task "#999"');
+        }
+        for (let search = 0; search < ANSWER_SEARCH_BUDGET; search += 1) {
+          const result = await handler({ query: `query ${search}` });
+          expect(result.isError).toBeUndefined();
+          expect(result.content[0].text).not.toContain('answer now from what you have already found');
+        }
+        const overBudget = await handler({ query: 'one more' });
+        expect(overBudget.content[0].text).toContain('answer now from what you have already found');
+      } finally {
+        stop();
+      }
+    });
+
     it('never limits an ordinary agent\'s search', async () => {
       for (let search = 0; search <= ANSWER_SEARCH_BUDGET + 1; search += 1) {
         const result = await server.getHandler('kangentic_search')({ query: `query ${search}` });
@@ -1314,6 +1359,34 @@ describe('kangentic_search MCP tool', () => {
       } finally {
         stop();
       }
+    });
+
+    it('holds a run no question is watching to the project its URL names, though it passes scope "all"', async () => {
+      // The watch goes when its question ends, and a run can outlive it. No
+      // question means no scope, and no scope is not every project. This caller
+      // never had a watch registered, which is the same state.
+      const handler = registerServer(threeProjectResolver(), 'answer-scope-6');
+
+      const result = await handler({ query: 'relay', scope: 'all' });
+
+      expect(result.isError).toBeUndefined();
+      const { scanned, nameable } = scannedProjects();
+      expect(scanned).toEqual([DEFAULT_PROJECT_ID]);
+      // The other projects' names do not leak through project hits either, and
+      // none of their commits are read.
+      expect(nameable).toEqual([DEFAULT_PROJECT_ID]);
+      expect(mockGetProjectDb.mock.calls.map(([projectId]) => projectId)).toEqual([DEFAULT_PROJECT_ID]);
+    });
+
+    it('refuses a project other than its own to a run no question is watching', async () => {
+      const handler = registerServer(threeProjectResolver(), 'answer-scope-7');
+
+      const result = await handler({ query: 'relay', project: 'Other' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe('This question is asked across Default. Search only those.');
+      expect(mockRunSearchEverything).not.toHaveBeenCalled();
+      expect(mockGetProjectDb).not.toHaveBeenCalled();
     });
 
     it('spends none of the question\'s searches on a call it refuses', async () => {

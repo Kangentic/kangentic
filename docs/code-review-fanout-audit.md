@@ -809,6 +809,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 734, third pass | 37f +2922 plus 2 new files | 317KB, 5814 lines | 7 (2) | 32 | 0 | 9 | 16 of 8 pack-carrying | 35 / 28 |
 | task 529, whole branch, pre-PR | 357f +51373 -3763 | 3508KB, 61990 lines | 4 (0) | 353 | 1 | 13, sharded by area | about 47 of 12 pack-carrying | about 94 / 38 applied |
 | task 529, whole branch, second pass | 364f +53178 -3804 | 3607KB, 63938 lines | 3 (0) | 361 | 1 | 17, sharded by area, 4 over tests | about 68 of 16 pack-carrying | about 106 / 53 applied |
+| task 529, whole branch, third pass | 367f +54593 -3815 | 3692KB, 65439 lines | 4 (0) | 363 | 1 | 17, sharded by area, 4 over tests | about 97 of 16 pack-carrying | about 85 / 55 applied |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -996,3 +997,21 @@ cross projects, because its key carries the search URL. A queued question alread
 draft. The main-process and renderer test-builders ran in parallel on disjoint files. One
 reverted shared source briefly while the other ran, so the driver re-ran every touched unit file
 and UI spec afterwards.
+
+The task 529 third pass kept the second pass's layout and added one input. Before the fan-out the
+driver wrote the working-tree line ranges changed since the last review began (its own fix commit
+and the four commits after it) to a short file every finder read after its ranges, so the lines no
+independent reviewer had seen got the closest look. The pack was built once and never re-based, so
+the preexisting-dirty list it writes stayed valid. The signature delta came from a script over the
+pack's marked lines, 139KB of it, well past "a few hundred tokens"; a 367-file branch has that many
+exported signatures, and the integration finder read it in 600-line calls. Of about 85 raised
+findings, 55 were applied and 2 refuted: a store that pins its instance and keeps a dispose stash
+(the documented `session-store` shape), and a settings change asking for a rebuild of a stale map,
+which is the user's own act. The rest were skipped with a reason, most of them performance work
+that needs a measurement first. The highest-value finds sat in code the earlier passes had read:
+closing the graph mid-answer killed the warm session and failed the kept turn, a node selection
+kept by array position showed another conversation after a rebuild, and a multi-chunk change
+record listed its own header as a changed file. Two side effects are worth knowing. On Windows the
+new process-tree stop ran a real `taskkill` against a fake child's pid in an existing test (pinned
+to the POSIX path since), and a test-builder's first red run printed `process.env` through a
+matcher over spawn options, so the neighbouring assertions now read single fields.

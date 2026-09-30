@@ -474,15 +474,6 @@ export function assignClusters(
 }
 
 /**
- * Split on non-alphanumerics AND on camelCase boundaries.
- *
- * Task titles are full of identifiers (`pruneOrphanedDirectories`,
- * `spawn_agent`), and lowercasing before splitting turns those into one
- * unreadable run - a real label came out as "pruneorphaneddirectories". Split
- * the case boundary first, then lowercase.
- */
-/** The raw word stream, stop words INCLUDED. Phrases are built from this. */
-/**
  * The title's words, split into runs that a PHRASE may not cross.
  *
  * Punctuation is a boundary, not whitespace to be discarded. Stripping it

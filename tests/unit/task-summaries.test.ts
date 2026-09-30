@@ -23,6 +23,7 @@ import {
   rankChangedFiles,
   readSummaryCandidates,
 } from '../../src/main/retrieval/summary/summary-sources';
+import { CHANGE_HEADER, changeRecordChunks } from '../../src/main/retrieval/change/change-record';
 import { runSummaryPass } from '../../src/main/retrieval/summary/summary-pass';
 import { createSummaryScheduler } from '../../src/main/retrieval/summary/summary-scheduler';
 import { SummaryStore } from '../../src/main/retrieval/summary/summary-store';
@@ -126,6 +127,23 @@ describe('reading a finished task', () => {
       'src/a/relay-client.ts',
       'README.md',
     ]);
+  });
+
+  it('reads every file of a document whose chunks were joined, and never takes the header a later chunk opens with for a file', () => {
+    // Enough files that the record does not fit one 1,600-character chunk. The
+    // readers join a document's chunks with a newline, and every chunk opens
+    // with the header, so the joined text meets it again at each boundary.
+    const files = Array.from({ length: 40 }, (_unused, index) => {
+      const padded = String(index).padStart(2, '0');
+      return { path: `src/features/module-${padded}/component-${padded}.ts`, changes: 1 };
+    });
+    const chunks = changeRecordChunks(files, null);
+    expect(chunks.length).toBeGreaterThan(1);
+    const joined = chunks.map((chunk) => chunk.text).join('\n');
+    expect(joined.split('\n').filter((line) => line === CHANGE_HEADER)).toHaveLength(chunks.length);
+
+    expect(changedFilesOf(joined)).toEqual(files.map((file) => file.path));
+    expect(rankChangedFiles([joined, joined])).toEqual(files.map((file) => file.path));
   });
 });
 

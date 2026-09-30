@@ -20,7 +20,12 @@
  *  - a project coming back into the scope is read again (its pushes were ignored
  *    while it was out), while one that stayed in, and the open project, are not, and
  *  - a scoped re-read that rejects keeps the island already drawn, while a first
- *    read that rejects records the project as empty.
+ *    read that rejects records the project as empty,
+ *  - the open project's island is seeded again from the live snapshot when it
+ *    rejoins the scope, since its reads refreshed the snapshot while it was out,
+ *  - closing the graph leaves a session that is still answering alone and ends
+ *    it when that turn lands, while an idle close ends it at once, and
+ *  - reopening the graph does not prewarm over a turn from before the close.
  *
  * window.electronAPI is stubbed globally and the store is imported fresh for
  * every test (vi.resetModules): its in-flight read, pending read, stream
@@ -49,6 +54,8 @@ let streamListeners: Array<(event: KnowledgeGraphAnswerStreamPush) => void> = []
 const graphSnapshotMock = vi.fn<(projectId?: string | null) => Promise<KnowledgeGraphSnapshot | null>>();
 const refreshGraphMock = vi.fn<(projectId?: string | null) => Promise<void>>();
 const answerFromGraphMock = vi.fn<(...args: unknown[]) => Promise<KnowledgeGraphAnswerResult>>();
+const prewarmMock = vi.fn<(options: { chatId: string; projectId: string | null }) => void>();
+const endChatMock = vi.fn<(chatId: string) => void>();
 
 function installWindowStub(): void {
   (globalThis as Record<string, unknown>).window = {
@@ -64,8 +71,8 @@ function installWindowStub(): void {
           return () => undefined;
         }),
         answerFromGraph: answerFromGraphMock,
-        prewarm: vi.fn(),
-        endChat: vi.fn(),
+        prewarm: prewarmMock,
+        endChat: endChatMock,
       },
     },
   };
@@ -408,6 +415,144 @@ describe('knowledge-graph-store setScope', () => {
 
     expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
     expect(store.getState().scopeSnapshots.A).toBe(store.getState().snapshot);
+  });
+
+  it('seeds the open project from its live snapshot when it rejoins the scope, not from the island it left behind', async () => {
+    const oldOwn = makeSnapshot('A', { stale: true });
+    const newerOwn = makeSnapshot('A', { stale: false });
+    store.setState({ projectId: 'A', snapshot: oldOwn });
+
+    store.getState().setScope(['A', 'B']);
+    expect(store.getState().scopeSnapshots.A).toBe(oldOwn);
+    resolveRead('B');
+    await flush();
+
+    // A leaves the scope. Its island stays cached, but a read of A now reaches
+    // only `snapshot`: the scope no longer holds A, so the island is not updated.
+    store.getState().setScope(['B']);
+    const reread = store.getState().loadSnapshot('A');
+    resolveRead('A', newerOwn);
+    await reread;
+    expect(store.getState().snapshot).toBe(newerOwn);
+    expect(store.getState().scopeSnapshots.A).toBe(oldOwn);
+
+    store.getState().setScope(['A', 'B']);
+
+    // The island is the newer snapshot itself (identity, not a lookalike), and
+    // it came from the live snapshot: neither A nor B was read again.
+    expect(store.getState().scopeSnapshots.A).toBe(newerOwn);
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('knowledge-graph-store close and open around a turn in flight', () => {
+  /** Hold the next answer open, so the turn stays in flight until the test
+   *  settles it. */
+  function holdNextAnswer(): (result: KnowledgeGraphAnswerResult) => void {
+    let release: (result: KnowledgeGraphAnswerResult) => void = () => undefined;
+    answerFromGraphMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    return (result) => release(result);
+  }
+
+  const settledAnswer: KnowledgeGraphAnswerResult = {
+    ok: true,
+    agentName: 'Test Agent',
+    answer: 'an answer',
+    rows: [],
+    related: [],
+    handedCount: 0,
+    promptTokens: 1,
+  };
+
+  /** The chat id the store handed the answering agent for the ask at `callIndex`. */
+  function chatIdOfAsk(callIndex: number): string {
+    const options = answerFromGraphMock.mock.calls[callIndex][4] as { chatId: string };
+    return options.chatId;
+  }
+
+  it('ends the chat at once when no turn is in flight', () => {
+    store.getState().open('A');
+    expect(endChatMock).not.toHaveBeenCalled();
+    const warmedChatId = prewarmMock.mock.calls[0][0].chatId;
+
+    store.getState().close();
+
+    expect(endChatMock).toHaveBeenCalledTimes(1);
+    expect(endChatMock).toHaveBeenCalledWith(warmedChatId);
+  });
+
+  it('leaves a session that is still answering alone on close, and ends it once when that turn lands', async () => {
+    store.getState().open('A');
+    store.getState().close();
+    expect(endChatMock).toHaveBeenCalledTimes(1);
+    store.getState().open('A');
+
+    const release = holdNextAnswer();
+    const asking = store.getState().askQuestion('which tasks touched the relay?');
+    const chatId = chatIdOfAsk(0);
+    expect(store.getState().thread[0].status).toBe('finding');
+
+    // The graph closes mid-answer: ending the session now would fail the turn
+    // the kept chat is about to show.
+    store.getState().close();
+    expect(endChatMock).toHaveBeenCalledTimes(1);
+
+    release(settledAnswer);
+    await asking;
+
+    // The answer landed into the kept chat, and only then does its session go.
+    expect(store.getState().thread[0].status).toBe('done');
+    expect(endChatMock).toHaveBeenCalledTimes(2);
+    expect(endChatMock).toHaveBeenLastCalledWith(chatId);
+  });
+
+  it('keeps the session when a turn lands while the graph is still open', async () => {
+    store.getState().open('A');
+    const release = holdNextAnswer();
+    const asking = store.getState().askQuestion('which tasks touched the relay?');
+
+    release(settledAnswer);
+    await asking;
+
+    // Nothing was closed, so a follow-up can still be asked in the same session.
+    expect(store.getState().thread[0].status).toBe('done');
+    expect(endChatMock).not.toHaveBeenCalled();
+  });
+
+  it('prewarms on every open when no turn is in flight', () => {
+    store.getState().open('A');
+    expect(prewarmMock).toHaveBeenCalledTimes(1);
+    const { chatId, projectId } = prewarmMock.mock.calls[0][0];
+    expect(projectId).toBe('A');
+
+    store.getState().close();
+    store.getState().open('A');
+
+    expect(prewarmMock).toHaveBeenCalledTimes(2);
+    expect(prewarmMock.mock.calls[1][0]).toEqual({ chatId, projectId: 'A' });
+  });
+
+  it('does not prewarm over a turn from before the close, and prewarms again once it has settled', async () => {
+    store.getState().open('A');
+    store.getState().close();
+    store.getState().open('A');
+    expect(prewarmMock).toHaveBeenCalledTimes(2);
+
+    const release = holdNextAnswer();
+    const asking = store.getState().askQuestion('which tasks touched the relay?');
+    store.getState().close();
+    store.getState().open('A');
+
+    // Its session is already warm and busy: a prewarm would replace it and fail
+    // the turn.
+    expect(prewarmMock).toHaveBeenCalledTimes(2);
+
+    release(settledAnswer);
+    await asking;
+    store.getState().close();
+    store.getState().open('A');
+
+    expect(prewarmMock).toHaveBeenCalledTimes(3);
   });
 });
 

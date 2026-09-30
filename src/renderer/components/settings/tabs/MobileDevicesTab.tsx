@@ -119,9 +119,9 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
   const relayMode = resolveRelayMode(globalConfig.mobileBridge);
   const resolvedRelayUrl = resolveRelayUrl(globalConfig.mobileBridge);
 
-  /** Search visibility is each card's own (`SettingsCard`'s searchIds), gated
-   *  on the WHOLE id list its section advertises: a relayUrl-only query
-   *  ("websocket", "address") must keep the relay card, address field and all. */
+  // Search visibility is each card's own (`SettingsCard`'s searchIds), gated
+  // on the WHOLE id list its section advertises: a relayUrl-only query
+  // ("websocket", "address") must keep the relay card, address field and all.
   /** Via settingProps, not a raw SETTINGS_BY_ID index: a future rename of the
    *  id then fails with "Unknown setting ID: ..." instead of a bare "cannot
    *  read properties of undefined". */

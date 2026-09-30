@@ -312,13 +312,6 @@ async function phraseFromTranscript(port, target) {
 }
 
 /**
- * Containment grading. Deterministic, no model, no human.
- *
- * Case-insensitive because an answer is prose and the facts are numbers and
- * tickets; commas are stripped from the haystack so `1,234` matches `1234`
- * without every provider having to guess which the agent wrote.
- */
-/**
  * Every name a result gives a task beyond its prose.
  *
  * An answer names a task in two places the reader can see: the prose, and the
@@ -340,6 +333,13 @@ function namedTasks(result) {
  */
 const QUOTE_MARK = new RegExp(`["${String.fromCharCode(0x201c)}]`);
 
+/**
+ * Containment grading. Deterministic, no model, no human.
+ *
+ * Case-insensitive because an answer is prose and the facts are numbers and
+ * tickets; commas are stripped from the haystack so `1,234` matches `1234`
+ * without every provider having to guess which the agent wrote.
+ */
 function grade(answerText, expectation, evidence = {}) {
   const normalize = (text) => String(text).toLowerCase().replace(/,/g, '');
   const prose = normalize(answerText);
@@ -454,6 +454,9 @@ async function main() {
   let passed = 0;
   let skipped = 0;
   let totalTokens = 0;
+  // Questions that reported their prompt tokens: a hung or failed one has none,
+  // and averaging over it understated the figure.
+  let tokenRows = 0;
 
   for (const entry of selected) {
     if (!rollupCache.has(entry.corpus)) {
@@ -461,7 +464,15 @@ async function main() {
       if (!provider) throw new Error(`No ground-truth provider for corpus "${entry.corpus}".`);
       rollupCache.set(entry.corpus, await provider(port));
     }
-    const expectation = await entry.truth(rollupCache.get(entry.corpus), tools);
+    // One question whose truth cannot be computed on this board is reported,
+    // not allowed to end the whole run.
+    let expectation;
+    try {
+      expectation = await entry.truth(rollupCache.get(entry.corpus), tools);
+    } catch (error) {
+      rows.push({ id: entry.id, verdict: 'ERROR', note: `ground truth failed: ${error instanceof Error ? error.message : String(error)}` });
+      continue;
+    }
 
     // A question that cannot apply to this board is SKIPPED, never failed.
     if (!expectation) {
@@ -526,7 +537,10 @@ async function main() {
     // Reported when the payload carries it, so the token line is a measurement
     // rather than an estimate. Absent is printed as absent.
     const tokens = result.promptTokens ?? null;
-    if (tokens) totalTokens += tokens;
+    if (tokens) {
+      totalTokens += tokens;
+      tokenRows += 1;
+    }
     rows.push({
       id: entry.id,
       verdict: verdict.pass ? 'PASS' : 'FAIL',
@@ -561,7 +575,7 @@ async function main() {
   }
   const graded = rows.length - skipped;
   console.log(`\n${passed}/${graded} passed, ${skipped} skipped`);
-  if (totalTokens) console.log(`${Math.round(totalTokens / graded)} prompt tokens per question`);
+  if (tokenRows) console.log(`${Math.round(totalTokens / tokenRows)} prompt tokens per question`);
   const timed = runs.filter((run) => run.elapsedMs).map((run) => run.elapsedMs).sort((a, b) => a - b);
   const firsts = runs.filter((run) => run.firstTextMs != null).map((run) => run.firstTextMs).sort((a, b) => a - b);
   const median = (values) => values[Math.floor(values.length / 2)];
@@ -608,7 +622,13 @@ async function regradeSavedRun(file, only) {
     if (!rollupCache.has(entry.corpus)) {
       rollupCache.set(entry.corpus, await ROLLUPS[entry.corpus](port));
     }
-    const expectation = await entry.truth(rollupCache.get(entry.corpus), tools);
+    let expectation;
+    try {
+      expectation = await entry.truth(rollupCache.get(entry.corpus), tools);
+    } catch (error) {
+      console.log(`ERROR ${run.id.padEnd(24)} ground truth failed: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
     if (!expectation) {
       console.log(`SKIP  ${run.id.padEnd(24)} not applicable to this index`);
       continue;

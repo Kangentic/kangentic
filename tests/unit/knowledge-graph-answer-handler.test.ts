@@ -596,6 +596,45 @@ describe('the Ask handler', () => {
     expect(options?.retrieval?.url).toBe('http://127.0.0.1:4321/mcp/project-1/answer-chat-1');
   });
 
+  describe('the id an answer run is named by', () => {
+    // A chat or request id becomes a path segment of the run's MCP URL, so only
+    // an id of the shape the renderer mints (word characters and dashes, 1 to
+    // 64 of them) is spliced in. Anything else falls back, in order, to the
+    // request id and then to "oneshot".
+    async function runUrlFor(requestId: string, chatId: string | undefined): Promise<string | undefined> {
+      const answerSpy = vi.fn(async () => 'Answered.');
+      mockAdapters = [claudeAdapter(answerSpy)];
+      registerSearchHandlers(makeContext() as unknown as Parameters<typeof registerSearchHandlers>[0]);
+      await ask('which task framed the sphere?', requestId, chatId === undefined ? undefined : { chatId });
+      const [, , , , options] = answerSpy.mock.calls[0] as unknown as AnswerCall;
+      return options?.retrieval?.url;
+    }
+
+    it.each([
+      ['a path separator and a parent segment', 'chat/../x'],
+      ['a space', 'chat 1'],
+      ['a dot', 'chat.1'],
+      ['a query character', 'chat?x=1'],
+      ['more than 64 characters', 'c'.repeat(65)],
+    ])('does not splice a chat id with %s into the URL, and names the run by its request id', async (_reason, chatId) => {
+      expect(await runUrlFor('req-9', chatId)).toBe('http://127.0.0.1:4321/mcp/project-1/answer-req-9');
+    });
+
+    it('names the run "oneshot" when neither the chat id nor the request id is of that shape', async () => {
+      expect(await runUrlFor('', 'chat/../x')).toBe('http://127.0.0.1:4321/mcp/project-1/answer-oneshot');
+      expect(await runUrlFor('req/9', 'chat/../x')).toBe('http://127.0.0.1:4321/mcp/project-1/answer-oneshot');
+      expect(await runUrlFor('', undefined)).toBe('http://127.0.0.1:4321/mcp/project-1/answer-oneshot');
+    });
+
+    it.each([
+      ['a UUID', '550e8400-e29b-41d4-a716-446655440000'],
+      ['underscores', 'chat_1'],
+      ['exactly 64 characters', 'c'.repeat(64)],
+    ])('names the run by a chat id that is %s', async (_shape, chatId) => {
+      expect(await runUrlFor('req-9', chatId)).toBe(`http://127.0.0.1:4321/mcp/project-1/answer-${chatId}`);
+    });
+  });
+
   it('scopes the table and the search to the map\'s filters', async () => {
     // The filters are the scope of a question, so a task they hide is neither
     // counted nor searched, and the prompt says the table is filtered.
@@ -1103,6 +1142,24 @@ describe('the Ask handler', () => {
       await vi.waitFor(() => expect(sessions.length).toBeGreaterThan(0));
       // Both prewarms resolve through the same async steps; one macrotask
       // lets any session the guard should have prevented open before asserting.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(sessions.map((session) => session.input.retrieval?.url)).toEqual([
+        'http://127.0.0.1:4321/mcp/project-1/answer-chat-live',
+      ]);
+    });
+
+    it('opens no warm session for a chat id that could not be a URL segment, and still prewarms a well-formed one', async () => {
+      mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'))];
+      registerSearchHandlers(makeContext() as unknown as Parameters<typeof registerSearchHandlers>[0]);
+
+      // The malformed id goes first, so an unguarded handler would open its
+      // session ahead of the well-formed one's.
+      prewarm('chat/../x');
+      prewarm('chat-live');
+      await vi.waitFor(() => expect(sessions.length).toBeGreaterThan(0));
+      // Both prewarms resolve through the same async steps; one macrotask
+      // lets any session the gate should have prevented open before asserting.
       await new Promise((resolve) => setImmediate(resolve));
 
       expect(sessions.map((session) => session.input.retrieval?.url)).toEqual([

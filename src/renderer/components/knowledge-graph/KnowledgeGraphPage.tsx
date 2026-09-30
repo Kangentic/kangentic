@@ -3,7 +3,7 @@
  * bar, showing what this project's conversation index has learned.
  *
  * Shares `z-[42]` with StatsPage and MonitorPage rather than claiming a new
- * slot in the documented ladder (board windows 40, stats/monitor/memory 42,
+ * slot in the documented ladder (board windows 40, stats/monitor/knowledge graph 42,
  * command terminal 45, dialogs 50, toasts 60). That is only safe because all
  * three are mutually exclusive - AppLayout closes the others when one opens.
  * Do not widen the ladder for this surface.
@@ -82,7 +82,7 @@ export function KnowledgeGraphPage() {
           }
         >
           {/* A plain lucide glyph, not a branding activity mark: those all mean
-              a STATE, so one here would read as "the memory is idle" rather
+              a STATE, so one here would read as "the graph is idle" rather
               than naming the surface. */}
           <Brain size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
           {/* No project name beside the title: the Filter card's Projects row

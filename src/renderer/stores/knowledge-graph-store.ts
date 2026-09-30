@@ -12,7 +12,7 @@
  * The load pattern is push-first: `open()` reads the cached projection (always
  * cheap - main never runs the pass in a handler) and then asks for a refresh,
  * with the finished pass arriving on `knowledgeGraph:graphChanged`. There is no poller,
- * which is the point: `KnowledgeGraphTab` already polls memory status every 1500ms, and
+ * which is the point: `KnowledgeGraphTab` already polls the index status every 1500ms, and
  * a second poller for the same subsystem is exactly what this avoids.
  *
  * THE CHAT is a thread of turns. The first question moves from the box on the
@@ -283,6 +283,10 @@ function createKnowledgeGraphStore() {
         }));
       } finally {
         if (activeRequestId === turn.id) activeRequestId = null;
+        // The graph closed while this turn was answering, and `close` left the
+        // session running so the answer could land. Nothing is open to ask a
+        // follow-up now, so the session goes.
+        if (!get().graphOpen && chatId) window.electronAPI.knowledgeGraph.endChat(chatId);
       }
     };
 
@@ -382,21 +386,24 @@ function createKnowledgeGraphStore() {
         // Start the embedding worker now, so the first question does not pay
         // its cold start before the related work can light the map, and the
         // answering agent's session for this chat, so it skips the CLI's
-        // start-up. Neither embeds nor calls a model until asked.
+        // start-up. Neither embeds nor calls a model until asked. Not while a
+        // turn from before the close is still answering: its session is already
+        // warm, and a prewarm would replace a busy session and fail the turn.
         if (!chatId) chatId = crypto.randomUUID();
-        window.electronAPI.knowledgeGraph.prewarm({ chatId, projectId: projectId ?? get().projectId });
+        if (!inFlightTurn()) window.electronAPI.knowledgeGraph.prewarm({ chatId, projectId: projectId ?? get().projectId });
       },
 
       close: () => {
         // The scope is a view choice for this visit; the next open starts on the
         // open project again. The chat is kept, its warm session is not: a
         // process idling behind a closed graph serves nobody, and the next open
-        // warms one again.
+        // warms one again. A session still answering is left to finish, or the
+        // kept chat would show that turn failed; `runTurn` ends it when it lands.
         set({ graphOpen: false, scopeProjectIds: null, scopeSnapshots: {} });
         // The next open reads afresh and asks for its own rebuilds.
         rebuildsAsked.clear();
         get().detach();
-        if (chatId) window.electronAPI.knowledgeGraph.endChat(chatId);
+        if (chatId && !inFlightTurn()) window.electronAPI.knowledgeGraph.endChat(chatId);
       },
 
       loadProjects: async () => {
@@ -420,12 +427,15 @@ function createKnowledgeGraphStore() {
         // The open project's map is already here, so it is seeded rather than
         // read again. Waiting on a read left the view with nothing to draw for
         // a moment, which blanked the map and unmounted the picker mid-choice.
+        // Seeded again when it rejoins the scope too: while it was out, its
+        // reads refreshed `snapshot` but not the island cached for the scope.
         const own = get().snapshot;
         const cached = get().scopeSnapshots;
-        const seeded = openProjectId && own && scope.includes(openProjectId) && !(openProjectId in cached)
+        const previous = new Set(get().scopeProjectIds ?? []);
+        const seeded = openProjectId && own && scope.includes(openProjectId)
+          && (!(openProjectId in cached) || !previous.has(openProjectId))
           ? { ...cached, [openProjectId]: own }
           : cached;
-        const previous = new Set(get().scopeProjectIds ?? []);
         set({ scopeProjectIds: scope, scopeSnapshots: seeded });
         for (const id of scope) {
           // A project coming back into the scope is read again. Its pushes were

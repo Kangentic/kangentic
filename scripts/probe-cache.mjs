@@ -57,9 +57,12 @@ function ask(prompt) {
     // `shell` is what finds the npm `claude.cmd` shim on Windows, and a shell
     // joins argv with spaces unquoted, so the empty tool list is written as a
     // quoted empty string. Bare, it vanished and left `--tools` with no value.
+    // No session is saved, as on the product's answer path, so a probe leaves
+    // nothing behind in the user's Claude history.
     const args = [
       '-p', '--model', 'haiku',
       '--tools', '""', '--strict-mcp-config',
+      '--no-session-persistence',
       '--output-format', 'json',
     ];
     // Prompt on STDIN, exactly as the product sends it - an argv prompt of this

@@ -22,7 +22,9 @@ export const CHANGE_RECORD_VERSION = 1;
 
 /** Characters of file lines per chunk, near the other corpora's chunk size. */
 const CHANGE_CHUNK_CHARS = 1_600;
-const CHANGE_HEADER = 'Files changed:';
+/** The first line of every chunk, not only the first chunk's: a reader that
+ *  joins a document's chunks meets it again at each chunk boundary. */
+export const CHANGE_HEADER = 'Files changed:';
 /** Folders whose files are not the repository's work: Kangentic's own runtime
  *  scratch (commit messages, PR bodies), git's internals, installed packages. */
 const IGNORED_ROOTS = ['.kangentic/', '.git/', 'node_modules/'];
@@ -51,13 +53,17 @@ export function changedFilesFromChunkTexts(
 ): Map<string, number> {
   const files = new Map<string, number>();
   if (tools.length === 0) return files;
-  const fieldByTool = new Map(tools.map((entry) => [entry.tool, entry.pathField]));
+  // One pattern per tool, built once rather than per tool line of every chunk.
+  const patternByTool = new Map(tools.map((entry) => [
+    entry.tool,
+    new RegExp(`"${escapeRegExp(entry.pathField)}":"((?:[^"\\\\]|\\\\.)*)"`),
+  ]));
   const toolLine = /^Tool: (\S+) (.*)$/gm;
   for (const text of texts) {
     for (const match of text.matchAll(toolLine)) {
-      const field = fieldByTool.get(match[1]);
-      if (!field) continue;
-      const found = match[2].match(new RegExp(`"${escapeRegExp(field)}":"((?:[^"\\\\]|\\\\.)*)"`));
+      const pattern = patternByTool.get(match[1]);
+      if (!pattern) continue;
+      const found = match[2].match(pattern);
       if (!found) continue;
       let filePath: string;
       try {

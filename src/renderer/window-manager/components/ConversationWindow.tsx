@@ -124,9 +124,10 @@ export function ConversationWindow({
   const sessions = useSessionStore((state) => state.sessions);
 
   // Whether THIS layer can put a task detail somewhere the user will see it. The
-  // board supplies the route; the Knowledge Graph's layer deliberately does not (see
+  // board supplies the route, and so does the in-app Knowledge Graph (it closes
+  // the graph first); the detached graph does not (see
   // `WindowManagerLayerOptions.revealTaskDetail`), so "Open task" hides there
-  // rather than opening a window under the graph or doing nothing at all.
+  // rather than doing nothing at all.
   const { layer } = useWindowManager();
   const revealTaskDetail = layer.revealTaskDetail;
 

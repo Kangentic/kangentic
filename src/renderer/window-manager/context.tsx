@@ -52,10 +52,11 @@ export interface WindowManagerLayerOptions {
    * Supplied rather than branched for the same reason `renderTaskDetail` is: what
    * differs is where a layer's host can put a task detail, which is a property of
    * the layer. The board supplies `setDetailTaskId`, whose bridge mounts the
-   * window on the board layer. The Knowledge Graph's layer omits it deliberately:
-   * in-app, that bridge would mount the detail at z-40, UNDERNEATH the graph's own
-   * z-42 overlay (the exact bug this layer exists to fix, one hop deeper); in the
-   * detached graph there is no board layer at all, so the button would be inert.
+   * window on the board layer. The Knowledge Graph's layer supplies it only
+   * in-app, where its host closes the graph first and then reveals the task on
+   * the board (mounting it there with the graph still open would put the detail
+   * at z-40, UNDERNEATH the graph's own z-42 overlay). The detached graph omits
+   * it: there is no board layer in a pop-out, so the button would be inert.
    * Hiding a control that cannot work beats shipping one that silently does
    * nothing.
    */

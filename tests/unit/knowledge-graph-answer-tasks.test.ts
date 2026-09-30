@@ -254,7 +254,7 @@ describe('board tasks with no indexed conversation', () => {
       boardTask('t-old', 14, 'Add support for OpenCode agent', 3.5),
     ]);
 
-    expect(table.rows.map((row) => row.displayId).sort()).toEqual([14, 509]);
+    expect(table.rows.map((row) => row.displayId).sort((first, second) => (first ?? 0) - (second ?? 0))).toEqual([14, 509]);
     const old = table.rows.find((row) => row.taskId === 't-old');
     expect(old).toMatchObject({ key: 't-old', docKeys: [], sessions: 2, costUsd: 3.5, region: null });
     // Its date widens the table's span, which the prompt states.

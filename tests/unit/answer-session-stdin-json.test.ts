@@ -6,7 +6,7 @@
  * and a dispose from the quit path.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -75,8 +75,18 @@ function open(overrides: Partial<StdinJsonSessionOptions> = {}): { child: FakeCh
 /** Let the PassThrough deliver what was written. */
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+// These pin the session's own lifecycle, not how a stop reaches the process. On
+// Windows `stopCli` takes the tree with a real `taskkill` by pid, which would
+// run against the fake child's made-up pid, so the POSIX path stands in on
+// every OS and a stop lands on the fake's own `kill`.
+const originalPlatform = process.platform;
+beforeEach(() => {
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+});
+
 afterEach(() => {
   vi.useRealTimers();
+  Object.defineProperty(process, 'platform', { value: originalPlatform });
 });
 
 describe('openStdinJsonSession', () => {

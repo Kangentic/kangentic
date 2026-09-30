@@ -552,7 +552,7 @@ export function TestHarness() {
         disabled={seedingRealIndex}
         className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
         data-testid="dev-seed-knowledge-graph-real"
-        title="Mirror a slice of the REAL parent project's conversation index (titles, text, embeddings) into this preview, so the Knowledge Graph shows actual work"
+        title="Mirror the REAL parent project's conversation index (titles, text, embeddings) into this preview, so the Knowledge Graph shows actual work"
       >
         <Brain size={16} />
         {seedingRealIndex ? 'Mirroring...' : 'Mirror Real Index'}

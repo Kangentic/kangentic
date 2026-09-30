@@ -647,6 +647,10 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         // last re-poll stamped; without this the card waits a whole sweep
         // interval again. A pending timer or a spent budget makes it a no-op.
         if (wantsInFlightVerdictRepoll(task, deps)) scheduleInFlightVerdictRepoll(task, deps);
+        // The coalesced resolve WAS a check. A scheduler restart clears the
+        // check stamps but not this window, and a task left stamp-less here is
+        // picked first on every tick until the window ends, starving the rest.
+        if (!lastCheckedAt.has(taskId)) lastCheckedAt.set(taskId, last);
         return { status: 'unchanged', task };
       }
     }

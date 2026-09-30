@@ -186,7 +186,7 @@ export function openStdinJsonSession(options: StdinJsonSessionOptions): AnswerSe
       // Already closed.
     }
     // Fire and forget: dispose runs on the quit path.
-    stopCli(child, options.cliPath);
+    stopCli(child);
   }
 
   return {

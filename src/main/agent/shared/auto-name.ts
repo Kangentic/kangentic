@@ -597,7 +597,7 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
     const timer = setTimeout(() => {
       timedOut = true;
       terminated = true;
-      stopCli(child, cliPath);
+      stopCli(child);
       exitWait = setTimeout(() => reject(new Error('summarize timed out')), EXIT_WAIT_MS);
       exitWait.unref();
     }, timeoutMs);
@@ -606,9 +606,9 @@ function runCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutSize += chunk.length;
       if (stdoutSize > outputBudget) {
-        // Stopped once: every chunk past the budget lands here, and a `.cmd`
-        // shim would otherwise start one taskkill per chunk.
-        if (!terminated) stopCli(child, cliPath);
+        // Stopped once: every chunk past the budget lands here, and on Windows
+        // it would otherwise start one taskkill per chunk.
+        if (!terminated) stopCli(child);
         terminated = true;
       } else {
         stdoutChunks.push(chunk);
@@ -706,20 +706,41 @@ const EXIT_WAIT_MS = 3_000;
 const processGroupLeaders = new WeakSet<ChildProcess>();
 
 /**
+ * Every CLI `spawnCli` started that has not exited yet, so the quit path can
+ * stop them (`stopAllCliRuns`). A CLI runs detached from the app on POSIX and
+ * outlives it on Windows, so one left running at quit kept answering, and
+ * holding its run directory, after the app was gone.
+ */
+const liveCliRuns = new Set<ChildProcess>();
+
+/**
+ * Stop every CLI still running. Synchronous, for the quit path: each stop is a
+ * signal or a `taskkill` started in place (`stopCli`).
+ */
+export function stopAllCliRuns(): void {
+  for (const child of [...liveCliRuns]) {
+    liveCliRuns.delete(child);
+    stopCli(child);
+  }
+}
+
+/**
  * Stop a CLI `spawnCli` started, and what it launched.
  *
  * A `.cmd` shim runs the CLI as a child of cmd.exe, so killing cmd.exe left the
  * CLI running with its working directory and every file it was handed by path,
- * a live MCP token among them. `taskkill /T /F` takes the whole tree. On POSIX
+ * a live MCP token among them. Any other Windows CLI can start children of its
+ * own too, and `child.kill` there ends one process with no grace either way, so
+ * on Windows `taskkill /T /F` takes the whole tree whatever the CLI is. On POSIX
  * a CLI can be a wrapper too (a shell script that starts node), so the CLI runs
  * as the leader of its own process group and the group gets the signal.
  * SIGTERM first, then SIGKILL if it has not exited within the grace. The check
  * reads the exit code and signal, not `child.killed`, which turns true when a
  * signal is SENT and so never let the SIGKILL fire.
  */
-export function stopCli(child: ChildProcess, cliPath: string): void {
+export function stopCli(child: ChildProcess): void {
   if (cliHasExited(child)) return;
-  if (cliRunsThroughShell(cliPath) && child.pid) {
+  if (process.platform === 'win32' && child.pid) {
     spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
       .on('error', () => undefined)
       .unref();
@@ -771,7 +792,15 @@ export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Rec
     env: env ? { ...process.env, ...env } : process.env,
     ...(leadsGroup ? { detached: true } : {}),
   });
-  if (leadsGroup && typeof child === 'object' && child !== null) processGroupLeaders.add(child);
+  if (typeof child === 'object' && child !== null) {
+    if (leadsGroup) processGroupLeaders.add(child);
+    // Tracked until it exits, so the quit path can reach it. `exit` fires even
+    // when stdio stays open; an `error` means it never started.
+    liveCliRuns.add(child);
+    const forget = (): void => { liveCliRuns.delete(child); };
+    child.once?.('exit', forget);
+    child.once?.('error', forget);
+  }
   return child;
 }
 

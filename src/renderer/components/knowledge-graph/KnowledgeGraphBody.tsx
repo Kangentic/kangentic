@@ -242,6 +242,29 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     return map;
   }, [nodes]);
 
+  // The selection, the trail and the explored node are positions in `nodes`,
+  // and a rebuild or a scope change reorders them: a rebuild re-clusters, and
+  // islands sort by size. Carried by position, the panel would show another
+  // conversation under the same selection. Found again by document key instead,
+  // and dropped when the conversation left the map. Adjusted during render, as
+  // the turn reset above is.
+  const [nodesSeen, setNodesSeen] = useState(nodes);
+  if (nodes !== nodesSeen) {
+    setNodesSeen(nodes);
+    const findAgain = (index: number): number | null => {
+      const docKey = nodesSeen?.[index]?.docKey;
+      return docKey === undefined ? null : indexByDocKey.get(docKey) ?? null;
+    };
+    if (selectedIndex !== null) setSelectedIndex(findAgain(selectedIndex));
+    if (exploreFromIndex !== null) setExploreFromIndex(findAgain(exploreFromIndex));
+    if (detailTrail.length > 0) {
+      setDetailTrail(detailTrail.flatMap((index) => {
+        const found = findAgain(index);
+        return found === null ? [] : [found];
+      }));
+    }
+  }
+
   /** The explored node plus everything it links to. */
   const exploreIndices = useMemo(() => {
     if (exploreFromIndex === null || !snapshot?.projection) return null;
@@ -567,13 +590,19 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
   useEffect(() => { askRef.current = ask; });
   useEffect(() => {
     const askQueued = (): void => {
-      const question = useKnowledgeGraphStore.getState().takeQueuedQuestion();
+      const state = useKnowledgeGraphStore.getState();
+      if (state.queuedQuestion === null) return;
+      // A turn still answering refuses a new question, so the queued one waits
+      // for it and is asked when the thread settles. Taken now, it was lost.
+      if (state.thread.some((turn) => turn.status === 'finding' || turn.status === 'answering')) return;
+      const question = state.takeQueuedQuestion();
       if (question) askRef.current(question);
     };
     // Usually queued before this body mounts: Quick Find queues, then opens.
     queueMicrotask(askQueued);
     return useKnowledgeGraphStore.subscribe((state, previous) => {
-      if (state.queuedQuestion !== null && state.queuedQuestion !== previous.queuedQuestion) askQueued();
+      if (state.queuedQuestion === null) return;
+      if (state.queuedQuestion !== previous.queuedQuestion || state.thread !== previous.thread) askQueued();
     });
   }, []);
 

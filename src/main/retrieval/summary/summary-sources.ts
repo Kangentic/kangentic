@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { summaryInputHash, type SummaryInput } from './summary-prompt';
 import { commitSubjectOf } from '../commit/commit-record';
+import { CHANGE_HEADER } from '../change/change-record';
 
 /**
  * What each finished task's summary is written from, read from the project
@@ -41,13 +42,14 @@ export function lastAssistantMessage(text: string): string | null {
   return null;
 }
 
-/** The files a session-changes document lists, in its order. */
+/** The files a session-changes document lists, in its order. The document's
+ *  chunks arrive joined, and each opens with the header, so every header line
+ *  is dropped, not only the first. */
 export function changedFilesOf(changeText: string): string[] {
   return changeText
     .split('\n')
-    .slice(1)
     .map((line) => line.replace(/ \([^()]*\)$/, '').trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.length > 0 && line !== CHANGE_HEADER);
 }
 
 /**

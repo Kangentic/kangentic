@@ -79,8 +79,11 @@ function titledWith(rollup, words) {
  * demand an arbitrary member of the tie. Any of them is the right answer.
  */
 function topRows(rollup, valueOf) {
-  const best = Math.max(...rollup.map((row) => valueOf(row) ?? -Infinity));
-  return rollup.filter((row) => (valueOf(row) ?? -Infinity) === best);
+  // Board tasks only: a taskless conversation has no ticket an answer could
+  // name, so topping a measure with one would demand `#null`.
+  const tasks = rollup.filter((row) => row.displayId != null && valueOf(row) != null);
+  const best = Math.max(...tasks.map((row) => valueOf(row)));
+  return tasks.filter((row) => valueOf(row) === best);
 }
 
 /**
@@ -112,6 +115,8 @@ export const QUESTIONS = [
     question: 'What is the most expensive task?',
     truth: (rollup) => {
       const top = topRows(rollup, (row) => row.costUsd)[0];
+      // A board with no recorded cost has no most expensive task to grade.
+      if (!top) return null;
       return expect(money(top.costUsd), [], nameFor(rollup, top));
     },
   },
@@ -121,6 +126,7 @@ export const QUESTIONS = [
     question: 'Which task ran for the longest total time?',
     truth: (rollup) => {
       const tied = topRows(rollup, (row) => row.durationMs);
+      if (tied.length === 0) return null;
       return expect([], [], tied.flatMap((row) => nameFor(rollup, row)));
     },
   },
@@ -130,6 +136,7 @@ export const QUESTIONS = [
     question: 'Which task took the most separate conversations?',
     truth: (rollup) => {
       const tied = topRows(rollup, (row) => row.sessions);
+      if (tied.length === 0) return null;
       return expect([String(tied[0].sessions)], [], tied.flatMap((row) => nameFor(rollup, row)));
     },
   },
@@ -156,8 +163,9 @@ export const QUESTIONS = [
       const row = rollup.find((entry) => entry.displayId === 529);
       // Skipped rather than failed when this board has no #529: the harness
       // must be runnable against any project, not only the one it was written
-      // on. A question that cannot apply is not a question that failed.
-      if (!row) return null;
+      // on. A question that cannot apply is not a question that failed. The
+      // same for a #529 with no recorded cost.
+      if (!row || row.costUsd == null) return null;
       return expect(money(row.costUsd));
     },
   },

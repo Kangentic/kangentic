@@ -5,6 +5,7 @@ import { SettingsCard, CardRow, CardChoiceRow, CardTile, CardStatusRow, CardSour
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { useConfigStore } from '../../../stores/config-store';
+import { useToastStore } from '../../../stores/toast-store';
 import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityResolution';
 import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
@@ -46,7 +47,7 @@ function semanticPlatformNote(status: KnowledgeGraphStatus | null): string | nul
   return null;
 }
 
-const SUMMARIES_INFO = `A sentence or two per Done task, so questions find it. The Knowledge Graph's agent reads each Done task's title, description, changed files and how its sessions ended, about ${SUMMARY_BATCH_SIZE} tasks a call, in the background.`;
+const SUMMARIES_INFO = `A sentence or two per Done task, so questions find it. The Knowledge Graph's agent reads each Done task's title, description, changed files, commit subjects and how its sessions ended, about ${SUMMARY_BATCH_SIZE} tasks a call, in the background.`;
 const CODE_INFO = 'The project\'s code and docs, so answers can explain it. Reads the default branch as committed: source files and docs. Tests, fixtures, data files and anything over 256 KB are skipped. Kept current as the branch moves.';
 
 export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig }) {
@@ -148,8 +149,14 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
         if (plan.summariesToRewrite > 0) setRebuildAsk(plan.summariesToRewrite);
         else runRebuild();
       })
-      // Without the plan it cannot say what it would spend, so it does not run.
-      .catch(() => undefined)
+      // Without the plan it cannot say what it would spend, so it does not run,
+      // and says so rather than leaving a click that did nothing.
+      .catch((error: unknown) => {
+        useToastStore.getState().addToast({
+          message: `Rebuild did not start: ${error instanceof Error ? error.message : String(error)}`,
+          variant: 'error',
+        });
+      })
       .finally(() => setPlanning(false));
   };
 

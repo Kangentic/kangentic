@@ -86,10 +86,11 @@ function scriptedStore(chunks: ScriptedChunk[], meta = new Map<string, string>()
         .slice(0, limit)
         .map((chunk) => ({ id: chunk.id, corpus: chunk.corpus, docId: chunk.docId }));
     },
-    listDocumentChunkIdentities(_corpus: string, docIds: ReadonlyArray<string>) {
+    // Embedded chunks only, as the real query reads (`embedded_model IS NOT NULL`).
+    listDocumentChunkIdentities(corpus: string, docIds: ReadonlyArray<string>) {
       const wanted = new Set(docIds);
       return chunks
-        .filter((chunk) => wanted.has(chunk.docId))
+        .filter((chunk) => chunk.corpus === corpus && wanted.has(chunk.docId) && !unembeddedChunkIds.has(chunk.id))
         .sort((first, second) => first.id - second.id)
         .map((chunk) => ({ id: chunk.id, corpus: chunk.corpus, docId: chunk.docId }));
     },
@@ -510,8 +511,10 @@ describe('projection pass', () => {
 
     it('reads the vectors of the changed and new documents only, not the whole corpus', async () => {
       const { incremental } = await cachedThenChanged();
-      // doc-005's four chunks and doc-006's two, where a rescan read all eighteen.
-      expect(incremental.vectorReads()).toBe(6);
+      // The EMBEDDED chunks of doc-005 (three of its four) and doc-006 (one of
+      // its two), where a rescan read all eighteen. An unembedded chunk has no
+      // vector to read, and the store never lists one.
+      expect(incremental.vectorReads()).toBe(4);
       expect(incremental.listCalls()).toBe(0);
     });
 

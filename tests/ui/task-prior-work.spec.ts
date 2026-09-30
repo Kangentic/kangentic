@@ -152,7 +152,7 @@ test.describe('task prior work', () => {
     }
   });
 
-  test('renders one row per hit it is given, each a distinct piece of prior work', async () => {
+  test('renders one row per hit it is given, and adds none of its own', async () => {
     // Retrieval collapses to one hit per SESSION, and a task usually has
     // several, so the raw list repeats the same task title back at the user -
     // which reads as a bug. The unit here is the task. The mock returns what

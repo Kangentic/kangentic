@@ -473,6 +473,9 @@ const summaryScheduler = createSummaryScheduler<IpcContext>({
  */
 let summaryChoice: SummaryChoice | null = null;
 let summaryChoiceRefresh: Promise<void> | null = null;
+/** Bumped by each refresh, so one started under older settings cannot land
+ *  after a newer one and leave its stale choice in place. */
+let summaryChoiceGeneration = 0;
 
 /**
  * What a summary would be written with now, for Rebuild and its plan, or null
@@ -490,23 +493,31 @@ async function resolveRewriteChoice(context: IpcContext): Promise<SummaryChoice 
   return choice;
 }
 
-/** Re-resolve `summaryChoice` from the current settings. One at a time. */
-function refreshSummaryChoice(context: IpcContext): void {
-  if (disposed || summaryChoiceRefresh) return;
+/**
+ * Re-resolve `summaryChoice` from the current settings. One at a time, except
+ * after a settings change (`force`): a refresh already in flight read the old
+ * settings, so a new one starts and the old one's result is dropped.
+ */
+function refreshSummaryChoice(context: IpcContext, options: { force?: boolean } = {}): void {
+  if (disposed || (summaryChoiceRefresh && !options.force)) return;
+  summaryChoiceGeneration += 1;
+  const generation = summaryChoiceGeneration;
   const projectId = context.currentProjectId;
   if (!projectId || !summariesEnabled(context)) {
     summaryChoice = null;
+    summaryChoiceRefresh = null;
     return;
   }
   summaryChoiceRefresh = resolveAnswerRun(context, projectId, 'summary', { withSearch: false, job: 'summary' })
     .then((resolved) => {
+      if (generation !== summaryChoiceGeneration) return;
       summaryChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
     })
     .catch(() => {
-      summaryChoice = null;
+      if (generation === summaryChoiceGeneration) summaryChoice = null;
     })
     .finally(() => {
-      summaryChoiceRefresh = null;
+      if (generation === summaryChoiceGeneration) summaryChoiceRefresh = null;
     });
 }
 
@@ -808,7 +819,7 @@ export const retrievalService = {
     // summary is written with may have changed.
     const projectId = context.currentProjectId;
     summaryChoice = null;
-    refreshSummaryChoice(context);
+    refreshSummaryChoice(context, { force: true });
     if (projectId) summaryScheduler.request(context, projectId);
     // Switching source code on fills the code index, and off clears it.
     if (projectId) queueRecordSweeps(context, projectId);

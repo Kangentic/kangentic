@@ -48,9 +48,6 @@ function makeFakeChild(): FakeChild {
   const emitter = new EventEmitter();
   const stdout = new EventEmitter();
   const stderr = new EventEmitter();
-  const killMock = vi.fn(function (this: FakeChild) {
-    this.killed = true;
-  });
 
   const child: FakeChild = {
     stdout,
@@ -76,7 +73,7 @@ function makeFakeChild(): FakeChild {
 // Import the function under test (after mocks are registered)
 // ---------------------------------------------------------------------------
 
-import { runCliPrintSummarize, runCliPrintAnswer } from '../../src/main/agent/shared/auto-name';
+import { runCliPrintSummarize, runCliPrintAnswer, spawnCli, stopAllCliRuns } from '../../src/main/agent/shared/auto-name';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -251,7 +248,9 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
       mockSpawn.mockReturnValue(child);
       const resultPromise = startStalledRun();
 
-      expect(mockSpawn.mock.calls[0][2]).toEqual(expect.objectContaining({ detached: true }));
+      // One field read out, never the options object: it carries process.env,
+      // which a failed matcher would print into the log.
+      expect((mockSpawn.mock.calls[0][2] as { detached?: boolean }).detached).toBe(true);
       vi.advanceTimersByTime(600);
       expect(processKill).toHaveBeenCalledWith(-4242, 'SIGTERM');
       expect(child.kill).not.toHaveBeenCalled();
@@ -283,7 +282,7 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
       mockSpawn.mockReturnValue(child);
       const resultPromise = startStalledRun();
 
-      expect(mockSpawn.mock.calls[0][2]).not.toHaveProperty('detached');
+      expect('detached' in (mockSpawn.mock.calls[0][2] as object)).toBe(false);
       child.emit('close', 0);
       await resultPromise.catch(() => { /* expected */ });
     });
@@ -306,12 +305,99 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
 
       vi.advanceTimersByTime(600);
 
-      expect(mockSpawn).toHaveBeenCalledWith('taskkill', ['/pid', '4242', '/T', '/F'], expect.objectContaining({ windowsHide: true }));
+      // The taskkill calls alone: a matcher over every call would print the
+      // CLI's own spawn options, process.env included, on a failure.
+      const taskkills = mockSpawn.mock.calls.filter(([command]) => command === 'taskkill');
+      expect(taskkills.map(([, args]) => args)).toEqual([['/pid', '4242', '/T', '/F']]);
+      expect((taskkills[0][2] as { windowsHide?: boolean }).windowsHide).toBe(true);
       expect(taskkill.unref).toHaveBeenCalled();
       expect(child.kill).not.toHaveBeenCalled();
       child.emit('close', null);
       await expect(resultPromise).rejects.toThrow('summarize timed out');
     });
+  });
+
+  describe('a CLI that is a plain executable on Windows', () => {
+    const originalPlatform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    });
+
+    it('takes the whole process tree with taskkill too, since it can start children of its own', async () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      const child = makeFakeChild() as FakeChild & { pid: number };
+      child.pid = 4243;
+      const taskkill = { on: vi.fn(), unref: vi.fn() };
+      taskkill.on.mockReturnValue(taskkill);
+      mockSpawn.mockImplementation((command: string) => (command === 'taskkill' ? taskkill : child));
+      const resultPromise = startStalledRun('C:\\tools\\fake.exe');
+
+      vi.advanceTimersByTime(600);
+
+      // Read off the taskkill calls alone: a failure prints what it compared, and
+      // the CLI's own spawn call carries the whole process environment.
+      const taskkills = mockSpawn.mock.calls.filter(([command]) => command === 'taskkill');
+      expect(taskkills).toHaveLength(1);
+      expect(taskkills[0][1]).toEqual(['/pid', '4243', '/T', '/F']);
+      expect(taskkills[0][2]).toEqual(expect.objectContaining({ windowsHide: true }));
+      expect(taskkill.unref).toHaveBeenCalled();
+      // child.kill ends the one process and leaves whatever it started running.
+      expect(child.kill).not.toHaveBeenCalled();
+      child.emit('close', null);
+      await expect(resultPromise).rejects.toThrow('summarize timed out');
+    });
+  });
+});
+
+describe('stopAllCliRuns', () => {
+  const originalPlatform = process.platform;
+
+  /** A child `spawnCli` can track: a pid, and `once`, which the tracker forgets it through. */
+  function makeTrackableChild(pid: number): FakeChild & { pid: number } {
+    const child = makeFakeChild() as FakeChild & { pid: number; once: (event: string, handler: (...args: unknown[]) => void) => void };
+    child.pid = pid;
+    child.once = (event, handler) => { child._emitter.once(event, handler); };
+    return child;
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    mockSpawn.mockReset();
+    // The tracker is module state, and earlier tests in this file leave CLIs
+    // that never emitted `exit` in it. Stop those now, against the stubbed
+    // process.kill, so what is counted below is this test's own children.
+    stopAllCliRuns();
+    processKill.mockClear();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+  });
+
+  it('stops every CLI spawnCli started that has not exited, once, and leaves alone one that exited or never started', () => {
+    const running = makeTrackableChild(5001);
+    const exited = makeTrackableChild(5002);
+    const failedToStart = makeTrackableChild(5003);
+    mockSpawn.mockReturnValueOnce(running).mockReturnValueOnce(exited).mockReturnValueOnce(failedToStart);
+    spawnCli('/usr/bin/fake', [], '/tmp');
+    spawnCli('/usr/bin/fake', [], '/tmp');
+    spawnCli('/usr/bin/fake', [], '/tmp');
+    // Only the event: the exit code is left unset, so a CLI the tracker still
+    // held would be stopped, and the test cannot pass on `stopCli`'s own check.
+    exited.emit('exit', 0, null);
+    // The caller's own handler, as runCliPrint has: an `error` with no listener throws.
+    failedToStart.on('error', () => undefined);
+    failedToStart.emit('error', new Error('spawn ENOENT'));
+
+    stopAllCliRuns();
+
+    // The group of the one still running, and nobody else's.
+    expect(processKill.mock.calls).toEqual([[-5001, 'SIGTERM']]);
+
+    // Forgotten once stopped: a second call at quit does not signal it again.
+    processKill.mockClear();
+    stopAllCliRuns();
+    expect(processKill).not.toHaveBeenCalled();
   });
 });
 
@@ -369,8 +455,9 @@ describe('runCliPrintSummarize - env merge (#4)', () => {
     const spawnCall = mockSpawn.mock.calls[0];
     const spawnOptions = spawnCall[2] as { env: Record<string, string | undefined> };
 
-    // When no env overlay is provided the production code passes process.env directly.
-    expect(spawnOptions.env).toBe(process.env);
+    // When no env overlay is provided the production code passes process.env
+    // directly. Compared as a boolean so a failure never prints either env.
+    expect(spawnOptions.env === process.env).toBe(true);
   });
 });
 

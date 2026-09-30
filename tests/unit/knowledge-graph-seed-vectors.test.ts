@@ -114,7 +114,7 @@ describe('cluster centroids', () => {
     }
   });
 
-  it('anisotropy tracks CORPUS_DIRECTION_WEIGHT', () => {
+  it('keeps CORPUS_DIRECTION_WEIGHT inside (0, 1) and the shipped centroids far from orthogonal', () => {
     // Guards the constant against being changed without understanding what it
     // controls: more shared direction means MORE similar centroids.
     const meanPairSimilarity = (centroids: Float32Array[]): number => {

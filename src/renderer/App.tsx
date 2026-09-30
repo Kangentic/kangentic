@@ -1182,7 +1182,7 @@ if (import.meta.hot) {
     if (useMonitorStore.getState().monitorOpen) {
       void useMonitorStore.getState().loadSnapshot();
     }
-    // Memory graph Pattern B: re-read the cached projection + coverage from
+    // Knowledge Graph Pattern B: re-read the cached projection + coverage from
     // main-process truth (no-ops while the surface is closed).
     // The Projects list and every project in a scope are main-process truth too.
     // Marked as pushes: a save is a refresh, not the reader acting, so it never

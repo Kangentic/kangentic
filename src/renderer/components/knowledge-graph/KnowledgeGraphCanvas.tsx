@@ -43,6 +43,7 @@ import {
   type ViewportInsets,
 } from './knowledge-graph-scene';
 import { HoverTip } from '../HoverTip';
+import { shownTheme, useConfigStore } from '../../stores/config-store';
 import { humanizeModelId } from '../../../shared/model-id';
 import { TASK_OUTCOME_LABELS, type KnowledgeGraphTaskOutcome } from '../../../shared/knowledge-graph-task-fields';
 import type {
@@ -811,12 +812,16 @@ export function KnowledgeGraphCanvas({
   // styles need it, and a memo that reached for the container during render
   // could only ever see the fallback on the first pass.
   const [accentColor, setAccentColor] = useState('#4ade80');
+  // Read again on a theme change: the store's own subscription swaps the theme
+  // class on <html> before this component renders with the new value, so the
+  // tokens read here are already the new theme's.
+  const theme = useConfigStore(shownTheme);
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     setEdgeColor(normalizeCssColor(readCssColor(container, '--color-fg-muted', '#8b949e')));
     setAccentColor(readCssColor(container, '--kng-active', '#4ade80'));
-  }, []);
+  }, [theme]);
 
   const framingInsets = useMemo(
     () => withLabelRoom(chromeInsets ?? NO_VIEWPORT_INSETS, showTitles, showLabels),
@@ -1184,7 +1189,7 @@ export function KnowledgeGraphCanvas({
   // edit to this file leaves the last frame's labels frozen on screen until the
   // user happens to interact, because render-on-demand correctly sees no state
   // change to react to. Dev-only in practice, and the team dogfoods from
-  // , so it has to look like a fresh boot.
+  // `npm start`, so it has to look like a fresh boot.
   useEffect(() => {
     requestRender();
   }, [positionOverlays, showTitles, requestRender]);
@@ -1234,6 +1239,8 @@ export function KnowledgeGraphCanvas({
     const scene = graph.scene;
     if (!container || !scene) return null;
     const rect = container.getBoundingClientRect();
+    // A collapsed pane has nothing to pick, and dividing by its zero size would.
+    if (rect.width === 0 || rect.height === 0) return null;
     const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
     const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
     return scene.pick(ndcX, ndcY);

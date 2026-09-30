@@ -173,6 +173,13 @@ describe('sweepTaskRecords', () => {
     const result = await sweepTaskRecords('project', () => true, deps(db));
 
     expect(result.indexed).toBe(2);
+    // Each case separately: the edited task by its newer edit time, the old
+    // format by its version. Both now carry the current version.
+    expect(inserts(calls).map((call) => call.args[1])).toEqual(['task-1', 'task-2']);
+    expect(stateWrites(calls).map((call) => call.args.slice(1, 5))).toEqual([
+      ['task-1', null, `task-record-v${TASK_RECORD_VERSION}`, Date.parse('2026-09-05T00:00:00.000Z')],
+      ['task-2', null, `task-record-v${TASK_RECORD_VERSION}`, Date.parse('2026-09-02T00:00:00.000Z')],
+    ]);
   });
 
   it('removes the record of a task that is gone, and of a promoted backlog item', async () => {

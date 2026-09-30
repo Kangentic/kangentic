@@ -6,7 +6,7 @@ import type { RequestResolver } from './project-resolver';
 import { runSearchEverything } from '../../search/search-core';
 import type { SearchHit, Project } from '../../../shared/types';
 import { isAnswerCaller } from './caller-url';
-import { ANSWER_SEARCH_BUDGET, answerSearchProjects, claimAnswerSearch, publishAnswerSearch } from './answer-search-trace';
+import { ANSWER_SEARCH_BUDGET, answerSearchProjects, claimAnswerSearch, isAnswerSearchWatched, publishAnswerSearch } from './answer-search-trace';
 import {
   boardRecordTasks,
   indexedConversationNodes,
@@ -96,8 +96,18 @@ export function registerSearchTools(
 
       // An answer run reads only the projects its question was asked across,
       // whatever scope or project the agent passes: the user chose them, and
-      // the Privacy tab names what an answer sends.
-      const askedAcross = answerCaller && callerSessionId ? answerSearchProjects(callerSessionId) : null;
+      // the Privacy tab names what an answer sends. One no question is watching
+      // any more (it outlived its question) reads only the project its URL
+      // names: no question means no scope, and no scope is not every project.
+      let askedAcross: ReadonlySet<string> | null = null;
+      if (answerCaller && callerSessionId) {
+        if (isAnswerSearchWatched(callerSessionId)) {
+          askedAcross = answerSearchProjects(callerSessionId);
+        } else {
+          const urlProject = resolver.resolveProject(undefined);
+          askedAcross = new Set('error' in urlProject ? [] : [urlProject.projectId]);
+        }
+      }
       const allProjects = resolver.listProjectsRaw()
         .filter((entry) => !askedAcross || askedAcross.has(entry.id));
       let projectsToScan: Project[];
@@ -118,14 +128,9 @@ export function registerSearchTools(
       // An answer run's question has a search budget, spent only by a search
       // that runs. Past it, the tool says so in words the agent acts on (answer
       // now), rather than failing, so a run that over-searches still ends in an
-      // answer.
-      if (callerSessionId && answerCaller && !claimAnswerSearch(callerSessionId)) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `This question has used its ${ANSWER_SEARCH_BUDGET} searches. Do not search again: answer now from what you have already found.`,
-          }],
-        };
+      // answer. A related-task search claims its own, once it has found the task.
+      if (callerSessionId && answerCaller && !relatedToTask && !claimAnswerSearch(callerSessionId)) {
+        return answerBudgetSpent();
       }
 
       // mode gates only the CONVERSATION corpus: 'hybrid' (default) pulls the
@@ -289,6 +294,16 @@ async function searchByTask(input: {
   };
 }
 
+/** What an answer run's search returns once its question's budget is spent. */
+function answerBudgetSpent(): McpToolResult {
+  return {
+    content: [{
+      type: 'text' as const,
+      text: `This question has used its ${ANSWER_SEARCH_BUDGET} searches. Do not search again: answer now from what you have already found.`,
+    }],
+  };
+}
+
 /** The sessions a set of ranked tasks' conversations open, for the answer trace. */
 function handedSessionIds(nodes: ReadonlyArray<IndexedConversationNode>, handed: ReadonlyArray<RelatedWorkTask>): string[] {
   const sessionByDocKey = new Map(nodes.map((node) => [node.docKey, node.sessionId]));
@@ -344,6 +359,9 @@ async function searchRelatedToTask(input: {
   if (!input.indexingEnabled) {
     return { content: [{ type: 'text' as const, text: `The index is off (Settings > Knowledge Graph), so there is nothing to rank the work related to ${label} by.` }] };
   }
+  // Claimed here, past the two answers that ran no search, so a mistyped task
+  // costs an answer run none of its budget.
+  if (input.callerSessionId && !claimAnswerSearch(input.callerSessionId)) return answerBudgetSpent();
 
   const focus = input.query?.trim() ?? '';
   const text = `${focus ? `${focus}. ` : ''}${task.title}\n${task.description ?? ''}`.slice(0, RELATED_TO_TASK_TEXT_CHARS);

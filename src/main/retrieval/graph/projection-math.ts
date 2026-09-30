@@ -149,18 +149,17 @@ export function finalizeMeanPool(accumulator: MeanPoolAccumulator): MeanPooledDo
  * Measured on the real corpus, reading all 51,265 vectors through vec0 takes
  * 62s sequentially and 68s batched - the cost is vec0's per-row blob decode, so
  * there is no faster public read. Persisting the running SUMS (not just the
- * finished means) lets a later pass scan only `id > lastScannedChunkId` and
- * fold new chunks into what is already there, which drops steady-state cost to
- * near zero.
+ * finished means) lets a later pass read only the documents that changed and
+ * fold them into what is already there, which drops steady-state cost to near
+ * zero.
  *
- * `chunkCountByDocKey` is the correctness guard, and it is not optional.
+ * `countsByDocKey` is the correctness guard, and it is not optional.
  * `upsertDocument` re-indexes a changed document by DELETING from the first
  * divergent seq and reinserting, which mints new chunk ids under the SAME doc
- * key. An incremental pass that only looked at `lastScannedChunkId` would add
- * those new chunks on top of the old ones' contribution and silently
- * double-count that document. Comparing each document's live chunk count
- * against the cached one detects exactly that case; `forgetDocument` then drops
- * the stale sum so the document can be rescanned from scratch.
+ * key, at or below ids already scanned. Comparing each document's live
+ * embedded count against the cached one finds the documents that changed;
+ * `forgetDocument` then drops the stale sum and the pass reads that document
+ * again by doc key (`planScan` in projection-engine.ts).
  */
 export interface SerializedMeanPool {
   readonly dimensions: number;

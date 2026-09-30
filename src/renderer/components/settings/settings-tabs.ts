@@ -82,7 +82,7 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   // -- Shared settings: Advanced tier --
   { id: 'dictation', label: 'Dictation', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   // Every card here serves the Knowledge Graph; the index also feeds Quick Find
-  // and `kangentic_search`, which the Index card's description says.
+  // and `kangentic_search`.
   { id: 'knowledgeGraph', label: 'Knowledge Graph', category: 'system', tier: 'advanced', tooltip: 'The Knowledge Graph and the index it reads. Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },

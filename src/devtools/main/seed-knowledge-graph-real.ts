@@ -1,5 +1,5 @@
 /**
- * Dev-only: mirror a slice of the REAL conversation index into an ephemeral
+ * Dev-only: mirror the REAL conversation index (all of it by default) into an ephemeral
  * preview project, so the Knowledge Graph can be judged against actual work.
  *
  * Why this exists alongside the synthetic seeder: synthetic data proves the

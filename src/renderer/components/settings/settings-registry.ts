@@ -32,12 +32,12 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Board ──
   { id: 'columnWidth', tabId: 'board', label: 'Column width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
 
-  // ── Board > Config Sync ──
-  { id: 'skipBoardConfigConfirm', tabId: 'board', label: 'Auto-apply board config changes', description: 'Apply a detected kangentic.json change immediately instead of asking to confirm.', scope: 'global', section: 'Config Sync', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
+  // ── Board > Config sync ──
+  { id: 'skipBoardConfigConfirm', tabId: 'board', label: 'Auto-apply board config changes', description: 'Apply a detected kangentic.json change immediately instead of asking to confirm.', scope: 'global', section: 'Config sync', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
 
-  // ── Board > Window ──
-  { id: 'terminalPanelVisible', tabId: 'board', label: 'Terminal panel', description: 'Show the terminal panel below the board', scope: 'global', section: 'Window', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
-  { id: 'statusBarVisible', tabId: 'board', label: 'Status bar', description: 'Show the status bar at the bottom of the window', scope: 'global', section: 'Window', keywords: ['bottom', 'bar', 'hide', 'visible'] },
+  // ── Board > Board layout ──
+  { id: 'terminalPanelVisible', tabId: 'board', label: 'Terminal panel', description: 'Show the terminal panel below the board', scope: 'global', section: 'Board layout', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
+  { id: 'statusBarVisible', tabId: 'board', label: 'Status bar', description: 'Show the status bar at the bottom of the window', scope: 'global', section: 'Board layout', keywords: ['bottom', 'bar', 'hide', 'visible'] },
 
   // ── Task ──
   { id: 'cardDensity', tabId: 'task', label: 'Card density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
@@ -45,20 +45,20 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'showTaskNumbers', tabId: 'task', label: 'Ticket numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
 
   // ── Task > Context Bar ──
-  { id: 'contextBar.showShell', tabId: 'task', label: 'Shell name', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showVersion', tabId: 'task', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showElapsed', tabId: 'task', label: 'Elapsed time', description: 'Ticking session duration', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'duration', 'timer'] },
+  { id: 'contextBar.showShell', tabId: 'task', label: 'Shell name', description: 'Detected shell name', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showVersion', tabId: 'task', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showElapsed', tabId: 'task', label: 'Elapsed time', description: 'Ticking session duration', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'duration', 'timer'] },
   // Note: model and effort are intentionally NOT in the registry. Those
   // pills double as the in-place picker triggers, so a "hide" toggle would
   // silently disable a feature, not just declutter chrome. They're a
   // permanent fixture of the context bar.
-  { id: 'contextBar.showCost', tabId: 'task', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'price'] },
-  { id: 'contextBar.showToolCalls', tabId: 'task', label: 'Tool calls', description: 'Cumulative tool invocations', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'tool', 'invocations'] },
-  { id: 'contextBar.showAgentActive', tabId: 'task', label: 'Agent active', description: 'Agent active time', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'active'] },
-  { id: 'contextBar.showTokens', tabId: 'task', label: 'Token counts', description: 'Input / output totals', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showContextFraction', tabId: 'task', label: 'Context window', description: 'Used / total tokens', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showProgressBar', tabId: 'task', label: 'Progress bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showRateLimits', tabId: 'task', label: 'Rate limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
+  { id: 'contextBar.showCost', tabId: 'task', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'price'] },
+  { id: 'contextBar.showToolCalls', tabId: 'task', label: 'Tool calls', description: 'Cumulative tool invocations', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'tool', 'invocations'] },
+  { id: 'contextBar.showAgentActive', tabId: 'task', label: 'Agent active', description: 'Agent active time', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'active'] },
+  { id: 'contextBar.showTokens', tabId: 'task', label: 'Token counts', description: 'Input / output totals', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showContextFraction', tabId: 'task', label: 'Context window', description: 'Used / total tokens', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showProgressBar', tabId: 'task', label: 'Progress bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showRateLimits', tabId: 'task', label: 'Rate limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
 
   // ── Changes ──
   { id: 'diffViewMode', tabId: 'changes', label: 'Layout', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', keywords: ['diff view', 'split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
@@ -78,13 +78,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'terminal.backspaceSendsCtrlH', tabId: 'terminal', label: 'Word delete on Backspace', description: 'Backspace deletes the whole previous word instead of one character.', scope: 'global', keywords: ['ctrl+h', 'delete word', 'backspace', 'putty', 'windows'] },
 
   // ── Terminal > Colors ──
-  { id: 'terminal.colors', tabId: 'terminal', label: 'Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Colors', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal', 'appearance'] },
+  { id: 'terminal.colors', tabId: 'terminal', label: 'Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Terminal', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal', 'appearance'] },
 
-  // ── Agent > Project Defaults ──
-  { id: 'project.defaultAgent', tabId: 'agent', label: 'Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', section: 'Project Defaults', keywords: ['agent', 'claude', 'default'] },
-  { id: 'project.defaultModel', tabId: 'agent', label: 'Model', description: 'Model used for new sessions when no column or task override is set', scope: 'project', section: 'Project Defaults', keywords: ['model', 'opus', 'sonnet', 'default'] },
-  { id: 'project.defaultEffort', tabId: 'agent', label: 'Effort', description: 'Reasoning effort used for new sessions when no column or task override is set', scope: 'project', section: 'Project Defaults', keywords: ['effort', 'reasoning', 'xhigh', 'default'] },
-  { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', section: 'Project Defaults', keywords: ['allowlist', 'bypass', 'approve'] },
+  // ── Agent > Project defaults ──
+  { id: 'project.defaultAgent', tabId: 'agent', label: 'Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', section: 'Project defaults', keywords: ['agent', 'claude', 'default'] },
+  { id: 'project.defaultModel', tabId: 'agent', label: 'Model', description: 'Model used for new sessions when no column or task override is set', scope: 'project', section: 'Project defaults', keywords: ['model', 'opus', 'sonnet', 'default'] },
+  { id: 'project.defaultEffort', tabId: 'agent', label: 'Effort', description: 'Reasoning effort used for new sessions when no column or task override is set', scope: 'project', section: 'Project defaults', keywords: ['effort', 'reasoning', 'xhigh', 'default'] },
+  { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', section: 'Project defaults', keywords: ['allowlist', 'bypass', 'approve'] },
 
   // ── Agent > Agent CLI ──
   { id: 'agent.cliPaths', tabId: 'agent', label: 'CLI path', description: 'Paths to agent CLI binaries (auto-detected if empty)', scope: 'global', section: 'Agent CLI', keywords: ['binary', 'executable'] },
@@ -94,7 +94,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.executionMode', tabId: 'agent', label: 'Execution', description: 'Run this agent locally, or attach to a server you run elsewhere', scope: 'project', section: 'Agent CLI', keywords: ['remote', 'local', 'server', 'attach'] },
   { id: 'agent.executionServerUrl', tabId: 'agent', label: 'Server URL', description: 'Address of the running server (e.g. http://10.0.0.5:4096)', scope: 'global', section: 'Agent CLI', keywords: ['remote', 'url', 'server', 'host'] },
   { id: 'agent.executionServerAuth', tabId: 'agent', label: 'Authentication', description: 'Leave blank if the server does not require credentials', scope: 'global', section: 'Agent CLI', keywords: ['remote', 'auth', 'username', 'password', 'basic', 'optional'] },
-  { id: 'agent.executionWorkingDirectory', tabId: 'agent', label: 'Server Working Directory', description: "Path on the server for this project's tasks. Leave blank to use the server's own default directory", scope: 'project', section: 'Agent CLI', keywords: ['remote', 'directory', 'path', 'worktree', 'cwd', 'optional'] },
+  { id: 'agent.executionWorkingDirectory', tabId: 'agent', label: 'Server working directory', description: "Path on the server for this project's tasks. Leave blank to use the server's own default directory", scope: 'project', section: 'Agent CLI', keywords: ['remote', 'directory', 'path', 'worktree', 'cwd', 'optional'] },
   // One registry entry backs the rows of EVERY adapter that declares
   // `launchOptions`; no agent name appears here, so the row never branches on
   // one (agent-adapters-boundary.md). The concrete per-option label/description
@@ -161,8 +161,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
 
   // ── Notifications > Delivery ──
-  { id: 'notifications.toasts.durationSeconds', tabId: 'notifications', label: 'Toast auto-dismiss', description: 'How long toasts remain visible', scope: 'global', section: 'Delivery', keywords: ['timeout', 'seconds'] },
-  { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: 'Max visible toasts', description: 'Maximum simultaneous toasts on screen', scope: 'global', section: 'Delivery', keywords: ['limit', 'count'] },
+  { id: 'notifications.toasts.durationSeconds', tabId: 'notifications', label: 'Toast auto-dismiss', description: 'How long toasts remain visible', scope: 'global', section: 'Toasts', keywords: ['timeout', 'seconds'] },
+  { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: 'Max visible toasts', description: 'Maximum simultaneous toasts on screen', scope: 'global', section: 'Toasts', keywords: ['limit', 'count'] },
 
   // ── Hotkeys ──
   { id: 'hotkeys', tabId: 'hotkeys', label: 'Hotkeys', description: 'Rebind keyboard hotkeys', scope: 'global', keywords: ['keyboard', 'hotkey', 'keybind', 'rebind', 'key', 'ctrl', 'cmd', 'shift', 'combo'] },

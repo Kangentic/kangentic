@@ -77,6 +77,12 @@ export function answerSearchProjects(callerId: string): ReadonlySet<string> | nu
   return watches.get(callerId)?.projectIds ?? null;
 }
 
+/** Whether a question is watching this caller now. An answer caller with none
+ *  (a run still alive after its question ended) is held to its own project. */
+export function isAnswerSearchWatched(callerId: string): boolean {
+  return watches.has(callerId);
+}
+
 /**
  * Claim one search for this caller's question. False once its budget is
  * spent. A caller no question is watching (a probe, a run whose question

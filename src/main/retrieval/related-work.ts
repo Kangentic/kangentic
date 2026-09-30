@@ -655,15 +655,15 @@ export interface ProjectRelatedWorkTask extends RelatedWorkTask {
   projectId: string;
 }
 
-/**
- * Related work that may span projects. Passages are keyed by `passageKey`,
- * not by chunk id, because chunk ids repeat between project databases.
- */
 /** A code passage, and the project whose code it is. */
 export interface ProjectCodePassage extends CodePassage {
   projectId: string;
 }
 
+/**
+ * Related work that may span projects. Passages are keyed by `passageKey`,
+ * not by chunk id, because chunk ids repeat between project databases.
+ */
 export interface ProjectRelatedWork {
   ranked: ProjectRelatedWorkTask[];
   handed: ProjectRelatedWorkTask[];

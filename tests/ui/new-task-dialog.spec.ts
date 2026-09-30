@@ -243,6 +243,10 @@ test.describe('Worktree placement', () => {
       await expect(page.locator('[data-testid="worktree-placement"]')).toHaveCount(0);
       await closeDialog();
     } finally {
+      // The page is shared by the file: a failure above leaves the dialog open
+      // over the settings button, and Worktrees would stay off for every test
+      // after this one.
+      if (await page.locator('input[placeholder="Task title"]').isVisible()) await closeDialog();
       await flipWorktrees('true');
     }
   });

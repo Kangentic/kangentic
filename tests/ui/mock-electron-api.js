@@ -59,7 +59,7 @@
   let nextDisplayId = 1;
   let bulkDeleteProgressCallbacks = [];
   let searchHits = [];
-  // Conversation memory (Phase 2/3). `memoryStatus` feeds the Search
+  // The conversation index. `memoryStatus` feeds the Knowledge Graph
   // settings tab's index and model status. Seeded via
   // __mockPreConfigure (mirrors searchHits).
   let memoryStatus = {
@@ -142,7 +142,7 @@
    * mirror is only here to keep the fake API self-consistent with listOpen().
    */
   function popOutKeyOf(kind, params) {
-    if (kind === 'stats' || kind === 'monitor') return kind;
+    if (kind === 'stats' || kind === 'monitor' || kind === 'knowledge-graph') return kind;
     const taskKey = kind + ':' + (params && params.projectId) + ':' + (params && params.taskId);
     if (kind === 'changes-file') return taskKey + ':' + (params && params.filePath);
     return taskKey;
@@ -2974,7 +2974,7 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
-            // KEEP IN SYNC with ClaudeAdapter.answerFromContext: gates the Memory
+            // KEEP IN SYNC with ClaudeAdapter.answerFromContext: gates the Knowledge
             // Graph's Ask on the capability rather than on the agent's name.
             supportsAnswerFromContext: true,
             // KEEP IN SYNC with ClaudeAdapter.answerCapabilities. `model: true` is

@@ -712,7 +712,8 @@ One summary per finished task: a sentence or two the Knowledge Graph's agent wro
 
 ### memory_meta table
 
-Key/value bookkeeping for the memory index.
+Key/value bookkeeping for the memory index. The Privacy "clear index" deletes every `graph_` key
+with the chunks, since the cached map, its sums and its region names are read from them.
 
 - `chunker_version` - a mismatch against the current chunker version purges and reindexes the project's conversations and the session changes read from them; task records are left in place.
 - `vec_dims` - the width of the vector tables, set from the selected embedding model. A change forces a full re-embed, since vec0 tables are fixed-width.

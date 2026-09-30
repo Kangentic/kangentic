@@ -1,8 +1,47 @@
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
+import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { markVecCapable } from '../../src/main/retrieval/vec-support';
 import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/types';
+
+type SqliteModule = typeof import('node:sqlite');
+let sqlite: SqliteModule | null = null;
+try {
+  sqlite = await import('node:sqlite');
+} catch {
+  sqlite = null;
+}
+const describeWithSqlite = sqlite ? describe : describe.skip;
+type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
+
+/** node:sqlite behind the slice of better-sqlite3 the store uses, with nested
+ *  transactions as savepoints. */
+function adaptDatabase(database: NodeDatabase): Database.Database {
+  let depth = 0;
+  const adapter = {
+    exec: (sql: string) => database.exec(sql),
+    prepare: (sql: string) => database.prepare(sql),
+    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
+    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
+      (...args: Args): Result => {
+        const savepoint = `sp_${depth}`;
+        database.exec(depth === 0 ? 'BEGIN' : `SAVEPOINT ${savepoint}`);
+        depth += 1;
+        try {
+          const result = body(...args);
+          depth -= 1;
+          database.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+          return result;
+        } catch (error) {
+          depth -= 1;
+          database.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+          throw error;
+        }
+      },
+  };
+  return adapter as unknown as Database.Database;
+}
 
 /**
  * better-sqlite3 cannot load under vitest's system Node, so the store's SQL is
@@ -11,6 +50,11 @@ import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/typ
  * (seq, contentHash) diff, the 1-based lexical ranks, and the read-path SQL
  * shape / bound bounds. (The real SQL executes at the E2E tier against a live
  * DB.) Mirrors tests/unit/transcript-repository.test.ts.
+ *
+ * The one exception is `purgeAll`'s meta cleanup, which runs the REAL project
+ * migrations and the REAL store against node:sqlite (as code-corpus.test.ts
+ * does). A recording double only sees the SQL text, and what that statement
+ * must get right is which rows its LIKE pattern matches, so it needs a database.
  */
 
 interface RecordedCall {
@@ -701,5 +745,52 @@ describe('RetrievalStore.corpusTotals', () => {
     const embedded = calls.find((call) => call.sql.includes('embedded_model IS NOT NULL'));
     expect(embedded?.sql).toMatch(/GROUP BY \+corpus/);
     expect(totals).toEqual([{ corpus: 'conversation', documents: 2, chunks: 5, embeddedChunks: 5 }]);
+  });
+});
+
+describeWithSqlite('RetrievalStore.purgeAll (real database)', () => {
+  function project() {
+    const database = new sqlite!.DatabaseSync(':memory:');
+    const db = adaptDatabase(database);
+    runProjectMigrations(db);
+    const store = new RetrievalStore(db);
+    const count = (table: string): number => (database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+    const metaKeys = (): string[] => (database.prepare('SELECT key FROM memory_meta ORDER BY key').all() as Array<{ key: string }>).map((row) => row.key);
+    return { store, count, metaKeys };
+  }
+
+  it('clears every corpus and the graph\'s cached map, sums and region names, and no other meta key', () => {
+    const { store, count, metaKeys } = project();
+    store.upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
+    store.setIndexState({
+      corpus: 'conversation',
+      docId: ref.docId,
+      sessionId: 'session-1',
+      sourcePath: '/mock/transcript.jsonl',
+      sourceMtimeMs: 1,
+      sourceSize: 2,
+      entryCount: 1,
+      chunkCount: 2,
+      status: 'ok',
+      indexedAt: '2026-09-30T00:00:00.000Z',
+    });
+    // The keys the graph writes: the cached map, its per-document sums, its region names.
+    const graphKeys = ['graph_projection_v11', 'graph_projection_sums_v1', 'graph_region_names'];
+    for (const key of graphKeys) store.setMeta(key, '{"titles":["Relay config"]}');
+    // Keys that are not the graph's, one of them beginning "graph" without the
+    // underscore: an unescaped `_` in the LIKE pattern is a wildcard and would take it.
+    const otherKeys = ['code_index_head', 'commit_index_head', 'chunker_version', 'graphite_cache'];
+    for (const key of otherKeys) store.setMeta(key, 'kept');
+    const survivors = metaKeys().filter((key) => !graphKeys.includes(key));
+    expect(count('memory_chunks')).toBe(2);
+    expect(count('memory_index_state')).toBe(1);
+
+    store.purgeAll();
+
+    expect(count('memory_chunks')).toBe(0);
+    expect(count('memory_index_state')).toBe(0);
+    expect(metaKeys()).toEqual(survivors);
+    for (const key of otherKeys) expect(store.getMeta(key), key).toBe('kept');
+    for (const key of graphKeys) expect(store.getMeta(key), key).toBeUndefined();
   });
 });

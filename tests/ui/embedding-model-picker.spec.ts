@@ -478,7 +478,9 @@ test.describe('Index card', () => {
       // The button is committed from the click, not only once the rebuild starts.
       await expect(rebuildButton).toBeDisabled();
       // A click on the disabled button: forced, since a user's press does not
-      // wait for the control to be enabled.
+      // wait for the control to be enabled. A disabled native button dispatches
+      // no click, so the disabled state asserted above is the guard this pins;
+      // the counts below confirm the second press started nothing.
       await rebuildButton.click({ force: true });
 
       // The click handler is synchronous, so both counts are already final:

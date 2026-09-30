@@ -550,10 +550,14 @@ export class OpenCodeAdapter implements AgentAdapter {
       });
     } finally {
       // After the answer, not before it: the delete is its own process, and
-      // the reader is not kept waiting on it.
-      if (sessionId) {
+      // the reader is not kept waiting on it. The id is read from the CLI's
+      // output, so it goes on the command line only in the shape an id has.
+      // Its output is drained so a full pipe cannot stall it.
+      if (sessionId && /^[\w-]+$/.test(sessionId)) {
         const deletion = spawnCli(cliPath, ['session', 'delete', sessionId], cwd);
         deletion.on('error', () => undefined);
+        deletion.stdout.resume();
+        deletion.stderr.resume();
         deletion.stdin.end();
       }
     }

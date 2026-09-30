@@ -16,7 +16,7 @@ import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { codeChunks, codePathOf, isIndexableCodePath, namesCodeIdentifier } from '../../src/main/retrieval/code/code-record';
-import { indexedCodeBranch, purgeCodeRecords, sweepCodeRecords, type CodeIndexerDeps } from '../../src/main/retrieval/code/code-indexer';
+import { batchesBySize, indexedCodeBranch, purgeCodeRecords, sweepCodeRecords, type CodeIndexerDeps } from '../../src/main/retrieval/code/code-indexer';
 import {
   BRANCH_SIZE_TTL_MS,
   CODE_BYTES_PER_PASSAGE,
@@ -98,6 +98,36 @@ describe('code records', () => {
     for (const question of ['How does the embedding drain pace itself?', 'Which task took the longest?', 'Where is the PTY resize debounced?']) {
       expect(namesCodeIdentifier(question), question).toBe(false);
     }
+  });
+});
+
+describe('batchesBySize', () => {
+  const entryOf = (index: number, size: number): TreeEntry => ({ path: `src/file-${index}.ts`, blob: `blob-${index}`, size });
+  const sizesOf = (batches: TreeEntry[][]): number[][] => batches.map((batch) => batch.map((entry) => entry.size));
+
+  it('holds no batch for no entries', () => {
+    expect(batchesBySize([], 10)).toEqual([]);
+  });
+
+  it('cuts the entries in order into runs whose sizes sum to at most the limit', () => {
+    const entries = [4, 4, 4, 4, 4].map((size, index) => entryOf(index, size));
+
+    const batches = batchesBySize(entries, 10);
+
+    expect(sizesOf(batches)).toEqual([[4, 4], [4, 4], [4]]);
+    // Order kept, nothing lost or repeated.
+    expect(batches.flat().map((entry) => entry.path)).toEqual(entries.map((entry) => entry.path));
+  });
+
+  it('keeps entries that sum to exactly the limit in one batch', () => {
+    expect(sizesOf(batchesBySize([5, 5].map((size, index) => entryOf(index, size)), 10))).toEqual([[5, 5]]);
+    expect(sizesOf(batchesBySize([5, 5, 1].map((size, index) => entryOf(index, size)), 10))).toEqual([[5, 5], [1]]);
+  });
+
+  it('gives an entry larger than the limit a batch of its own, wherever it sits, and never an empty one', () => {
+    expect(sizesOf(batchesBySize([entryOf(0, 30)], 10))).toEqual([[30]]);
+    expect(sizesOf(batchesBySize([30, 3].map((size, index) => entryOf(index, size)), 10))).toEqual([[30], [3]]);
+    expect(sizesOf(batchesBySize([3, 30, 3].map((size, index) => entryOf(index, size)), 10))).toEqual([[3], [30], [3]]);
   });
 });
 
@@ -282,6 +312,36 @@ describeWithSqlite('sweepCodeRecords', () => {
     expect(fixture.git.blobReads).toHaveLength(1);
     expect(fixture.git.blobReads[0]).toHaveLength(1);
     expect(fixture.paths()).toEqual(['src/kept.ts', 'src/pacer.ts']);
+  });
+
+  it('reads the changed files one 16 MB batch at a time, and still indexes every one of them', async () => {
+    const fixture = project();
+    const fileCount = 90;
+    for (let index = 0; index < fileCount; index += 1) {
+      fixture.files.set(`src/module-${String(index).padStart(2, '0')}.ts`, `export const value${index} = ${index};\n`);
+    }
+    // The tree listing is what reports a file's size, so the batches are cut on
+    // it and the contents stay small: each file is listed at 200 KB, under the
+    // per-file cap, so 90 of them are 18 MB and cannot go through in one read.
+    const reportedSize = 200_000;
+    const sixteenMegabytes = 16 * 1024 * 1024;
+    const listedFromContent = fixture.deps.listTree;
+    fixture.deps.listTree = async (projectPath, commit) =>
+      (await listedFromContent(projectPath, commit)).map((entry) => ({ ...entry, size: reportedSize }));
+
+    const result = await fixture.sweep();
+
+    expect(result).toEqual({ indexed: fileCount, removed: 0, deferred: false });
+    expect(fixture.paths()).toHaveLength(fileCount);
+    // More than one read, none of them past the limit, and every blob read once.
+    expect(fixture.git.blobReads.length).toBeGreaterThan(1);
+    for (const read of fixture.git.blobReads) {
+      expect(read.length * reportedSize).toBeLessThanOrEqual(sixteenMegabytes);
+    }
+    // 83 files of 200 KB fit in 16 MB and an 84th does not: 90 files read as 83, then 7.
+    expect(fixture.git.blobReads.map((read) => read.length)).toEqual([83, 7]);
+    expect(fixture.git.blobReads.flat()).toHaveLength(fileCount);
+    expect(new Set(fixture.git.blobReads.flat()).size).toBe(fileCount);
   });
 
   it('puts off the first read of a whole branch until it may run, and never an update', async () => {

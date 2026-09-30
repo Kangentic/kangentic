@@ -165,7 +165,9 @@ describe('answer run flags and prompt delivery', () => {
     expect(options.extractRaw).toBe(extractLastTurnAnswer);
   });
 
-  it('Grok streams its deltas, and reaches the search tool through the environment, never a file', async () => {
+  // The search tool's environment plumbing (a run WITH retrieval) is pinned in
+  // grok-adapter.test.ts; this one runs without it, so nothing touches disk.
+  it('Grok streams its deltas, writes its prompt file in the run directory, and sets no environment without search', async () => {
     const grok = new GrokAdapter();
     expect(grok.answerCapabilities.streaming).toBe(true);
     expect(grok.answerCapabilities.search).toBe(true);

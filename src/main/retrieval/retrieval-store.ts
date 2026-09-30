@@ -252,13 +252,16 @@ export class RetrievalStore {
     run();
   }
 
-  /** Every corpus, and the task summaries written from it, gone: the Privacy
-   *  "clear index". */
+  /** Every corpus, and what was derived from it, gone: the Privacy "clear
+   *  index". That includes the graph's cached map, its per-document sums and
+   *  its region names (the `graph_` meta keys), which carry titles, cost and
+   *  task ids read from the cleared chunks. */
   purgeAll(): void {
     const run = this.db.transaction(() => {
       this.db.prepare('DELETE FROM memory_chunks').run();
       this.db.prepare('DELETE FROM memory_index_state').run();
       this.db.prepare('DELETE FROM memory_task_summaries').run();
+      this.db.prepare("DELETE FROM memory_meta WHERE key LIKE 'graph\\_%' ESCAPE '\\'").run();
       for (const corpus of this.vecTables) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
     });
     run();
@@ -675,20 +678,28 @@ export class RetrievalStore {
       // vector belongs to.
       const checkHash = this.db.prepare('SELECT content_hash, corpus FROM memory_chunks WHERE id = ?');
       const markChunk = this.db.prepare('UPDATE memory_chunks SET embedded_model = ? WHERE id = ?');
+      // Prepared once per vec table a batch touches, not twice per row.
+      const statementsByTable = new Map<string, { remove: Database.Statement; insert: Database.Statement }>();
       for (const { chunkId, vector, contentHash } of rows) {
         const current = checkHash.get(chunkId) as { content_hash: string; corpus: string } | undefined;
         if (!current || current.content_hash !== contentHash) continue;
         // A corpus with no table on this connection stays pending.
         if (!isMemoryCorpus(current.corpus) || !this.vecTables.has(current.corpus)) continue;
         const table = vecTableName(current.corpus);
+        let statements = statementsByTable.get(table);
+        if (!statements) {
+          statements = {
+            remove: this.db.prepare(`DELETE FROM ${table} WHERE rowid = ?`),
+            insert: this.db.prepare(`INSERT INTO ${table}(rowid, embedding) VALUES (?, ?)`),
+          };
+          statementsByTable.set(table, statements);
+        }
         // vec0 rejects a JS number for its rowid ("Only integers are allowed
         // for primary key values") - it must be bound as a BigInt (verified
         // against sqlite-vec 0.1.9 under Electron).
         const rowid = BigInt(chunkId);
-        this.db.prepare(`DELETE FROM ${table} WHERE rowid = ?`).run(rowid);
-        this.db
-          .prepare(`INSERT INTO ${table}(rowid, embedding) VALUES (?, ?)`)
-          .run(rowid, Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength));
+        statements.remove.run(rowid);
+        statements.insert.run(rowid, Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength));
         markChunk.run(modelTag, chunkId);
       }
     });
