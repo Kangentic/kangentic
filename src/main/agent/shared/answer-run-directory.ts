@@ -63,17 +63,22 @@ const fallbackHomes = new Map<string, Promise<string>>();
  * by this user and writable by no one else. One that fails that is never used;
  * a fresh private folder takes its place for the rest of the launch, so each
  * CLI still keeps one state entry per launch, not one per question.
+ *
+ * Returned as its real path. macOS's temp folder sits behind a link (`/var` is
+ * `/private/var`), and a CLI that resolves its working directory keys its trust
+ * and its saved chats by the real path, so a trust entry or a cleanup written
+ * for the linked one would miss.
  */
 export async function ensureAnswerHomeDirectory(options: { root?: string } = {}): Promise<string> {
   const directory = answerHomeDirectory(options.root);
   if (currentUserId() === null) {
     await fs.promises.mkdir(directory, { recursive: true });
-    return directory;
+    return fs.promises.realpath(directory);
   }
-  if (await isPrivateToThisUser(directory)) return directory;
+  if (await isPrivateToThisUser(directory)) return fs.promises.realpath(directory);
   let fallback = fallbackHomes.get(directory);
   if (!fallback) {
-    fallback = fs.promises.mkdtemp(`${directory}-`);
+    fallback = fs.promises.mkdtemp(`${directory}-`).then((created) => fs.promises.realpath(created));
     fallbackHomes.set(directory, fallback);
   }
   return fallback;
@@ -152,7 +157,8 @@ export async function sweepStaleAnswerRunDirectories(
  * worth failing an answer over.
  */
 export async function withAnswerRunDirectory<T>(work: (directory: string) => Promise<T>): Promise<T> {
-  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), ANSWER_RUN_DIRECTORY_PREFIX));
+  // The real path, as for the home: see `ensureAnswerHomeDirectory`.
+  const directory = await fs.promises.realpath(await fs.promises.mkdtemp(path.join(os.tmpdir(), ANSWER_RUN_DIRECTORY_PREFIX)));
   try {
     return await work(directory);
   } finally {

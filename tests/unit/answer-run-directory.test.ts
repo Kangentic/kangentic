@@ -42,10 +42,10 @@ describe('the answer home', () => {
     expect(answerHomeDirectory(root)).toBe(path.join(root, expectedName));
   });
 
-  it('is created, and the same folder comes back on the next call', async () => {
+  it('is created, and the same folder comes back on the next call, as its real path', async () => {
     const first = await ensureAnswerHomeDirectory({ root });
     const second = await ensureAnswerHomeDirectory({ root });
-    expect(first).toBe(answerHomeDirectory(root));
+    expect(first).toBe(fs.realpathSync(answerHomeDirectory(root)));
     expect(second).toBe(first);
     expect(fs.statSync(first).isDirectory()).toBe(true);
   });
@@ -62,7 +62,7 @@ describe('the answer home', () => {
       fs.mkdirSync(home);
       fs.chmodSync(home, 0o755);
 
-      await expect(ensureAnswerHomeDirectory({ root })).resolves.toBe(home);
+      await expect(ensureAnswerHomeDirectory({ root })).resolves.toBe(fs.realpathSync(home));
       expect(modeOf(home)).toBe(0o700);
     });
 
@@ -72,7 +72,7 @@ describe('the answer home', () => {
       fs.chmodSync(home, 0o777);
 
       const used = await ensureAnswerHomeDirectory({ root });
-      expect(used).not.toBe(home);
+      expect(used).not.toBe(fs.realpathSync(home));
       expect(modeOf(used)).toBe(0o700);
       // Once per launch, not once per question.
       await expect(ensureAnswerHomeDirectory({ root })).resolves.toBe(used);

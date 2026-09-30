@@ -56,8 +56,8 @@ export function PrivacyTab() {
 
       <SettingsCard
         icon={<HardDrive size={16} />}
-        label="Conversation search"
-        description="Indexing and the Knowledge Graph's local model run on this device."
+        label="Knowledge Graph"
+        description="What runs on this device, and what goes to the agent you choose."
         searchIds={['privacy.info']}
       >
         <CardTile>

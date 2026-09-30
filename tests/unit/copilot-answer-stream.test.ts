@@ -55,4 +55,22 @@ describe('extractCopilotAnswer', () => {
   it('returns nothing, for the runner to report, when a clean run wrote no answer', () => {
     expect(extractCopilotAnswer(JSON.stringify({ type: 'result', exitCode: 0 }))).toBe('');
   });
+
+  it('fails a run that exited non-zero after an answer, rather than passing a partial answer off as whole', () => {
+    const exitedAfterAnswer = [
+      ...CAPTURED.slice(0, -1),
+      JSON.stringify({ type: 'session.error', data: { message: 'Connection reset mid-reply' } }),
+      JSON.stringify({ type: 'result', sessionId: 'session-1', exitCode: 1 }),
+    ].join('\n');
+    expect(() => extractCopilotAnswer(exitedAfterAnswer)).toThrow('Connection reset mid-reply');
+  });
+
+  it('keeps the answer of a run that exited 0 after a failed tool call it recovered from', () => {
+    const recovered = [
+      ...CAPTURED.slice(0, 3),
+      JSON.stringify({ type: 'tool.execution_error', data: { message: 'search timed out' } }),
+      ...CAPTURED.slice(3),
+    ].join('\n');
+    expect(extractCopilotAnswer(recovered)).toBe('It found a half-open socket.\nSELECTED: none');
+  });
 });

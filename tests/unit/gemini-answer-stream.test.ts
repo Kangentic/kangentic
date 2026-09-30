@@ -42,4 +42,14 @@ describe('Gemini answer stream', () => {
     const stdout = [INIT, USER, line({ type: 'result', status: 'error', error: { type: 'FatalError', message: 'quota exhausted' } })].join('\n');
     expect(() => extractGeminiAnswer(stdout)).toThrow('quota exhausted');
   });
+
+  it('fails a run that reported an error after writing part of an answer, rather than passing the part off as whole', () => {
+    const stdout = [
+      INIT,
+      USER,
+      line({ type: 'message', role: 'assistant', content: 'Three tasks changed the ', delta: true }),
+      line({ type: 'result', status: 'error', error: { type: 'ApiError', message: 'model overloaded (503)' } }),
+    ].join('\n');
+    expect(() => extractGeminiAnswer(stdout)).toThrow('model overloaded (503)');
+  });
 });

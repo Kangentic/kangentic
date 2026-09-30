@@ -192,7 +192,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'knowledgeGraph.taskSummaries', tabId: 'knowledgeGraph', label: 'Task summaries', description: 'A sentence or two per Done task, so questions find it.', scope: 'global', section: 'Index', keywords: ['summary', 'summaries', 'summarize', 'finished', 'done', 'task', 'memory', 'knowledge', 'graph', 'search', 'cost', 'background'] },
   { id: 'knowledgeGraph.sourceCode', tabId: 'knowledgeGraph', label: 'Source code', description: 'The project\'s code and docs, so answers can explain it.', scope: 'global', section: 'Index', keywords: ['code', 'source', 'codebase', 'repository', 'files', 'docs', 'branch', 'ask', 'answer', 'knowledge', 'graph', 'embed', 'index'] },
   // ── Privacy (synthetic) ──
-  { id: 'privacy.info', tabId: 'privacy', label: 'Privacy', description: 'Anonymous analytics and data collection policy', scope: 'global', keywords: ['telemetry', 'analytics', 'aptabase', 'gdpr', 'opt out'] },
+  { id: 'privacy.info', tabId: 'privacy', label: 'Privacy', description: 'Anonymous analytics and data collection policy', scope: 'global', keywords: ['telemetry', 'analytics', 'aptabase', 'gdpr', 'opt out', 'knowledge graph', 'agent'] },
 
   // ── Developer ──
   { id: 'developer.activityDebugOverlay', tabId: 'developer', label: 'Activity engine debug overlay', description: 'Show a floating panel with live activity-engine state for every running session. Useful for diagnosing spinner / idle bugs.', scope: 'global', keywords: ['debug', 'overlay', 'diagnostic', 'engine', 'activity', 'thinking', 'idle', 'subagent', 'background', 'shell', 'reason'] },

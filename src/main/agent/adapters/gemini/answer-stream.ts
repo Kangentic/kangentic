@@ -50,7 +50,10 @@ export function geminiAnswerEvents(line: string): AnswerStreamEvent[] {
 /**
  * The answer: the assistant's text after its last tool call (the text before
  * one is narration of what it is about to do), or all of it when it called
- * none. Throws the CLI's own error text when the run failed.
+ * none. Throws the CLI's own error text when the run failed, even after some
+ * text: the `result` line is the last one, so a failure there is final, and the
+ * text before it is a partial answer that read as a whole one. Claude's reader
+ * does the same with `is_error`.
  */
 export function extractGeminiAnswer(stdout: string): string {
   let sinceLastTool = '';
@@ -68,10 +71,8 @@ export function extractGeminiAnswer(stdout: string): string {
       if (typeof record.error?.message === 'string') errorText = record.error.message;
     }
   }
-  const answer = sinceLastTool.trim();
-  if (answer) return answer;
   if (failed) throw new Error(errorText || 'the agent reported an error');
-  return '';
+  return sinceLastTool.trim();
 }
 
 /** Fold a path for comparison with Gemini's project registry keys. */

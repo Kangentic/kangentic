@@ -699,14 +699,23 @@ const CLI_KILL_GRACE_MS = 1_000;
 const EXIT_WAIT_MS = 3_000;
 
 /**
+ * The children `spawnCli` started as the leader of their own process group
+ * (POSIX), so `stopCli` can signal the group. Only these: a child from anywhere
+ * else never has its pid negated into a group signal.
+ */
+const processGroupLeaders = new WeakSet<ChildProcess>();
+
+/**
  * Stop a CLI `spawnCli` started, and what it launched.
  *
  * A `.cmd` shim runs the CLI as a child of cmd.exe, so killing cmd.exe left the
  * CLI running with its working directory and every file it was handed by path,
- * a live MCP token among them. `taskkill /T /F` takes the whole tree. Anything
- * else is the CLI itself: SIGTERM, then SIGKILL if it has not exited within the
- * grace. The check reads the exit code and signal, not `child.killed`, which
- * turns true when a signal is SENT and so never let the SIGKILL fire.
+ * a live MCP token among them. `taskkill /T /F` takes the whole tree. On POSIX
+ * a CLI can be a wrapper too (a shell script that starts node), so the CLI runs
+ * as the leader of its own process group and the group gets the signal.
+ * SIGTERM first, then SIGKILL if it has not exited within the grace. The check
+ * reads the exit code and signal, not `child.killed`, which turns true when a
+ * signal is SENT and so never let the SIGKILL fire.
  */
 export function stopCli(child: ChildProcess, cliPath: string): void {
   if (cliHasExited(child)) return;
@@ -716,10 +725,23 @@ export function stopCli(child: ChildProcess, cliPath: string): void {
       .unref();
     return;
   }
-  child.kill('SIGTERM');
+  signalCli(child, 'SIGTERM');
   setTimeout(() => {
-    if (!cliHasExited(child)) child.kill('SIGKILL');
+    if (!cliHasExited(child)) signalCli(child, 'SIGKILL');
   }, CLI_KILL_GRACE_MS).unref();
+}
+
+/** Signal the CLI's process group when it leads one, else the CLI itself. */
+function signalCli(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (processGroupLeaders.has(child) && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // The group is gone already, or cannot be signalled: try the CLI itself.
+    }
+  }
+  child.kill(signal);
 }
 
 function cliHasExited(child: ChildProcess): boolean {
@@ -732,17 +754,25 @@ function cliHasExited(child: ChildProcess): boolean {
  * A Windows `.cmd` or `.bat` shim (an npm-installed CLI) runs through cmd.exe,
  * so its args are interpolated into one command string and each is quoted for
  * cmd.exe (`quoteForCmdShell`). Everything else gets its args passed literally.
+ *
+ * On POSIX the CLI leads a process group of its own (`detached`), so `stopCli`
+ * reaches whatever it started. Never on Windows, where `detached` opens a
+ * console of its own and `taskkill /T` already takes the tree.
  */
 export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Record<string, string>): ChildProcessWithoutNullStreams {
   const useShell = cliRunsThroughShell(cliPath);
   const command = useShell ? `"${cliPath}" ${args.map(quoteForCmdShell).join(' ')}` : cliPath;
-  return spawn(command, useShell ? [] : args, {
+  const leadsGroup = process.platform !== 'win32';
+  const child = spawn(command, useShell ? [] : args, {
     cwd,
     shell: useShell,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: env ? { ...process.env, ...env } : process.env,
+    ...(leadsGroup ? { detached: true } : {}),
   });
+  if (leadsGroup && typeof child === 'object' && child !== null) processGroupLeaders.add(child);
+  return child;
 }
 
 /** Longest stderr excerpt a failure message carries. */

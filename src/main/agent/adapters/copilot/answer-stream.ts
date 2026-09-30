@@ -66,8 +66,11 @@ export function createCopilotAnswerReducer(): (line: string) => AnswerStreamEven
 
 /**
  * The answer: the last assistant message with content. Throws the CLI's own
- * error text when the run failed without one (an error event, or a result line
- * with a non-zero exit code), so the chat shows why.
+ * error text, so the chat shows why, when the run failed: its result line
+ * reports a non-zero exit code, even after an answer (a partial answer read as
+ * a whole one), or it wrote no answer and some event reported an error. An
+ * error event in a run that exited 0 was recovered from, a failed tool call
+ * among them, so its answer stands.
  */
 export function extractCopilotAnswer(stdout: string): string {
   let answer = '';
@@ -86,8 +89,8 @@ export function extractCopilotAnswer(stdout: string): string {
       errorText = stringField(record.data, 'message') || stringField(record.data, 'error') || errorText;
     }
   }
+  if (exitCode !== null && exitCode !== 0) throw new Error(errorText || `the agent exited ${exitCode}`);
   if (answer) return answer;
   if (errorText) throw new Error(errorText);
-  if (exitCode !== null && exitCode !== 0) throw new Error(`the agent exited ${exitCode}`);
   return '';
 }

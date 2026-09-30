@@ -395,4 +395,24 @@ describe('answer extraction', () => {
     ].join('\n');
     expect(extractAiderAnswer(stdout)).toBe('Two tasks changed the renderer, #561 and #573.');
   });
+
+  it('keeps an answer\'s own lines that look like Aider\'s, trimming only the banner and the token line', () => {
+    // Synthetic: Aider is not installed where this was written. An Ask answer
+    // about costs writes "Cost:" lines of its own, which the old per-line
+    // filter dropped.
+    const answer = [
+      'Model: Sonnet ran most of #529.',
+      'Cost: $136.74 across three sessions.',
+      'Tokens: about 2.9 billion, most of them cached.',
+    ].join('\n');
+    const stdout = [
+      'Aider v0.86.1',
+      'Main model: gpt-5 with ask edit format',
+      '',
+      answer,
+      '',
+      'Tokens: 12k sent, 3.1k cache hit, 40 received. Cost: $0.01 message, $0.01 session.',
+    ].join('\n');
+    expect(extractAiderAnswer(stdout)).toBe(answer);
+  });
 });

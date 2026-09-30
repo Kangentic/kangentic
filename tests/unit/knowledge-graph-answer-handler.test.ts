@@ -412,9 +412,9 @@ describe('the Ask handler', () => {
 
     await ask('anything');
     await ask('anything else');
-    // The per-user name on POSIX, the plain one on Windows.
-    expect(seen[0].cwd).toBe(answerHomeDirectory());
-    expect(path.dirname(seen[0].cwd)).toBe(os.tmpdir());
+    // The per-user name on POSIX, the plain one on Windows, as its real path.
+    expect(seen[0].cwd).toBe(fs.realpathSync(answerHomeDirectory()));
+    expect(path.dirname(seen[0].cwd)).toBe(fs.realpathSync(os.tmpdir()));
     expect(seen[1].cwd).toBe(seen[0].cwd);
     expect(fs.existsSync(seen[0].cwd)).toBe(true);
     expect(path.basename(seen[0].runDirectory)).toMatch(/^kangentic-answer-/);

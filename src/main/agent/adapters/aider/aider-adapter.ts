@@ -263,15 +263,23 @@ export class AiderAdapter implements AgentAdapter {
 }
 
 /**
- * Lines Aider prints around an answer: its version banner, the model and repo
- * summary, and the token and cost line. Dropped so only the answer remains.
+ * The lines Aider prints before an answer: its version banner, the model and
+ * repo summary, and any startup notice.
  */
-const AIDER_STATUS_LINE = /^(?:Aider v\d|Main model:|Model:|Weak model:|Editor model:|Git repo:|Repo-map:|Added .* to the chat|Tokens: |Cost: |Warning:|Use \/help|https:\/\/aider\.chat)/;
+const AIDER_BANNER_LINE = /^(?:Aider v\d|(?:Main |Editor )?[Mm]odel: .+ with .+ format|Weak model:|Git repo:|Repo-map:|Added .* to the chat|Warning:|Use \/help|https:\/\/aider\.chat)/;
+/** The line Aider prints after one: `Tokens: 2.3k sent, 145 received. Cost: ...`. */
+const AIDER_TOKENS_LINE = /^Tokens: .* sent, .* received/;
 
+/**
+ * The answer between Aider's banner and its token line. Only the ends are
+ * trimmed: filtering every line dropped an answer's own "Cost: $136.74 across
+ * three sessions", and an answer about task costs writes lines like that.
+ */
 export function extractAiderAnswer(stdout: string): string {
-  return stdout
-    .split(/\r?\n/)
-    .filter((line) => !AIDER_STATUS_LINE.test(line.trim()))
-    .join('\n')
-    .trim();
+  const lines = stdout.split(/\r?\n/);
+  let start = 0;
+  while (start < lines.length && (lines[start].trim() === '' || AIDER_BANNER_LINE.test(lines[start].trim()))) start += 1;
+  let end = lines.length;
+  while (end > start && (lines[end - 1].trim() === '' || AIDER_TOKENS_LINE.test(lines[end - 1].trim()))) end -= 1;
+  return lines.slice(start, end).join('\n').trim();
 }

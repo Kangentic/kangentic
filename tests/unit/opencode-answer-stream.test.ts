@@ -46,6 +46,18 @@ describe('extractOpenCodeAnswer', () => {
     const failed = JSON.stringify({ type: 'error', sessionID: SESSION, error: { name: 'APIError', data: { message: 'Model not found' } } });
     expect(() => extractOpenCodeAnswer(failed)).toThrow('Model not found');
   });
+
+  const sessionError = JSON.stringify({ type: 'error', sessionID: SESSION, error: { name: 'APIError', data: { message: 'Rate limited' } } });
+
+  it('fails a run that ended on an error after part of an answer, rather than passing the part off as whole', () => {
+    const partial = [CAPTURED[0], CAPTURED[1], sessionError].join('\n');
+    expect(() => extractOpenCodeAnswer(partial)).toThrow('Rate limited');
+  });
+
+  it('answers when text came after the error, which the run recovered from', () => {
+    const recovered = [sessionError, ...CAPTURED].join('\n');
+    expect(extractOpenCodeAnswer(recovered)).toBe('The search found 12 conversation hits.\n\nSELECTED: none');
+  });
 });
 
 describe('openCodeSessionId', () => {

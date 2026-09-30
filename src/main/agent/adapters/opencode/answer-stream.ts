@@ -56,21 +56,30 @@ export function openCodeAnswerEvents(line: string): AnswerStreamEvent[] {
   return [];
 }
 
-/** The text written after the last tool use. Throws the CLI's error when a run failed without one. */
+/**
+ * The text written after the last tool use. Throws the CLI's error when the run
+ * ended on one: an `error` record is the session's own (a tool's failure is in
+ * its `tool_use` state), and text written before it is a partial answer that
+ * read as a whole one. An error with text after it was recovered from, so that
+ * text is the answer.
+ */
 export function extractOpenCodeAnswer(stdout: string): string {
   let sinceLastTool: string[] = [];
   let failure: string | null = null;
   for (const line of stdout.split(/\r?\n/)) {
     const record = parse(line);
     if (!record) continue;
-    if (record.type === 'text' && typeof record.part?.text === 'string') sinceLastTool.push(record.part.text);
-    else if (record.type === 'tool_use') sinceLastTool = [];
-    else if (record.type === 'error') failure = errorMessage(record.error) ?? failure ?? 'the agent reported an error';
+    if (record.type === 'text' && typeof record.part?.text === 'string') {
+      sinceLastTool.push(record.part.text);
+      failure = null;
+    } else if (record.type === 'tool_use') {
+      sinceLastTool = [];
+    } else if (record.type === 'error') {
+      failure = errorMessage(record.error) ?? failure ?? 'the agent reported an error';
+    }
   }
-  const answer = sinceLastTool.join('\n').trim();
-  if (answer) return answer;
   if (failure) throw new Error(failure);
-  return '';
+  return sinceLastTool.join('\n').trim();
 }
 
 /** The session id any event carries, or null. */

@@ -82,13 +82,19 @@ import { runCliPrintSummarize, runCliPrintAnswer } from '../../src/main/agent/sh
 // Tests
 // ---------------------------------------------------------------------------
 
+// A fake child with a pid, spawned on POSIX, is a process-group leader to
+// `stopCli`, which would signal `-pid`: never let that reach a real process.
+let processKill: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   vi.useFakeTimers();
   mockSpawn.mockClear();
+  processKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  processKill.mockRestore();
 });
 
 describe('runCliPrintSummarize - OUTPUT_BUDGET termination (#2)', () => {
@@ -230,6 +236,57 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
     expect(child.kill).not.toHaveBeenCalledWith('SIGKILL');
     child.emit('close', 1);
     await resultPromise.catch(() => { /* expected */ });
+  });
+
+  describe('a CLI on POSIX', () => {
+    const originalPlatform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    });
+
+    it('runs as the leader of its own process group, and a stop signals the whole group', async () => {
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      const child = makeFakeChild() as FakeChild & { pid: number };
+      child.pid = 4242;
+      mockSpawn.mockReturnValue(child);
+      const resultPromise = startStalledRun();
+
+      expect(mockSpawn.mock.calls[0][2]).toEqual(expect.objectContaining({ detached: true }));
+      vi.advanceTimersByTime(600);
+      expect(processKill).toHaveBeenCalledWith(-4242, 'SIGTERM');
+      expect(child.kill).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1_100);
+      expect(processKill).toHaveBeenCalledWith(-4242, 'SIGKILL');
+
+      child.emit('close', null);
+      await resultPromise.catch(() => { /* expected */ });
+    });
+
+    it('falls back to the CLI itself when its group cannot be signalled', async () => {
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      processKill.mockImplementation(() => { throw new Error('ESRCH'); });
+      const child = makeFakeChild() as FakeChild & { pid: number };
+      child.pid = 4242;
+      mockSpawn.mockReturnValue(child);
+      const resultPromise = startStalledRun();
+
+      vi.advanceTimersByTime(600);
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+
+      child.emit('close', null);
+      await resultPromise.catch(() => { /* expected */ });
+    });
+
+    it('is never detached on Windows', async () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      const child = makeFakeChild();
+      mockSpawn.mockReturnValue(child);
+      const resultPromise = startStalledRun();
+
+      expect(mockSpawn.mock.calls[0][2]).not.toHaveProperty('detached');
+      child.emit('close', 0);
+      await resultPromise.catch(() => { /* expected */ });
+    });
   });
 
   describe('a CLI launched through cmd.exe', () => {
