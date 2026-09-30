@@ -21,6 +21,7 @@ import { getProjectDb } from '../../db/database';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { resolveTask } from '../commands/task-resolver';
 import { searchCommits, type CommitHit } from '../../retrieval/commit/commit-search';
+import { rankWorkRelatedToTask } from '../../retrieval/task-related-work';
 import { SummaryStore } from '../../retrieval/summary/summary-store';
 import type { BoardTaskFacts } from '../../retrieval/answer-tasks';
 import {
@@ -290,24 +291,12 @@ function handedSessionIds(nodes: ReadonlyArray<IndexedConversationNode>, handed:
     .filter((sessionId): sessionId is string => Boolean(sessionId))))];
 }
 
-/**
- * Characters of the task's title and description a relatedToTask ranking reads,
- * the same budget the task window's prior work uses: enough to carry the task's
- * meaning, and past it the embedding blurs.
- */
-const RELATED_TO_TASK_TEXT_CHARS = 1_200;
 /** Rows relatedToTask returns, every one with its summary and passage. */
 export const RELATED_TO_TASK_ROWS = 12;
 
 /**
  * `relatedToTask`: the tasks most like one task, its prior and related work,
- * ranked by the same rollup as groupBy:"task". The task itself is left out of
- * the ranking entirely (its conversations and its record), so strength is
- * measured against the best OTHER task.
- *
- * The task is embedded once, as one query vector, rather than as the question
- * and its content words: each vector costs one scan of every conversation
- * vector on main, so one vector keeps this at the cost of a single search.
+ * ranked by `rankWorkRelatedToTask`, which the task window's prior work shares.
  */
 async function searchRelatedToTask(input: {
   relatedToTask: string;
@@ -338,32 +327,11 @@ async function searchRelatedToTask(input: {
     return { content: [{ type: 'text' as const, text: `The index is off (Settings > Knowledge Graph), so there is nothing to rank the work related to ${label} by.` }] };
   }
 
-  const focus = input.query?.trim() ?? '';
-  const text = `${focus ? `${focus}. ` : ''}${task.title}\n${task.description ?? ''}`.slice(0, RELATED_TO_TASK_TEXT_CHARS);
-  // The node and record reads come BEFORE the embedding, as they do for
-  // groupBy:"task". The embed is a round trip to the worker, so timers and IPC
-  // run between these reads and the vector scan; read after it, they ran back to
-  // back with the scan and held main for one merged 470 ms stall.
-  const targetId = task.id;
-  const nodes = indexedConversationNodes(input.project.id).filter((node) => node.taskId !== targetId);
-  const recordOnlyTasks = boardRecordTasks(input.project.id).filter((record) => record.taskId !== targetId);
-  let queryVectors: ReadonlyArray<Float32Array> = [];
-  if (input.embedder) {
-    try {
-      queryVectors = (await input.embedder.embed([text], { timeoutMs: 5000, isQuery: true })) ?? [];
-    } catch {
-      queryVectors = [];
-    }
-  }
-  const related = await searchRelatedWork({
-    question: text,
-    keywordText: `${focus} ${task.title}`,
+  const { related, nodes } = await rankWorkRelatedToTask({
     projectId: input.project.id,
-    nodes,
-    recordOnlyTasks,
+    task,
+    focus: input.query,
     embedder: input.embedder,
-    queryVectors,
-    embedWaitMs: 5000,
   });
   const handed = related.handed.slice(0, RELATED_TO_TASK_ROWS);
 

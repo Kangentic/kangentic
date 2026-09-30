@@ -1183,8 +1183,10 @@ holds earlier conversations near it, a line appears under the description readin
 **"3 earlier conversations about this"**. Expand it to see them, click one to open its transcript.
 
 The task's own title and description are the query, so there is nothing to type, and the task's own
-history is excluded (that is already one click away in the header). When there is no earlier work
-near a task, nothing is shown at all.
+history is excluded (that is already one click away in the header). The five rows are the other tasks
+most like this one, ranked the way `kangentic_search` ranks them for `relatedToTask`, across their
+conversations, task records and commits; each opens that task's best-matching conversation. When
+there is no earlier work near a task, nothing is shown at all.
 
 ## Agent Monitor
 
