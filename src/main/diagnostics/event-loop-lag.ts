@@ -27,6 +27,13 @@
  * whose window contains a labelled span is attributed, one with no span is a
  * suspect that is not wrapped yet. Recording is skipped entirely while the
  * monitor is not running, so a production build pays one boolean check.
+ *
+ * The rings hold the latest few; the counters beside them hold everything.
+ * `syncWorkByLabel` counts every span per label, with its total, its worst and
+ * how many reached each of `DURATION_EDGES_MS`, and `lagAtLeastMs` does the same
+ * for the sampler's lag. Both only ever grow, so two reads taken around a
+ * scenario subtract to that scenario's distribution, which a ring that other
+ * spans keep filling cannot give.
  */
 
 export interface EventLoopLagSpike {
@@ -43,6 +50,15 @@ export interface SlowSyncWork {
   label: string;
   /** The span's duration in ms. */
   ms: number;
+}
+
+/** Every span one label has timed since the monitor started. */
+export interface SyncWorkStats {
+  count: number;
+  totalMs: number;
+  maxMs: number;
+  /** Spans at or over each edge in `DURATION_EDGES_MS`, keyed by the edge. */
+  atLeastMs: Record<string, number>;
 }
 
 export interface EventLoopLagReport {
@@ -63,13 +79,30 @@ export interface EventLoopLagReport {
   slowSyncThresholdMs: number;
   /** The most recent slow synchronous spans (bounded ring, newest last). */
   recentSlowSyncWork: SlowSyncWork[];
+  /** Every timed span since start, per label. */
+  syncWorkByLabel: Record<string, SyncWorkStats>;
+  /** Samples whose lag reached each edge in `DURATION_EDGES_MS`, keyed by the edge. */
+  lagAtLeastMs: Record<string, number>;
 }
 
 const SAMPLE_INTERVAL_MS = 100;
 const SPIKE_THRESHOLD_MS = 75;
 const RING_SIZE = 120;
-const SLOW_SYNC_THRESHOLD_MS = 50;
-const SLOW_SYNC_RING_SIZE = 60;
+/** One frame at 60 Hz: a span this long already drops a frame's worth of input. */
+const SLOW_SYNC_THRESHOLD_MS = 16;
+const SLOW_SYNC_RING_SIZE = 200;
+const DURATION_EDGES_MS = [4, 8, 16, 32, 64, 128, 256] as const;
+
+function emptyEdgeCounts(): Record<string, number> {
+  return Object.fromEntries(DURATION_EDGES_MS.map((edge) => [String(edge), 0]));
+}
+
+function countEdges(counts: Record<string, number>, valueMs: number): void {
+  for (const edge of DURATION_EDGES_MS) {
+    if (valueMs < edge) break;
+    counts[String(edge)] += 1;
+  }
+}
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let startedAtMs: number | null = null;
@@ -79,6 +112,8 @@ let maxLagMs = 0;
 let spikeCount = 0;
 const recentSpikes: EventLoopLagSpike[] = [];
 const recentSlowSyncWork: SlowSyncWork[] = [];
+const syncWorkByLabel = new Map<string, SyncWorkStats>();
+const lagAtLeastMs = emptyEdgeCounts();
 
 /**
  * Run a synchronous piece of main-process work and, while the monitor is
@@ -94,6 +129,15 @@ export function timeSyncWork<T>(label: string, work: () => T): T {
     return work();
   } finally {
     const elapsed = performance.now() - startedAt;
+    let stats = syncWorkByLabel.get(label);
+    if (!stats) {
+      stats = { count: 0, totalMs: 0, maxMs: 0, atLeastMs: emptyEdgeCounts() };
+      syncWorkByLabel.set(label, stats);
+    }
+    stats.count += 1;
+    stats.totalMs += elapsed;
+    if (elapsed > stats.maxMs) stats.maxMs = elapsed;
+    countEdges(stats.atLeastMs, elapsed);
     if (elapsed >= SLOW_SYNC_THRESHOLD_MS) {
       recentSlowSyncWork.push({ at: new Date().toISOString(), label, ms: Math.round(elapsed) });
       while (recentSlowSyncWork.length > SLOW_SYNC_RING_SIZE) recentSlowSyncWork.shift();
@@ -111,6 +155,7 @@ export function startEventLoopLagMonitor(): void {
     lastFire = now;
     samples += 1;
     if (lag > maxLagMs) maxLagMs = lag;
+    countEdges(lagAtLeastMs, lag);
     if (lag >= SPIKE_THRESHOLD_MS) {
       spikeCount += 1;
       recentSpikes.push({ at: new Date().toISOString(), lagMs: Math.round(lag) });
@@ -140,5 +185,12 @@ export function getEventLoopLagReport(): EventLoopLagReport {
     recentSpikes: [...recentSpikes],
     slowSyncThresholdMs: SLOW_SYNC_THRESHOLD_MS,
     recentSlowSyncWork: [...recentSlowSyncWork],
+    syncWorkByLabel: Object.fromEntries([...syncWorkByLabel].map(([label, stats]) => [label, {
+      count: stats.count,
+      totalMs: Math.round(stats.totalMs),
+      maxMs: Math.round(stats.maxMs),
+      atLeastMs: { ...stats.atLeastMs },
+    }])),
+    lagAtLeastMs: { ...lagAtLeastMs },
   };
 }

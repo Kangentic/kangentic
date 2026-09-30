@@ -72,19 +72,19 @@ export async function writeInSlices<Item>(
     const slice: PreparedWrite[] = carried ? [carried] : [];
     let rows = carried?.rows ?? 0;
     let bytes = carried?.bytes ?? 0;
-    carried = null;
-    while (next < items.length && !overCap(rows, bytes) && deps.clock() - preparingSince < PREPARE_BUDGET_MS) {
-      const prepared = prepareOne(prepare, items[next], label);
-      next += 1;
-      if (!prepared) continue;
-      if (slice.length > 0 && overCap(rows + prepared.rows, bytes + prepared.bytes)) {
-        carried = prepared;
-        break;
+    // Labelled apart from the write, so the slow-work log says which half held main.
+    carried = timeSyncWork(`${label}:prepare`, (): PreparedWrite | null => {
+      while (next < items.length && !overCap(rows, bytes) && deps.clock() - preparingSince < PREPARE_BUDGET_MS) {
+        const prepared = prepareOne(prepare, items[next], label);
+        next += 1;
+        if (!prepared) continue;
+        if (slice.length > 0 && overCap(rows + prepared.rows, bytes + prepared.bytes)) return prepared;
+        slice.push(prepared);
+        rows += prepared.rows;
+        bytes += prepared.bytes;
       }
-      slice.push(prepared);
-      rows += prepared.rows;
-      bytes += prepared.bytes;
-    }
+      return null;
+    });
     try {
       if (slice.length === 1 && overCap(rows, bytes)) {
         timeSyncWork(label, () => slice[0].write());
