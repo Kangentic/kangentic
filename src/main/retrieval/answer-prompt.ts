@@ -315,11 +315,12 @@ export function buildFollowUpPrompt(
   context: Pick<AnswerPromptContext, 'related' | 'canSearch' | 'code'>,
 ): string {
   return [
-    context.code
+    (context.code
       ? 'A follow-up question in the same chat. The task table, the glossary and the rules above still apply,'
         + ' and the related work and source code below replace those of earlier questions.'
       : 'A follow-up question in the same chat. The task table, the glossary and the rules above still apply,'
-        + ' and the related work below replaces the related work of earlier questions.',
+        + ' and the related work below replaces the related work of earlier questions.')
+      + ' Where a related task\'s facts differ from the table\'s, the related work\'s are newer.',
     '',
     `<related_work>\n${formatRelatedWork(context.related)}\n</related_work>`,
     ...codeBlock(context.code),

@@ -1011,6 +1011,71 @@ describe('the Ask handler', () => {
       expect(sessions[0].input.model).toBe('haiku');
     });
 
+    /** The map the handler reads, with `nodes` in place of the default ones. */
+    function mapWith(nodes: ReturnType<typeof graphNode>[]): void {
+      vi.mocked(graphService.getSnapshot).mockReturnValue({
+        projectId: 'project-1',
+        projection: { ...MOCK_PROJECTION, nodes },
+        coverage: {},
+        building: false,
+        stale: false,
+        semanticAvailable: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrow test double
+      } as any);
+    }
+
+    it('keeps the warm session on a follow-up but gives the related row this turn\'s facts, not the first turn\'s', async () => {
+      mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'), ['#561.\nSELECTED: #561', '#561 again.\nSELECTED: #561'])];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      await ask('what did the sphere work cost?', 'req-1', { chatId: 'chat-1' });
+      // The task kept running between the two questions.
+      mapWith([
+        graphNode('conversation::doc-1', 'task-1', 561, 'Sphere fit framing', 100),
+        graphNode('conversation::doc-2', 'task-1', 561, 'Sphere fit framing', 15),
+        graphNode('conversation::doc-3', 'task-2', 564, 'Terminal scrollback repaint', 4),
+      ]);
+      await ask('and now?', 'req-2', {
+        chatId: 'chat-1',
+        history: [{ question: 'what did the sphere work cost?', answer: '#561.', taskKeys: ['task-1'] }],
+      });
+
+      expect(sessions).toHaveLength(1);
+      const [firstPrompt, followUp] = sessions[0].prompts;
+      expect(firstPrompt).toMatch(/#561\|Sphere fit framing\|1\.00\|6\|[^|\n]*\|[^|\n]*\|25\.00\|/);
+      expect(followUp).not.toMatch(/<task_table>\n/);
+      expect(followUp).toMatch(/#561\|Sphere fit framing\|1\.00\|6\|[^|\n]*\|[^|\n]*\|115\.00\|/);
+      expect(followUp).toContain('the related work\'s are newer');
+    });
+
+    it('starts the session over when the related work finds a task created after its first turn', async () => {
+      mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'), ['#561.\nSELECTED: #561', '#580 is new.\nSELECTED: #580'])];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      await ask('which task framed the sphere?', 'req-1', { chatId: 'chat-1' });
+      mapWith([...MOCK_PROJECTION.nodes, graphNode('conversation::doc-9', 'task-9', 580, 'Relay reconnect', 3)]);
+      mockRelated = relatedWork([relatedTask({
+        key: 'task-9', taskId: 'task-9', displayId: 580, title: 'Relay reconnect',
+        docKeys: ['conversation::doc-9'], bestChunkId: null, sessionId: 'session-conversation::doc-9',
+      })]);
+      const second = await ask('what about the relay?', 'req-2', {
+        chatId: 'chat-1',
+        history: [{ question: 'which task framed the sphere?', answer: '#561.', taskKeys: ['task-1'] }],
+      });
+
+      // The first session's table has no ref for #580, so it is dropped for one
+      // that gets this turn's whole prompt.
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0].disposed).toBe(true);
+      expect(sessions[0].prompts).toHaveLength(1);
+      const [prompt] = sessions[1].prompts;
+      expect(prompt).toMatch(/<task_table>\n[\s\S]*\n#580\|Relay reconnect\|/);
+      expect(prompt).toMatch(/<related_work>[\s\S]*#580\|Relay reconnect/);
+      expect(second.ok && second.rows.map((row) => row.key)).toEqual(['task-9']);
+    });
+
     it('prewarms on open and answers from the prewarmed session', async () => {
       mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'))];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double

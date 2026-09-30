@@ -18,6 +18,7 @@ import {
   refPrefixFor,
   taskRef,
   type AnswerTaskRow,
+  type AnswerTaskTable,
 } from '../../retrieval/answer-tasks';
 import {
   PASSAGES_SHOWN,
@@ -324,7 +325,7 @@ export function registerSearchHandlers(context: IpcContext): void {
           answerSessionPool.discard(pooled);
           pooled = takeAnswerSession(answerContext.chatId, resolvedRun.run);
         }
-        const primedTable = pooled?.primed?.table ?? null;
+        let primedTable = pooled?.primed?.table ?? null;
 
         const takenPrefixes = new Set<string>();
         // Across projects EVERY ticket carries its project, the open one's too.
@@ -352,7 +353,13 @@ export function registerSearchHandlers(context: IpcContext): void {
             })))
             : tables[0];
         };
-        const taskTable = primedTable ?? buildTaskTable();
+        // Built every turn, for the facts: a follow-up that read them from the
+        // session's first table showed a running task's cost as it was then.
+        const freshTable = buildTaskTable();
+        // The refs are the table the session was primed with, the one in its
+        // context: rows sort by cost, so a fresh build numbers `C<n>` differently
+        // while an agent runs.
+        let taskTable = primedTable ?? freshTable;
         const projectNameById = new Map(scopeProjects.map((entry) => [entry.id, entry.name]));
         /** The project fields a wire task carries. The name only across projects,
          *  where it is what a row shows. */
@@ -377,23 +384,26 @@ export function registerSearchHandlers(context: IpcContext): void {
         }
 
         // Refs as the prompt writes them, both ways.
-        const refByKey = new Map<string, string>();
-        const keyByRef = new Map<string, string>();
-        const rowByKey = new Map<string, AnswerTaskRow>();
-        taskTable.rows.forEach((row, index) => {
-          const ref = taskRef(row, index);
-          refByKey.set(row.key, ref);
-          keyByRef.set(ref, row.key);
-          rowByKey.set(row.key, row);
-        });
-        // A bare ticket still means the open project's task, as it does
-        // everywhere else in the app, so an answer that drops the prefix on one
-        // of those still resolves. Never another project's: that ticket is theirs.
-        taskTable.rows.forEach((row) => {
-          if (!acrossProjects || row.projectId !== openProjectId || row.displayId == null) return;
-          const bare = `#${row.displayId}`;
-          if (!keyByRef.has(bare)) keyByRef.set(bare, row.key);
-        });
+        const indexRefs = (table: AnswerTaskTable): { refByKey: Map<string, string>; keyByRef: Map<string, string> } => {
+          const refs = new Map<string, string>();
+          const keys = new Map<string, string>();
+          table.rows.forEach((row, index) => {
+            const ref = taskRef(row, index);
+            refs.set(row.key, ref);
+            keys.set(ref, row.key);
+          });
+          // A bare ticket still means the open project's task, as it does
+          // everywhere else in the app, so an answer that drops the prefix on one
+          // of those still resolves. Never another project's: that ticket is theirs.
+          table.rows.forEach((row) => {
+            if (!acrossProjects || row.projectId !== openProjectId || row.displayId == null) return;
+            const bare = `#${row.displayId}`;
+            if (!keys.has(bare)) keys.set(bare, row.key);
+          });
+          return { refByKey: refs, keyByRef: keys };
+        };
+        let { refByKey, keyByRef } = indexRefs(taskTable);
+        const rowByKey = new Map<string, AnswerTaskRow>(freshTable.rows.map((row) => [row.key, row]));
 
         const emit = (event: KnowledgeGraphAnswerStreamEvent): void => {
           if (context.mainWindow.isDestroyed()) return;
@@ -445,7 +455,17 @@ export function registerSearchHandlers(context: IpcContext): void {
           console.warn('[knowledge-graph] related work search failed, answering from the table:', error);
           related = { ranked: [], handed: [], passages: new Map(), code: [], semantic: false, elapsedMs: 0 };
         }
-        const toWire = (task: ProjectRelatedWorkTask): KnowledgeGraphRelatedTask => ({
+        // A task created since the session's first turn has no ref in the
+        // table it holds, so the related work could not name it and it was
+        // dropped. Start the session over on this turn's table instead.
+        if (primedTable && answerContext.chatId && related.handed.some((task) => !refByKey.has(task.key) && rowByKey.has(task.key))) {
+          if (pooled) answerSessionPool.discard(pooled);
+          pooled = takeAnswerSession(answerContext.chatId, resolvedRun.run);
+          primedTable = null;
+          taskTable = freshTable;
+          ({ refByKey, keyByRef } = indexRefs(taskTable));
+        }
+        const toWire =(task: ProjectRelatedWorkTask): KnowledgeGraphRelatedTask => ({
           key: task.key,
           taskId: task.taskId,
           displayId: task.displayId,
