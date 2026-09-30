@@ -55,8 +55,19 @@ const TEXT_BYTES_PER_CHUNK = 512;
  *  cannot be confused for each other. */
 const UNEMBEDDED_PER_DOC = 1;
 
-/** Minimal store double: only the reads the pass actually performs. */
-function scriptedStore(chunks: ScriptedChunk[], meta = new Map<string, string>()) {
+/** When every document was last indexed, unless a test says otherwise. */
+const FIRST_INDEXED_AT = '2026-09-01T00:00:00.000Z';
+
+/**
+ * Minimal store double: only the reads the pass actually performs.
+ * `indexedAtByDocId` overrides a document's index time, which is how a test
+ * says a document was rewritten without its count moving.
+ */
+function scriptedStore(
+  chunks: ScriptedChunk[],
+  meta = new Map<string, string>(),
+  indexedAtByDocId: Record<string, string> = {},
+) {
   const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
   let listCalls = 0;
   /** Chunk ids asked of `readVectors`: the cost the incremental pass exists to cut. */
@@ -120,6 +131,13 @@ function scriptedStore(chunks: ScriptedChunk[], meta = new Map<string, string>()
         ...row,
         embeddedCount: row.chunkCount - UNEMBEDDED_PER_DOC,
       }));
+    },
+    documentIndexTimes(corpus: string) {
+      const times = new Map<string, string>();
+      for (const chunk of chunks) {
+        if (chunk.corpus === corpus) times.set(chunk.docId, indexedAtByDocId[chunk.docId] ?? FIRST_INDEXED_AT);
+      }
+      return times;
     },
     maxChunkId() {
       return chunks.reduce((highest, chunk) => Math.max(highest, chunk.id), 0);
@@ -525,6 +543,61 @@ describe('projection pass', () => {
       const { changed, shared, result } = await cachedThenChanged();
       shared.set(PROJECTION_SUMS_KEY, JSON.stringify(result.sums));
       const next = scriptedStore(changed, shared);
+      await runProjectionPass({
+        store: next.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      expect(next.vectorReads()).toBe(0);
+    });
+
+    it('reads again a document rewritten without its embedded count moving', async () => {
+      // A live conversation's tail chunk grows in place: same seq, same count,
+      // often the same reused rowid, and a new vector once it is embedded again.
+      // Only the document's index time says it changed.
+      const original = makeChunks(6, 3);
+      const shared = new Map<string, string>();
+      const initial = await runProjectionPass({
+        store: scriptedStore(original, shared).store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      shared.set(PROJECTION_SUMS_KEY, JSON.stringify(initial!.sums));
+
+      // doc-005 holds ids 16 to 18, and 18 is its unembedded newest chunk, so 17
+      // is the last one with a vector.
+      const rewritten = original.map((chunk) => (chunk.id === 17 ? { ...chunk, vector: unitVector(90) } : chunk));
+      const reindexed = { 'doc-005': '2026-09-02T00:00:00.000Z' };
+      const incremental = scriptedStore(rewritten, shared, reindexed);
+      const result = await runProjectionPass({
+        store: incremental.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      const fromScratch = await runProjectionPass({
+        store: scriptedStore(rewritten, new Map(), reindexed).store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+
+      expect(result!.sums.sumsByDocKey).toEqual(fromScratch!.sums.sumsByDocKey);
+      // doc-005's two embedded chunks, and no other document's.
+      expect(incremental.vectorReads()).toBe(2);
+    });
+
+    it('reads a cache written before index times were kept again whole, then resumes', async () => {
+      const chunks = makeChunks(6, 3);
+      const shared = new Map<string, string>();
+      const initial = await runProjectionPass({
+        store: scriptedStore(chunks, shared).store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      const older: Record<string, unknown> = { ...initial!.sums };
+      delete older.indexedAtByDocKey;
+      shared.set(PROJECTION_SUMS_KEY, JSON.stringify(older));
+
+      // It cannot tell a same-count rewrite from an untouched document, so it
+      // scans from the first chunk.
+      const upgraded = scriptedStore(chunks, shared);
+      const result = await runProjectionPass({
+        store: upgraded.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      expect(upgraded.listCalls()).toBeGreaterThan(0);
+
+      // And records the times, so the pass after it reads nothing.
+      shared.set(PROJECTION_SUMS_KEY, JSON.stringify(result!.sums));
+      const next = scriptedStore(chunks, shared);
       await runProjectionPass({
         store: next.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
       });

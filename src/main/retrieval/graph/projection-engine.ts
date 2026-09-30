@@ -161,23 +161,38 @@ export interface ProjectionPassDeps {
  * which a live conversation causes on every turn. Reading the changed
  * documents by doc key finds every chunk of theirs whatever its id, so the
  * rest keep their cached sums.
+ *
+ * The count alone misses a document rewritten at the SAME count: the live
+ * conversation's tail chunk grows in place and is embedded again, and when no
+ * pass runs in between the count reads as unchanged. So a document whose index
+ * time moved is read again too. `liveIndexTimes` is read before any vector, so
+ * a re-index that lands while this pass yields stamps a later time than the one
+ * recorded, and the next pass reads that document again.
  */
 function planScan(
   cached: SerializedMeanPool | null,
   dimensions: number,
   modelTag: string,
   liveCounts: Map<string, number>,
+  liveIndexTimes: Map<string, string>,
 ): { accumulator: MeanPoolAccumulator; resumeFrom: number; documentsToRead: string[] | null } {
   const fullScan = { accumulator: createMeanPoolAccumulator(dimensions), resumeFrom: 0, documentsToRead: null };
   if (!cached) return fullScan;
+  // Written before index times were recorded, so a same-count rewrite in it is
+  // undetectable. Read once from scratch, then incremental again.
+  const cachedIndexTimes = cached.indexedAtByDocKey;
+  if (!cachedIndexTimes) return fullScan;
   const restored = deserializeMeanPool(cached, dimensions, modelTag);
   // Different model or width: the vectors mean something else entirely.
   if (!restored) return fullScan;
 
   for (const [docKey, cachedCount] of [...restored.countsByDocKey]) {
     // A document gone from the index, or with nothing embedded any more, is
-    // forgotten; one whose count moved is forgotten and read again below.
-    if (liveCounts.get(docKey) !== cachedCount) forgetDocument(restored, docKey);
+    // forgotten; one whose count or index time moved is forgotten and read
+    // again below.
+    if (liveCounts.get(docKey) !== cachedCount || liveIndexTimes.get(docKey) !== cachedIndexTimes[docKey]) {
+      forgetDocument(restored, docKey);
+    }
   }
   // Every live document the accumulator no longer holds: the changed ones, and
   // any new since the cache was written.
@@ -206,9 +221,15 @@ export async function runProjectionPass(
   for (const row of totals) {
     if (row.embeddedCount > 0) liveCounts.set(`${row.corpus}::${row.docId}`, row.embeddedCount);
   }
+  const liveIndexTimes = new Map<string, string>();
+  for (const [docId, indexedAt] of store.documentIndexTimes('conversation')) {
+    liveIndexTimes.set(`conversation::${docId}`, indexedAt);
+  }
 
   const cachedSums = readJson<SerializedMeanPool>(store, PROJECTION_SUMS_KEY);
-  const { accumulator, resumeFrom, documentsToRead } = planScan(cachedSums, dimensions, modelTag, liveCounts);
+  const { accumulator, resumeFrom, documentsToRead } = planScan(
+    cachedSums, dimensions, modelTag, liveCounts, liveIndexTimes,
+  );
 
   /** Fold one page of chunks in, then pace. */
   const foldPage = async (identities: ReadonlyArray<{ id: number; corpus: string; docId: string }>): Promise<void> => {
@@ -376,7 +397,7 @@ export async function runProjectionPass(
     builtAt: new Date().toISOString(),
   };
 
-  return { projection, sums: serializeMeanPool(accumulator, cursor, modelTag) };
+  return { projection, sums: serializeMeanPool(accumulator, cursor, modelTag, liveIndexTimes) };
 }
 
 /**

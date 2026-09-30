@@ -891,6 +891,20 @@ export class RetrievalStore {
   }
 
   /**
+   * When each document in `corpus` was last indexed, keyed by doc id. An
+   * incremental projection pass compares it with the time its cached sum was
+   * read at, because a document rewritten at the same embedded count (a live
+   * conversation's tail chunk growing in place) moves no count. One range seek
+   * on the `(corpus, doc_id)` primary key.
+   */
+  documentIndexTimes(corpus: MemoryCorpus): Map<string, string> {
+    const rows = this.db
+      .prepare('SELECT doc_id AS docId, indexed_at AS indexedAt FROM memory_index_state WHERE corpus = ?')
+      .all(corpus) as Array<{ docId: string; indexedAt: string }>;
+    return new Map(rows.map((row) => [row.docId, row.indexedAt]));
+  }
+
+  /**
    * A cheap summary of everything conversation coverage is computed from, so a
    * caller can tell whether a coverage it already holds is still true.
    *

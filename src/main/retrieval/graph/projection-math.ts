@@ -157,9 +157,10 @@ export function finalizeMeanPool(accumulator: MeanPoolAccumulator): MeanPooledDo
  * `upsertDocument` re-indexes a changed document by DELETING from the first
  * divergent seq and reinserting, which mints new chunk ids under the SAME doc
  * key, at or below ids already scanned. Comparing each document's live
- * embedded count against the cached one finds the documents that changed;
- * `forgetDocument` then drops the stale sum and the pass reads that document
- * again by doc key (`planScan` in projection-engine.ts).
+ * embedded count, and the time it was last indexed, against the cached ones
+ * finds the documents that changed; `forgetDocument` then drops the stale sum
+ * and the pass reads that document again by doc key (`planScan` in
+ * projection-engine.ts).
  */
 export interface SerializedMeanPool {
   readonly dimensions: number;
@@ -170,18 +171,30 @@ export interface SerializedMeanPool {
   readonly modelTag: string;
   readonly sumsByDocKey: Record<string, number[]>;
   readonly countsByDocKey: Record<string, number>;
+  /**
+   * Each document's `memory_index_state.indexed_at` as the pass that folded it
+   * in read it. The count alone misses a document rewritten at the same count:
+   * a live conversation's tail chunk grows in place, keeps its seq, and is
+   * embedded again, often under the same reused rowid. Absent from a blob
+   * written before it was recorded, which is read again whole.
+   */
+  readonly indexedAtByDocKey?: Record<string, string>;
 }
 
 export function serializeMeanPool(
   accumulator: MeanPoolAccumulator,
   lastScannedChunkId: number,
   modelTag: string,
+  indexedAtByDocKey: ReadonlyMap<string, string>,
 ): SerializedMeanPool {
   const sumsByDocKey: Record<string, number[]> = {};
   const countsByDocKey: Record<string, number> = {};
+  const indexedAt: Record<string, string> = {};
   for (const [docKey, sum] of accumulator.sumsByDocKey) {
     sumsByDocKey[docKey] = Array.from(sum);
     countsByDocKey[docKey] = accumulator.countsByDocKey.get(docKey) ?? 0;
+    const stamp = indexedAtByDocKey.get(docKey);
+    if (stamp !== undefined) indexedAt[docKey] = stamp;
   }
   return {
     dimensions: accumulator.dimensions,
@@ -189,6 +202,7 @@ export function serializeMeanPool(
     modelTag,
     sumsByDocKey,
     countsByDocKey,
+    indexedAtByDocKey: indexedAt,
   };
 }
 

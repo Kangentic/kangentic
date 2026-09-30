@@ -194,7 +194,11 @@ describe('incremental accumulation', () => {
   }
 
   it('round-trips sums and counts so a later pass can extend them', () => {
-    const restored = deserializeMeanPool(serializeMeanPool(build(), 42, modelTag), dimensions, modelTag);
+    const indexedAt = new Map([['doc-a', '2026-09-01T00:00:00.000Z']]);
+    const serialized = serializeMeanPool(build(), 42, modelTag, indexedAt);
+    // Only the documents the accumulator holds, and only those with a time.
+    expect(serialized.indexedAtByDocKey).toEqual({ 'doc-a': '2026-09-01T00:00:00.000Z' });
+    const restored = deserializeMeanPool(serialized, dimensions, modelTag);
     expect(restored).not.toBeNull();
     expect(restored?.countsByDocKey.get('doc-a')).toBe(2);
     expect(Array.from(restored!.sumsByDocKey.get('doc-a')!)).toEqual([1, 1, 0, 0]);
@@ -210,7 +214,7 @@ describe('incremental accumulation', () => {
   it('refuses a cache built under a different model or width', () => {
     // A model switch changes vector width AND meaning. Silently mixing them
     // would produce a map that is wrong in a way nothing else would catch.
-    const serialized = serializeMeanPool(build(), 42, modelTag);
+    const serialized = serializeMeanPool(build(), 42, modelTag, new Map());
     expect(deserializeMeanPool(serialized, dimensions, 'bge-large@q8-cls')).toBeNull();
     expect(deserializeMeanPool(serialized, 768, modelTag)).toBeNull();
     expect(deserializeMeanPool(serialized, dimensions, modelTag)).not.toBeNull();
