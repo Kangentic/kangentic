@@ -133,7 +133,11 @@ function subscribeReadStream(
   subscriptions: SubscriptionRegistry,
   wantsTerminal: boolean,
 ): void {
-  const db = getProjectDb(context.sessionManager.getSessionProjectId(sessionId) ?? '');
+  // A session with no owning project (a Command Terminal session carries
+  // none) has no transcript to stream. This used to open the database named
+  // '' instead, which creates a stray `projects/.db` file.
+  const ownerProjectId = resolveProjectIdForSession(context, sessionId);
+  const db = ownerProjectId ? getProjectDb(ownerProjectId) : null;
   const transcriptSync = new TranscriptSync();
   let lastAwaitedPromptId = initialAwaitedPromptId;
   let lastMessagePreview: string | null = null;
@@ -165,6 +169,7 @@ function subscribeReadStream(
   };
 
   const pushTranscriptIfChanged = async (): Promise<void> => {
+    if (!db) return;
     try {
       const resolved = await resolveTaskTranscript(db, sessionId);
       if (!resolved) return;
@@ -382,6 +387,7 @@ function subscribeReadStream(
   // redundant - and for long sessions impossible within the frame cap.
   // Deltas cover only what changes from this point on.
   void (async (): Promise<void> => {
+    if (!db) return;
     try {
       const resolved = await resolveTaskTranscript(db, sessionId);
       if (!resolved) return;

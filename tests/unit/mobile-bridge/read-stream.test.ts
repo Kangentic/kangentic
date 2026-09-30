@@ -79,6 +79,22 @@ describe('handleReadStream', () => {
     __resetSpawnProgressForTest();
   });
 
+  it('subscribes to a live session with no owning project without opening a database', async () => {
+    // A Command Terminal session carries no project. The subscription used to
+    // open the database named '', which creates a stray `projects/.db` file.
+    const { getProjectDb } = await import('../../../src/main/db/database');
+    vi.mocked(getProjectDb).mockClear();
+    sessionManager.getSessionProjectId.mockReturnValue(undefined as never);
+    const context = { sessionManager, projectRepo: { list: () => [] } } as unknown as IpcContext;
+
+    const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+    await flushProbe();
+
+    expect(response.ok).toBe(true);
+    expect(getProjectDb).not.toHaveBeenCalled();
+    expect(resolveTaskTranscriptMock).not.toHaveBeenCalled();
+  });
+
   it('rejects when the session does not exist', async () => {
     sessionManager.getSession.mockReturnValueOnce(undefined as never);
     const context = { sessionManager } as unknown as IpcContext;
