@@ -1,16 +1,16 @@
 /**
- * Dev-only: seed a fully-embedded, cluster-structured conversation corpus so
- * the Knowledge Graph surface has something real to render in an ephemeral
- * `/preview`.
+ * Dev-only: seed a cluster-structured synthetic conversation corpus so the
+ * Knowledge Graph surface has something to render in an ephemeral `/preview`.
+ * The Test Harness's "Seed Knowledge Graph" button mirrors the real index
+ * (`seed-knowledge-graph-real.ts`) and falls back to this on a machine that has
+ * none to copy.
  *
- * Why this exists rather than reusing "Seed Embedding Backlog": that seeder
- * writes chunks and lets the REAL engine embed them, which is the right shape
- * for soak-testing the drain loop but useless here. A preview project starts
- * with zero indexed conversations, and embedding several hundred synthetic
- * documents through real ONNX inference would take many minutes before the
- * graph showed anything at all. This writes vectors DIRECTLY through
- * `RetrievalStore.writeEmbeddings`, so the surface is populated the instant the
- * button is clicked.
+ * A preview project starts with zero indexed conversations, and embedding
+ * several hundred synthetic documents through real ONNX inference would take
+ * many minutes before the graph showed anything at all. So this writes vectors
+ * DIRECTLY through `RetrievalStore.writeEmbeddings`, and the surface is
+ * populated the instant the button is clicked. `withoutVectors` skips that
+ * step and leaves every chunk pending, a backlog for the real embedding drain.
  *
  * The vectors are not noise. Documents are assigned to PLANTED topic clusters,
  * and each document's embedding is its cluster centroid plus bounded noise. That
@@ -48,6 +48,7 @@ import type { ChunkInput } from '../../main/retrieval/types';
 import type { DevSeedKnowledgeGraphResult } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { buildKnowledgeGraphNow } from './build-knowledge-graph-now';
+import { embedEngine } from '../../main/retrieval/embedder/embed-engine';
 
 /** The real corpus name on purpose. The Knowledge Graph reads
  *  `memory_chunks.corpus` as its node-kind discriminator, so seeding under a
@@ -77,10 +78,9 @@ const SESSIONS_PER_TASK = 3;
  * These rows live under the REAL 'conversation' corpus on purpose (the graph
  * reads `memory_chunks.corpus` as its node-kind discriminator, so a 'dev-seed'
  * corpus would exercise a path the product never takes). The cost of that
- * choice is that seeded rows are otherwise indistinguishable from real history,
- * which is exactly the escape hatch `seed-embedding-backlog.ts` kept by using a
- * distinct corpus. This marker restores it: seeded documents stay filterable
- * and purgeable without changing the corpus they are indexed under.
+ * choice is that seeded rows are otherwise indistinguishable from real
+ * history. This marker restores the distinction: seeded documents stay
+ * filterable and purgeable without changing the corpus they are indexed under.
  */
 const DEV_SEED_MARKER = { devSeed: 'knowledge-graph' } as const;
 
@@ -100,12 +100,14 @@ function makeChunkText(clusterIndex: number, documentIndex: number, seq: number,
 export interface SeedKnowledgeGraphOptions {
   documentCount?: number;
   chunksPerDocument?: number;
+  /** Leave every chunk pending for the embedding drain instead of writing vectors. */
+  withoutVectors?: boolean;
 }
 
 /**
- * Seed `documentCount` fully-embedded synthetic conversations, spread across
+ * Seed `documentCount` synthetic conversations, spread across
  * `CLUSTER_TOPICS.length` planted clusters and hung off real tasks and
- * sessions. Throws when no project is open.
+ * sessions, embedded unless `withoutVectors`. Throws when no project is open.
  */
 export function seedKnowledgeGraph(
   context: IpcContext,
@@ -117,19 +119,22 @@ export function seedKnowledgeGraph(
 
   const documentCount = options.documentCount ?? DEFAULT_DOCUMENT_COUNT;
   const chunksPerDocument = options.chunksPerDocument ?? DEFAULT_CHUNKS_PER_DOCUMENT;
+  const withVectors = options.withoutVectors !== true;
 
   const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
   const db = getProjectDb(projectId);
   const store = new RetrievalStore(db);
 
-  // The vec table is normally created by the embedding path (it alone knows the
-  // model's width). Nothing has embedded yet in a fresh preview, so create it
-  // here at the SELECTED model's dimension - never a hardcoded width.
-  store.ensureVecTable(model.dimensions);
-  if (!store.hasVec) {
-    throw new Error('sqlite-vec is unavailable, so embeddings cannot be seeded (lexical-only build)');
+  if (withVectors) {
+    // The vec table is normally created by the embedding path (it alone knows
+    // the model's width). Nothing has embedded yet in a fresh preview, so create
+    // it here at the SELECTED model's dimension - never a hardcoded width.
+    store.ensureVecTable(model.dimensions);
+    if (!store.hasVec) {
+      throw new Error('sqlite-vec is unavailable, so embeddings cannot be seeded (lexical-only build)');
+    }
+    store.setMeta('vec_dims', String(model.dimensions));
   }
-  store.setMeta('vec_dims', String(model.dimensions));
 
   const todoSwimlane = new SwimlaneRepository(db).list().find((lane) => lane.role === 'todo');
   if (!todoSwimlane) throw new Error('No To Do column to seed knowledge-graph tasks into');
@@ -156,7 +161,7 @@ export function seedKnowledgeGraph(
   }
 
   const now = new Date().toISOString();
-  let embeddedChunks = 0;
+  let writtenChunks = 0;
 
   for (let documentIndex = 0; documentIndex < documentCount; documentIndex += 1) {
     // A document's topic comes from its TASK, not from its own index. Keying
@@ -229,15 +234,17 @@ export function seedKnowledgeGraph(
     // inference, so a populated graph is one click away instead of many
     // minutes.
     const stored = store.getChunksForDoc(CORPUS, agentSessionId);
-    store.writeEmbeddings(
-      stored.map((chunk) => ({
-        chunkId: chunk.id,
-        vector: jitterUnitVector(documentVector, CHUNK_NOISE, random),
-        contentHash: chunk.contentHash,
-      })),
-      model.modelTag,
-    );
-    embeddedChunks += stored.length;
+    if (withVectors) {
+      store.writeEmbeddings(
+        stored.map((chunk) => ({
+          chunkId: chunk.id,
+          vector: jitterUnitVector(documentVector, CHUNK_NOISE, random),
+          contentHash: chunk.contentHash,
+        })),
+        model.modelTag,
+      );
+    }
+    writtenChunks += stored.length;
 
     store.setIndexState({
       corpus: CORPUS,
@@ -255,7 +262,8 @@ export function seedKnowledgeGraph(
 
   return {
     documents: documentCount,
-    chunks: embeddedChunks,
+    chunks: writtenChunks,
+    embedded: withVectors,
     clusters: clusterCount,
     tasks: taskIds.length,
     dimensions: model.dimensions,
@@ -276,10 +284,14 @@ export function registerSeedKnowledgeGraphDevIpc(getContext: () => IpcContext | 
       const context = getContext();
       if (!context) throw new Error('IPC not initialized');
       const seeded = seedKnowledgeGraph(context, options ?? {});
-      // Build the map before returning, so the click lands on the surface rather
-      // than on a "Building the map" spinner. See `build-knowledge-graph-now.ts` for
-      // why this is safe to run unthrottled here and nowhere else.
-      if (context.currentProjectId) await buildKnowledgeGraphNow(context.currentProjectId);
+      if (context.currentProjectId) {
+        // Build the map before returning, so the click lands on the surface
+        // rather than on a "Building the map" spinner. See
+        // `build-knowledge-graph-now.ts` for why this is safe to run unthrottled
+        // here and nowhere else. Pending chunks go to the drain instead.
+        if (seeded.embedded) await buildKnowledgeGraphNow(context.currentProjectId);
+        else embedEngine.markDirty(context.currentProjectId);
+      }
       return seeded;
     },
   );

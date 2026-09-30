@@ -35,7 +35,7 @@ import { TaskRepository } from '../../main/db/repositories/task-repository';
 import { SessionRepository } from '../../main/db/repositories/session-repository';
 import { SwimlaneRepository } from '../../main/db/repositories/swimlane-repository';
 import { toForwardSlash } from '../../shared/paths';
-import type { DevSeedKnowledgeGraphRealResult } from '../../shared/types';
+import type { DevSeedKnowledgeGraphRealResult, DevSeedKnowledgeGraphRealUnavailable } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { buildKnowledgeGraphNow } from './build-knowledge-graph-now';
 import { writeTransaction } from '../../main/db/transaction';
@@ -116,7 +116,17 @@ export interface SeedKnowledgeGraphRealOptions {
    * Passed at run time, so no real project's name is written into the repo.
    */
   sourceProject?: string;
+  /**
+   * Copy the chunks without their vectors, leaving every one pending: the
+   * backlog a model switch creates, for exercising the embedding drain at real
+   * scale. The map stays empty until the drain has embedded enough to build it.
+   */
+  withoutVectors?: boolean;
 }
+
+/** Thrown when there is no real index here to copy; the handler turns it into
+ *  an `unavailable` answer, and the harness falls back to the synthetic seed. */
+class NoRealIndexError extends Error {}
 
 /** What the mirror needs from a source session row to make a preview node
  *  look like the real thing in the detail panel. */
@@ -150,10 +160,11 @@ export function seedKnowledgeGraphFromRealIndex(
 
   const source = resolveSourceProject(options.sourceProject);
   if (!source) {
-    throw new Error(options.sourceProject
+    throw new NoRealIndexError(options.sourceProject
       ? `No real project matches "${options.sourceProject}" (by id or name) in the real index.db`
-      : 'Could not resolve the real parent project for this preview (no matching project in the real index.db)');
+      : 'No real parent project for this preview in the real index.db');
   }
+  const withVectors = options.withoutVectors !== true;
 
   const documentLimit = options.documentLimit ?? DEFAULT_DOCUMENT_LIMIT;
   const sourceDb = new Database(source.dbPath, { readonly: true, fileMustExist: true });
@@ -165,7 +176,7 @@ export function seedKnowledgeGraphFromRealIndex(
       .get() as { value: string } | undefined;
     const dimensions = dimensionsRow ? Number(dimensionsRow.value) : 0;
     if (!sourceHasVec || !dimensions) {
-      throw new Error('The real project has no embedded index to mirror (semantic search may never have run there)');
+      throw new NoRealIndexError('The real project has no embedded index to mirror (semantic search may never have run there)');
     }
     // The copies keep the source's own model tag. A made-up tag reads to the
     // embedding drain as another model's rows, so every preview re-embedded the
@@ -198,7 +209,7 @@ export function seedKnowledgeGraphFromRealIndex(
       )
       .all(documentLimit) as SourceDocument[];
 
-    if (documents.length === 0) throw new Error('The real project has no embedded conversations to mirror');
+    if (documents.length === 0) throw new NoRealIndexError('The real project has no embedded conversations to mirror');
 
     // Carry the source task's OUTCOME, not just its title. Without it every
     // mirrored task lands in To Do and the graph's Outcome colouring is
@@ -287,9 +298,11 @@ export function seedKnowledgeGraphFromRealIndex(
 
     const targetDb = getProjectDb(projectId);
     const store = new RetrievalStore(targetDb);
-    store.ensureVecTable(dimensions);
-    if (!store.hasVec) throw new Error('sqlite-vec is unavailable in this preview, so vectors cannot be mirrored');
-    store.setMeta('vec_dims', String(dimensions));
+    if (withVectors) {
+      store.ensureVecTable(dimensions);
+      if (!store.hasVec) throw new Error('sqlite-vec is unavailable in this preview, so vectors cannot be mirrored');
+      store.setMeta('vec_dims', String(dimensions));
+    }
 
     const targetLanes = new SwimlaneRepository(targetDb).list();
     const todoSwimlane = targetLanes.find((lane) => lane.role === 'todo');
@@ -420,26 +433,30 @@ export function seedKnowledgeGraphFromRealIndex(
         })),
       );
 
-      // Vectors are matched by CONTENT HASH, not by position: `upsertDocument`
-      // assigns fresh rowids in the target DB, and a chunk skipped for any
-      // reason would silently shift every later vector onto the wrong chunk.
-      const sourceVectorByHash = new Map<string, Buffer>();
-      for (const chunk of sourceChunks) {
-        const row = readVector.get(chunk.id) as { embedding: Buffer } | undefined;
-        if (row) sourceVectorByHash.set(chunk.contentHash, row.embedding);
-      }
+      let chunkCount = sourceChunks.length;
+      if (withVectors) {
+        // Vectors are matched by CONTENT HASH, not by position: `upsertDocument`
+        // assigns fresh rowids in the target DB, and a chunk skipped for any
+        // reason would silently shift every later vector onto the wrong chunk.
+        const sourceVectorByHash = new Map<string, Buffer>();
+        for (const chunk of sourceChunks) {
+          const row = readVector.get(chunk.id) as { embedding: Buffer } | undefined;
+          if (row) sourceVectorByHash.set(chunk.contentHash, row.embedding);
+        }
 
-      const storedChunks = store.getChunksForDoc('conversation', document.docId);
-      const writes: Array<{ chunkId: number; vector: Float32Array; contentHash: string }> = [];
-      for (const stored of storedChunks) {
-        const embedding = sourceVectorByHash.get(stored.contentHash);
-        if (!embedding) continue;
-        const vector = new Float32Array(embedding.byteLength / 4);
-        vector.set(new Float32Array(embedding.buffer, embedding.byteOffset, embedding.byteLength / 4));
-        writes.push({ chunkId: stored.id, vector, contentHash: stored.contentHash });
+        const storedChunks = store.getChunksForDoc('conversation', document.docId);
+        const writes: Array<{ chunkId: number; vector: Float32Array; contentHash: string }> = [];
+        for (const stored of storedChunks) {
+          const embedding = sourceVectorByHash.get(stored.contentHash);
+          if (!embedding) continue;
+          const vector = new Float32Array(embedding.byteLength / 4);
+          vector.set(new Float32Array(embedding.buffer, embedding.byteOffset, embedding.byteLength / 4));
+          writes.push({ chunkId: stored.id, vector, contentHash: stored.contentHash });
+        }
+        store.writeEmbeddings(writes, mirroredTag);
+        chunkCount = writes.length;
       }
-      store.writeEmbeddings(writes, mirroredTag);
-      copiedChunks += writes.length;
+      copiedChunks += chunkCount;
 
       store.setIndexState({
         corpus: 'conversation',
@@ -449,7 +466,7 @@ export function seedKnowledgeGraphFromRealIndex(
         sourceMtimeMs: null,
         sourceSize: null,
         entryCount: sourceChunks.length,
-        chunkCount: writes.length,
+        chunkCount,
         // The mirrored transcript file does not exist in the preview, which is
         // exactly the real corpus's dominant state and worth exercising.
         status: 'missing-source',
@@ -545,6 +562,7 @@ export function seedKnowledgeGraphFromRealIndex(
       chunks: copiedChunks,
       tasks: previewTaskIdBySourceTaskId.size,
       dimensions,
+      embedded: withVectors,
     };
   } finally {
     sourceDb.close();
@@ -558,15 +576,26 @@ export function registerSeedKnowledgeGraphRealDevIpc(getContext: () => IpcContex
   devIpcRegistered = true;
   ipcMain.handle(
     IPC.DEV_SEED_KNOWLEDGE_GRAPH_REAL,
-    async (_event, options: SeedKnowledgeGraphRealOptions): Promise<DevSeedKnowledgeGraphRealResult> => {
+    async (
+      _event,
+      options: SeedKnowledgeGraphRealOptions,
+    ): Promise<DevSeedKnowledgeGraphRealResult | DevSeedKnowledgeGraphRealUnavailable> => {
       const context = getContext();
       if (!context) throw new Error('IPC not initialized');
-      const seeded = seedKnowledgeGraphFromRealIndex(context, options ?? {});
-      // Build the map before returning, so the click lands on the surface rather
-      // than on a "Building the map" spinner. See `build-knowledge-graph-now.ts` for
-      // why this is safe to run unthrottled here and nowhere else.
+      let seeded: DevSeedKnowledgeGraphRealResult;
+      try {
+        seeded = seedKnowledgeGraphFromRealIndex(context, options ?? {});
+      } catch (error) {
+        if (error instanceof NoRealIndexError) return { unavailable: error.message };
+        throw error;
+      }
       if (context.currentProjectId) {
-        await buildKnowledgeGraphNow(context.currentProjectId);
+        // Build the map before returning, so the click lands on the surface
+        // rather than on a "Building the map" spinner. See
+        // `build-knowledge-graph-now.ts` for why this is safe to run unthrottled
+        // here and nowhere else. With no vectors there is nothing to build: the
+        // drain embeds the mirror first.
+        if (seeded.embedded) await buildKnowledgeGraphNow(context.currentProjectId);
         // The mirrored tasks' own records, the `task` corpus, indexed now so a
         // first question searches them; the embedding drain picks them up in
         // the background, as it would on a real install.

@@ -5534,20 +5534,14 @@ export interface DevSeedGitChangesResult {
   working: number;
 }
 
-/** Summary of a dev test-harness embedding-backlog seed (see DEV_SEED_EMBEDDING_BACKLOG). */
-export interface DevSeedEmbeddingBacklogResult {
-  /** Number of synthetic pending chunks inserted. */
-  seeded: number;
-  /** The synthetic document id the chunks were written under (e.g. 'dev-seed-embedding-backlog-3'). */
-  docId: string;
-}
-
 /** Summary of a dev test-harness knowledge-graph seed (see DEV_SEED_KNOWLEDGE_GRAPH). */
 export interface DevSeedKnowledgeGraphResult {
-  /** Synthetic fully-embedded conversations written. */
+  /** Synthetic conversations written. */
   documents: number;
-  /** Chunks written and embedded across those conversations. */
+  /** Chunks written across those conversations. */
   chunks: number;
+  /** Whether the chunks were given vectors; false leaves them for the embedding drain. */
+  embedded: boolean;
   /** Planted topic clusters the documents were drawn from. The Knowledge Graph
    *  layout is expected to recover these, which is what makes the seeded
    *  corpus a ground truth rather than just filler. */
@@ -5568,6 +5562,14 @@ export interface DevSeedKnowledgeGraphRealResult {
   chunks: number;
   tasks: number;
   dimensions: number;
+  /** Whether the vectors were copied; false leaves the chunks for the embedding drain. */
+  embedded: boolean;
+}
+
+/** A real-index mirror that had nothing to copy: no real project, or no embedded
+ *  index in it. The harness falls back to the synthetic seed. */
+export interface DevSeedKnowledgeGraphRealUnavailable {
+  unavailable: string;
 }
 
 /** Summary of a dev test-harness usage-data seed (see DEV_SEED_USAGE_DATA). */
@@ -5636,15 +5638,6 @@ export interface ElectronAPI {
      */
     seedGitChanges: (targetPaths: string[]) => Promise<DevSeedGitChangesResult>;
     /**
-     * Seed `count` synthetic pending chunks (embedded_model = NULL) into the
-     * current project's conversation-memory index via the real chunk-write
-     * path, then flag the project dirty - the fast path to a realistic
-     * embedding backlog (thousands of pending chunks) for exercising the
-     * central embedding engine's drain loop under sustained real-worker load,
-     * without needing that many real agent turns to produce it.
-     */
-    seedEmbeddingBacklog: (count: number) => Promise<DevSeedEmbeddingBacklogResult>;
-    /**
      * Seed (or, on a re-click for the same project, append to) a throwaway
      * task + session backed by a real synthetic Claude session JSONL
      * transcript file, `count` turns long - the fast path to a huge realistic
@@ -5663,20 +5656,24 @@ export interface ElectronAPI {
      */
     seedUsageData: (days: number) => Promise<DevSeedUsageDataResult>;
     /**
-     * Seed a fully-embedded, cluster-structured conversation corpus so the
-     * Knowledge Graph surface has something to render in an ephemeral preview.
-     * Vectors are written directly rather than inferred, because embedding
-     * hundreds of documents for real would take minutes before the graph
-     * showed anything.
+     * Seed a cluster-structured synthetic conversation corpus, the fallback
+     * for a machine with no real index to mirror. Vectors are written
+     * directly rather than inferred; `withoutVectors` leaves every chunk
+     * pending instead, a backlog for the embedding drain.
      */
-    seedKnowledgeGraph: (options: { documentCount?: number; chunksPerDocument?: number }) => Promise<DevSeedKnowledgeGraphResult>;
+    seedKnowledgeGraph: (options: {
+      documentCount?: number; chunksPerDocument?: number; withoutVectors?: boolean;
+    }) => Promise<DevSeedKnowledgeGraphResult>;
     /**
-     * Mirror a slice of the REAL parent project's conversation index (chunks,
-     * vectors, titles) into this preview, so the Knowledge Graph can be judged
-     * against actual work rather than synthetic word salad. A copy, not a
-     * re-embed - the source embeddings already exist.
+     * Mirror the REAL parent project's conversation index (chunks, vectors,
+     * titles) into this preview, so the Knowledge Graph can be judged against
+     * actual work. A copy, not a re-embed; `withoutVectors` leaves every chunk
+     * pending instead, the backlog a model switch creates. Answers
+     * `{ unavailable }` when there is no real index here to copy.
      */
-    seedKnowledgeGraphReal: (options: { documentLimit?: number; sourceProject?: string }) => Promise<DevSeedKnowledgeGraphRealResult>;
+    seedKnowledgeGraphReal: (options: {
+      documentLimit?: number; sourceProject?: string; withoutVectors?: boolean;
+    }) => Promise<DevSeedKnowledgeGraphRealResult | DevSeedKnowledgeGraphRealUnavailable>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**

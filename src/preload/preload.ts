@@ -839,12 +839,11 @@ if (__KANGENTIC_DEV__) {
   api.dev = {
     createEphemeralProject: () => ipcRenderer.invoke(IPC.DEV_CREATE_EPHEMERAL_PROJECT),
     seedGitChanges: (targetPaths: string[]) => ipcRenderer.invoke(IPC.DEV_SEED_GIT_CHANGES, targetPaths),
-    seedEmbeddingBacklog: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_EMBEDDING_BACKLOG, count),
     seedLargeConversation: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_LARGE_CONVERSATION, count),
     seedUsageData: (days: number) => ipcRenderer.invoke(IPC.DEV_SEED_USAGE_DATA, days),
-    seedKnowledgeGraph: (options: { documentCount?: number; chunksPerDocument?: number }) =>
+    seedKnowledgeGraph: (options: { documentCount?: number; chunksPerDocument?: number; withoutVectors?: boolean }) =>
       ipcRenderer.invoke(IPC.DEV_SEED_KNOWLEDGE_GRAPH, options),
-    seedKnowledgeGraphReal: (options: { documentLimit?: number; sourceProject?: string }) =>
+    seedKnowledgeGraphReal: (options: { documentLimit?: number; sourceProject?: string; withoutVectors?: boolean }) =>
       ipcRenderer.invoke(IPC.DEV_SEED_KNOWLEDGE_GRAPH_REAL, options),
     isEphemeralPreview,
     previewTaskTitle,

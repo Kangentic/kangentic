@@ -24,7 +24,6 @@ export const IPC = {
   // Dev-only (preview): build-excluded from production via __KANGENTIC_DEV__.
   DEV_CREATE_EPHEMERAL_PROJECT: 'dev:createEphemeralProject',
   DEV_SEED_GIT_CHANGES: 'dev:seedGitChanges',
-  DEV_SEED_EMBEDDING_BACKLOG: 'dev:seedEmbeddingBacklog',
   DEV_SEED_LARGE_CONVERSATION: 'dev:seedLargeConversation',
   DEV_SEED_USAGE_DATA: 'dev:seedUsageData',
   DEV_SEED_KNOWLEDGE_GRAPH: 'dev:seedKnowledgeGraph',

@@ -16,23 +16,16 @@
  */
 
 import { useRef, useState } from 'react';
-import { Plus, FolderPlus, FileDiff, Database, MessagesSquare, ChartColumn, Waypoints, Brain, GripVertical } from 'lucide-react';
+import { Plus, FolderPlus, FileDiff, MessagesSquare, ChartColumn, Brain, GripVertical } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
 import { useSessionStore } from '../../renderer/stores/session-store';
 import { useUsageDashboardStore } from '../../renderer/stores/usage-dashboard-store';
 
-/** Default seed count for "Seed Embedding Backlog": large enough to force
- *  hundreds of real drain-loop round-robin iterations against the live embed
- *  worker (a multi-minute soak test, not an instant no-op), in the same
- *  ballpark as a real one-time model-switch backfill, while staying well
- *  short of a full multi-hour history backfill. */
 /** The app title bar's height (`top-10`). It is an OS drag region, so the panel
  *  must never be draggable into it - see handleDragPointerMove. */
 const TITLE_BAR_HEIGHT_PX = 40;
-
-const EMBEDDING_BACKLOG_SEED_COUNT = 3000;
 
 /** Turns written per click of "Seed Large Conversation": large enough to
  *  stress the Conversation viewer's virtualization/scrolling/search on a
@@ -47,11 +40,8 @@ const LARGE_CONVERSATION_SEED_TURNS = 3000;
  *  dashboard visibly animates to the new totals. */
 const USAGE_DATA_SEED_DAYS = 60;
 
-/** Documents written per click of "Seed Knowledge Graph". Chosen to sit in the
- *  same order as a real project's indexed history (the dogfood project holds
- *  ~640), so the layout, the node budget, and the coverage strip are all
- *  exercised at production scale rather than on a toy corpus. Vectors are
- *  written directly, so this stays near-instant despite the size. */
+/** Synthetic documents "Seed Knowledge Graph" writes when there is no real
+ *  index to mirror. Vectors are written directly, so this stays near-instant. */
 const KNOWLEDGE_GRAPH_SEED_DOCUMENTS = 240;
 
 // Lorem source. Titles/descriptions are deliberately meaningless so that
@@ -151,11 +141,10 @@ export function TestHarness() {
   const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [seeding, setSeeding] = useState(false);
-  const [seedingBacklog, setSeedingBacklog] = useState(false);
   const [seedingConversation, setSeedingConversation] = useState(false);
   const [seedingUsage, setSeedingUsage] = useState(false);
   const [seedingKnowledgeGraph, setSeedingKnowledgeGraph] = useState(false);
-  const [seedingRealIndex, setSeedingRealIndex] = useState(false);
+  const [seedNeedingEmbedding, setSeedNeedingEmbedding] = useState(false);
 
   // Draggable so the panel can be moved off whatever it is covering. Position
   // is session-only BY DESIGN (never persisted): every launch starts at the
@@ -290,38 +279,6 @@ export function TestHarness() {
     }
   };
 
-  // Dev-only: seed a realistic embedding backlog (thousands of pending chunks)
-  // into the current project so the central embedding engine's drain loop can
-  // be exercised under sustained real-worker load. The engine only cares
-  // about memory_chunks.embedded_model IS NULL, not where the row came from,
-  // so this needs no real tasks or agent sessions to reach that scale.
-  const handleSeedEmbeddingBacklog = async () => {
-    const project = useProjectStore.getState().currentProject;
-    if (!project) {
-      useToastStore.getState().addToast({ message: 'Open a project first to seed an embedding backlog', variant: 'warning' });
-      return;
-    }
-    setSeedingBacklog(true);
-    try {
-      const result = await window.electronAPI.dev?.seedEmbeddingBacklog(EMBEDDING_BACKLOG_SEED_COUNT);
-      if (!result) {
-        useToastStore.getState().addToast({ message: 'Seeding an embedding backlog is dev-preview only', variant: 'warning' });
-        return;
-      }
-      useToastStore.getState().addToast({
-        message: `Seeded ${result.seeded} pending chunks - turn the Knowledge Graph on (Settings > Knowledge Graph) to watch the drain`,
-        variant: 'success',
-      });
-    } catch (error) {
-      useToastStore.getState().addToast({
-        message: `Failed to seed embedding backlog: ${error instanceof Error ? error.message : 'unknown error'}`,
-        variant: 'error',
-      });
-    } finally {
-      setSeedingBacklog(false);
-    }
-  };
-
   // Dev-only: seed (or, on a re-click for the same project, append to) a
   // throwaway task + session backed by a real synthetic multi-thousand-turn
   // Claude session JSONL transcript file, so the Conversation viewer can be
@@ -385,62 +342,46 @@ export function TestHarness() {
     }
   };
 
-  // Dev-only: seed a fully-embedded, cluster-structured conversation corpus so
-  // the Knowledge Graph has nodes, similarity edges, and provenance to render. A
-  // preview project starts with zero indexed conversations, and embedding this
-  // many documents through real inference would take minutes, so the vectors
-  // are written directly. Documents are drawn from planted topic clusters, so
-  // the map has a ground truth you can check by eye.
+  // Dev-only: give the Knowledge Graph something to show. The REAL parent
+  // project's index is mirrored when this machine has one, because synthetic
+  // text makes every product question unanswerable (you cannot judge a cluster
+  // label or a result card against word salad); a synthetic corpus in planted
+  // clusters is the fallback. "Needing embedding" leaves the chunks pending
+  // instead of copying vectors, which is the backlog a model switch creates.
   const handleSeedKnowledgeGraph = async () => {
+    const dev = window.electronAPI.dev;
+    if (!dev) {
+      useToastStore.getState().addToast({ message: 'Seeding the knowledge graph is dev-preview only', variant: 'warning' });
+      return;
+    }
+    const withoutVectors = seedNeedingEmbedding;
+    const pendingNote = withoutVectors ? ', left for the embedding drain' : '';
     setSeedingKnowledgeGraph(true);
     try {
-      const result = await window.electronAPI.dev?.seedKnowledgeGraph({
-        documentCount: KNOWLEDGE_GRAPH_SEED_DOCUMENTS,
-      });
-      if (!result) {
-        useToastStore.getState().addToast({ message: 'Seeding the knowledge graph is dev-preview only', variant: 'warning' });
+      const mirrored = await dev.seedKnowledgeGraphReal({ withoutVectors });
+      if (!('unavailable' in mirrored)) {
+        await useBoardStore.getState().loadBoard();
+        useToastStore.getState().addToast({
+          message: `Mirrored ${mirrored.documents} conversations / ${mirrored.chunks} chunks `
+            + `from "${mirrored.sourceProject}"${pendingNote}`,
+          variant: 'success',
+        });
         return;
       }
+      const synthetic = await dev.seedKnowledgeGraph({ documentCount: KNOWLEDGE_GRAPH_SEED_DOCUMENTS, withoutVectors });
       await useBoardStore.getState().loadBoard();
       useToastStore.getState().addToast({
-        message: `Seeded ${result.documents} conversations / ${result.chunks} embedded chunks `
-          + `across ${result.clusters} topic clusters (${result.dimensions}d)`,
+        message: `${mirrored.unavailable}. Seeded ${synthetic.documents} synthetic conversations / `
+          + `${synthetic.chunks} chunks in ${synthetic.clusters} clusters instead${pendingNote}`,
         variant: 'success',
       });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to seed knowledge graph: ${error instanceof Error ? error.message : 'unknown error'}`,
+        message: `Failed to seed the knowledge graph: ${error instanceof Error ? error.message : 'unknown error'}`,
         variant: 'error',
       });
     } finally {
       setSeedingKnowledgeGraph(false);
-    }
-  };
-
-  // Dev-only: mirror the REAL parent project's conversation index into this
-  // preview. Synthetic text proves the plumbing but makes every product
-  // question unanswerable - you cannot judge a cluster label or a result card
-  // against word salad. The source embeddings already exist, so this is a copy.
-  const handleSeedRealIndex = async () => {
-    setSeedingRealIndex(true);
-    try {
-      const result = await window.electronAPI.dev?.seedKnowledgeGraphReal({});
-      if (!result) {
-        useToastStore.getState().addToast({ message: 'Mirroring the real index is dev-preview only', variant: 'warning' });
-        return;
-      }
-      await useBoardStore.getState().loadBoard();
-      useToastStore.getState().addToast({
-        message: `Mirrored ${result.documents} conversations / ${result.chunks} chunks from "${result.sourceProject}" (${result.dimensions}d)`,
-        variant: 'success',
-      });
-    } catch (error) {
-      useToastStore.getState().addToast({
-        message: `Failed to mirror the real index: ${error instanceof Error ? error.message : 'unknown error'}`,
-        variant: 'error',
-      });
-    } finally {
-      setSeedingRealIndex(false);
     }
   };
 
@@ -504,17 +445,6 @@ export function TestHarness() {
       </button>
       <button
         type="button"
-        onClick={handleSeedEmbeddingBacklog}
-        disabled={seedingBacklog}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-seed-embedding-backlog"
-        title={`Seed ${EMBEDDING_BACKLOG_SEED_COUNT} synthetic pending chunks to stress-test the background embedding engine's drain loop`}
-      >
-        <Database size={16} />
-        {seedingBacklog ? 'Seeding...' : 'Seed Embedding Backlog'}
-      </button>
-      <button
-        type="button"
         onClick={handleSeedLargeConversation}
         disabled={seedingConversation}
         className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
@@ -541,22 +471,23 @@ export function TestHarness() {
         disabled={seedingKnowledgeGraph}
         className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
         data-testid="dev-seed-knowledge-graph"
-        title={`Seed ${KNOWLEDGE_GRAPH_SEED_DOCUMENTS} fully-embedded synthetic conversations across planted topic clusters, so the Knowledge Graph has nodes, edges, and provenance to render`}
-      >
-        <Waypoints size={16} />
-        {seedingKnowledgeGraph ? 'Seeding...' : 'Seed Knowledge Graph'}
-      </button>
-      <button
-        type="button"
-        onClick={handleSeedRealIndex}
-        disabled={seedingRealIndex}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-seed-knowledge-graph-real"
-        title="Mirror the REAL parent project's conversation index (titles, text, embeddings) into this preview, so the Knowledge Graph shows actual work"
+        title={`Mirror this project's real index (conversations, vectors, tasks) into the preview, or seed ${KNOWLEDGE_GRAPH_SEED_DOCUMENTS} synthetic conversations when this machine has none`}
       >
         <Brain size={16} />
-        {seedingRealIndex ? 'Mirroring...' : 'Mirror Real Index'}
+        {seedingKnowledgeGraph ? 'Seeding...' : 'Seed Knowledge Graph'}
       </button>
+      <label
+        className="flex cursor-pointer select-none items-center gap-1.5 px-3.5 pb-1 text-[12px] text-fg-secondary"
+        title="Seed the chunks without vectors, so the embedding drain has a real backlog to work through"
+      >
+        <input
+          type="checkbox"
+          checked={seedNeedingEmbedding}
+          onChange={(event) => setSeedNeedingEmbedding(event.target.checked)}
+          data-testid="dev-seed-knowledge-graph-needing-embedding"
+        />
+        Needing embedding
+      </label>
     </div>
   );
 }

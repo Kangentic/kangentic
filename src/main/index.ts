@@ -15,7 +15,6 @@ import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryD
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
 import { resolvePreviewTaskLabel } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
-import { registerSeedEmbeddingBacklogDevIpc } from '../devtools/main/seed-embedding-backlog';
 import { registerSeedLargeConversationDevIpc } from '../devtools/main/seed-large-conversation';
 import { registerSeedUsageDataDevIpc } from '../devtools/main/seed-usage-data';
 import { registerSeedKnowledgeGraphDevIpc } from '../devtools/main/seed-knowledge-graph';
@@ -1436,10 +1435,6 @@ const createWindow = () => {
           // registered in ephemeral preview, the one place its safety guard
           // (preview-projects root) has clones to operate on.
           registerSeedGitChangesDevIpc();
-          // Seed-embedding-backlog dev IPC for the TestHarness "Seed Embedding
-          // Backlog" button - a realistic pending-chunk count for exercising the
-          // central embedding engine's drain loop under sustained real-worker load.
-          registerSeedEmbeddingBacklogDevIpc(getOptionalIpcContext);
           // Seed-large-conversation dev IPC for the TestHarness "Seed Large
           // Conversation" button - a throwaway task/session backed by a real
           // synthetic multi-thousand-turn Claude transcript file, for
@@ -1450,15 +1445,13 @@ const createWindow = () => {
           // real capture repositories, so the usage dashboard has rich charts
           // to show in an ephemeral preview.
           registerSeedUsageDataDevIpc(getOptionalIpcContext);
-          // Seed-knowledge-graph dev IPC for the TestHarness "Seed Knowledge Graph"
-          // button - a fully-embedded, cluster-structured conversation corpus so
-          // the Knowledge Graph surface has nodes, edges, and provenance to render
-          // in an ephemeral preview without waiting on real ONNX inference.
-          registerSeedKnowledgeGraphDevIpc(getOptionalIpcContext);
-          // ...and the REAL-index mirror, which copies a slice of the parent
-          // project's actual conversations (titles, text, vectors) so the graph
-          // can be judged against real work rather than synthetic text.
+          // The TestHarness "Seed Knowledge Graph" button: the REAL-index mirror
+          // (the parent project's actual conversations, titles and vectors), and
+          // the synthetic cluster corpus it falls back to on a machine with no
+          // real index. Either can leave its chunks pending for the embedding
+          // drain instead of writing vectors.
           registerSeedKnowledgeGraphRealDevIpc(getOptionalIpcContext);
+          registerSeedKnowledgeGraphDevIpc(getOptionalIpcContext);
           // Adopt the two clones the /preview script pre-cloned (overlapping the
           // build); add more on demand via the TestHarness "Create Project" button.
           const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"
