@@ -799,6 +799,22 @@ export interface IndexedConversationNode extends RelatedWorkNode {
 }
 
 /**
+ * Each project's conversation owners, kept until its index changes.
+ *
+ * Reading them groups every conversation chunk row (about 300 ms on main on a
+ * 94k-chunk index), and `kangentic_search` needs them on every call, up to four
+ * times per answer. The coverage fingerprint moves whenever a chunk is added,
+ * removed, embedded or re-pointed to another session, and costs about 11 ms.
+ * Titles are not kept, and cost about 4 ms to read: a task renamed with no
+ * index change still shows its new name. One entry per project searched since
+ * launch.
+ */
+const conversationOwnersByProject = new Map<string, {
+  fingerprint: string;
+  owners: ReturnType<RetrievalStore['conversationOwners']>;
+}>();
+
+/**
  * Every indexed conversation in a project as a rollup node, read off the index
  * itself rather than the Knowledge Graph's projection, so a caller with no map
  * (the `kangentic_search` tool) can rank tasks the same way Ask does. Empty
@@ -809,15 +825,24 @@ export function indexedConversationNodes(
   getDb: (projectId: string) => Database.Database = getProjectDb,
 ): IndexedConversationNode[] {
   try {
-    return new RetrievalStore(getDb(projectId)).documentMetadata()
-      .filter((row) => row.corpus === 'conversation')
-      .map((row) => ({
-        docKey: `${row.corpus}::${row.docId}`,
-        taskId: row.taskId,
-        displayId: row.displayId,
-        title: row.title,
-        sessionId: row.sessionId,
-      }));
+    const store = new RetrievalStore(getDb(projectId));
+    const fingerprint = store.coverageFingerprint();
+    let cached = conversationOwnersByProject.get(projectId);
+    if (!cached || cached.fingerprint !== fingerprint) {
+      cached = { fingerprint, owners: timeSyncWork('related:conversation-owners', () => store.conversationOwners()) };
+      conversationOwnersByProject.set(projectId, cached);
+    }
+    const tasks = new Map(store.boardTaskTitles().map((task) => [task.taskId, task]));
+    return cached.owners.map((owner) => {
+      const task = owner.taskId ? tasks.get(owner.taskId) : undefined;
+      return {
+        docKey: `conversation::${owner.docId}`,
+        taskId: owner.taskId,
+        displayId: task?.displayId ?? null,
+        title: task?.title ?? null,
+        sessionId: owner.sessionId,
+      };
+    });
   } catch {
     return [];
   }

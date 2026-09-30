@@ -1216,6 +1216,23 @@ export class RetrievalStore {
 
   /** Every board task's id, ticket and title: what a task-record match needs
    *  to become a row when none of the task's conversations is in scope. */
+  /**
+   * The session and task each indexed conversation belongs to, read off its
+   * chunks. Neither column is in an index, so this reads every conversation
+   * chunk row: about 300 ms on a 94k-chunk index. `indexedConversationNodes`
+   * keeps the result until `coverageFingerprint` moves.
+   */
+  conversationOwners(): Array<{ docId: string; sessionId: string | null; taskId: string | null }> {
+    return this.db
+      .prepare(
+        `SELECT doc_id AS docId, MAX(session_id) AS sessionId, MAX(task_id) AS taskId
+         FROM memory_chunks
+         WHERE corpus = 'conversation'
+         GROUP BY doc_id`,
+      )
+      .all() as Array<{ docId: string; sessionId: string | null; taskId: string | null }>;
+  }
+
   boardTaskTitles(): Array<{ taskId: string; displayId: number | null; title: string }> {
     return this.db
       .prepare('SELECT id AS taskId, display_id AS displayId, title FROM tasks')

@@ -44,6 +44,7 @@ import {
 } from './projection-math';
 import { computeCosineNeighbors, buildSimilarityEdgesByQuantile } from './neighbor-edges';
 import { agentRegistry } from '../../agent/agent-registry';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import {
   assignClusters,
   chooseClusterCount,
@@ -292,8 +293,11 @@ export async function runProjectionPass(
 
   // Metadata is what turns a point into something worth clicking: a title to
   // read, a session to open, a timestamp to colour by.
+  // One statement that groups every conversation chunk row, so it is timed:
+  // about 370 ms on a 94k-chunk index.
   const metadataByDocKey = new Map(
-    store.documentMetadata().map((row) => [`${row.corpus}::${row.docId}`, row]),
+    timeSyncWork('graph:document-metadata', () => store.documentMetadata())
+      .map((row) => [`${row.corpus}::${row.docId}`, row]),
   );
 
   // Clustered in the SAME space the map is drawn in, so a label always names the

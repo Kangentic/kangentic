@@ -1,0 +1,135 @@
+/**
+ * `indexedConversationNodes` (src/main/retrieval/related-work.ts): the rollup
+ * nodes `kangentic_search` ranks tasks over, on a real migrated database.
+ *
+ * Which session and task each conversation belongs to is read by grouping every
+ * conversation chunk row, about 300 ms on main on a 94k-chunk index, and the
+ * tool asked for it on every call, up to four times per answer. It is now kept
+ * until the index changes. Two things have to hold: an unchanged index reads
+ * the chunks once, and a task renamed with no index change still shows its new
+ * title, because titles are read fresh rather than kept.
+ *
+ * node:sqlite rather than better-sqlite3 on purpose: better-sqlite3 is compiled
+ * for Electron's Node ABI, so every suite gated on it skips everywhere.
+ */
+
+import { describe, it, expect } from 'vitest';
+import type Database from 'better-sqlite3';
+import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
+import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+import { indexedConversationNodes } from '../../src/main/retrieval/related-work';
+import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/types';
+
+type SqliteModule = typeof import('node:sqlite');
+let sqlite: SqliteModule | null = null;
+try {
+  sqlite = await import('node:sqlite');
+} catch {
+  sqlite = null;
+}
+const describeWithSqlite = sqlite ? describe : describe.skip;
+type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
+
+/** node:sqlite behind the slice of better-sqlite3 the store uses, recording
+ *  every statement prepared, with nested transactions as savepoints. */
+function adaptDatabase(database: NodeDatabase, prepared: string[]): Database.Database {
+  let depth = 0;
+  const adapter = {
+    exec: (sql: string) => database.exec(sql),
+    prepare: (sql: string) => {
+      prepared.push(sql);
+      return database.prepare(sql);
+    },
+    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
+    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
+      (...args: Args): Result => {
+        const savepoint = `sp_${depth}`;
+        database.exec(depth === 0 ? 'BEGIN' : `SAVEPOINT ${savepoint}`);
+        depth += 1;
+        try {
+          const result = body(...args);
+          depth -= 1;
+          database.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+          return result;
+        } catch (error) {
+          depth -= 1;
+          database.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+          throw error;
+        }
+      },
+  };
+  return adapter as unknown as Database.Database;
+}
+
+const CREATED_AT = '2026-09-30T00:00:00.000Z';
+
+function chunk(seq: number): ChunkInput {
+  return {
+    seq,
+    text: `text-${seq}`,
+    contentHash: `hash-${seq}`,
+    tokenEstimate: 10,
+    role: 'user',
+    tsStart: 1,
+    tsEnd: 2,
+    turnUuidStart: `u${seq}`,
+    turnUuidEnd: `u${seq}`,
+  };
+}
+
+function conversation(docId: string, sessionId: string, taskId: string): CorpusDocumentRef {
+  return { corpus: 'conversation', docId, sessionId, taskId, agentSessionId: docId, metaJson: null };
+}
+
+/** A board with one task, #7, and one indexed conversation of it. */
+function project() {
+  const database = new sqlite!.DatabaseSync(':memory:');
+  const prepared: string[] = [];
+  const db = adaptDatabase(database, prepared);
+  runProjectMigrations(db);
+  database.prepare("INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, ?)").run(CREATED_AT);
+  database
+    .prepare("INSERT INTO tasks (id, title, swimlane_id, position, display_id, created_at, updated_at) VALUES ('task-1', 'Relay config', 'lane-1', 0, 7, ?, ?)")
+    .run(CREATED_AT, CREATED_AT);
+  const store = new RetrievalStore(db);
+  store.upsertDocument(conversation('doc-1', 'session-1', 'task-1'), [chunk(0), chunk(1)]);
+  /** How many times the chunk owners were read, the statement the cache saves. */
+  const ownerReads = (): number => prepared.filter((sql) => sql.includes('MAX(session_id) AS sessionId') && sql.includes('GROUP BY doc_id')).length;
+  return { database, db, store, ownerReads, getDb: () => db };
+}
+
+describeWithSqlite('indexedConversationNodes', () => {
+  it('names each conversation with its session, task and the task\'s card number and title', () => {
+    const { getDb } = project();
+    expect(indexedConversationNodes('project-shape', getDb)).toEqual([{
+      docKey: 'conversation::doc-1',
+      taskId: 'task-1',
+      displayId: 7,
+      title: 'Relay config',
+      sessionId: 'session-1',
+    }]);
+  });
+
+  it('reads the chunk owners once while the index is unchanged, and again once it changes', () => {
+    const { store, ownerReads, getDb } = project();
+    indexedConversationNodes('project-reads', getDb);
+    indexedConversationNodes('project-reads', getDb);
+    expect(ownerReads()).toBe(1);
+
+    store.upsertDocument(conversation('doc-2', 'session-2', 'task-1'), [chunk(0)]);
+    const nodes = indexedConversationNodes('project-reads', getDb);
+    expect(ownerReads()).toBe(2);
+    expect(nodes.map((node) => node.docKey)).toEqual(['conversation::doc-1', 'conversation::doc-2']);
+  });
+
+  it('shows a task renamed with no index change by its new title', () => {
+    const { database, ownerReads, getDb } = project();
+    indexedConversationNodes('project-rename', getDb);
+    database.prepare("UPDATE tasks SET title = 'Relay settings' WHERE id = 'task-1'").run();
+
+    const [node] = indexedConversationNodes('project-rename', getDb);
+    expect(node.title).toBe('Relay settings');
+    // Served from the kept owners: the rename moved no chunk.
+    expect(ownerReads()).toBe(1);
+  });
+});
