@@ -51,6 +51,7 @@ vi.mock('../../src/main/retrieval/conversation/conversation-indexer', () => ({
   ConversationIndexer: class {
     indexSession = conversationIndexerMock.indexSession;
     indexSubagentUsage = conversationIndexerMock.indexSubagentUsage;
+    purgeDeletedSessions = vi.fn(async () => 0);
   },
 }));
 

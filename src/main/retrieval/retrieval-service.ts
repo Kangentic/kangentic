@@ -362,12 +362,15 @@ function queueRecordSweeps(context: IpcContext, projectId: string): void {
     // database would create an empty one again.
     if (!projectStillExists(context, projectId)) return;
     const projectPath = projectPathFor(context, projectId);
+    // A deleted task or session leaves its conversation in the index until
+    // here; the delete itself touches no index row.
+    const purged = await indexer.purgeDeletedSessions(projectId, () => !disposed);
     const tasks = await sweepTaskRecords(projectId, () => !disposed);
     const changes = await sweepChangeRecords(projectId, projectPath, () => !disposed);
     const commits = await sweepProjectCommits(context, projectId, projectPath, () => !disposed);
     const code = await sweepProjectCode(context, projectId, projectPath, () => !disposed);
     if (tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0 || code.indexed > 0) embedEngine.markDirty(projectId);
-    if (tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0
+    if (purged > 0 || tasks.indexed > 0 || tasks.removed > 0 || changes.indexed > 0
       || commits.indexed > 0 || commits.removed > 0 || commits.relinked > 0
       || code.indexed > 0 || code.removed > 0) {
       // An open Knowledge Graph re-reads its snapshot, so the Index panel
@@ -720,6 +723,7 @@ export const retrievalService = {
       chain(async () => {
         const stillThisProject = (): boolean =>
           !disposed && context.currentProjectId === project.id && activeSweepProjectId === project.id;
+        await indexer.purgeDeletedSessions(project.id, stillThisProject);
         await indexer.sweepProject(project.id, stillThisProject);
         // The board's own records, the files each conversation changed, and
         // the default branch's commits: each cheap once caught up, and

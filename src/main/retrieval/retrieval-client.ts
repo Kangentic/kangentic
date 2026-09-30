@@ -70,8 +70,12 @@ interface PendingCall {
 
 export interface RetrievalClientEvents {
   event: [event: RetrievalEventName, projectId: string];
+  /** A worker is up and answering (the first, or a replacement). */
+  ready: [];
   /** A worker became ready after an earlier one exited. */
   respawned: [];
+  /** The worker that was up is gone (exited, stuck, or disposed). */
+  down: [];
 }
 
 export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
@@ -84,6 +88,8 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
   private nextRequestId = 1;
   private disposed = false;
   private hadWorker = false;
+  /** A worker said ready and has not gone since, so `down` fires once per up. */
+  private workerUp = false;
   /** The child an intentional teardown is killing, so its exit is not read as
    *  a crash; per child, as in `dictation-client.ts`. */
   private intentionalKill: UtilityProcess | null = null;
@@ -178,6 +184,8 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     const record = message as FromWorkerMessage;
     if (record.type === 'ready') {
       markReady();
+      this.workerUp = true;
+      this.emit('ready');
       if (this.hadWorker) this.emit('respawned');
       this.hadWorker = true;
       return;
@@ -226,7 +234,14 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     this.failReady = null;
     const exited = new RetrievalUnavailableError('The retrieval worker exited');
     for (const requestId of [...this.pending.keys()]) this.settle(requestId, exited);
+    this.markDown();
     if (!this.disposed) this.restartPolicy.recordCrash(exitCode, stderrTail);
+  }
+
+  private markDown(): void {
+    if (!this.workerUp) return;
+    this.workerUp = false;
+    this.emit('down');
   }
 
   /** Let go of the current worker now: every call waiting on it fails with
@@ -238,6 +253,7 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     this.failReady?.(error);
     this.failReady = null;
     for (const requestId of [...this.pending.keys()]) this.settle(requestId, error);
+    this.markDown();
     if (!child) return;
     this.intentionalKill = child;
     try {

@@ -32,6 +32,7 @@ import { ConversationUsageStore } from '../conversation/conversation-usage-store
 import type { RetrievalEventName } from './protocol';
 import { createIndexStatusReader, type IndexStatus, type IndexStatusParams } from './index-status';
 import { createGraphService } from '../graph/graph-service';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { prepareAnswer, type AnswerPrepareParams, type PreparedAnswer } from './answer-prepare';
 
 const indexStatus = createIndexStatusReader();
@@ -60,6 +61,18 @@ function graphFor(context: WorkerContext, summaryNamesOn: boolean): GraphService
   }
   holder.summaryNamesOn = summaryNamesOn;
   return holder.service;
+}
+
+/** The last checkpoint logged per project, so a quiet WAL logs once. */
+const lastCheckpointLogged = new Map<string, string>();
+
+/** Dev builds: each project's WAL size and what a checkpoint copied, when it
+ *  changed since the last line. */
+function logCheckpoint(result: { projectId: string; walFrames: number; checkpointed: number; busy: boolean }): void {
+  const line = `WAL ${result.walFrames} pages, ${result.checkpointed} copied${result.busy ? ', busy' : ''}`;
+  if (lastCheckpointLogged.get(result.projectId) === line) return;
+  lastCheckpointLogged.set(result.projectId, line);
+  console.log(`[retrieval] checkpoint ${result.projectId.slice(0, 8)}: ${line}`);
 }
 
 /** A project as a search names it. */
@@ -92,6 +105,14 @@ export interface RetrievalMethods {
   'project.close': {
     params: { projectId: string };
     result: void;
+  };
+  /** A PASSIVE checkpoint of each project database main has open, for both
+   *  processes' writes: main's own auto-checkpoint is off while the worker is
+   *  up. PASSIVE never waits for or blocks a writer. A project whose database
+   *  is gone is skipped. */
+  'db.checkpoint': {
+    params: { projectIds: string[] };
+    result: Array<{ projectId: string; walFrames: number; checkpointed: number; busy: boolean } | null>;
   };
   /** The Knowledge Graph's snapshot, with the map as JSON only when the
    *  caller's key does not match (`graphService.getSnapshotWire`). Never runs
@@ -257,6 +278,17 @@ export const retrievalHandlers: RetrievalHandlers = {
   'graph.requestRegionNames': ({ projectId, urgent, summaryNamesOn }, context) => {
     graphFor(context, summaryNamesOn).requestRegionNames(projectId, urgent);
   },
+  'db.checkpoint': ({ projectIds }, context) => projectIds.map((projectId) => {
+    try {
+      const db = context.getDb(projectId);
+      const [row] = timeSyncWork('db:checkpoint', () => db.pragma('wal_checkpoint(PASSIVE)') as Array<{ busy: number; log: number; checkpointed: number }>);
+      const result = { projectId, walFrames: row?.log ?? 0, checkpointed: row?.checkpointed ?? 0, busy: (row?.busy ?? 0) !== 0 };
+      if (__KANGENTIC_DEV__) logCheckpoint(result);
+      return result;
+    } catch {
+      return null;
+    }
+  }),
   'status.index': (params, context) => ({ ...indexStatus.read(context.getDb(params.projectId), params), vecError: context.vecLoadError() }),
   'summary.forTask': ({ projectId, taskId }, context) => new SummaryStore(context.getDb(projectId)).summariesFor([taskId]).get(taskId) ?? null,
   'task.knowledge': ({ projectId, taskIds }, context) => readTaskKnowledge(context.getDb(projectId), taskIds),

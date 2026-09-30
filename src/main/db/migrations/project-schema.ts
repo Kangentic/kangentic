@@ -1243,15 +1243,12 @@ export function runProjectMigrations(db: Database.Database): void {
   // ended_ms IS NULL) without holding row ids in memory across a restart.
   db.exec('CREATE INDEX IF NOT EXISTS idx_activity_intervals_open ON session_activity_intervals(session_id, ended_ms)');
 
-  // Cascade cleanup when a session is deleted (mirrors trg_sessions_delete_transcript).
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_sessions_delete_memory
-    AFTER DELETE ON sessions
-    BEGIN
-      DELETE FROM memory_chunks WHERE session_id = OLD.id;
-      DELETE FROM memory_index_state WHERE session_id = OLD.id;
-    END
-  `);
+  // A deleted session's conversation used to leave the index by trigger,
+  // inside main's own delete transaction: every chunk row and its full-text
+  // rows, which for a long conversation held main (and the write lock) for as
+  // long as that took. The retrieval worker's record sweep deletes such
+  // conversations a page at a time instead (`orphanedConversationDocIds`).
+  db.exec('DROP TRIGGER IF EXISTS trg_sessions_delete_memory');
 
   // Hot-path indices for session lookups.
   // - sessions(task_id, started_at): getLatestForTask, cost summaries, per-task history

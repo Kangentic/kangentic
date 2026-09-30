@@ -55,6 +55,7 @@ const conversationIndexerMock = vi.hoisted(() => ({ sweepProject: vi.fn(async ()
 vi.mock('../../src/main/retrieval/conversation/conversation-indexer', () => ({
   ConversationIndexer: class {
     sweepProject = conversationIndexerMock.sweepProject;
+    purgeDeletedSessions = vi.fn(async () => 0);
     indexSession = vi.fn(async () => ({}));
     indexSubagentUsage = vi.fn(async () => 'indexed');
   },

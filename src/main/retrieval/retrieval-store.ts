@@ -362,6 +362,23 @@ export class RetrievalStore {
     })();
   }
 
+  /**
+   * Documents whose session row is gone (a deleted task or session), as their
+   * index state records them: a conversation, its subagent walk and the files
+   * it changed. Replaces the session-delete trigger that deleted them inside
+   * main's own transaction: the record sweep deletes these a page at a time
+   * instead. A primary-key probe of `sessions` per state row, a few thousand
+   * rows at most.
+   */
+  deletedSessionDocuments(limit: number): Array<{ corpus: string; docId: string }> {
+    return this.prepared(
+      `SELECT corpus, doc_id AS docId FROM memory_index_state AS state
+        WHERE session_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = state.session_id)
+        LIMIT ?`,
+    ).all(limit) as Array<{ corpus: string; docId: string }>;
+  }
+
   /** How many of one document's chunks sit below `seq`: equal to `seq` while
    *  a resumed walk's untouched prefix is intact. A range count on the
    *  UNIQUE(corpus, doc_id, seq) index. */

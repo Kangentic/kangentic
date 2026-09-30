@@ -25,6 +25,8 @@ import {
 
 const CORPUS = 'conversation';
 const CHUNKER_VERSION_KEY = 'chunker_version';
+/** Deleted sessions' documents found per read of the index state. */
+const ORPHAN_PAGE = 20;
 /** Max sessions actually (re)indexed per backfill sweep, so a large history's
  *  cost amortizes across project opens instead of one long CPU burst. Exported
  *  so tests can assert the cap by the real value rather than a copied-in
@@ -281,9 +283,9 @@ export class ConversationIndexer {
       // sessionId column below stays record.id so the session-delete trigger and
       // the ownership re-point track the live session.
       // `docSuffix` splits the subagent walk onto its own row (see
-      // SUBAGENT_DOC_SUFFIX). It stays keyed to record.id, so
-      // trg_sessions_delete_memory cleans it up with the main one; the ledger
-      // rows it produced survive by design (no cascade).
+      // SUBAGENT_DOC_SUFFIX). It stays keyed to record.id, so the record
+      // sweep's orphan purge removes it with the main one once the session is
+      // deleted; the ledger rows it produced survive by design (no cascade).
       docId: `${record.agent_session_id ?? record.id}${docSuffix}`,
       sessionId: record.id,
       sourcePath: signature.path,
@@ -660,6 +662,45 @@ export class ConversationIndexer {
     sourcePath = parsed.sourcePath;
     collect(parsed.entries);
     return { sourcePath, entryCount, ...unwalked };
+  }
+
+  /**
+   * Remove deleted sessions' documents from the index (the conversation, its
+   * subagent walk, the files it changed), one document at a time with a yield
+   * between, `DELETES_PER_TRANSACTION` chunks per transaction. This used to be
+   * a trigger on `sessions`, which deleted a whole conversation inside the
+   * session delete's own transaction. Returns how many documents went; never
+   * throws.
+   */
+  async purgeDeletedSessions(projectId: string, shouldContinue: () => boolean): Promise<number> {
+    let removed = 0;
+    let store: RetrievalStore;
+    try {
+      store = new RetrievalStore(this.deps.getDb(projectId));
+    } catch {
+      return removed;
+    }
+    for (;;) {
+      if (!shouldContinue()) return removed;
+      let documents: Array<{ corpus: string; docId: string }>;
+      try {
+        documents = store.deletedSessionDocuments(ORPHAN_PAGE);
+      } catch {
+        return removed;
+      }
+      if (documents.length === 0) return removed;
+      for (const { corpus, docId } of documents) {
+        if (!shouldContinue()) return removed;
+        try {
+          timeSyncWork('index:purge-deleted', () => store.deleteDocument(corpus, docId));
+          removed += 1;
+        } catch (error) {
+          console.warn(`[retrieval] a deleted session's ${corpus} document ${docId} failed to remove:`, error);
+          return removed;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
   }
 
   /**

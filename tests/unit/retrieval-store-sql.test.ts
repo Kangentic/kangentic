@@ -17,6 +17,7 @@ const describeWithSqlite = sqlite ? describe : describe.skip;
 type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
 
 import { adaptDatabase } from './helpers/node-sqlite-database';
+import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
 
 /**
  * better-sqlite3 cannot load under vitest's system Node, so the store's SQL is
@@ -748,6 +749,62 @@ describe('RetrievalStore.corpusTotals', () => {
     const embedded = calls.find((call) => call.sql.includes('embedded_model IS NOT NULL'));
     expect(embedded?.sql).toMatch(/GROUP BY \+corpus/);
     expect(totals).toEqual([{ corpus: 'conversation', documents: 2, chunks: 5, embeddedChunks: 5 }]);
+  });
+});
+
+describeWithSqlite('a deleted session leaves the index by the sweep, not by trigger (real database)', () => {
+  function stateFor(docId: string, sessionId: string) {
+    return {
+      corpus: 'conversation',
+      docId,
+      sessionId,
+      sourcePath: '/mock/transcript.jsonl',
+      sourceMtimeMs: 1,
+      sourceSize: 2,
+      entryCount: 1,
+      chunkCount: 1,
+      status: 'ok',
+      indexedAt: '2026-09-30T00:00:00.000Z',
+    };
+  }
+
+  it('keeps a deleted session\'s chunks until the sweep, which finds and deletes them', async () => {
+    const database = new sqlite!.DatabaseSync(':memory:');
+    const db = adaptDatabase(database);
+    runProjectMigrations(db);
+    const store = new RetrievalStore(db);
+    const count = (sql: string): number => (database.prepare(sql).get() as { count: number }).count;
+    database.exec(`INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, '2026-09-30T00:00:00.000Z')`);
+    for (const id of ['task-1', 'task-2']) {
+      database.exec(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at)
+        VALUES ('${id}', ${id === 'task-1' ? 1 : 2}, '${id}', '', 'lane-1', 0, '2026-09-30T00:00:00.000Z', '2026-09-30T00:00:00.000Z')`);
+    }
+    for (const [sessionId, taskId] of [['session-kept', 'task-1'], ['session-gone', 'task-2']]) {
+      database.exec(`INSERT INTO sessions (id, task_id, session_type, command, cwd, status, started_at)
+        VALUES ('${sessionId}', '${taskId}', 'claude_agent', 'claude', '/mock', 'exited', '2026-09-30T00:00:00.000Z')`);
+    }
+    store.upsertDocument({ ...ref, docId: 'agent-kept', sessionId: 'session-kept' }, [chunk(0, 'hashA')]);
+    store.upsertDocument({ ...ref, docId: 'agent-gone', sessionId: 'session-gone' }, [chunk(0, 'hashB')]);
+    store.upsertDocument({ ...ref, corpus: 'change', docId: 'session-gone', sessionId: 'session-gone' }, [chunk(0, 'hashC')]);
+    store.setIndexState(stateFor('agent-kept', 'session-kept'));
+    store.setIndexState(stateFor('agent-gone', 'session-gone'));
+    store.setIndexState({ ...stateFor('session-gone', 'session-gone'), corpus: 'change' });
+
+    database.exec(`DELETE FROM sessions WHERE id = 'session-gone'`);
+
+    // No trigger: the delete touched no index row.
+    expect(count('SELECT COUNT(*) AS count FROM memory_chunks')).toBe(3);
+    // The conversation and the files it changed, as the old trigger removed.
+    expect(store.deletedSessionDocuments(100)).toEqual(expect.arrayContaining([
+      { corpus: 'conversation', docId: 'agent-gone' },
+      { corpus: 'change', docId: 'session-gone' },
+    ]));
+    const indexer = new ConversationIndexer({ getDb: () => db });
+    await expect(indexer.purgeDeletedSessions('project-1', () => true)).resolves.toBe(2);
+    expect(count(`SELECT COUNT(*) AS count FROM memory_chunks WHERE session_id = 'session-gone'`)).toBe(0);
+    expect(count(`SELECT COUNT(*) AS count FROM memory_index_state WHERE session_id = 'session-gone'`)).toBe(0);
+    expect(count(`SELECT COUNT(*) AS count FROM memory_chunks WHERE doc_id = 'agent-kept'`)).toBe(1);
+    expect(store.deletedSessionDocuments(100)).toEqual([]);
   });
 });
 

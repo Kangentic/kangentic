@@ -22,6 +22,34 @@ interface ProjectDbAccess {
 
 let projectDbAccess: ProjectDbAccess = { projectsDir: null, migrate: true };
 
+/**
+ * The WAL auto-checkpoint this process's project connections use, in pages,
+ * or null for SQLite's default (1000). SQLite runs an auto-checkpoint on the
+ * connection that commits, so on main it puts checkpoint I/O and its sync on
+ * the main thread. While the retrieval worker is up it checkpoints for both
+ * processes (PASSIVE, which never blocks a writer), and main sets 0 here.
+ */
+let walAutoCheckpointPages: number | null = null;
+
+/** How large a WAL file is left after a checkpoint resets it, so one grown
+ *  in a burst of writes shrinks again. */
+const JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
+
+function applyWalAutoCheckpoint(db: Database.Database): void {
+  try {
+    db.pragma(`wal_autocheckpoint = ${walAutoCheckpointPages ?? 1000}`);
+  } catch {
+    // A connection that cannot take it keeps checkpointing as it did.
+  }
+}
+
+/** Set the auto-checkpoint on every open project connection and on those
+ *  opened later. */
+export function setWalAutoCheckpoint(pages: number | null): void {
+  walAutoCheckpointPages = pages;
+  for (const db of projectDbs.values()) applyWalAutoCheckpoint(db);
+}
+
 export function configureProjectDbAccess(access: ProjectDbAccess): void {
   projectDbAccess = access;
 }
@@ -135,6 +163,8 @@ export function getProjectDb(projectId: string): Database.Database {
       db.pragma('busy_timeout = 5000');
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');
+      db.pragma(`journal_size_limit = ${JOURNAL_SIZE_LIMIT_BYTES}`);
+      applyWalAutoCheckpoint(db);
       if (projectDbAccess.migrate) runProjectMigrations(db);
       // Load optional extensions (sqlite-vec) after migrations. Never throws:
       // the initializer swallows a load failure and the engine falls back to

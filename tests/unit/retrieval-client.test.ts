@@ -200,6 +200,23 @@ describe('RetrievalClient', () => {
     }
   });
 
+  it('says when a worker is up and when it goes, once each', async () => {
+    const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+    const seen: string[] = [];
+    client.on('ready', () => seen.push('ready'));
+    client.on('down', () => seen.push('down'));
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+    lastChild().emit('message', { type: 'ready' });
+    lastChild().emit('exit', 1);
+    // A worker that never said ready was never up, so its exit says nothing.
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+    lastChild().emit('exit', 1);
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+    lastChild().emit('message', { type: 'ready' });
+    client.dispose();
+    expect(seen).toEqual(['ready', 'down', 'ready', 'down']);
+  });
+
   it('relays worker events', async () => {
     const client = new RetrievalClient();
     const events: Array<[string, string]> = [];

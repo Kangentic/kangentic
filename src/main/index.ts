@@ -76,6 +76,7 @@ import { gitFetchScheduler } from './git/git-fetch-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
 import { retrievalClient } from './retrieval/retrieval-client';
+import { attachCheckpointDriver } from './retrieval/checkpoint-driver';
 import { setProjectDbInitializer } from './db/database';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
@@ -1627,6 +1628,9 @@ app.whenReady().then(async () => {
   // migrations). Registered before any project opens so the semantic search
   // layer is available; a load failure degrades to lexical-only.
   setProjectDbInitializer(loadVecExtension);
+  // While the retrieval worker is up it checkpoints the project databases'
+  // WAL and main's own auto-checkpoint is off (see checkpoint-driver.ts).
+  attachCheckpointDriver();
 
   // Let agent adapters drop per-directory state for a worktree Kangentic just
   // deleted (Codex records directory trust in ~/.codex/config.toml keyed by
