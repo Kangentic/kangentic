@@ -22,7 +22,8 @@ import {
   withoutTrailers,
   type CommitEntry,
 } from '../../src/main/retrieval/commit/commit-record';
-import { sweepCommitRecords, RELINK_WINDOW_MS, type BranchHead, type CommitIndexerDeps } from '../../src/main/retrieval/commit/commit-indexer';
+import { sweepCommitRecords, RELINK_WINDOW_MS, type CommitIndexerDeps } from '../../src/main/retrieval/commit/commit-indexer';
+import type { BranchHead } from '../../src/main/retrieval/branch-git';
 
 type SqliteModule = typeof import('node:sqlite');
 let sqlite: SqliteModule | null = null;

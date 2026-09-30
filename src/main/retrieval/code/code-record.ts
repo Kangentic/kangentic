@@ -96,12 +96,6 @@ export function codeChunks(path: string, text: string): ChunkInput[] {
   });
 }
 
-/** The path a code chunk opens with. */
-export function codePathOf(text: string): string {
-  const newline = text.indexOf('\n');
-  return newline === -1 ? text : text.slice(0, newline);
-}
-
 /** Whether a question names a code identifier (camelCase, snake_case, a dotted
  *  name or a backticked word). Such questions score low by meaning even when
  *  the right file ranks near the top, so the code floor is lower for them. */

@@ -20,13 +20,8 @@ import {
   createMeanPoolAccumulator,
   accumulateVector,
   finalizeMeanPool,
-  projectToPlane,
-  fitLayoutToUnitBox,
   fitLayoutToPercentileBoxN,
-  fitLayoutToPercentileBox,
   embedNeighborGraph,
-  measureLayoutSpread,
-  measureNeighborhoodTrust,
   serializeMeanPool,
   deserializeMeanPool,
   forgetDocument,
@@ -34,9 +29,14 @@ import {
 } from '../../src/main/retrieval/graph/projection-math';
 import {
   computeCosineNeighbors,
-  buildSimilarityEdges,
   buildSimilarityEdgesByQuantile,
 } from '../../src/main/retrieval/graph/neighbor-edges';
+import {
+  projectToPlane,
+  fitLayoutToUnitBox,
+  measureLayoutSpread,
+  measureNeighborhoodTrust,
+} from './helpers/layout-measures';
 
 /** Deterministic xorshift32, so every assertion below is reproducible. */
 function createSeededRandom(seed: number): () => number {
@@ -267,16 +267,18 @@ describe('cosine neighbours', () => {
     expect(lists[0].neighbors).toHaveLength(0);
   });
 
-  it('dedupes the undirected edge list and honours the floor', () => {
+  it('dedupes the undirected edge list and keeps the strongest edge first', () => {
     const lists = computeCosineNeighbors(matrix, 3, dimensions, 2);
-    const all = buildSimilarityEdges(lists, -1);
+    const all = buildSimilarityEdgesByQuantile(lists, 1);
     for (const edge of all) expect(edge.source).toBeLessThan(edge.target);
+    // Three rows naming both others name every pair twice: three edges, not six.
+    expect(all).toHaveLength(3);
     expect(new Set(all.map((edge) => `${edge.source}:${edge.target}`)).size).toBe(all.length);
 
-    // 0 and 1 are near-identical, so a high floor keeps only that pair.
-    const strong = buildSimilarityEdges(lists, 0.9);
-    expect(strong).toHaveLength(1);
-    expect(strong[0]).toMatchObject({ source: 0, target: 1 });
+    // 0 and 1 are near-identical, so the strongest third is that pair alone.
+    const strongest = buildSimilarityEdgesByQuantile(lists, 1 / 3);
+    expect(strongest).toHaveLength(1);
+    expect(strongest[0]).toMatchObject({ source: 0, target: 1 });
   });
 });
 
@@ -318,7 +320,9 @@ describe('quantile edge floor', () => {
     sparse[4] = 1;
     sparse[8] = 1;
     const orthogonal = computeCosineNeighbors(sparse, 3, 3, 2);
-    expect(buildSimilarityEdges(orthogonal, 0.5)).toHaveLength(0);
+    for (const list of orthogonal) {
+      for (const neighbor of list.neighbors) expect(neighbor.similarity).toBeLessThan(0.5);
+    }
     expect(buildSimilarityEdgesByQuantile(orthogonal, 0.5).length).toBeGreaterThan(0);
   });
 
@@ -355,7 +359,7 @@ describe('layout fitting', () => {
     }
 
     const minMax = fitLayoutToUnitBox(points, rowCount);
-    const percentile = fitLayoutToPercentileBox(points, rowCount);
+    const percentile = fitLayoutToPercentileBoxN(points, rowCount, 2);
 
     expect(measureLayoutSpread(minMax, rowCount).occupancy)
       .toBeLessThan(measureLayoutSpread(percentile, rowCount).occupancy);
@@ -366,14 +370,12 @@ describe('layout fitting', () => {
   });
 
   it('places a single point in the middle instead of dividing by zero', () => {
-    expect(Array.from(fitLayoutToUnitBox(new Float32Array([7, 7]), 1))).toEqual([0.5, 0.5]);
-    expect(Array.from(fitLayoutToPercentileBox(new Float32Array([7, 7]), 1))).toEqual([0.5, 0.5]);
+    expect(Array.from(fitLayoutToPercentileBoxN(new Float32Array([7, 7, 7]), 1, 3))).toEqual([0.5, 0.5, 0.5]);
   });
 
   it('collapses identical points to the middle rather than producing NaN', () => {
-    const points = new Float32Array([3, 3, 3, 3, 3, 3]);
-    for (const value of fitLayoutToUnitBox(points, 3)) expect(value).toBe(0.5);
-    for (const value of fitLayoutToPercentileBox(points, 3)) expect(value).toBe(0.5);
+    const points = new Float32Array([3, 3, 3, 3, 3, 3, 3, 3, 3]);
+    for (const value of fitLayoutToPercentileBoxN(points, 3, 3)) expect(value).toBe(0.5);
   });
 });
 
@@ -471,7 +473,7 @@ describe('neighbour-graph embedding', () => {
     // The reason the surface does not simply ship PCA. Measured on the real
     // corpus the gap is 28% vs 7.5%; this pins the ordering on synthetic data.
     const embedded = fitLayoutToUnitBox(embedNeighborGraph(truth, rowCount), rowCount);
-    const pca = fitLayoutToPercentileBox(projectToPlane(matrix, rowCount, dimensions).points, rowCount);
+    const pca = fitLayoutToPercentileBoxN(projectToPlane(matrix, rowCount, dimensions).points, rowCount, 2);
 
     const embeddedTrust = measureNeighborhoodTrust(truth, embedded, rowCount, 10);
     const pcaTrust = measureNeighborhoodTrust(truth, pca, rowCount, 10);
@@ -665,33 +667,5 @@ describe('3D neighbour embedding', () => {
     expect(embedNeighborGraph([], 0, { components: 3 })).toHaveLength(0);
     expect(Array.from(embedNeighborGraph([{ row: 0, neighbors: [] }], 1, { components: 3 })))
       .toEqual([0.5, 0.5, 0.5]);
-  });
-});
-
-describe('PCA projection', () => {
-  it('reports explained variance that sums to at most 1', () => {
-    const dimensions = 32;
-    const rowCount = 80;
-    const { matrix } = makeClusteredCorpus(rowCount, 4, dimensions, 0.3);
-    const projection = projectToPlane(matrix, rowCount, dimensions);
-
-    const [first, second] = projection.explainedVarianceRatio;
-    expect(first).toBeGreaterThan(0);
-    expect(first).toBeGreaterThanOrEqual(second);
-    expect(first + second).toBeLessThanOrEqual(1.0001);
-    expect(projection.points).toHaveLength(rowCount * 2);
-  });
-
-  it('is dimension-agnostic', () => {
-    // The embedding model is user-selectable; nothing may assume a width.
-    for (const dimensions of [8, 384, 768, 1024]) {
-      const { matrix } = makeClusteredCorpus(12, 3, dimensions, 0.3);
-      expect(projectToPlane(matrix, 12, dimensions).points).toHaveLength(24);
-    }
-  });
-
-  it('returns a safe result for empty and single-row corpora', () => {
-    expect(projectToPlane(new Float32Array(0), 0, 16).points).toHaveLength(0);
-    expect(Array.from(projectToPlane(new Float32Array(16), 1, 16).points)).toEqual([0, 0]);
   });
 });

@@ -15,7 +15,6 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  parseAnswerStreamLine,
   extractStreamedAnswer,
   extractLastTurnAnswer,
   createAnswerStreamReducer,
@@ -35,20 +34,23 @@ const textDelta = (text: string) => streamEventLine({
   type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text },
 });
 
-describe('parseAnswerStreamLine', () => {
+/** What one line yields to a fresh reducer, with no partial message before it. */
+const reduceFirstLine = (line: string) => createAnswerStreamReducer()(line);
+
+describe('the answer stream reducer, one line at a time', () => {
   it('yields the text the assistant wrote', () => {
-    expect(parseAnswerStreamLine(assistantLine([{ type: 'text', text: 'The sphere ' }])))
+    expect(reduceFirstLine(assistantLine([{ type: 'text', text: 'The sphere ' }])))
       .toEqual([{ kind: 'text', text: 'The sphere ' }]);
   });
 
   it('yields a tool call by name, so the rail can say it is searching', () => {
-    expect(parseAnswerStreamLine(assistantLine([
+    expect(reduceFirstLine(assistantLine([
       { type: 'tool_use', id: 'toolu_1', name: 'mcp__kangentic__kangentic_search', input: { query: 'sphere fit' } },
     ]))).toEqual([{ kind: 'tool', name: 'mcp__kangentic__kangentic_search' }]);
   });
 
   it('yields every block of a mixed turn, in order', () => {
-    expect(parseAnswerStreamLine(assistantLine([
+    expect(reduceFirstLine(assistantLine([
       { type: 'text', text: 'Let me check.' },
       { type: 'tool_use', name: 'mcp__kangentic__kangentic_search', input: {} },
     ]))).toEqual([
@@ -60,33 +62,33 @@ describe('parseAnswerStreamLine', () => {
   it('degrades to nothing on a line it cannot read', () => {
     // A chunk boundary can split a line, and a CLI update can change a shape.
     // Neither is allowed to cost the answer.
-    expect(parseAnswerStreamLine('{"type":"assistant","message":{"content":[{"type":"te')).toEqual([]);
-    expect(parseAnswerStreamLine('')).toEqual([]);
-    expect(parseAnswerStreamLine('not json at all')).toEqual([]);
-    expect(parseAnswerStreamLine('{"type":"assistant","message":"a string, not an object"}')).toEqual([]);
-    expect(parseAnswerStreamLine('{"type":"assistant","message":{"content":"not an array"}}')).toEqual([]);
+    expect(reduceFirstLine('{"type":"assistant","message":{"content":[{"type":"te')).toEqual([]);
+    expect(reduceFirstLine('')).toEqual([]);
+    expect(reduceFirstLine('not json at all')).toEqual([]);
+    expect(reduceFirstLine('{"type":"assistant","message":"a string, not an object"}')).toEqual([]);
+    expect(reduceFirstLine('{"type":"assistant","message":{"content":"not an array"}}')).toEqual([]);
   });
 
   it('ignores every line that is not an assistant turn', () => {
-    expect(parseAnswerStreamLine(JSON.stringify({ type: 'system', subtype: 'init', tools: [] }))).toEqual([]);
-    expect(parseAnswerStreamLine(JSON.stringify({ type: 'result', result: 'Done.' }))).toEqual([]);
-    expect(parseAnswerStreamLine(JSON.stringify({
+    expect(reduceFirstLine(JSON.stringify({ type: 'system', subtype: 'init', tools: [] }))).toEqual([]);
+    expect(reduceFirstLine(JSON.stringify({ type: 'result', result: 'Done.' }))).toEqual([]);
+    expect(reduceFirstLine(JSON.stringify({
       type: 'user', message: { content: [{ type: 'tool_result', content: 'hits' }] },
     }))).toEqual([]);
   });
 
   it('skips an empty text block rather than emitting an empty delta', () => {
-    expect(parseAnswerStreamLine(assistantLine([{ type: 'text', text: '' }]))).toEqual([]);
+    expect(reduceFirstLine(assistantLine([{ type: 'text', text: '' }]))).toEqual([]);
   });
 
   it('yields a text delta from a partial message, as the model writes it', () => {
     // Captured from the CLI: "hello world" arrived as "h" then "ello world".
-    expect(parseAnswerStreamLine(textDelta('h'))).toEqual([{ kind: 'text', text: 'h' }]);
-    expect(parseAnswerStreamLine(textDelta('ello world'))).toEqual([{ kind: 'text', text: 'ello world' }]);
+    expect(reduceFirstLine(textDelta('h'))).toEqual([{ kind: 'text', text: 'h' }]);
+    expect(reduceFirstLine(textDelta('ello world'))).toEqual([{ kind: 'text', text: 'ello world' }]);
   });
 
   it('yields a tool call the moment its block opens', () => {
-    expect(parseAnswerStreamLine(streamEventLine({
+    expect(reduceFirstLine(streamEventLine({
       type: 'content_block_start',
       index: 1,
       content_block: { type: 'tool_use', id: 'toolu_1', name: 'mcp__kangentic__kangentic_search', input: {} },
@@ -94,13 +96,13 @@ describe('parseAnswerStreamLine', () => {
   });
 
   it('yields nothing for the partial-message machinery around the deltas', () => {
-    expect(parseAnswerStreamLine(streamEventLine({ type: 'message_start', message: { content: [] } }))).toEqual([]);
-    expect(parseAnswerStreamLine(streamEventLine({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }))).toEqual([]);
-    expect(parseAnswerStreamLine(streamEventLine({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"q' } }))).toEqual([]);
-    expect(parseAnswerStreamLine(streamEventLine({ type: 'content_block_stop', index: 0 }))).toEqual([]);
-    expect(parseAnswerStreamLine(streamEventLine({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }))).toEqual([]);
-    expect(parseAnswerStreamLine(streamEventLine({ type: 'message_stop' }))).toEqual([]);
-    expect(parseAnswerStreamLine('{"type":"stream_event","event":"not an object"}')).toEqual([]);
+    expect(reduceFirstLine(streamEventLine({ type: 'message_start', message: { content: [] } }))).toEqual([]);
+    expect(reduceFirstLine(streamEventLine({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }))).toEqual([]);
+    expect(reduceFirstLine(streamEventLine({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"q' } }))).toEqual([]);
+    expect(reduceFirstLine(streamEventLine({ type: 'content_block_stop', index: 0 }))).toEqual([]);
+    expect(reduceFirstLine(streamEventLine({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }))).toEqual([]);
+    expect(reduceFirstLine(streamEventLine({ type: 'message_stop' }))).toEqual([]);
+    expect(reduceFirstLine('{"type":"stream_event","event":"not an object"}')).toEqual([]);
   });
 });
 

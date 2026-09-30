@@ -11,7 +11,6 @@
 
 import { lazy, Suspense } from 'react';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
-import { onIdle } from '../../utils/on-idle';
 
 const KnowledgeGraphBody = lazy(() =>
   import('./KnowledgeGraphBody').then((module) => ({ default: module.KnowledgeGraphBody })),
@@ -27,10 +26,6 @@ export function warmKnowledgeGraph(): void {
   if (hasWarmedKnowledgeGraph) return;
   hasWarmedKnowledgeGraph = true;
   void import('./KnowledgeGraphBody');
-}
-
-export function warmKnowledgeGraphOnIdle(): void {
-  onIdle(warmKnowledgeGraph);
 }
 
 function KnowledgeGraphSkeleton() {

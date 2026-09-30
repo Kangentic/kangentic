@@ -89,30 +89,18 @@ export function computeCosineNeighbors(
 }
 
 /**
- * Collapse the directed kNN lists into a deduped undirected edge list, keeping
- * only edges at or above `similarityFloor`.
+ * Collapse the directed kNN lists into a deduped undirected edge list.
  *
  * kNN is not symmetric (A can be in B's top-k without B being in A's), so an
  * undirected graph must dedupe. Keeping the union rather than the intersection
  * is deliberate: an intersection drops the edges that connect a dense cluster
  * to an outlying document, which are exactly the ones worth traversing.
  */
-export function buildSimilarityEdges(
-  lists: ReadonlyArray<NeighborList>,
-  similarityFloor: number,
-): SimilarityEdge[] {
-  return buildEdgesAboveFloor(lists, similarityFloor);
-}
-
-function buildEdgesAboveFloor(
-  lists: ReadonlyArray<NeighborList>,
-  similarityFloor: number,
-): SimilarityEdge[] {
+function buildUndirectedEdges(lists: ReadonlyArray<NeighborList>): SimilarityEdge[] {
   const edges: SimilarityEdge[] = [];
   const seen = new Set<string>();
   for (const list of lists) {
     for (const neighbor of list.neighbors) {
-      if (neighbor.similarity < similarityFloor) continue;
       const source = Math.min(list.row, neighbor.row);
       const target = Math.max(list.row, neighbor.row);
       const key = `${source}:${target}`;
@@ -148,7 +136,7 @@ export function buildSimilarityEdgesByQuantile(
   const clamped = Math.min(1, Math.max(0, keepFraction));
   if (clamped <= 0) return [];
 
-  const candidates = buildEdgesAboveFloor(lists, -Infinity);
+  const candidates = buildUndirectedEdges(lists);
   if (clamped >= 1 || candidates.length === 0) return candidates;
 
   const sorted = [...candidates].sort((first, second) => second.similarity - first.similarity);

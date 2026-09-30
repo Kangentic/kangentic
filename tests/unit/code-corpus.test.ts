@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
-import { codeChunks, codePathOf, isIndexableCodePath, namesCodeIdentifier } from '../../src/main/retrieval/code/code-record';
+import { codeChunks, isIndexableCodePath, namesCodeIdentifier } from '../../src/main/retrieval/code/code-record';
 import { batchesBySize, indexedCodeBranch, purgeCodeRecords, sweepCodeRecords, type CodeIndexerDeps } from '../../src/main/retrieval/code/code-indexer';
 import {
   BRANCH_SIZE_TTL_MS,
@@ -77,7 +77,6 @@ describe('code records', () => {
       expect(chunk.seq).toBe(seq);
       expect(chunk.role).toBe('code');
       expect(chunk.tsStart).toBeNull();
-      expect(codePathOf(chunk.text)).toBe('src/steps.ts');
       expect(chunk.text.startsWith('src/steps.ts\n\n')).toBe(true);
       expect(chunk.text.length - 'src/steps.ts\n\n'.length).toBeLessThanOrEqual(1_600);
     }

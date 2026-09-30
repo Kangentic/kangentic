@@ -66,8 +66,6 @@ export interface CommitSweepOptions {
   allowFullRead?: boolean;
 }
 
-export type { BranchHead };
-
 export interface CommitIndexerDeps {
   getDb: (projectId: string) => Database.Database;
   /** The first of `origin/<base>` and `<base>` that resolves, or null. */

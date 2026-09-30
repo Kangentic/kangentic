@@ -226,27 +226,15 @@ export type AnswerStreamEvent =
   | { kind: 'tool'; name: string };
 
 /**
- * Reduce one stream-json line to an `AnswerStreamEvent`, or null.
+ * One complete assistant turn: every text and tool_use block, in order.
  *
- * Degrades to null on anything it does not recognise: a malformed line, a
- * partial line at a chunk boundary, a schema the CLI has not shipped yet. A
- * stream that drops an event shows the user slightly less progress; a stream
- * that throws on one costs the whole answer.
- *
- * The line shapes handled, from the CLI's stream-json output:
  *   {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
  *   {"type":"assistant","message":{"content":[{"type":"tool_use","name":"..."}]}}
- * A content array can carry several blocks; each becomes its own event.
+ *
+ * Degrades to nothing on a shape it does not recognise, as every reader of the
+ * stream does: a stream that drops an event shows the user slightly less
+ * progress, and a stream that throws on one costs the whole answer.
  */
-export function parseAnswerStreamLine(rawLine: string): AnswerStreamEvent[] {
-  const record = parseJsonLine(rawLine);
-  if (!record) return [];
-  if (record.type === 'assistant') return eventsFromAssistantMessage(record);
-  if (record.type === 'stream_event') return eventsFromStreamEvent(record);
-  return [];
-}
-
-/** One complete assistant turn: every text and tool_use block, in order. */
 function eventsFromAssistantMessage(record: Record<string, unknown>): AnswerStreamEvent[] {
   const message = record.message;
   if (typeof message !== 'object' || message === null) return [];
