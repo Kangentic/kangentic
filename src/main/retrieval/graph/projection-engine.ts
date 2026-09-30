@@ -147,44 +147,42 @@ export interface ProjectionPassDeps {
 }
 
 /**
- * Restore the cached accumulator, dropping any document whose live chunk count
- * no longer matches what the cache recorded.
+ * What a pass starts from: the cached accumulator with every document that
+ * changed taken out, and the documents to read again. `documentsToRead` is null
+ * when there is no usable cache and the pass reads the whole corpus.
  *
- * That check is the correctness guard for incremental scanning.
- * `upsertDocument` re-indexes a changed document by deleting from the first
- * divergent seq and reinserting, which mints NEW chunk ids under the SAME doc
- * key. A pass that trusted `lastScannedChunkId` alone would add those new
- * chunks on top of the old ones' contribution and silently double-count the
- * document, with no error and a subtly wrong position forever after.
+ * A document changed when its live embedded count no longer matches the count
+ * the cache folded in. `upsertDocument` re-indexes one by deleting from the
+ * first divergent seq and reinserting, which mints NEW chunk ids under the SAME
+ * doc key, and a new id can sit below the old scan cursor: the live
+ * conversation holds the highest ids, so deleting its tail and reinserting
+ * reuses them. A cursor therefore cannot find a re-indexed document's chunks.
+ * This used to answer any change with a rescan of every vector in the corpus,
+ * which a live conversation causes on every turn. Reading the changed
+ * documents by doc key finds every chunk of theirs whatever its id, so the
+ * rest keep their cached sums.
  */
-function restoreAccumulator(
+function planScan(
   cached: SerializedMeanPool | null,
   dimensions: number,
   modelTag: string,
   liveCounts: Map<string, number>,
-): { accumulator: MeanPoolAccumulator; resumeFrom: number } {
-  if (!cached) {
-    return { accumulator: createMeanPoolAccumulator(dimensions), resumeFrom: 0 };
-  }
+): { accumulator: MeanPoolAccumulator; resumeFrom: number; documentsToRead: string[] | null } {
+  const fullScan = { accumulator: createMeanPoolAccumulator(dimensions), resumeFrom: 0, documentsToRead: null };
+  if (!cached) return fullScan;
   const restored = deserializeMeanPool(cached, dimensions, modelTag);
-  if (!restored) {
-    // Different model or width: the vectors mean something else entirely.
-    return { accumulator: createMeanPoolAccumulator(dimensions), resumeFrom: 0 };
-  }
+  // Different model or width: the vectors mean something else entirely.
+  if (!restored) return fullScan;
 
-  let rescanNeeded = false;
-  for (const [docKey, cachedCount] of restored.countsByDocKey) {
-    if (liveCounts.get(docKey) !== cachedCount) {
-      forgetDocument(restored, docKey);
-      rescanNeeded = true;
-    }
+  for (const [docKey, cachedCount] of [...restored.countsByDocKey]) {
+    // A document gone from the index, or with nothing embedded any more, is
+    // forgotten; one whose count moved is forgotten and read again below.
+    if (liveCounts.get(docKey) !== cachedCount) forgetDocument(restored, docKey);
   }
-  // A re-indexed document's new chunks may sit below the cursor, so a full
-  // rescan is the only way to pick them up. Correctness over speed: this is
-  // rare, and the alternative is a permanently wrong position.
-  return rescanNeeded
-    ? { accumulator: createMeanPoolAccumulator(dimensions), resumeFrom: 0 }
-    : { accumulator: restored, resumeFrom: cached.lastScannedChunkId };
+  // Every live document the accumulator no longer holds: the changed ones, and
+  // any new since the cache was written.
+  const documentsToRead = [...liveCounts.keys()].filter((docKey) => !restored.countsByDocKey.has(docKey));
+  return { accumulator: restored, resumeFrom: cached.lastScannedChunkId, documentsToRead };
 }
 
 /**
@@ -210,27 +208,44 @@ export async function runProjectionPass(
   }
 
   const cachedSums = readJson<SerializedMeanPool>(store, PROJECTION_SUMS_KEY);
-  const { accumulator, resumeFrom } = restoreAccumulator(cachedSums, dimensions, modelTag, liveCounts);
+  const { accumulator, resumeFrom, documentsToRead } = planScan(cachedSums, dimensions, modelTag, liveCounts);
 
-  let cursor = resumeFrom;
-  for (;;) {
-    if (aborted()) return null;
+  /** Fold one page of chunks in, then pace. */
+  const foldPage = async (identities: ReadonlyArray<{ id: number; corpus: string; docId: string }>): Promise<void> => {
     const startedAt = Date.now();
-
-    const identities = store.listChunkIdentities(cursor, scanBatch, 'conversation');
-    if (identities.length === 0) break;
-
     const vectors = store.readVectors(identities.map((row) => row.id), 'conversation');
     for (const identity of identities) {
       const vector = vectors.get(identity.id);
       if (vector === undefined) continue;
       accumulateVector(accumulator, `${identity.corpus}::${identity.docId}`, vector);
     }
-    // Rowids are not contiguous, so advance by the last id SEEN rather than by
-    // how many vectors came back - otherwise a page with gaps stalls the cursor.
-    cursor = identities[identities.length - 1].id;
-
     await delay(computeProjectionSleepMs(Date.now() - startedAt, dutyCycle));
+  };
+
+  let cursor = resumeFrom;
+  if (documentsToRead === null) {
+    for (;;) {
+      if (aborted()) return null;
+      const identities = store.listChunkIdentities(cursor, scanBatch, 'conversation');
+      if (identities.length === 0) break;
+      await foldPage(identities);
+      // Rowids are not contiguous, so advance by the last id SEEN rather than by
+      // how many vectors came back - otherwise a page with gaps stalls the cursor.
+      cursor = identities[identities.length - 1].id;
+    }
+  } else if (documentsToRead.length > 0) {
+    // In pages of the same size as a full scan, paced and abortable the same
+    // way: the live conversation alone can hold thousands of chunks.
+    const identities = store.listDocumentChunkIdentities(
+      'conversation',
+      documentsToRead.map((docKey) => docKey.slice(docKey.indexOf('::') + 2)),
+    );
+    for (let start = 0; start < identities.length; start += scanBatch) {
+      if (aborted()) return null;
+      const page = identities.slice(start, start + scanBatch);
+      await foldPage(page);
+      for (const identity of page) cursor = Math.max(cursor, identity.id);
+    }
   }
 
   if (aborted()) return null;

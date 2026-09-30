@@ -808,6 +808,28 @@ export class RetrievalStore {
   }
 
   /**
+   * The embedded chunk identities of the given documents, ascending by id, for
+   * an incremental projection pass that reads again only the documents whose
+   * chunks changed. One seek per document on `idx_memory_chunks_doc_embedded
+   * (corpus, doc_id, embedded_model)`, and only embedded chunks, the same ones
+   * `documentChunkTotals` counts as `embeddedCount`, so a document read here
+   * accumulates the count the next pass compares against.
+   */
+  listDocumentChunkIdentities(corpus: MemoryCorpus, docIds: ReadonlyArray<string>): Array<{
+    id: number;
+    corpus: string;
+    docId: string;
+  }> {
+    if (docIds.length === 0) return [];
+    const statement = this.db.prepare(
+      `SELECT id, corpus, doc_id AS docId FROM memory_chunks
+       WHERE corpus = ? AND doc_id = ? AND embedded_model IS NOT NULL
+       ORDER BY id ASC`,
+    );
+    return docIds.flatMap((docId) => statement.all(corpus, docId) as Array<{ id: number; corpus: string; docId: string }>);
+  }
+
+  /**
    * Bulk-read embedding vectors by chunk id.
    *
    * `WHERE rowid IN (...)` is the only bulk read verified to work against a

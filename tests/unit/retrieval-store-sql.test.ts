@@ -546,6 +546,33 @@ describe('RetrievalStore corpus reads', () => {
   });
 });
 
+describe('RetrievalStore.listDocumentChunkIdentities', () => {
+  it('seeks each document once, embedded chunks only, in id order, and returns them all', () => {
+    const { db, calls } = makeRecordingDb({
+      all: (_sql, args) => [{ id: args[1] === 'doc-a' ? 7 : 3, corpus: 'conversation', docId: args[1] }],
+    });
+
+    const rows = new RetrievalStore(db).listDocumentChunkIdentities('conversation', ['doc-a', 'doc-b']);
+
+    expect(rows).toEqual([
+      { id: 7, corpus: 'conversation', docId: 'doc-a' },
+      { id: 3, corpus: 'conversation', docId: 'doc-b' },
+    ]);
+    const selects = calls.filter((call) => call.method === 'all');
+    expect(selects.map((call) => call.args)).toEqual([['conversation', 'doc-a'], ['conversation', 'doc-b']]);
+    // The count the projection compares against is `embeddedCount`, so a
+    // re-read document must fold in embedded chunks alone.
+    expect(selects[0].sql).toContain('corpus = ? AND doc_id = ? AND embedded_model IS NOT NULL');
+    expect(selects[0].sql).toContain('ORDER BY id ASC');
+  });
+
+  it('touches the database for no documents at all', () => {
+    const { db, calls } = makeRecordingDb({});
+    expect(new RetrievalStore(db).listDocumentChunkIdentities('conversation', [])).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe('RetrievalStore.getChunkIdsForTask', () => {
   it('returns the set of chunk ids for one task, binding taskId', () => {
     const { db, calls } = makeRecordingDb({

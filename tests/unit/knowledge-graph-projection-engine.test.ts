@@ -59,6 +59,8 @@ const UNEMBEDDED_PER_DOC = 1;
 function scriptedStore(chunks: ScriptedChunk[], meta = new Map<string, string>()) {
   const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
   let listCalls = 0;
+  /** Chunk ids asked of `readVectors`: the cost the incremental pass exists to cut. */
+  let vectorReads = 0;
 
   // The newest chunk of each document has text but no vector yet - the ordinary
   // state while the embed backfill is still catching up. Modelling it here is
@@ -84,7 +86,15 @@ function scriptedStore(chunks: ScriptedChunk[], meta = new Map<string, string>()
         .slice(0, limit)
         .map((chunk) => ({ id: chunk.id, corpus: chunk.corpus, docId: chunk.docId }));
     },
+    listDocumentChunkIdentities(_corpus: string, docIds: ReadonlyArray<string>) {
+      const wanted = new Set(docIds);
+      return chunks
+        .filter((chunk) => wanted.has(chunk.docId))
+        .sort((first, second) => first.id - second.id)
+        .map((chunk) => ({ id: chunk.id, corpus: chunk.corpus, docId: chunk.docId }));
+    },
     readVectors(chunkIds: number[]) {
+      vectorReads += chunkIds.length;
       const vectors = new Map<number, Float32Array>();
       for (const id of chunkIds) {
         if (unembeddedChunkIds.has(id)) continue;
@@ -151,7 +161,7 @@ function scriptedStore(chunks: ScriptedChunk[], meta = new Map<string, string>()
     },
   };
 
-  return { store: store as unknown as RetrievalStore, meta, listCalls: () => listCalls };
+  return { store: store as unknown as RetrievalStore, meta, listCalls: () => listCalls, vectorReads: () => vectorReads };
 }
 
 function makeChunks(documentCount: number, chunksPerDocument: number): ScriptedChunk[] {
@@ -448,8 +458,91 @@ describe('projection pass', () => {
     });
     expect(resumed).not.toBeNull();
     expect(resumed!.projection.nodes).toHaveLength(8);
-    // One probe that returns nothing, versus several pages on a cold pass.
-    expect(second.listCalls()).toBe(1);
+    // Nothing changed, so nothing is read: no page, no vector.
+    expect(second.listCalls()).toBe(0);
+    expect(second.vectorReads()).toBe(0);
+  });
+
+  describe('after the corpus changes under a cached pass', () => {
+    /**
+     * doc-005 re-indexed the way a live conversation is on every turn: its tail
+     * deleted and reinserted, REUSING ids at and below the old cursor (its
+     * chunks held the highest ids). doc-006 is new, and doc-000 is gone.
+     */
+    function changedCorpus(original: ScriptedChunk[]): ScriptedChunk[] {
+      return original
+        .filter((chunk) => chunk.docId !== 'doc-000' && !(chunk.docId === 'doc-005' && chunk.id >= 17))
+        .concat([
+          { id: 17, corpus: 'conversation', docId: 'doc-005', vector: unitVector(71) },
+          { id: 18, corpus: 'conversation', docId: 'doc-005', vector: unitVector(72) },
+          { id: 19, corpus: 'conversation', docId: 'doc-005', vector: unitVector(73) },
+          { id: 20, corpus: 'conversation', docId: 'doc-006', vector: unitVector(80) },
+          { id: 21, corpus: 'conversation', docId: 'doc-006', vector: unitVector(81) },
+        ]);
+    }
+
+    async function cachedThenChanged() {
+      const original = makeChunks(6, 3);
+      const shared = new Map<string, string>();
+      const initial = await runProjectionPass({
+        store: scriptedStore(original, shared).store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      shared.set(PROJECTION_SUMS_KEY, JSON.stringify(initial!.sums));
+      const changed = changedCorpus(original);
+      const incremental = scriptedStore(changed, shared);
+      const result = await runProjectionPass({
+        store: incremental.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      return { changed, shared, incremental, result: result! };
+    }
+
+    it('ends with exactly the sums a pass from scratch finds', async () => {
+      const { changed, result } = await cachedThenChanged();
+      const fromScratch = await runProjectionPass({
+        store: scriptedStore(changed).store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      expect(result.sums.countsByDocKey).toEqual(fromScratch!.sums.countsByDocKey);
+      expect(result.sums.sumsByDocKey).toEqual(fromScratch!.sums.sumsByDocKey);
+      expect(result.projection.nodes.map((node) => node.docKey).sort())
+        .toEqual(fromScratch!.projection.nodes.map((node) => node.docKey).sort());
+      expect(Object.keys(result.sums.countsByDocKey)).not.toContain('conversation::doc-000');
+    });
+
+    it('reads the vectors of the changed and new documents only, not the whole corpus', async () => {
+      const { incremental } = await cachedThenChanged();
+      // doc-005's four chunks and doc-006's two, where a rescan read all eighteen.
+      expect(incremental.vectorReads()).toBe(6);
+      expect(incremental.listCalls()).toBe(0);
+    });
+
+    it('reads nothing on the next pass, since a re-read document folds in the count the index reports', async () => {
+      // Each document's newest chunk has no vector (see scriptedStore), so a
+      // count taken from its chunks rather than its embedded ones would re-read
+      // it on every pass.
+      const { changed, shared, result } = await cachedThenChanged();
+      shared.set(PROJECTION_SUMS_KEY, JSON.stringify(result.sums));
+      const next = scriptedStore(changed, shared);
+      await runProjectionPass({
+        store: next.store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay, scanBatch: 4,
+      });
+      expect(next.vectorReads()).toBe(0);
+    });
+
+    it('stops between pages when aborted', async () => {
+      const original = makeChunks(6, 3);
+      const shared = new Map<string, string>();
+      const initial = await runProjectionPass({
+        store: scriptedStore(original, shared).store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, delay: instantDelay,
+      });
+      shared.set(PROJECTION_SUMS_KEY, JSON.stringify(initial!.sums));
+      const signal = { aborted: false };
+      const pass = runProjectionPass({
+        store: scriptedStore(changedCorpus(original), shared).store, modelTag: MODEL_TAG, dimensions: DIMENSIONS, scanBatch: 2,
+        delay: async () => { signal.aborted = true; },
+        signal,
+      });
+      await expect(pass).resolves.toBeNull();
+    });
   });
 
   it('does NOT double-count a re-indexed document', async () => {
