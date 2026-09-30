@@ -146,7 +146,8 @@ describe('RetrievalStore.upsertDocument diff', () => {
     // the untouched prefix must follow it so the Terminal/History badge and the
     // session-delete trigger (which keys on session_id) track the live session.
     const ownershipUpdate = findRun(calls, 'UPDATE memory_chunks SET session_id');
-    expect(ownershipUpdate?.args).toEqual(['session-1', 'task-1', 'conversation', 'doc-1', 2, 'session-1', 'task-1']);
+    // From seq 0 (the whole document was passed) up to the divergence.
+    expect(ownershipUpdate?.args).toEqual(['session-1', 'task-1', 'conversation', 'doc-1', 0, 2, 'session-1', 'task-1']);
     // Rows that already have the owner are left alone.
     expect(ownershipUpdate?.sql).toContain('AND (session_id IS NOT ? OR task_id IS NOT ?)');
 

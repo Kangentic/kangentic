@@ -208,25 +208,31 @@ export class RetrievalStore {
    * its index state last, so a crash part-way leaves it stale and the next pass
    * finishes the job. Inside a caller's own transaction these nest as
    * savepoints, as before.
+   *
+   * `fromSeq` says `chunks` start at that seq and the stored chunks below it
+   * are the caller's, unchanged, owner included: a resumed walk of a growing
+   * transcript passes only its tail (`ConversationIndexer`). Those rows are not
+   * read, diffed or re-owned. The tail is diffed as the whole document is.
    */
   upsertDocument(
     ref: CorpusDocumentRef,
     chunks: ChunkInput[],
+    fromSeq = 0,
   ): { insertedIds: number[]; deletedIds: number[] } {
     const existing = this.db
       .prepare(
         `SELECT id, seq, content_hash, turn_uuid_start, turn_uuid_end, session_id, task_id
-         FROM memory_chunks WHERE corpus = ? AND doc_id = ? ORDER BY seq ASC`,
+         FROM memory_chunks WHERE corpus = ? AND doc_id = ? AND seq >= ? ORDER BY seq ASC`,
       )
-      .all(ref.corpus, ref.docId) as ExistingChunkRow[];
+      .all(ref.corpus, ref.docId, fromSeq) as ExistingChunkRow[];
     const existingBySeq = new Map<number, ExistingChunkRow>();
     for (const row of existing) existingBySeq.set(row.seq, row);
 
     // First seq where new content diverges from stored content.
-    let divergence = 0;
-    const maxLen = Math.max(existing.length, chunks.length);
-    for (; divergence < maxLen; divergence++) {
-      const incoming = chunks[divergence];
+    let divergence = fromSeq;
+    const end = fromSeq + Math.max(existing.length, chunks.length);
+    for (; divergence < end; divergence++) {
+      const incoming = chunks[divergence - fromSeq];
       const stored = existingBySeq.get(divergence);
       if (!incoming || !stored || incoming.contentHash !== stored.content_hash) break;
     }
@@ -290,9 +296,9 @@ export class RetrievalStore {
             this.db
               .prepare(
                 `UPDATE memory_chunks SET session_id = ?, task_id = ?
-                 WHERE corpus = ? AND doc_id = ? AND seq < ? AND (session_id IS NOT ? OR task_id IS NOT ?)`,
+                 WHERE corpus = ? AND doc_id = ? AND seq >= ? AND seq < ? AND (session_id IS NOT ? OR task_id IS NOT ?)`,
               )
-              .run(ref.sessionId, ref.taskId, ref.corpus, ref.docId, divergence, ref.sessionId, ref.taskId);
+              .run(ref.sessionId, ref.taskId, ref.corpus, ref.docId, fromSeq, divergence, ref.sessionId, ref.taskId);
           }
         })();
       }
@@ -354,6 +360,15 @@ export class RetrievalStore {
     writeTransaction(this.db, () => {
       this.db.prepare('DELETE FROM memory_index_state WHERE corpus = ? AND doc_id = ?').run(corpus, docId);
     })();
+  }
+
+  /** How many of one document's chunks sit below `seq`: equal to `seq` while
+   *  a resumed walk's untouched prefix is intact. A range count on the
+   *  UNIQUE(corpus, doc_id, seq) index. */
+  documentChunkCountBelow(corpus: string, docId: string, seq: number): number {
+    const row = this.prepared('SELECT count(*) AS chunks FROM memory_chunks WHERE corpus = ? AND doc_id = ? AND seq < ?')
+      .get(corpus, docId, seq) as { chunks: number };
+    return row.chunks;
   }
 
   /** The chunks one document holds: what deleting it writes. */
@@ -464,6 +479,7 @@ export class RetrievalStore {
           chunk_count: number;
           status: IndexStateRow['status'];
           indexed_at: string;
+          resume_point?: string | null;
         }
       | undefined;
     if (!row) return undefined;
@@ -478,6 +494,7 @@ export class RetrievalStore {
       chunkCount: row.chunk_count,
       status: row.status,
       indexedAt: row.indexed_at,
+      resumePoint: row.resume_point ?? null,
     };
   }
 
@@ -486,8 +503,8 @@ export class RetrievalStore {
       .prepare(
         `INSERT INTO memory_index_state
           (corpus, doc_id, session_id, source_path, source_mtime_ms, source_size,
-           entry_count, chunk_count, status, indexed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           entry_count, chunk_count, status, indexed_at, resume_point)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(corpus, doc_id) DO UPDATE SET
            session_id = excluded.session_id,
            source_path = excluded.source_path,
@@ -496,7 +513,8 @@ export class RetrievalStore {
            entry_count = excluded.entry_count,
            chunk_count = excluded.chunk_count,
            status = excluded.status,
-           indexed_at = excluded.indexed_at`,
+           indexed_at = excluded.indexed_at,
+           resume_point = excluded.resume_point`,
       )
       .run(
         row.corpus,
@@ -509,6 +527,7 @@ export class RetrievalStore {
         row.chunkCount,
         row.status,
         row.indexedAt,
+        row.resumePoint ?? null,
       );
   }
 

@@ -751,16 +751,17 @@ function makeSharedFakeDb(state: SharedFakeDbState): Database.Database {
           }
           if (sql.includes('UPDATE memory_chunks SET session_id')) {
             // The diff-upsert's ownership re-point over the untouched leading
-            // prefix: WHERE corpus = ? AND doc_id = ? AND seq < ?.
-            const [sessionId, taskId, corpus, docId, divergence] = args as [
+            // prefix: WHERE corpus = ? AND doc_id = ? AND seq >= ? AND seq < ?.
+            const [sessionId, taskId, corpus, docId, fromSeq, divergence] = args as [
               string | null,
               string | null,
               string,
               string,
               number,
+              number,
             ];
             for (const chunk of state.chunks) {
-              if (chunk.corpus === corpus && chunk.docId === docId && chunk.seq < divergence) {
+              if (chunk.corpus === corpus && chunk.docId === docId && chunk.seq >= fromSeq && chunk.seq < divergence) {
                 chunk.sessionId = sessionId;
                 chunk.taskId = taskId;
               }

@@ -691,8 +691,11 @@ Per-document index bookkeeping: the source-file staleness signature (path/mtime/
 | chunk_count | INTEGER | NOT NULL | 0 |
 | status | TEXT | NOT NULL | 'ok' |
 | indexed_at | TEXT | NOT NULL | |
+| resume_point | TEXT | | |
 
 Constraint: `PRIMARY KEY (corpus, doc_id)`. `status` is one of `ok`, `unsupported`, `missing-source`, `error`.
+
+`resume_point` is where the next walk of a conversation transcript starts, as JSON (`ResumePoint` in `src/main/retrieval/conversation/conversation-indexer.ts`): the start of the last window of the walk that advanced, the chunks and entries before it, the usage-attribution carry there, a hash of the 4 KB before it, and the session and task it was written for. A live conversation is indexed after every turn, and each walk from byte 0 parsed every window of the transcript; resumed, it parses the last window and what follows it, with the same result. A walk from byte 0 happens instead when the owner changed (a new session row re-points every chunk and turn), the path changed, the file shrank below the point, the hash no longer matches, or a chunk before the point is gone. Other corpora leave it null. Added in place on an existing database (`ALTER TABLE ... ADD COLUMN`).
 
 ### memory_task_summaries table
 

@@ -76,7 +76,13 @@ vi.mock('../../src/main/retrieval/code/code-indexer', () => ({
   indexedCodeBranch: vi.fn(() => null),
 }));
 vi.mock('../../src/main/retrieval/graph/graph-service', () => ({
-  graphService: { notifyChanged: vi.fn(), setSummariesSkipped: vi.fn(), setSummaryNamesOn: vi.fn(), requestRegionNames: vi.fn() },
+  graphService: {
+    notifyChanged: vi.fn(),
+    setSummariesSkipped: vi.fn(),
+    setSummaryNamesOn: vi.fn(),
+    requestRegionNames: vi.fn(),
+    setProjectExists: vi.fn(),
+  },
 }));
 
 /** What each project's stores were asked, in the order asked. */

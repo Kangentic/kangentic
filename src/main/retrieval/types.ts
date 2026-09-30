@@ -95,6 +95,10 @@ export interface IndexStateRow {
   chunkCount: number;
   status: 'ok' | 'unsupported' | 'missing-source' | 'error';
   indexedAt: string;
+  /** Where the next walk of a growing conversation transcript starts, as JSON
+   *  (`ResumePoint` in `conversation-indexer.ts`). Null for every other corpus,
+   *  and absent when a writer does not set it. */
+  resumePoint?: string | null;
 }
 
 /**

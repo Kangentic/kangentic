@@ -914,9 +914,16 @@ export function runProjectMigrations(db: Database.Database): void {
       chunk_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'ok',
       indexed_at TEXT NOT NULL,
+      resume_point TEXT,
       PRIMARY KEY (corpus, doc_id)
     )
   `);
+  // Where the next walk of a growing conversation transcript starts, as JSON
+  // (`ResumePoint` in `conversation-indexer.ts`). Added in place: ADD COLUMN
+  // changes only the schema, whatever the table holds.
+  const hasResumePoint = (db.pragma('table_info(memory_index_state)') as Array<{ name: string }>)
+    .some((column) => column.name === 'resume_point');
+  if (!hasResumePoint) db.exec('ALTER TABLE memory_index_state ADD COLUMN resume_point TEXT');
 
   db.exec('CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 
