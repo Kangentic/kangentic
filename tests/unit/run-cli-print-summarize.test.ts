@@ -73,7 +73,14 @@ function makeFakeChild(): FakeChild {
 // Import the function under test (after mocks are registered)
 // ---------------------------------------------------------------------------
 
-import { runCliPrintSummarize, runCliPrintAnswer, spawnCli, stopAllCliRuns } from '../../src/main/agent/shared/auto-name';
+import {
+  runCliForChat,
+  runCliPrintSummarize,
+  runCliPrintAnswer,
+  spawnCli,
+  stopAllCliRuns,
+  stopCliRunsForChat,
+} from '../../src/main/agent/shared/auto-name';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -398,6 +405,34 @@ describe('stopAllCliRuns', () => {
     processKill.mockClear();
     stopAllCliRuns();
     expect(processKill).not.toHaveBeenCalled();
+  });
+
+  it('stops only the runs started for the chat that ended, including one spawned after an await', async () => {
+    const forChat = makeTrackableChild(5101);
+    const forChatLater = makeTrackableChild(5102);
+    const forOtherChat = makeTrackableChild(5103);
+    const unowned = makeTrackableChild(5104);
+    mockSpawn
+      .mockReturnValueOnce(forChat)
+      .mockReturnValueOnce(forChatLater)
+      .mockReturnValueOnce(forOtherChat)
+      .mockReturnValueOnce(unowned);
+    await runCliForChat('chat-a', async () => {
+      spawnCli('/usr/bin/fake', [], '/tmp');
+      // An adapter awaits its run directory and its prompt file before it spawns.
+      await Promise.resolve();
+      spawnCli('/usr/bin/fake', [], '/tmp');
+    });
+    await runCliForChat('chat-b', async () => { spawnCli('/usr/bin/fake', [], '/tmp'); });
+    spawnCli('/usr/bin/fake', [], '/tmp');
+
+    stopCliRunsForChat('chat-a');
+
+    expect(processKill.mock.calls).toEqual([[-5101, 'SIGTERM'], [-5102, 'SIGTERM']]);
+    processKill.mockClear();
+    // The rest are still tracked, for the quit path.
+    stopAllCliRuns();
+    expect(processKill.mock.calls).toEqual([[-5103, 'SIGTERM'], [-5104, 'SIGTERM']]);
   });
 });
 

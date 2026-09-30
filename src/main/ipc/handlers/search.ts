@@ -11,7 +11,7 @@ import { graphService } from '../../retrieval/graph/graph-service';
 import { buildAnswerPrompt, buildFollowUpPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
 import { answerSessionPool, type PooledAnswerSession, type PrimedAnswerChat } from '../../retrieval/answer-session-pool';
 import { AnswerSessionError } from '../../agent/shared/answer-session/stdin-json-session';
-import type { AnswerStreamEvent } from '../../agent/shared/auto-name';
+import { runCliForChat, stopCliRunsForChat, type AnswerStreamEvent } from '../../agent/shared/auto-name';
 import {
   buildAnswerTaskTable,
   mergeAnswerTaskTables,
@@ -187,9 +187,14 @@ export function registerSearchHandlers(context: IpcContext): void {
 
   // The chat's warm session is no longer needed: the chat ended, or its graph
   // closed. The next question in a kept chat opens a fresh one carrying the
-  // chat so far.
+  // chat so far. A one-shot run still answering for it stops too: the renderer
+  // ends a chat with a turn in flight only on X or a project switch, both of
+  // which clear the thread, so nobody is waiting for that answer. Closing the
+  // graph mid-turn keeps the chat and sends this only once the turn lands.
   ipcMain.on(IPC.KNOWLEDGE_GRAPH_END_CHAT, (_event, chatId: string) => {
-    if (isCallerSegment(chatId)) answerSessionPool.end(chatId);
+    if (!isCallerSegment(chatId)) return;
+    answerSessionPool.end(chatId);
+    stopCliRunsForChat(chatId);
   });
 
   // The Index card's Rebuild, for every source in every project. Global, like
@@ -589,9 +594,14 @@ export function registerSearchHandlers(context: IpcContext): void {
         // instruction files cost 18,700 tokens a question on this repo), and
         // writes what it passes by path into a run directory of its own that
         // goes when it ends. See `answer-run-directory.ts` for why the two differ.
-        const runFresh = (freshPrompt: string): Promise<string> => withAnswerRunDirectory((runDirectory) => (
+        const runFreshInDirectory = (freshPrompt: string): Promise<string> => withAnswerRunDirectory((runDirectory) => (
           answerFromContext(freshPrompt, cliPath, resolvedRun.run.answerHome, configuredModel, { retrieval, effort, onEvent, runDirectory })
         ));
+        // Recorded as the chat's, so ending the chat stops it (`stopCliRunsForChat`).
+        const chatOfRun = answerContext.chatId && isCallerSegment(answerContext.chatId) ? answerContext.chatId : null;
+        const runFresh = (freshPrompt: string): Promise<string> => (
+          chatOfRun ? runCliForChat(chatOfRun, () => runFreshInDirectory(freshPrompt)) : runFreshInDirectory(freshPrompt)
+        );
         let raw: string;
         try {
           if (pooled) {

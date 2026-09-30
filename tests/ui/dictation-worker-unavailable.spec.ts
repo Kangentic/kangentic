@@ -103,3 +103,44 @@ test.describe('DictationTab: worker-unavailable banner', () => {
     await closeSettings();
   });
 });
+
+/**
+ * The model download/status row (`dictation-model-download`) names the models
+ * the current setup runs and whether they are on disk. A stopped worker
+ * downloads nothing, so the row would read "Downloading" forever beside the
+ * crash banner that already explains the dead end. The row is therefore
+ * hidden while `info.workerUnavailable` is true and shown otherwise.
+ *
+ * The two tests below are a pair: they share one model pick (the mock's
+ * default config leaves the live slot empty, so a model must be picked through
+ * `selectedLiveModelId` or no row would render in either case) and differ only
+ * in `workerUnavailable`, so the assertion on the row is the only thing that
+ * can explain a different outcome.
+ */
+test.describe('DictationTab: model status row', () => {
+  test.afterEach(async () => {
+    await setDictationInfoOverride(null);
+  });
+
+  const PICKED_LIVE_MODEL = { selectedLiveModelId: 'streaming-zipformer-en' };
+
+  test('is shown when the worker is available and a model is picked', async () => {
+    await setDictationInfoOverride({ ...PICKED_LIVE_MODEL, workerUnavailable: false });
+    await openDictationTab();
+    await expect(page.getByTestId('dictation-language-select')).toBeVisible();
+    await expect(page.getByTestId('dictation-model-download')).toBeVisible();
+    await expect(page.getByTestId('dictation-worker-unavailable')).toHaveCount(0);
+    await closeSettings();
+  });
+
+  test('is absent when the worker is unavailable, even with a model picked', async () => {
+    await setDictationInfoOverride({ ...PICKED_LIVE_MODEL, workerUnavailable: true });
+    await openDictationTab();
+    // The banner and the row render from the same `info`, so once the banner
+    // is up the row's absence is settled and needs no fixed wait.
+    await expect(page.getByTestId('dictation-worker-unavailable')).toBeVisible();
+    await expect(page.getByTestId('dictation-language-select')).toBeVisible();
+    await expect(page.getByTestId('dictation-model-download')).toHaveCount(0);
+    await closeSettings();
+  });
+});

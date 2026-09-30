@@ -42,6 +42,27 @@ vi.mock('electron', () => ({
   },
 }));
 
+// Which chat a one-shot run is recorded as, and which chat's runs an end stops.
+// Passed through, so the run itself is unchanged.
+const { runCliForChatSpy, stopCliRunsForChatSpy } = vi.hoisted(() => ({
+  runCliForChatSpy: vi.fn(),
+  stopCliRunsForChatSpy: vi.fn(),
+}));
+vi.mock('../../src/main/agent/shared/auto-name', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/auto-name')>();
+  return {
+    ...actual,
+    runCliForChat: <T>(chatId: string, work: () => Promise<T>): Promise<T> => {
+      runCliForChatSpy(chatId);
+      return actual.runCliForChat(chatId, work);
+    },
+    stopCliRunsForChat: (chatId: string): void => {
+      stopCliRunsForChatSpy(chatId);
+      actual.stopCliRunsForChat(chatId);
+    },
+  };
+});
+
 // The first session opened sweeps stale run directories out of the real temp
 // folder; a unit run must not touch the developer's.
 vi.mock('../../src/main/agent/shared/answer-run-directory', async (importActual) => {
@@ -1249,6 +1270,24 @@ describe('the Ask handler', () => {
       endChat?.(undefined, 'chat-1');
       expect(sessions[0].disposed).toBe(true);
       expect(answerSessionPool.size).toBe(0);
+    });
+
+    it('records a one-shot answer as its chat\'s, so ending the chat stops it, and a question with no chat as nobody\'s', async () => {
+      runCliForChatSpy.mockClear();
+      stopCliRunsForChatSpy.mockClear();
+      // No warm session: every answer is a one-shot run.
+      mockAdapters = [claudeAdapter(vi.fn(async () => 'Answered.'))];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+
+      await ask('anything', 'req-1', { chatId: 'chat-1' });
+      expect(runCliForChatSpy.mock.calls).toEqual([['chat-1']]);
+      capturedHandlers.get(IPC.KNOWLEDGE_GRAPH_END_CHAT)?.(undefined, 'chat-1');
+      expect(stopCliRunsForChatSpy.mock.calls).toEqual([['chat-1']]);
+
+      runCliForChatSpy.mockClear();
+      await ask('anything', 'req-2');
+      expect(runCliForChatSpy).not.toHaveBeenCalled();
     });
 
     it('runs fresh for an agent without a session, and for a question with no chat', async () => {

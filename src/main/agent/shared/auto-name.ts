@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -709,16 +710,43 @@ const processGroupLeaders = new WeakSet<ChildProcess>();
  * Every CLI `spawnCli` started that has not exited yet, so the quit path can
  * stop them (`stopAllCliRuns`). A CLI runs detached from the app on POSIX and
  * outlives it on Windows, so one left running at quit kept answering, and
- * holding its run directory, after the app was gone.
+ * holding its run directory, after the app was gone. The value is the chat a
+ * one-shot answer run was started for, or null.
  */
-const liveCliRuns = new Set<ChildProcess>();
+const liveCliRuns = new Map<ChildProcess, string | null>();
+
+/**
+ * The chat a one-shot answer run belongs to, set around the run by the answer
+ * handler (`runCliForChat`) and read where `spawnCli` records the child. Ending
+ * a chat can then stop its run without every adapter passing the chat through
+ * to `runCliPrint`.
+ */
+const cliRunChat = new AsyncLocalStorage<string>();
+
+/** Run `work` with every CLI it spawns recorded as `chatId`'s. */
+export function runCliForChat<T>(chatId: string, work: () => Promise<T>): Promise<T> {
+  return cliRunChat.run(chatId, work);
+}
 
 /**
  * Stop every CLI still running. Synchronous, for the quit path: each stop is a
  * signal or a `taskkill` started in place (`stopCli`).
  */
 export function stopAllCliRuns(): void {
-  for (const child of [...liveCliRuns]) {
+  for (const child of [...liveCliRuns.keys()]) {
+    liveCliRuns.delete(child);
+    stopCli(child);
+  }
+}
+
+/**
+ * Stop the one-shot answer runs a chat started. The chat ended with its answer
+ * still coming, so nobody is waiting for it, and an agent without a warm session
+ * would otherwise keep answering, and spending, until it finished.
+ */
+export function stopCliRunsForChat(chatId: string): void {
+  for (const [child, owner] of [...liveCliRuns]) {
+    if (owner !== chatId) continue;
     liveCliRuns.delete(child);
     stopCli(child);
   }
@@ -796,7 +824,7 @@ export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Rec
     if (leadsGroup) processGroupLeaders.add(child);
     // Tracked until it exits, so the quit path can reach it. `exit` fires even
     // when stdio stays open; an `error` means it never started.
-    liveCliRuns.add(child);
+    liveCliRuns.set(child, cliRunChat.getStore() ?? null);
     const forget = (): void => { liveCliRuns.delete(child); };
     child.once?.('exit', forget);
     child.once?.('error', forget);

@@ -722,6 +722,7 @@ export const retrievalService = {
         return false;
       }
     });
+    graphService.setProjectExists((projectId) => projectStillExists(context, projectId));
     if (attached) return;
     attached = true;
     context.sessionManager.on('exit', (sessionId: string) => {

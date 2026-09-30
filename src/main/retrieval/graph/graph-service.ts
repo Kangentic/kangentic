@@ -129,6 +129,9 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   /** Whether region names read summaries: task summaries switched on. Set by the
    *  retrieval service, which reads the config. */
   let summaryNamesOn: () => boolean = () => false;
+  /** Whether a project is still registered. Set by the retrieval service, which
+   *  holds the project list; until then every project counts as present. */
+  let projectExists: (projectId: string) => boolean = () => true;
   const summariesFor = deps.summaries ?? ((projectId: string): SummarySource => new SummaryStore(getDb(projectId)));
   const now = deps.now ?? Date.now;
   const naming = new Map<string, NamingState>();
@@ -223,6 +226,12 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   }
 
   async function runRegionNames(projectId: string, state: NamingState): Promise<void> {
+    // A timer can outlive its project: naming waits up to its interval, and a
+    // project deleted meanwhile would get an empty database made for it again.
+    if (!projectExists(projectId)) {
+      naming.delete(projectId);
+      return;
+    }
     state.running = true;
     try {
       if (await makeRegionNames(projectId)) onChanged?.(projectId);
@@ -361,6 +370,11 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     /** Register whether region names read summaries (task summaries switched on). */
     setSummaryNamesOn(provider: () => boolean): void {
       summaryNamesOn = provider;
+    },
+
+    /** Register whether a project is still registered, so no timer opens a deleted one. */
+    setProjectExists(provider: (projectId: string) => boolean): void {
+      projectExists = provider;
     },
 
     /**
