@@ -7,6 +7,7 @@ import { CONVERSATION_CORPUS } from './corpora';
 import { escapeFtsMatchQuery } from './fts-query';
 import { reciprocalRankFusion } from './fusion';
 import { trackFeatureUsed } from '../analytics/usage';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import type { Embedder, StoredChunk } from './types';
 
 /** Per-list candidate depth before fusion. */
@@ -116,7 +117,10 @@ export async function searchConversationMemory(
   if (queryVector) trackFeatureUsed('semantic_memory');
 
   const allHits: TranscriptSearchHit[] = [];
-  for (const project of input.projects) {
+  for (const [projectIndex, project] of input.projects.entries()) {
+    // Each project's scans are synchronous and a large index costs a few hundred
+    // ms, so queued IPC runs between projects rather than after all of them.
+    if (projectIndex > 0) await yieldToEventLoop();
     let store: RetrievalStore;
     try {
       store = new RetrievalStore(getDb(project.id));
@@ -133,9 +137,11 @@ export async function searchConversationMemory(
       if (taskChunkIds.size === 0) continue;
     }
 
-    const lexical = matchQuery ? safeLexical(store, matchQuery, input.taskId) : [];
+    const lexical = matchQuery ? timeSyncWork('search:lexical', () => safeLexical(store, matchQuery, input.taskId)) : [];
     let semantic = queryVector
-      ? relevantSemantic(store, queryVector, semanticFloor, taskChunkIds ? TASK_SCOPED_SEMANTIC_OVERFETCH : PER_LIST_LIMIT)
+      ? timeSyncWork('search:semantic', () => relevantSemantic(
+        store, queryVector, semanticFloor, taskChunkIds ? TASK_SCOPED_SEMANTIC_OVERFETCH : PER_LIST_LIMIT,
+      ))
       : [];
     if (taskChunkIds) {
       semantic = semantic
@@ -211,6 +217,11 @@ export async function searchConversationMemory(
     }
   }
   return [...bestBySession.values()].sort((a, b) => b.score - a.score).slice(0, k);
+}
+
+/** Let queued I/O and IPC run before the next synchronous database step. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 // Conversation search: every hit here opens a transcript at a turn, which only
