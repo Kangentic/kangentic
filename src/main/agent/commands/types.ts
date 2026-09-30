@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { AutomationRunAgainResult, BoardProfile, Task, Swimlane } from '../../../shared/types';
+import type { AutomationRunAgainResult, BoardProfile, SessionSummary, Task, Swimlane } from '../../../shared/types';
 import type { PRResolveOptions } from '../../pr/shared/pr-connector';
 import type { TaskKnowledge } from '../../retrieval/task-knowledge';
 
@@ -130,6 +130,12 @@ export interface CommandContext {
    * hand-build a context; without it the reads print no knowledge.
    */
   readTaskKnowledge?: (taskIds: string[]) => Promise<TaskKnowledgeRead> | TaskKnowledgeRead;
+  /**
+   * Every task's lifetime session summary, keyed by task id, read in the
+   * retrieval worker (it aggregates every session row). Optional because test
+   * suites hand-build a context; without it the handlers read it themselves.
+   */
+  listSessionSummaries?: () => Promise<Record<string, SessionSummary>>;
 }
 
 /** The index's knowledge of some tasks, as `readTaskKnowledge` returns it. */

@@ -134,11 +134,12 @@ describe('retrieval out-of-process boundary', () => {
       'readSummaryFingerprint',
       'localEmbedStoreAccess',
       'localSummaryPassStore',
+      'localUsageReader',
       'loadVecExtensionFrom',
     ];
     // Class methods cannot be found by name, so the classes that own the
     // index's reads and writes are checked whole.
-    const workerOnlyClasses = ['RetrievalStore', 'ConversationIndexer', 'SummaryStore'];
+    const workerOnlyClasses = ['RetrievalStore', 'ConversationIndexer', 'SummaryStore', 'ConversationUsageStore'];
     for (const devBuild of [false, true]) {
       const text = await bundledText('src/main/index.ts', devBuild);
       const shipped = [

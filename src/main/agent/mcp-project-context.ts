@@ -302,6 +302,8 @@ export function buildCommandContextForProject(
       }
       return { indexOn: true, summariesOn: taskSummariesOn(knowledgeGraph), byTask };
     },
+
+    listSessionSummaries: () => retrievalClient.call('sessions.summaries', { projectId }),
   };
 }
 

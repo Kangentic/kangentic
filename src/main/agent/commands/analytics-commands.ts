@@ -11,12 +11,18 @@ import { retrievalClient } from '../../retrieval/retrieval-client';
 import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
-import type { SubagentUsageTotals, Task, TaskFanOut } from '../../../shared/types';
+import type { SessionSummary, SubagentUsageTotals, Task, TaskFanOut } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
 /** Fan-out rows printed before collapsing the tail into a "+N more" line. The
  *  rows are heaviest-first, so the cap keeps the expensive ones. */
 const MAX_FAN_OUT_LINES = 5;
+
+/** Every task's session summary: from the retrieval worker where the context
+ *  offers it (it aggregates every session row), read here in a test context. */
+function sessionSummariesFor(context: CommandContext, sessionRepo: SessionRepository): Promise<Record<string, SessionSummary>> {
+  return context.listSessionSummaries ? context.listSessionSummaries() : Promise.resolve(sessionRepo.listAllSummaries());
+}
 
 export const handleGetTaskStats: CommandHandler = async (
   params: Record<string, unknown>,
@@ -119,7 +125,7 @@ export const handleGetTaskStats: CommandHandler = async (
 
   // Aggregate stats across completed tasks (optionally filtered by query)
   const archivedTasks = taskRepo.listArchived();
-  const allSummaries = sessionRepo.listAllSummaries();
+  const allSummaries = await sessionSummariesFor(context, sessionRepo);
 
   const allSwimlanes = listActiveSwimlanes(db);
   const activeTasks: Task[] = [];
@@ -306,10 +312,10 @@ export function formatLabelVocabulary(
   return lines;
 }
 
-export const handleBoardSummary: CommandHandler = (
+export const handleBoardSummary: CommandHandler = async (
   _params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
   const sessionRepo = new SessionRepository(db);
@@ -321,7 +327,7 @@ export const handleBoardSummary: CommandHandler = (
   // column it can see as the finish line.
   const allSwimlanes = listBoardColumns(db);
   const archivedTasks = taskRepo.listArchived();
-  const allSummaries = sessionRepo.listAllSummaries();
+  const allSummaries = await sessionSummariesFor(context, sessionRepo);
   const backlogTasks = backlogRepo.list();
 
   let totalActiveTasks = 0;

@@ -93,7 +93,7 @@ beforeEach(() => {
 });
 
 describe('handleGetUsageStats subagent message section', () => {
-  it('renders the Subagents line and the Top subagent types line when subagentTurnCount > 0', () => {
+  it('renders the Subagents line and the Top subagent types line when subagentTurnCount > 0', async () => {
     const bySubagentType: SubagentUsageTotals[] = [
       { agentType: 'review-finder', inputTokens: 400, outputTokens: 800, cacheCreationTokens: 10, cacheReadTokens: 5000, turnCount: 7, subagentCount: 2, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
       { agentType: 'test-builder', inputTokens: 50, outputTokens: 60, cacheCreationTokens: 0, cacheReadTokens: 300, turnCount: 3, subagentCount: 1, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
@@ -110,7 +110,7 @@ describe('handleGetUsageStats subagent message section', () => {
       bySubagentType,
     }));
 
-    const response = handleGetUsageStats({ allProjects: true }, makeContext());
+    const response = await handleGetUsageStats({ allProjects: true }, makeContext());
 
     expect(response.success).toBe(true);
     expect(response.message).toContain('Subagents: 3 across 10 turn(s)');
@@ -119,10 +119,10 @@ describe('handleGetUsageStats subagent message section', () => {
     expect(response.message).toContain('test-builder');
   });
 
-  it('renders neither line when subagentTurnCount is 0', () => {
+  it('renders neither line when subagentTurnCount is 0', async () => {
     mockGetDashboardStats.mockReturnValue(makeStats());
 
-    const response = handleGetUsageStats({ allProjects: true }, makeContext());
+    const response = await handleGetUsageStats({ allProjects: true }, makeContext());
 
     expect(response.success).toBe(true);
     expect(response.message).not.toContain('Subagents:');
@@ -132,19 +132,19 @@ describe('handleGetUsageStats subagent message section', () => {
     expect(response.message).not.toContain('Not counted:');
   });
 
-  it('names agents that cannot report subagent usage, so an empty breakdown is not read as a measurement', () => {
+  it('names agents that cannot report subagent usage, so an empty breakdown is not read as a measurement', async () => {
     mockGetDashboardStats.mockReturnValue(makeStats({ subagentBlindAgents: ['codex'] }));
 
-    const response = handleGetUsageStats({ allProjects: true }, makeContext());
+    const response = await handleGetUsageStats({ allProjects: true }, makeContext());
 
     // Singular agent takes a singular verb.
     expect(response.message).toContain('Not counted: codex does not report subagent usage');
   });
 
-  it('pluralizes the caveat for several blind agents', () => {
+  it('pluralizes the caveat for several blind agents', async () => {
     mockGetDashboardStats.mockReturnValue(makeStats({ subagentBlindAgents: ['codex', 'gemini'] }));
 
-    const response = handleGetUsageStats({ allProjects: true }, makeContext());
+    const response = await handleGetUsageStats({ allProjects: true }, makeContext());
 
     expect(response.message).toContain('Not counted: codex, gemini do not report subagent usage');
   });

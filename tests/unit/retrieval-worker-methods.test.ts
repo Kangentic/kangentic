@@ -65,4 +65,27 @@ describeWithSqlite('retrieval worker methods', () => {
     expect(rows[1]).toBeNull();
     expect(rows[2]).toMatchObject({ projectId: 'empty', conversations: 0, taskRecords: 0, lastIndexedAt: null });
   });
+
+  it('usage.read answers the usage dashboard\'s reads by name from the ledgers, and refuses an unknown name', async () => {
+    const project = openProject();
+    const now = Date.parse('2026-09-30T12:00:00.000Z');
+    const handler = retrievalHandlers['usage.read'];
+    const context = contextFor(new Map([['project-1', project]]));
+    // Two turns in the ledger, the earliest at `now - 60 s`.
+    const record = await import('../../src/main/retrieval/conversation/conversation-usage-store');
+    new record.ConversationUsageStore(adaptDatabase(project)).recordTurns(
+      { agentSessionId: null, sessionId: 'session-1', taskId: null },
+      [
+        { turnUuid: 'turn-1', ts: now - 60_000, model: 'model-a', usage: { inputTokens: 10, outputTokens: 5, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 } },
+        { turnUuid: 'turn-2', ts: now, model: 'model-a', usage: { inputTokens: 20, outputTokens: 5, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 } },
+      ],
+      new Date(now).toISOString(),
+    );
+
+    expect(await handler({ projectId: 'project-1', read: 'getEarliestTurnMs', args: [] }, context)).toBe(now - 60_000);
+    // A day-wide group holds both turns.
+    const groups = await handler({ projectId: 'project-1', read: 'listTurnGroups', args: [null, 86_400_000, null, null, null] }, context);
+    expect(groups).toEqual([expect.objectContaining({ inputTokens: 30, outputTokens: 10, turnCount: 2 })]);
+    expect(() => handler({ projectId: 'project-1', read: 'constructor' as never, args: [] }, context)).toThrow(/Unknown usage read/);
+  });
 });

@@ -27,7 +27,7 @@ import { SummaryStore } from '../summary/summary-store';
 import { readTaskKnowledge, type TaskKnowledge } from '../task-knowledge';
 import type { BoardTaskFacts } from '../answer-tasks';
 import type { Embedder, StoredChunk } from '../types';
-import type { KnowledgeGraphQueryHit, KnowledgeGraphSnapshotWire, SubagentUsageTotals, TaskFanOut } from '../../../shared/types';
+import type { KnowledgeGraphQueryHit, KnowledgeGraphSnapshotWire, SessionSummary, SubagentUsageTotals, TaskFanOut } from '../../../shared/types';
 import { ConversationUsageStore } from '../conversation/conversation-usage-store';
 import type { RetrievalEventName } from './protocol';
 import { createIndexStatusReader, type IndexStatus, type IndexStatusParams } from './index-status';
@@ -39,6 +39,8 @@ import { devIndexHandlers, type DevIndexMethods } from '../../../devtools/worker
 import { localEmbedStoreAccess, type EmbeddingRow } from '../embedder/embed-store-access';
 import { localSummaryPassStore, type SummaryRow } from '../summary/summary-pass-store';
 import { readSummaryFingerprint, type SummaryCandidate } from '../summary/summary-sources';
+import { localUsageReader, type UsageReadName } from '../../usage-stats/project-usage-reader';
+import { SessionRepository } from '../../db/repositories/session-repository';
 
 const indexStatus = createIndexStatusReader();
 
@@ -133,6 +135,18 @@ export interface RetrievalMethods extends IndexMethods, DevIndexMethods {
   'summary.save': {
     params: { projectId: string; rows: SummaryRow[] };
     result: number;
+  };
+  /** Every task's lifetime session summary, keyed by task id
+   *  (`SessionRepository.listAllSummaries`, 66 to 71 ms on a long history). */
+  'sessions.summaries': {
+    params: { projectId: string };
+    result: Record<string, SessionSummary>;
+  };
+  /** One of the usage dashboard's per-project reads (`ProjectUsageReader`),
+   *  by name: main's `AsyncProjectUsageReader` types each result. */
+  'usage.read': {
+    params: { projectId: string; read: UsageReadName; args: unknown[] };
+    result: unknown;
   };
   /** Let go of a project's database before main deletes its files. */
   'project.close': {
@@ -329,6 +343,12 @@ export const retrievalHandlers: RetrievalHandlers = {
   'summary.fingerprint': ({ projectId }, context) => readSummaryFingerprint(context.getDb(projectId)),
   'summary.candidates': ({ projectId, skip }, context) => summaryStoreFor(context).candidates(projectId, skip),
   'summary.save': ({ projectId, rows }, context) => summaryStoreFor(context).save(projectId, rows),
+  'sessions.summaries': ({ projectId }, context) => new SessionRepository(context.getDb(projectId)).listAllSummaries(),
+  'usage.read': ({ projectId, read, args }, context) => {
+    const reader = localUsageReader(context.getDb(projectId));
+    if (!Object.hasOwn(reader, read)) throw new Error(`Unknown usage read: ${String(read)}`);
+    return timeSyncWork(`usage:${read}`, () => (reader[read] as (...readArgs: unknown[]) => unknown)(...args));
+  },
   'project.close': ({ projectId }, context) => {
     context.closeDb(projectId);
     indexStatus.forget(projectId);

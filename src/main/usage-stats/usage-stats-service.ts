@@ -10,18 +10,12 @@ import type {
   UsageTimePeriod,
 } from '../../shared/types';
 import { PATHS } from '../config/paths';
-import { getProjectDb } from '../db/database';
 import { ProjectRepository } from '../db/repositories/project-repository';
-import {
-  UsageHistoryRepository,
-  type UsageCostGroupRow,
-  type UsageRollupRow,
-  type UsageWindowTotals,
-} from '../db/repositories/usage-history-repository';
+import type { UsageCostGroupRow, UsageRollupRow, UsageWindowTotals } from '../db/repositories/usage-history-repository';
 import { agentRegistry } from '../agent/agent-registry';
-import { recordSyncSpan } from '../diagnostics/event-loop-lag';
-import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
-import { ConversationUsageStore, type GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
+import type { GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
+import { retrievalClient } from '../retrieval/retrieval-client';
+import type { AsyncProjectUsageReader, ProjectUsageReader, UsageReadName } from './project-usage-reader';
 import {
   COST_GROUP_MS,
   NOMINAL_BUCKET_MS,
@@ -49,16 +43,17 @@ import {
  * `conversation_turn_usage` per-turn time series) and aggregates in the pure
  * functions of ./bucketing.ts.
  *
- * App-wide scope loops every registered project SEQUENTIALLY (better-sqlite3
- * is synchronous) and merges per-project SQL AGGREGATES (one totals row, an
- * O(dimension-combos) rollup, and fine-grained UTC bucket groups per
- * project) before the global fold - the JS on the main thread is O(buckets),
- * never O(historical rows), so a long-lived install cannot stall the event
- * loop that owns the PTYs. Projects are separate SQLite files, so the N-way
- * merge itself must stay in JS. Missing project DB files are skipped WITHOUT
- * opening them - `getProjectDb` would otherwise CREATE and migrate a
- * database for a never-opened project - and a project whose read throws is
- * reported in `skippedProjects` instead of failing the whole payload.
+ * App-wide scope loops every registered project SEQUENTIALLY and merges
+ * per-project SQL AGGREGATES (one totals row, an O(dimension-combos) rollup,
+ * and fine-grained UTC bucket groups per project) before the global fold. The
+ * aggregates run in the retrieval worker (`ProjectUsageReader`), one call per
+ * read, since over a long history they cost 350 to 550 ms together; the JS
+ * here is O(buckets), never O(historical rows), so a long-lived install cannot
+ * stall the event loop that owns the PTYs. Projects are separate SQLite
+ * files, so the N-way merge itself must stay in JS. Missing project DB files
+ * are skipped WITHOUT opening them - opening one would CREATE a database for a
+ * never-opened project - and a project whose read throws is reported in
+ * `skippedProjects` instead of failing the whole payload.
  *
  * The optional `liveSessions` param (populated by the IPC handler from the
  * live `SessionManager`, empty for the MCP command handler) fixes the
@@ -84,70 +79,11 @@ import {
  * (a COUNT and a SUM over the live ids).
  */
 
-/** Per-project read surface; the DI seam the unit tests fake. Every method
- *  returns a SQL-side aggregate - the service never sees raw ledger rows. */
-export interface ProjectUsageReader {
-  /** One-row window aggregate of usage_history. */
-  getUsageTotals(sinceIso: string | null, untilIso: string | null): UsageWindowTotals;
-  /**
-   * GROUP BY (model, display name, agent, effort) rollup: cost from
-   * usage_history, tokens from the per-turn ledger. Takes BOTH window forms
-   * because the two ledgers key their windows differently.
-   */
-  listUsageRollup(
-    sinceIso: string | null,
-    untilIso: string | null,
-    sinceMs: number | null,
-    untilMs: number | null,
-  ): UsageRollupRow[];
-  /** usage_history grouped to fixed UTC buckets of `groupMs` per model. */
-  listUsageCostGroups(sinceIso: string | null, untilIso: string | null, groupMs: number): UsageCostGroupRow[];
-  /**
-   * Turn groups with SQL-side proportional cost allocation. `costSinceIso`/
-   * `costUntilIso` MUST be the same usage_history window passed to the other
-   * reads, so a turn group whose session has no in-window ledger row
-   * allocates $0.
-   */
-  listTurnGroups(
-    sinceMs: number | null,
-    groupMs: number,
-    untilMs: number | null,
-    costSinceIso: string | null,
-    costUntilIso: string | null,
-  ): GroupedTurnUsageRow[];
-  /** COUNT of the given live session record ids already in the window's ledger. */
-  countSessionsRepresented(sinceIso: string | null, untilIso: string | null, sessionRecordIds: string[]): number;
-  /**
-   * Cost/token totals the window's ledger already holds for those same live
-   * ids - the baseline the renderer's overlay subtracts (see
-   * `UsageDashboardStats.liveLedgerBaseline`).
-   */
-  sumSessionsRepresented(
-    sinceIso: string | null,
-    untilIso: string | null,
-    sessionRecordIds: string[],
-  ): { costUsd: number; inputTokens: number; outputTokens: number };
-  /**
-   * Subagent turn usage in the window, grouped by subagent type. Additive to
-   * `listTurnGroups`, which is main-thread only: on a fan-out task this is most
-   * of the traffic. Carries no cost - the session's reported cost already covers
-   * the whole tree, so pricing these separately would double count.
-   */
-  listSubagentTotals(sinceMs: number | null, untilMs: number | null): SubagentUsageTotals[];
-  /** Oldest turn timestamp in this project's turn ledger, or null when empty. */
-  getEarliestTurnMs(): number | null;
-  /**
-   * Active (non-idle) milliseconds in the window and how many sessions the
-   * interval ledger covers there. Feeds the Avg Active tile.
-   */
-  getActiveTotals(sinceMs: number | null, untilMs: number | null): {
-    activeMs: number;
-    sessionsCovered: number;
-  };
-}
+/** The per-project reads; the DI seam the unit tests fake (`project-usage-reader.ts`). */
+export type { ProjectUsageReader } from './project-usage-reader';
 
 export interface UsageStatsDeps {
-  openReader: (projectId: string) => ProjectUsageReader;
+  openReader: (projectId: string) => AsyncProjectUsageReader;
   listProjects: () => Array<{ id: string; name: string }>;
   projectDbExists: (projectId: string) => boolean;
   /**
@@ -170,7 +106,7 @@ export interface UsageStatsService {
     drill?: UsageDayDrill | null,
     customWindow?: UsageCustomWindow | null,
     liveSessions?: LiveSessionRow[],
-  ): UsageDashboardStats;
+  ): Promise<UsageDashboardStats>;
 }
 
 export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService {
@@ -231,13 +167,13 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     };
   }
 
-  function getDashboardStats(
+  async function getDashboardStats(
     scope: UsageStatsScope,
     period: UsageTimePeriod,
     drill: UsageDayDrill | null = null,
     customWindow: UsageCustomWindow | null = null,
     liveSessions: LiveSessionRow[] = [],
-  ): UsageDashboardStats {
+  ): Promise<UsageDashboardStats> {
     const nowMs = now();
     const bucketing = resolveBucketing(period, nowMs);
 
@@ -323,24 +259,23 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       // DB file: legitimately zero usage, NOT an error - and opening it via
       // getProjectDb would mint an empty database.
       if (!deps.projectDbExists(project.id)) continue;
-      const projectReadStartedAt = performance.now();
       try {
         const reader = deps.openReader(project.id);
-        const totals = reader.getUsageTotals(sinceIso, untilIso);
-        const rollup = reader.listUsageRollup(sinceIso, untilIso, sinceMs, untilMs);
-        const costGroups = reader.listUsageCostGroups(sinceIso, untilIso, COST_GROUP_MS);
-        const groups = reader.listTurnGroups(sinceMs, turnGroupMs, untilMs, sinceIso, untilIso);
+        const totals = await reader.getUsageTotals(sinceIso, untilIso);
+        const rollup = await reader.listUsageRollup(sinceIso, untilIso, sinceMs, untilMs);
+        const costGroups = await reader.listUsageCostGroups(sinceIso, untilIso, COST_GROUP_MS);
+        const groups = await reader.listTurnGroups(sinceMs, turnGroupMs, untilMs, sinceIso, untilIso);
         totalsList.push(totals);
         combinedRollup.push(...rollup);
         combinedCostGroups.push(...costGroups);
         combinedGroups.push(...groups);
-        subagentTotalsList.push(reader.listSubagentTotals(sinceMs, untilMs));
-        const projectActive = reader.getActiveTotals(sinceMs, untilMs);
+        subagentTotalsList.push(await reader.listSubagentTotals(sinceMs, untilMs));
+        const projectActive = await reader.getActiveTotals(sinceMs, untilMs);
         activeMsTotal += projectActive.activeMs;
         activeSessionsCovered += projectActive.sessionsCovered;
         // Earliest across projects: the app-wide token coverage starts when
         // the FIRST project began capturing turns.
-        const projectEarliestTurnMs = reader.getEarliestTurnMs();
+        const projectEarliestTurnMs = await reader.getEarliestTurnMs();
         if (projectEarliestTurnMs !== null
           && (earliestTurnMs === null || projectEarliestTurnMs < earliestTurnMs)) {
           earliestTurnMs = projectEarliestTurnMs;
@@ -348,8 +283,8 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         if (previousWindow) {
           // The previous window feeds previousKpis only (no breakdowns or
           // series), so totals + turn groups suffice.
-          previousTotalsList.push(reader.getUsageTotals(previousWindow.sinceIso, previousWindow.untilIso));
-          previousGroups.push(...reader.listTurnGroups(
+          previousTotalsList.push(await reader.getUsageTotals(previousWindow.sinceIso, previousWindow.untilIso));
+          previousGroups.push(...await reader.listTurnGroups(
             previousWindow.sinceMs, turnGroupMs, previousWindow.untilMs,
             previousWindow.sinceIso, previousWindow.untilIso,
           ));
@@ -358,12 +293,12 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
           // left at 0 here would render as a full-size delta on every load
           // rather than the real period-over-period change.
           previousSubagentTotalsList.push(
-            reader.listSubagentTotals(previousWindow.sinceMs, previousWindow.untilMs),
+            await reader.listSubagentTotals(previousWindow.sinceMs, previousWindow.untilMs),
           );
           // Same reason as the subagent totals above: a zeroed active time
           // here would render as a full-size delta on the Avg Active tile
           // every load rather than the real period-over-period change.
-          const previousActive = reader.getActiveTotals(previousWindow.sinceMs, previousWindow.untilMs);
+          const previousActive = await reader.getActiveTotals(previousWindow.sinceMs, previousWindow.untilMs);
           previousActiveMsTotal += previousActive.activeMs;
           previousActiveSessionsCovered += previousActive.sessionsCovered;
         }
@@ -374,7 +309,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         const liveRecordIds = liveForProject.map((live) => live.sessionRecordId);
         const projectLiveCount = liveForProject.length === 0
           ? 0
-          : liveForProject.length - reader.countSessionsRepresented(sinceIso, untilIso, liveRecordIds);
+          : liveForProject.length - await reader.countSessionsRepresented(sinceIso, untilIso, liveRecordIds);
         liveSessionCountTotal += projectLiveCount;
         // The cost/token half of the same dedup. The COUNT above kept the
         // Sessions tile honest; this keeps the Cost and Tokens tiles honest,
@@ -382,7 +317,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         // contains.
         if (liveRecordIds.length > 0) {
           liveLedgerBaseline.costUsd +=
-            reader.sumSessionsRepresented(sinceIso, untilIso, liveRecordIds).costUsd;
+            (await reader.sumSessionsRepresented(sinceIso, untilIso, liveRecordIds)).costUsd;
         }
         if (scope.kind === 'all') {
           perProject.push(
@@ -392,9 +327,6 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       } catch (error) {
         console.warn(`[usage-stats] Skipping unreadable project DB ${project.id}:`, error);
         skippedProjects.push({ projectId: project.id, projectName: project.name });
-      } finally {
-        // One project's reads run back to back with no await between them.
-        recordSyncSpan('usage:project', performance.now() - projectReadStartedAt);
       }
     }
 
@@ -507,28 +439,30 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
   return { getDashboardStats };
 }
 
+/** One project's reads, each a retrieval worker call (`usage.read`), so a
+ *  question or a search is answered between them. */
+function workerUsageReader(projectId: string): AsyncProjectUsageReader {
+  const read = <Name extends UsageReadName>(name: Name) => (
+    ...args: Parameters<ProjectUsageReader[Name]>
+  ): Promise<ReturnType<ProjectUsageReader[Name]>> => (
+    retrievalClient.call('usage.read', { projectId, read: name, args }) as Promise<ReturnType<ProjectUsageReader[Name]>>
+  );
+  return {
+    getUsageTotals: read('getUsageTotals'),
+    listUsageRollup: read('listUsageRollup'),
+    listUsageCostGroups: read('listUsageCostGroups'),
+    listTurnGroups: read('listTurnGroups'),
+    countSessionsRepresented: read('countSessionsRepresented'),
+    sumSessionsRepresented: read('sumSessionsRepresented'),
+    listSubagentTotals: read('listSubagentTotals'),
+    getEarliestTurnMs: read('getEarliestTurnMs'),
+    getActiveTotals: read('getActiveTotals'),
+  };
+}
+
 /** The app-wired singleton used by the IPC and MCP handlers. */
 export const usageStatsService = createUsageStatsService({
-  openReader: (projectId) => {
-    const db = getProjectDb(projectId);
-    const usageHistory = new UsageHistoryRepository(db);
-    const turnUsage = new ConversationUsageStore(db);
-    return {
-      getUsageTotals: (sinceIso, untilIso) => usageHistory.getUsageTotals(sinceIso, untilIso),
-      listUsageRollup: (sinceIso, untilIso, sinceMs, untilMs) =>
-        usageHistory.listUsageRollup(sinceIso, untilIso, sinceMs, untilMs),
-      listUsageCostGroups: (sinceIso, untilIso, groupMs) => usageHistory.listUsageCostGroups(sinceIso, untilIso, groupMs),
-      listTurnGroups: (sinceMs, groupMs, untilMs, costSinceIso, costUntilIso) =>
-        turnUsage.getGroupedUsageSince(sinceMs, groupMs, untilMs, costSinceIso, costUntilIso),
-      countSessionsRepresented: (sinceIso, untilIso, sessionRecordIds) =>
-        usageHistory.countSessionsRepresented(sinceIso, untilIso, sessionRecordIds),
-      sumSessionsRepresented: (sinceIso, untilIso, sessionRecordIds) =>
-        usageHistory.sumSessionsRepresented(sinceIso, untilIso, sessionRecordIds),
-      listSubagentTotals: (sinceMs, untilMs) => turnUsage.getSubagentTotalsByType(sinceMs, untilMs),
-      getEarliestTurnMs: () => turnUsage.getEarliestTurnMs(),
-      getActiveTotals: (sinceMs, untilMs) => new ActivityIntervalStore(db).getActiveTotals(sinceMs, untilMs),
-    };
-  },
+  openReader: workerUsageReader,
   listProjects: () => new ProjectRepository().list().map((project) => ({ id: project.id, name: project.name })),
   projectDbExists: (projectId) => fs.existsSync(PATHS.projectDb(projectId)),
   // The SAME pair of methods `ConversationIndexer.indexSubagentUsage` gates on,

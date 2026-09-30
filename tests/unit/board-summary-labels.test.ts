@@ -53,14 +53,14 @@ import type { CommandContext } from '../../src/main/agent/commands/types';
 // ---------------------------------------------------------------------------
 
 describe('tallyLabelUsage', () => {
-  it('counts label uses, not items', () => {
+  it('counts label uses, not items', async () => {
     const { counts } = tallyLabelUsage([['a', 'b'], ['a'], ['a', 'c']]);
     expect(counts.get('a')).toBe(3);
     expect(counts.get('b')).toBe(1);
     expect(counts.get('c')).toBe(1);
   });
 
-  it('counts labelled ITEMS separately, so a multi-label item counts once', () => {
+  it('counts labelled ITEMS separately, so a multi-label item counts once', async () => {
     // The two figures measure different things and the summary prints both;
     // conflating them makes the numbers fail to reconcile for a reader.
     const { counts, labelledItems } = tallyLabelUsage([['a', 'b', 'c'], ['a']]);
@@ -68,13 +68,13 @@ describe('tallyLabelUsage', () => {
     expect([...counts.values()].reduce((sum, count) => sum + count, 0)).toBe(4);
   });
 
-  it('ignores items with no labels, and null/undefined lists', () => {
+  it('ignores items with no labels, and null/undefined lists', async () => {
     const { counts, labelledItems } = tallyLabelUsage([[], null, undefined, ['a']]);
     expect(labelledItems).toBe(1);
     expect(counts.size).toBe(1);
   });
 
-  it('returns an empty tally for no items at all', () => {
+  it('returns an empty tally for no items at all', async () => {
     const { counts, labelledItems } = tallyLabelUsage([]);
     expect(counts.size).toBe(0);
     expect(labelledItems).toBe(0);
@@ -86,38 +86,38 @@ describe('tallyLabelUsage', () => {
 // ---------------------------------------------------------------------------
 
 describe('formatLabelVocabulary', () => {
-  it('says so explicitly when there are no labels', () => {
+  it('says so explicitly when there are no labels', async () => {
     // "none yet" rather than an omitted block: the agent must be able to tell
     // an empty vocabulary from a missing feature.
     expect(formatLabelVocabulary(new Map(), 0)).toEqual(['Labels in use: none yet.']);
   });
 
-  it('orders by count descending', () => {
+  it('orders by count descending', async () => {
     const text = formatLabelVocabulary(new Map([['rare', 1], ['common', 9], ['mid', 4]]), 14).join('\n');
     expect(text.indexOf('common')).toBeLessThan(text.indexOf('mid'));
     expect(text.indexOf('mid')).toBeLessThan(text.indexOf('rare'));
   });
 
-  it('breaks count ties alphabetically so output is stable across calls', () => {
+  it('breaks count ties alphabetically so output is stable across calls', async () => {
     const text = formatLabelVocabulary(new Map([['zebra', 2], ['alpha', 2]]), 4).join('\n');
     expect(text.indexOf('alpha')).toBeLessThan(text.indexOf('zebra'));
   });
 
-  it('reports the distinct count and the labelled-item count', () => {
+  it('reports the distinct count and the labelled-item count', async () => {
     const [header] = formatLabelVocabulary(new Map([['a', 3], ['b', 1]]), 3);
     expect(header).toBe('Labels in use (2 distinct, 3 labelled items):');
   });
 
-  it('singularizes a single labelled item', () => {
+  it('singularizes a single labelled item', async () => {
     const [header] = formatLabelVocabulary(new Map([['a', 1]]), 1);
     expect(header).toContain('1 labelled item)');
   });
 
-  it('renders each label with its count', () => {
+  it('renders each label with its count', async () => {
     expect(formatLabelVocabulary(new Map([['terminal', 41]]), 41).join('\n')).toContain('terminal (41)');
   });
 
-  it('caps the list and reports how many were omitted', () => {
+  it('caps the list and reports how many were omitted', async () => {
     const counts = new Map<string, number>();
     for (let index = 0; index < 45; index++) counts.set(`label-${index}`, 45 - index);
     const lines = formatLabelVocabulary(counts, 45);
@@ -127,11 +127,11 @@ describe('formatLabelVocabulary', () => {
     expect(lines.join('\n')).not.toContain('label-44');
   });
 
-  it('adds no "and N more" line when everything fits', () => {
+  it('adds no "and N more" line when everything fits', async () => {
     expect(formatLabelVocabulary(new Map([['a', 1]]), 1).join('\n')).not.toContain('more');
   });
 
-  it('wraps a wide vocabulary instead of emitting one enormous line', () => {
+  it('wraps a wide vocabulary instead of emitting one enormous line', async () => {
     const counts = new Map<string, number>();
     for (let index = 0; index < 20; index++) counts.set(`a-fairly-long-label-${index}`, 1);
     const lines = formatLabelVocabulary(counts, 20);
@@ -155,14 +155,14 @@ describe('handleBoardSummary - label vocabulary wiring', () => {
     mockSessionListAllSummaries.mockReturnValue({});
   });
 
-  it('counts labels across active tasks, archived tasks, AND backlog items', () => {
+  it('counts labels across active tasks, archived tasks, AND backlog items', async () => {
     // The load-bearing case: on a mature board most of the vocabulary lives in
     // Done, so an active-only tally would under-report it badly.
     mockTaskList.mockReturnValue([{ id: 't1', session_id: null, labels: ['mcp', 'ui'] }]);
     mockTaskListArchived.mockReturnValue([{ id: 't2', labels: ['mcp'] }, { id: 't3', labels: ['mcp'] }]);
     mockBacklogList.mockReturnValue([{ id: 'b1', labels: ['ui'] }]);
 
-    const result = handleBoardSummary({}, makeContext());
+    const result = await handleBoardSummary({}, makeContext());
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('Labels in use (2 distinct, 4 labelled items):');
@@ -170,22 +170,22 @@ describe('handleBoardSummary - label vocabulary wiring', () => {
     expect(result.message).toContain('ui (2)');
   });
 
-  it('reports the empty vocabulary rather than omitting the block', () => {
+  it('reports the empty vocabulary rather than omitting the block', async () => {
     mockTaskList.mockReturnValue([{ id: 't1', session_id: null, labels: [] }]);
     mockTaskListArchived.mockReturnValue([]);
     mockBacklogList.mockReturnValue([]);
 
-    const result = handleBoardSummary({}, makeContext());
+    const result = await handleBoardSummary({}, makeContext());
 
     expect(result.message).toContain('Labels in use: none yet.');
   });
 
-  it('exposes the tally as structured data, ordered like the message', () => {
+  it('exposes the tally as structured data, ordered like the message', async () => {
     mockTaskList.mockReturnValue([{ id: 't1', session_id: null, labels: ['ui'] }]);
     mockTaskListArchived.mockReturnValue([{ id: 't2', labels: ['mcp'] }, { id: 't3', labels: ['mcp'] }]);
     mockBacklogList.mockReturnValue([]);
 
-    const result = handleBoardSummary({}, makeContext());
+    const result = await handleBoardSummary({}, makeContext());
 
     expect((result.data as { labels: Array<{ name: string; count: number }> }).labels).toEqual([
       { name: 'mcp', count: 2 },
@@ -193,13 +193,13 @@ describe('handleBoardSummary - label vocabulary wiring', () => {
     ]);
   });
 
-  it('still reports the pre-existing column and task counts', () => {
+  it('still reports the pre-existing column and task counts', async () => {
     // Guard against the label block displacing what the summary already said.
     mockTaskList.mockReturnValue([{ id: 't1', session_id: 's1', labels: ['mcp'] }]);
     mockTaskListArchived.mockReturnValue([]);
     mockBacklogList.mockReturnValue([]);
 
-    const result = handleBoardSummary({}, makeContext());
+    const result = await handleBoardSummary({}, makeContext());
 
     expect(result.message).toContain('To Do: 1 task(s) (1 active session)');
     expect(result.message).toContain('Active tasks: 1');
@@ -230,7 +230,7 @@ describe('handleBoardSummary - done lane presentation', () => {
     mockBacklogList.mockReturnValue([]);
   });
 
-  it('lists the done lane at all, prints its own "N completed" line, and carries completedCount only on its own columnData entry', () => {
+  it('lists the done lane at all, prints its own "N completed" line, and carries completedCount only on its own columnData entry', async () => {
     mockSwimlaneList.mockReturnValue([
       { id: 'lane-todo', name: 'To Do', role: 'todo', is_archived: 0 },
       { id: 'lane-done', name: 'Done', role: 'done', is_archived: 1 },
@@ -245,7 +245,7 @@ describe('handleBoardSummary - done lane presentation', () => {
     );
     mockTaskListArchived.mockReturnValue([{ id: 't2', labels: [] }, { id: 't3', labels: [] }]);
 
-    const result = handleBoardSummary({}, makeContext());
+    const result = await handleBoardSummary({}, makeContext());
 
     expect(result.success).toBe(true);
 

@@ -1,8 +1,8 @@
 import { ipcMain, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
-import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { retrievalClient } from '../../retrieval/retrieval-client';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
@@ -304,11 +304,11 @@ export function registerSessionHandlers(context: IpcContext): void {
     return sessionRepo.getSummaryForTask(taskId);
   });
 
-  ipcMain.handle(IPC.SESSION_LIST_SUMMARIES, () => {
+  // Read in the retrieval worker: aggregating every session row took 66 to
+  // 71 ms on a long history.
+  ipcMain.handle(IPC.SESSION_LIST_SUMMARIES, async () => {
     if (!context.currentProjectId) return {};
-    const db = getProjectDb(context.currentProjectId);
-    const sessionRepo = new SessionRepository(db);
-    return timeSyncWork('sessions:summaries', () => sessionRepo.listAllSummaries());
+    return retrievalClient.call('sessions.summaries', { projectId: context.currentProjectId });
   });
 
   // Live per-tool breakdown for an active session. Unlike the summary handlers
