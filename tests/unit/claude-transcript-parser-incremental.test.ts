@@ -372,12 +372,46 @@ describe('parseClaudeTranscript incremental append', () => {
       uuid: 'u-after-truncation',
       text: 'appended past the cap',
     });
-    expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(cap);
+    expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(2 * cap);
+  });
+
+  it('parses only the appended bytes of a transcript past the cap, until it has grown a window', async () => {
+    // A full parse of an over-cap file keeps exactly one window. The append
+    // gate used to allow one window, so any growth failed it and every poll of
+    // a live session past 16 MB re-parsed its whole tail. An append now lands
+    // on the same array; a re-window builds a new one.
+    const cap = 4 * 1024;
+    setParseWindowBytesForTests(cap);
+    let lineIndex = 0;
+    const appendTurns = (count: number): void => {
+      let batch = '';
+      for (let turn = 0; turn < count; turn += 1) {
+        batch += userLine(`u${lineIndex}`, `turn ${lineIndex} ${'q'.repeat(200)}`);
+        lineIndex += 1;
+      }
+      fs.appendFileSync(file, batch);
+    };
+    appendTurns(40);
+    const windowed = await parseClaudeTranscript(file);
+
+    appendTurns(1);
+    const afterOneTurn = await parseClaudeTranscript(file);
+    expect(afterOneTurn).toBe(windowed);
+    expect(afterOneTurn[afterOneTurn.length - 1]).toMatchObject({ uuid: `u${lineIndex - 1}` });
+
+    // A window's worth more: the retained span passes two windows, so the next
+    // parse re-windows onto a fresh array with one marker at its head.
+    appendTurns(20);
+    const rewindowed = await parseClaudeTranscript(file);
+    expect(rewindowed).not.toBe(windowed);
+    expect(rewindowed.filter((entry) => entry.kind === 'system' && entry.subtype === 'truncated')).toHaveLength(1);
+    expect(rewindowed[rewindowed.length - 1]).toMatchObject({ uuid: `u${lineIndex - 1}` });
+    expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(2 * cap);
   });
 
   it('carries exactly one truncation marker across a re-window as the file keeps growing', async () => {
-    // A live session past the cap keeps appending, and every cap-worth of
-    // growth forces a fresh window (the `canIncrement` gate). Each full parse
+    // A live session past the cap keeps appending, and growth past two windows
+    // forces a fresh window (the `canIncrement` gate). Each full parse
     // prepends a marker, so if a re-window ever appended to the previous array
     // instead of rebuilding, markers would stack up at the head of the
     // conversation, one per re-window.
@@ -407,7 +441,7 @@ describe('parseClaudeTranscript incremental append', () => {
       expect(markers.length).toBeLessThanOrEqual(1);
       // When present it is always at the head, describing the omitted prefix.
       if (markers.length === 1) expect(entries[0]).toBe(markers[0]);
-      expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(cap);
+      expect(incrementalStateBytesForTests()).toBeLessThanOrEqual(2 * cap);
     }
   });
 
