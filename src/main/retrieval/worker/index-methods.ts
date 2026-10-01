@@ -22,7 +22,7 @@ import { RetrievalStore } from '../retrieval-store';
 import { SummaryStore } from '../summary/summary-store';
 import { hasVecSupport } from '../vec-support';
 import { vecLayout } from '../vec-layout';
-import { ensureRetrievalIndexes } from '../index-builds';
+import { buildMissingIndexesWhenQuiet } from '../index-builds';
 import { agentRegistry } from '../../agent/agent-registry';
 import { adoptRemoteTargets, type RemoteTargets } from '../remote-targets';
 import type { CodeSweepPlan } from '../../../shared/answer-agent';
@@ -31,8 +31,6 @@ import type { WorkerContext } from './methods';
 
 /** Which sweeps one `index.sweep` runs, in this order. */
 export interface IndexSweepSteps {
-  /** Build any of the index's own indexes the database lacks (`index-builds.ts`). */
-  ensureIndexes?: boolean;
   /** Delete vectors whose chunk is gone (left while sqlite-vec was missing). */
   reconcileVec?: boolean;
   /** Remove deleted sessions' documents: by index state, or by chunks too. */
@@ -107,6 +105,15 @@ export interface IndexMethods {
   'vec.migrateLayout': {
     params: { projectId: string; jobId?: string };
     result: { copied: number; switched: boolean; freedBlocks: number };
+  };
+  /**
+   * Build the index's own indexes a database lacks (`index-builds.ts`), one at
+   * a time, each once no other connection has committed for a while, so its
+   * write lock never lands on main's writes. The last step of storage upkeep.
+   */
+  'index.buildWhenQuiet': {
+    params: { projectId: string; jobId?: string };
+    result: { built: Array<{ name: string; ms: number; after: 'quiet' | 'cap' }> };
   };
 }
 
@@ -232,15 +239,6 @@ export const indexHandlers: IndexHandlers = {
     const result: IndexSweepResult = { purged: 0, tasks: null, changes: null, commits: null, code: null };
     if (steps.conversations) adoptRemoteTargets(agentRegistry, remoteTargets);
     const indexer = indexerFor(context);
-    if (steps.ensureIndexes) {
-      try {
-        for (const built of ensureRetrievalIndexes(context.getDb(projectId))) {
-          console.log(`[retrieval] built ${built.name} for project ${projectId} in ${built.ms} ms`);
-        }
-      } catch (error) {
-        console.warn(`[retrieval] could not build the index's indexes for project ${projectId}:`, error);
-      }
-    }
     if (steps.reconcileVec) {
       try {
         const db = context.getDb(projectId);
@@ -431,6 +429,25 @@ export const indexHandlers: IndexHandlers = {
       console.log(`[retrieval] conversation vectors moved to chunk size 128: ${result.copied} copied, ${result.freedBlocks} old blocks freed, ${Math.round(performance.now() - started)} ms`);
     }
     return result;
+  }),
+
+  'index.buildWhenQuiet': ({ projectId, jobId }, context) => runJob(jobId, async (shouldContinue) => {
+    let db: Database.Database;
+    try {
+      db = context.getDb(projectId);
+    } catch {
+      return { built: [] };
+    }
+    const built = await buildMissingIndexesWhenQuiet(db, {
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: () => performance.now(),
+      shouldContinue,
+    });
+    for (const index of built) {
+      const when = index.after === 'quiet' ? 'once no other writer had committed for 2 s' : 'after the 10 minute wait for quiet ran out';
+      console.log(`[retrieval] built ${index.name} for project ${projectId} in ${index.ms} ms, ${when}`);
+    }
+    return { built };
   }),
 };
 

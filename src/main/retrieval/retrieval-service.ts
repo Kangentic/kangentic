@@ -195,20 +195,21 @@ function cancelActiveSweep(): void {
 let storageUpkeep: { projectId: string; jobId: string } | null = null;
 
 /**
- * One-time storage moves for databases older releases wrote, in the worker:
+ * One-time storage work for databases older releases wrote, in the worker:
  * legacy raw transcripts into pieces, misfiled ones into their own project
- * (`transcripts.convertLegacy`), then the conversation vectors into a vec0
- * table at chunk size 128 (`vec.migrateLayout`). Off the job chain: they touch
- * only their own tables, and on a large install they run for minutes the
- * indexing should not wait behind. One project at a time; a project switch
- * stops it, and the next open carries on where it stopped.
+ * (`transcripts.convertLegacy`), the conversation vectors into a vec0 table at
+ * chunk size 128 (`vec.migrateLayout`), then the index's own indexes, each in
+ * a quiet moment (`index.buildWhenQuiet`). Off the job chain: they touch only
+ * their own tables, and on a large install they run for minutes the indexing
+ * should not wait behind. One project at a time; a project switch stops it,
+ * and the next open carries on where it stopped.
  *
  * This is the permanent upgrade path, not a temporary one: an install can skip
  * releases, and a project can stay unopened for any length of time, so a
  * database older releases wrote can arrive at any later version. Once a
- * project is converted both steps find nothing to do and return at once.
+ * project is upgraded every step finds nothing to do and returns at once.
  */
-function upgradeLegacyTranscriptsAndVectors(context: IpcContext, projectId: string): void {
+function upgradeProjectStorage(context: IpcContext, projectId: string): void {
   if (storageUpkeep?.projectId === projectId) return;
   if (storageUpkeep) retrievalClient.notifyRunning('job.cancel', { jobId: storageUpkeep.jobId });
   sweepJobCounter += 1;
@@ -233,6 +234,10 @@ function upgradeLegacyTranscriptsAndVectors(context: IpcContext, projectId: stri
     sweepJobCounter += 1;
     upkeep.jobId = `upkeep-${sweepJobCounter}`;
     await retrievalClient.call('vec.migrateLayout', { projectId, jobId: upkeep.jobId }, { timeoutMs: null });
+    if (storageUpkeep !== upkeep) return;
+    sweepJobCounter += 1;
+    upkeep.jobId = `upkeep-${sweepJobCounter}`;
+    await retrievalClient.call('index.buildWhenQuiet', { projectId, jobId: upkeep.jobId }, { timeoutMs: null });
   })().catch((error) => {
     console.warn('[retrieval] storage upkeep stopped:', error instanceof Error ? error.message : error);
   }).finally(() => {
@@ -796,10 +801,10 @@ export const retrievalService = {
     setImmediate(() => {
       if (disposed) return;
       if (context.currentProjectId !== project.id) return;
-      // Storage upkeep, transcripts then vectors, not indexing: it runs
-      // whatever the indexing switch says.
+      // Storage upkeep (transcripts, vectors, the index's own indexes), not
+      // indexing: it runs whatever the indexing switch says.
       if (!isIndexingEnabled(context)) {
-        upgradeLegacyTranscriptsAndVectors(context, project.id);
+        upgradeProjectStorage(context, project.id);
         return;
       }
 
@@ -811,8 +816,6 @@ export const retrievalService = {
         const jobId = `open-${sweepJobCounter}`;
         activeSweepJobId = jobId;
         const result = await sweepInWorker(project.id, {
-          // The index's own indexes, built once after an upgrade adds one.
-          ensureIndexes: true,
           // Vectors orphaned while the extension was unavailable.
           reconcileVec: true,
           // Deleted sessions' documents, found by their chunks too.
@@ -828,7 +831,7 @@ export const retrievalService = {
         }, jobId);
         if (activeSweepJobId === jobId) activeSweepJobId = null;
         afterSweep(context, project.id, result);
-        if (!disposed && context.currentProjectId === project.id) upgradeLegacyTranscriptsAndVectors(context, project.id);
+        if (!disposed && context.currentProjectId === project.id) upgradeProjectStorage(context, project.id);
         // Covers project open, the startup backlog, AND crash-resume: the
         // sweep re-indexed whatever changed, and this flags it for the
         // background drain regardless of whether anything actually changed

@@ -67,6 +67,18 @@ function vecTableDefinition(dimensions: number): string {
 }
 
 /**
+ * The next conversation chunk ids the vector copy covers, read by rowid. The
+ * copy runs before the worker builds `idx_memory_chunks_corpus`
+ * (`index-builds.ts`), and without it SQLite answered `corpus = ?` from the
+ * UNIQUE (corpus, doc_id, seq) index and sorted every conversation chunk for
+ * each batch of 16: 213 ms a batch on 97k chunks, about 20 minutes over a
+ * whole copy. The `+` keeps the planner on the rowid range, 0.01 ms with or
+ * without the index.
+ */
+export const CONVERSATION_VEC_COPY_IDS_SQL =
+  "SELECT id FROM memory_chunks WHERE +corpus = 'conversation' AND embedded_model IS NOT NULL AND id > ? ORDER BY id LIMIT ?";
+
+/**
  * Bytes of document sums written per transaction, and sums rows deleted per
  * one. A row holds two Float64 sums, 16 KB at 1,024 dimensions, so the cap is
  * the same 64 KB a record slice may write (`timed-slices.ts`).
@@ -1758,7 +1770,7 @@ export class RetrievalStore {
     const through = Number(this.getMeta(CONVERSATION_VEC_COPY_KEY) ?? NaN);
     if (!Number.isFinite(through)) return { covered: 0, heldMs: 0 };
     const ids = (this.db
-      .prepare(`SELECT id FROM memory_chunks WHERE corpus = 'conversation' AND embedded_model IS NOT NULL AND id > ? ORDER BY id LIMIT ?`)
+      .prepare(CONVERSATION_VEC_COPY_IDS_SQL)
       .all(through, limit) as Array<{ id: number }>).map((row) => row.id);
     if (ids.length === 0) return { covered: 0, heldMs: 0 };
     const placeholders = ids.map(() => '?').join(',');

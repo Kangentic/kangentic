@@ -47,7 +47,9 @@ connection.
   16-row write: 363 to 479 ms). FULL, RESTART and TRUNCATE are never used: they block writers.
 - **Migrations run on main, first.** The worker opens with migrations off and `fileMustExist`,
   after main has opened and migrated the file. An index over an existing large table is built by
-  the worker at the project-open sweep, never as a migration on main.
+  the worker, never as a migration on main, and only once no other connection has committed for
+  2 s (`index-builds.ts`): a build holds the write lock for 180 to 245 ms, and at project open it
+  held main's own startup writes for 542 ms.
 - **`RetrievalClient` is constructed only in `retrieval-client.ts`**, as the shared
   `retrievalClient`. The worker is its own esbuild entry in `scripts/build.js` and `scripts/dev.js`
   and carries no `electron`, IPC, analytics or Sentry import.

@@ -19,8 +19,8 @@
 import { describe, it, expect } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
-import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
-import { ensureRetrievalIndexes, RETRIEVAL_INDEXES } from '../../src/main/retrieval/index-builds';
+import { CONVERSATION_VEC_COPY_IDS_SQL, RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+import { buildRetrievalIndex, missingRetrievalIndexes, RETRIEVAL_INDEXES } from '../../src/main/retrieval/index-builds';
 
 type SqliteModule = typeof import('node:sqlite');
 let sqlite: SqliteModule | null = null;
@@ -43,7 +43,7 @@ function migrated(): { database: NodeDatabase; adapted: DatabaseType.Database; p
   const prepared: string[] = [];
   const adapted = adaptDatabase(database, prepared);
   runProjectMigrations(adapted);
-  ensureRetrievalIndexes(adapted);
+  for (const index of missingRetrievalIndexes(adapted)) buildRetrievalIndex(adapted, index);
   return { database, adapted, prepared };
 }
 
@@ -187,9 +187,10 @@ describeWithSqlite('memory_chunks indexes', () => {
     const names = RETRIEVAL_INDEXES.map((index) => index.name);
     for (const name of names) expect(indexNames(database), name).not.toContain(name);
 
-    expect(ensureRetrievalIndexes(adapted).map((built) => built.name)).toEqual(names);
+    expect(missingRetrievalIndexes(adapted).map((index) => index.name)).toEqual(names);
+    for (const index of missingRetrievalIndexes(adapted)) buildRetrievalIndex(adapted, index);
     for (const name of names) expect(indexNames(database), name).toContain(name);
-    expect(ensureRetrievalIndexes(adapted)).toEqual([]);
+    expect(missingRetrievalIndexes(adapted)).toEqual([]);
   });
 
   it('carries embedded_model in a per-document index and drops the duplicate of the unique index', () => {
@@ -257,6 +258,21 @@ describeWithSqlite('memory_chunks indexes', () => {
     const plan = planOf(database, taskSql!, ['task-1']);
     expect(plan).toContain('idx_memory_chunks_task');
     expect(plan).not.toMatch(/SCAN memory_chunks\b(?! USING)/);
+  });
+
+  it('pages the vector copy by rowid, with no sort, before the worker\'s indexes exist and after', () => {
+    // The copy runs before the indexes are built. Planned off the UNIQUE
+    // (corpus, doc_id, seq) index instead, each batch of 16 sorted every
+    // conversation chunk: 213 ms a batch on the upgrade dry run.
+    const before = new sqlite!.DatabaseSync(':memory:');
+    runProjectMigrations(adaptDatabase(before));
+    const { database: after } = migrated();
+
+    for (const database of [before, after]) {
+      const plan = planOf(database, CONVERSATION_VEC_COPY_IDS_SQL, [0, 16]);
+      expect(plan).toContain('INTEGER PRIMARY KEY (rowid>?)');
+      expect(plan).not.toContain('TEMP B-TREE');
+    }
   });
 
   it('still reads a document\'s chunks in seq order as an index seek, with no sort', () => {
