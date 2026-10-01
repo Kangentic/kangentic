@@ -1,13 +1,15 @@
 /**
- * Orchestrates the Knowledge Graph's projection cache for the IPC layer.
+ * Orchestrates the Knowledge Graph's projection cache, in the retrieval worker
+ * (`worker/methods.ts` builds one per worker context; main reaches it through
+ * `graph-facade.ts`).
  *
  * The division of labour matters and is enforced by
- * `.claude/rules/central-embedding-engine.md`'s sibling reasoning: an IPC
- * handler may only READ a cached projection and ASK for a refresh. It must
- * never run the pass inline, because a full projection is the same class of
- * work (a long scan plus vector math) that produced felt hardware spikes when
- * embedding ran in lifecycle hooks. `getSnapshot` is therefore always cheap,
- * and `markDirty` schedules the paced pass in the background.
+ * `.claude/rules/central-embedding-engine.md`'s sibling reasoning: a read may
+ * only READ a cached projection and ASK for a refresh. It must never run the
+ * pass inline, because a full projection is the same class of work (a long
+ * scan plus vector math) that produced felt hardware spikes when embedding ran
+ * in lifecycle hooks. `getSnapshotWire` is therefore always cheap, and
+ * `markDirty` schedules the paced pass in the background.
  *
  * One pass runs at a time per project. A pass is deliberately NOT cancelled on
  * a project switch: it captures its model tag up front and records it in the
@@ -111,7 +113,8 @@ export interface SnapshotOptions {
   summariesSkipped?: number;
 }
 
-/** One event-loop turn, so a long job never holds main in one piece. */
+/** One event-loop turn, so a long job never holds the worker in one piece and
+ *  an Ask or search is answered between its steps. */
 function yieldTurn(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
@@ -121,8 +124,8 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   const running = new Map<string, RunningPass>();
   /**
    * Each project's last coverage, and the fingerprint it was computed at.
-   * Coverage groups every chunk (about 285 ms on a large index, on main) and
-   * was recomputed on every graph open and every refresh push; it only changes
+   * Coverage groups every chunk (about 285 ms on a large index) and was
+   * recomputed on every graph open and every refresh push; it only changes
    * when the index does, which the fingerprint (about 6 ms) detects.
    */
   const coverageCache = new Map<string, { fingerprint: string; coverage: CoverageSummary }>();
@@ -133,18 +136,10 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     /** Text bytes of every corpus but conversations, which the map's pass sums. */
     otherTextBytes: number;
   }>();
-  // Settable rather than constructor-only: the singleton is created at import
-  // time but the push target (the main window) only exists once IPC registers.
-  let onChanged: ((projectId: string) => void) | undefined = deps.onChanged;
-  /** How many Done tasks the summary scheduler passed over, by project. Set
-   *  by the retrieval service, which owns the scheduler and imports this module. */
-  let summariesSkipped: ((projectId: string) => number) | undefined;
+  const onChanged = deps.onChanged;
   /** Whether region names read summaries: task summaries switched on. Set by the
-   *  retrieval service, which reads the config. */
+   *  worker from each read, which carries main's config. */
   let summaryNamesOn: () => boolean = () => false;
-  /** Whether a project is still registered. Set by the retrieval service, which
-   *  holds the project list; until then every project counts as present. */
-  let projectExists: (projectId: string) => boolean = () => true;
   const summariesFor = deps.summaries ?? ((projectId: string): SummarySource => new SummaryStore(getDb(projectId)));
   const now = deps.now ?? Date.now;
   const naming = new Map<string, NamingState>();
@@ -257,12 +252,9 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   }
 
   async function runRegionNames(projectId: string, state: NamingState): Promise<void> {
-    // A timer can outlive its project: naming waits up to its interval, and a
-    // project deleted meanwhile would get an empty database made for it again.
-    if (!projectExists(projectId)) {
-      naming.delete(projectId);
-      return;
-    }
+    // A timer can outlive its project: naming waits up to its interval. The
+    // worker opens databases with `fileMustExist`, so a project deleted
+    // meanwhile throws at its open below and is never made again.
     state.running = true;
     try {
       if (await makeRegionNames(projectId)) onChanged?.(projectId);
@@ -341,7 +333,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       .reduce((total, entry) => total + entry.embeddedChunks, 0);
     return {
       corpora,
-      summaries: summaryCounts(projectId, store, summariesSkippedCount),
+      summaries: summaryCounts(store, summariesSkippedCount),
       storageBytes: (projection?.storageBytes ?? 0) + cached.otherTextBytes + otherEmbedded * dimensions * 4,
       lastIndexedAt: store.lastIndexedAt(),
     };
@@ -350,8 +342,8 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   /** Summaries written, of the finished tasks: two small reads, never cached, so
    *  the row moves as the background backfill writes. The count passed over is
    *  the summary scheduler's, which runs on main and sends it with the read. */
-  function summaryCounts(projectId: string, store: RetrievalStore, skippedCount: number | undefined): KnowledgeGraphIndexSummary['summaries'] {
-    const skipped = skippedCount ?? summariesSkipped?.(projectId) ?? 0;
+  function summaryCounts(store: RetrievalStore, skippedCount: number | undefined): KnowledgeGraphIndexSummary['summaries'] {
+    const skipped = skippedCount ?? 0;
     try {
       return { ...store.summaryCounts(), skipped };
     } catch {
@@ -416,25 +408,9 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   }
 
   return {
-    /** Register the push emitter. Idempotent; last writer wins, which is
-     *  correct across a dev-mode IPC re-registration. */
-    setOnChanged(listener: (projectId: string) => void): void {
-      onChanged = listener;
-    },
-
-    /** Register where the Index reads how many tasks summaries passed over. */
-    setSummariesSkipped(provider: (projectId: string) => number): void {
-      summariesSkipped = provider;
-    },
-
     /** Register whether region names read summaries (task summaries switched on). */
     setSummaryNamesOn(provider: () => boolean): void {
       summaryNamesOn = provider;
-    },
-
-    /** Register whether a project is still registered, so no timer opens a deleted one. */
-    setProjectExists(provider: (projectId: string) => boolean): void {
-      projectExists = provider;
     },
 
     /**
@@ -444,19 +420,6 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
      */
     requestRegionNames(projectId: string, urgent: boolean): void {
       scheduleRegionNames(projectId, urgent);
-    },
-
-    /**
-     * Announce that this project's cached projection changed.
-     *
-     * The paced pass fires this itself on completion. It is exposed because a
-     * caller can legitimately write the cache WITHOUT running that pass - the
-     * dev seeders build at full speed and write directly - and a cache that
-     * changed with no push leaves every open surface rendering the previous
-     * state until something unrelated triggers a reload.
-     */
-    notifyChanged(projectId: string): void {
-      onChanged?.(projectId);
     },
 
     /**
@@ -471,13 +434,8 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       return named(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
     },
 
-    /** Cheap read. Never runs the pass. */
-    getSnapshot(projectId: string, modelTag: string, options: SnapshotOptions = {}): GraphSnapshot {
-      return snapshotWithKey(projectId, modelTag, options).snapshot;
-    },
-
     /**
-     * The snapshot as it crosses to the renderer: the map as JSON, and only
+     * Cheap read; never runs the pass. The snapshot as it crosses to the renderer: the map as JSON, and only
      * when the caller does not already hold it (`knownProjectionKey`). A map is
      * about 1 MB, and an open graph re-reads its snapshot on every push, most
      * of which leave the map as it was. The JSON is kept per project, so a map
@@ -567,5 +525,3 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
 
   };
 }
-
-export const graphService = createGraphService();

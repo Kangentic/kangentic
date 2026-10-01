@@ -94,7 +94,7 @@ describe('graph service markDirty', () => {
 
     // No sqlite-vec, so the pass returned at once and nothing is running.
     expect(mockRunProjectionPass).not.toHaveBeenCalled();
-    expect(service.getSnapshot('project-a', 'model').building).toBe(false);
+    expect(service.getSnapshotWire('project-a', 'model').building).toBe(false);
   });
 
   it('starts a new pass on a later markDirty after an early exit, rather than refusing it forever', async () => {
@@ -121,7 +121,7 @@ describe('graph service markDirty', () => {
     service.markDirty('project-a', 'model', 4);
     await settle();
     expect(mockRunProjectionPass).toHaveBeenCalledTimes(1);
-    expect(service.getSnapshot('project-a', 'model').building).toBe(true);
+    expect(service.getSnapshotWire('project-a', 'model').building).toBe(true);
 
     // One pass at a time per project.
     service.markDirty('project-a', 'model', 4);
@@ -130,7 +130,7 @@ describe('graph service markDirty', () => {
 
     finishPass(undefined);
     await settle();
-    expect(service.getSnapshot('project-a', 'model').building).toBe(false);
+    expect(service.getSnapshotWire('project-a', 'model').building).toBe(false);
 
     service.markDirty('project-a', 'model', 4);
     await settle();
@@ -147,8 +147,8 @@ describe('graph service markDirty', () => {
     service.markDirty('project-a', 'model', 4);
     await settle();
 
-    expect(service.getSnapshot('project-a', 'model').building).toBe(true);
-    expect(service.getSnapshot('project-b', 'model').building).toBe(false);
+    expect(service.getSnapshotWire('project-a', 'model').building).toBe(true);
+    expect(service.getSnapshotWire('project-b', 'model').building).toBe(false);
 
     finishPass(undefined);
     await settle();

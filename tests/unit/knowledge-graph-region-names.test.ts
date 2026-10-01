@@ -242,21 +242,25 @@ describe('the graph service names regions in the background', () => {
     expect(changed).toEqual(['project']);
   });
 
-  it('opens no database for a project deleted while its naming waited, and names nothing', async () => {
-    let exists = true;
-    const getDb = vi.fn(() => ({}) as never);
+  it('names nothing for a project deleted while its naming waited', async () => {
+    // The worker opens with `fileMustExist`: a deleted project's database
+    // throws at its open instead of being made again empty.
+    let deleted = false;
+    const getDb = vi.fn(() => {
+      if (deleted) throw new Error('unable to open database file');
+      return {} as never;
+    });
+    const loggedError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const graph = createGraphService({ getDb, onChanged: (projectId) => changed.push(projectId), now: () => clock });
-    graph.setProjectExists(() => exists);
     graph.getProjection('project');
-    const opensBeforeTimer = getDb.mock.calls.length;
 
-    exists = false;
+    deleted = true;
     await vi.runAllTimersAsync();
 
-    // Opening its database would have created an empty one again.
-    expect(getDb.mock.calls.length).toBe(opensBeforeTimer);
     expect(stored()).toBeNull();
     expect(changed).toEqual([]);
+    expect(loggedError).toHaveBeenCalledWith('[knowledge-graph] region names failed:', expect.any(Error));
+    loggedError.mockRestore();
   });
 
   it('switching summaries on or off shows the map\'s own names until the right ones land', async () => {

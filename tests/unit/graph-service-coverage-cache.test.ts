@@ -81,25 +81,25 @@ describe('graph service coverage cache', () => {
 
   it('reads coverage once while the index is unchanged', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
-    const first = service.getSnapshot('project-a', 'model');
-    const second = service.getSnapshot('project-a', 'model');
+    const first = service.getSnapshotWire('project-a', 'model');
+    const second = service.getSnapshotWire('project-a', 'model');
     expect(storeState.chunkTotalsCalls).toBe(1);
     expect(second.coverage).toBe(first.coverage);
   });
 
   it('recomputes coverage when the fingerprint moves', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
-    service.getSnapshot('project-a', 'model');
+    service.getSnapshotWire('project-a', 'model');
     storeState.fingerprint = 'chunks:11';
-    service.getSnapshot('project-a', 'model');
+    service.getSnapshotWire('project-a', 'model');
     expect(storeState.chunkTotalsCalls).toBe(2);
   });
 
   it('keeps each project on its own cache entry', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
-    service.getSnapshot('project-a', 'model');
-    service.getSnapshot('project-b', 'model');
-    service.getSnapshot('project-a', 'model');
+    service.getSnapshotWire('project-a', 'model');
+    service.getSnapshotWire('project-b', 'model');
+    service.getSnapshotWire('project-a', 'model');
     expect(storeState.chunkTotalsCalls).toBe(2);
   });
 
@@ -111,23 +111,23 @@ describe('graph service coverage cache', () => {
 
   it('reports every corpus, a missing one as zeros, and keeps the totals until the store moves', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
-    const first = service.getSnapshot('project-a', 'model');
+    const first = service.getSnapshotWire('project-a', 'model');
     expect(first.index.corpora).toEqual([
       { corpus: 'conversation', documents: 1, chunks: 4, embeddedChunks: 4, embeds: true },
       { corpus: 'task', documents: 2, chunks: 3, embeddedChunks: 1, embeds: true },
       // Kept as text only, so they have no embedded share to report.
       { corpus: 'change', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
       { corpus: 'commit', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
-      // Opt-in, and embedded once on: its row carries an embedded share.
+      // Embedded while its switch is on: its row carries an embedded share.
       { corpus: 'code', documents: 0, chunks: 0, embeddedChunks: 0, embeds: true },
     ]);
     // No projection yet and no stored width: the size is the other corpora's text.
     expect(first.index.storageBytes).toBe(300);
 
-    service.getSnapshot('project-a', 'model');
+    service.getSnapshotWire('project-a', 'model');
     expect(storeState.corpusTotalsCalls).toBe(1);
     storeState.corpusFingerprint = 'all:11';
-    service.getSnapshot('project-a', 'model');
+    service.getSnapshotWire('project-a', 'model');
     expect(storeState.corpusTotalsCalls).toBe(2);
     // The corpus totals and conversation coverage are cached apart: a task
     // record moving the store does not recompute coverage.
@@ -136,9 +136,9 @@ describe('graph service coverage cache', () => {
 
   it('says when the index last changed, and how many summaries the scheduler passed over', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
-    expect(service.getSnapshot('project-a', 'model').index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 0 });
-    service.setSummariesSkipped((projectId) => (projectId === 'project-a' ? 1 : 0));
-    const snapshot = service.getSnapshot('project-a', 'model');
+    expect(service.getSnapshotWire('project-a', 'model').index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 0 });
+    // Main runs the scheduler and sends its count with every read.
+    const snapshot = service.getSnapshotWire('project-a', 'model', { summariesSkipped: 1 });
     expect(snapshot.index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 1 });
     expect(snapshot.index.lastIndexedAt).toBe('2026-09-28T10:00:00.000Z');
   });

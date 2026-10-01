@@ -147,23 +147,22 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: { getEmbedder: vi.fn(() => null), prewarmEmbedWorker: vi.fn(), refreshRecords: vi.fn() },
 }));
-vi.mock('../../src/main/retrieval/graph/graph-service', () => {
-  const getSnapshot = vi.fn();
-  const markDirty = vi.fn();
-  const graphService = {
-    getSnapshot,
-    // Ask reads the map alone; each test sets it through the snapshot.
-    getProjection: (projectId: string) => getSnapshot(projectId, '')?.projection ?? null,
-    // The wire read hands back what `getSnapshot` answers, whole.
-    getSnapshotWire: (projectId: string, modelTag: string) => getSnapshot(projectId, modelTag),
-    markDirty,
+// The worker's graph service, as `createGraphService` hands it out. Each test
+// sets `snapshotFor`, which the wire read and Ask's map read both answer from.
+const graphDouble = vi.hoisted(() => {
+  const snapshotFor = vi.fn();
+  return {
+    snapshotFor,
+    // Ask reads the map alone.
+    getProjection: (projectId: string) => snapshotFor(projectId, '')?.projection ?? null,
+    // The wire read hands back the snapshot whole.
+    getSnapshotWire: (projectId: string, modelTag: string) => snapshotFor(projectId, modelTag),
+    markDirty: vi.fn(),
     requestRegionNames: vi.fn(),
     setSummaryNamesOn: vi.fn(),
-    setOnChanged: vi.fn(),
   };
-  // The retrieval worker makes its own instance; here it is the same double.
-  return { graphService, createGraphService: () => graphService };
 });
+vi.mock('../../src/main/retrieval/graph/graph-service', () => ({ createGraphService: () => graphDouble }));
 
 // The map, the board table and the related work are read in the retrieval
 // worker. Here a call runs the worker's own handlers in process, so the module
@@ -191,8 +190,8 @@ import { registerSearchHandlers } from '../../src/main/ipc/handlers/search';
 import { answerSessionPool } from '../../src/main/retrieval/answer-session-pool';
 import { AnswerSessionError } from '../../src/main/agent/shared/answer-session/stdin-json-session';
 import { answerHomeDirectory } from '../../src/main/agent/shared/answer-run-directory';
-import { graphService } from '../../src/main/retrieval/graph/graph-service';
 import { broadcast } from '../../src/main/pop-out/window-broadcast';
+import type { KnowledgeGraphSnapshotWire } from '../../src/shared/types';
 import { IPC } from '../../src/shared/ipc-channels';
 
 /** Every stream push the handler broadcast, in order, payload only. */
@@ -308,7 +307,7 @@ describe('the graph snapshot and refresh handlers', () => {
     building: false,
     stale: false,
     semanticAvailable: true,
-  } as unknown as ReturnType<typeof graphService.getSnapshot>;
+  } as unknown as KnowledgeGraphSnapshotWire;
 
   function handlerFor(channel: string): (...args: unknown[]) => Promise<unknown> {
     const handler = capturedHandlers.get(channel);
@@ -318,9 +317,9 @@ describe('the graph snapshot and refresh handlers', () => {
 
   beforeEach(() => {
     capturedHandlers.clear();
-    vi.mocked(graphService.getSnapshot).mockClear();
-    vi.mocked(graphService.getSnapshot).mockReturnValue(snapshot);
-    vi.mocked(graphService.markDirty).mockClear();
+    vi.mocked(graphDouble.snapshotFor).mockClear();
+    vi.mocked(graphDouble.snapshotFor).mockReturnValue(snapshot);
+    vi.mocked(graphDouble.markDirty).mockClear();
     knowledgeGraphConfig = {};
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
     registerSearchHandlers(makeContext() as any);
@@ -330,7 +329,7 @@ describe('the graph snapshot and refresh handlers', () => {
     const result = await handlerFor(IPC.KNOWLEDGE_GRAPH_SNAPSHOT)(undefined, 'deleted-project');
 
     expect(result).toBeNull();
-    expect(graphService.getSnapshot).not.toHaveBeenCalled();
+    expect(graphDouble.snapshotFor).not.toHaveBeenCalled();
   });
 
   it('returns the snapshot for a listed project, named or defaulted to the open one', async () => {
@@ -339,22 +338,22 @@ describe('the graph snapshot and refresh handlers', () => {
 
     expect(named).toBe(snapshot);
     expect(defaulted).toBe(snapshot);
-    expect(graphService.getSnapshot).toHaveBeenCalledTimes(2);
-    expect(graphService.getSnapshot).toHaveBeenCalledWith('project-1', expect.any(String));
+    expect(graphDouble.snapshotFor).toHaveBeenCalledTimes(2);
+    expect(graphDouble.snapshotFor).toHaveBeenCalledWith('project-1', expect.any(String));
   });
 
   it('starts no pass for a project the repository does not list', async () => {
     await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, 'deleted-project');
 
-    expect(graphService.markDirty).not.toHaveBeenCalled();
+    expect(graphDouble.markDirty).not.toHaveBeenCalled();
   });
 
   it('asks for a pass for a listed project, named or defaulted to the open one', async () => {
     await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, 'project-1');
     await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, undefined);
 
-    expect(graphService.markDirty).toHaveBeenCalledTimes(2);
-    expect(graphService.markDirty).toHaveBeenCalledWith('project-1', expect.any(String), expect.any(Number));
+    expect(graphDouble.markDirty).toHaveBeenCalledTimes(2);
+    expect(graphDouble.markDirty).toHaveBeenCalledWith('project-1', expect.any(String), expect.any(Number));
   });
 });
 
@@ -365,7 +364,7 @@ describe('the Ask handler', () => {
     vi.mocked(broadcast).mockClear();
     // Chosen explicitly, as it must be: there is no fallback agent or model.
     knowledgeGraphConfig = { agent: 'claude', model: 'haiku' };
-    vi.mocked(graphService.getSnapshot).mockReturnValue({
+    vi.mocked(graphDouble.snapshotFor).mockReturnValue({
       projectId: 'project-1',
       projection: MOCK_PROJECTION,
       coverage: {},
@@ -562,7 +561,7 @@ describe('the Ask handler', () => {
     // charges for that once is distrusted for the rest of the session.
     const answerSpy = vi.fn(async () => 'should never run');
     mockAdapters = [baseAdapter(answerSpy)];
-    vi.mocked(graphService.getSnapshot).mockReturnValue({
+    vi.mocked(graphDouble.snapshotFor).mockReturnValue({
       projectId: 'project-1',
       projection: { nodes: [], edges: [], clusterings: [] },
       coverage: {}, building: false, stale: false, semanticAvailable: true,
@@ -902,7 +901,7 @@ describe('the Ask handler', () => {
 
     beforeEach(() => {
       relatedAcrossSpy.mockClear();
-      vi.mocked(graphService.getSnapshot).mockImplementation((projectId: string) => ({
+      vi.mocked(graphDouble.snapshotFor).mockImplementation((projectId: string) => ({
         projectId,
         projection: projectId === 'project-2' ? OTHER_PROJECTION : MOCK_PROJECTION,
         coverage: {}, building: false, stale: false, semanticAvailable: true,
@@ -1096,7 +1095,7 @@ describe('the Ask handler', () => {
 
     /** The map the handler reads, with `nodes` in place of the default ones. */
     function mapWith(nodes: ReturnType<typeof graphNode>[]): void {
-      vi.mocked(graphService.getSnapshot).mockReturnValue({
+      vi.mocked(graphDouble.snapshotFor).mockReturnValue({
         projectId: 'project-1',
         projection: { ...MOCK_PROJECTION, nodes },
         coverage: {},
