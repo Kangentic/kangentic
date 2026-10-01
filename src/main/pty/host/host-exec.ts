@@ -13,6 +13,7 @@
 
 import { exec, execFile } from 'node:child_process';
 import path from 'node:path';
+import { isSamePath } from '../../../shared/paths';
 import type { HostExecFailure, HostExecRequest, HostExecResult } from './protocol';
 
 /** What both `exec` and `execFile` hand their callback on a failed run. */
@@ -23,17 +24,9 @@ type ChildProcessFailure = Error & {
   cmd?: string;
 };
 
-function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
 /** True when the request would start this process's own executable. */
 export function launchesOwnBinary(request: HostExecRequest, ownExecutable = process.execPath): boolean {
-  if (request.kind === 'execFile') return samePath(request.file, ownExecutable);
+  if (request.kind === 'execFile') return isSamePath(request.file, ownExecutable);
   const lowerCommand = request.command.toLowerCase();
   return lowerCommand.includes(ownExecutable.toLowerCase())
     || lowerCommand.includes(path.basename(ownExecutable).toLowerCase());

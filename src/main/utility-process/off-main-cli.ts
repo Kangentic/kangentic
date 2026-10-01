@@ -12,7 +12,6 @@
  * tests, startup before the host exists) the caller spawns locally.
  */
 
-import { spawn } from 'node:child_process';
 import type { EventEmitter } from 'node:events';
 
 /** A run's stdout or stderr: `data` events carrying Buffers. */
@@ -72,27 +71,14 @@ export function spawnOffMainCli(command: string, args: string[], options: OffMai
 }
 
 /**
- * Stop a host run's CLI tree from main, by pid, for the two moments the host
- * cannot be relied on to do it: the host died (its pipes went with it, but on
- * Windows a child outlives its parent), or the app is quitting (main may exit,
- * and the host be torn down, before the host reads its `cliStop`). A second
- * stop of a tree the host also stops is harmless. `taskkill /T /F` on Windows;
- * on POSIX the run leads its own process group, which gets SIGKILL.
+ * An environment as plain data the host can receive: unset entries dropped,
+ * since `process.env` types every value `string | undefined` and a structured
+ * clone would carry the key with nothing in it.
  */
-export function stopCliTreeByPid(pid: number): void {
-  try {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
-        .on('error', () => undefined)
-        .unref();
-      return;
-    }
-    try {
-      process.kill(-pid, 'SIGKILL');
-    } catch {
-      process.kill(pid, 'SIGKILL');
-    }
-  } catch {
-    // Already gone.
+export function toHostEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
+  const defined: Record<string, string> = {};
+  for (const [key, value] of Object.entries(environment)) {
+    if (value !== undefined) defined[key] = value;
   }
+  return defined;
 }

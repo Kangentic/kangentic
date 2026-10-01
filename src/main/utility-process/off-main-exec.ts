@@ -18,6 +18,7 @@
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { HostExecFailure, HostExecOptions, HostExecRequest, HostExecResult } from '../pty/host/protocol';
+import { toHostEnvironment } from './off-main-cli';
 
 export interface OffMainExecOptions {
   cwd?: string;
@@ -66,14 +67,9 @@ const EXEC_BUDGET_MARGIN_MS = 5_000;
 function toHostOptions(options: OffMainExecOptions): HostExecOptions {
   // The host forked with main's environment at startup; PATH and the rest
   // can change after that, so every request carries main's current one.
-  const sourceEnv = options.env ?? process.env;
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(sourceEnv)) {
-    if (typeof value === 'string') env[key] = value;
-  }
   return {
     cwd: options.cwd,
-    env,
+    env: toHostEnvironment(options.env ?? process.env),
     timeout: options.timeout,
     maxBuffer: options.maxBuffer,
     windowsHide: options.windowsHide,

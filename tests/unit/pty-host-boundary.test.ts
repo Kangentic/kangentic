@@ -149,8 +149,8 @@ describe('pty host out-of-process boundary', () => {
     expect(hostCli).not.toMatch(/\bfork\s*\(/);
     expect(hostCli).toMatch(/launchesOwnBinary\(\{ kind: 'execFile', file: executable/);
     // spawnCli asks the drop-in first and spawns locally only when it returns
-    // null (no host registered). The file's only other spawn is stopCli's
-    // taskkill for such a local child.
+    // null (no host registered). That fallback is the file's only spawn: the
+    // tree stops live in child-tree-stop.ts.
     const autoName = fs.readFileSync(path.join(REPO_ROOT, 'src/main/agent/shared/auto-name.ts'), 'utf-8');
     const spawnCliBody = autoName.slice(autoName.indexOf('export function spawnCli('));
     const offMainAt = spawnCliBody.indexOf('spawnOffMainCli(');
@@ -159,9 +159,31 @@ describe('pty host out-of-process boundary', () => {
     expect(localAt, 'spawnCli spawns locally only as the fallback').toBeGreaterThan(offMainAt);
     const spawnCalls = autoName.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /(^|[^\w.])spawn\(/.test(line));
     expect(spawnCalls.map((line) => line.trim())).toEqual([
-      "spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })",
       '}) ?? spawn(command, commandArgs, {',
     ]);
+  });
+
+  it('stops a CLI tree in one module, which never forks and spawns only taskkill', () => {
+    const treeStop = fs.readFileSync(path.join(REPO_ROOT, 'src/main/shared/child-tree-stop.ts'), 'utf-8');
+    expect(treeStop).not.toMatch(/\bfork\s*\(/);
+    const code = treeStop.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+    const spawnCalls = code.filter((line) => /(^|[^\w.])spawnProcess\(|(^|[^\w.])spawn\(/.test(line));
+    expect(spawnCalls.map((line) => line.trim())).toEqual([
+      "spawnProcess('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })",
+    ]);
+    // The host bundles it, so it imports nothing but spawn.
+    const imports = code.filter((line) => /^import\b/.test(line));
+    expect(imports).toEqual(["import { spawn } from 'node:child_process';"]);
+    // Each former copy now goes through it.
+    for (const site of [
+      'src/main/agent/shared/auto-name.ts',
+      'src/main/pty/host/host-cli-processes.ts',
+      'src/main/pty/host/pty-host-client.ts',
+      'src/main/utility-process/off-main-cli.ts',
+    ]) {
+      const source = fs.readFileSync(path.join(REPO_ROOT, site), 'utf-8');
+      expect(source, `${site} must not hand-roll a taskkill`).not.toContain("'taskkill'");
+    }
   });
 
   it('spawns every PTY in the host: session PTYs in the core, probe PTYs through off-main-pty', () => {

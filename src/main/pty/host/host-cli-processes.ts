@@ -17,11 +17,9 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { childHasExited, stopChildTree } from '../../shared/child-tree-stop';
 import { launchesOwnBinary } from './host-exec';
 import { toPtyHostError, type PtyHostCliSpawnParams, type PtyHostEvent } from './protocol';
-
-/** How long a CLI stopped with SIGTERM has to exit before it gets SIGKILL. */
-const CLI_KILL_GRACE_MS = 1_000;
 
 interface CliRun {
   child: ChildProcessWithoutNullStreams;
@@ -37,10 +35,6 @@ export function leadingExecutable(commandLine: string): string {
   const quoted = /^\s*"([^"]*)"/.exec(commandLine);
   if (quoted) return quoted[1];
   return commandLine.trim().split(/\s+/)[0] ?? '';
-}
-
-function hasExited(child: ChildProcessWithoutNullStreams): boolean {
-  return typeof child.exitCode === 'number' || typeof child.signalCode === 'string';
 }
 
 export class HostCliProcesses {
@@ -130,7 +124,7 @@ export class HostCliProcesses {
   get liveCount(): number {
     let count = 0;
     for (const run of this.runs.values()) {
-      if (run.child.pid !== undefined && !hasExited(run.child)) count += 1;
+      if (run.child.pid !== undefined && !childHasExited(run.child)) count += 1;
     }
     return count;
   }
@@ -141,41 +135,10 @@ export class HostCliProcesses {
     this.emit({ type: 'cliClose', processId, code: null, signal: null });
   }
 
-  /**
-   * Stop a run and what it started. On Windows `taskkill /T /F` takes the
-   * whole tree. On POSIX the run leads its own process group, which gets
-   * SIGTERM, then SIGKILL if it has not exited within the grace.
-   */
+  /** Stop a run and what it started (`stopChildTree`): its `taskkill` goes
+   *  through this runner's spawn, and the run is its own latch, so a second
+   *  stop of it spawns no second `taskkill`. */
   private stopRun(run: CliRun): void {
-    const { child } = run;
-    if (hasExited(child)) return;
-    if (process.platform === 'win32' && child.pid) {
-      if (run.treeKillStarted) return;
-      run.treeKillStarted = true;
-      this.spawnChild('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
-        .on('error', () => undefined)
-        .unref();
-      return;
-    }
-    this.signal(run, 'SIGTERM');
-    setTimeout(() => {
-      if (!hasExited(child)) this.signal(run, 'SIGKILL');
-    }, CLI_KILL_GRACE_MS).unref();
-  }
-
-  private signal(run: CliRun, signal: NodeJS.Signals): void {
-    if (run.leadsGroup && run.child.pid) {
-      try {
-        process.kill(-run.child.pid, signal);
-        return;
-      } catch {
-        // The group is gone already: try the CLI itself.
-      }
-    }
-    try {
-      run.child.kill(signal);
-    } catch {
-      // Already gone.
-    }
+    stopChildTree(run.child, { leadsGroup: run.leadsGroup, spawnProcess: this.spawnChild, treeKillLatch: run });
   }
 }

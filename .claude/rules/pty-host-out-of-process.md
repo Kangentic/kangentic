@@ -70,8 +70,10 @@ at the Windows timer floor.
   on Windows a child outlives its parent. Stops run in the host (`taskkill /T /F`, or the process
   group's SIGTERM then SIGKILL), and the host's shutdown stops every run still going and waits for
   them inside its exit bound. At quit, `stopAllCliRuns` also stops each run's tree from main by pid
-  (`stopCliTreeByPid`): with no terminal open the quit does not wait for the host, which can be
+  (`killChildTreeByPid`): with no terminal open the quit does not wait for the host, which can be
   torn down before it reads its stop. `spawnCli` spawns locally only when no host is registered.
+  Every one of these stops, local, in the host, and by pid, is `src/main/shared/child-tree-stop.ts`,
+  which imports only `spawn` so the host can bundle it.
 
 ## Enforcement (self-maintaining)
 
@@ -82,9 +84,11 @@ at the Windows timer floor.
   `node-pty` outside the host core, and on a lazy `import('node-pty')` outside the
   `off-main-pty.ts` fallback; fails on `promisify(exec)` / `promisify(execFile)` under
   `src/main` outside the drop-in and its two reasoned exceptions; pins that `host-exec.ts` and
-  `host-cli-processes.ts` never fork and check for their own executable; and pins that `spawnCli`
-  asks `spawnOffMainCli` before its local fallback, with `auto-name.ts` holding no other spawn
-  but `stopCli`'s taskkill for such a local child. Runs in CI via `npm run test:unit`.
+  `host-cli-processes.ts` never fork and check for their own executable; pins that `spawnCli`
+  asks `spawnOffMainCli` before its local fallback, which is the only spawn in `auto-name.ts`; and
+  pins that `child-tree-stop.ts` never forks, spawns nothing but `taskkill`, imports only `spawn`,
+  and is the only place a CLI tree stop builds a `taskkill`. Runs in CI via `npm run test:unit`.
+  `tests/unit/child-tree-stop.test.ts` pins each stop branch per platform.
   `tests/unit/off-main-exec.test.ts` pins the drop-in's routing, error shape and fallback;
   `tests/unit/host-cli-processes.test.ts` runs real children through the host's runner (pipes,
   event order, stop, shutdown, a failed start, the own-executable refusal);

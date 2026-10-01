@@ -13,7 +13,8 @@ import type { AgentParser } from '../../../shared/types';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../../shared/pty-host';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { HostUnavailableError, type OffMainPty, type OffMainPtyOptions } from '../../utility-process/off-main-pty';
-import { stopCliTreeByPid, type CliChildProcess, type CliStdin, type OffMainCliOptions } from '../../utility-process/off-main-cli';
+import type { CliChildProcess, CliStdin, OffMainCliOptions } from '../../utility-process/off-main-cli';
+import { killChildTreeByPid } from '../../shared/child-tree-stop';
 import { PtyHostCore } from './pty-host-core';
 import {
   fromPtyHostError,
@@ -310,7 +311,8 @@ export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
   /** The host died with this run in it: fail it the way a killed child ends. */
   deliverHostLost(): void {
     if (this.closed) return;
-    if (this.pid !== undefined && this.exitCode === null && this.signalCode === null) stopCliTreeByPid(this.pid);
+    // Its pipes went with the host, but on Windows a child outlives its parent.
+    if (this.pid !== undefined && this.exitCode === null && this.signalCode === null) killChildTreeByPid(this.pid);
     this.deliverError(new Error('The pty host stopped while the agent was running'));
     if (this.exitCode === null && this.signalCode === null) this.deliverExit(null, 'SIGKILL');
     this.deliverClose(null, 'SIGKILL');
