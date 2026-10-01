@@ -181,6 +181,14 @@ export const test = base.extend<SharedAppFixtures>({
 
     await use({ page, tmpDir });
 
+    // End this test's sessions BEFORE deleting its directory. On Windows a
+    // running session holds the directory as its working directory, so the
+    // delete failed silently and the directory survived; the next page
+    // reload's background activation (activateAllProjects, 5 s after
+    // did-finish-load) then found the project still on disk and resumed its
+    // killed sessions, which piled up across tests until a later test's spawn
+    // sat queued behind maxConcurrentSessions.
+    await resetSharedApp(page);
     cleanupTempProject(`shared-${uniqueSuffix}`);
   }, { auto: true, scope: 'test' }],
 });
