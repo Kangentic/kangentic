@@ -7067,7 +7067,7 @@ export interface KnowledgeGraphIndexCorpusSummary {
  * still accounted for.
  */
 export interface KnowledgeGraphIndexSummary {
-  /** One entry per corpus the store knows, in `MEMORY_CORPORA` order, present
+  /** One entry per corpus the store knows, in `INDEX_CORPORA` order, present
    *  with zeros when nothing of it is indexed yet. */
   corpora: KnowledgeGraphIndexCorpusSummary[];
   /**

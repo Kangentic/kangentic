@@ -16,15 +16,22 @@
  *   thousand conversation chunks for its top k.
  */
 
+import type { KnowledgeGraphIndexCorpus } from '../../shared/types';
+
+/** A corpus name. The union itself is the shared one the Index panel reads. */
+export type IndexCorpus = KnowledgeGraphIndexCorpus;
+
 /** Every corpus, in the order the embedding drain serves them. Source code is
  *  last: its first fill is about 12k chunks (half an hour on a GPU), and
  *  conversations and task records must never wait behind it. */
-export const MEMORY_CORPORA = ['conversation', 'task', 'change', 'commit', 'code'] as const;
+export const INDEX_CORPORA = ['conversation', 'task', 'change', 'commit', 'code'] as const satisfies ReadonlyArray<IndexCorpus>;
 
-export type MemoryCorpus = typeof MEMORY_CORPORA[number];
+/** Fails to compile when the shared union names a corpus `INDEX_CORPORA` leaves out. */
+type ListsEveryCorpus<Missing extends never> = Missing;
+export type IndexCorporaComplete = ListsEveryCorpus<Exclude<IndexCorpus, typeof INDEX_CORPORA[number]>>;
 
 /** The conversation corpus alone: what the map is drawn from. */
-export const CONVERSATION_CORPUS: ReadonlyArray<MemoryCorpus> = ['conversation'];
+export const CONVERSATION_CORPUS: ReadonlyArray<IndexCorpus> = ['conversation'];
 
 /**
  * The corpora that get vectors. Session changes do not: measured free on the
@@ -46,9 +53,9 @@ export const CONVERSATION_CORPUS: ReadonlyArray<MemoryCorpus> = ['conversation']
  * rules name (12,186 chunks), meaning put that file first 7 times and in the
  * top five 16 times; keywords, 4 and 12; the two fused, 6 and 15.
  */
-export const EMBEDDED_CORPORA: ReadonlyArray<MemoryCorpus> = ['conversation', 'task', 'code'];
+export const EMBEDDED_CORPORA: ReadonlyArray<IndexCorpus> = ['conversation', 'task', 'code'];
 
-export function isEmbeddedCorpus(corpus: MemoryCorpus): boolean {
+export function isEmbeddedCorpus(corpus: IndexCorpus): boolean {
   return EMBEDDED_CORPORA.includes(corpus);
 }
 
@@ -64,10 +71,10 @@ export function isEmbeddedCorpus(corpus: MemoryCorpus): boolean {
  * switches over (`vec-layout.ts`); a store asks `vecLayout` for the
  * conversation table rather than this name.
  */
-export function vecTableName(corpus: MemoryCorpus): string {
+export function vecTableName(corpus: IndexCorpus): string {
   return `memory_vec_${corpus}`;
 }
 
-export function isMemoryCorpus(value: string): value is MemoryCorpus {
-  return (MEMORY_CORPORA as ReadonlyArray<string>).includes(value);
+export function isIndexCorpus(value: string): value is IndexCorpus {
+  return (INDEX_CORPORA as ReadonlyArray<string>).includes(value);
 }

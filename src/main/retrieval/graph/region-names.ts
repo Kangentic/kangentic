@@ -17,12 +17,10 @@
 
 import type { KnowledgeGraphGranularity, KnowledgeGraphProjection } from '../../../shared/types';
 import { SUMMARY_FILLER, SUMMARY_LABEL_WEIGHT, LABELLER_VERSION, labelClusters } from './cluster-labels';
+import { LAYOUT_COMPONENTS } from './projection-math';
 
 /** Where the names are stored, in `memory_meta`. */
 export const REGION_NAMES_KEY = 'graph_region_names';
-
-/** The layout's components, as the map is built in (`projection-engine.ts`). */
-const LAYOUT_COMPONENTS = 3;
 
 /** What the names were made from, when summaries are off. */
 export const SUMMARIES_OFF = 'off';

@@ -23,7 +23,7 @@
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { SummaryStore } from '../summary/summary-store';
-import { CONVERSATION_CORPUS, isEmbeddedCorpus, MEMORY_CORPORA } from '../corpora';
+import { CONVERSATION_CORPUS, isEmbeddedCorpus, INDEX_CORPORA } from '../corpora';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { createHash } from 'node:crypto';
@@ -167,16 +167,16 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
    * and new ones are asked for at once; names a few summaries behind are shown
    * while new ones wait their turn.
    */
-  function named(projectId: string, store: RetrievalStore, projection: KnowledgeGraphProjection | null): KnowledgeGraphProjection | null {
-    return namedWithKey(projectId, store, projection).projection;
+  function projectionWithNames(projectId: string, store: RetrievalStore, projection: KnowledgeGraphProjection | null): KnowledgeGraphProjection | null {
+    return projectionWithNamesAndKey(projectId, store, projection).projection;
   }
 
   /**
-   * `named`, and the key that identifies what it returned: the map's signature
+   * `projectionWithNames`, and the key that identifies what it returned: the map's signature
    * and the names laid over it. Two reads with one key return the same map, so
    * a caller holding it need not be sent it again.
    */
-  function namedWithKey(
+  function projectionWithNamesAndKey(
     projectId: string,
     store: RetrievalStore,
     projection: KnowledgeGraphProjection | null,
@@ -313,12 +313,12 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       cached = timeSyncWork('graph:index-totals', () => ({
         fingerprint,
         totals: store.corpusTotals(),
-        otherTextBytes: store.corpusTextBytes(MEMORY_CORPORA.filter((corpus) => corpus !== 'conversation')),
+        otherTextBytes: store.corpusTextBytes(INDEX_CORPORA.filter((corpus) => corpus !== 'conversation')),
       }));
       corpusCache.set(projectId, cached);
     }
     const totals = cached.totals;
-    const corpora = MEMORY_CORPORA.map((corpus) => {
+    const corpora = INDEX_CORPORA.map((corpus) => {
       const row = totals.find((entry) => entry.corpus === corpus);
       return {
         corpus,
@@ -351,7 +351,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     }
   }
 
-  /** The snapshot, and the key of the map inside it (`namedWithKey`). */
+  /** The snapshot, and the key of the map inside it (`projectionWithNamesAndKey`). */
   function snapshotWithKey(
     projectId: string,
     modelTag: string,
@@ -359,7 +359,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   ): { snapshot: GraphSnapshot; key: string | null } {
     const store = storeFor(projectId);
     const coverage = coverageFor(projectId, store);
-    const { projection, key } = namedWithKey(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
+    const { projection, key } = projectionWithNamesAndKey(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
     const embedding = resolveEmbedding(store, modelTag, 0);
     const snapshot: GraphSnapshot = {
       projectId,
@@ -431,7 +431,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     getProjection(projectId: string): GraphSnapshot['projection'] {
       const store = storeFor(projectId);
       // Named as the map is, so an answer names a region the way the map does.
-      return named(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
+      return projectionWithNames(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
     },
 
     /**

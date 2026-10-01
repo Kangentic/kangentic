@@ -11,7 +11,7 @@ import type { TaskKnowledgeRead } from './types';
 /** Matches that get the lines; a longer list says how to look one up. */
 export const TASK_KNOWLEDGE_MATCH_LIMIT = 5;
 
-const SETTINGS = 'Settings > Knowledge Graph';
+const KNOWLEDGE_GRAPH_SETTINGS = 'Settings > Knowledge Graph';
 
 function isoDay(iso: string): string {
   return iso.slice(0, 10);
@@ -30,7 +30,7 @@ export function taskKnowledgeLines(knowledge: TaskKnowledge, finished: boolean, 
     } else {
       lines.push(summariesOn
         ? '  summary: not written yet'
-        : `  summary: none written (Task summaries are switched off in ${SETTINGS})`);
+        : `  summary: none written (Task summaries are switched off in ${KNOWLEDGE_GRAPH_SETTINGS})`);
     }
   }
   if (knowledge.commitCount > 0) {
@@ -64,7 +64,7 @@ export async function taskKnowledgeFor(
   const shown = tasks.slice(0, TASK_KNOWLEDGE_MATCH_LIMIT);
   const read = await readTaskKnowledge(shown.map((task) => task.id));
   if (!read.indexOn) {
-    notes.push(`The Knowledge Graph index is off (${SETTINGS}), so no summary, linked commits or changed files are shown.`);
+    notes.push(`The Knowledge Graph index is off (${KNOWLEDGE_GRAPH_SETTINGS}), so no summary, linked commits or changed files are shown.`);
     return { linesByTask, notes, knowledgeByTask };
   }
   for (const task of shown) {

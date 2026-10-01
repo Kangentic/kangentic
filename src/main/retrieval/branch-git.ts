@@ -2,8 +2,8 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 /**
- * Reading a project's default branch for the memory index: its head, its tree
- * and its file contents, as committed (never the working copy, which may hold
+ * Reading a project's default branch for the index: its head, its tree and
+ * its file contents, as committed (never the working copy, which may hold
  * another branch or unfinished work). Every call is a child process, so git's
  * work never runs on main's thread.
  */
@@ -15,6 +15,27 @@ export interface BranchHead {
    *  own default), or the checked-out branch's name. */
   ref: string;
   sha: string;
+}
+
+/** The head an indexer last read, kept in `memory_meta` with the record
+ *  version it was read at, so a new version reads the branch again. */
+export interface IndexedBranchHead extends BranchHead {
+  version: number;
+}
+
+/** The head stored under `metaKey`, or null before one or when it does not parse. */
+export function readIndexedHead(meta: { getMeta(key: string): string | undefined }, metaKey: string): IndexedBranchHead | null {
+  try {
+    const parsed = JSON.parse(meta.getMeta(metaKey) ?? 'null') as Partial<IndexedBranchHead> | null;
+    if (!parsed || typeof parsed.ref !== 'string' || typeof parsed.sha !== 'string' || typeof parsed.version !== 'number') return null;
+    return { ref: parsed.ref, sha: parsed.sha, version: parsed.version };
+  } catch {
+    return null;
+  }
+}
+
+export function writeIndexedHead(meta: { setMeta(key: string, value: string): void }, metaKey: string, head: BranchHead, version: number): void {
+  meta.setMeta(metaKey, JSON.stringify({ ref: head.ref, sha: head.sha, version }));
 }
 
 export interface TreeEntry {

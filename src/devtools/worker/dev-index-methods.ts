@@ -18,7 +18,7 @@ import { runProjectionPass, writeProjectionCache } from '../../main/retrieval/gr
 import { ConversationUsageStore, type TurnUsageInput } from '../../main/retrieval/conversation/conversation-usage-store';
 import { getSyncWorkByLabel, type SyncWorkStats } from '../../main/diagnostics/event-loop-lag';
 import type { ChunkInput, CorpusDocumentRef } from '../../main/retrieval/types';
-import type { MemoryCorpus } from '../../main/retrieval/corpora';
+import type { IndexCorpus } from '../../main/retrieval/corpora';
 import type { WorkerContext } from '../../main/retrieval/worker/methods';
 
 /** One seeded document: its chunks, a vector per chunk seq or null to leave
@@ -66,7 +66,7 @@ export interface DevIndexMethods {
   };
   /** Clear whole corpora of one project's index. */
   'dev.purgeCorpora': {
-    params: { projectId: string; corpora: MemoryCorpus[] };
+    params: { projectId: string; corpora: IndexCorpus[] };
     result: void;
   };
   /** The worker's own span counters, every span per label (main's report

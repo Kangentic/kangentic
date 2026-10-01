@@ -107,10 +107,16 @@ export function finalizeMeanPool(accumulator: MeanPoolAccumulator): MeanPooledDo
   return { docKeys, matrix, rowCount: docKeys.length, dimensions, chunkCounts };
 }
 
-/** Deterministic xorshift32. The layout's starting positions and its negative
- *  samples come from it, so a cached projection is reproducible across passes
- *  and the unit tests are stable. */
-function createSeededRandom(seed: number): () => number {
+/**
+ * Components in the layout. Three, and only three: the surface is spatial-only,
+ * so nothing consumes a flat projection and nothing needs to choose.
+ */
+export const LAYOUT_COMPONENTS = 3;
+
+/** Deterministic xorshift32. The layout's starting positions, its negative
+ *  samples and the region clustering's seeds come from it, so a cached
+ *  projection is reproducible across passes and the unit tests are stable. */
+export function createSeededRandom(seed: number): () => number {
   let state = seed >>> 0 || 0x9e3779b9;
   return () => {
     state ^= state << 13;

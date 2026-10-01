@@ -33,7 +33,7 @@ export const ANSWER_PROMPT_TAGS = [
 const ANSWER_PROMPT_TAG_PATTERN = promptTagPattern(ANSWER_PROMPT_TAGS);
 
 /** Text from outside the prompt, unable to open or close one of its blocks. */
-function outside(text: string): string {
+function defuseAnswerTags(text: string): string {
   return defusePromptTags(text, ANSWER_PROMPT_TAG_PATTERN);
 }
 
@@ -109,7 +109,7 @@ export interface AnswerPromptContext {
 /** Characters of an earlier answer carried into a follow-up. */
 const HISTORY_ANSWER_CHARS = 1_200;
 
-function rules(context: AnswerPromptContext): string {
+function formatRules(context: AnswerPromptContext): string {
   const { canSearch, projects } = context;
   const withCode = context.code !== undefined;
   // Real prefixes from this table, so the examples are refs the agent will meet.
@@ -208,7 +208,7 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
   if (related.length === 0) return 'Nothing in the recorded conversations matched this question.';
   // One line per row: a newline in a title or a written summary would start a
   // row of its own, and a pipe would shift a column.
-  const cellText = (text: string): string => outside(text).replace(/\s+/g, ' ').replace(/\|/g, '/');
+  const cellText = (text: string): string => defuseAnswerTags(text).replace(/\s+/g, ' ').replace(/\|/g, '/');
   const quote = (text: string): string => `"${cellText(text).replace(/"/g, '\'')}"`;
   const header = [
     'ref', 'task', 'strength', 'matches', 'first', 'last',
@@ -240,13 +240,13 @@ export function formatRelatedWork(related: ReadonlyArray<RelatedPromptTask>): st
  *  empty block is never read as the code having nothing on the subject. */
 export function formatCodePassages(passages: ReadonlyArray<CodePromptPassage>): string {
   if (passages.length === 0) return 'No source code matched this question.';
-  return outside(passages
+  return defuseAnswerTags(passages
     .map((passage) => `--- ${passage.project ? `${passage.project}: ` : ''}${passage.path}\n${passage.text}`)
     .join('\n\n'));
 }
 
 function formatHistory(history: ReadonlyArray<AnswerHistoryTurn>): string {
-  return outside(history.map((turn) => {
+  return defuseAnswerTags(history.map((turn) => {
     const answer = turn.answer.length > HISTORY_ANSWER_CHARS
       ? `${turn.answer.slice(0, HISTORY_ANSWER_CHARS)}...`
       : turn.answer;
@@ -276,14 +276,14 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
         + ' the work a search found related to the question, and the chat so far.',
     '',
     `<task_summary>\n${formatSpan(context.tasks, context.nowMs)}\n\n`
-      + `${outside(summarizeTaskTable(context.tasks))}\n</task_summary>`,
+      + `${defuseAnswerTags(summarizeTaskTable(context.tasks))}\n</task_summary>`,
     '',
     `<column_glossary>\n${formatTaskFieldGlossary(context.tasks)}\n</column_glossary>`,
     '',
     // Titles, labels, column and region names are the user's own text.
-    `<task_table>\n${outside(formatTaskTable(context.tasks))}\n</task_table>`,
+    `<task_table>\n${defuseAnswerTags(formatTaskTable(context.tasks))}\n</task_table>`,
     '',
-    rules(context),
+    formatRules(context),
     '',
     `<related_work>\n${formatRelatedWork(context.related)}\n</related_work>`,
     ...codeBlock(context.code),
@@ -291,7 +291,7 @@ export function buildAnswerPrompt(question: string, context: AnswerPromptContext
     '',
     finalReminder(context.canSearch, context.code !== undefined),
     '',
-    `Question: ${outside(question.trim())}`,
+    `Question: ${defuseAnswerTags(question.trim())}`,
   ].join('\n');
 }
 
@@ -327,7 +327,7 @@ export function buildFollowUpPrompt(
     '',
     finalReminder(context.canSearch, context.code !== undefined),
     '',
-    `Question: ${outside(question.trim())}`,
+    `Question: ${defuseAnswerTags(question.trim())}`,
   ].join('\n');
 }
 

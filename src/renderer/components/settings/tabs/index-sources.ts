@@ -26,7 +26,7 @@ export function timeLeft(minutes: number): string {
   return `${Math.round(minutes / 30) / 2} hr left`;
 }
 
-function running(percent: number, minutesLeft: number | null, progressLabel: string): SourceLineState {
+function runningLine(percent: number, minutesLeft: number | null, progressLabel: string): SourceLineState {
   return {
     value: minutesLeft === null ? `${percent}%` : `${percent}%, ${timeLeft(minutesLeft)}`,
     percent,
@@ -35,9 +35,9 @@ function running(percent: number, minutesLeft: number | null, progressLabel: str
 }
 
 /** Conversations, tasks and commits: always on, so only caught up or running. */
-export function alwaysLine(source: KnowledgeGraphSourceStatus | undefined, progressLabel: string): SourceLineState {
+export function alwaysOnLine(source: KnowledgeGraphSourceStatus | undefined, progressLabel: string): SourceLineState {
   if (!source) return {};
-  if (source.percent !== null) return running(source.percent, source.minutesLeft, progressLabel);
+  if (source.percent !== null) return runningLine(source.percent, source.minutesLeft, progressLabel);
   return { value: source.count.toLocaleString(), tone: 'ready' };
 }
 
@@ -68,7 +68,7 @@ export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatu
     const total = summaries.writtenWith.reduce((sum, entry) => sum + entry.count, 0);
     const done = Math.max(0, total - summaries.awaitingRewrite);
     // Rounded down, so it never reads 100% while one still waits.
-    return running(total > 0 ? Math.floor((done / total) * 100) : 0, summaries.minutesLeft, 'Summaries rewritten');
+    return runningLine(total > 0 ? Math.floor((done / total) * 100) : 0, summaries.minutesLeft, 'Summaries rewritten');
   }
   if (summaries.state === 'retrying') {
     const minutes = Math.max(1, Math.round((summaries.retryInMs ?? 0) / 60_000));
@@ -87,7 +87,7 @@ export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatu
   if (summaries.state === 'idle' && toWrite <= summaries.skipped) {
     return { value: `${count} of ${summaries.finishedTasks.toLocaleString()}, ${summaries.skipped.toLocaleString()} skipped` };
   }
-  return running(Math.floor((summaries.written / summaries.finishedTasks) * 100), summaries.minutesLeft, 'Summaries written');
+  return runningLine(Math.floor((summaries.written / summaries.finishedTasks) * 100), summaries.minutesLeft, 'Summaries written');
 }
 
 function filesOf(count: number): string {
@@ -103,10 +103,10 @@ export function codeLine(code: KnowledgeGraphCodeStatus | undefined, requirement
       return { value: filesOf(code.files), tone: 'muted' };
     case 'reading':
       // Switched on and the branch not read yet: running, at nothing so far.
-      return running(0, null, 'Source code embedded');
+      return runningLine(0, null, 'Source code embedded');
     case 'indexing':
       // Rounded down, so the line never reads 100% while a passage still waits.
-      return running(code.passages > 0 ? Math.floor((code.embedded / code.passages) * 100) : 0, code.minutesLeft, 'Source code embedded');
+      return runningLine(code.passages > 0 ? Math.floor((code.embedded / code.passages) * 100) : 0, code.minutesLeft, 'Source code embedded');
     case 'ready':
       return { value: filesOf(code.files), tone: 'ready' };
     case 'nothing-committed':

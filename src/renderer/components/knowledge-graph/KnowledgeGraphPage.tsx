@@ -26,7 +26,7 @@ import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
 import { knowledgeGraphWindowManager } from '../../window-manager';
 import { LazyKnowledgeGraph } from './LazyKnowledgeGraph';
 import { KnowledgeGraphDetailLayer } from './KnowledgeGraphDetailLayer';
-import { openAnswerSettings, openSearchSettings } from './open-answer-settings';
+import { openAnswerAgentSettings, openKnowledgeGraphSettings } from './open-knowledge-graph-settings';
 
 export function KnowledgeGraphPage() {
   const close = useKnowledgeGraphStore((state) => state.close);
@@ -92,9 +92,9 @@ export function KnowledgeGraphPage() {
         </DetachableSurfaceHeader>
 
         <LazyKnowledgeGraph
-          onChooseAnswerAgent={openAnswerSettings}
+          onChooseAnswerAgent={openAnswerAgentSettings}
           onRevealTask={revealTaskOnBoard}
-          onOpenSettings={openSearchSettings}
+          onOpenSettings={openKnowledgeGraphSettings}
         />
       </div>
 

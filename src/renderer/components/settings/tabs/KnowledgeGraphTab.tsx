@@ -14,7 +14,7 @@ import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { agentJobChoice, answerSetupGap, resolveAnswerAgent, taskSummariesOn } from '../../../../shared/answer-agent';
 import { SUMMARY_BATCH_SIZE } from '../../../../shared/task-summaries';
 import { EMBEDDING_MODELS } from '../../../../shared/embedding-models';
-import { alwaysLine, codeLine, summariesLine } from './index-sources';
+import { alwaysOnLine, codeLine, summariesLine } from './index-sources';
 import type {
   AgentDetectionInfo, AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
 } from '../../../../shared/types';
@@ -187,9 +187,9 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
   const summaries = settingProps('knowledgeGraph.taskSummaries');
   const code = settingProps('knowledgeGraph.sourceCode');
   const sourceLines: CardSourceLineProps[] = [
-    { label: 'Conversations', ...alwaysLine(status?.sources?.conversations, 'Conversations embedded'), testId: 'index-source-conversations' },
-    { label: 'Tasks', ...alwaysLine(status?.sources?.tasks, 'Tasks embedded'), testId: 'index-source-tasks' },
-    { label: 'Commits', ...alwaysLine(status?.sources?.commits, 'Commits indexed'), testId: 'index-source-commits' },
+    { label: 'Conversations', ...alwaysOnLine(status?.sources?.conversations, 'Conversations embedded'), testId: 'index-source-conversations' },
+    { label: 'Tasks', ...alwaysOnLine(status?.sources?.tasks, 'Tasks embedded'), testId: 'index-source-tasks' },
+    { label: 'Commits', ...alwaysOnLine(status?.sources?.commits, 'Commits indexed'), testId: 'index-source-commits' },
     {
       label: summaries.label,
       info: SUMMARIES_INFO,

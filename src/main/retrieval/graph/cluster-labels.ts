@@ -18,6 +18,7 @@
  */
 
 import { runToCompletion, type Stepwise } from './stepwise';
+import { createSeededRandom } from './projection-math';
 
 /**
  * Grammar, never content. These may not appear in a label at all, alone or
@@ -204,19 +205,6 @@ function squaredDistanceTo(
     total += difference * difference;
   }
   return total;
-}
-
-/** Deterministic xorshift32, so a cached projection's clusters never shuffle. */
-function createSeededRandom(seed: number): () => number {
-  let state = seed >>> 0 || 0x9e3779b9;
-  return () => {
-    state ^= state << 13;
-    state >>>= 0;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    state >>>= 0;
-    return state / 0x100000000;
-  };
 }
 
 /** Fewer than this says nothing about the corpus. */

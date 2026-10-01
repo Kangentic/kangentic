@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { writeInSlices, type PreparedWrite } from '../timed-slices';
-import { listTree, readBlobs, readBranchHead, type BranchHead, type TreeEntry } from '../branch-git';
+import { listTree, readBlobs, readBranchHead, readIndexedHead, writeIndexedHead, type BranchHead, type TreeEntry } from '../branch-git';
 import { CODE_MAX_FILE_BYTES, CODE_RECORD_VERSION, codeChunks, isIndexableCodePath } from './code-record';
 
 /**
@@ -117,7 +117,7 @@ export async function sweepCodeRecords(
   // No state rows at all means nothing is indexed yet, whatever the stored
   // head says (a cleared index keeps the meta row).
   const anyIndexed = db.prepare("SELECT 1 FROM memory_index_state WHERE corpus = 'code' LIMIT 1").get() !== undefined;
-  const stored = readStoredHead(store);
+  const stored = readIndexedHead(store, HEAD_META_KEY);
   if (anyIndexed && stored?.ref === head.ref && stored.sha === head.sha && stored.version === CODE_RECORD_VERSION) return result;
   if (!anyIndexed && options.allowFullRead === false) {
     result.deferred = true;
@@ -199,7 +199,7 @@ export async function sweepCodeRecords(
   });
   if (!await writeInSlices(db, gone, prepareRemoval, 'records:code-remove', shouldContinue, deps)) return result;
 
-  store.setMeta(HEAD_META_KEY, JSON.stringify({ ref: head.ref, sha: head.sha, version: CODE_RECORD_VERSION }));
+  writeIndexedHead(store, HEAD_META_KEY, head, CODE_RECORD_VERSION);
   return result;
 }
 
@@ -221,21 +221,5 @@ export function purgeCodeRecords(projectId: string, getDb: (projectId: string) =
 
 /** The branch the code index last read (`origin/main`), or null before one. */
 export function indexedCodeBranch(store: RetrievalStore): string | null {
-  return readStoredHead(store)?.ref ?? null;
-}
-
-interface StoredHead {
-  ref: string;
-  sha: string;
-  version: number;
-}
-
-function readStoredHead(store: RetrievalStore): StoredHead | null {
-  try {
-    const parsed = JSON.parse(store.getMeta(HEAD_META_KEY) ?? 'null') as Partial<StoredHead> | null;
-    if (!parsed || typeof parsed.ref !== 'string' || typeof parsed.sha !== 'string' || typeof parsed.version !== 'number') return null;
-    return { ref: parsed.ref, sha: parsed.sha, version: parsed.version };
-  } catch {
-    return null;
-  }
+  return readIndexedHead(store, HEAD_META_KEY)?.ref ?? null;
 }

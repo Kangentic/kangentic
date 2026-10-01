@@ -34,6 +34,7 @@ import {
   finalizeMeanPool,
   embedNeighborGraphSteps,
   fitLayoutToPercentileBoxN,
+  LAYOUT_COMPONENTS,
   setDocumentSum,
 } from './projection-math';
 import { computeCosineNeighbors, buildSimilarityEdgesByQuantile } from './neighbor-edges';
@@ -68,12 +69,6 @@ import { runInSlices } from './stepwise';
  *  1024-vs-768 width mismatch caused here once already. Bump on every shape
  *  change; the signature will not do it for you. */
 export const PROJECTION_CACHE_KEY = 'graph_projection_v11';
-
-/**
- * Components in the layout. Three, and only three: the surface is spatial-only,
- * so nothing consumes a flat projection and nothing needs to choose.
- */
-const LAYOUT_COMPONENTS = 3;
 
 /** Chunk states read per page of a changed document: 3.3 ms at most a page on
  *  the longest real conversation (4,832 chunks), where one read of it all took

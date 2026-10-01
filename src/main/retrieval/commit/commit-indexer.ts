@@ -3,7 +3,7 @@ import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { writeInSlices, type PreparedWrite } from '../timed-slices';
 import { writeTransaction } from '../../db/transaction';
-import { readBranchHead, runGit, type BranchHead } from '../branch-git';
+import { readBranchHead, readIndexedHead, runGit, writeIndexedHead, type BranchHead } from '../branch-git';
 import {
   COMMIT_LOG_FORMAT,
   COMMIT_RECORD_VERSION,
@@ -99,22 +99,6 @@ const defaultDeps: CommitIndexerDeps = {
   yieldToEventLoop: () => new Promise((resolve) => setImmediate(resolve)),
 };
 
-interface StoredHead {
-  ref: string;
-  sha: string;
-  version: number;
-}
-
-function readStoredHead(store: RetrievalStore): StoredHead | null {
-  try {
-    const parsed = JSON.parse(store.getMeta(HEAD_META_KEY) ?? 'null') as Partial<StoredHead> | null;
-    if (!parsed || typeof parsed.ref !== 'string' || typeof parsed.sha !== 'string' || typeof parsed.version !== 'number') return null;
-    return { ref: parsed.ref, sha: parsed.sha, version: parsed.version };
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Bring one project's commits up to date with its default branch. A project
  * that is not a git repository, or has no such branch, is left as it is.
@@ -142,8 +126,8 @@ export async function sweepCommitRecords(
 
   const head = await deps.readHead(projectPath, baseBranch).catch(() => null);
   if (!head || !shouldContinue()) return result;
-  const stored = readStoredHead(store);
-  // A cleared index (Rebuild, or the Privacy purge) drops the commits' state
+  const stored = readIndexedHead(store, HEAD_META_KEY);
+  // A cleared index (Rebuild) drops the commits' state
   // rows but not the stored head, and a head that has not moved would then
   // never be read again. No rows at all means nothing is indexed yet.
   const anyIndexed = db.prepare("SELECT 1 FROM memory_index_state WHERE corpus = 'commit' LIMIT 1").get() !== undefined;
@@ -226,7 +210,7 @@ export async function sweepCommitRecords(
       });
       if (!await writeInSlices(db, gone, prepareRemoval, 'records:commit-remove', shouldContinue, deps)) return result;
     }
-    store.setMeta(HEAD_META_KEY, JSON.stringify({ ref: head.ref, sha: head.sha, version: COMMIT_RECORD_VERSION }));
+    writeIndexedHead(store, HEAD_META_KEY, head, COMMIT_RECORD_VERSION);
   }
 
   // Both change which task a commit rolls up under.

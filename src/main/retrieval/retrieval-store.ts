@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { hasVecSupport } from './vec-support';
 import { BOARD_TASK_FACTS_SQL, type BoardTaskFactsRow } from './board-task-facts';
-import { EMBEDDED_CORPORA, isMemoryCorpus, MEMORY_CORPORA, vecTableName, type MemoryCorpus } from './corpora';
+import { EMBEDDED_CORPORA, isIndexCorpus, INDEX_CORPORA, vecTableName, type IndexCorpus } from './corpora';
 import {
   CONVERSATION_VEC_COPY_KEY,
   CONVERSATION_VEC_TABLE,
@@ -136,7 +136,7 @@ function toStoredChunk(row: StoredChunkRow): StoredChunk {
 }
 
 /** A corpus list for SQL: one placeholder per corpus. */
-function corpusPlaceholders(corpora: ReadonlyArray<MemoryCorpus>): string {
+function corpusPlaceholders(corpora: ReadonlyArray<IndexCorpus>): string {
   return corpora.map(() => '?').join(',');
 }
 
@@ -210,11 +210,11 @@ function toBlob(sum: Float64Array | null): Buffer | null {
  */
 export class RetrievalStore {
   /** The corpora whose vec table exists on this connection. */
-  private readonly vecTables = new Set<MemoryCorpus>();
+  private readonly vecTables = new Set<IndexCorpus>();
 
   /** The vec0 table `corpus` reads and writes on this connection: the
    *  conversation one follows the layout while its old table is copied. */
-  private tableOf(corpus: MemoryCorpus): string {
+  private tableOf(corpus: IndexCorpus): string {
     return corpus === 'conversation' ? vecLayout(this.db).conversationTable : vecTableName(corpus);
   }
 
@@ -225,7 +225,7 @@ export class RetrievalStore {
     // search path can query them. A fake DB (unit tests) is never vec-capable,
     // so this no-ops and never runs the sqlite_master query.
     if (hasVecSupport(db)) {
-      for (const corpus of MEMORY_CORPORA) {
+      for (const corpus of INDEX_CORPORA) {
         try {
           const exists = this.db
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -419,7 +419,7 @@ export class RetrievalStore {
    * rows at most.
    */
   deletedSessionDocuments(limit: number): Array<{ corpus: string; docId: string }> {
-    return this.prepared(
+    return this.cachedStatement(
       `SELECT corpus, doc_id AS docId FROM memory_index_state AS state
         WHERE session_id IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = state.session_id)
@@ -437,7 +437,7 @@ export class RetrievalStore {
    * chunk says (an owner rewrite in flight), and is left alone.
    */
   deletedSessionChunkDocuments(limit: number): Array<{ corpus: string; docId: string }> {
-    return this.prepared(
+    return this.cachedStatement(
       `SELECT DISTINCT chunk.corpus, chunk.doc_id AS docId FROM memory_chunks AS chunk
         WHERE chunk.session_id IN (
           SELECT DISTINCT session_id FROM memory_chunks AS orphan
@@ -454,7 +454,7 @@ export class RetrievalStore {
    *  a resumed walk's untouched prefix is intact. A range count on the
    *  UNIQUE(corpus, doc_id, seq) index. */
   documentChunkCountBelow(corpus: string, docId: string, seq: number): number {
-    const row = this.prepared('SELECT count(*) AS chunks FROM memory_chunks WHERE corpus = ? AND doc_id = ? AND seq < ?')
+    const row = this.cachedStatement('SELECT count(*) AS chunks FROM memory_chunks WHERE corpus = ? AND doc_id = ? AND seq < ?')
       .get(corpus, docId, seq) as { chunks: number };
     return row.chunks;
   }
@@ -473,7 +473,7 @@ export class RetrievalStore {
    * Their chunks go `DELETES_PER_TRANSACTION` at a time: a whole corpus is tens
    * of thousands of rows, each with a full-text delete behind it.
    */
-  purgeCorpora(corpora: ReadonlyArray<MemoryCorpus>): void {
+  purgeCorpora(corpora: ReadonlyArray<IndexCorpus>): void {
     if (corpora.length === 0) return;
     // One corpus at a time, so each page is a seek on `(corpus)` in id order
     // rather than a sort of every remaining row.
@@ -499,8 +499,8 @@ export class RetrievalStore {
 
   /** Every stored document sum of one corpus, a few rows per transaction:
    *  each row is two vector sums, 16 KB at 1,024 dimensions. */
-  private clearDocSums(corpus: MemoryCorpus): void {
-    const clearPage = this.prepared(
+  private clearDocSums(corpus: IndexCorpus): void {
+    const clearPage = this.cachedStatement(
       `DELETE FROM memory_doc_sums WHERE rowid IN
          (SELECT rowid FROM memory_doc_sums WHERE corpus = ? LIMIT ${DOC_SUMS_DELETED_PER_TRANSACTION})`,
     );
@@ -640,7 +640,7 @@ export class RetrievalStore {
   searchLexical(
     matchQuery: string,
     limit: number,
-    corpora: ReadonlyArray<MemoryCorpus>,
+    corpora: ReadonlyArray<IndexCorpus>,
     taskId?: string,
   ): LexicalHit[] {
     if (corpora.length === 0) return [];
@@ -683,9 +683,9 @@ export class RetrievalStore {
    */
   searchLexicalPerCorpus(
     matchQuery: string,
-    limits: ReadonlyMap<MemoryCorpus, number>,
-  ): Map<MemoryCorpus, Array<{ chunkId: number; rank: number }>> {
-    const byCorpus = new Map<MemoryCorpus, Array<{ chunkId: number; rank: number }>>();
+    limits: ReadonlyMap<IndexCorpus, number>,
+  ): Map<IndexCorpus, Array<{ chunkId: number; rank: number }>> {
+    const byCorpus = new Map<IndexCorpus, Array<{ chunkId: number; rank: number }>>();
     const corpora = [...limits.keys()];
     if (corpora.length === 0) return byCorpus;
     const rows = this.db
@@ -698,7 +698,7 @@ export class RetrievalStore {
       )
       .all(matchQuery, ...corpora) as Array<{ id: number; corpus: string; score: number }>;
     for (const row of rows) {
-      if (!isMemoryCorpus(row.corpus)) continue;
+      if (!isIndexCorpus(row.corpus)) continue;
       const list = byCorpus.get(row.corpus) ?? [];
       if (list.length >= (limits.get(row.corpus) ?? 0)) continue;
       list.push({ chunkId: row.id, rank: list.length + 1 });
@@ -732,7 +732,7 @@ export class RetrievalStore {
   /** Commits linked to a task that has since been deleted. A probe of `tasks`
    *  per linked commit chunk (one chunk per commit), a few thousand at most. */
   commitsOfDeletedTasks(): string[] {
-    return (this.prepared(
+    return (this.cachedStatement(
       `SELECT doc_id AS docId FROM memory_chunks AS chunk
         WHERE corpus = 'commit' AND task_id IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = chunk.task_id)`,
@@ -740,7 +740,7 @@ export class RetrievalStore {
   }
 
   /** Point one document's chunks at a task, text and embeddings untouched. */
-  setDocumentTask(corpus: MemoryCorpus, docId: string, taskId: string | null): void {
+  setDocumentTask(corpus: IndexCorpus, docId: string, taskId: string | null): void {
     this.db
       .prepare('UPDATE memory_chunks SET task_id = ? WHERE corpus = ? AND doc_id = ?')
       .run(taskId, corpus, docId);
@@ -874,7 +874,7 @@ export class RetrievalStore {
     // Every embedded chunk back to pending, its vector deleted with it, a page
     // at a time: one statement over the whole index rewrote about 95k rows
     // while holding the database's write lock.
-    for (const corpus of MEMORY_CORPORA) {
+    for (const corpus of INDEX_CORPORA) {
       const page = this.db.prepare(
         `SELECT id FROM memory_chunks WHERE embedded_model IS NOT NULL AND corpus = ? LIMIT ${DELETES_PER_TRANSACTION}`,
       );
@@ -895,7 +895,7 @@ export class RetrievalStore {
       // The older conversation table too, and any copy into the new one.
       this.db.exec(`DROP TABLE IF EXISTS ${LEGACY_CONVERSATION_VEC_TABLE}`);
       this.db.prepare('DELETE FROM memory_meta WHERE key = ?').run(CONVERSATION_VEC_COPY_KEY);
-      for (const corpus of MEMORY_CORPORA) this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
+      for (const corpus of INDEX_CORPORA) this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
       for (const corpus of EMBEDDED_CORPORA) {
         this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} ${vecTableDefinition(dimensions)}`);
       }
@@ -905,7 +905,7 @@ export class RetrievalStore {
     for (const corpus of EMBEDDED_CORPORA) this.vecTables.add(corpus);
     // Sums of vectors at the old width. The pass would replace them anyway,
     // since each row names its model and width; this frees them now.
-    for (const corpus of MEMORY_CORPORA) this.clearDocSums(corpus);
+    for (const corpus of INDEX_CORPORA) this.clearDocSums(corpus);
   }
 
   /**
@@ -962,7 +962,7 @@ export class RetrievalStore {
         const current = checkHash.get(chunkId) as { content_hash: string; corpus: string } | undefined;
         if (!current || current.content_hash !== contentHash) continue;
         // A corpus with no table on this connection stays pending.
-        if (!isMemoryCorpus(current.corpus) || !this.vecTables.has(current.corpus)) continue;
+        if (!isIndexCorpus(current.corpus) || !this.vecTables.has(current.corpus)) continue;
         // While the older conversation table is copied, the new one gets every
         // vector too, so one written behind the copy is not lost at the switch.
         const tables = current.corpus === 'conversation' && copyTarget
@@ -991,7 +991,7 @@ export class RetrievalStore {
    * `limit` and the lists merge by distance. Every table holds the same model's
    * vectors, so distances compare across them.
    */
-  searchSemantic(query: Float32Array, limit: number, corpora: ReadonlyArray<MemoryCorpus>): SemanticHit[] {
+  searchSemantic(query: Float32Array, limit: number, corpora: ReadonlyArray<IndexCorpus>): SemanticHit[] {
     const buffer = Buffer.from(query.buffer, query.byteOffset, query.byteLength);
     const merged: Array<{ id: number; distance: number }> = [];
     for (const corpus of corpora) {
@@ -1012,7 +1012,7 @@ export class RetrievalStore {
 
   /**
    * The next chunks to embed: never-embedded ones corpus by corpus in
-   * `MEMORY_CORPORA` order (conversations first), then any left under another
+   * `INDEX_CORPORA` order (conversations first), then any left under another
    * model's tag.
    *
    * Written against `idx_memory_chunks_pending (embedded_model, corpus)`. The
@@ -1038,7 +1038,7 @@ export class RetrievalStore {
       const stale = this.db
         .prepare('SELECT * FROM memory_chunks WHERE embedded_model < ? OR embedded_model > ? LIMIT ?')
         .all(modelTag, modelTag, limit - rows.length) as StoredChunkRow[];
-      rows.push(...stale.filter((row) => isMemoryCorpus(row.corpus) && this.vecTables.has(row.corpus)));
+      rows.push(...stale.filter((row) => isIndexCorpus(row.corpus) && this.vecTables.has(row.corpus)));
     }
     return rows.map(toStoredChunk);
   }
@@ -1074,8 +1074,8 @@ export class RetrievalStore {
    * index. `octet_length` reads a value's size without reading the value:
    * 11 ms against 70 ms for `length`, which counts characters, over 50 MB.
    */
-  chunkStatesAfter(corpus: MemoryCorpus, docId: string, afterSeq: number, limit: number): ChunkState[] {
-    const rows = this.prepared(
+  chunkStatesAfter(corpus: IndexCorpus, docId: string, afterSeq: number, limit: number): ChunkState[] {
+    const rows = this.cachedStatement(
       `SELECT id, seq, embedded_model IS NOT NULL AS embedded, octet_length(text) AS textBytes
        FROM memory_chunks WHERE corpus = ? AND doc_id = ? AND seq > ? ORDER BY seq LIMIT ?`,
     ).all(corpus, docId, afterSeq, limit) as Array<{ id: number; seq: number; embedded: number; textBytes: number | null }>;
@@ -1084,8 +1084,8 @@ export class RetrievalStore {
 
   /** A page of stored document sums, in doc id order, without their prefixes
    *  (read per changed document with `docSumPrefix`). */
-  docSumsPage(corpus: MemoryCorpus, afterDocId: string, limit: number): DocSumRow[] {
-    const rows = this.prepared(
+  docSumsPage(corpus: IndexCorpus, afterDocId: string, limit: number): DocSumRow[] {
+    const rows = this.cachedStatement(
       `SELECT doc_id AS docId, version, model_tag AS modelTag, dimensions, chunk_count AS chunkCount,
               embedded_count AS embeddedCount, indexed_at AS indexedAt, text_bytes AS textBytes,
               folded_count AS foldedCount, full_sum AS fullSum, prefix_through_seq AS prefixThroughSeq
@@ -1096,8 +1096,8 @@ export class RetrievalStore {
 
   /** One document's stored prefix, with the model it was summed under and the
    *  row's version it was read at. */
-  docSumPrefix(corpus: MemoryCorpus, docId: string): StoredDocSumPrefix | null {
-    const row = this.prepared(
+  docSumPrefix(corpus: IndexCorpus, docId: string): StoredDocSumPrefix | null {
+    const row = this.cachedStatement(
       `SELECT version, model_tag AS modelTag, dimensions, prefix_through_seq AS prefixThroughSeq,
               prefix_count AS prefixCount, prefix_text_bytes AS prefixTextBytes, prefix_sum AS prefixSum
        FROM memory_doc_sums WHERE corpus = ? AND doc_id = ?`,
@@ -1116,7 +1116,7 @@ export class RetrievalStore {
    * Anything else is skipped and read again by the next pass. Written
    * `SUM_BYTES_PER_TRANSACTION` of sums at a time. Returns how many went in.
    */
-  writeDocSums(corpus: MemoryCorpus, writes: ReadonlyArray<DocSumWrite>): number {
+  writeDocSums(corpus: IndexCorpus, writes: ReadonlyArray<DocSumWrite>): number {
     let written = 0;
     let batch: DocSumWrite[] = [];
     let batchBytes = 0;
@@ -1134,14 +1134,14 @@ export class RetrievalStore {
     return written;
   }
 
-  private writeDocSumsBatch(corpus: MemoryCorpus, writes: ReadonlyArray<DocSumWrite>): number {
-    const currentVersion = this.prepared('SELECT version FROM memory_doc_sums WHERE corpus = ? AND doc_id = ?');
+  private writeDocSumsBatch(corpus: IndexCorpus, writes: ReadonlyArray<DocSumWrite>): number {
+    const currentVersion = this.cachedStatement('SELECT version FROM memory_doc_sums WHERE corpus = ? AND doc_id = ?');
     // Covered by (corpus, doc_id, embedded_model): the counts never read the table.
-    const liveCounts = this.prepared(
+    const liveCounts = this.cachedStatement(
       'SELECT COUNT(*) AS chunks, COUNT(embedded_model) AS embedded FROM memory_chunks WHERE corpus = ? AND doc_id = ?',
     );
-    const liveIndexedAt = this.prepared('SELECT indexed_at AS indexedAt FROM memory_index_state WHERE corpus = ? AND doc_id = ?');
-    const upsert = this.prepared(
+    const liveIndexedAt = this.cachedStatement('SELECT indexed_at AS indexedAt FROM memory_index_state WHERE corpus = ? AND doc_id = ?');
+    const upsert = this.cachedStatement(
       `INSERT INTO memory_doc_sums
          (corpus, doc_id, version, model_tag, dimensions, chunk_count, embedded_count, indexed_at, text_bytes,
           folded_count, full_sum, prefix_through_seq, prefix_count, prefix_text_bytes, prefix_sum)
@@ -1176,7 +1176,7 @@ export class RetrievalStore {
   }
 
   /** Stored sums of documents no longer in the index, a few rows per transaction. */
-  deleteDocSums(corpus: MemoryCorpus, docIds: ReadonlyArray<string>): void {
+  deleteDocSums(corpus: IndexCorpus, docIds: ReadonlyArray<string>): void {
     for (let start = 0; start < docIds.length; start += DOC_SUMS_DELETED_PER_TRANSACTION) {
       const batch = docIds.slice(start, start + DOC_SUMS_DELETED_PER_TRANSACTION);
       writeTransaction(this.db, () => {
@@ -1192,7 +1192,7 @@ export class RetrievalStore {
    * not free: a fresh commit sweep spent 102 ms of one stall profile in the
    * statement constructor, where the same few statements were prepared per call.
    */
-  private prepared(sql: string): Database.Statement {
+  private cachedStatement(sql: string): Database.Statement {
     let cache = statementCaches.get(this.db);
     if (!cache) {
       cache = new Map();
@@ -1216,7 +1216,7 @@ export class RetrievalStore {
    * chunks leave gaps - so a page can legitimately return fewer rows than it
    * asked for, and that must not be read as end-of-scan.
    */
-  readVectors(chunkIds: number[], corpus: MemoryCorpus): Map<number, Float32Array> {
+  readVectors(chunkIds: number[], corpus: IndexCorpus): Map<number, Float32Array> {
     const vectors = new Map<number, Float32Array>();
     if (!this.vecTables.has(corpus) || chunkIds.length === 0) return vectors;
     const placeholders = chunkIds.map(() => '?').join(',');
@@ -1238,7 +1238,7 @@ export class RetrievalStore {
   /** Per-document chunk and embedded counts in `corpora`, for the coverage
    *  strip and for detecting a re-indexed document during an incremental
    *  projection pass. */
-  documentChunkTotals(corpora: ReadonlyArray<MemoryCorpus>): Array<{
+  documentChunkTotals(corpora: ReadonlyArray<IndexCorpus>): Array<{
     corpus: string;
     docId: string;
     chunkCount: number;
@@ -1263,7 +1263,7 @@ export class RetrievalStore {
    * conversation's tail chunk growing in place) moves no count. One range seek
    * on the `(corpus, doc_id)` primary key.
    */
-  documentIndexTimes(corpus: MemoryCorpus): Map<string, string> {
+  documentIndexTimes(corpus: IndexCorpus): Map<string, string> {
     const rows = this.db
       .prepare('SELECT doc_id AS docId, indexed_at AS indexedAt FROM memory_index_state WHERE corpus = ?')
       .all(corpus) as Array<{ docId: string; indexedAt: string }>;
@@ -1316,7 +1316,7 @@ export class RetrievalStore {
 
   /** Highest chunk id in one corpus: half the projection's cache signature.
    *  A seek on `idx_memory_chunks_corpus`, which carries rowid. */
-  maxChunkId(corpus: MemoryCorpus): number {
+  maxChunkId(corpus: IndexCorpus): number {
     const row = this.db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM memory_chunks WHERE corpus = ?').get(corpus) as {
       id: number;
     };
@@ -1477,7 +1477,7 @@ export class RetrievalStore {
    * conversation's own re-index keeps current.
    */
   projectIndexSummary(): { conversations: number; taskRecords: number; lastIndexedAt: string | null } {
-    const documentsIn = (corpus: MemoryCorpus): number => (this.db
+    const documentsIn = (corpus: IndexCorpus): number => (this.db
       .prepare('SELECT COUNT(*) AS count FROM (SELECT DISTINCT doc_id FROM memory_chunks WHERE corpus = ?)')
       .get(corpus) as { count: number }).count;
     const recency = this.db
@@ -1537,7 +1537,7 @@ export class RetrievalStore {
    * embedded count reads `(embedded_model, corpus)` for exactly this model, so
    * passages still carrying another model's vectors count as waiting.
    */
-  corpusProgress(corpus: MemoryCorpus, modelTag: string): { documents: number; chunks: number; embedded: number } {
+  corpusProgress(corpus: IndexCorpus, modelTag: string): { documents: number; chunks: number; embedded: number } {
     const documents = (this.db
       .prepare('SELECT COUNT(*) AS count FROM memory_index_state WHERE corpus = ?')
       .get(corpus) as { count: number }).count;
@@ -1552,7 +1552,7 @@ export class RetrievalStore {
 
   /** Bytes of text held in some corpora. For the small ones: the conversation
    *  total is the projection pass's sum of its per-document sizes. */
-  corpusTextBytes(corpora: ReadonlyArray<MemoryCorpus>): number {
+  corpusTextBytes(corpora: ReadonlyArray<IndexCorpus>): number {
     if (corpora.length === 0) return 0;
     const row = this.db
       .prepare(`SELECT COALESCE(SUM(octet_length(text)), 0) AS bytes FROM memory_chunks WHERE corpus IN (${corpusPlaceholders(corpora)})`)
@@ -1669,7 +1669,7 @@ export class RetrievalStore {
 
   /** Each indexed document's source signature in one corpus, keyed by doc id:
    *  what a record sweep compares against without reading any chunk. */
-  indexSignatures(corpus: MemoryCorpus): Map<string, { sourcePath: string | null; sourceMtimeMs: number | null }> {
+  indexSignatures(corpus: IndexCorpus): Map<string, { sourcePath: string | null; sourceMtimeMs: number | null }> {
     const rows = this.db
       .prepare('SELECT doc_id AS docId, source_path AS sourcePath, source_mtime_ms AS sourceMtimeMs FROM memory_index_state WHERE corpus = ?')
       .all(corpus) as Array<{ docId: string; sourcePath: string | null; sourceMtimeMs: number | null }>;
@@ -1677,13 +1677,13 @@ export class RetrievalStore {
   }
 
   /** Every document id holding chunks in one corpus. */
-  documentIds(corpus: MemoryCorpus): string[] {
+  documentIds(corpus: IndexCorpus): string[] {
     return (this.db
       .prepare('SELECT DISTINCT doc_id AS docId FROM memory_chunks WHERE corpus = ?')
       .all(corpus) as Array<{ docId: string }>).map((row) => row.docId);
   }
 
-  listIndexState(corpus: MemoryCorpus): Array<{ corpus: string; docId: string; status: string }> {
+  listIndexState(corpus: IndexCorpus): Array<{ corpus: string; docId: string; status: string }> {
     return this.db
       .prepare('SELECT corpus, doc_id AS docId, status FROM memory_index_state WHERE corpus = ?')
       .all(corpus) as Array<{ corpus: string; docId: string; status: string }>;
@@ -1710,7 +1710,7 @@ export class RetrievalStore {
   private deleteVecRows(ids: number[], corpus: string): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
-    const tables = isMemoryCorpus(corpus) ? [corpus] : [...MEMORY_CORPORA];
+    const tables = isIndexCorpus(corpus) ? [corpus] : [...INDEX_CORPORA];
     const rowids = ids.map((id) => BigInt(id));
     for (const table of tables) {
       if (!this.hasVecTable(table)) continue;
@@ -1839,7 +1839,7 @@ export class RetrievalStore {
    * did not load here), so the delete's transaction rolls back rather than
    * leaving that vector behind.
    */
-  private hasVecTable(corpus: MemoryCorpus): boolean {
+  private hasVecTable(corpus: IndexCorpus): boolean {
     if (this.vecTables.has(corpus)) return true;
     if (!EMBEDDED_CORPORA.includes(corpus)) return false;
     const exists = this.db

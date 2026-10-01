@@ -162,7 +162,7 @@ export interface SceneNodeStyle {
 }
 
 /** Below this a node counts as filtered out rather than dim. */
-const HIDDEN_ALPHA = 0.001;
+const HIDDEN_ALPHA_THRESHOLD = 0.001;
 
 /**
  * How long a change of node styles takes to settle, in ms.
@@ -1087,7 +1087,7 @@ export function createKnowledgeGraphScene(options: KnowledgeGraphSceneOptions): 
     for (let index = 0; index < edges.length; index += 1) {
       const from = nodeAlphas[edges[index].source] ?? 0;
       const to = nodeAlphas[edges[index].target] ?? 0;
-      const visible = from > HIDDEN_ALPHA && to > HIDDEN_ALPHA ? Math.min(from, to) : 0;
+      const visible = from > HIDDEN_ALPHA_THRESHOLD && to > HIDDEN_ALPHA_THRESHOLD ? Math.min(from, to) : 0;
       const alpha = visible * edgeStrengths[index];
       edgeAlphas[index * 2] = alpha;
       edgeAlphas[index * 2 + 1] = alpha;
@@ -1188,7 +1188,7 @@ export function createKnowledgeGraphScene(options: KnowledgeGraphSceneOptions): 
         if (index === null) continue;
         // The TARGET, not what is drawn: a node fading out is already gone as
         // far as the user's intent is concerned, and one fading in is there.
-        if (targetAlphas[index] <= HIDDEN_ALPHA) continue;
+        if (targetAlphas[index] <= HIDDEN_ALPHA_THRESHOLD) continue;
         return index;
       }
       return null;

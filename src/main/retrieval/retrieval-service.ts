@@ -41,7 +41,7 @@ import { embedEngine } from './embedder/embed-engine';
 import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
 import { requiresUserInteraction } from '../../shared/activity-state';
-import { isEmbeddedCorpus, type MemoryCorpus } from './corpora';
+import { isEmbeddedCorpus, type IndexCorpus } from './corpora';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
 import type {
@@ -624,7 +624,7 @@ function sourcesStatusFor(index: IndexStatus['sources']): KnowledgeGraphSourcesS
   if (!index) return undefined;
   const { totals, waitingByCorpus } = index;
   const perMinute = embedEngine.chunksPerMinute;
-  const sourceOf = (corpus: MemoryCorpus): KnowledgeGraphSourceStatus => {
+  const sourceOf = (corpus: IndexCorpus): KnowledgeGraphSourceStatus => {
     const row = totals.find((entry) => entry.corpus === corpus);
     const count = row?.documents ?? 0;
     const waiting = isEmbeddedCorpus(corpus) ? waitingByCorpus.get(corpus) ?? 0 : 0;

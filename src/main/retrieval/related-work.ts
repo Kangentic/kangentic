@@ -80,7 +80,7 @@
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../db/database';
 import { RetrievalStore } from './retrieval-store';
-import { CONVERSATION_CORPUS, type MemoryCorpus } from './corpora';
+import { CONVERSATION_CORPUS, type IndexCorpus } from './corpora';
 import { SEMANTIC_RELEVANCE_CUTOFF } from './memory-search';
 import { namesCodeIdentifier } from './code/code-record';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
@@ -103,7 +103,7 @@ const LEXICAL_POOL = 500;
  * chunks' task, so a chunk with none (a backlog item, an unlinked commit)
  * counts toward nothing. A `semanticPool` of 0 means keywords only.
  */
-const SIDE_CORPORA: ReadonlyArray<{ corpus: MemoryCorpus; semanticPool: number; lexicalPool: number }> = [
+const SIDE_CORPORA: ReadonlyArray<{ corpus: IndexCorpus; semanticPool: number; lexicalPool: number }> = [
   { corpus: 'task', semanticPool: 500, lexicalPool: 200 },
   { corpus: 'commit', semanticPool: 0, lexicalPool: 200 },
 ];
@@ -503,7 +503,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     return noiseFloor > 0 && noiseFloor < 1 ? (cosine - noiseFloor) / (1 - noiseFloor) : cosine;
   };
   /** Best relevance per chunk across the query vectors, one corpus's pool. */
-  const semanticPool = async (corpus: ReadonlyArray<MemoryCorpus>, limit: number): Promise<Map<number, number>> => {
+  const semanticPool = async (corpus: ReadonlyArray<IndexCorpus>, limit: number): Promise<Map<number, number>> => {
     const relevanceByChunk = new Map<number, number>();
     for (const vector of vectors) {
       await yieldToEventLoop();
@@ -563,7 +563,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
   let lexical: Array<{ chunkId: number; rank: number }> = [];
   if (keywordQuery) {
     await yieldToEventLoop();
-    const keywordPool = (corpus: ReadonlyArray<MemoryCorpus>, limit: number): Array<{ chunkId: number; rank: number }> => {
+    const keywordPool = (corpus: ReadonlyArray<IndexCorpus>, limit: number): Array<{ chunkId: number; rank: number }> => {
       try {
         return timeSyncWork('related:lexical', () => store.searchLexical(keywordQuery, limit, corpus))
           .map((hit) => ({ chunkId: hit.chunkId, rank: hit.rank }));

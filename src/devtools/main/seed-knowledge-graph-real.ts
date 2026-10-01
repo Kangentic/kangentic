@@ -39,7 +39,7 @@ import { retrievalClient } from '../../main/retrieval/retrieval-client';
 import { TaskRepository } from '../../main/db/repositories/task-repository';
 import { SessionRepository } from '../../main/db/repositories/session-repository';
 import { SwimlaneRepository } from '../../main/db/repositories/swimlane-repository';
-import { toForwardSlash } from '../../shared/paths';
+import { isSamePath, toForwardSlash } from '../../shared/paths';
 import type { DevSeedKnowledgeGraphRealResult, DevSeedKnowledgeGraphRealUnavailable } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import type { MirrorDocument } from '../worker/dev-index-methods';
@@ -62,14 +62,6 @@ const WORKTREE_MARKER = '/.kangentic/worktrees/';
  * what is being tested.
  */
 const DEFAULT_DOCUMENT_LIMIT = -1;
-
-function samePath(first: string, second: string): boolean {
-  try {
-    return path.relative(path.resolve(first), path.resolve(second)) === '';
-  } catch {
-    return false;
-  }
-}
 
 /** The real (non-ephemeral) project this preview was cloned from, if resolvable,
  *  or the real project `selector` names (by id, or by name ignoring case).
@@ -94,7 +86,7 @@ function resolveSourceProject(selector?: string): { id: string; name: string; db
     const wanted = selector?.trim().toLowerCase();
     const match = wanted
       ? rows.find((row) => row.id === selector || row.name.toLowerCase() === wanted)
-      : rows.find((row) => samePath(row.path, parentRoot));
+      : rows.find((row) => isSamePath(row.path, parentRoot));
     if (!match) return null;
     const dbPath = path.join(configDir, 'projects', `${match.id}.db`);
     return fs.existsSync(dbPath) ? { id: match.id, name: match.name, dbPath } : null;

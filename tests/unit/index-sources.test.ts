@@ -5,7 +5,7 @@
  * a missing prerequisite is a tag in place of the value.
  */
 import { describe, expect, it } from 'vitest';
-import { alwaysLine, codeLine, summariesLine, timeLeft } from '../../src/renderer/components/settings/tabs/index-sources';
+import { alwaysOnLine, codeLine, summariesLine, timeLeft } from '../../src/renderer/components/settings/tabs/index-sources';
 import type { KnowledgeGraphCodeStatus, KnowledgeGraphSummaryStatus } from '../../src/shared/types';
 
 const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
@@ -36,19 +36,19 @@ describe('the time left', () => {
 
 describe('an always-on source', () => {
   it('is its count with a check once nothing waits', () => {
-    expect(alwaysLine({ count: 1002, percent: null, minutesLeft: null }, 'Conversations embedded'))
+    expect(alwaysOnLine({ count: 1002, percent: null, minutesLeft: null }, 'Conversations embedded'))
       .toEqual({ value: '1,002', tone: 'ready' });
   });
 
   it('is the share and the time left while passages wait for vectors', () => {
-    expect(alwaysLine({ count: 1002, percent: 40, minutesLeft: 5 }, 'Conversations embedded'))
+    expect(alwaysOnLine({ count: 1002, percent: 40, minutesLeft: 5 }, 'Conversations embedded'))
       .toEqual({ value: '40%, 5 min left', percent: 40, progressLabel: 'Conversations embedded' });
     // No time before the machine has measured a rate.
-    expect(alwaysLine({ count: 1002, percent: 40, minutesLeft: null }, 'Conversations embedded').value).toBe('40%');
+    expect(alwaysOnLine({ count: 1002, percent: 40, minutesLeft: null }, 'Conversations embedded').value).toBe('40%');
   });
 
   it('says nothing before the status has arrived', () => {
-    expect(alwaysLine(undefined, 'Tasks embedded')).toEqual({});
+    expect(alwaysOnLine(undefined, 'Tasks embedded')).toEqual({});
   });
 });
 
