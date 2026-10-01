@@ -602,7 +602,8 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   watcher's process table run in the host too, since a Windows spawn's CreateProcess is synchronous
   on the calling thread. A CLI run is a command, so `spawnCli` gets its handle at once; a host crash
   fails a running one (it is never rerun, which would be a second paid answer) and main stops the
-  orphaned CLI's tree. The host's shutdown stops every run still going.
+  orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
+  main by pid, since with no terminal open the quit does not wait for the host.
 
 See `.claude/rules/pty-host-out-of-process.md`.
 

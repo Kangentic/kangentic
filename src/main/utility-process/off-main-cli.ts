@@ -12,6 +12,7 @@
  * tests, startup before the host exists) the caller spawns locally.
  */
 
+import { spawn } from 'node:child_process';
 import type { EventEmitter } from 'node:events';
 
 /** A run's stdout or stderr: `data` events carrying Buffers. */
@@ -68,4 +69,30 @@ export function setOffMainCliSpawner(next: OffMainCliSpawner | null): void {
 /** The run in the pty host, or null when no host is registered (spawn locally). */
 export function spawnOffMainCli(command: string, args: string[], options: OffMainCliOptions): CliChildProcess | null {
   return spawner ? spawner(command, args, options) : null;
+}
+
+/**
+ * Stop a host run's CLI tree from main, by pid, for the two moments the host
+ * cannot be relied on to do it: the host died (its pipes went with it, but on
+ * Windows a child outlives its parent), or the app is quitting (main may exit,
+ * and the host be torn down, before the host reads its `cliStop`). A second
+ * stop of a tree the host also stops is harmless. `taskkill /T /F` on Windows;
+ * on POSIX the run leads its own process group, which gets SIGKILL.
+ */
+export function stopCliTreeByPid(pid: number): void {
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+        .on('error', () => undefined)
+        .unref();
+      return;
+    }
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      process.kill(pid, 'SIGKILL');
+    }
+  } catch {
+    // Already gone.
+  }
 }

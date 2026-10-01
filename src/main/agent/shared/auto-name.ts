@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { spawnOffMainCli, type CliChildProcess } from '../../utility-process/off-main-cli';
+import { spawnOffMainCli, stopCliTreeByPid, type CliChildProcess } from '../../utility-process/off-main-cli';
 
 const PROMPT_BUDGET = 4000; // characters of input we forward to the CLI
 const OUTPUT_BUDGET = 2048; // bytes of stdout we accept before terminating
@@ -719,12 +719,15 @@ export function runCliForChat<T>(chatId: string, work: () => Promise<T>): Promis
 
 /**
  * Stop every CLI still running. Synchronous, for the quit path: each stop is a
- * signal or a `taskkill` started in place (`stopCli`).
+ * signal or a `taskkill` started in place (`stopCli`). A run in the pty host is
+ * also stopped from here by pid: with no terminal open the quit does not wait
+ * for the host, which can be torn down before it reads its stop.
  */
 export function stopAllCliRuns(): void {
   for (const child of [...liveCliRuns.keys()]) {
     liveCliRuns.delete(child);
     stopCli(child);
+    if (child.stopTree && child.pid) stopCliTreeByPid(child.pid);
   }
 }
 

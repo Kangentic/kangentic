@@ -8,13 +8,12 @@
  * paths run the one core and the one protocol.
  */
 
-import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { AgentParser } from '../../../shared/types';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../../shared/pty-host';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { HostUnavailableError, type OffMainPty, type OffMainPtyOptions } from '../../utility-process/off-main-pty';
-import type { CliChildProcess, CliStdin, OffMainCliOptions } from '../../utility-process/off-main-cli';
+import { stopCliTreeByPid, type CliChildProcess, type CliStdin, type OffMainCliOptions } from '../../utility-process/off-main-cli';
 import { PtyHostCore } from './pty-host-core';
 import {
   fromPtyHostError,
@@ -311,34 +310,10 @@ export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
   /** The host died with this run in it: fail it the way a killed child ends. */
   deliverHostLost(): void {
     if (this.closed) return;
-    if (this.pid !== undefined && this.exitCode === null && this.signalCode === null) stopOrphanedCli(this.pid);
+    if (this.pid !== undefined && this.exitCode === null && this.signalCode === null) stopCliTreeByPid(this.pid);
     this.deliverError(new Error('The pty host stopped while the agent was running'));
     if (this.exitCode === null && this.signalCode === null) this.deliverExit(null, 'SIGKILL');
     this.deliverClose(null, 'SIGKILL');
-  }
-}
-
-/**
- * The host died with this CLI still running. Its pipes went with the host,
- * but on Windows a child outlives its parent, and a CLI waiting on its model
- * writes nothing to find out: stop its tree from here. Only this path spawns
- * on main, and only after a host crash.
- */
-function stopOrphanedCli(pid: number): void {
-  try {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
-        .on('error', () => undefined)
-        .unref();
-      return;
-    }
-    try {
-      process.kill(-pid, 'SIGKILL');
-    } catch {
-      process.kill(pid, 'SIGKILL');
-    }
-  } catch {
-    // Already gone.
   }
 }
 

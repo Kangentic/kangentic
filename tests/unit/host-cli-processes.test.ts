@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { HostCliProcesses } from '../../src/main/pty/host/host-cli-processes';
+import { HostCliProcesses, leadingExecutable } from '../../src/main/pty/host/host-cli-processes';
 import type { PtyHostCliSpawnParams, PtyHostEvent } from '../../src/main/pty/host/protocol';
 
 const NOT_THIS_PROCESS = '/nonexistent/kangentic-host-binary';
@@ -124,6 +124,37 @@ describe('host CLI runs', () => {
     expect(events.map((event) => event.type)).toEqual(['cliError', 'cliClose']);
     expect(events[0]).toMatchObject({ error: { message: 'The pty host does not launch its own executable' } });
     expect(processes.liveCount).toBe(0);
+  });
+
+  it('starts a shell run whose arguments only name its own executable', async () => {
+    // A `.cmd` shim's run goes through the shell as one command line, and a
+    // title prompt passed as an argument can be a user's text about this app.
+    const ownExecutable = process.platform === 'win32' ? 'C:\\Program Files\\Kangentic\\Kangentic.exe' : '/opt/Kangentic/kangentic';
+    const { processes, events, closed } = runner(ownExecutable);
+    processes.start({
+      processId: 7,
+      command: `"${process.execPath}" -e "process.stdout.write('ran')" "why does Kangentic.exe crash at ${ownExecutable}"`,
+      args: [],
+      cwd: process.cwd(),
+      shell: true,
+      env: { ...process.env } as Record<string, string>,
+      detached: false,
+    });
+    await closed(7);
+    expect(events.some((event) => event.type === 'cliError')).toBe(false);
+    expect(text(events, 'stdout')).toBe('ran');
+  }, 20_000);
+
+  it('refuses a shell run whose executable is its own', () => {
+    const { processes, events } = runner(process.execPath);
+    processes.start({ ...nodeRun(8, ''), command: `"${process.execPath}" -e "0"`, args: [], shell: true });
+    expect(events.map((event) => event.type)).toEqual(['cliError', 'cliClose']);
+  });
+
+  it('reads the executable a shell command line starts', () => {
+    expect(leadingExecutable('"C:\\npm\\agent.cmd" -p "Kangentic.exe"')).toBe('C:\\npm\\agent.cmd');
+    expect(leadingExecutable('  "/usr/local/bin/agent" --flag')).toBe('/usr/local/bin/agent');
+    expect(leadingExecutable('agent -p title')).toBe('agent');
   });
 
   it('ignores writes and stops for a run it does not know', () => {

@@ -147,8 +147,7 @@ describe('pty host out-of-process boundary', () => {
   it('starts agent CLI runs in the host, which never forks or launches itself', () => {
     const hostCli = fs.readFileSync(path.join(REPO_ROOT, 'src/main/pty/host/host-cli-processes.ts'), 'utf-8');
     expect(hostCli).not.toMatch(/\bfork\s*\(/);
-    expect(hostCli).toMatch(/launchesOwnBinary\(\{ kind: 'exec'/);
-    expect(hostCli).toMatch(/launchesOwnBinary\(\{ kind: 'execFile'/);
+    expect(hostCli).toMatch(/launchesOwnBinary\(\{ kind: 'execFile', file: executable/);
     // spawnCli asks the drop-in first and spawns locally only when it returns
     // null (no host registered). The file's only other spawn is stopCli's
     // taskkill for such a local child.

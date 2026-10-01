@@ -31,6 +31,14 @@ interface CliRun {
   treeKillStarted: boolean;
 }
 
+/** The executable a shell command line starts: its leading quoted path, or
+ *  its first word. Exported for the tests. */
+export function leadingExecutable(commandLine: string): string {
+  const quoted = /^\s*"([^"]*)"/.exec(commandLine);
+  if (quoted) return quoted[1];
+  return commandLine.trim().split(/\s+/)[0] ?? '';
+}
+
 function hasExited(child: ChildProcessWithoutNullStreams): boolean {
   return typeof child.exitCode === 'number' || typeof child.signalCode === 'string';
 }
@@ -47,9 +55,11 @@ export class HostCliProcesses {
 
   start(params: PtyHostCliSpawnParams): void {
     const { processId } = params;
-    const ownBinary = params.shell
-      ? launchesOwnBinary({ kind: 'exec', command: params.command, options: {} }, this.ownExecutable)
-      : launchesOwnBinary({ kind: 'execFile', file: params.command, args: params.args, options: {} }, this.ownExecutable);
+    // A shell run's `command` is its whole command line (`"<cli>" <args>`, as
+    // spawnCli builds it), and its arguments can carry a user's text naming
+    // this app. Only the executable that would run is compared.
+    const executable = params.shell ? leadingExecutable(params.command) : params.command;
+    const ownBinary = launchesOwnBinary({ kind: 'execFile', file: executable, args: [], options: {} }, this.ownExecutable);
     if (ownBinary) {
       this.failToStart(processId, new Error('The pty host does not launch its own executable'));
       return;

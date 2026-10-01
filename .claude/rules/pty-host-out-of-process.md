@@ -69,7 +69,9 @@ at the Windows timer floor.
   rather than rerunning it (a second paid answer); main then stops the orphaned CLI's tree, since
   on Windows a child outlives its parent. Stops run in the host (`taskkill /T /F`, or the process
   group's SIGTERM then SIGKILL), and the host's shutdown stops every run still going and waits for
-  them inside its exit bound. `spawnCli` spawns locally only when no host is registered.
+  them inside its exit bound. At quit, `stopAllCliRuns` also stops each run's tree from main by pid
+  (`stopCliTreeByPid`): with no terminal open the quit does not wait for the host, which can be
+  torn down before it reads its stop. `spawnCli` spawns locally only when no host is registered.
 
 ## Enforcement (self-maintaining)
 
@@ -103,5 +105,7 @@ Session PTYs and their output pipeline (`src/main/pty/**`), the host's fork and 
 `register-all.ts`, one-shot child processes on main, the probes' raw PTYs (the Claude model
 picker, the Antigravity print runner spawn through `spawnOffMainPty`, `off-main-pty.ts`), the
 agent CLI runs (`spawnCli`, `off-main-cli.ts`), and the packaging. Still on main, by measurement:
-git through simple-git and `runGitWithTimeout` (5 to 17 ms a spawn, event-driven; the library has
-no spawn hook and the abortable runner would need request cancellation).
+git. simple-git carries most git calls (about 60 call sites in 20 files) and has no spawn hook;
+`runGitWithTimeout` could ride `cliSpawn` and `cliStop`, but it is a handful of calls (fetch,
+prune, rev-parse), so moving it alone would move a fraction of the cost. Measured with three task
+starts: 28 git spawns in 281 s, event-driven, at most 32 ms, three at 16 ms or more.

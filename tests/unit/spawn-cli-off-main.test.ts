@@ -11,6 +11,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { runCliPrintSummarize, spawnCli, stopAllCliRuns, stopCli } from '../../src/main/agent/shared/auto-name';
 import { HostCliProcesses } from '../../src/main/pty/host/host-cli-processes';
@@ -72,6 +73,23 @@ describe('spawnCli with a pty host registered', () => {
     stopAllCliRuns();
     expect(remote.stops).toBe(2);
   });
+
+  it('at quit, also stops a host run\'s tree from main by pid, since the host may be torn down first', async () => {
+    // Stand-in for the CLI the host started: a real process this test owns.
+    const cli = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+    const cliExited = new Promise<void>((resolve) => cli.once('exit', () => resolve()));
+    await new Promise<void>((resolve) => cli.once('spawn', () => resolve()));
+    const remote = Object.assign(fakeRemoteChild(), { pid: cli.pid });
+    setOffMainCliSpawner(() => remote);
+    spawnCli('/usr/local/bin/agent', [], '/work');
+
+    // The host never acts on its stop here: only main's own stop can end it.
+    stopAllCliRuns();
+
+    expect(remote.stops).toBe(1);
+    await cliExited;
+    expect(cli.exitCode !== null || cli.signalCode !== null).toBe(true);
+  }, 20_000);
 
   it('forgets a host run once it exits, so quit does not stop it again', () => {
     const remote = fakeRemoteChild();
