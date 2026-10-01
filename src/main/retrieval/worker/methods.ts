@@ -35,6 +35,7 @@ import { createGraphService } from '../graph/graph-service';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { prepareAnswer, type AnswerPrepareParams, type PreparedAnswer } from './answer-prepare';
 import { indexHandlers, type IndexMethods } from './index-methods';
+import { transcriptHandlers, type TranscriptMethods } from './transcript-methods';
 import { devIndexHandlers, type DevIndexMethods } from '../../../devtools/worker/dev-index-methods';
 import { localEmbedStoreAccess, type EmbeddingRow } from '../embedder/embed-store-access';
 import { localSummaryPassStore, type SummaryRow } from '../summary/summary-pass-store';
@@ -109,7 +110,7 @@ export interface ProjectIndexSummaryRow {
   lastIndexedAt: string | null;
 }
 
-export interface RetrievalMethods extends IndexMethods, DevIndexMethods {
+export interface RetrievalMethods extends IndexMethods, TranscriptMethods, DevIndexMethods {
   /** The embedding drain's read: the next chunks without a vector from this
    *  model, the vec tables put at its width first. Null: no vectors here. */
   'embed.nextBatch': {
@@ -212,12 +213,6 @@ export interface RetrievalMethods extends IndexMethods, DevIndexMethods {
   'task.knowledge': {
     params: { projectId: string; taskIds: string[] };
     result: Map<string, TaskKnowledge>;
-  };
-  /** A conversation's indexed chunks in order, the viewer's fallback when
-   *  the agent's own history file is gone. */
-  'transcript.indexedChunks': {
-    params: { projectId: string; docId: string };
-    result: Array<Pick<StoredChunk, 'id' | 'role' | 'text' | 'tsStart' | 'turnUuidStart'>>;
   };
   /** The Projects picker: what each project's index holds. A project whose
    *  database will not open answers null rather than failing the list. */
@@ -336,6 +331,7 @@ export const retrievalHandlers: RetrievalHandlers = {
   // Folded to `{}` in a production build, which drops the dev module.
   ...(__KANGENTIC_DEV__ ? devIndexHandlers : {}),
   ...indexHandlers,
+  ...transcriptHandlers,
   'embed.nextBatch': ({ projectId, dimensions, modelTag, limit }, context) => (
     embedStoreFor(context).nextBatch(projectId, { dimensions, modelTag }, limit)
   ),
@@ -388,9 +384,6 @@ export const retrievalHandlers: RetrievalHandlers = {
     const subagentTurns = bySubagentType.reduce((total, row) => total + row.turnCount, 0);
     return { bySubagentType, fanOuts: subagentTurns > 0 ? usageStore.getTaskFanOuts(taskId) : [] };
   },
-  'transcript.indexedChunks': ({ projectId, docId }, context) => new RetrievalStore(context.getDb(projectId))
-    .getChunksForDoc('conversation', docId)
-    .map((chunk) => ({ id: chunk.id, role: chunk.role, text: chunk.text, tsStart: chunk.tsStart, turnUuidStart: chunk.turnUuidStart })),
   'projects.summaries': ({ projectIds }, context) => projectIds.map((projectId) => {
     try {
       return { projectId, ...new RetrievalStore(context.getDb(projectId)).projectIndexSummary() };

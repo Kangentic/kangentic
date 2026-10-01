@@ -1,10 +1,6 @@
 import { EventEmitter } from 'node:events';
-import { promises as fs } from 'node:fs';
-import type { AgentAdapter } from './agent-adapter';
 import { EventType } from '../../shared/types';
-import type { AssistantMessageTrailEntry, Session, SessionEvent, TranscriptEntry } from '../../shared/types';
-import { assistantMessagePreviews } from './shared/message-preview';
-import { getCachedTranscript } from './transcript-cache';
+import type { AssistantMessageTrailEntry, Session, SessionEvent } from '../../shared/types';
 
 /**
  * Keeps the agent message trail every board card shows: the newest few things
@@ -23,14 +19,13 @@ import { getCachedTranscript } from './transcript-cache';
  * safe: a hook fires as the agent finishes a step, and the record it announces
  * can still be landing on disk.
  *
- * Read: the adapter's stateless bounded window (`parseTranscriptWindow`) over
- * only the bytes appended since the last read. The first read stats the file
- * and starts `MESSAGE_TRAIL_TAIL_BYTES` from its end, so a resumed session
- * shows what its previous run said at once; later reads start at the cursor
- * the previous window handed back. Nothing is retained between reads but that
- * cursor and the trail. An adapter without the window capability falls back
- * to the stat-validated cached parse (`getCachedTranscript`), rate-limited
- * harder because a changed file re-parses its whole bounded tail there.
+ * Read: `readTrail`, which the app runs in the retrieval worker
+ * (`message-trail-read.ts`), so main parses no transcript. It reads the
+ * adapter's bounded window over only the bytes appended since the last read
+ * and hands back the newest assistant previews and the next cursor. Nothing
+ * is retained between reads but that cursor and the trail. An adapter without
+ * the window capability re-parses its whole bounded tail there, so its reads
+ * are rate-limited harder.
  *
  * Retention: a trail outlives its session until the session leaves the registry
  * or the map hits `MESSAGE_TRAIL_MAX_SESSIONS`.
@@ -92,17 +87,21 @@ export const MESSAGE_TRAIL_MAX_SESSIONS = 200;
  */
 const MESSAGE_TRAIL_SILENT_EVENT_TYPES: ReadonlySet<string> = new Set([EventType.ToolEnd, EventType.Prompt]);
 
-/** The three optional adapter capabilities the tracker reads through. */
-export type MessageTrailAdapter = Pick<
-  AgentAdapter,
-  'parseTranscript' | 'parseTranscriptWindow' | 'locateSessionHistoryFile'
->;
-
 /** What the tracker needs to know about a session to find and parse its transcript. */
 export interface MessageTrailSessionFacts {
   sessionType: string;
   agentSessionId: string | null;
   cwd: string;
+}
+
+/** One read's outcome (`message-trail-read.ts`, run in the retrieval worker). */
+export interface TrailRead {
+  /** The newest assistant previews among the entries read. */
+  previews: AssistantMessageTrailEntry[];
+  /** Where the next window read starts; null until anchored at the tail. */
+  cursor: number | null;
+  /** True when the adapter has no window read and re-parsed its whole tail. */
+  usedFallback: boolean;
 }
 
 /** The slice of `SessionManager` the tracker consumes, so tests can hand it a plain EventEmitter. */
@@ -122,9 +121,12 @@ export interface MessageTrailTrackerDeps {
   sessionManager: MessageTrailSessionSource;
   /** Session facts from the project DB; null when the row is unknown or the DB will not open. */
   resolveSessionFacts: (sessionId: string, projectId: string) => MessageTrailSessionFacts | null;
-  resolveAdapter: (sessionType: string) => MessageTrailAdapter | undefined;
-  /** Size of the transcript file, for the first read's tail anchor. Injectable for tests. */
-  fileSize?: (filePath: string) => Promise<number>;
+  /**
+   * Read the session's transcript from `cursor` and return its newest
+   * assistant previews (`message-trail-read.ts`). The app runs it in the
+   * retrieval worker, so main parses no transcript; tests run it in-process.
+   */
+  readTrail: (facts: MessageTrailSessionFacts & { agentSessionId: string }, cursor: number | null) => Promise<TrailRead>;
   now?: () => number;
   /** Test seams for the two read floors, so coalescing is exercised in milliseconds, not seconds. */
   minIntervalMs?: number;
@@ -144,18 +146,12 @@ interface TrailState {
   trailingTimer: ReturnType<typeof setTimeout> | null;
 }
 
-async function statSize(filePath: string): Promise<number> {
-  return (await fs.stat(filePath)).size;
-}
-
 export class MessageTrailTracker extends EventEmitter {
   private readonly states = new Map<string, TrailState>();
-  private readonly fileSize: (filePath: string) => Promise<number>;
   private readonly now: () => number;
 
   constructor(private readonly deps: MessageTrailTrackerDeps) {
     super();
-    this.fileSize = deps.fileSize ?? statSize;
     this.now = deps.now ?? Date.now;
     deps.sessionManager.on('event', (sessionId, event) => {
       if (MESSAGE_TRAIL_SILENT_EVENT_TYPES.has(event.type)) return;
@@ -275,8 +271,8 @@ export class MessageTrailTracker extends EventEmitter {
     state.readInFlight = true;
     state.lastReadAt = this.now();
     try {
-      const entries = await this.readNewEntries(sessionId, state);
-      if (entries.length > 0) this.merge(sessionId, state, entries);
+      const previews = await this.readPreviews(sessionId, state);
+      if (previews.length > 0) this.merge(sessionId, state, previews);
     } catch {
       // Best effort: a file mid-rotate or an adapter error never stops tracking;
       // the next event reads again.
@@ -296,7 +292,7 @@ export class MessageTrailTracker extends EventEmitter {
     }
   }
 
-  private async readNewEntries(sessionId: string, state: TrailState): Promise<TranscriptEntry[]> {
+  private async readPreviews(sessionId: string, state: TrailState): Promise<AssistantMessageTrailEntry[]> {
     // The agent id is captured after spawn for some adapters, so keep asking
     // the row until it is there (one SQLite lookup per read until then).
     if (!state.facts?.agentSessionId) {
@@ -305,75 +301,13 @@ export class MessageTrailTracker extends EventEmitter {
     const facts = state.facts;
     const agentSessionId = facts?.agentSessionId;
     if (!facts || !agentSessionId) return [];
-    const adapter = this.deps.resolveAdapter(facts.sessionType);
-    if (!adapter) return [];
-
-    const parseWindow = adapter.parseTranscriptWindow;
-    const locateFile = adapter.locateSessionHistoryFile;
-    if (parseWindow && locateFile) {
-      return this.readWindows(adapter, parseWindow, locateFile, facts.cwd, agentSessionId, state);
-    }
-    const parseTranscript = adapter.parseTranscript;
-    if (parseTranscript) {
-      state.usesFallback = true;
-      const cached = await getCachedTranscript(
-        facts.sessionType,
-        agentSessionId,
-        () => parseTranscript.call(adapter, agentSessionId, facts.cwd),
-      );
-      return cached.entries;
-    }
-    return [];
+    const read = await this.deps.readTrail({ ...facts, agentSessionId }, state.cursor);
+    state.cursor = read.cursor;
+    state.usesFallback = read.usedFallback;
+    return read.previews;
   }
 
-  private async readWindows(
-    adapter: MessageTrailAdapter,
-    parseWindow: NonNullable<MessageTrailAdapter['parseTranscriptWindow']>,
-    locateFile: NonNullable<MessageTrailAdapter['locateSessionHistoryFile']>,
-    cwd: string,
-    agentSessionId: string,
-    state: TrailState,
-  ): Promise<TranscriptEntry[]> {
-    let cursor: number;
-    if (state.cursor === null) {
-      const filePath = await locateFile.call(adapter, agentSessionId, cwd);
-      if (!filePath) return [];
-      const size = await this.fileSize(filePath);
-      cursor = Math.max(0, size - MESSAGE_TRAIL_TAIL_BYTES);
-    } else {
-      cursor = state.cursor;
-    }
-    const collected: TranscriptEntry[] = [];
-    for (let windowIndex = 0; windowIndex < MESSAGE_TRAIL_MAX_WINDOWS_PER_READ; windowIndex += 1) {
-      const window = await parseWindow.call(adapter, agentSessionId, cwd, cursor, MESSAGE_TRAIL_WINDOW_BYTES);
-      if (window.totalBytes < cursor) {
-        // The file shrank under the cursor (a rotate, or a reused id): re-anchor at the new tail.
-        cursor = Math.max(0, window.totalBytes - MESSAGE_TRAIL_TAIL_BYTES);
-        continue;
-      }
-      collected.push(...window.entries);
-      if (window.nextByteOffset >= window.totalBytes) {
-        // `readJsonlWindow` hands back an offset ON the closing newline for a
-        // mid-file window but PAST the end for the final one, and every
-        // mid-file start drops through its first newline. Stepping back one
-        // byte makes the next read's drop consume exactly the newline the
-        // last record ended with, instead of the whole first appended record.
-        cursor = Math.max(0, window.nextByteOffset - 1);
-        break;
-      }
-      if (window.nextByteOffset <= cursor) break;
-      cursor = window.nextByteOffset;
-    }
-    state.cursor = cursor;
-    return collected;
-  }
-
-  private merge(sessionId: string, state: TrailState, entries: TranscriptEntry[]): void {
-    const previews = assistantMessagePreviews(entries, {
-      count: MESSAGE_TRAIL_MAX_ENTRIES,
-      maxChars: MESSAGE_TRAIL_ENTRY_MAX_CHARS,
-    });
-    if (previews.length === 0) return;
+  private merge(sessionId: string, state: TrailState, previews: AssistantMessageTrailEntry[]): void {
     // The window path yields only new records; the fallback yields the whole
     // bounded tail every time. Dedupe by the entry's own uuid so both merge
     // the same way, and push only when a line is genuinely new.

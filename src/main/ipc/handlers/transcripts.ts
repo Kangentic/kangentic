@@ -3,13 +3,9 @@ import { IPC } from '../../../shared/ipc-channels';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { agentRegistry } from '../../agent/agent-registry';
-import { resolveTaskTranscript } from '../../agent/transcript-service';
-import type {
-  ConversationSessionMeta,
-  TranscriptGetRequest,
-  TranscriptGetResponse,
-  TranscriptUnchangedResponse,
-} from '../../../shared/types';
+import { retrievalClient } from '../../retrieval/retrieval-client';
+import { collectRemoteTargets } from '../../retrieval/remote-targets';
+import type { ConversationSessionMeta, TranscriptGetRequest } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -19,62 +15,42 @@ import type { IpcContext } from '../ipc-context';
  *
  * TRANSCRIPT_GET always returns a task's ENTIRE lifecycle - every session it
  * has ever accumulated, stitched into one timeline - not just the one session
- * id passed in (that id only resolves which task to show). The heavy lifting
- * lives in the shared `resolveTaskTranscript` service. The MCP get_transcript
- * tool deliberately stays per-session (an agent inspecting one specific run)
- * and calls the single-session `resolveSessionTranscript` instead.
+ * id passed in (that id only resolves which task to show). The retrieval
+ * worker parses and stitches it (`transcript.task`) and answers with JSON:
+ * the whole response, an unchanged marker, or only the entries that changed
+ * since the caller's revision. Main hands that string to the renderer as is,
+ * so a long conversation costs main neither a parse nor a structured clone;
+ * the preload parses it. The MCP get_transcript tool deliberately stays
+ * per-session (an agent inspecting one specific run).
  */
 export function registerTranscriptHandlers(context: IpcContext): void {
   ipcMain.handle(
     IPC.TRANSCRIPT_GET,
-    async (
-      _event,
-      request: TranscriptGetRequest,
-    ): Promise<TranscriptGetResponse | TranscriptUnchangedResponse> => {
+    async (_event, request: TranscriptGetRequest): Promise<string> => {
       const projectId = request.projectId ?? context.currentProjectId;
-      const emptyResponse: TranscriptGetResponse = {
-        sessionId: request.sessionId,
-        taskId: null,
-        taskTitle: '(unknown task)',
-        agentName: '',
-        startedAt: '',
-        sessionStatus: null,
-        source: 'none',
-        sourcePath: null,
-        entries: [],
-        degraded: false,
-        unavailableReason: 'file_missing',
-        sessions: [],
-        revision: 0,
-      };
-      if (!projectId) return emptyResponse;
-
-      const db = getProjectDb(projectId);
-      const resolved = await resolveTaskTranscript(db, request.sessionId);
-      if (!resolved) return emptyResponse;
-
-      // Nothing changed since the caller's last fetch: skip the full
-      // structured clone (the common case for an idle live-poll tick on a
-      // long transcript).
-      if (request.knownRevision !== undefined && request.knownRevision === resolved.revision) {
-        return { unchanged: true, revision: resolved.revision };
+      if (!projectId) {
+        return JSON.stringify({
+          sessionId: request.sessionId,
+          taskId: null,
+          taskTitle: '(unknown task)',
+          agentName: '',
+          startedAt: '',
+          sessionStatus: null,
+          source: 'none',
+          sourcePath: null,
+          entries: [],
+          degraded: false,
+          unavailableReason: 'file_missing',
+          sessions: [],
+          revision: 0,
+        });
       }
-
-      return {
-        sessionId: resolved.record.id,
-        taskId: resolved.record.task_id ?? null,
-        taskTitle: resolved.taskTitle,
-        agentName: resolved.agentName,
-        startedAt: resolved.record.started_at,
-        sessionStatus: resolved.record.status,
-        source: resolved.source,
-        sourcePath: resolved.sourcePath,
-        entries: resolved.entries,
-        degraded: resolved.degraded,
-        unavailableReason: resolved.unavailableReason,
-        sessions: resolved.sessions,
-        revision: resolved.revision,
-      };
+      return retrievalClient.call('transcript.task', {
+        projectId,
+        sessionId: request.sessionId,
+        knownRevision: request.knownRevision,
+        remoteTargets: collectRemoteTargets(agentRegistry),
+      });
     },
   );
 

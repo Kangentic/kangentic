@@ -776,7 +776,12 @@ const api: ElectronAPI = {
   },
 
   transcripts: {
-    get: (input) => ipcRenderer.invoke(IPC.TRANSCRIPT_GET, input),
+    // Main relays the retrieval worker's JSON untouched (a long conversation
+    // is several MB); it is parsed here, in the renderer's process.
+    get: async (input) => {
+      const reply: unknown = await ipcRenderer.invoke(IPC.TRANSCRIPT_GET, input);
+      return typeof reply === 'string' ? JSON.parse(reply) : reply;
+    },
     listSessions: (taskId, projectId) =>
       ipcRenderer.invoke(IPC.TRANSCRIPT_LIST_SESSIONS, taskId, projectId),
   },

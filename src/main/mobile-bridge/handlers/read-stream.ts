@@ -5,18 +5,18 @@ import {
   type ReadStreamResponsePayload,
   type TranscriptWindowResponsePayload,
 } from '@kangentic/protocol';
-import type { ActivityReason, ActivityState, SessionEvent, SessionUsage, TranscriptEntry } from '../../../shared/types';
-import { lastAssistantPreview } from '../../agent/shared/message-preview';
+import type { ActivityReason, ActivityState, SessionEvent, SessionUsage } from '../../../shared/types';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { resolveTaskTranscript } from '../../agent/transcript-service';
+import { agentRegistry } from '../../agent/agent-registry';
+import { retrievalClient } from '../../retrieval/retrieval-client';
+import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import { sendEvent } from './send-event';
 import { buildPermissionPromptId } from './permission-prompt-id';
 import { extractPromptOptions } from '../prompt-options-probe';
-import { sliceTranscriptWindow, TranscriptSync } from './transcript-sync';
 import {
   toActivityReasonWire,
   toReadStreamSessionStatusWire,
@@ -53,6 +53,18 @@ const PROMPT_OPTIONS_RETRY_MS = 400;
  * ever showing a number a user would call wrong.
  */
 const USAGE_COALESCE_MS = 2000;
+
+/**
+ * Trailing window for transcript pushes. Every hook event used to re-read
+ * and diff the task's whole stitched transcript, once per event per phone
+ * subscription, and a tool burst fires several a second. A burst now costs one
+ * read at its end, a quarter second later, which a phone reading a live turn
+ * does not notice.
+ */
+const TRANSCRIPT_COALESCE_MS = 250;
+
+/** Distinguishes one subscription's transcript sync from another's in the worker. */
+let nextSyncNumber = 1;
 
 export function subscriptionKeyFor(sessionId: string): string {
   return `stream:${sessionId}`;
@@ -137,8 +149,12 @@ function subscribeReadStream(
   // none) has no transcript to stream. This used to open the database named
   // '' instead, which creates a stray `projects/.db` file.
   const ownerProjectId = resolveProjectIdForSession(context, sessionId);
-  const db = ownerProjectId ? getProjectDb(ownerProjectId) : null;
-  const transcriptSync = new TranscriptSync();
+  // The transcript diff runs in the retrieval worker, which keeps this
+  // subscription's sync state under this id (`transcript.mobileSync`).
+  const syncId = `${sessionId}:${nextSyncNumber++}`;
+  let transcriptReadInFlight = false;
+  let transcriptRereadWanted = false;
+  let transcriptTimer: ReturnType<typeof setTimeout> | null = null;
   let lastAwaitedPromptId = initialAwaitedPromptId;
   let lastMessagePreview: string | null = null;
   let pendingUsage: SessionUsage | null = null;
@@ -168,27 +184,53 @@ function subscribeReadStream(
     sendEvent(session, { kind: 'terminal', sessionId, taskId, payload: { data } });
   };
 
-  const pushTranscriptIfChanged = async (): Promise<void> => {
-    if (!db) return;
+  const readTranscriptChanges = async (): Promise<void> => {
+    if (!ownerProjectId || disposed) return;
+    transcriptReadInFlight = true;
     try {
-      const resolved = await resolveTaskTranscript(db, sessionId);
-      if (!resolved) return;
-      // Delta chunks stream the moment a turn's content changes - usually
-      // just the mutating tail entry, so each frame is small and immediate.
-      for (const payload of transcriptSync.diff(resolved)) {
+      const { payloads, preview } = await retrievalClient.call('transcript.mobileSync', {
+        syncId,
+        projectId: ownerProjectId,
+        sessionId,
+        mode: 'diff',
+        remoteTargets: collectRemoteTargets(agentRegistry),
+      });
+      if (disposed) return;
+      // Delta chunks carry only what changed - usually just the mutating tail
+      // entry, so each frame is small.
+      for (const payload of payloads) {
         sendEvent(session, { kind: 'transcript', sessionId, taskId, payload });
       }
-      pushMessagePreviewIfChanged(resolved.entries);
+      pushMessagePreviewIfChanged(preview);
     } catch {
       // Best-effort; a transcript-read failure should not tear down the subscription.
+    } finally {
+      transcriptReadInFlight = false;
+      if (transcriptRereadWanted && !disposed) {
+        transcriptRereadWanted = false;
+        pushTranscriptIfChanged();
+      }
     }
   };
 
+  // Coalesced: a burst of events becomes one read at its end, and an event
+  // during a read asks for one more after it.
+  const pushTranscriptIfChanged = (): void => {
+    if (transcriptReadInFlight) {
+      transcriptRereadWanted = true;
+      return;
+    }
+    if (transcriptTimer) return;
+    transcriptTimer = setTimeout(() => {
+      transcriptTimer = null;
+      void readTranscriptChanges();
+    }, TRANSCRIPT_COALESCE_MS);
+  };
+
   // The one line a phone's session list renders. Derived from the transcript
-  // we just resolved anyway, so the list costs no request of its own; sent
-  // only when the text actually changes, so an idle session is silent.
-  const pushMessagePreviewIfChanged = (entries: TranscriptEntry[]): void => {
-    const text = lastAssistantPreview(entries);
+  // read anyway, so the list costs no request of its own; sent only when the
+  // text actually changes, so an idle session is silent.
+  const pushMessagePreviewIfChanged = (text: string | null): void => {
     if (text === null || text === lastMessagePreview) return;
     lastMessagePreview = text;
     sendEvent(session, { kind: 'activity', sessionId, taskId, payload: { type: 'message-preview', text } });
@@ -294,7 +336,7 @@ function subscribeReadStream(
     if (eventSessionId !== sessionId) return;
     sendEvent(session, { kind: 'activity', sessionId, taskId, payload: { type: 'event', event: toSessionEventWire(event) } });
     pushPermissionIfChanged();
-    void pushTranscriptIfChanged();
+    pushTranscriptIfChanged();
   };
 
   // When the session exits, tear our own subscription down: nothing else
@@ -370,6 +412,9 @@ function subscribeReadStream(
     context.sessionManager.off('exit', onExit);
     if (terminalFlushTimer) clearTimeout(terminalFlushTimer);
     if (usageFlushTimer) clearTimeout(usageFlushTimer);
+    if (transcriptTimer) clearTimeout(transcriptTimer);
+    // The worker's sync state for this subscription goes with it.
+    retrievalClient.notifyRunning('transcript.mobileRelease', { syncId });
     // The terminal marker lives and dies with THIS subscription: a list-only
     // re-subscribe replaces this teardown, which runs it, which drops the
     // marker before the new registration decides whether to re-add it.
@@ -387,15 +432,19 @@ function subscribeReadStream(
   // redundant - and for long sessions impossible within the frame cap.
   // Deltas cover only what changes from this point on.
   void (async (): Promise<void> => {
-    if (!db) return;
+    if (!ownerProjectId) return;
     try {
-      const resolved = await resolveTaskTranscript(db, sessionId);
-      if (!resolved) return;
-      transcriptSync.seed(resolved);
+      const { preview } = await retrievalClient.call('transcript.mobileSync', {
+        syncId,
+        projectId: ownerProjectId,
+        sessionId,
+        mode: 'seed',
+        remoteTargets: collectRemoteTargets(agentRegistry),
+      });
       // The list's one line, delivered at subscribe rather than waiting for
       // the session's next change: an idle session may never change again,
       // and its card would otherwise have nothing to show.
-      if (!disposed) pushMessagePreviewIfChanged(resolved.entries);
+      if (!disposed) pushMessagePreviewIfChanged(preview);
     } catch {
       // Best-effort: an unseeded sync just means the first post-subscribe
       // change diffs against nothing and streams as plain appends.
@@ -432,10 +481,14 @@ export async function handleReadStream(
     if (!projectId) {
       return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
     }
-    const resolved = await resolveTaskTranscript(getProjectDb(projectId), payload.sessionId);
-    const windowPayload: TranscriptWindowResponsePayload = resolved
-      ? sliceTranscriptWindow(resolved, payload.beforeIndex, payload.limit)
-      : { revision: 0, totalEntries: 0, startIndex: 0, entries: [] };
+    // Parsed, stitched and paged in the retrieval worker.
+    const windowPayload: TranscriptWindowResponsePayload = await retrievalClient.call('transcript.window', {
+      projectId,
+      sessionId: payload.sessionId,
+      beforeIndex: payload.beforeIndex,
+      limit: payload.limit,
+      remoteTargets: collectRemoteTargets(agentRegistry),
+    });
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(windowPayload) };
   }
 

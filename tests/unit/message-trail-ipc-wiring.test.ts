@@ -136,6 +136,11 @@ vi.mock('../../src/main/transition-engine/terminal-submit-scheduler', () => ({
 vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { get: vi.fn(), list: vi.fn(() => []), getBySessionType: mockGetBySessionType },
 }));
+const { mockRetrievalCall } = vi.hoisted(() => ({ mockRetrievalCall: vi.fn() }));
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({
+  retrievalClient: { call: mockRetrievalCall, notifyRunning: vi.fn(), on: vi.fn() },
+  RetrievalUnavailableError: class RetrievalUnavailableError extends Error {},
+}));
 vi.mock('../../src/main/agent/adapters/claude/trust-manager', () => ({
   ensureWorktreeTrust: vi.fn(),
 }));
@@ -204,11 +209,11 @@ function getTrailListener(): ((...args: unknown[]) => void) | undefined {
 /**
  * The two DI closures `sessions.ts` builds inline and hands to
  * `MessageTrailTracker`'s constructor: `resolveSessionFacts` (the DB lookup
- * and snake_case -> camelCase field map) and `resolveAdapter` (the
- * `agentRegistry` delegation). `MessageTrailTracker` itself is mocked above,
- * so these are exercised directly against the real closures - nothing else in
+ * and snake_case -> camelCase field map) and `readTrail` (the read, sent to
+ * the retrieval worker). `MessageTrailTracker` itself is mocked above, so
+ * these are exercised directly against the real closures - nothing else in
  * the tree calls them, since every tracker test in message-trail-tracker.test.ts
- * supplies its own fake lambda instead.
+ * supplies its own reader instead.
  */
 interface CapturedMessageTrailDeps {
   resolveSessionFacts: (sessionId: string, projectId: string) => {
@@ -216,7 +221,7 @@ interface CapturedMessageTrailDeps {
     agentSessionId: string | null;
     cwd: string;
   } | null;
-  resolveAdapter: (sessionType: string) => unknown;
+  readTrail: (facts: { sessionType: string; agentSessionId: string; cwd: string }, cursor: number | null) => Promise<unknown>;
 }
 
 function getConstructedDeps(): CapturedMessageTrailDeps {
@@ -377,7 +382,7 @@ describe('IPC handler wiring: message trail tracker', () => {
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
   });
 
-  describe('resolveSessionFacts / resolveAdapter (the DI closures passed to the tracker)', () => {
+  describe('resolveSessionFacts / readTrail (the DI closures passed to the tracker)', () => {
     it('maps a found record to MessageTrailSessionFacts, snake_case field for snake_case field', () => {
       const context = makeContext();
       registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
@@ -425,16 +430,17 @@ describe('IPC handler wiring: message trail tracker', () => {
       expect(resolveSessionFacts('sess-abc', 'proj-broken')).toBeNull();
     });
 
-    it('delegates resolveAdapter to agentRegistry.getBySessionType', () => {
+    it('sends each read to the retrieval worker, so main parses no transcript', async () => {
       const context = makeContext();
       registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
-      const { resolveAdapter } = getConstructedDeps();
+      const { readTrail } = getConstructedDeps();
 
-      const fakeAdapter = { name: 'fake-claude-adapter' };
-      mockGetBySessionType.mockReturnValueOnce(fakeAdapter);
+      const read = { previews: [], cursor: 128, usedFallback: false };
+      mockRetrievalCall.mockResolvedValueOnce(read);
+      const facts = { sessionType: 'claude', agentSessionId: 'agent-1', cwd: '/mock/project' };
 
-      expect(resolveAdapter('claude')).toBe(fakeAdapter);
-      expect(mockGetBySessionType).toHaveBeenCalledWith('claude');
+      await expect(readTrail(facts, 64)).resolves.toBe(read);
+      expect(mockRetrievalCall).toHaveBeenCalledWith('transcript.trailRead', { facts, cursor: 64, remoteTargets: [] });
     });
   });
 });

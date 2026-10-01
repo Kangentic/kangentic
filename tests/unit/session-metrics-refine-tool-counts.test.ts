@@ -15,6 +15,12 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+
+// The transcript read runs in the retrieval worker; this runs the worker's own
+// handler in-process, over the spied registry.
+vi.mock('../../src/main/retrieval/retrieval-client', async () => (
+  (await import('./helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
+));
 import { refineTranscriptToolCounts } from '../../src/main/ipc/handlers/session-metrics';
 import type { SessionManager } from '../../src/main/pty/session-manager';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';

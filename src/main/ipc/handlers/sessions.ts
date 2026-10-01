@@ -3,6 +3,7 @@ import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { retrievalClient } from '../../retrieval/retrieval-client';
+import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
@@ -539,7 +540,11 @@ export function registerSessionHandlers(context: IpcContext): void {
         return null;
       }
     },
-    resolveAdapter: (sessionType) => agentRegistry.getBySessionType(sessionType),
+    // Parsed in the retrieval worker: main reads no transcript.
+    readTrail: (facts, cursor) => retrievalClient.call(
+      'transcript.trailRead',
+      { facts, cursor, remoteTargets: collectRemoteTargets(agentRegistry) },
+    ),
   });
   messageTrailTracker.on('trail', (sessionId: string, entries: AssistantMessageTrailEntry[], projectId: string) => {
     if (context.mainWindow.isDestroyed()) return;

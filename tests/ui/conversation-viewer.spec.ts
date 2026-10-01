@@ -735,6 +735,68 @@ test.describe('Conversation Viewer', () => {
     }
   });
 
+  test('a live poll answered with a delta appends the new turn and keeps the rows it already drew', async () => {
+    const { browser, page } = await launch(undefined, liveSessionPreConfig());
+    try {
+      await openConversation(page, 'sess-conv-liveswitch-old');
+      await expect(page.getByText('LIVESWITCH_INITIAL_TEXT')).toBeVisible();
+
+      // First call: the whole conversation at revision 7. Second: only the
+      // new turn, against revision 7 (what the reader sends a caller holding
+      // a revision it still keeps). After that: unchanged at revision 8.
+      await page.evaluate(() => {
+        const state = window as unknown as { __deltaPollKnownRevisions: Array<number | undefined> };
+        state.__deltaPollKnownRevisions = [];
+        const meta = {
+          sessionId: 'sess-conv-liveswitch-old',
+          taskId: 'task-conv-liveswitch',
+          taskTitle: 'Live session switch',
+          agentName: 'Claude Code',
+          startedAt: new Date().toISOString(),
+          sessionStatus: 'running',
+          source: 'live',
+          sourcePath: '/mock/liveswitch-old.jsonl',
+          degraded: false,
+          sessions: [
+            { sessionId: 'sess-conv-liveswitch-old', agentName: 'Claude Code', startedAt: new Date().toISOString(), exitedAt: null, isolatedSwimlaneId: null, status: 'running' },
+          ],
+        };
+        window.__mockTranscriptsGetOverride = (input) => {
+          if (input.sessionId !== 'sess-conv-liveswitch-old') return undefined;
+          state.__deltaPollKnownRevisions.push(input.knownRevision);
+          const call = state.__deltaPollKnownRevisions.length;
+          if (call === 1) {
+            return { ...meta, entries: [{ kind: 'user', uuid: 'turn-delta-1', ts: Date.now(), text: 'DELTA_FIRST_TURN' }], revision: 7 };
+          }
+          if (call === 2) {
+            return {
+              ...meta,
+              delta: true,
+              baseRevision: 7,
+              revision: 8,
+              length: 2,
+              upserts: [[1, { kind: 'assistant', uuid: 'turn-delta-2', ts: Date.now() + 1, blocks: [{ type: 'text', text: 'DELTA_SECOND_TURN' }] }]],
+            };
+          }
+          return { unchanged: true, revision: 8 };
+        };
+      });
+
+      await expect(page.getByText('DELTA_FIRST_TURN')).toBeVisible({ timeout: 8000 });
+      const firstRow = await page.getByText('DELTA_FIRST_TURN').elementHandle();
+      await expect(page.getByText('DELTA_SECOND_TURN')).toBeVisible({ timeout: 8000 });
+      // The first turn's row was patched around, not rebuilt.
+      expect(await firstRow?.evaluate((node) => node.isConnected)).toBe(true);
+      await expect(page.getByText('DELTA_FIRST_TURN')).toBeVisible();
+      // Each poll sent the revision it held: 7 for the delta, then 8.
+      await expect
+        .poll(async () => page.evaluate(() => (window as unknown as { __deltaPollKnownRevisions: Array<number | undefined> }).__deltaPollKnownRevisions.slice(1, 3)), { timeout: 12_000 })
+        .toEqual([7, 8]);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a duplicate uuid in the transcript is rendered once, not piled up as a stale overlapping row', async () => {
     const { browser, page } = await launch();
     try {

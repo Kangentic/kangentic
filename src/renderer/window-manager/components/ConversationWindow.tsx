@@ -40,7 +40,12 @@ import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor'
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
 import { useLayerStore, useWindowManager } from '../context';
 import type { ManagedWindow } from '../store/types';
-import type { TranscriptGetResponse, TranscriptUnchangedResponse } from '../../../shared/types';
+import {
+  applyTranscriptDelta,
+  type TranscriptDeltaResponse,
+  type TranscriptGetResponse,
+  type TranscriptUnchangedResponse,
+} from '../../../shared/types';
 
 interface ConversationWindowProps {
   managedWindow: ManagedWindow;
@@ -54,10 +59,27 @@ interface ConversationWindowProps {
  *  open viewer follows new turns as the agent produces them. */
 const LIVE_REFRESH_MS = 2500;
 
-function isUnchangedResponse(
-  value: TranscriptGetResponse | TranscriptUnchangedResponse,
-): value is TranscriptUnchangedResponse {
+type TranscriptReply = TranscriptGetResponse | TranscriptUnchangedResponse | TranscriptDeltaResponse;
+
+function isUnchangedResponse(value: TranscriptReply): value is TranscriptUnchangedResponse {
   return (value as TranscriptUnchangedResponse).unchanged === true;
+}
+
+/**
+ * The response a reply leaves the window holding: the reply itself when it
+ * is whole, the held entries patched when it is a delta against the held
+ * revision, and null when it is a delta against some other revision (the
+ * caller then fetches the whole conversation). An unchanged reply never
+ * reaches here.
+ */
+function responseAfterReply(
+  held: TranscriptGetResponse | null,
+  reply: TranscriptGetResponse | TranscriptDeltaResponse,
+): TranscriptGetResponse | null {
+  if (!('delta' in reply)) return reply;
+  if (!held || held.revision !== reply.baseRevision) return null;
+  const { delta: _delta, baseRevision: _baseRevision, length: _length, upserts: _upserts, ...meta } = reply;
+  return { ...meta, entries: applyTranscriptDelta(held.entries, reply) };
 }
 
 /**
@@ -170,7 +192,8 @@ export function ConversationWindow({
       .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
       .then((result) => {
         if (cancelled) return;
-        if (!isUnchangedResponse(result)) setResponse(result);
+        // No knownRevision was sent, so the reply is whole.
+        if (!isUnchangedResponse(result)) setResponse(responseAfterReply(null, result));
         setSettledFetchKey(fetchKey);
       })
       .catch(() => {
@@ -204,23 +227,34 @@ export function ConversationWindow({
     const live = sessionStatus === 'running' || sessionStatus === 'queued' || taskHasLiveSession;
     if (!live) return;
     let cancelled = false;
+    // Set when a delta did not fit what this window holds: the next tick asks
+    // for the whole conversation.
+    let wantWhole = false;
     const interval = setInterval(() => {
+      const held = responseRef.current;
       window.electronAPI.transcripts
         .get({
           sessionId: managedWindow.anchor,
           projectId: currentProjectId,
-          knownRevision: responseRef.current?.revision,
+          knownRevision: wantWhole ? undefined : held?.revision,
         })
         .then((result) => {
           if (cancelled) return;
-          // Nothing changed server-side: the handler already skipped the full
-          // structured clone, so there is nothing further to do here.
+          // Nothing changed: the reader sent only a revision.
           if (isUnchangedResponse(result)) return;
+          // A delta carries only the entries that changed since the held
+          // revision; unchanged ones keep their objects.
+          const next = responseAfterReply(responseRef.current, result);
+          if (!next) {
+            wantWhole = true;
+            return;
+          }
+          wantWhole = false;
           // Returning the SAME reference when nothing changed makes React bail
           // out of the re-render, so an idle live session does not repaint the
           // viewer every 2.5s.
           setResponse((previous) =>
-            transcriptSignature(previous) === transcriptSignature(result) ? previous : result,
+            transcriptSignature(previous) === transcriptSignature(next) ? previous : next,
           );
         })
         .catch(() => undefined);

@@ -11,8 +11,15 @@ import type { AgentAdapter, ParsedTranscript } from '../../src/main/agent/agent-
 // parseTranscript`, with no agent-name branching of its own.
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
-  agentRegistry: { getBySessionType: vi.fn() },
+  agentRegistry: { getBySessionType: vi.fn(), list: vi.fn(() => []), get: vi.fn() },
 }));
+
+// The structured format parses and renders in the retrieval worker
+// (`transcript.structured`); this runs the worker's own handler in-process,
+// so the cases below drive the same code through the same mocked registry.
+vi.mock('../../src/main/retrieval/retrieval-client', async () => (
+  (await import('./helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
+));
 
 // transcript-format is NOT mocked: filterTranscriptView / searchTranscript /
 // renderTranscriptBudgeted are pure and agent-agnostic, so the handler's

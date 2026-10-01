@@ -6647,7 +6647,7 @@ export interface ElectronAPI {
 
   // Conversation viewer (structured transcripts)
   transcripts: {
-    get: (input: TranscriptGetRequest) => Promise<TranscriptGetResponse | TranscriptUnchangedResponse>;
+    get: (input: TranscriptGetRequest) => Promise<TranscriptGetResponse | TranscriptUnchangedResponse | TranscriptDeltaResponse>;
     listSessions: (
       taskId: string,
       projectId?: string | null,
@@ -7569,6 +7569,29 @@ export interface TranscriptGetResponse {
 export interface TranscriptUnchangedResponse {
   unchanged: true;
   revision: number;
+}
+
+/**
+ * Returned by `transcripts.get` instead of a full `TranscriptGetResponse`
+ * when the caller's `knownRevision` is one the reader still holds: only the
+ * entries that changed or were added since, by index. Apply it to the entries
+ * the caller has at `baseRevision`: keep the first `length`, then replace each
+ * upsert's index. Every other field is current, as in a full response.
+ */
+export interface TranscriptDeltaResponse extends Omit<TranscriptGetResponse, 'entries'> {
+  delta: true;
+  baseRevision: number;
+  /** How many entries the conversation has at `revision`. */
+  length: number;
+  /** `[index, entry]` for each entry that is new or changed since `baseRevision`. */
+  upserts: Array<[number, TranscriptEntry]>;
+}
+
+/** The entries a delta describes, applied to those its caller holds. */
+export function applyTranscriptDelta(held: TranscriptEntry[], delta: TranscriptDeltaResponse): TranscriptEntry[] {
+  const entries = held.slice(0, delta.length);
+  for (const [index, entry] of delta.upserts) entries[index] = entry;
+  return entries;
 }
 
 /** One selectable session in the conversation viewer's session picker. */

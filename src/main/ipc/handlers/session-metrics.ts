@@ -1,5 +1,6 @@
 import PQueue from 'p-queue';
 import { agentRegistry } from '../../agent/agent-registry';
+import { retrievalClient } from '../../retrieval/retrieval-client';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { SessionManager } from '../../pty/session-manager';
@@ -158,7 +159,8 @@ export function refineTranscriptTokens(
   // before marking the record suspended), so the whole body is guarded.
   try {
     const agentName = sessionManager.getSessionAgentName(sessionId);
-    const adapter = agentName ? agentRegistry.get(agentName) : undefined;
+    if (!agentName) return;
+    const adapter = agentRegistry.get(agentName);
     if (!adapter?.transcriptUsage) return;
 
     const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
@@ -167,11 +169,10 @@ export function refineTranscriptTokens(
     const cwd = record?.cwd ?? null;
     if (!transcriptPath && !(agentSessionId && cwd)) return;
 
-    // Bound after the capability guard: the queued closure runs later, and TS
-    // does not carry the optional-method narrowing across it.
-    const readTranscriptUsage = adapter.transcriptUsage.bind(adapter);
+    // Read in the retrieval worker: a whole-file parse of a transcript that
+    // can run to hundreds of MB, which used to stream through main.
     void transcriptReadQueue
-      .add(() => readTranscriptUsage({ transcriptPath, agentSessionId, cwd }))
+      .add(() => retrievalClient.call('transcript.usage', { agentName, transcriptPath, agentSessionId, cwd }, { timeoutMs: null }))
       .then((transcriptUsage) => {
         if (!transcriptUsage) return;
         sessionRepo.updateTranscriptTokens(recordId, {
@@ -228,7 +229,8 @@ export function refineTranscriptToolCounts(
 ): void {
   try {
     const agentName = sessionManager.getSessionAgentName(sessionId);
-    const adapter = agentName ? agentRegistry.get(agentName) : undefined;
+    if (!agentName) return;
+    const adapter = agentRegistry.get(agentName);
     if (!adapter?.transcriptToolCounts) return;
 
     const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
@@ -237,10 +239,9 @@ export function refineTranscriptToolCounts(
     const cwd = record?.cwd ?? null;
     if (!transcriptPath && !(agentSessionId && cwd)) return;
 
-    // Bound after the capability guard, as in refineTranscriptTokens.
-    const readTranscriptToolCounts = adapter.transcriptToolCounts.bind(adapter);
+    // Read in the retrieval worker, as in refineTranscriptTokens.
     void transcriptReadQueue
-      .add(() => readTranscriptToolCounts({ transcriptPath, agentSessionId, cwd }))
+      .add(() => retrievalClient.call('transcript.toolCounts', { agentName, transcriptPath, agentSessionId, cwd }, { timeoutMs: null }))
       .then((counts) => {
         if (!counts) return;
         sessionRepo.updateTranscriptToolCounts(recordId, counts);

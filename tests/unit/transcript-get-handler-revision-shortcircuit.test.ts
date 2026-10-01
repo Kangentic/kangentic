@@ -1,25 +1,17 @@
 /**
- * Unit tests for the TRANSCRIPT_GET IPC handler's `knownRevision`
- * short-circuit in src/main/ipc/handlers/transcripts.ts.
+ * The TRANSCRIPT_GET IPC handler hands the retrieval worker's JSON to the
+ * renderer as is, and the worker's `transcript.task` answers a caller's
+ * `knownRevision`: a matching revision returns only `{ unchanged: true,
+ * revision }`, while a differing one (with no earlier revision kept for a
+ * delta) or none at all (the first fetch) returns the whole response.
  *
- * When the caller's `request.knownRevision` matches the task's current
- * `resolved.revision`, the handler must skip the full structured-clone
- * payload and return only `{ unchanged: true, revision }`. Any other case
- * (a differing revision, or no `knownRevision` at all - the first fetch)
- * must return the full `TranscriptGetResponse`, including `entries`.
- *
- * Strategy mirrors agent-summarize-handler.test.ts: capture the handler via
- * a mocked `ipcMain.handle`, and stub `resolveTaskTranscript` (the service
- * this handler delegates to) so the test controls the resolved revision
- * directly rather than driving it through real DB/file state.
+ * The worker runs in-process (`inProcessRetrievalClientModule`), and
+ * `resolveTaskTranscript` is stubbed so the test sets the resolved revision
+ * directly rather than driving it through real DB and file state.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { TranscriptGetResponse, TranscriptUnchangedResponse } from '../../src/shared/types';
-
-// ---------------------------------------------------------------------------
-// Hoisted mocks
-// ---------------------------------------------------------------------------
 
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -36,20 +28,21 @@ vi.mock('../../src/main/db/database', () => ({
 }));
 
 const resolveTaskTranscript = vi.fn();
-vi.mock('../../src/main/agent/transcript-service', () => ({
+vi.mock('../../src/main/agent/transcript-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/agent/transcript-service')>()),
   resolveTaskTranscript: (...args: unknown[]) => resolveTaskTranscript(...args),
 }));
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
-  agentRegistry: { getBySessionType: vi.fn() },
+  agentRegistry: { getBySessionType: vi.fn(), list: vi.fn(() => []), get: vi.fn() },
 }));
+
+vi.mock('../../src/main/retrieval/retrieval-client', async () => (
+  (await import('./helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
+));
 
 import { registerTranscriptHandlers } from '../../src/main/ipc/handlers/transcripts';
 import { IPC } from '../../src/shared/ipc-channels';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeContext(currentProjectId: string | null) {
   return { currentProjectId } as Parameters<typeof registerTranscriptHandlers>[0];
@@ -62,7 +55,10 @@ async function invokeTranscriptGet(request: {
 }): Promise<TranscriptGetResponse | TranscriptUnchangedResponse> {
   const handler = capturedHandlers.get(IPC.TRANSCRIPT_GET);
   if (!handler) throw new Error(`${IPC.TRANSCRIPT_GET} handler not registered`);
-  return handler(undefined, request) as Promise<TranscriptGetResponse | TranscriptUnchangedResponse>;
+  const reply = await handler(undefined, request);
+  // Main relays a string; the preload parses it.
+  expect(typeof reply).toBe('string');
+  return JSON.parse(reply as string) as TranscriptGetResponse | TranscriptUnchangedResponse;
 }
 
 function makeResolved(revision: number) {
@@ -84,11 +80,7 @@ function makeResolved(revision: number) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe('TRANSCRIPT_GET IPC handler knownRevision short-circuit', () => {
+describe('TRANSCRIPT_GET relays the worker answer to knownRevision', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     resolveTaskTranscript.mockReset();
@@ -104,7 +96,7 @@ describe('TRANSCRIPT_GET IPC handler knownRevision short-circuit', () => {
     expect('entries' in result).toBe(false);
   });
 
-  it('returns the full response including entries when knownRevision differs from the resolved revision', async () => {
+  it('returns the full response including entries when knownRevision differs and no delta base is kept', async () => {
     resolveTaskTranscript.mockResolvedValue(makeResolved(5));
 
     const result = await invokeTranscriptGet({ sessionId: 'session-1', knownRevision: 4 });
@@ -127,5 +119,15 @@ describe('TRANSCRIPT_GET IPC handler knownRevision short-circuit', () => {
       expect(result.entries).toEqual([{ kind: 'user', uuid: 'u1', ts: 1, text: 'hi' }]);
       expect(result.revision).toBe(1);
     }
+  });
+
+  it('answers an empty response, without asking the worker, when no project is open', async () => {
+    capturedHandlers.clear();
+    registerTranscriptHandlers(makeContext(null));
+
+    const result = await invokeTranscriptGet({ sessionId: 'session-1' });
+
+    expect(result).toMatchObject({ source: 'none', entries: [], revision: 0 });
+    expect(resolveTaskTranscript).not.toHaveBeenCalled();
   });
 });

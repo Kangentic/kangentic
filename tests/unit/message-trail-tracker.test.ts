@@ -10,8 +10,8 @@ import {
   MESSAGE_TRAIL_MAX_SESSIONS,
   MESSAGE_TRAIL_TAIL_BYTES,
   MessageTrailTracker,
-  type MessageTrailAdapter,
 } from '../../src/main/agent/message-trail-tracker';
+import { localTrailReader, type MessageTrailAdapter } from '../../src/main/agent/message-trail-read';
 import { MESSAGE_PREVIEW_MAX_CHARS } from '../../src/main/agent/shared/message-preview';
 import type { AssistantMessageTrailEntry, Session, TranscriptEntry } from '../../src/shared/types';
 
@@ -115,7 +115,7 @@ describe('MessageTrailTracker', () => {
     tracker = new MessageTrailTracker({
       sessionManager: manager,
       resolveSessionFacts: () => ({ sessionType: 'fake-agent', agentSessionId, cwd: '/mock/project' }),
-      resolveAdapter: () => adapter,
+      readTrail: localTrailReader(() => adapter),
       minIntervalMs: MIN_INTERVAL_MS,
       fallbackMinIntervalMs: MIN_INTERVAL_MS,
     });
@@ -343,7 +343,7 @@ describe('MessageTrailTracker', () => {
       const evictionTracker = new MessageTrailTracker({
         sessionManager: manager,
         resolveSessionFacts: (sessionId) => ({ sessionType: 'fake-agent', agentSessionId: sessionId, cwd: '/mock/project' }),
-        resolveAdapter: () => adapter,
+        readTrail: localTrailReader(() => adapter),
         // Large enough that the trailing timer armed below can never fire
         // mid-test: every step from here to the eviction is synchronous JS
         // (no await), so Node's single-threaded event loop cannot run a
@@ -422,7 +422,7 @@ describe('MessageTrailTracker', () => {
       const raceTracker = new MessageTrailTracker({
         sessionManager: manager,
         resolveSessionFacts: (sessionId) => ({ sessionType: 'fake-agent', agentSessionId: sessionId, cwd: '/mock/project' }),
-        resolveAdapter: () => adapter,
+        readTrail: localTrailReader(() => adapter),
         minIntervalMs: MIN_INTERVAL_MS,
         fallbackMinIntervalMs: MIN_INTERVAL_MS,
       });

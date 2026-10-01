@@ -495,7 +495,7 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 Read-only structured-transcript access for the conversation viewer. Prefer the explicit `projectId`, falling back to the ambient current project.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
+| `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session's whole task. Powers the conversation viewer. The retrieval worker parses and stitches it (`transcript.task`) and answers as JSON main relays without parsing (the preload parses it): the whole response, `{ unchanged, revision }` when the caller's `knownRevision` is current, or a `TranscriptDeltaResponse` carrying only the entries changed since a revision the worker still keeps. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
 ### Knowledge Graph (13 channels)

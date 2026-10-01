@@ -136,10 +136,19 @@ describe('retrieval out-of-process boundary', () => {
       'localSummaryPassStore',
       'localUsageReader',
       'loadVecExtensionFrom',
+      // Agent transcript reads: the viewer's stitch and its cache, the
+      // MCP render, the board trail and the phone's window.
+      'resolveTaskTranscript',
+      'resolveSessionTranscript',
+      'getCachedTranscript',
+      'truncateEntries',
+      'renderStructuredTranscript',
+      'readTrail',
+      'sliceTranscriptWindow',
     ];
     // Class methods cannot be found by name, so the classes that own the
     // index's reads and writes are checked whole.
-    const workerOnlyClasses = ['RetrievalStore', 'ConversationIndexer', 'SummaryStore', 'ConversationUsageStore'];
+    const workerOnlyClasses = ['RetrievalStore', 'ConversationIndexer', 'SummaryStore', 'ConversationUsageStore', 'TranscriptSync'];
     for (const devBuild of [false, true]) {
       const text = await bundledText('src/main/index.ts', devBuild);
       const shipped = [

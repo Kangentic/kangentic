@@ -1,8 +1,18 @@
+/**
+ * The conversation viewer's transcript reader: parse each of a task's sessions
+ * (through the stat-validated cache) and stitch them into one timeline.
+ *
+ * Runs in the retrieval worker (`worker/transcript-methods.ts`), never on
+ * main: a 16 MB tail parse was 47 ms of main's time on a 448 MB transcript,
+ * and the Conversation window, the phone and MCP read it while an agent runs.
+ * The worker also parses the same files for the index, so both share one
+ * cache. Entries keep their object identity across reads while their source
+ * is unchanged, which the delta a viewer receives is built on.
+ */
 import type Database from 'better-sqlite3';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { agentRegistry } from './agent-registry';
-import { projectIdOfDb } from '../db/database';
-import { retrievalClient } from '../retrieval/retrieval-client';
+import { RetrievalStore } from '../retrieval/retrieval-store';
 import type { StoredChunk } from '../retrieval/types';
 import { touchBounded, heldBytes } from './shared/bounded-lru';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
@@ -56,17 +66,14 @@ export interface ResolvedTaskTranscript {
 export type IndexedChunk = Pick<StoredChunk, 'id' | 'role' | 'text' | 'tsStart' | 'turnUuidStart'>;
 
 /**
- * Reads a conversation's indexed chunks from a project's index. In the app
- * that is the retrieval worker, which owns the index; the project is the one
- * whose handle `db` is. Tests set an in-process reader.
+ * Reads a conversation's indexed chunks from the project's index, on the
+ * worker's own connection to it. Tests set another reader.
  */
 let readIndexedChunks = async (db: Database.Database, docId: string): Promise<IndexedChunk[]> => {
-  const projectId = projectIdOfDb(db);
-  if (!projectId) return [];
   try {
-    return await retrievalClient.call('transcript.indexedChunks', { projectId, docId });
+    return new RetrievalStore(db).getChunksForDoc('conversation', docId);
   } catch {
-    // The index is restarting: nothing to fall back on this time.
+    // No index tables yet: nothing to fall back on.
     return [];
   }
 };
@@ -282,12 +289,76 @@ function touchStitchMemo(taskId: string, record: StitchMemoRecord): void {
   });
 }
 
+/**
+ * A task's last few stitched revisions, newest last, so a viewer that holds
+ * an earlier one can be sent only what changed since (`entriesAtRevision`).
+ * A poll every 2.5 s is normally one revision behind; a few cover a phone and
+ * a desktop window reading the same task at their own pace.
+ */
+const REVISIONS_KEPT = 4;
+const revisionHistoryByTaskId = new Map<string, Array<{ revision: number; entries: TranscriptEntry[] }>>();
+
+function recordRevision(taskId: string, revision: number, entries: TranscriptEntry[]): void {
+  const history = revisionHistoryByTaskId.get(taskId) ?? [];
+  if (history.length > 0 && history[history.length - 1].revision === revision) return;
+  history.push({ revision, entries });
+  while (history.length > REVISIONS_KEPT) history.shift();
+  revisionHistoryByTaskId.set(taskId, history);
+  // Kept only for tasks the memo still holds, so its bounds bound this too.
+  for (const heldTaskId of revisionHistoryByTaskId.keys()) {
+    if (!stitchMemoByTaskId.has(heldTaskId) && heldTaskId !== taskId) revisionHistoryByTaskId.delete(heldTaskId);
+  }
+}
+
+/** The entries a task had at `revision`, while still kept. */
+export function entriesAtRevision(taskId: string, revision: number): TranscriptEntry[] | null {
+  return revisionHistoryByTaskId.get(taskId)?.find((held) => held.revision === revision)?.entries ?? null;
+}
+
+/** Each entry's JSON, made once per entry object. */
+const jsonByEntry = new WeakMap<TranscriptEntry, string>();
+
+export function entryJson(entry: TranscriptEntry): string {
+  let json = jsonByEntry.get(entry);
+  if (json === undefined) {
+    json = JSON.stringify(entry);
+    jsonByEntry.set(entry, json);
+  }
+  return json;
+}
+
+/**
+ * Whether two entries render the same. The same object always does: a parse
+ * keeps an unchanged entry's object (`truncateEntries`). Objects made fresh
+ * each read (a session boundary, an index-fallback entry, a parser with no
+ * incremental path) compare by content when the uuid lines up.
+ */
+export function sameEntry(left: TranscriptEntry, right: TranscriptEntry): boolean {
+  if (left === right) return true;
+  if (left.uuid !== right.uuid || left.kind !== right.kind) return false;
+  return entryJson(left) === entryJson(right);
+}
+
+/** Each assistant entry stamped with the agent of the session it came from,
+ *  made once per entry and agent so a re-stitch keeps the same objects. */
+const stampedByEntry = new WeakMap<TranscriptEntry, { agentName: string; stamped: TranscriptEntry }>();
+
+function stampAgent(entry: TranscriptEntry, agentName: string): TranscriptEntry {
+  if (entry.kind !== 'assistant') return entry;
+  const known = stampedByEntry.get(entry);
+  if (known && known.agentName === agentName) return known.stamped;
+  const stamped: TranscriptEntry = { ...entry, agentName };
+  stampedByEntry.set(entry, { agentName, stamped });
+  return stamped;
+}
+
 /** Test-only: clear both the file-level transcript cache and the task-level
  *  stitch memo between test cases, AND restore the byte budget, so a case that
  *  lowered it cannot leak a shrunken cap into the next one. */
 export function resetForTests(): void {
   resetTranscriptCacheForTests();
   stitchMemoByTaskId.clear();
+  revisionHistoryByTaskId.clear();
   nextEntriesArrayToken = 1;
   stitchMemoByteBudget = STITCH_MEMO_BYTE_BUDGET;
 }
@@ -468,7 +539,7 @@ export async function resolveTaskTranscript(
     entry: TranscriptEntry;
     sessionId: string;
   }
-  const entries: TranscriptEntry[] = [];
+  let entries: TranscriptEntry[] = [];
   timeSyncWork('transcript:stitch', () => {
     const tagged: TaggedEntry[] = [];
     const seenUuids = new Set<string>();
@@ -476,10 +547,7 @@ export async function resolveTaskTranscript(
       for (const entry of resolved.entries) {
         if (seenUuids.has(entry.uuid)) continue; // a resume replays parent turns verbatim
         seenUuids.add(entry.uuid);
-        tagged.push({
-          entry: entry.kind === 'assistant' ? { ...entry, agentName: resolved.agentName } : entry,
-          sessionId: session.id,
-        });
+        tagged.push({ entry: stampAgent(entry, resolved.agentName), sessionId: session.id });
       }
     }
 
@@ -515,7 +583,15 @@ export async function resolveTaskTranscript(
     }
   });
 
-  const revision = taskId ? (stitchMemoByTaskId.get(taskId)?.revision ?? 0) + 1 : 0;
+  // A re-stitch that came out the same (a file touched without new turns, an
+  // index fallback rebuilt from the same chunks) keeps its revision and its
+  // array, so a poll short-circuits and a viewer is sent nothing.
+  const previousMemo = taskId ? stitchMemoByTaskId.get(taskId) : undefined;
+  const unchanged = previousMemo !== undefined
+    && previousMemo.entries.length === entries.length
+    && entries.every((entry, index) => sameEntry(previousMemo.entries[index], entry));
+  if (unchanged) entries = previousMemo.entries;
+  const revision = taskId ? (unchanged ? previousMemo.revision : (previousMemo?.revision ?? 0) + 1) : 0;
   if (taskId) {
     // Only record file keys when EVERY contributing session has a cached file
     // signature. A session resolved from the index (or with no source at all)
@@ -546,6 +622,7 @@ export async function resolveTaskTranscript(
         agentName: latest.agentName,
       },
     });
+    recordRevision(taskId, revision, entries);
   }
 
   return {
