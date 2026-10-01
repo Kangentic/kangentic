@@ -333,3 +333,62 @@ describe('resumeSuspendedSessions: a suspended record in a non-auto-spawn column
     expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
   });
 });
+
+describe('resumeSuspendedSessions scoped to the sessions a pty host crash took down', () => {
+  it('recovers only the lost session, not an earlier abnormal exit or a session suspended this run, and orphans nothing', async () => {
+    // Mid-run the gather also finds records the host never held. A host crash
+    // must not wake them: that spends tokens and changes the board unasked.
+    swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    taskRepoList.mockReturnValue([
+      makeTask({ id: 'task-lost' }),
+      makeTask({ id: 'task-earlier' }),
+      makeTask({ id: 'task-suspended' }),
+    ]);
+    sessionRepoGetInterruptedExited.mockReturnValue([
+      makeRecord({ id: 'lost', task_id: 'task-lost', status: 'exited', exit_code: -2, suspended_by: null }),
+      makeRecord({ id: 'earlier', task_id: 'task-earlier', status: 'exited', exit_code: 1, suspended_by: null }),
+    ]);
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ id: 'suspended', task_id: 'task-suspended' })]);
+    const sessionManager = makeSessionManager();
+
+    await resumeSuspendedSessions(
+      'proj-1',
+      '/project',
+      sessionManager as never,
+      makeConfigManager(true) as never,
+      null,
+      null,
+      null,
+      null,
+      [],
+      new Set(['lost']),
+    );
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    expect(prepareAgentSpawnMock).toHaveBeenCalledWith(expect.objectContaining({ task: expect.objectContaining({ id: 'task-lost' }) }));
+    // The other two records are left exactly as they were. (The mocked
+    // preparation fails, so only 'lost' itself is retired.)
+    const touchedRecordIds = [...retireRecordMock.mock.calls, ...markRecordSuspendedMock.mock.calls]
+      .map((call) => (call as unknown[])[1]);
+    expect(touchedRecordIds).not.toContain('earlier');
+    expect(touchedRecordIds).not.toContain('suspended');
+  });
+
+  it('without a scope recovers all three, as startup always has', async () => {
+    swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    taskRepoList.mockReturnValue([
+      makeTask({ id: 'task-lost' }),
+      makeTask({ id: 'task-earlier' }),
+      makeTask({ id: 'task-suspended' }),
+    ]);
+    sessionRepoGetInterruptedExited.mockReturnValue([
+      makeRecord({ id: 'lost', task_id: 'task-lost', status: 'exited', exit_code: -2, suspended_by: null }),
+      makeRecord({ id: 'earlier', task_id: 'task-earlier', status: 'exited', exit_code: 1, suspended_by: null }),
+    ]);
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ id: 'suspended', task_id: 'task-suspended' })]);
+
+    await runResume(makeSessionManager());
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(3);
+  });
+});

@@ -32,11 +32,12 @@ skipConsoleListHelper();
  *  costs main a few messages a second instead of one per chunk. */
 const COALESCE_MS = 250;
 /** After a shutdown, how long to wait for the PTYs' exit callbacks before
- *  exiting anyway. An exit callback that lands after Node has stopped crashes
- *  the process (Sentry DESKTOP-C), so the host waits for them first. Covers a
- *  young session's kill, which main defers by its 1500 ms grace, plus the
- *  ConPTY exit that follows it. */
-const SHUTDOWN_EXIT_WAIT_MS = 3500;
+ *  exiting anyway, when main names no bound. An exit callback that lands after
+ *  Node has stopped crashes the process (Sentry DESKTOP-C), so the host waits
+ *  for them first. Main normally sends the bound: its quit drain's deadline
+ *  less a margin, so this process is gone before main stops waiting for it. */
+const DEFAULT_SHUTDOWN_EXIT_WAIT_MS = 1300;
+const MAX_SHUTDOWN_EXIT_WAIT_MS = 10_000;
 const SHUTDOWN_POLL_MS = 25;
 
 const parentPort = process.parentPort;
@@ -122,11 +123,14 @@ async function dispatchRequest(message: PtyHostRequest): Promise<void> {
  * callback has run (main posts the kills), so none is dispatched after Node
  * stops.
  */
-function shutdown(): void {
+function shutdown(exitWaitMs: number | undefined): void {
   const hostCore = core;
   if (!hostCore) process.exit(0);
   hostCore.handleCommand({ type: 'shutdown' });
-  const deadline = Date.now() + SHUTDOWN_EXIT_WAIT_MS;
+  const waitMs = typeof exitWaitMs === 'number' && Number.isFinite(exitWaitMs)
+    ? Math.max(0, Math.min(MAX_SHUTDOWN_EXIT_WAIT_MS, exitWaitMs))
+    : DEFAULT_SHUTDOWN_EXIT_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   const waitForExits = (): void => {
     if (hostCore.livePtyCount === 0 || Date.now() >= deadline) {
       process.exit(0);
@@ -149,7 +153,7 @@ parentPort.on('message', (event: Electron.MessageEvent) => {
       void dispatchRequest(message);
       return;
     case 'shutdown':
-      shutdown();
+      shutdown(message.exitWaitMs);
       return;
     default:
       core?.handleCommand(message);

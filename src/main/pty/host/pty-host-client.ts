@@ -9,6 +9,7 @@
  */
 
 import type { AgentParser } from '../../../shared/types';
+import { PTY_HOST_LOST_EXIT_CODE } from '../../../shared/pty-host';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { PtyHostCore } from './pty-host-core';
 import {
@@ -56,20 +57,16 @@ export interface PtyHostTransport {
   setEventListener(listener: (event: PtyHostEvent) => void): void;
   /** The host process's pid while it runs, for the quit drain; null in-process. */
   readonly hostPid: number | null;
-  /** The app is quitting: flush transcripts and kill every PTY. Synchronous. */
-  shutdown(): void;
+  /** The app is quitting: flush transcripts, and for a utility host, exit once
+   *  every PTY has, within `exitWaitMs`. Synchronous. */
+  shutdown(exitWaitMs?: number): void;
   /** Hear of a host dying and coming back (a utility process only). */
   setLifecycleListener?(listener: PtyHostLifecycleListener): void;
   /** What to run the host core on if the utility process keeps crashing. */
   setFallbackFactory?(factory: () => PtyHostTransport): void;
 }
 
-/**
- * The exit code a PTY is reported with when its host died under it. Non-zero,
- * so startup recovery and the crash notice treat it as an interrupted session;
- * a value no OS uses, so a log tells it apart from a real kill.
- */
-export const PTY_HOST_LOST_EXIT_CODE = -2;
+export { PTY_HOST_LOST_EXIT_CODE };
 
 export interface PtyHostLifecycleHandler {
   /** The host died; these sessions' PTYs were reported exited. */
@@ -244,8 +241,8 @@ export class PtyHostClient {
     return this.transport.request('getDiagnostics', {});
   }
 
-  shutdown(): void {
-    this.transport.shutdown();
+  shutdown(exitWaitMs?: number): void {
+    this.transport.shutdown(exitWaitMs);
   }
 
   private dispatch(event: PtyHostEvent): void {

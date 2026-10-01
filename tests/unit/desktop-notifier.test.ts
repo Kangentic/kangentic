@@ -187,6 +187,19 @@ describe('DesktopNotifier', () => {
     expect(showNotification).not.toHaveBeenCalled();
   });
 
+  it('folds the burst of exits one pty host crash produces into one notification', () => {
+    sessionManager.getSession.mockImplementation((sessionId: string) => makeSession({ id: sessionId }));
+    buildNotifier();
+    for (const sessionId of ['sess-1', 'sess-2', 'sess-3']) sessionManager.emit('exit', sessionId, -2, false);
+    expect(showNotification).toHaveBeenCalledTimes(1);
+    expect(shownInputs()[0]).toMatchObject({ title: 'Terminals restarted', body: 'Running agents are resuming.' });
+
+    // A later, separate crash notifies again once the window and cooldown pass.
+    vi.advanceTimersByTime(10_000);
+    sessionManager.emit('exit', 'sess-4', -2, false);
+    expect(showNotification).toHaveBeenCalledTimes(2);
+  });
+
   it('does not notify when desktop.onAgentCrash is disabled', () => {
     config = makeConfig({ desktop: { onAgentIdle: true, onAgentCrash: false, onPlanComplete: true, onSpawnStalled: true } });
     sessionManager.getSession.mockReturnValue(makeSession());

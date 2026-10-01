@@ -135,7 +135,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     });
   }
 
-  shutdown(): void {
+  shutdown(exitWaitMs?: number): void {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     this.stopHeartbeat();
@@ -148,7 +148,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     const child = this.child;
     if (!child) return;
     try {
-      child.postMessage({ type: 'shutdown' } satisfies PtyHostCommand);
+      child.postMessage({ type: 'shutdown', exitWaitMs } satisfies PtyHostCommand);
     } catch {
       child.kill();
     }

@@ -19,7 +19,12 @@ import { SessionFileManager } from './lifecycle/session-file-manager';
 import { gracefulPtyShutdown } from './shutdown/session-suspend';
 import { suspendAllSessions, killAllSessions, writeExitSequence } from './shutdown/session-shutdown';
 import type { PtyKillReport } from './shutdown/session-shutdown';
-import { DeferredKillRegistry, isYoungSession } from './lifecycle/deferred-kill';
+import { DeferredKillRegistry, KILL_GRACE_MS, isYoungSession } from './lifecycle/deferred-kill';
+import { PTY_EXIT_DRAIN_DEADLINE_MS } from './shutdown/exit-callback-drain';
+
+/** How long before the quit drain's deadline the pty host gives up waiting
+ *  for exits and exits itself, so main never stops waiting first. */
+const HOST_EXIT_MARGIN_MS = 200;
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
@@ -185,6 +190,9 @@ export class SessionManager extends EventEmitter {
    * transcript, detectors), backpressure and the redraw filter live there.
    */
   private readonly host: PtyHostClient;
+  /** Set by `killAll()`: how long the pty host may wait for exits after
+   *  `dispose()`, so it is gone inside the quit drain's deadline. */
+  private hostExitWaitMs: number | undefined;
   /** Main's mirror of each session's alternate-screen state, from the host. */
   private inAltScreen = new Map<string, boolean>();
   /** The column count each session's ring was last sized to, mirroring the
@@ -781,8 +789,8 @@ export class SessionManager extends EventEmitter {
     this.telemetry.dispose();
     // Flush every transcript. A utility host then exits once every PTY's exit
     // callback has landed (killAll posted the kills, a young one's after its
-    // grace).
-    this.host.shutdown();
+    // grace), within the bound killAll worked out from the drain's deadline.
+    this.host.shutdown(this.hostExitWaitMs);
     for (const sessionId of [...this.restingGridTimers.keys()]) this.cancelRestingGridRestore(sessionId);
   }
 
@@ -2414,6 +2422,11 @@ export class SessionManager extends EventEmitter {
     // The drain waits for that process too, so the quit never tears the host
     // down while one of those callbacks is in flight (Sentry DESKTOP-C, now
     // in the host). Counted as one more kill so the blind count stays right.
+    // The host's own wait ends inside the drain's deadline, which a deferred
+    // kill extends by its grace.
+    this.hostExitWaitMs = PTY_EXIT_DRAIN_DEADLINE_MS
+      + (report.deferredCount > 0 ? KILL_GRACE_MS : 0)
+      - HOST_EXIT_MARGIN_MS;
     const hostPid = this.host.hostPid;
     if (hostPid === null || report.killedCount === 0) return report;
     return { ...report, pids: [...report.pids, hostPid], killedCount: report.killedCount + 1 };

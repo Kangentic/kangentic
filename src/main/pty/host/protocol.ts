@@ -94,8 +94,10 @@ export type PtyHostCommand =
   /** The app is quitting: flush every transcript. Main has already posted
    *  every kill (a young session's after its grace). The utility process then
    *  waits for the exit callbacks and exits itself, so none lands after Node
-   *  has stopped (Sentry DESKTOP-C, now in this process). */
-  | { type: 'shutdown' };
+   *  has stopped (Sentry DESKTOP-C, now in this process). `exitWaitMs` bounds
+   *  that wait inside main's quit drain, so the host is gone before main stops
+   *  waiting for it. */
+  | { type: 'shutdown'; exitWaitMs?: number };
 
 export interface PtyHostPipelineStats {
   sessionId: string;

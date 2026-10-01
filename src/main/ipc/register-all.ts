@@ -245,17 +245,20 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // A pty host crash ends every PTY it held; each was reported exited with a
   // non-zero code. Once a new host (or the in-process fallback) is up, the
   // agent sessions resume as they would after a hard shutdown.
-  const projectsLostToPtyHost = new Set<string>();
+  const sessionsLostToPtyHost = new Map<string, Set<string>>();
   sessionManager.on('pty-host-lost', (sessionIds: string[]) => {
     for (const sessionId of sessionIds) {
       const projectId = sessionManager.getSessionProjectId(sessionId);
-      if (projectId) projectsLostToPtyHost.add(projectId);
+      if (!projectId) continue;
+      const lost = sessionsLostToPtyHost.get(projectId) ?? new Set<string>();
+      lost.add(sessionId);
+      sessionsLostToPtyHost.set(projectId, lost);
     }
   });
   sessionManager.on('pty-host-restarted', () => {
-    const projectIds = [...projectsLostToPtyHost];
-    projectsLostToPtyHost.clear();
-    if (projectIds.length > 0 && context) void recoverSessionsAfterPtyHostLoss(context, projectIds);
+    const lostByProject = new Map(sessionsLostToPtyHost);
+    sessionsLostToPtyHost.clear();
+    if (lostByProject.size > 0 && context) void recoverSessionsAfterPtyHostLoss(context, lostByProject);
   });
 
   registerProjectHandlers(context);

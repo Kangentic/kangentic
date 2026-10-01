@@ -52,6 +52,13 @@ export async function resumeSuspendedSessions(
   projectDefaultEffort?: string | null,
   /** Board Board Profiles, so a profiled task resumes on the same rung it spawned under. */
   boardProfiles?: ReadonlyArray<BoardProfile>,
+  /**
+   * Recover these session records and nothing else: the pty host's crash
+   * path, mid-run, where the gather below would also find sessions the host
+   * never held (an agent that exited non-zero on its own, one suspended
+   * earlier this run) and wake them. Startup omits it.
+   */
+  onlySessionIds?: ReadonlySet<string>,
 ): Promise<void> {
   if (isShuttingDown()) return;
 
@@ -64,12 +71,16 @@ export async function resumeSuspendedSessions(
   //    SKIP records whose task already has a live PTY session -- this prevents
   //    re-entrant calls (Vite hot-reload, duplicate PROJECT_OPEN) from
   //    orphaning sessions that were JUST created and are actively running.
+  //    A scoped recovery skips it: its sessions' exits were already recorded,
+  //    and every other 'running' record belongs to a live session.
   const liveTaskIds = new Set(
     sessionManager.listSessions()
       .filter((session) => session.status === 'running' || session.status === 'queued')
       .map((session) => session.taskId),
   );
-  if (liveTaskIds.size > 0) {
+  if (onlySessionIds) {
+    // Nothing to orphan.
+  } else if (liveTaskIds.size > 0) {
     sessionRepo.markRunningAsOrphanedExcluding(liveTaskIds);
   } else {
     sessionRepo.markAllRunningAsOrphaned();
@@ -82,7 +93,10 @@ export async function resumeSuspendedSessions(
   const suspended = sessionRepo.getResumable();
   const orphaned = sessionRepo.getOrphaned();
   const interruptedExited = sessionRepo.getInterruptedExited();
-  const allRecords = [...suspended, ...orphaned, ...interruptedExited];
+  const gathered = [...suspended, ...orphaned, ...interruptedExited];
+  const allRecords = onlySessionIds
+    ? gathered.filter((record) => onlySessionIds.has(record.id))
+    : gathered;
   if (allRecords.length === 0) {
     done(0);
     return;

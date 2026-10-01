@@ -657,12 +657,17 @@ function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
  */
 /**
  * The pty host died and a new one is up: resume the agent sessions it took
- * down. Each lost PTY was reported exited with a non-zero code, so its record
- * is an interrupted one and the startup recovery path resumes it (`--resume`),
- * honouring the auto-resume setting as it does after a hard shutdown.
+ * down, and only those. Each lost PTY was reported exited with a non-zero
+ * code, so its record is an interrupted one and the startup recovery path
+ * resumes it (`--resume`), honouring the auto-resume setting as it does after
+ * a hard shutdown. Scoped to the lost ids, so a session that exited or was
+ * suspended earlier this run is not woken with them.
  */
-export async function recoverSessionsAfterPtyHostLoss(context: IpcContext, projectIds: string[]): Promise<void> {
-  for (const projectId of projectIds) {
+export async function recoverSessionsAfterPtyHostLoss(
+  context: IpcContext,
+  lostSessionIdsByProject: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<void> {
+  for (const [projectId, lostSessionIds] of lostSessionIdsByProject) {
     if (isShuttingDown()) return;
     const project = context.projectRepo.getById(projectId);
     if (!project || !fs.existsSync(project.path)) continue;
@@ -677,6 +682,7 @@ export async function recoverSessionsAfterPtyHostLoss(context: IpcContext, proje
         project.default_model,
         project.default_effort,
         context.boardConfigManager.getBoardProfiles(project.path),
+        lostSessionIds,
       ));
     } catch (error) {
       console.error(`[pty-host] resuming sessions in ${project.name} after the host restarted failed:`, error);

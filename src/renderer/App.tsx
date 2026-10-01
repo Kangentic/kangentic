@@ -29,6 +29,7 @@ import { resolveGpuNotice } from './utils/gpu-notice';
 import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
+import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../shared/pty-host';
 import { describeAutomationFailure } from '../shared/automation-describe';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
@@ -495,6 +496,9 @@ export function App() {
 
     // Session exit events
     if (sessions.onExit) {
+      // A pty host crash ends every terminal at once; its exits collapse to
+      // one notice, and the agents among them resume a moment later.
+      let lastHostLostToastAt = 0;
       cleanups.push(sessions.onExit((sessionId, exitCode, projectId, intentional) => {
         const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
         const exitedTaskId = currentSession?.taskId;
@@ -530,9 +534,19 @@ export function App() {
 
         const notifyConfig = useConfigStore.getState().config.notifications;
 
-        // Only show toast if exited session belongs to current project
         const activeProjectId = useProjectStore.getState().currentProject?.id;
-        if ((projectId ?? currentSession?.projectId) === activeProjectId) {
+        if (exitCode === PTY_HOST_LOST_EXIT_CODE) {
+          // A machine-level event, not one project's, so no project gate.
+          const now = Date.now();
+          if (notifyConfig.toasts.onAgentCrash && now - lastHostLostToastAt >= PTY_HOST_LOST_NOTICE_WINDOW_MS) {
+            useToastStore.getState().addToast({
+              message: 'Terminals restarted. Running agents are resuming.',
+              variant: 'warning',
+            });
+          }
+          lastHostLostToastAt = now;
+        } else if ((projectId ?? currentSession?.projectId) === activeProjectId) {
+          // Only show toast if exited session belongs to current project
           if (notifyConfig.toasts.onAgentCrash) {
             const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId)
               ?? useBoardStore.getState().tasks.find((t) => t.id === currentSession?.taskId);

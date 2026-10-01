@@ -370,6 +370,47 @@ describe('killAll() and the parked PTYs', () => {
   });
 });
 
+describe('killAll() and dispose() with a utility pty host', () => {
+  /** The manager's transport, made to look like a utility host with a pid. */
+  function asUtilityHost(manager: SessionManager, hostPid: number) {
+    const transport = (manager as unknown as { host: { transport: { hostPid: number | null; shutdown: (exitWaitMs?: number) => void } } }).host.transport;
+    Object.defineProperty(transport, 'hostPid', { value: hostPid });
+    return vi.spyOn(transport, 'shutdown');
+  }
+
+  it('adds the host to the drain as one more kill, and bounds its wait inside the extended deadline', async () => {
+    const manager = new SessionManager();
+    await spawnSession(manager, 'task-young', 2222);
+    const shutdown = asUtilityHost(manager, 9999);
+
+    const report = manager.killAll({ allowGrace: true });
+    manager.dispose();
+
+    expect(report).toEqual({ pids: [2222, 9999], killedCount: 2, deferredCount: 1 });
+    // Drain deadline 1500 + the 1500 grace, less the 200 margin.
+    expect(shutdown).toHaveBeenCalledWith(2800);
+  });
+
+  it('bounds the host\'s wait inside the base deadline when nothing was deferred', async () => {
+    const manager = new SessionManager();
+    await spawnSession(manager, 'task-mature', 1111);
+    await vi.advanceTimersByTimeAsync(YOUNG_SINCE_SPAWN_MS);
+    const shutdown = asUtilityHost(manager, 9999);
+
+    const report = manager.killAll({ allowGrace: true });
+    manager.dispose();
+
+    expect(report).toEqual({ pids: [1111, 9999], killedCount: 2, deferredCount: 0 });
+    expect(shutdown).toHaveBeenCalledWith(1300);
+  });
+
+  it('leaves the report alone when nothing was killed, so a quit with no terminals is not held', () => {
+    const manager = new SessionManager();
+    asUtilityHost(manager, 9999);
+    expect(manager.killAll({ allowGrace: true })).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
+  });
+});
+
 describe('the spawn flow onData guard once remove() has cleared the row', () => {
   /** An adapter that reports an agent session id it finds in the output. */
   function idCapturingParser(): AgentParser {
