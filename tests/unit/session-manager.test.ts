@@ -1712,11 +1712,15 @@ describe('Transcript-fallback handoff', () => {
     // The deliberately-detached transcript fallback stays detached.
     expect(managerInternals.sessionHistoryReader.isAttached(session.id)).toBe(false);
 
-    // Same-id churn after the fork stays quiet.
+    // Same-id churn after the fork stays quiet. Wait for the read to be
+    // dispatched, so the assertion below checks a delivered status.
+    const dispatchSpy = vi.spyOn(
+      managerInternals.statusFileReader as unknown as { dispatchStatus: (...args: unknown[]) => void },
+      'dispatchStatus',
+    );
     fs.writeFileSync(statusPath, statusPayload('fork-uuid-after-clear'));
     managerInternals.statusFileReader.handleStatusChange(session.id);
-    // Let the async read land before asserting nothing new fired.
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await vi.waitFor(() => expect(dispatchSpy).toHaveBeenCalledTimes(1));
     expect(capturedAgentSessionIds).toEqual(['fork-uuid-original', 'fork-uuid-after-clear']);
   });
 });
