@@ -10,18 +10,16 @@ export const SHARED_RENDERER_ID = -1;
 import { resolveDebugDumpDir } from '../diagnostics/debug-dump-resolver';
 import { ShellResolver } from './spawn/shell-resolver';
 import { SessionQueue } from './session-queue';
-import { PtyBufferManager } from './buffer/pty-buffer-manager';
 import { SessionHistoryReader } from './readers/session-history-reader';
 import { StatusFileReader } from './readers/status-file-reader';
 import { SessionTelemetry } from '../activity-engine/session-telemetry';
-import { TranscriptWriter, type TranscriptSink } from './buffer/transcript-writer';
+import type { TranscriptSink } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
 import { gracefulPtyShutdown } from './shutdown/session-suspend';
 import { suspendAllSessions, killAllSessions, writeExitSequence } from './shutdown/session-shutdown';
 import type { PtyKillReport } from './shutdown/session-shutdown';
 import { DeferredKillRegistry, isYoungSession } from './lifecycle/deferred-kill';
-import { ResizeManager } from './lifecycle/resize-manager';
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
@@ -29,8 +27,9 @@ import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/se
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
 import { createWriteQueue, type WriteQueue } from './write-queue';
 import { PromptDraftLedger, type WriteOrigin } from './prompt-draft-ledger';
-import { BackpressureController } from './buffer/backpressure-controller';
-import { traceTerminal } from './terminal-trace';
+import { recordTerminalTrace, traceTerminal } from './terminal-trace';
+import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
+import type { PtyHostEvent } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import type {
   Session,
@@ -61,6 +60,43 @@ export interface SessionManagerOptions {
    * wait.
    */
   restingGridDelayMs?: number;
+  /**
+   * Where the PTYs live. Production passes the `kangentic-pty-host` utility
+   * process (`host/utility-pty-host-transport.ts`); without one the host core
+   * runs in this process, which is what the unit tests use.
+   */
+  ptyHostTransport?: PtyHostTransport;
+}
+
+/** Per-session pipeline numbers for the dev terminal-pipeline route. */
+export interface SessionPipelineStats {
+  sessionId: string;
+  taskId: string;
+  status: string;
+  focused: boolean;
+  pendingBytes: number;
+  scrollbackBytes: number;
+  paused: boolean;
+  inFlightBytes: number;
+}
+
+/** Every dimension main and the host know for one session's terminal. */
+export interface SessionTerminalDimensions {
+  sessionId: string;
+  taskId: string;
+  status: string;
+  ptyCols: number | null;
+  ptyRows: number | null;
+  lastCols: number | null;
+  lastRows: number | null;
+  lastDesktopCols: number | null;
+  lastDesktopRows: number | null;
+  pendingResizeCols: number | null;
+  pendingResizeRows: number | null;
+  pendingRepaintAt: number | null;
+  pendingRepaintStacked: boolean;
+  inAltScreen: boolean;
+  geometryChangedAtRingIndex: number | null;
 }
 
 /**
@@ -142,12 +178,22 @@ export class SessionManager extends EventEmitter {
   private deferredKills = new DeferredKillRegistry({ killPty: safeKillPty });
   private shellResolver = new ShellResolver();
   private configuredShell: string | null = null;
+  /** Which sessions have emitted first output, as the pty host reports it. */
   private firstOutputTracker = new FirstOutputTracker();
   /**
-   * TUI redraw suppression: dedup ring buffer + resize grace window.
-   * See ResizeManager for the full contract.
+   * The pty host: every PTY, its output pipeline (ring, headless parser,
+   * transcript, detectors), backpressure and the redraw filter live there.
    */
-  private resizeManager = new ResizeManager();
+  private readonly host: PtyHostClient;
+  /** Main's mirror of each session's alternate-screen state, from the host. */
+  private inAltScreen = new Map<string, boolean>();
+  /** The column count each session's ring was last sized to, mirroring the
+   *  host's buffer so `resize()` reports colsChanged synchronously. */
+  private bufferCols = new Map<string, number>();
+  /** Raw output subscriptions per session (`subscribeDataTap`). */
+  private dataTapRefs = new Map<string, number>();
+  /** Where an in-process host writes transcripts (unit tests). */
+  private transcriptSinkFor: ((projectId: string) => TranscriptSink | null) | null = null;
   /**
    * Sessions currently visible in the renderer (terminal panel + command bar overlay).
    * Only these sessions' PTY data is emitted via IPC - background sessions
@@ -159,8 +205,9 @@ export class SessionManager extends EventEmitter {
    * (useFocusedSessionsSync) and sends a legitimately empty set when no
    * terminal is visible (Backlog view, hidden panel); an unfocused session
    * catches up via getScrollback() on focus. Any headless caller listening on
-   * the manager's 'data' event must call setFocusedSessions first - the
-   * unfiltered 'data-tap' event is the focus-independent seam.
+   * the manager's 'data' event must call setFocusedSessions first. The
+   * focus-independent seams are 'data-tap' (raw bytes, for a session someone
+   * holds a `subscribeDataTap` on) and 'output-seen' (no bytes, every session).
    */
   private focusedSessionIds = new Set<string>();
   /**
@@ -221,16 +268,6 @@ export class SessionManager extends EventEmitter {
    */
   private mountedByRenderer = new Map<number, Set<string>>();
   private mountedSessionIds = new Set<string>();
-  /**
-   * Per-session output backpressure: pauses a session's PTY when the renderer
-   * falls behind on its emitted bytes, resuming as the renderer acks. Only
-   * tracks sessions actively emitting to the renderer (focused); reset on focus
-   * change and per-session on teardown. See BackpressureController.
-   */
-  private backpressure = new BackpressureController(
-    (sessionId) => this.registry.get(sessionId)?.pty ?? null,
-  );
-  private transcriptWriter: TranscriptWriter | null = null;
 
   // Sub-modules owned by SessionManager. Cross-wired in the constructor
   // below; `telemetry` and `sessionHistoryReader` form a cycle (the
@@ -238,7 +275,6 @@ export class SessionManager extends EventEmitter {
   // calls back into telemetry) which is resolved via definite-
   // assignment (`!`) so their callbacks can reference each other.
   private sessionQueue: SessionQueue;
-  private bufferManager: PtyBufferManager;
   private telemetry!: SessionTelemetry;
   private sessionHistoryReader!: SessionHistoryReader;
   private statusFileReader: StatusFileReader;
@@ -265,73 +301,12 @@ export class SessionManager extends EventEmitter {
       maxConcurrent: 5,
     });
 
-    this.bufferManager = new PtyBufferManager({
-      onFlush: (sessionId, data) => {
-        this.consumeFirstOutput(sessionId, data);
-        // Unfiltered output tap: fires for EVERY session regardless of
-        // renderer focus, unlike 'data' below. This is the mobile bridge's
-        // seam onto live PTY output (see src/main/mobile-bridge/handlers)
-        // - it deliberately does NOT feed backpressure.recordEmitted,
-        // since that accounting exists only for the renderer's focused-tab
-        // drain protocol, which a bridge subscriber does not participate
-        // in. With no listener attached this emit is a no-op call, so it
-        // costs nothing when no device is paired. data-tap has a SECOND
-        // feeder, onDrain below, covering bytes a replay sample drains out
-        // of the pending buffer before they can flush.
-        this.emit('data-tap', sessionId, data);
-
-        // Only emit IPC data for focused sessions. Background sessions
-        // accumulate in scrollback and reload via getScrollback() on tab
-        // switch. Default-closed (see focusedSessionIds): an empty set
-        // forwards nothing, so sessions spawned before the renderer's first
-        // SESSION_SET_FOCUSED never fan out over IPC.
-        if (this.focusedSessionIds.has(sessionId)) {
-          this.emit('data', sessionId, data);
-          this.backpressure.recordEmitted(sessionId, data.length);
-        }
-      },
-      onDrain: (sessionId, data) => {
-        // Replay-drain tap: a desktop replay (getScrollback /
-        // getReplaySnapshot) consumed these bytes straight out of the
-        // pending buffer as its double-delivery guard, so they will never
-        // reach onFlush. Forward them to 'data-tap' ONLY:
-        // - never to the focused 'data' IPC emit: suppressing that duplicate
-        //   is exactly what the drain exists for (the renderer receives
-        //   these bytes inside the replay payload it just requested);
-        // - never to backpressure.recordEmitted: that accounting tracks
-        //   bytes in flight on the renderer's 'data' channel, which these
-        //   never ride.
-        // firstOutputTracker DOES consume drained bytes: for the cursor-hide
-        // adapters the ESC[?25l marker can arrive in the very first output
-        // chunk (docs/agent-integration.md pins this for Grok), and a
-        // terminal mounting onto a just-spawned session samples exactly
-        // across that chunk - the replay hold window keeps those bytes out
-        // of onFlush, so skipping them here would strand the shimmer
-        // overlay until the marker happens to recur.
-        // consume() is a one-shot latch, so feeding both the flushed and
-        // the drained stream can never double-fire 'first-output'.
-        this.consumeFirstOutput(sessionId, data);
-        this.emit('data-tap', sessionId, data);
-      },
-      onAltScreenEnter: (sessionId) => {
-        // The TUI's first composed frame: the one boot signal a shell
-        // preamble cannot fake (see the arming comment in resize()). This
-        // trigger always disarms - a child that just switched buffers is
-        // demonstrably parsing output, so the re-delivered geometry lands.
-        //
-        // Stamp the FIRST entry only: it is the upper bound on when Claude
-        // armed its fullscreen boot canary, which is what kill() reads to
-        // decide whether the force-kill must wait for the exit sequence. A
-        // later re-entry (a TUI that dropped to the normal buffer and came
-        // back) is not a boot and must not re-open the window.
-        const session = this.registry.get(sessionId);
-        if (session) session.altScreenEnteredAt ??= Date.now();
-        this.reassertGeometryForBootingChild(sessionId, {
-          trigger: 'alt-screen-enter',
-          disarm: true,
-        });
-      },
-    });
+    this.host = new PtyHostClient(options.ptyHostTransport ?? new InProcessPtyHostTransport({
+      // In-process the detectors are the row's own adapter instance.
+      resolveAgent: (sessionId) => this.registry.get(sessionId)?.agentParser,
+      transcriptSinkFor: (projectId) => this.transcriptSinkFor?.(projectId) ?? null,
+    }));
+    this.host.setEventHandler((event) => this.handleHostEvent(event));
 
     this.sessionIdManager = new SessionIdManager({
       hasAgentSessionId: (id) => this.telemetry.hasAgentSessionId(id),
@@ -341,7 +316,12 @@ export class SessionManager extends EventEmitter {
 
     this.telemetry = new SessionTelemetry({
       onUsageChange: (sessionId, usage) => this.emit('usage', sessionId, usage),
-      onActivityChange: (sessionId, activity, reason) => this.emit('activity', sessionId, activity, reason),
+      onActivityChange: (sessionId, activity, reason) => {
+        // The host's redraw filter reads the current activity (a repaint
+        // after a resize must not wake an idle session).
+        this.host.post({ type: 'setActivity', sessionId, activity });
+        this.emit('activity', sessionId, activity, reason);
+      },
       // A separate event, not 'activity', and that separation is load-bearing
       // rather than tidy. Ten listeners read 'activity' as "the state changed",
       // and several of them ACT on it: the mobile push notifier wakes a phone,
@@ -364,8 +344,10 @@ export class SessionManager extends EventEmitter {
         // a good time to resolve. The authoritative branch->PR query happens in
         // the IPC listener; forward the raw scrollback so it can degrade to
         // scraping if gh is unavailable.
-        const scrollback = this.bufferManager.getRawScrollback(sessionId);
-        this.emit('pr-candidate', sessionId, scrollback);
+        void this.host.getRawScrollback(sessionId).then(
+          (scrollback) => this.emit('pr-candidate', sessionId, scrollback),
+          () => this.emit('pr-candidate', sessionId, ''),
+        );
       },
       onBranchPushed: (sessionId, branch) => {
         // The agent's own `git push` named this branch as its destination. The
@@ -385,6 +367,8 @@ export class SessionManager extends EventEmitter {
         // recoverStaleSessionId() handles all cases - emit unconditionally.
         const session = this.registry.get(sessionId);
         if (!session) return;
+        // The host can stop scanning this session's output for an id.
+        this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
         // Reflect the captured ID on the live Session so the renderer (and
         // tests) can observe it via sessions.list() without a DB round-trip.
         if (session.agentSessionId !== agentReportedId) {
@@ -527,10 +511,9 @@ export class SessionManager extends EventEmitter {
         this.writeQueues.delete(sessionId);
       }
       // The prompt died with the PTY; a remembered draft would otherwise be
-      // reported as discarded by the next session to reuse this id.
+      // reported as discarded by the next session to reuse this id. (The host
+      // dropped the session's backpressure accounting when the PTY exited.)
       this.promptDrafts.clear(sessionId);
-      // The PTY is gone; drop any backpressure accounting (resume is moot).
-      this.backpressure.release(sessionId);
       // Nothing left to reshape either: a respawn spawns at the desktop grid.
       this.cancelRestingGridRestore(sessionId);
       // A deferred force-kill whose PTY exited on its own inside the grace has
@@ -542,41 +525,134 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Feed a chunk to the first-output latch; on the first qualifying chunk,
-   * emit 'first-output'. Fed from BOTH buffer
-   * streams - the 16ms flush (onFlush) and the replay-drain report
-   * (onDrain) - because a replay can consume the chunk carrying the
-   * adapter's one-time marker before it ever flushes. The tracker is a
-   * one-shot latch per session, so the double feed can never double-fire.
+   * Apply one event from the pty host. The host runs the per-chunk work; what
+   * main needs of it arrives here, in the order the host produced it.
    */
-  private consumeFirstOutput(sessionId: string, data: string): void {
-    const session = this.registry.get(sessionId);
-    const detector = session?.agentParser
-      ? (chunk: string) => session.agentParser!.detectFirstOutput(chunk)
-      : undefined;
-    if (this.firstOutputTracker.consume(sessionId, data, detector)) {
-      this.emit('first-output', sessionId);
-      // First-output can be tripped by a SHELL preamble, not the agent (see
-      // the arming comment in resize()), so this trigger DISARMS only when
-      // the stream is already in the alt buffer - the output provably came
-      // from the TUI. Otherwise the jiggle still fires (for an inline-mode
-      // agent this is the only trigger, and one extra repaint is harmless)
-      // but the flag stays armed for the alt-screen-entry trigger, which is
-      // what actually reaches a fullscreen agent that boots after the shell.
-      const tuiComposedThisOutput =
-        this.bufferManager.getDimensionState(sessionId)?.inAltScreen === true;
-      this.reassertGeometryForBootingChild(sessionId, {
-        trigger: 'first-output',
-        disarm: tuiComposedThisOutput,
-      });
-      // `resuming` is NOT cleared here. It means "spawned as a resume of a
-      // previous session" (the Session type's own doc), and the card and the
-      // context bar read it for their spinner label until the model name
-      // lands. Clearing it at first output flipped a resumed card from
-      // "Resuming agent..." to "Starting agent..." for that gap, which reads
-      // as the resume having failed and a fresh agent starting. The overlay
-      // this latch lifts is gone by then, so nothing else consumed the flip.
+  private handleHostEvent(event: PtyHostEvent): void {
+    switch (event.type) {
+      case 'data':
+        // Output for a focused session (the host gates on the focus union).
+        // Rechecked here: a focus change can cross a slice in flight, and
+        // such a slice has no renderer left to go to. The host releases its
+        // accounting for every session a focus change touched.
+        if (this.focusedSessionIds.has(event.sessionId)) this.emit('data', event.sessionId, event.data);
+        return;
+      case 'tap':
+        // Raw output for a session someone subscribed to (subscribeDataTap):
+        // every flushed slice, plus bytes a replay drained before they could
+        // flush. Never the renderer's channel and never in backpressure.
+        this.emit('data-tap', event.sessionId, event.data);
+        return;
+      case 'outputSeen':
+        this.telemetry.activityEngine.markPtyChunk(event.sessionId);
+        // Production stuck-pending-tools signal: a single timestamp write so a
+        // long quiet foreground tool (a test run streaming output with no hook
+        // event or status heartbeat for >5 min) is not force-idled. A no-op
+        // for an unknown id, so it needs no registry guard.
+        this.telemetry.activityEngine.markPtyOutput(event.sessionId);
+        this.emit('output-seen', event.sessionId);
+        return;
+      case 'firstOutput':
+        if (!this.firstOutputTracker.markEmitted(event.sessionId)) return;
+        this.emit('first-output', event.sessionId);
+        // First-output can be tripped by a SHELL preamble, not the agent (see
+        // the arming comment in resize()), so this trigger DISARMS only when
+        // the stream was already in the alt buffer - the output provably came
+        // from the TUI. Otherwise the jiggle still fires (for an inline-mode
+        // agent this is the only trigger, and one extra repaint is harmless)
+        // but the flag stays armed for the alt-screen-entry trigger, which is
+        // what actually reaches a fullscreen agent that boots after the shell.
+        // `resuming` is NOT cleared here: the card and the context bar read it
+        // for their "Resuming agent..." label until the model name lands.
+        this.reassertGeometryForBootingChild(event.sessionId, {
+          trigger: 'first-output',
+          disarm: event.inAltScreen,
+        });
+        return;
+      case 'altScreen': {
+        this.inAltScreen.set(event.sessionId, event.inAltScreen);
+        if (!event.inAltScreen) return;
+        // The TUI's first composed frame: the one boot signal a shell
+        // preamble cannot fake (see the arming comment in resize()). This
+        // trigger always disarms - a child that just switched buffers is
+        // demonstrably parsing output, so the re-delivered geometry lands.
+        //
+        // Stamp the FIRST entry only: it is the upper bound on when Claude
+        // armed its fullscreen boot canary, which is what kill() reads to
+        // decide whether the force-kill must wait for the exit sequence. A
+        // later re-entry is not a boot and must not re-open the window.
+        const session = this.registry.get(event.sessionId);
+        if (session) session.altScreenEnteredAt ??= Date.now();
+        this.reassertGeometryForBootingChild(event.sessionId, {
+          trigger: 'alt-screen-enter',
+          disarm: true,
+        });
+        return;
+      }
+      // The rest re-create per-session state, so each is dropped for a
+      // session no longer in the registry (removed while its PTY exits).
+      case 'ptyIdle':
+        if (this.registry.has(event.sessionId)) this.telemetry.notifyPtyIdle(event.sessionId);
+        return;
+      case 'ptyData':
+        if (this.registry.has(event.sessionId)) this.telemetry.notifyPtyData(event.sessionId);
+        return;
+      case 'agentSessionId':
+        if (!this.registry.has(event.sessionId)) return;
+        if (this.telemetry.hasAgentSessionId(event.sessionId)) return;
+        this.telemetry.notifyAgentSessionId(event.sessionId, event.capturedId);
+        return;
+      case 'streamTelemetry':
+        if (!this.registry.has(event.sessionId)) return;
+        if (event.usage) this.telemetry.setSessionUsage(event.sessionId, event.usage);
+        if (event.events && event.events.length > 0) this.telemetry.ingestEvents(event.sessionId, event.events);
+        return;
+      case 'trace':
+        recordTerminalTrace(event.sessionId, event.event, event.detail, event.ts);
+        return;
+      case 'exit':
+        // Routed per PTY by the host client, never here.
+        return;
+      default: {
+        const unknownEvent: never = event;
+        console.warn('[SessionManager] unknown pty host event', unknownEvent);
+      }
     }
+  }
+
+  /**
+   * Receive a session's raw output as 'data-tap' events until the returned
+   * function is called. Reference-counted per session: the host sends a
+   * session's bytes to main only while someone holds a subscription, so a
+   * flood in an unwatched session costs main nothing.
+   */
+  subscribeDataTap(sessionId: string): () => void {
+    this.dataTapRefs.set(sessionId, (this.dataTapRefs.get(sessionId) ?? 0) + 1);
+    this.publishTapped();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const remaining = (this.dataTapRefs.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.dataTapRefs.set(sessionId, remaining);
+      else this.dataTapRefs.delete(sessionId);
+      this.publishTapped();
+    };
+  }
+
+  private publishTapped(): void {
+    this.host.post({ type: 'setTapped', sessionIds: [...this.dataTapRefs.keys()] });
+  }
+
+  /** The pty host process's pid while it runs (null in-process), for the quit
+   *  drain: the host flushes and exits after the PTYs die. */
+  getPtyHostPid(): number | null {
+    return this.host.hostPid;
+  }
+
+  /** Close the pty host's handle on a project's database before it is deleted. */
+  closeProjectInPtyHost(projectId: string): void {
+    this.host.post({ type: 'closeProject', projectId });
   }
 
   /**
@@ -667,15 +743,18 @@ export class SessionManager extends EventEmitter {
    * kept in the in-memory ring buffer).
    */
   enableTranscripts(sinkFor: (projectId: string) => TranscriptSink | null): void {
-    this.transcriptWriter = new TranscriptWriter(
-      (sessionId) => this.registry.getSessionProjectId(sessionId) ?? null,
-      sinkFor,
-    );
+    // Read only by an in-process host. The utility process opens each
+    // project's database itself and writes there, so the pieces never cross
+    // main (sending them to another process measured at 13 times main's
+    // major-GC time).
+    this.transcriptSinkFor = sinkFor;
   }
 
   dispose(): void {
     this.telemetry.dispose();
-    this.transcriptWriter?.finalizeAll();
+    // Flush every transcript and, for the utility process, kill what is left
+    // and let it exit once the exit callbacks have landed.
+    this.host.shutdown();
     for (const sessionId of [...this.restingGridTimers.keys()]) this.cancelRestingGridRestore(sessionId);
   }
 
@@ -712,10 +791,8 @@ export class SessionManager extends EventEmitter {
     // has no relationship to.
     const affectedSessionIds = new Set(previousForRenderer);
     for (const sessionId of sessionIds) affectedSessionIds.add(sessionId);
-    for (const sessionId of affectedSessionIds) {
-      this.backpressure.release(sessionId);
-      this.reconsiderRestingGrid(sessionId);
-    }
+    this.host.post({ type: 'releaseBackpressure', sessionIds: [...affectedSessionIds] });
+    for (const sessionId of affectedSessionIds) this.reconsiderRestingGrid(sessionId);
   }
 
   /**
@@ -869,7 +946,7 @@ export class SessionManager extends EventEmitter {
    * dropped (overlay / scrollback reload) would never resume.
    */
   acknowledgeDrain(sessionId: string, bytes: number): void {
-    this.backpressure.acknowledge(sessionId, bytes);
+    this.host.post({ type: 'ack', sessionId, bytes });
   }
 
   /**
@@ -936,9 +1013,8 @@ export class SessionManager extends EventEmitter {
     // its sole renderer died would stay paused forever and the agent would
     // stall. A session another renderer still has visible keeps its accounting,
     // which the blanket reset this replaces would have wrongly zeroed.
-    for (const sessionId of departingSessionIds ?? []) {
-      if (!this.focusedSessionIds.has(sessionId)) this.backpressure.release(sessionId);
-    }
+    const orphanedSessionIds = [...(departingSessionIds ?? [])].filter((sessionId) => !this.focusedSessionIds.has(sessionId));
+    if (orphanedSessionIds.length > 0) this.host.post({ type: 'releaseBackpressure', sessionIds: orphanedSessionIds });
   }
 
   private recomputeFocusedUnion(): void {
@@ -969,6 +1045,9 @@ export class SessionManager extends EventEmitter {
       }
     }
     this.focusedSessionIds = union;
+    // The host emits output only for these, so an unwatched session's bytes
+    // never reach this process.
+    this.host.post({ type: 'setFocused', sessionIds: [...union] });
   }
 
   private recomputeMountedUnion(): void {
@@ -1055,16 +1134,18 @@ export class SessionManager extends EventEmitter {
   private doSpawn(input: SpawnSessionInput): Promise<Session> {
     return performSpawn(input, {
       registry: this.registry,
-      bufferManager: this.bufferManager,
+      host: this.host,
       telemetry: this.telemetry,
       sessionIdManager: this.sessionIdManager,
       sessionFiles: this.sessionFiles,
-      resizeManager: this.resizeManager,
       statusFileReader: this.statusFileReader,
       sessionHistoryReader: this.sessionHistoryReader,
       sessionQueue: this.sessionQueue,
       firstOutputTracker: this.firstOutputTracker,
-      getTranscriptWriter: () => this.transcriptWriter,
+      setBufferCols: (sessionId, cols) => {
+        this.bufferCols.set(sessionId, cols);
+        this.inAltScreen.delete(sessionId);
+      },
       getShell: () => this.getShell(),
       takePendingResize: (sessionId) => {
         const dims = this.pendingResizes.get(sessionId);
@@ -1293,7 +1374,13 @@ export class SessionManager extends EventEmitter {
       return { colsChanged: false, refused: true, held: { cols: session.pty.cols, rows: session.pty.rows } };
     }
 
-    const colsChanged = this.bufferManager.onResize(sessionId, clampedCols, clampedRows);
+    // The host's buffer keeps its headless parser on the new grid and arms the
+    // repaint settle; colsChanged reports against main's mirror of the width
+    // that buffer last had, which only this method and the spawn change.
+    const previousBufferCols = this.bufferCols.get(sessionId);
+    const colsChanged = previousBufferCols !== undefined && clampedCols !== previousBufferCols;
+    if (previousBufferCols !== undefined) this.bufferCols.set(sessionId, clampedCols);
+    this.host.post({ type: 'resizeBuffer', sessionId, cols: clampedCols, rows: clampedRows });
     if (clampedCols === session.pty.cols && clampedRows === session.pty.rows) {
       // The grid is not changing, so reshaping the PTY, suppressing activity
       // transitions, and emitting pty-resize would all be pure churn - the
@@ -1349,7 +1436,7 @@ export class SessionManager extends EventEmitter {
     // An inline-mode session's mid-turn resize arms a flag no remaining
     // trigger consumes - a dormant boolean that dies with the session, not a
     // jiggle. Any origin arms - the loss is about timing, not who asked.
-    const preTuiReady = this.bufferManager.getDimensionState(sessionId)?.inAltScreen !== true;
+    const preTuiReady = this.inAltScreen.get(sessionId) !== true;
     if (preTuiReady) {
       session.resizeAppliedBeforeTuiReady = true;
     }
@@ -1359,9 +1446,9 @@ export class SessionManager extends EventEmitter {
       rows: clampedRows,
       preTuiReady,
     });
-    // Mark resize time so the dispatch can suppress idle->thinking
+    // Mark resize time so the host's redraw filter can suppress idle->thinking
     // transitions during the redraw burst that follows.
-    this.resizeManager.notifyResize(sessionId);
+    this.host.post({ type: 'markResized', sessionId });
     // The mobile bridge's seam onto grid changes, mirroring 'data-tap':
     // read-stream forwards this to subscribed phones as a terminal-resize
     // event so their renderer matches the grid before the repaint bytes land.
@@ -1449,11 +1536,13 @@ export class SessionManager extends EventEmitter {
    * PTY and the on-disk session files before this runs.
    */
   private clearSessionCaches(sessionId: string): void {
-    this.bufferManager.removeSession(sessionId);
-    this.transcriptWriter?.remove(sessionId);
+    // The host drops the ring, the transcript (flushing what is pending), its
+    // first-output latch and the redraw filter's state.
+    this.host.post({ type: 'removeSession', sessionId });
     this.telemetry.removeSession(sessionId);
     this.firstOutputTracker.removeSession(sessionId);
-    this.resizeManager.removeSession(sessionId);
+    this.inAltScreen.delete(sessionId);
+    this.bufferCols.delete(sessionId);
   }
 
   /**
@@ -1667,11 +1756,11 @@ export class SessionManager extends EventEmitter {
     this.pendingResizes.delete(sessionId);
     this.lastDesktopDimensions.delete(sessionId);
     this.cancelRestingGridRestore(sessionId);
-    // Release backpressure BEFORE nulling the PTY so a paused session is
-    // resumed (lets any buffered output flush) and its accounting entry is
-    // dropped immediately, rather than waiting for the async onExit handler.
-    // release() is idempotent, so the later 'exit'-driven release is a no-op.
-    this.backpressure.release(sessionId);
+    // Release backpressure BEFORE the kill so a paused session is resumed
+    // (lets any buffered output flush) and its accounting entry is dropped
+    // immediately, rather than waiting for the exit. Posted ahead of the kill,
+    // so the host applies it first; the exit's own release is a no-op.
+    this.host.post({ type: 'releaseBackpressure', sessionIds: [sessionId] });
     if (session?.pty) {
       const ptyRef = session.pty;
       // Read before nulling: the quit drain probes the child pid, not the wrapper.
@@ -1788,7 +1877,7 @@ export class SessionManager extends EventEmitter {
     this.sessionFiles.detachPreservingFiles(sessionId);
 
     // Flush transcript to DB before killing PTY
-    this.transcriptWriter?.finalize(sessionId);
+    this.host.post({ type: 'finalizeTranscript', sessionId });
 
     // Synthetic session_end before we kill - Claude Code's hook won't fire
     this.telemetry.emitSessionEnd(sessionId);
@@ -1815,7 +1904,7 @@ export class SessionManager extends EventEmitter {
 
     // Resume a backpressure-paused PTY so the agent's exit-sequence output is
     // not held back during the graceful shutdown window.
-    this.backpressure.release(sessionId);
+    this.host.post({ type: 'releaseBackpressure', sessionIds: [sessionId] });
 
     if (session.pty) {
       // Send exit sequence, wait up to 1500ms for natural exit, then
@@ -1837,7 +1926,7 @@ export class SessionManager extends EventEmitter {
     // captured. Handles Gemini printing session ID at shutdown, Codex
     // startup header missed by streaming handler, etc. Uses raw (pre-TUI)
     // scrollback so startup headers remain in scope.
-    const rawScrollback = this.bufferManager.getRawScrollback(sessionId);
+    const rawScrollback = await this.host.getRawScrollback(sessionId).catch(() => '');
     this.sessionIdManager.scanScrollback(sessionId, session.agentParser, rawScrollback);
 
     this.emit('session-changed', sessionId, toSession(session));
@@ -1848,23 +1937,18 @@ export class SessionManager extends EventEmitter {
   }
 
   async getScrollback(sessionId: string): Promise<string> {
-    // If a geometry-changing resize just fired, wait for the agent TUI's async
-    // repaint to land before sampling, so the replay shows the frame at the
-    // fitted geometry rather than the stale pre-resize one. No-op for sessions
-    // with no pending geometry change (see PtyBufferManager.waitForResizeRepaint).
-    // Skipped entirely when the session has no live PTY (suspended/killed, or
-    // queued pre-spawn): no process means no SIGWINCH repaint can ever arrive,
-    // so a wait armed just before teardown would only burn its deadline against
-    // a repaint that cannot come.
-    if (this.registry.get(sessionId)?.pty) {
-      await this.bufferManager.waitForResizeRepaint(sessionId);
-    }
-    // Alt-screen sessions and sessions whose byte ring spans a geometry
-    // change get the parsed-grid frame, everything else the raw byte replay -
-    // see PtyBufferManager.getReplaySnapshot for why a capped byte ring
-    // cannot reconstruct a fullscreen TUI's write-once cells, and why a
-    // multi-geometry ring replays with stale-geometry rows interleaved.
-    return this.bufferManager.getReplaySnapshot(sessionId);
+    // If a geometry-changing resize just fired, the host waits for the agent
+    // TUI's async repaint to land before sampling, so the replay shows the
+    // frame at the fitted geometry rather than the stale pre-resize one (see
+    // PtyBufferManager.waitForResizeRepaint). Skipped when the session has no
+    // live PTY (suspended/killed, or queued pre-spawn): no process means no
+    // SIGWINCH repaint can ever arrive, so a wait armed just before teardown
+    // would only burn its deadline against a repaint that cannot come.
+    // Alt-screen sessions and sessions whose byte ring spans a geometry change
+    // get the parsed-grid frame, everything else the raw byte replay (see
+    // PtyBufferManager.getReplaySnapshot). The reply rides the same ordered
+    // channel as the session's output, so no flushed slice overtakes it.
+    return this.host.getScrollback(sessionId, !!this.registry.get(sessionId)?.pty);
   }
 
   /**
@@ -1875,16 +1959,12 @@ export class SessionManager extends EventEmitter {
    * bytes have aged out of the byte window (getScrollback serves the same
    * frame to the desktop when the session is in the alt screen).
    *
-   * Preserves the same repaint settle as getScrollback (awaits
-   * waitForResizeRepaint, and like getScrollback skips it when no live PTY can
-   * deliver a repaint) so the grid is never serialized mid-repaint at a stale
-   * geometry.
+   * Keeps the same repaint settle as getScrollback, skipped likewise when no
+   * live PTY can deliver a repaint, so the grid is never serialized
+   * mid-repaint at a stale geometry.
    */
   async getSerializedFrame(sessionId: string): Promise<string> {
-    if (this.registry.get(sessionId)?.pty) {
-      await this.bufferManager.waitForResizeRepaint(sessionId);
-    }
-    return this.bufferManager.getSerializedFrame(sessionId);
+    return this.host.getSerializedFrame(sessionId, !!this.registry.get(sessionId)?.pty);
   }
 
   /**
@@ -1902,25 +1982,23 @@ export class SessionManager extends EventEmitter {
    * replay-shaped view of them. The exit listener reads it for the same reason
    * when it asks an adapter whether the CLI's last words name a startup
    * failure: at exit there is no process left to repaint, and what matters is
-   * what the CLI wrote.
+   * what the CLI wrote. Async because the ring lives in the pty host.
    */
-  getRawScrollback(sessionId: string): string {
-    return this.bufferManager.getRawScrollback(sessionId);
+  getRawScrollback(sessionId: string): Promise<string> {
+    return this.host.getRawScrollback(sessionId);
   }
 
   /**
    * The Agent Monitor's output peek: the last few meaningful rendered lines.
    *
-   * Deliberately does NOT await `waitForResizeRepaint`, unlike the two readers
+   * Deliberately does NOT wait for a resize repaint, unlike the two readers
    * above. That settle exists so a REPLAY is never captured mid-repaint at a
    * stale width, which matters when the captured frame becomes the terminal the
    * user then looks at. The peek is a few lines of throwaway text resampled on a
-   * timer, so a mid-repaint sample self-corrects on the next tick, while awaiting
-   * the settle would make every sample cost up to REPAINT_MAX_WAIT_MS and force
-   * this synchronous read to become async for no benefit.
+   * timer, so a mid-repaint sample self-corrects on the next tick.
    */
-  getOutputPeek(sessionId: string): string[] {
-    return this.bufferManager.getOutputPeek(sessionId);
+  getOutputPeek(sessionId: string): Promise<string[]> {
+    return this.host.getOutputPeek(sessionId);
   }
 
   /**
@@ -1931,28 +2009,12 @@ export class SessionManager extends EventEmitter {
    * route to diagnose terminal-driven lag: a paused session with high in-flight
    * bytes, or a ballooning pending buffer, points straight at a flooding agent.
    */
-  getPipelineStats(): Array<{
-    sessionId: string;
-    taskId: string;
-    status: string;
-    focused: boolean;
-    pendingBytes: number;
-    scrollbackBytes: number;
-    paused: boolean;
-    inFlightBytes: number;
-  }> {
-    const stats: Array<{
-      sessionId: string;
-      taskId: string;
-      status: string;
-      focused: boolean;
-      pendingBytes: number;
-      scrollbackBytes: number;
-      paused: boolean;
-      inFlightBytes: number;
-    }> = [];
+  async getPipelineStats(): Promise<SessionPipelineStats[]> {
+    const diagnostics = await this.host.getDiagnostics();
+    const bySession = new Map(diagnostics.pipeline.map((entry) => [entry.sessionId, entry]));
+    const stats: SessionPipelineStats[] = [];
     for (const session of this.registry.values()) {
-      const buffer = this.bufferManager.getBufferStats(session.id);
+      const buffer = bySession.get(session.id);
       stats.push({
         sessionId: session.id,
         taskId: session.taskId,
@@ -1960,15 +2022,16 @@ export class SessionManager extends EventEmitter {
         focused: this.focusedSessionIds.has(session.id),
         pendingBytes: buffer?.pendingBytes ?? 0,
         scrollbackBytes: buffer?.scrollbackBytes ?? 0,
-        paused: this.backpressure.isPaused(session.id),
-        inFlightBytes: this.backpressure.getInFlight(session.id),
+        paused: buffer?.paused ?? false,
+        inFlightBytes: buffer?.inFlightBytes ?? 0,
       });
     }
     return stats;
   }
 
   /**
-   * Dev diagnostics: every dimension MAIN knows for each session's terminal.
+   * Dev diagnostics: every dimension main and the host know for each session's
+   * terminal.
    *
    * The renderer can only see its own xterm's grid, so a PTY whose geometry has
    * drifted from the grid showing it is invisible from there - and that
@@ -1976,7 +2039,7 @@ export class SessionManager extends EventEmitter {
    * wrapped or clipped and no refit ever corrects it (xterm only re-sends
    * dimensions when ITS OWN size changes, so a mismatch has no path back).
    *
-   * `ptyCols`/`ptyRows` is the live node-pty grid. `lastCols`/`lastRows` is the
+   * `ptyCols`/`ptyRows` is the live PTY grid. `lastCols`/`lastRows` is the
    * geometry the bytes now in the scrollback were drawn at.
    * `lastDesktopDimensions` is the size the desktop last asked for, and
    * `pendingResize` a size stashed for a session with no PTY yet. Comparing
@@ -1984,26 +2047,12 @@ export class SessionManager extends EventEmitter {
    * terminal-state route) localizes a drift to a specific layer instead of
    * leaving it to be inferred from pixels.
    */
-  getTerminalDimensions(): Array<{
-    sessionId: string;
-    taskId: string;
-    status: string;
-    ptyCols: number | null;
-    ptyRows: number | null;
-    lastCols: number | null;
-    lastRows: number | null;
-    lastDesktopCols: number | null;
-    lastDesktopRows: number | null;
-    pendingResizeCols: number | null;
-    pendingResizeRows: number | null;
-    pendingRepaintAt: number | null;
-    pendingRepaintStacked: boolean;
-    inAltScreen: boolean;
-    geometryChangedAtRingIndex: number | null;
-  }> {
-    const rows = [];
+  async getTerminalDimensions(): Promise<SessionTerminalDimensions[]> {
+    const diagnostics = await this.host.getDiagnostics();
+    const bySession = new Map(diagnostics.dimensions.map((entry) => [entry.sessionId, entry]));
+    const rows: SessionTerminalDimensions[] = [];
     for (const session of this.registry.values()) {
-      const buffer = this.bufferManager.getDimensionState(session.id);
+      const buffer = bySession.get(session.id);
       const desktop = this.lastDesktopDimensions.get(session.id) ?? null;
       const pending = this.pendingResizes.get(session.id) ?? null;
       rows.push({
@@ -2156,11 +2205,6 @@ export class SessionManager extends EventEmitter {
    */
   getCompactionCount(sessionId: string): number {
     return this.telemetry.getCompactionCount(sessionId);
-  }
-
-  /** Return the transcript writer instance (if enabled). */
-  getTranscriptWriter(): TranscriptWriter | null {
-    return this.transcriptWriter;
   }
 
   /** Return cached events for all sessions (survives renderer reloads). */

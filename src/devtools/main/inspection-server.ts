@@ -625,17 +625,17 @@ async function respondEventLoopLag(
 /** Per-session terminal output-pipeline stats (in-process). Diagnoses
  *  terminal-driven lag: a paused session with high in-flight bytes or a
  *  ballooning pending buffer points at a flooding agent. */
-function respondPtyPipeline(
+async function respondPtyPipeline(
   options: InspectionServerOptions,
   response: http.ServerResponse,
-): void {
+): Promise<void> {
   const sessionManager = options.getSessionManager();
   if (!sessionManager) {
     return respondError(response, 503, 'no-session-manager', 'Session manager is not available.');
   }
   respondJson(response, 200, {
     ts: new Date().toISOString(),
-    sessions: sessionManager.getPipelineStats(),
+    sessions: await sessionManager.getPipelineStats(),
   });
 }
 
@@ -670,7 +670,7 @@ async function respondTerminalState(
     return respondError(response, 503, 'no-main-window', 'Main window is not available yet.');
   }
 
-  const main = sessionManager.getTerminalDimensions();
+  const main = await sessionManager.getTerminalDimensions();
   // The third layer beside the pty-vs-grid invariants: the width the child TUI
   // is actually composing at, read from its own byte stream. Gated on
   // alt-screen because outside it raw pass-through content fakes widths (see
@@ -682,7 +682,7 @@ async function respondTerminalState(
     // resolveBaseWidth); it cannot manufacture agreement.
     composedBySession.set(
       dimensionRow.sessionId,
-      measureComposedCols(sessionManager.getRawScrollback(dimensionRow.sessionId), dimensionRow.ptyCols),
+      measureComposedCols(await sessionManager.getRawScrollback(dimensionRow.sessionId), dimensionRow.ptyCols),
     );
   }
   const composedFields = (
@@ -760,7 +760,7 @@ async function respondTerminalState(
     unmountedSessions: main
       .filter((row) => !grids.some((grid) => (grid as Record<string, unknown>).sessionId === row.sessionId))
       .map((row) => ({ ...row, ...composedFields(row.sessionId, row.ptyCols) })),
-    pipeline: sessionManager.getPipelineStats(),
+    pipeline: await sessionManager.getPipelineStats(),
     // Both processes' lifecycle events on ONE timeline. The terminal bugs worth
     // debugging are orderings - which of resize / repaint / sample / replay-write
     // happened first - and that is only visible merged.
@@ -837,7 +837,7 @@ async function respondTerminalForensics(
     FORENSIC_RAW_TAIL_MAX_BYTES,
   );
 
-  const dimensions = sessionManager.getTerminalDimensions()
+  const dimensions = (await sessionManager.getTerminalDimensions())
     .find((row) => row.sessionId === sessionId) ?? null;
 
   // Main's parsed grid, reconstructed by replaying its own serialized frame
@@ -879,7 +879,7 @@ async function respondTerminalForensics(
   const evaluatedValue = (evaluated.value ?? {}) as { dumps?: unknown };
   const rendererGrids = Array.isArray(evaluatedValue.dumps) ? evaluatedValue.dumps : [];
 
-  const raw = sessionManager.getRawScrollback(sessionId);
+  const raw = await sessionManager.getRawScrollback(sessionId);
   const tail = sliceTailOnCharacterBoundary(raw, rawTailBytes);
 
   respondJson(response, 200, {

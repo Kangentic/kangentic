@@ -97,7 +97,7 @@ beforeEach(() => {
   mockHandle.mockClear();
   mockBroadcast.mockClear();
   mockBuildSnapshot.mockClear();
-  mockBuildSnapshot.mockReturnValue({ rows: [], generatedAt: '2026-01-01T00:00:00.000Z' });
+  mockBuildSnapshot.mockResolvedValue({ rows: [], generatedAt: '2026-01-01T00:00:00.000Z' });
 });
 
 afterEach(() => {
@@ -105,33 +105,33 @@ afterEach(() => {
 });
 
 describe('monitor push gate', () => {
-  it('with no subscriber, a session event builds and pushes nothing', () => {
+  it('with no subscriber, a session event builds and pushes nothing', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
 
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
 
     expect(mockBuildSnapshot).not.toHaveBeenCalled();
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
-  it('subscribe returns a snapshot and turns the push pipeline on', () => {
+  it('subscribe returns a snapshot and turns the push pipeline on', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
     const sender = new FakeWebContents(7);
 
-    const snapshot = getHandler(IPC.MONITOR_SUBSCRIBE)({ sender });
+    const snapshot = await getHandler(IPC.MONITOR_SUBSCRIBE)({ sender });
     expect(snapshot).toEqual({ rows: [], generatedAt: '2026-01-01T00:00:00.000Z' });
     expect(mockBuildSnapshot).toHaveBeenCalledTimes(1);
 
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
     expect(mockBroadcast).toHaveBeenCalledTimes(1);
     expect(mockBroadcast.mock.calls[0][1]).toBe(IPC.MONITOR_CHANGED);
   });
 
-  it('a session removal schedules a push, so a detached monitor re-lists and drops the row', () => {
+  it('a session removal schedules a push, so a detached monitor re-lists and drops the row', async () => {
     // A direct remove (project delete, SESSION_RESET, an aborted spawn) has no
     // 'exit' to ride, and the detached monitor's session store refreshes only
     // on MONITOR_CHANGED. Dropping this subscription leaves that window holding
@@ -142,13 +142,13 @@ describe('monitor push gate', () => {
     mockBroadcast.mockClear();
 
     fireSessionRemoved();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
 
     expect(mockBroadcast).toHaveBeenCalledTimes(1);
     expect(mockBroadcast.mock.calls[0][1]).toBe(IPC.MONITOR_CHANGED);
   });
 
-  it('unsubscribe turns the pipeline back off', () => {
+  it('unsubscribe turns the pipeline back off', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
     const sender = new FakeWebContents(7);
@@ -158,12 +158,12 @@ describe('monitor push gate', () => {
     mockBuildSnapshot.mockClear();
 
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
     expect(mockBuildSnapshot).not.toHaveBeenCalled();
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
-  it('a subscriber vanishing INSIDE the debounce window skips the deferred build', () => {
+  it('a subscriber vanishing INSIDE the debounce window skips the deferred build', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
     const sender = new FakeWebContents(7);
@@ -172,15 +172,15 @@ describe('monitor push gate', () => {
     mockBuildSnapshot.mockClear();
 
     fireSessionChanged();
-    vi.advanceTimersByTime(100);
+    await vi.advanceTimersByTimeAsync(100);
     getHandler(IPC.MONITOR_UNSUBSCRIBE)({ sender });
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS);
 
     expect(mockBuildSnapshot).not.toHaveBeenCalled();
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
-  it('a destroyed renderer drops its subscription without an unsubscribe call', () => {
+  it('a destroyed renderer drops its subscription without an unsubscribe call', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
     const sender = new FakeWebContents(7);
@@ -190,11 +190,11 @@ describe('monitor push gate', () => {
     mockBuildSnapshot.mockClear();
 
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
-  it('a crashed renderer (render-process-gone) drops its subscription', () => {
+  it('a crashed renderer (render-process-gone) drops its subscription', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
     const sender = new FakeWebContents(7);
@@ -204,11 +204,11 @@ describe('monitor push gate', () => {
     mockBuildSnapshot.mockClear();
 
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
-  it('a hard reload (main-frame did-start-navigation) drops the subscription; same-document does not', () => {
+  it('a hard reload (main-frame did-start-navigation) drops the subscription; same-document does not', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
     const sender = new FakeWebContents(7);
@@ -217,17 +217,17 @@ describe('monitor push gate', () => {
     sender.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true } satisfies FakeNavigationDetails);
     mockBuildSnapshot.mockClear();
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
     expect(mockBroadcast).toHaveBeenCalledTimes(1);
 
     mockBroadcast.mockClear();
     sender.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false } satisfies FakeNavigationDetails);
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 
-  it('re-subscribing after a reload works and never stacks navigation listeners', () => {
+  it('re-subscribing after a reload works and never stacks navigation listeners', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
     const sender = new FakeWebContents(7);
@@ -242,11 +242,11 @@ describe('monitor push gate', () => {
     subscribe({ sender });
     mockBroadcast.mockClear();
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
     expect(mockBroadcast).toHaveBeenCalledTimes(1);
   });
 
-  it('the plain getSnapshot fetch does not subscribe', () => {
+  it('the plain getSnapshot fetch does not subscribe', async () => {
     const { context, fireSessionChanged } = makeContext();
     registerMonitorHandlers(context);
     const sender = new FakeWebContents(7);
@@ -255,7 +255,7 @@ describe('monitor push gate', () => {
     mockBuildSnapshot.mockClear();
 
     fireSessionChanged();
-    vi.advanceTimersByTime(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
     expect(mockBroadcast).not.toHaveBeenCalled();
   });
 });

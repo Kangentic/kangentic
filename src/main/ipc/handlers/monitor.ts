@@ -75,9 +75,9 @@ export function registerMonitorHandlers(context: IpcContext): void {
     sender.once('render-process-gone', dropOnTeardown);
   };
 
-  const buildSnapshotSafe = () => {
+  const buildSnapshotSafe = async () => {
     try {
-      return buildMonitorSnapshot(context);
+      return await buildMonitorSnapshot(context);
     } catch (error) {
       // Same reasoning as the push path below: one project's DB hiccup must not
       // fail the whole cross-project fetch. `resolveProject` already guards the
@@ -145,16 +145,17 @@ export function registerMonitorHandlers(context: IpcContext): void {
       pushTimer = null;
       if (subscribers.size === 0) return;
       if (context.mainWindow.isDestroyed()) return;
-      try {
+      // A snapshot failure must never take down the session event pipeline it
+      // is riding on.
+      buildMonitorSnapshot(context).then((snapshot) => {
+        if (context.mainWindow.isDestroyed()) return;
         // broadcast (not webContents.send) so a detached monitor window receives
         // it too. MONITOR_CHANGED is declared in the surface's `channels`, without
         // which the pop-out would silently never update.
-        broadcast(context.mainWindow, IPC.MONITOR_CHANGED, buildMonitorSnapshot(context));
-      } catch (error) {
-        // A snapshot failure must never take down the session event pipeline it
-        // is riding on.
+        broadcast(context.mainWindow, IPC.MONITOR_CHANGED, snapshot);
+      }, (error: unknown) => {
         console.error('[monitor] Failed to build snapshot for push:', error);
-      }
+      });
     }, MONITOR_PUSH_DEBOUNCE_MS);
   };
 

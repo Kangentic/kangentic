@@ -366,7 +366,10 @@ describe('SessionManager - natural PTY exit disposes write queue', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. onAutoDispose path: pty.write throws, next write() creates a fresh queue.
+// 5. A pty.write that throws never wedges the session's writes. The PTY lives
+//    in the pty host, so the throw lands there (the host drops that write) and
+//    main's queue keeps draining in order; the queue's own onAutoDispose path is
+//    covered by write-queue's unit tests.
 // ---------------------------------------------------------------------------
 
 describe('SessionManager.write - onAutoDispose recovery', () => {
@@ -381,7 +384,7 @@ describe('SessionManager.write - onAutoDispose recovery', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
 
-  it('creates a fresh queue after pty.write throws, and the next payload arrives', async () => {
+  it('keeps delivering after pty.write throws in the host: the next payload arrives, in order', async () => {
     vi.useFakeTimers();
     try {
       const { session, mockPty } = await spawnSessionWithMock(
@@ -404,13 +407,11 @@ describe('SessionManager.write - onAutoDispose recovery', () => {
       // The first synchronous chunk has landed. Now arm the throw.
       shouldThrow = true;
       vi.advanceTimersToNextTimer();
-      // The throw fires and onAutoDispose removes the map entry.
+      // The throw fires inside the host, which drops that one write.
 
-      // Disarm the throw for the fresh queue.
       shouldThrow = false;
       mockPty.write.mockClear();
 
-      // Second write: must create a fresh queue (the old one was auto-disposed).
       manager.write(session.id, 'recovery-payload');
       vi.runAllTimers();
 
@@ -418,7 +419,9 @@ describe('SessionManager.write - onAutoDispose recovery', () => {
         .map((callArgs) => callArgs[0])
         .join('');
 
-      expect(writtenText).toBe('recovery-payload');
+      // The rest of the first payload, then the second, in order.
+      expect(writtenText.endsWith('recovery-payload')).toBe(true);
+      expect(writtenText.replace('recovery-payload', '')).toMatch(/^a*$/);
 
       errorSpy.mockRestore();
     } finally {

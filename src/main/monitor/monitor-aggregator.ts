@@ -132,11 +132,12 @@ function lastEventOf(events: SessionEvent[] | undefined): MonitorLastEvent | nul
 }
 
 /**
- * Build the full cross-project snapshot. Synchronous by design: every read is
- * either an in-memory cache or an indexed lookup against an already-open DB
- * handle, so there is no await to serialize against a concurrent board mutation.
+ * Build the full cross-project snapshot. The rows are built synchronously from
+ * in-memory caches and indexed lookups against already-open DB handles, so no
+ * await splits them against a concurrent board mutation. Only the output peeks
+ * are awaited, after: they are read from the pty host, which holds the grids.
  */
-export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
+export async function buildMonitorSnapshot(context: IpcContext): Promise<MonitorSnapshot> {
   const { sessionManager } = context;
   const activityCache = sessionManager.getActivityCache();
   const reasonCache = sessionManager.getActivityReasonsCache();
@@ -191,11 +192,10 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
       projectName: project.projectName,
       taskId: managed.taskId,
       taskTitle: task?.title ?? commandTerminalTitle(managed.commandTerminalSlot),
-      // Seeded on every snapshot so the row is self-consistent and an idle session
-      // that never emits still shows something. Live updates between snapshots
-      // ride MONITOR_PEEK. A synchronous O(rows) grid read, negligible next to the
-      // two indexed DB lookups this loop already does per session.
-      outputPeek: sessionManager.getOutputPeek(managed.id),
+      // Seeded on every snapshot (below, from the pty host) so the row is
+      // self-consistent and an idle session that never emits still shows
+      // something. Live updates between snapshots ride MONITOR_PEEK.
+      outputPeek: [],
       // Capped: the card clamps this to at most four short lines, and the
       // snapshot is fanned to every monitor window on every change, so a
       // multi-KB description would ride each push for nothing.
@@ -241,6 +241,11 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
   }
 
   capRecentlyFinished(rows);
+
+  const peeks = await Promise.all(rows.map((row) => Promise.resolve(sessionManager.getOutputPeek(row.sessionId)).catch(() => [])));
+  rows.forEach((row, index) => {
+    row.outputPeek = peeks[index];
+  });
 
   return { rows, generatedAt: new Date().toISOString() };
 }

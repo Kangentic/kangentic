@@ -71,6 +71,17 @@ class FakeSessionManager extends EventEmitter {
   getDimensions = vi.fn((): { cols: number; rows: number } | null => ({ cols: 120, rows: 30 }));
   parkRestingGridForMobileSubscriber = vi.fn();
   isSessionTeardownInFlight = vi.fn(() => false);
+  /** Raw-output subscriptions held, by session (the pty host forwards a
+   *  session's bytes only while one is held). */
+  readonly tapSubscriptions = new Map<string, number>();
+  subscribeDataTap = vi.fn((sessionId: string) => {
+    this.tapSubscriptions.set(sessionId, (this.tapSubscriptions.get(sessionId) ?? 0) + 1);
+    return () => {
+      const remaining = (this.tapSubscriptions.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.tapSubscriptions.set(sessionId, remaining);
+      else this.tapSubscriptions.delete(sessionId);
+    };
+  });
 }
 
 describe('handleReadStream', () => {
@@ -242,6 +253,7 @@ describe('handleReadStream', () => {
     expect(response.ok).toBe(false);
     expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(false);
     expect(sessionManager.listenerCount('data-tap')).toBe(0);
+    expect(sessionManager.tapSubscriptions.size).toBe(0);
     expect(sessionManager.listenerCount('exit')).toBe(0);
   });
 
@@ -265,6 +277,8 @@ describe('handleReadStream', () => {
 
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
     expect(sessionManager.listenerCount('data-tap')).toBe(1);
+    // The pty host forwards the session's raw bytes only while a tap is held.
+    expect(sessionManager.tapSubscriptions.get('sess-1')).toBe(1);
     expect(sessionManager.listenerCount('pty-resize')).toBe(1);
     expect(sessionManager.listenerCount('activity')).toBe(1);
     expect(sessionManager.listenerCount('usage')).toBe(1);
@@ -273,6 +287,7 @@ describe('handleReadStream', () => {
     const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'unsubscribe' }), fakeSession(), context, subscriptions);
     expect(response.ok).toBe(true);
     expect(sessionManager.listenerCount('data-tap')).toBe(0);
+    expect(sessionManager.tapSubscriptions.has('sess-1')).toBe(false);
     expect(sessionManager.listenerCount('pty-resize')).toBe(0);
     expect(sessionManager.listenerCount('activity')).toBe(0);
     expect(sessionManager.listenerCount('usage')).toBe(0);
@@ -299,6 +314,8 @@ describe('handleReadStream', () => {
 
     expect((response.payload as { scrollback: string }).scrollback).toBe('');
     expect(sessionManager.listenerCount('data-tap')).toBe(0);
+    // No tap, so the pty host never sends this session's bytes to main.
+    expect(sessionManager.tapSubscriptions.size).toBe(0);
     expect(sessionManager.listenerCount('pty-resize')).toBe(0);
     // Everything the list actually renders still flows.
     expect(sessionManager.listenerCount('activity')).toBe(1);

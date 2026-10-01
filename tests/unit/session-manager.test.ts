@@ -264,26 +264,23 @@ describe('Scrollback clearing on resize', () => {
     expect(scrollback).toContain('hello world');
   });
 
-  it('reports a resize the just-died PTY rejected instead of throwing it at the renderer', async () => {
+  it('a resize the just-died PTY rejects never throws at the renderer, and the host records it', async () => {
     const { session, mockPty } = await spawnSession();
     // node-pty's WindowsPtyAgent.resize throws this once the child has exited
     // but before the 'exit' event (which nulls session.pty) lands, up to ~1s
     // later on Windows. Every guard before the native call still passes in
     // that window, so the throw used to escape as an unhandled IPC rejection.
+    // The PTY now lives in the pty host: main reports the resize and the host
+    // catches the native throw, recording it for the terminal forensics.
     mockPty.resize.mockImplementationOnce(() => {
       throw new Error('Cannot resize a pty that has already exited');
     });
     vi.mocked(traceTerminal).mockClear();
-    // The catch block must return early: a regression that lets control fall
-    // through to the success path (deleting the `return { colsChanged };`
-    // inside the catch in session-manager.ts) would still trace
-    // 'resize-applied' and emit 'pty-resize' for a resize whose native call
-    // never actually took effect. Observing both proves the early return, not
-    // just the trace call.
-    const resizes: Array<[string, number, number]> = [];
-    manager.on('pty-resize', (sessionId: string, cols: number, rows: number) => resizes.push([sessionId, cols, rows]));
 
-    const result = manager.resize(session.id, 200, 40);
+    let result: ReturnType<typeof manager.resize> | undefined;
+    expect(() => {
+      result = manager.resize(session.id, 200, 40);
+    }).not.toThrow();
 
     expect(result).toEqual({ colsChanged: true });
     const failed = vi.mocked(traceTerminal).mock.calls.find((call) => call[1] === 'resize-failed');
@@ -293,9 +290,6 @@ describe('Scrollback clearing on resize', () => {
       rows: 40,
       message: expect.stringContaining('already exited'),
     });
-    expect(resizes).toEqual([]);
-    const applied = vi.mocked(traceTerminal).mock.calls.find((call) => call[1] === 'resize-applied');
-    expect(applied).toBeUndefined();
   });
 
   it('a rows-only resize arms the repaint settle (arming widens; the report stays colsChanged)', async () => {
@@ -309,7 +303,7 @@ describe('Scrollback clearing on resize', () => {
     expect(result).toEqual({ colsChanged: false });
 
     // But the settle armed on the rows change, visible via the diagnostics row.
-    const dimensions = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    const dimensions = (await manager.getTerminalDimensions()).find((row) => row.sessionId === session.id);
     expect(dimensions?.pendingRepaintAt).not.toBeNull();
     expect(dimensions?.lastRows).toBe(50);
 
@@ -325,7 +319,7 @@ describe('Scrollback clearing on resize', () => {
     // spawnSession()'s own initial resize (120x30) matches the PTY's actual
     // spawn dims, so it is a same-geometry no-op and never arms the gate -
     // the diagnostics row reports null for an unresized session.
-    const beforeResize = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    const beforeResize = (await manager.getTerminalDimensions()).find((row) => row.sessionId === session.id);
     expect(beforeResize?.geometryChangedAtRingIndex).toBeNull();
 
     feedData('hello world');
@@ -334,7 +328,7 @@ describe('Scrollback clearing on resize', () => {
     // before that index was drawn for the OLD (120x30) geometry.
     manager.resize(session.id, 200, 40);
 
-    const afterResize = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    const afterResize = (await manager.getTerminalDimensions()).find((row) => row.sessionId === session.id);
     expect(afterResize?.geometryChangedAtRingIndex).toBe('hello world'.length);
   });
 
@@ -348,7 +342,7 @@ describe('Scrollback clearing on resize', () => {
     // an AWAITED settle here would ride the full REPAINT_MAX_WAIT_MS (400ms)
     // deadline - confirm it actually armed before killing.
     manager.resize(session.id, 120, 50);
-    const dimensionsBeforeKill = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    const dimensionsBeforeKill = (await manager.getTerminalDimensions()).find((row) => row.sessionId === session.id);
     expect(dimensionsBeforeKill?.pendingRepaintAt).not.toBeNull();
 
     // kill() nulls session.pty (unlike remove(), it does NOT clear the
@@ -380,7 +374,7 @@ describe('Scrollback clearing on resize', () => {
     // an AWAITED settle here would ride the full REPAINT_MAX_WAIT_MS (400ms)
     // deadline - confirm it actually armed before killing.
     manager.resize(session.id, 120, 50);
-    const dimensionsBeforeKill = manager.getTerminalDimensions().find((row) => row.sessionId === session.id);
+    const dimensionsBeforeKill = (await manager.getTerminalDimensions()).find((row) => row.sessionId === session.id);
     expect(dimensionsBeforeKill?.pendingRepaintAt).not.toBeNull();
 
     // Same guard as getScrollback (see the sibling test above), applied to
@@ -2278,8 +2272,9 @@ describe('safeKillPty behavior', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       expect(() => manager.killAll()).not.toThrow();
+      // The kill lands in the pty host, which logs the unexpected errno.
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[SESSION]'),
+        expect.stringContaining('[pty-host]'),
         expect.anything(),
       );
     } finally {
@@ -2317,100 +2312,43 @@ describe('safeKillPty behavior', () => {
     }
   });
 
-  // -- suspend() skips 1500ms post-kill wait when kill returns false --------
+  // -- suspend() when the force-kill finds the PTY already dead ----------------
 
   /**
-   * The regression this test locks in:
-   *
    * suspend() sends the exit sequence, waits up to 1500ms for a natural exit,
-   * then force-kills. If the PTY is already dead (EACCES/ESRCH), safeKillPty
-   * returns false and the second 1500ms wait must be SKIPPED entirely.
-   * Without the `if (killLanded)` guard, suspend() would burn a full 1500ms
-   * on every shutdown operation involving an already-dead process.
-   *
-   * We verify this by measuring wall-clock time: if the wait is skipped,
-   * suspend() resolves well under 200ms. If the wait is not skipped it would
-   * take at least 1500ms - a 7x difference that is not attributable to
-   * timer jitter.
+   * then force-kills and waits up to another 1500ms for the kill to propagate.
+   * The PTY lives in the pty host, so a kill that finds the child already dead
+   * (EACCES/ESRCH) fails there, not in main's call: main can skip the second
+   * wait only once the host has REPORTED the exit (RemotePty.kill then throws
+   * ESRCH, see pty-host-client.test.ts). Otherwise the dead child's exit arrives
+   * on its own and ends the wait; with no exit at all, suspend() is bounded by
+   * the two waits and never throws.
    */
-  /**
-   * Authoritative timing test using fake timers.
-   *
-   * Sequence of events inside suspend() after the PTY's exit sequence is sent:
-   *  T+0ms    natural-exit wait starts (1500ms timeout)
-   *  T+1500ms timeout fires, exitedNaturally=false
-   *  T+1500ms force-kill attempted: PTY.kill() throws EACCES -> killLanded=false
-   *  T+1500ms `if (killLanded)` is false -> second wait SKIPPED -> suspend() returns
-   *
-   * With real timers: suspend() resolves at T+1500ms.
-   * With fake timers advanced by 1500ms: suspend() resolves immediately after
-   *   the advance, with no further timer pending.
-   *
-   * We advance fake time by 1500ms and then confirm suspend() has settled.
-   * If the second wait were NOT skipped, a further 1500ms advance would be
-   * required - the test would hang waiting on the unresolved promise.
-   */
-  it('suspend() skips 1500ms post-kill wait when PTY.kill() throws EACCES (killLanded=false)', async () => {
-    vi.useFakeTimers();
-    try {
-      const dead = createAlreadyDeadPty('EACCES');
-      vi.mocked(pty.spawn).mockReturnValue(dead.mockPty as unknown as pty.IPty);
+  for (const errnoCode of ['EACCES', 'ESRCH'] as const) {
+    it(`suspend() settles within the grace and propagation waits when the host's kill throws ${errnoCode}`, async () => {
+      vi.useFakeTimers();
+      try {
+        const dead = createAlreadyDeadPty(errnoCode);
+        vi.mocked(pty.spawn).mockReturnValue(dead.mockPty as unknown as pty.IPty);
 
-      const freshManager = new SessionManager();
+        const freshManager = new SessionManager();
+        const session = await freshManager.spawn({ taskId: `task-kill-dead-${errnoCode}`, command: '', cwd: tmpDir });
 
-      const session = await freshManager.spawn({ taskId: 'task-kill-skip-eacces', command: '', cwd: tmpDir });
+        let settled = false;
+        const suspendPromise = freshManager.suspend(session.id).then(() => { settled = true; });
 
-      // Start suspend() - it will block on the natural-exit wait (1500ms timer).
-      // Do NOT emit the 'exit' event - we want exitedNaturally=false so the
-      // force-kill path runs.
-      let settled = false;
-      const suspendPromise = freshManager.suspend(session.id).then(() => { settled = true; });
+        await vi.advanceTimersByTimeAsync(1500);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1500);
+        await suspendPromise;
+        expect(settled).toBe(true);
 
-      // Advance past the natural-exit timeout only. If killLanded=false correctly
-      // skips the second 1500ms wait, the promise resolves after this advance.
-      await vi.advanceTimersByTimeAsync(1500);
-
-      // Flush any queued microtasks.
-      await Promise.resolve();
-
-      expect(settled).toBe(true);
-
-      // Advance another 1500ms to confirm no second wait is pending.
-      await vi.advanceTimersByTimeAsync(1500);
-      await suspendPromise;
-
-      freshManager.killAll();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('suspend() skips 1500ms post-kill wait when PTY.kill() throws ESRCH (killLanded=false)', async () => {
-    vi.useFakeTimers();
-    try {
-      const dead = createAlreadyDeadPty('ESRCH');
-      vi.mocked(pty.spawn).mockReturnValue(dead.mockPty as unknown as pty.IPty);
-
-      const freshManager = new SessionManager();
-
-      const session = await freshManager.spawn({ taskId: 'task-kill-skip-esrch', command: '', cwd: tmpDir });
-
-      let settled = false;
-      const suspendPromise = freshManager.suspend(session.id).then(() => { settled = true; });
-
-      await vi.advanceTimersByTimeAsync(1500);
-      await Promise.resolve();
-
-      expect(settled).toBe(true);
-
-      await vi.advanceTimersByTimeAsync(1500);
-      await suspendPromise;
-
-      freshManager.killAll();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+        freshManager.killAll();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -2843,8 +2781,8 @@ describe('Per-renderer focus scoping', () => {
   }
 
   /** Bytes emitted-but-unacknowledged for a session, via the public pipeline-stats seam. */
-  function inFlightBytesFor(sessionId: string): number {
-    const stats = manager.getPipelineStats();
+  async function inFlightBytesFor(sessionId: string): Promise<number> {
+    const stats = await manager.getPipelineStats();
     return stats.find((row) => row.sessionId === sessionId)?.inFlightBytes ?? 0;
   }
 
@@ -2864,16 +2802,16 @@ describe('Per-renderer focus scoping', () => {
 
     // Sanity: both sessions actually accumulated in-flight accounting, or the
     // assertions below would pass vacuously.
-    expect(inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
-    expect(inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
+    expect(await inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
+    expect(await inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
 
     // Renderer 2 changes its OWN focus away from session B. Session B was in
     // renderer 2's affected set (previous ∪ new), so it is released. Session A
     // was never in renderer 2's set and must be left alone.
     manager.setFocusedSessions([], RENDERER_2);
 
-    expect(inFlightBytesFor(sessionB.id)).toBe(0);
-    expect(inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
+    expect(await inFlightBytesFor(sessionB.id)).toBe(0);
+    expect(await inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
   });
 
   it('clearFocusedSessionsFor releases only sessions no other renderer still has focused', async () => {
@@ -2891,16 +2829,16 @@ describe('Per-renderer focus scoping', () => {
     feedB('hello-b');
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
-    expect(inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
+    expect(await inFlightBytesFor(sessionA.id)).toBeGreaterThan(0);
+    expect(await inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
 
     // Renderer 1's window closes. Session A had no other consumer, so its
     // accounting is released. Session B is still held by renderer 2 and must
     // keep its in-flight accounting intact.
     manager.clearFocusedSessionsFor(RENDERER_1);
 
-    expect(inFlightBytesFor(sessionA.id)).toBe(0);
-    expect(inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
+    expect(await inFlightBytesFor(sessionA.id)).toBe(0);
+    expect(await inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
   });
 
   it('getRenderersFocusedOn reports every renderer currently showing a session', async () => {

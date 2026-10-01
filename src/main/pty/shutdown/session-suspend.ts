@@ -1,5 +1,5 @@
 import type { EventEmitter } from 'node:events';
-import type * as pty from 'node-pty';
+import type { PtyHandle } from '../host/pty-host-client';
 import { writeExitSequence } from './session-shutdown';
 
 /**
@@ -58,14 +58,14 @@ export function awaitSessionExit(
  * delegated to the callbacks.
  */
 export async function gracefulPtyShutdown(input: {
-  ptyRef: pty.IPty;
+  ptyRef: PtyHandle;
   exitSequence: string[];
   emitter: EventEmitter;
   sessionId: string;
   /** Null the caller's reference to the PTY before we force-kill. */
   clearPty: () => void;
   /** Invoke the caller's safeKillPty and return whether kill landed. */
-  killPty: (ptyRef: pty.IPty) => boolean;
+  killPty: (ptyRef: PtyHandle) => boolean;
   gracePeriodMs?: number;
   killPropagationMs?: number;
 }): Promise<void> {

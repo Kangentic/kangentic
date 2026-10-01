@@ -693,14 +693,21 @@ export function registerSessionHandlers(context: IpcContext): void {
     const exitAgentName = context.sessionManager.getSessionAgentName(exitedSession.id);
     const adapter = exitAgentName ? agentRegistry.get(exitAgentName) : undefined;
     if (!adapter?.describeStartupFailure) return;
-    const startupFailure = adapter.describeStartupFailure(context.sessionManager.getRawScrollback(exitedSession.id), exitCode);
-    if (!startupFailure) return;
-    try {
-      const failedTask = new TaskRepository(getProjectDb(projectId)).getById(exitedSession.taskId);
-      if (failedTask) notifySpawnBlocked(context, failedTask, 'agent', new Error(startupFailure), projectId);
-    } catch {
-      // DB may be closed during shutdown; the notice is best-effort.
-    }
+    const describeStartupFailure = adapter.describeStartupFailure.bind(adapter);
+    // The ring lives in the pty host. The read is posted now, ahead of any
+    // kill that follows, so it sees the CLI's last words.
+    void context.sessionManager.getRawScrollback(exitedSession.id).then((rawScrollback) => {
+      const startupFailure = describeStartupFailure(rawScrollback, exitCode);
+      if (!startupFailure) return;
+      try {
+        const failedTask = new TaskRepository(getProjectDb(projectId)).getById(exitedSession.taskId);
+        if (failedTask) notifySpawnBlocked(context, failedTask, 'agent', new Error(startupFailure), projectId);
+      } catch {
+        // DB may be closed during shutdown; the notice is best-effort.
+      }
+    }, () => {
+      // The host is gone (a quit or a crash); there is nothing to read.
+    });
   };
 
   // The agent-absence sweep found a running session whose CLI is gone and is

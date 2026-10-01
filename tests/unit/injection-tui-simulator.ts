@@ -424,6 +424,12 @@ export class SimulatedSessionManager extends EventEmitter {
     this.write(sessionId, data);
   }
 
+  /** The real manager asks the pty host for a session's bytes; this one
+   *  always emits 'data-tap', so a subscription changes nothing. */
+  subscribeDataTap(): () => void {
+    return () => undefined;
+  }
+
   drain(sessionId: string): Promise<void> {
     if (sessionId !== this.sessionId) return Promise.resolve();
     if (this.pending.length === 0 && this.flushTimer === null) return Promise.resolve();

@@ -1,21 +1,17 @@
-import * as pty from 'node-pty';
 import * as path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
-import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import type { Session, SessionContext, SpawnSessionInput } from '../../../shared/types';
+import type { AgentParser, Session, SessionContext, SpawnSessionInput } from '../../../shared/types';
 import type { SessionRegistry, ManagedSession } from '../session-registry';
 import { toSession } from '../session-registry';
-import type { PtyBufferManager } from '../buffer/pty-buffer-manager';
 import type { SessionTelemetry } from '../../activity-engine/session-telemetry';
 import type { SessionIdManager } from './session-id-manager';
 import type { SessionFileManager } from './session-file-manager';
-import type { ResizeManager } from './resize-manager';
 import type { StatusFileReader } from '../readers/status-file-reader';
 import type { SessionHistoryReader } from '../readers/session-history-reader';
 import type { SessionQueue } from '../session-queue';
 import type { FirstOutputTracker } from './first-output-tracker';
-import type { TranscriptWriter } from '../buffer/transcript-writer';
+import type { PtyHostClient } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
 import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd } from '../spawn/pty-spawn';
@@ -39,23 +35,25 @@ export const DEFAULT_PTY_ROWS = 30;
  * single object so the signature stays readable as new modules get
  * wired into the lifecycle.
  *
- * Callbacks (`getShell`, `getTranscriptWriter`, `emit`) use getters
- * instead of value snapshots because the underlying state can change
- * after spawn (transcript writer is installed lazily; shell config
- * is mutable; emit is the session manager's inherited method).
+ * Callbacks (`getShell`, `emit`) use getters instead of value snapshots
+ * because the underlying state can change after spawn (shell config is
+ * mutable; emit is the session manager's inherited method).
  */
 export interface SpawnFlowContext {
   registry: SessionRegistry;
-  bufferManager: PtyBufferManager;
+  /** The pty host: spawns the PTY and owns its output pipeline (buffer,
+   *  transcript, detectors). */
+  host: PtyHostClient;
   telemetry: SessionTelemetry;
   sessionIdManager: SessionIdManager;
   sessionFiles: SessionFileManager;
-  resizeManager: ResizeManager;
   statusFileReader: StatusFileReader;
   sessionHistoryReader: SessionHistoryReader;
   sessionQueue: SessionQueue;
   firstOutputTracker: FirstOutputTracker;
-  getTranscriptWriter: () => TranscriptWriter | null;
+  /** Record the column count a session's ring was seeded at (main's mirror
+   *  for `resize()`'s colsChanged report). */
+  setBufferCols: (sessionId: string, cols: number) => void;
   getShell: () => Promise<string>;
   /**
    * Consume any resize that arrived before this session's PTY existed (see
@@ -83,6 +81,16 @@ function pickCarryoverSource(siblings: ManagedSession[], reusedId: string): Mana
     if (!source || (sibling.startedAt || '') > (source.startedAt || '')) source = sibling;
   }
   return source ?? siblings[0] ?? null;
+}
+
+/**
+ * The registry name of the adapter behind an `AgentParser`. The parser is the
+ * full `AgentAdapter` instance at runtime (see ManagedSession.agentParser), so
+ * its `name` is the key the pty host resolves the detectors by.
+ */
+function adapterNameOf(parser: AgentParser): string | null {
+  const name = (parser as { name?: unknown }).name;
+  return typeof name === 'string' ? name : null;
 }
 
 /**
@@ -161,24 +169,13 @@ export async function performSpawn(
     disposeAdapterAttachment(sibling);
   }
 
-  // Carry over previous scrollback BEFORE removing state so scroll history
-  // is preserved across respawns (including resume). Claude CLI's TUI uses
-  // full-screen draws that overwrite the active viewport without corrupting
-  // scroll history. The geometry the carried bytes were drawn for rides
-  // along so initSession can keep the replay's geometry gate accurate
-  // instead of conservatively frame-routing every respawn.
+  // Carry over previous scrollback so scroll history is preserved across
+  // respawns (including resume). Claude CLI's TUI uses full-screen draws that
+  // overwrite the active viewport without corrupting scroll history. The host
+  // holds the rings: it reads the source's bytes and the geometry they were
+  // drawn for before it drops the old sessions, so initSession can keep the
+  // replay's geometry gate accurate instead of frame-routing every respawn.
   const carryoverSource = pickCarryoverSource(siblings, id);
-  const previousScrollback = carryoverSource ? context.bufferManager.getRawScrollback(carryoverSource.id) : '';
-  const previousGeometry = carryoverSource ? context.bufferManager.getCarryoverGeometry(carryoverSource.id) : null;
-
-  // Remove the old rows from the map and caches so the task's only registry
-  // row is the new session, and stale usage/activity data doesn't persist.
-  for (const sibling of siblings) {
-    context.registry.delete(sibling.id);
-    context.telemetry.removeSession(sibling.id);
-    context.bufferManager.removeSession(sibling.id);
-    context.sessionFiles.removeSession(sibling.id);
-  }
 
   // Shell invocation (exe + args) and spawn env. See pty-spawn.ts.
   const shellName = shell.toLowerCase();
@@ -228,30 +225,51 @@ export async function performSpawn(
   const spawnCols = pendingResize?.cols ?? requestedCols ?? DEFAULT_PTY_COLS;
   const spawnRows = pendingResize?.rows ?? requestedRows ?? DEFAULT_PTY_ROWS;
 
-  let ptyProcess: pty.IPty;
-  try {
-    ptyProcess = pty.spawn(shellExe, shellArgs, {
-      name: 'xterm-256color',
-      cols: spawnCols,
-      rows: spawnRows,
-      cwd: effectiveCwd,
-      env: cleanEnv,
-    });
-  } catch (err) {
-    return handleSpawnFailure(err, {
+  // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
+  // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
+  // lets it run the output detectors; a session with no adapter has none.
+  const spawnOutcome = await context.host.spawn({
+    sessionId: id,
+    projectId: carryoverSource?.projectId || input.projectId,
+    agentName: input.agentParser ? (input.agentName ?? adapterNameOf(input.agentParser)) : null,
+    transient: input.transient === true,
+    file: shellExe,
+    args: shellArgs,
+    cwd: effectiveCwd,
+    env: cleanEnv,
+    cols: spawnCols,
+    rows: spawnRows,
+    carryoverFromSessionId: carryoverSource?.id ?? null,
+    dropSessionIds: siblings.map((sibling) => sibling.id),
+    agentSessionIdKnown: !!input.agentSessionId,
+  });
+
+  // Remove the old rows from the map and caches so the task's only registry
+  // row is the new session, and stale usage/activity data doesn't persist.
+  // After the spawn, so the task is never without a row while it is in flight.
+  for (const sibling of siblings) {
+    context.registry.delete(sibling.id);
+    context.telemetry.removeSession(sibling.id);
+    context.sessionFiles.removeSession(sibling.id);
+  }
+
+  if (!spawnOutcome.ok) {
+    return handleSpawnFailure(spawnOutcome.error, {
       id,
       input,
       shell,
       shellExe,
       shellArgs,
       effectiveCwd,
-      previousScrollback,
+      previousScrollback: spawnOutcome.previousScrollback,
     }, {
       registry: context.registry,
-      bufferManager: context.bufferManager,
+      host: context.host,
+      setBufferCols: context.setBufferCols,
       emit: context.emit,
     });
   }
+  const ptyProcess = spawnOutcome.pty;
 
   const session: ManagedSession = {
     id,
@@ -275,17 +293,12 @@ export async function performSpawn(
 
   context.registry.set(id, session);
 
-  // Initialize extracted modules for this session. Seed the buffer manager with
-  // the ACTUAL spawn cols so the first renderer resize reports colsChanged
-  // truthfully: an unchanged width (PTY spawned at the fitted size) reports
-  // false and skips the repaint-settle, while the cold-launch 120-to-fitted
-  // change reports true and arms it. See PtyBufferManager.onResize.
-  // previousGeometry lets initSession carry the replay geometry gate through a
-  // same-geometry respawn (the common resume) instead of frame-routing it.
-  // transient mirrors the clear-prelude exemption below: a Command Terminal
-  // has no spawn echo for the pre-TUI strip to hunt, and arming it there
-  // would let a user shell's later \x1b[2J wipe genuine scrollback.
-  context.bufferManager.initSession(id, previousScrollback, spawnCols, spawnRows, previousGeometry, input.transient === true);
+  // The host seeded the ring at the ACTUAL spawn cols, so the first renderer
+  // resize reports colsChanged truthfully: an unchanged width (PTY spawned at
+  // the fitted size) reports false and skips the repaint-settle, while the
+  // cold-launch 120-to-fitted change reports true and arms it. Main keeps the
+  // same number for that report. See PtyBufferManager.onResize.
+  context.setBufferCols(id, spawnCols);
   context.sessionFiles.register({
     sessionId: id,
     statusOutputPath: input.statusOutputPath || null,
@@ -402,97 +415,14 @@ export async function performSpawn(
     });
   }
 
-  // Batched data output (~60Hz hot path). Fans out to:
-  //   - PtyBufferManager: ring buffer + IPC batching for focused sessions.
-  //   - TranscriptWriter: raw bytes to DB (skipped for transient sessions).
-  //   - SessionIdManager: chunk-boundary-safe scanner for the agent's
-  //     self-reported session ID (ANSI-stripped for ConPTY).
-  //   - Stream telemetry parser (adapter-specific, lazy init on first chunk).
-  //   - PTY activity detection (yields to hook-based for 'hooks_and_pty').
-  const ptyDataDisposable = ptyProcess.onData((data: string) => timeSyncWork('pty:data', () => {
-    context.bufferManager.onData(id, data);
-
-    // Dev-only: record chunk arrival for the trace replay pipeline.
-    // Length-only (no content) keeps the file small and privacy-safe.
-    traceRecorder.recordPtyChunk(id, data.length);
-
-    // Per-session in-memory ring of bucketed PTY chunk arrivals for
-    // the debug overlay's timeline. Cheap (one map lookup + array
-    // push) and bounded (~1200 entries for the 120s window). Body is
-    // dead-code-eliminated in production via __KANGENTIC_DEV__.
-    context.telemetry.activityEngine.markPtyChunk(id);
-
-    // Production stuck-pending-tools signal: a single timestamp write so a
-    // long quiet foreground tool (a test run streaming output with no hook
-    // event or status heartbeat for >5 min) is not force-idled. Unconditional
-    // and independent of the PtyActivityTracker suppression below, which
-    // silences PTY activity detection for hooks-based agents but must not
-    // silence this watchdog refresh.
-    context.telemetry.activityEngine.markPtyOutput(id);
-
-    // A session remove()d while its PTY is still exiting (kill() parks a
-    // young session's PTY for the exit-sequence grace, so its exit screen
-    // arrives after the row and its caches are gone) must not re-create
-    // per-session state under a dead id. None of the consumers below guards
-    // its own existence: the transcript flush would write against a DB record
-    // the cleanup may already have deleted, the session-id scanner would arm
-    // a fresh rolling buffer, and the telemetry paths (setSessionUsage,
-    // ingestEvents, notifyPtyData) would re-create the usage / event caches
-    // remove() just cleared and push updates for a session the renderer no
-    // longer knows. markPtyOutput above is the one documented no-op for an
-    // unknown id, so it stays unguarded.
-    const rowStillRegistered = context.registry.has(id);
-
-    // Transient sessions (command terminal) have no DB row and keep no
-    // transcript, so they are skipped entirely.
-    if (!session.transient && rowStillRegistered) {
-      context.getTranscriptWriter()?.onData(id, data);
-    }
-
-    // Per-adapter session ID capture from PTY output. Handles chunk-
-    // boundary safety (rolling buffer) and ANSI stripping (Windows
-    // ConPTY cursor positioning that defeats raw regexes).
-    if (rowStillRegistered) {
-      context.sessionIdManager.onData(id, data, session.agentParser);
-    }
-
-    // Per-adapter stream telemetry (e.g. Cursor stream-json: model from
-    // the init event, ToolStart/ToolEnd events for activity tracking).
-    // Each adapter owns whatever carry-over state it needs across PTY
-    // chunks (the parser is constructed lazily on first chunk).
-    const streamFactory = input.agentParser?.runtime?.streamOutput;
-    if (streamFactory && rowStillRegistered) {
-      if (!session.streamParser) {
-        session.streamParser = streamFactory.createParser();
-      }
-      const result = session.streamParser.parseTelemetry(data);
-      if (result?.usage) {
-        context.telemetry.setSessionUsage(id, result.usage);
-      }
-      if (result?.events && result.events.length > 0) {
-        context.telemetry.ingestEvents(id, result.events);
-      }
-    }
-
-    // PTY-based activity detection for agents using 'pty' or 'hooks_and_pty'
-    // strategies. For 'hooks_and_pty', yields to hook-based detection once
-    // hooks deliver a thinking event.
-    const strategy = input.agentParser?.runtime?.activity;
-    if (strategy && strategy.kind !== 'hooks' && rowStillRegistered) {
-      if (strategy.detectIdle?.(data)) {
-        context.telemetry.notifyPtyIdle(id);
-      } else if (data.length > 0) {
-        const currentActivity = context.telemetry.getSessionActivity(id);
-        if (context.resizeManager.shouldNotifyOnData(id, data, currentActivity)) {
-          context.telemetry.notifyPtyData(id);
-        }
-      }
-    }
-  }));
+  // The PTY's output never reaches this process. The host runs the per-chunk
+  // pipeline (the ring and headless parser, the transcript, the session-id
+  // scan, stream telemetry, the redraw filter, idle detection) and sends main
+  // what it needs as events; SessionManager.handleHostEvent applies them.
 
   // PTY exit cleanup sequence. Don't overwrite 'suspended' - suspend()
   // sets that before killing the PTY, and the new status must survive.
-  const ptyExitDisposable = ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
+  const ptyExitDisposable = context.host.onPtyExit(ptyProcess.ptyId, (exitCode: number) => {
     // Captured BEFORE the status mutation below. `intentional` means Kangentic
     // ended this session deliberately, so a non-zero force-kill exit must not be
     // misclassified as a crash. Two deliberate-end mechanisms set it:
@@ -525,8 +455,7 @@ export async function performSpawn(
     context.sessionIdManager.clearDiagnostic(id);
     disposeAdapterAttachment(session);
 
-    // Flush transcript to DB before closing out the session
-    context.getTranscriptWriter()?.finalize(id);
+    // The host flushed this session's transcript before it reported the exit.
 
     // Final flush: process any unread events written before PTY exited.
     // Catches the common race where the agent writes ToolEnd just before
@@ -566,8 +495,11 @@ export async function performSpawn(
     // as a degradation fallback).
     if (context.telemetry.hasPendingPRCommand(id)) {
       context.telemetry.clearPendingPRCommand(id);
-      const scrollback = context.bufferManager.getRawScrollback(id);
-      context.emit('pr-candidate', id, scrollback);
+      // The ring is in the host and outlives the exit (it goes with remove()).
+      void context.host.getRawScrollback(id).then(
+        (scrollback) => context.emit('pr-candidate', id, scrollback),
+        () => context.emit('pr-candidate', id, ''),
+      );
     }
 
     // Dev-only: stop trace recording for this session. Files persist
@@ -580,10 +512,10 @@ export async function performSpawn(
     context.sessionQueue.notifySlotFreed();
   });
 
-  // Retain the listener disposables so the synchronous shutdown path
-  // (killAllSessions) can detach them at kill, stopping node-pty from
-  // invoking our callbacks on a later tick after the session dir is deleted.
-  session.ptyDisposables = [ptyDataDisposable, ptyExitDisposable];
+  // Retain the exit listener's disposable so the synchronous shutdown path
+  // (killAllSessions) can detach it at kill: a late exit must not run the
+  // handling above after the session dir is deleted.
+  session.ptyDisposables = [ptyExitDisposable];
 
   context.emit('session-changed', id, toSession(session));
   // Announce the grid the PTY actually spawned at. A mobile-bridge

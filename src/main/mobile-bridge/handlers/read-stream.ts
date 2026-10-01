@@ -393,6 +393,9 @@ function subscribeReadStream(
   // for. The grid-size event goes too: it only explains bytes we are not
   // sending, and the phone re-subscribes with terminal:true the moment a
   // terminal opens, which delivers a fresh frame and its dimensions together.
+  // The pty host forwards a session's raw bytes to main only while someone
+  // holds a tap on it.
+  const releaseDataTap = wantsTerminal ? context.sessionManager.subscribeDataTap(sessionId) : null;
   if (wantsTerminal) {
     context.sessionManager.on('data-tap', onDataTap);
     context.sessionManager.on('pty-resize', onPtyResize);
@@ -405,6 +408,7 @@ function subscribeReadStream(
   subscriptions.set(subscriptionKeyFor(sessionId), () => {
     disposed = true; // parks any in-flight prompt-options probe so it never sends after teardown
     context.sessionManager.off('data-tap', onDataTap);
+    releaseDataTap?.();
     context.sessionManager.off('pty-resize', onPtyResize);
     context.sessionManager.off('activity', onActivity);
     context.sessionManager.off('usage', onUsage);

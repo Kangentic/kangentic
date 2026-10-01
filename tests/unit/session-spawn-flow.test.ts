@@ -104,6 +104,7 @@ import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
 import { handleSpawnFailure } from '../../src/main/pty/spawn/spawn-failure-handler';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
+import { InProcessPtyHostTransport, PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 
 // ---- Helpers ----
 
@@ -141,17 +142,18 @@ function makeAdapter(options: {
  * The `sessionHistoryReader.attach` stub resolves by default (overridden
  * in individual tests where rejection behaviour is needed).
  */
+/** Each context's in-process pty host transport, for seeding and reading rings. */
+const hostTransports = new WeakMap<SpawnFlowContext, InProcessPtyHostTransport>();
+
 function makeContext(): SpawnFlowContext {
   const registry = new SessionRegistry();
-  return {
+  const transport = new InProcessPtyHostTransport({ resolveAgent: () => undefined, transcriptSinkFor: () => null });
+  const host = new PtyHostClient(transport);
+  vi.spyOn(host, 'spawn');
+  const context = {
     registry,
-    bufferManager: {
-      getRawScrollback: vi.fn(() => ''),
-      getCarryoverGeometry: vi.fn(() => null),
-      removeSession: vi.fn(),
-      initSession: vi.fn(),
-      onData: vi.fn(),
-    },
+    host,
+    setBufferCols: vi.fn(),
     telemetry: {
       removeSession: vi.fn(),
       initSession: vi.fn(),
@@ -178,9 +180,6 @@ function makeContext(): SpawnFlowContext {
       removeSession: vi.fn(),
       detachOnPtyExit: vi.fn(),
     },
-    resizeManager: {
-      shouldNotifyOnData: vi.fn(() => false),
-    },
     statusFileReader: {
       attach: vi.fn(),
       flushPendingEvents: vi.fn(),
@@ -194,11 +193,28 @@ function makeContext(): SpawnFlowContext {
     firstOutputTracker: {
       removeSession: vi.fn(),
     },
-    getTranscriptWriter: vi.fn(() => null),
     getShell: vi.fn().mockResolvedValue('/bin/bash'),
     takePendingResize: vi.fn(() => undefined),
     emit: vi.fn(),
   } as unknown as SpawnFlowContext;
+  hostTransports.set(context, transport);
+  return context;
+}
+
+/** Give a session a ring in the context's host, as an earlier spawn would. */
+function seedRing(context: SpawnFlowContext, sessionId: string, bytes: string): void {
+  hostTransports.get(context)!.core.handleCommand({ type: 'initSession', sessionId, scrollback: bytes, cols: 120 });
+}
+
+/** The ring the host holds for a session. */
+function ringOf(context: SpawnFlowContext, sessionId: string): string {
+  return hostTransports.get(context)!.core.getRawScrollback(sessionId);
+}
+
+/** What performSpawn asked the host to spawn. */
+function lastSpawnParams(context: SpawnFlowContext): Parameters<PtyHostClient['spawn']>[0] {
+  const calls = vi.mocked(context.host.spawn).mock.calls;
+  return calls[calls.length - 1][0];
 }
 
 /**
@@ -353,11 +369,9 @@ describe('performSpawn - scrollback carry-over geometry', () => {
     vi.clearAllMocks();
   });
 
-  it('captures the carried ring geometry BEFORE removal and hands it to bufferManager.initSession', async () => {
+  it('asks the host to carry the old ring over and drop the old session, in one spawn', async () => {
     const context = makeContext();
-    const carryoverGeometry = { cols: 210, rows: 48, geometryChangedAtRingIndex: 7 };
-    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>).mockReturnValue('carried bytes');
-    (context.bufferManager.getCarryoverGeometry as ReturnType<typeof vi.fn>).mockReturnValue(carryoverGeometry);
+    seedRing(context, 'old-session-id', 'carried bytes');
     // An existing session for the task makes this a respawn; pty: null skips
     // the orphan-kill path so no fake PTY shape is needed.
     context.registry.set('old-session-id', {
@@ -370,16 +384,13 @@ describe('performSpawn - scrollback carry-over geometry', () => {
 
     await performSpawn(makeInput(), context);
 
-    // Read off the OLD session's buffer state while it still exists ...
-    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledWith('old-session-id');
-    const geometryOrder = (context.bufferManager.getCarryoverGeometry as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-    const removeOrder = (context.bufferManager.removeSession as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-    expect(geometryOrder).toBeLessThan(removeOrder);
-    // ... and handed to the new session's initSession with the carried
-    // scrollback, so the replay geometry gate stays accurate across respawn.
-    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(initCall?.[1]).toBe('carried bytes');
-    expect(initCall?.[4]).toBe(carryoverGeometry);
+    // The host reads the old ring and its geometry before dropping it, which
+    // is what keeps the replay geometry gate accurate across a respawn.
+    const params = lastSpawnParams(context);
+    expect(params.carryoverFromSessionId).toBe('old-session-id');
+    expect(params.dropSessionIds).toEqual(['old-session-id']);
+    expect(ringOf(context, makeInput().id!)).toBe('carried bytes');
+    expect(ringOf(context, 'old-session-id')).toBe('');
   });
 });
 
@@ -469,7 +480,7 @@ describe('performSpawn - one row per task', () => {
       expect(context.sessionIdManager.removeSession).toHaveBeenCalledWith(staleId);
       expect(context.firstOutputTracker.removeSession).toHaveBeenCalledWith(staleId);
       expect(context.telemetry.removeSession).toHaveBeenCalledWith(staleId);
-      expect(context.bufferManager.removeSession).toHaveBeenCalledWith(staleId);
+      expect(lastSpawnParams(context).dropSessionIds).toContain(staleId);
       expect(context.sessionFiles.removeSession).toHaveBeenCalledWith(staleId);
     }
   });
@@ -486,15 +497,13 @@ describe('performSpawn - one row per task', () => {
         startedAt: id === 'sess-newer' ? SUSPENDED_STARTED_AT : PLACEHOLDER_STARTED_AT,
       });
     }
-    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
-      .mockImplementation((sessionId: string) => (sessionId === 'sess-newer' ? 'newer bytes' : ''));
+    seedRing(context, 'sess-newer', 'newer bytes');
+    seedRing(context, 'sess-older', 'older bytes');
 
     await performSpawn(makeInput({ id: 'sess-respawn' }), context);
 
-    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-newer');
-    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith('sess-newer');
-    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(initCall?.[1]).toBe('newer bytes');
+    expect(lastSpawnParams(context).carryoverFromSessionId).toBe('sess-newer');
+    expect(ringOf(context, 'sess-respawn')).toBe('newer bytes');
   });
 
   it('settings restart: the row suspended in place is drained by its own respawn', async () => {
@@ -533,14 +542,12 @@ describe('performSpawn - one row per task', () => {
     const queuedId = makeInput().id!;
     seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
     seedRow(context, { id: queuedId, status: 'queued', startedAt: '2026-09-04T14:25:33.000Z' });
-    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
-      .mockImplementation((sessionId: string) => (sessionId === 'sess-suspended' ? 'predecessor bytes' : ''));
+    seedRing(context, 'sess-suspended', 'predecessor bytes');
 
     await performSpawn(makeInput(), context);
 
-    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-suspended');
-    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(initCall?.[1]).toBe('predecessor bytes');
+    expect(lastSpawnParams(context).carryoverFromSessionId).toBe('sess-suspended');
+    expect(ringOf(context, queuedId)).toBe('predecessor bytes');
     const rows = context.registry.listByTaskId('task-001');
     expect(rows.map((row) => row.id)).toEqual([queuedId]);
     expect(rows[0].status).toBe('running');
@@ -558,8 +565,7 @@ describe('performSpawn - one row per task', () => {
 
     await performSpawn(makeInput(), context);
 
-    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith(queuedId);
-    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith(queuedId);
+    expect(lastSpawnParams(context).carryoverFromSessionId).toBe(queuedId);
   });
 
   it.each([
@@ -577,23 +583,20 @@ describe('performSpawn - one row per task', () => {
         startedAt: id === 'sess-timestamped' ? SUSPENDED_STARTED_AT : undefined,
       });
     }
-    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
-      .mockImplementation((sessionId: string) => (sessionId === 'sess-timestamped' ? 'timestamped bytes' : ''));
+    seedRing(context, 'sess-timestamped', 'timestamped bytes');
+    seedRing(context, 'sess-no-started-at', 'undated bytes');
 
     await performSpawn(makeInput({ id: 'sess-respawn' }), context);
 
-    expect(context.bufferManager.getRawScrollback).toHaveBeenCalledExactlyOnceWith('sess-timestamped');
-    expect(context.bufferManager.getCarryoverGeometry).toHaveBeenCalledExactlyOnceWith('sess-timestamped');
-    const initCall = (context.bufferManager.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(initCall?.[1]).toBe('timestamped bytes');
+    expect(lastSpawnParams(context).carryoverFromSessionId).toBe('sess-timestamped');
+    expect(ringOf(context, 'sess-respawn')).toBe('timestamped bytes');
   });
 
   it('a failed spawn has already drained the stale rows and hands the carried scrollback to the failure placeholder', async () => {
     const context = makeContext();
     seedRow(context, { id: 'sess-placeholder', status: 'suspended', startedAt: PLACEHOLDER_STARTED_AT });
     seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
-    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>)
-      .mockImplementation((sessionId: string) => (sessionId === 'sess-suspended' ? 'carried bytes' : ''));
+    seedRing(context, 'sess-suspended', 'carried bytes');
     vi.mocked(ptyModule.spawn).mockImplementationOnce(() => {
       throw new Error('spawn boom');
     });
@@ -1165,13 +1168,15 @@ describe('performSpawn - onExit fallback ordering: branch-pushed before pr-candi
     const context = makeContext();
     (context.telemetry.takePendingPushedBranch as ReturnType<typeof vi.fn>).mockReturnValue('feature/pending-branch');
     (context.telemetry.hasPendingPRCommand as ReturnType<typeof vi.fn>).mockReturnValue(true);
-    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>).mockReturnValue('scrollback bytes');
 
     const input = makeInput();
     await performSpawn(input, context);
+    seedRing(context, input.id!, 'scrollback bytes');
 
     expect(ptyExitHarness.onExitCallback).toBeTypeOf('function');
     ptyExitHarness.onExitCallback!({ exitCode: 0 });
+    // The PR fallback reads the ring from the host before it emits.
+    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
 
     const emitMock = context.emit as unknown as ReturnType<typeof vi.fn>;
     const eventOrder = emitMock.mock.calls.map((call) => call[0] as string);

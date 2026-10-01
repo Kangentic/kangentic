@@ -1,6 +1,6 @@
 import type { Session, SpawnSessionInput } from '../../../shared/types';
 import type { SessionRegistry, ManagedSession } from '../session-registry';
-import type { PtyBufferManager } from '../buffer/pty-buffer-manager';
+import type { PtyHostClient } from '../host/pty-host-client';
 import { toSession } from '../session-registry';
 import { diagnoseSpawnFailure, recordSpawnFailure } from './pty-spawn';
 
@@ -22,9 +22,14 @@ export interface SpawnAttempt {
 
 export interface SpawnFailureContext {
   registry: SessionRegistry;
-  bufferManager: PtyBufferManager;
+  host: PtyHostClient;
+  /** Record the column count the failed session's ring was seeded at. */
+  setBufferCols: (sessionId: string, cols: number) => void;
   emit: (event: string, ...args: unknown[]) => void;
 }
+
+/** Columns a failed session's ring is seeded at; it has no PTY to fit. */
+const FAILED_SESSION_COLS = 120;
 
 /**
  * Handle a thrown `pty.spawn()` call. The platform-specific failure
@@ -87,8 +92,10 @@ export function handleSpawnFailure(
     agentParser: input.agentParser,
   };
   context.registry.set(id, failedSession);
-  // Initialize buffer manager with diagnostic scrollback for failed sessions
-  context.bufferManager.initSession(id, diagnosticScrollback, 120);
+  // Seed the host's ring with the diagnostic scrollback, so the failed
+  // session's terminal shows it.
+  context.host.post({ type: 'initSession', sessionId: id, scrollback: diagnosticScrollback, cols: FAILED_SESSION_COLS });
+  context.setBufferCols(id, FAILED_SESSION_COLS);
   context.emit('exit', id, -1);
   return toSession(failedSession);
 }

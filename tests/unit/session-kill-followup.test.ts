@@ -60,6 +60,16 @@ const ALLOWLIST: AllowlistedKill[] = [
     lineIncludes: 'context.sessionManager.kill(session.id);',
     reason: 'transient Command Terminal kills during a relocate; the relocate reopens the project, whose cold-path syncSessions re-lists every row',
   },
+  {
+    file: 'src/main/pty/host/pty-host-core.ts',
+    lineIncludes: 'this.kill(command.ptyId);',
+    reason: 'the pty host carrying out a kill command; main posted it from SessionManager.kill() / suspend() / killAll(), which announce what happened',
+  },
+  {
+    file: 'src/main/pty/host/pty-host-core.ts',
+    lineIncludes: 'this.kill(entry.ptyId);',
+    reason: 'the pty host\'s quit-time killAll, after main\'s own killAll has announced every row',
+  },
 ];
 
 function collectSourceFiles(directory: string): string[] {

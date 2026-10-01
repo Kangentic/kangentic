@@ -27,6 +27,7 @@ const DIRECT_KILL_ALLOWLIST: Record<string, string> = {
   'pty/shutdown/session-suspend.ts': 'gracefulPtyShutdown: exit sequence, grace, then kill',
   'pty/shutdown/session-shutdown.ts': 'killAllSessions: the synchronous quit path',
   'pty/lifecycle/session-spawn-flow.ts': 'the respawn sibling drain, which only ever finds an already-nulled pty',
+  'pty/host/pty-host-core.ts': 'the pty host carrying out a kill main already timed: the command comes from SessionManager.kill() / suspend() / killAll(), after the exit sequence and any grace',
   'agent/adapters/claude/model-picker-probe.ts': 'the probe PTY: classic renderer, /exit, then the fallback kill',
   'agent/adapters/antigravity/print-runner.ts': 'a print-mode run of a different agent, no boot canary',
 };
