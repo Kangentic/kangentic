@@ -234,11 +234,18 @@ describe('PtyHostCore', () => {
     expect(fake.kill).toHaveBeenCalledTimes(1);
   });
 
-  it('killAll reports every live PTY\'s pid, for the quit drain', () => {
-    const { core } = makeCore({ fake: createFakePty(777) });
+  it('shutdown flushes the transcripts and kills nothing: main posts the kills, a young one after its grace', () => {
+    const { core, fake, appended } = makeCore();
     core.spawn(spawnParams());
-    expect(core.killAll()).toEqual([777]);
+    fake.feed('unflushed text');
+
+    core.handleCommand({ type: 'shutdown' });
+
+    expect(appended).toEqual([{ sessionId: 'session-1', chunk: 'unflushed text' }]);
+    expect(fake.kill).not.toHaveBeenCalled();
     expect(core.livePtyCount).toBe(1);
+    fake.exit(0);
+    expect(core.livePtyCount).toBe(0);
   });
 });
 

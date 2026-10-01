@@ -66,6 +66,10 @@ vi.mock('../../src/main/pty/session-manager', () => {
     },
   };
 });
+// The real transport forks the pty host utility process.
+vi.mock('../../src/main/pty/host/utility-pty-host-transport', () => ({
+  UtilityPtyHostTransport: class { start = vi.fn(); },
+}));
 vi.mock('../../src/main/agent/adapters/claude/detector', () => ({
   ClaudeDetector: class { detect = vi.fn(); },
 }));

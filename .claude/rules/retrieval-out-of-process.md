@@ -28,9 +28,9 @@ connection.
 - **Main keeps scheduling and the work only it can do.** Session and board events, debounces,
   config gates, the IPC and MCP shells, the embed worker (`embed-engine.ts` stays the only
   embedder, see [[central-embedding-engine]]), agent CLIs, and writes to project data: tasks,
-  sessions, the app tables, and one INSERT per raw PTY transcript flush. That last write stays on
-  main because sending each 64 KB flush to the worker was measured at 13 times main's major-GC
-  time.
+  sessions and the app tables. The raw PTY transcript is written by the pty host, which produces
+  it, one INSERT per flush over its own connection ([[pty-host-out-of-process]]). Sending each
+  64 KB flush to another process was measured at 13 times the sender's major-GC time.
 - **Main never loads sqlite-vec.** Main bundle code that touches a vec0 table throws
   `no such module: vec0`, which is the intent.
 - **Write transactions stay short on both sides.** Main converts every project-database

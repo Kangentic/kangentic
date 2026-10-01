@@ -249,7 +249,7 @@ interface MockContext {
     create: ReturnType<typeof vi.fn>;
     updateLastOpened: ReturnType<typeof vi.fn>;
   };
-  sessionManager: Record<string, never>;
+  sessionManager: Record<string, unknown>;
   configManager: { getEffectiveConfig: ReturnType<typeof vi.fn> };
   boardConfigManager: {
     attach: ReturnType<typeof vi.fn>;
@@ -274,7 +274,8 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       create: vi.fn(),
       updateLastOpened: vi.fn(),
     },
-    sessionManager: {},
+    // A project delete has the pty host close its database handle first.
+    sessionManager: { closeProjectInPtyHost: vi.fn(async () => undefined) },
     configManager: { getEffectiveConfig: vi.fn(() => ({ mcpServer: { enabled: false } })) },
     boardConfigManager: {
       attach: vi.fn(),

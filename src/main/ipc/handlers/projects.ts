@@ -114,9 +114,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
     console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} -- skipping filesystem cleanup`);
-    // The retrieval worker holds its own connection, and Windows will not
-    // unlink a file another process has open.
+    // The retrieval worker and the pty host each hold their own connection,
+    // and Windows will not unlink a file another process has open.
     await retrievalClient.closeProject(projectId);
+    await context.sessionManager.closeProjectInPtyHost(projectId);
     closeProjectDb(projectId);
     const dbPath = PATHS.projectDb(projectId);
     try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
@@ -210,8 +211,9 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   } catch { /* may not exist or not readable -- skip */ }
 
   // 5. Close the project DB connections before deleting files: the retrieval
-  // worker's, then main's.
+  // worker's and the pty host's, then main's.
   await retrievalClient.closeProject(projectId);
+  await context.sessionManager.closeProjectInPtyHost(projectId);
   closeProjectDb(projectId);
 
   // Steps 6-7 modify the project's .gitignore and .kangentic/ directory.
@@ -305,6 +307,7 @@ export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<v
 
     // Lightweight cleanup: only delete DB records, not worktree filesystem.
     await retrievalClient.closeProject(project.id);
+    await context.sessionManager.closeProjectInPtyHost(project.id);
     closeProjectDb(project.id);
     const dbPath = PATHS.projectDb(project.id);
     try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
@@ -652,6 +655,35 @@ function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
  * background and may still be in flight when this resolves. Callers
  * that need cleanup-complete must not rely on this function's resolution.
  */
+/**
+ * The pty host died and a new one is up: resume the agent sessions it took
+ * down. Each lost PTY was reported exited with a non-zero code, so its record
+ * is an interrupted one and the startup recovery path resumes it (`--resume`),
+ * honouring the auto-resume setting as it does after a hard shutdown.
+ */
+export async function recoverSessionsAfterPtyHostLoss(context: IpcContext, projectIds: string[]): Promise<void> {
+  for (const projectId of projectIds) {
+    if (isShuttingDown()) return;
+    const project = context.projectRepo.getById(projectId);
+    if (!project || !fs.existsSync(project.path)) continue;
+    try {
+      await runWithProjectLogContext(project.name, () => resumeSuspendedSessions(
+        project.id,
+        project.path,
+        context.sessionManager,
+        context.configManager,
+        project.default_agent,
+        context.mcpServerHandle,
+        project.default_model,
+        project.default_effort,
+        context.boardConfigManager.getBoardProfiles(project.path),
+      ));
+    } catch (error) {
+      console.error(`[pty-host] resuming sessions in ${project.name} after the host restarted failed:`, error);
+    }
+  }
+}
+
 export async function activateAllProjects(context: IpcContext): Promise<void> {
   if (isShuttingDown()) return;
 

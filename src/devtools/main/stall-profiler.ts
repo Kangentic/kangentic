@@ -270,8 +270,13 @@ async function saveProfile(serialized: string, detectedAt: number): Promise<stri
   }
 }
 
+/** Keep the newest stall profiles. On-demand captures (`capture-*`) are left
+ *  alone: they sort first, so counting them here deleted a capture before the
+ *  caller could read it. */
 async function pruneProfiles(profileDirectory: string): Promise<void> {
-  const names = (await fsPromises.readdir(profileDirectory)).filter((name) => name.endsWith('.cpuprofile')).sort();
+  const names = (await fsPromises.readdir(profileDirectory))
+    .filter((name) => name.startsWith('main-') && name.endsWith('.cpuprofile'))
+    .sort();
   for (const name of names.slice(0, Math.max(0, names.length - KEEP_FILES))) {
     await fsPromises.rm(path.join(profileDirectory, name), { force: true });
   }

@@ -91,11 +91,10 @@ export type PtyHostCommand =
   | { type: 'removeSession'; sessionId: string }
   /** Seed a session's ring with no PTY behind it (a failed spawn's diagnostic). */
   | { type: 'initSession'; sessionId: string; scrollback: string; cols: number }
-  /** Close the host's handle on a project's database before it is deleted. */
-  | { type: 'closeProject'; projectId: string }
-  /** The app is quitting: flush every transcript and kill every PTY. The
-   *  utility process then waits for their exit callbacks and exits itself, so
-   *  none lands after Node has stopped (Sentry DESKTOP-C, now in this process). */
+  /** The app is quitting: flush every transcript. Main has already posted
+   *  every kill (a young session's after its grace). The utility process then
+   *  waits for the exit callbacks and exits itself, so none lands after Node
+   *  has stopped (Sentry DESKTOP-C, now in this process). */
   | { type: 'shutdown' };
 
 export interface PtyHostPipelineStats {
@@ -132,6 +131,10 @@ export interface PtyHostRequestMap {
   getOutputPeek: { params: { sessionId: string }; result: string[] };
   getDiagnostics: { params: Record<string, never>; result: PtyHostDiagnostics };
   ping: { params: Record<string, never>; result: 'pong' };
+  /** Close the host's handle on a project's database. A request, not a
+   *  command, so a project delete can wait for it before unlinking the file
+   *  (Windows will not unlink a file another process has open). */
+  closeProject: { params: { projectId: string }; result: true };
 }
 
 export type PtyHostMethod = keyof PtyHostRequestMap;
@@ -169,6 +172,27 @@ export type PtyHostEvent =
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }
   | { type: 'reply'; id: number; ok: false; error: PtyHostError };
+
+/** The first message to a utility host: what it cannot work out itself (it is
+ *  forked with no arguments, so a `--data-dir` override never reaches it). */
+export interface PtyHostInitMessage {
+  type: 'init';
+  projectsDir: string;
+}
+
+/** Everything main sends the utility process. */
+export type ToPtyHostMessage = PtyHostInitMessage | PtyHostCommand | PtyHostRequest;
+
+/** Everything the utility process sends main. */
+export type FromPtyHostMessage =
+  | PtyHostEvent
+  | PtyHostReply
+  /** Initialized; requests are answered from here on. */
+  | { type: 'ready' }
+  /** A console line, for main's log. */
+  | { type: 'log'; level: 'log' | 'info' | 'warn' | 'error'; text: string }
+  /** A span of 16 ms or more on the host's thread (dev builds only). */
+  | { type: 'slow-span'; label: string; ms: number };
 
 export function toPtyHostError(error: unknown): PtyHostError {
   if (error instanceof Error) {

@@ -48,8 +48,10 @@ describe('skipConsoleListHelper', () => {
     expect(WindowsPtyAgent.prototype._getConsoleProcessList).toBe(original);
   });
 
-  it('is installed by main at startup', () => {
-    const source = fs.readFileSync(path.resolve(__dirname, '../../src/main/index.ts'), 'utf-8');
-    expect(source).toMatch(/^skipConsoleListHelper\(\);$/m);
+  it('is installed at startup by main and by the pty host, the two processes that kill PTYs', () => {
+    for (const entry of ['src/main/index.ts', 'src/main/pty/host/pty-host-entry.ts']) {
+      const source = fs.readFileSync(path.resolve(__dirname, '../..', entry), 'utf-8');
+      expect(source, entry).toMatch(/^skipConsoleListHelper\(\);$/m);
+    }
   });
 });

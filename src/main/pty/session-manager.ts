@@ -301,12 +301,23 @@ export class SessionManager extends EventEmitter {
       maxConcurrent: 5,
     });
 
-    this.host = new PtyHostClient(options.ptyHostTransport ?? new InProcessPtyHostTransport({
-      // In-process the detectors are the row's own adapter instance.
-      resolveAgent: (sessionId) => this.registry.get(sessionId)?.agentParser,
-      transcriptSinkFor: (projectId) => this.transcriptSinkFor?.(projectId) ?? null,
-    }));
+    const transport: PtyHostTransport = options.ptyHostTransport ?? this.createInProcessHost();
+    // A utility host that keeps crashing falls back to the core in this
+    // process, which is how every terminal ran before the host existed.
+    transport.setFallbackFactory?.(() => this.createInProcessHost());
+    this.host = new PtyHostClient(transport);
     this.host.setEventHandler((event) => this.handleHostEvent(event));
+    this.host.setLifecycleHandler({
+      // The host died and its PTYs were reported exited (each through the
+      // spawn flow's own exit handling). The IPC layer resumes the sessions.
+      onHostLost: (sessionIds) => this.emit('pty-host-lost', sessionIds),
+      onHostRestarted: () => {
+        // The new host knows nothing: replay what gates its output.
+        this.host.post({ type: 'setFocused', sessionIds: [...this.focusedSessionIds] });
+        this.publishTapped();
+        this.emit('pty-host-restarted');
+      },
+    });
 
     this.sessionIdManager = new SessionIdManager({
       hasAgentSessionId: (id) => this.telemetry.hasAgentSessionId(id),
@@ -524,6 +535,15 @@ export class SessionManager extends EventEmitter {
     });
   }
 
+  /** The host core in this process: the unit tests' host, and the fallback. */
+  private createInProcessHost(): InProcessPtyHostTransport {
+    return new InProcessPtyHostTransport({
+      // In-process the detectors are the row's own adapter instance.
+      resolveAgent: (sessionId) => this.registry.get(sessionId)?.agentParser,
+      transcriptSinkFor: (projectId) => this.transcriptSinkFor?.(projectId) ?? null,
+    });
+  }
+
   /**
    * Apply one event from the pty host. The host runs the per-chunk work; what
    * main needs of it arrives here, in the order the host produced it.
@@ -650,9 +670,16 @@ export class SessionManager extends EventEmitter {
     return this.host.hostPid;
   }
 
-  /** Close the pty host's handle on a project's database before it is deleted. */
-  closeProjectInPtyHost(projectId: string): void {
-    this.host.post({ type: 'closeProject', projectId });
+  /**
+   * Close the pty host's handle on a project's database before it is deleted.
+   * Never rejects: a host that is down holds no handle.
+   */
+  async closeProjectInPtyHost(projectId: string): Promise<void> {
+    try {
+      await this.host.transport.request('closeProject', { projectId });
+    } catch (error) {
+      console.warn('[pty-host] closing a project database failed:', error);
+    }
   }
 
   /**
@@ -752,8 +779,9 @@ export class SessionManager extends EventEmitter {
 
   dispose(): void {
     this.telemetry.dispose();
-    // Flush every transcript and, for the utility process, kill what is left
-    // and let it exit once the exit callbacks have landed.
+    // Flush every transcript. A utility host then exits once every PTY's exit
+    // callback has landed (killAll posted the kills, a young one's after its
+    // grace).
     this.host.shutdown();
     for (const sessionId of [...this.restingGridTimers.keys()]) this.cancelRestingGridRestore(sessionId);
   }
@@ -2377,10 +2405,18 @@ export class SessionManager extends EventEmitter {
    * there would undo the deferral the drain is about to wait on.
    */
   killAll(options?: { allowGrace?: boolean }): PtyKillReport {
-    return killAllSessions(this.shutdownContext(), {
+    const report = killAllSessions(this.shutdownContext(), {
       allowGrace: options?.allowGrace === true,
       deferredKills: this.deferredKills,
     });
+    // The PTYs' exit callbacks land in the pty host, which exits itself once
+    // they have (or at its own deadline), after `dispose()` posts its shutdown.
+    // The drain waits for that process too, so the quit never tears the host
+    // down while one of those callbacks is in flight (Sentry DESKTOP-C, now
+    // in the host). Counted as one more kill so the blind count stays right.
+    const hostPid = this.host.hostPid;
+    if (hostPid === null || report.killedCount === 0) return report;
+    return { ...report, pids: [...report.pids, hostPid], killedCount: report.killedCount + 1 };
   }
 
   private shutdownContext() {

@@ -63,6 +63,13 @@ import { IPC } from '../../src/shared/ipc-channels';
 function createMockContext(): IpcContext {
   return {
     projectRepo: { list: mockList, delete: mockDelete },
+    // The pty host holds its own handle on each project database too.
+    sessionManager: {
+      closeProjectInPtyHost: vi.fn(async (projectId: string) => {
+        await Promise.resolve();
+        steps.push(`pty host closed ${projectId}`);
+      }),
+    },
     mainWindow: {
       webContents: { send: vi.fn() },
       isDestroyed: vi.fn(() => false),
@@ -97,7 +104,7 @@ describe('pruneStaleWorktreeProjects', () => {
     expect(mockDelete).toHaveBeenCalledWith('proj-1');
   });
 
-  it('has the retrieval worker let go of the database before its files are deleted', async () => {
+  it('has the retrieval worker and the pty host let go of the database before its files are deleted', async () => {
     steps.length = 0;
     mockList.mockReturnValue([
       { id: 'proj-1', name: 'stale-preview', path: '/home/dev/my-app/.kangentic/worktrees/fix-bug-abc123' },
@@ -108,9 +115,9 @@ describe('pruneStaleWorktreeProjects', () => {
 
     await pruneStaleWorktreeProjects(mockContext);
 
-    expect(steps[0]).toBe('worker closed proj-1');
-    expect(steps.slice(1).every((step) => step.startsWith('unlink '))).toBe(true);
-    expect(steps).toHaveLength(4);
+    expect(steps.slice(0, 2)).toEqual(['worker closed proj-1', 'pty host closed proj-1']);
+    expect(steps.slice(2).every((step) => step.startsWith('unlink '))).toBe(true);
+    expect(steps).toHaveLength(5);
   });
 
   it('skips non-worktree projects', async () => {

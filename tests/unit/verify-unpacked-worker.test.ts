@@ -28,14 +28,17 @@ const require = createRequire(import.meta.url);
 const {
   verifyUnpackedWorkerModules,
   verifyRetrievalWorkerLoads,
+  verifyPtyHostLoads,
   buildProbeScript,
   buildRetrievalLoadScript,
+  buildPtyHostLoadScript,
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
   DICTATION_WORKER_EXTERNALS,
   DICTATION_WORKER_PROBE_DEPENDENCIES,
   RETRIEVAL_WORKER_EXTERNALS,
   RETRIEVAL_WORKER_PROBE_DEPENDENCIES,
+  PTY_HOST_EXTERNALS,
 } = require('../../build/verify-unpacked-worker.js');
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -363,5 +366,52 @@ describe('retrieval worker gate', () => {
       expect(asarUnpack).toContain(`"node_modules/${name}/**"`);
     }
     expect(asarUnpack).toContain('"node_modules/sqlite-vec-*/**"');
+  });
+});
+
+describe('pty host gate', () => {
+  it('runs the load probe under the given Electron binary as Node, and throws with its stderr on failure', () => {
+    const spawn = vi.fn(() => {
+      const error: SpawnError = new Error('Command failed');
+      error.stderr = 'Error: Cannot find module \'./build/Release/conpty.node\'';
+      throw error;
+    });
+    const binary = path.join(path.sep, 'mock', 'Kangentic.exe');
+    expect(() => verifyPtyHostLoads({ unpackedRoot: MOCK_ROOT, electronBinaryPath: binary, spawn, log: vi.fn() }))
+      .toThrow(/pty host cannot run a terminal[\s\S]*conpty\.node/);
+    expect(spawn).toHaveBeenCalledWith(
+      binary,
+      ['-e', expect.stringContaining('pty.spawn(')],
+      expect.objectContaining({ env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }) }),
+    );
+  });
+
+  it('fences the load probe to the unpacked root', () => {
+    const script = buildPtyHostLoadScript(MOCK_ROOT);
+    expect(script).toContain('candidate.startsWith(root)');
+    expect(script).toContain('Module.globalPaths = [];');
+    expect(script).toContain(JSON.stringify(MOCK_ROOT));
+  });
+
+  it('the load probe spawns a process and reads its output for real, under this checkout\'s Electron', () => {
+    const installRoot = path.dirname(fs.realpathSync(path.join(REPO_ROOT, 'node_modules')));
+    const electronBinary = require('electron') as unknown as string;
+    const log = vi.fn();
+    verifyPtyHostLoads({ unpackedRoot: installRoot, electronBinaryPath: electronBinary, log });
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[afterPack\] pty host: node-pty spawned a process and read its output/));
+  }, 60_000);
+
+  it('the host imports node-pty from outside the bundle, and all of node-pty and the host bundle are unpacked', () => {
+    const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf8');
+    const externals = [...(buildSource.match(/external:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
+    expect(PTY_HOST_EXTERNALS).toEqual(['node-pty']);
+    for (const name of PTY_HOST_EXTERNALS) expect(externals).toContain(name);
+
+    const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
+    const asarUnpack = config.match(/\nasarUnpack:\n([\s\S]*?)\nextraResources:/)?.[1] ?? '';
+    expect(asarUnpack).toContain('.vite/build/pty-host.js');
+    // The whole package, not only prebuilds/: the host resolves node-pty's JS
+    // from the unpacked tree, and its ConPTY conout worker loads from there.
+    expect(asarUnpack).toContain('"node_modules/node-pty/**"');
   });
 });

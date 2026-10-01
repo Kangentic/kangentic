@@ -56,7 +56,11 @@ files:
 
 asar: true
 asarUnpack:
-  - "node_modules/node-pty/prebuilds/**"
+  # The pty host is forked from the unpacked tree, where Node resolves modules
+  # from real directories and never looks inside the asar, so all of node-pty
+  # unpacks, not only its prebuilt binaries. That also lets its ConPTY conout
+  # worker thread load from a real directory.
+  - "node_modules/node-pty/**"
   - "node_modules/sherpa-onnx-*/**"
   # font-list's macOS binary is spawned via child_process, which cannot exec a
   # path inside an asar archive.
@@ -90,6 +94,7 @@ asarUnpack:
   - ".vite/build/line-count-worker.js"
   - ".vite/build/dictation-worker.js"
   - ".vite/build/retrieval-worker.js"
+  - ".vite/build/pty-host.js"
   - ".vite/build/event-bridge.js"
   - ".vite/build/status-bridge.js"
   - ".vite/build/plugins/**"

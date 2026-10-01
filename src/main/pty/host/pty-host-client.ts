@@ -41,6 +41,13 @@ export interface PtyHandle {
   kill(): void;
 }
 
+export interface PtyHostLifecycleListener {
+  /** The host died: every PTY it held is gone with it. */
+  onHostDown(): void;
+  /** A host is up and answering; `restarted` when an earlier one died. */
+  onHostUp(restarted: boolean): void;
+}
+
 export interface PtyHostTransport {
   /** Send a command. Commands and requests keep their order. */
   post(command: PtyHostCommand): void;
@@ -51,6 +58,24 @@ export interface PtyHostTransport {
   readonly hostPid: number | null;
   /** The app is quitting: flush transcripts and kill every PTY. Synchronous. */
   shutdown(): void;
+  /** Hear of a host dying and coming back (a utility process only). */
+  setLifecycleListener?(listener: PtyHostLifecycleListener): void;
+  /** What to run the host core on if the utility process keeps crashing. */
+  setFallbackFactory?(factory: () => PtyHostTransport): void;
+}
+
+/**
+ * The exit code a PTY is reported with when its host died under it. Non-zero,
+ * so startup recovery and the crash notice treat it as an interrupted session;
+ * a value no OS uses, so a log tells it apart from a real kill.
+ */
+export const PTY_HOST_LOST_EXIT_CODE = -2;
+
+export interface PtyHostLifecycleHandler {
+  /** The host died; these sessions' PTYs were reported exited. */
+  onHostLost(sessionIds: string[]): void;
+  /** A replacement host is up: replay what it needs to know. */
+  onHostRestarted(): void;
 }
 
 /**
@@ -69,7 +94,9 @@ export class RemotePty implements PtyHandle {
     readonly pid: number,
     cols: number,
     rows: number,
-    private readonly transport: PtyHostTransport,
+    private readonly transport: Pick<PtyHostTransport, 'post'>,
+    /** The session this PTY was spawned for, for host-loss reporting. */
+    readonly sessionId: string = '',
   ) {
     this.currentCols = cols;
     this.currentRows = rows;
@@ -124,14 +151,44 @@ export class PtyHostClient {
   private readonly handles = new Map<number, RemotePty>();
   private readonly exitListeners = new Map<number, (exitCode: number) => void>();
   private eventHandler: ((event: PtyHostEvent) => void) | null = null;
+  private lifecycleHandler: PtyHostLifecycleHandler | null = null;
 
   constructor(readonly transport: PtyHostTransport) {
     transport.setEventListener((event) => this.dispatch(event));
+    transport.setLifecycleListener?.({
+      onHostDown: () => this.reportHostLost(),
+      onHostUp: (restarted) => {
+        if (restarted) this.lifecycleHandler?.onHostRestarted();
+      },
+    });
   }
 
   /** Where every event other than a PTY's exit goes. */
   setEventHandler(handler: (event: PtyHostEvent) => void): void {
     this.eventHandler = handler;
+  }
+
+  /** Hear of the host dying and of its replacement. */
+  setLifecycleHandler(handler: PtyHostLifecycleHandler): void {
+    this.lifecycleHandler = handler;
+  }
+
+  /**
+   * The host died: report every PTY it held as exited, through each one's own
+   * exit listener, so the sessions end exactly as a PTY exit ends them.
+   */
+  private reportHostLost(): void {
+    const lostSessionIds: string[] = [];
+    for (const { handle, listener } of this.takeLiveHandles()) {
+      handle.markExited();
+      if (handle.sessionId) lostSessionIds.push(handle.sessionId);
+      try {
+        listener?.(PTY_HOST_LOST_EXIT_CODE);
+      } catch (error) {
+        console.error('[pty-host] exit handling after the host was lost failed:', error);
+      }
+    }
+    this.lifecycleHandler?.onHostLost(lostSessionIds);
   }
 
   get hostPid(): number | null {
@@ -149,7 +206,7 @@ export class PtyHostClient {
     if (!result.ok) {
       return { ok: false, error: fromPtyHostError(result.error), previousScrollback: result.previousScrollback };
     }
-    const handle = new RemotePty(ptyId, result.pid, params.cols, params.rows, this.transport);
+    const handle = new RemotePty(ptyId, result.pid, params.cols, params.rows, this.transport, params.sessionId);
     this.handles.set(ptyId, handle);
     return { ok: true, pty: handle };
   }
@@ -208,7 +265,7 @@ export class PtyHostClient {
    * Every PTY the host still runs, as handles: the host went away, and each of
    * these must be reported exited. Clears the routing.
    */
-  takeLiveHandles(): Array<{ handle: RemotePty; listener: ((exitCode: number) => void) | undefined }> {
+  private takeLiveHandles(): Array<{ handle: RemotePty; listener: ((exitCode: number) => void) | undefined }> {
     const live = [...this.handles.values()].map((handle) => ({
       handle,
       listener: this.exitListeners.get(handle.ptyId),

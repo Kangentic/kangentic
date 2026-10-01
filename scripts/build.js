@@ -454,8 +454,16 @@ async function build() {
       entryPoints: [path.join(projectDir, 'src/main/retrieval/worker/retrieval-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/retrieval-worker.js'),
     }),
+    // The pty host (`kangentic-pty-host` utility process): every node-pty
+    // instance and the per-chunk work on its output. node-pty and
+    // better-sqlite3 stay external, resolved from the unpacked node_modules.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/pty/host/pty-host-entry.ts')],
+      outfile: path.join(projectDir, '.vite/build/pty-host.js'),
+    }),
   ]);
-  console.log('[build] Main + preload + embed, line-count, dictation and retrieval workers built');
+  console.log('[build] Main + preload + embed, line-count, dictation and retrieval workers and the pty host built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
   // esbuild bundle as raw .js/.mjs and must sit next to the bundle. The copy

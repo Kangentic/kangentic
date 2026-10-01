@@ -70,6 +70,16 @@ const RETRIEVAL_WORKER_EXTERNALS = ['better-sqlite3'];
 const RETRIEVAL_WORKER_PROBE_DEPENDENCIES = ['bindings', 'file-uri-to-path'];
 
 /**
+ * The pty host's esbuild externals (src/main/pty/host/pty-host-entry.ts): every
+ * node-pty instance, and better-sqlite3 for the raw transcripts it writes.
+ * better-sqlite3's closure is the retrieval worker's, already probed; this
+ * resolves node-pty, and `verifyPtyHostLoads` spawns a real process with it
+ * under the packaged Electron binary.
+ */
+const PTY_HOST_EXTERNALS = ['node-pty'];
+const PTY_HOST_PROBE_DEPENDENCIES = [];
+
+/**
  * The script the probe child runs. Everything it needs is inlined, since it is
  * handed to `node -e` and cannot import from this file.
  */
@@ -196,6 +206,65 @@ function verifyRetrievalWorkerLoads({ unpackedRoot, electronBinaryPath, spawn = 
   log(`[afterPack] retrieval worker: ${String(stdout).trim()}`);
 }
 
+/**
+ * The script the pty host load probe runs under the packaged Electron binary:
+ * fenced to the unpacked root, it does what the host does for every terminal.
+ * It loads node-pty from the unpacked tree and spawns a short process, reading
+ * its output back, which needs the native binding and, on Windows, ConPTY's
+ * conout worker thread to load from real directories.
+ */
+function buildPtyHostLoadScript(unpackedRoot) {
+  return [
+    "const Module = require('module');",
+    "const path = require('path');",
+    "const fs = require('fs');",
+    `const root = fs.realpathSync(${JSON.stringify(unpackedRoot)});`,
+    'const originalNodeModulePaths = Module._nodeModulePaths;',
+    'Module._nodeModulePaths = function fencedNodeModulePaths(from) {',
+    '  return originalNodeModulePaths.call(Module, from).filter((candidate) => candidate.startsWith(root));',
+    '};',
+    'Module.globalPaths = [];',
+    "const pty = require(path.join(root, 'node_modules', 'node-pty'));",
+    "const isWindows = process.platform === 'win32';",
+    "const marker = 'pty-host-probe';",
+    "const term = pty.spawn(isWindows ? 'cmd.exe' : '/bin/sh', isWindows ? ['/c', 'echo ' + marker] : ['-c', 'echo ' + marker], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: process.env });",
+    "let output = '';",
+    'term.onData((data) => { output += data; });',
+    "const timer = setTimeout(() => { process.stderr.write('node-pty spawned but the process never finished; output: ' + JSON.stringify(output)); process.exit(1); }, 20000);",
+    'term.onExit(({ exitCode }) => {',
+    '  clearTimeout(timer);',
+    "  if (!output.includes(marker)) { process.stderr.write('node-pty read no output back: ' + JSON.stringify(output)); process.exit(1); }",
+    "  process.stdout.write('node-pty spawned a process and read its output (exit ' + exitCode + ')\\n');",
+    '  process.exit(0);',
+    '});',
+  ].join('\n');
+}
+
+/**
+ * Run the pty host load probe with the packaged Electron binary as Node, before
+ * `flipFuses` turns `ELECTRON_RUN_AS_NODE` off. Throws with the child's stderr
+ * on failure; logs the verified branch on success.
+ */
+function verifyPtyHostLoads({ unpackedRoot, electronBinaryPath, spawn = execFileSync, log = console.log }) {
+  let stdout;
+  try {
+    stdout = spawn(electronBinaryPath, ['-e', buildPtyHostLoadScript(unpackedRoot)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60_000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+  } catch (error) {
+    const stderr = error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
+    throw new Error(
+      `[afterPack] the pty host cannot run a terminal from ${unpackedRoot} under ${electronBinaryPath}. ` +
+        'The packaged app would spawn no terminals. Check node-pty in `asarUnpack` in electron-builder.yml.\n' +
+        (stderr || String(error)),
+    );
+  }
+  log(`[afterPack] pty host: ${String(stdout).trim()}`);
+}
+
 module.exports = {
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
@@ -203,8 +272,12 @@ module.exports = {
   DICTATION_WORKER_PROBE_DEPENDENCIES,
   RETRIEVAL_WORKER_EXTERNALS,
   RETRIEVAL_WORKER_PROBE_DEPENDENCIES,
+  PTY_HOST_EXTERNALS,
+  PTY_HOST_PROBE_DEPENDENCIES,
   buildProbeScript,
   buildRetrievalLoadScript,
+  buildPtyHostLoadScript,
   verifyUnpackedWorkerModules,
   verifyRetrievalWorkerLoads,
+  verifyPtyHostLoads,
 };

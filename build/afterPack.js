@@ -4,10 +4,13 @@ const path = require('path');
 const {
   verifyUnpackedWorkerModules,
   verifyRetrievalWorkerLoads,
+  verifyPtyHostLoads,
   DICTATION_WORKER_EXTERNALS,
   DICTATION_WORKER_PROBE_DEPENDENCIES,
   RETRIEVAL_WORKER_EXTERNALS,
   RETRIEVAL_WORKER_PROBE_DEPENDENCIES,
+  PTY_HOST_EXTERNALS,
+  PTY_HOST_PROBE_DEPENDENCIES,
 } = require('./verify-unpacked-worker');
 const { installSpawnHelper } = require('./install-spawn-helper');
 
@@ -94,6 +97,16 @@ module.exports = async function afterPack(context) {
     probeDependencies: RETRIEVAL_WORKER_PROBE_DEPENDENCIES,
   });
   verifyRetrievalWorkerLoads({ unpackedRoot, electronBinaryPath });
+
+  // The pty host runs every terminal from the unpacked tree: resolve node-pty
+  // there, then spawn a real process with it under the packaged Electron
+  // binary, before the fuses below turn ELECTRON_RUN_AS_NODE off.
+  verifyUnpackedWorkerModules({
+    unpackedRoot,
+    moduleNames: PTY_HOST_EXTERNALS,
+    probeDependencies: PTY_HOST_PROBE_DEPENDENCIES,
+  });
+  verifyPtyHostLoads({ unpackedRoot, electronBinaryPath });
 
   await flipFuses(electronBinaryPath, {
     version: FuseVersion.V1,

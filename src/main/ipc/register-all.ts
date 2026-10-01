@@ -10,6 +10,8 @@ import { trackFeatureUsed, isKnownAnalyticsFeature } from '../analytics/usage';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
 import { SessionManager } from '../pty/session-manager';
+import { UtilityPtyHostTransport } from '../pty/host/utility-pty-host-transport';
+import { PATHS } from '../config/paths';
 import { ConfigManager } from '../config/config-manager';
 import { BoardConfigManager } from '../config/board-config-manager';
 import { DiffWatcher } from '../git/diff-watcher';
@@ -26,6 +28,7 @@ import {
   pruneStaleWorktreeProjects as pruneStaleWorktreeProjectsImpl,
   openProjectByPath as openProjectByPathImpl,
   activateAllProjects as activateAllProjectsImpl,
+  recoverSessionsAfterPtyHostLoss,
   getLastOpenedProject as getLastOpenedProjectImpl,
 } from './handlers/projects';
 import { registerTaskCrudHandlers } from './handlers/task-crud';
@@ -95,14 +98,19 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // TerminalSubmitScheduler layers task-keyed scheduling (cancel,
   // fresh-spawn wait, drag-burst coalesce) on top. pasteEngine remains for
   // now until Step 4 of the migration deletes it.
-  const sessionManager = new SessionManager();
-  // Raw terminal transcripts, each written to its session's own project. A
-  // project whose database is not open (a deleted one) drops the flush rather
-  // than creating the file again. Main writes the pieces itself (one INSERT,
-  // 1 to 2 ms): sending each 64 KB piece to the retrieval worker instead was
-  // measured under a heavy terminal and cost main 13 times the major-GC time
-  // (48 collections against 8 in 15 s) for the structured clones, more than
-  // the lock waits it saved.
+  // Every PTY runs in the `kangentic-pty-host` utility process, so terminal
+  // output never crosses this process's event loop. Forked now, ahead of the
+  // first spawn.
+  const ptyHostTransport = new UtilityPtyHostTransport({ projectsDir: PATHS.projectsDir });
+  const sessionManager = new SessionManager({ ptyHostTransport });
+  ptyHostTransport.start();
+  // Raw terminal transcripts, each written to its session's own project. The
+  // pty host writes them over its own connection; this sink is what the host
+  // core uses if it ever falls back to running in this process. A project
+  // whose database is not open (a deleted one) drops the flush rather than
+  // creating the file again. Sending each 64 KB piece across processes
+  // instead was measured under a heavy terminal and cost main 13 times the
+  // major-GC time (48 collections against 8 in 15 s) for the structured clones.
   const transcriptRepositories = new WeakMap<object, TranscriptRepository>();
   sessionManager.enableTranscripts((projectId) => {
     const db = getOpenProjectDb(projectId);
@@ -232,6 +240,22 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   mobileBridgeService.reconcile({
     enabled: effectiveConfig.mobileBridge?.enabled ?? false,
     relayUrl: resolveRelayUrl(effectiveConfig.mobileBridge),
+  });
+
+  // A pty host crash ends every PTY it held; each was reported exited with a
+  // non-zero code. Once a new host (or the in-process fallback) is up, the
+  // agent sessions resume as they would after a hard shutdown.
+  const projectsLostToPtyHost = new Set<string>();
+  sessionManager.on('pty-host-lost', (sessionIds: string[]) => {
+    for (const sessionId of sessionIds) {
+      const projectId = sessionManager.getSessionProjectId(sessionId);
+      if (projectId) projectsLostToPtyHost.add(projectId);
+    }
+  });
+  sessionManager.on('pty-host-restarted', () => {
+    const projectIds = [...projectsLostToPtyHost];
+    projectsLostToPtyHost.clear();
+    if (projectIds.length > 0 && context) void recoverSessionsAfterPtyHostLoss(context, projectIds);
   });
 
   registerProjectHandlers(context);

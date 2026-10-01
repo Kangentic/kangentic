@@ -262,6 +262,9 @@ export class PtyHostCore {
         return this.getDiagnostics() as PtyHostRequestMap[M]['result'];
       case 'ping':
         return 'pong' as PtyHostRequestMap[M]['result'];
+      case 'closeProject':
+        this.deps.closeProject?.((params as { projectId: string }).projectId);
+        return true as PtyHostRequestMap[M]['result'];
       default: {
         const unknownMethod: never = method;
         throw new Error(`unknown pty host method: ${String(unknownMethod)}`);
@@ -339,32 +342,17 @@ export class PtyHostCore {
       case 'initSession':
         this.bufferManager.initSession(command.sessionId, command.scrollback, command.cols);
         return;
-      case 'closeProject':
-        this.deps.closeProject?.(command.projectId);
-        return;
       case 'shutdown':
-        this.killAll();
+        // Main's killAll has already posted every kill, a young session's
+        // after its exit-sequence grace (pty-teardown-grace), so killing here
+        // would cut that grace short. Nothing writes the transcripts after this.
+        this.transcriptWriter.finalizeAll();
         return;
       default: {
         const unknownCommand: never = command;
         throw new Error(`unknown pty host command: ${JSON.stringify(unknownCommand)}`);
       }
     }
-  }
-
-  /**
-   * Kill every live PTY and report their child pids (the quit path). The
-   * transcripts are flushed first, since nothing will write them after.
-   */
-  killAll(): number[] {
-    this.transcriptWriter.finalizeAll();
-    const pids: number[] = [];
-    for (const entry of this.ptys.values()) {
-      if (entry.exited) continue;
-      pids.push(entry.pty.pid);
-      this.kill(entry.ptyId);
-    }
-    return pids;
   }
 
   /** Flush every pending transcript piece (in-process quit). */
