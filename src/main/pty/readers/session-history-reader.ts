@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import { promises as fsPromises } from 'node:fs';
 import { FileWatcher } from './file-watcher';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { Activity } from '../../../shared/types';
@@ -71,6 +71,8 @@ interface WatcherState {
    * reading pre-existing (stale pre-suspend) content from byte 0.
    */
   deferEofInit: boolean;
+  /** This session's reads, one after another, so changes dispatch in order. */
+  chain: Promise<void>;
 }
 
 /**
@@ -165,14 +167,14 @@ export class SessionHistoryReader {
       let deferEofInit = false;
       if (startAtEnd) {
         try {
-          initialCursor = fs.statSync(resolvedPath).size;
+          initialCursor = (await fsPromises.stat(resolvedPath)).size;
         } catch (err) {
           // Could not stat to find EOF (a transient lock / AV / rename race in
           // the window between locate confirming existence and here). Reading
           // from 0 would surface the stale pre-suspend tail this flag exists to
           // suppress, so defer: leave the cursor at 0 but mark it so the first
           // change re-anchors to the then-current EOF instead of reading byte 0.
-          console.warn(`[session-history] statSync failed for startAtEnd resume of session=${sessionId.slice(0, 8)} - deferring EOF cursor to first change:`, err);
+          console.warn(`[session-history] stat failed for startAtEnd resume of session=${sessionId.slice(0, 8)} - deferring EOF cursor to first change:`, err);
           initialCursor = 0;
           deferEofInit = true;
         }
@@ -189,17 +191,22 @@ export class SessionHistoryReader {
         isFullRewrite: hook.isFullRewrite,
         startedAtEnd: startAtEnd,
         deferEofInit,
+        chain: Promise.resolve(),
       };
 
+      // The stat above awaited too: a detach meanwhile cancels the attach.
+      if (this.cancelled.has(sessionId)) return;
       state.watcher = new FileWatcher({
         filePath: resolvedPath,
-        onChange: () => timeSyncWork('history:change', () => this.processChange(sessionId, state)),
+        onChange: () => this.scheduleChange(sessionId, state, 'history:change'),
       });
       this.states.set(sessionId, state);
 
       // Trigger an initial read immediately - FileWatcher only fires on
-      // subsequent changes, but the file likely has content already.
-      timeSyncWork('history:initial', () => this.processChange(sessionId, state));
+      // subsequent changes, but the file likely has content already. The
+      // attach resolves once it has been read.
+      this.scheduleChange(sessionId, state, 'history:initial');
+      await state.chain;
     } finally {
       this.pending.delete(sessionId);
       this.cancelled.delete(sessionId);
@@ -243,23 +250,30 @@ export class SessionHistoryReader {
     return this.states.has(sessionId);
   }
 
+  /** Queue a read behind any still running for this session. */
+  private scheduleChange(sessionId: string, state: WatcherState, label: string): void {
+    state.chain = state.chain.then(() => this.processChange(sessionId, state, label));
+  }
+
   /**
    * Read new content from a session history file and dispatch parsed
    * telemetry via the callback primitives. Handles both append-mode
    * (Codex: cursor-tracked byte reads) and full-rewrite mode
-   * (Gemini: whole-file reads). All errors are swallowed with a WARN
+   * (Gemini: whole-file reads). The reads are asynchronous; the parse and
+   * dispatch are timed under `label`. All errors are swallowed with a WARN
    * log so watcher failures never break the session.
    */
-  private processChange(sessionId: string, state: WatcherState): void {
+  private async processChange(sessionId: string, state: WatcherState, label: string): Promise<void> {
     try {
-      let result: SessionHistoryParseResult;
+      let chunk: string;
+      let mode: 'full' | 'append';
 
       if (state.isFullRewrite) {
-        const content = fs.readFileSync(state.filePath, 'utf-8');
-        if (!content) return;
-        result = state.parse(content, 'full');
+        chunk = await fsPromises.readFile(state.filePath, 'utf-8');
+        mode = 'full';
       } else {
-        const stat = fs.statSync(state.filePath);
+        const stat = await fsPromises.stat(state.filePath);
+        if (this.states.get(sessionId) !== state) return;
         // A resume watcher whose attach-time stat failed: anchor the cursor at
         // the current EOF now (the stat here succeeded) and skip this round, so
         // pre-existing pre-suspend content is never read from byte 0. Only
@@ -282,19 +296,23 @@ export class SessionHistoryReader {
         if (stat.size <= state.cursor) return;
         const length = stat.size - state.cursor;
         const buffer = Buffer.alloc(length);
-        const fileDescriptor = fs.openSync(state.filePath, 'r');
+        const handle = await fsPromises.open(state.filePath, 'r');
         try {
-          fs.readSync(fileDescriptor, buffer, 0, length, state.cursor);
+          await handle.read(buffer, 0, length, state.cursor);
         } finally {
-          fs.closeSync(fileDescriptor);
+          await handle.close();
         }
         state.cursor = stat.size;
-        const chunk = buffer.toString('utf-8');
-        if (!chunk) return;
-        result = state.parse(chunk, 'append');
+        chunk = buffer.toString('utf-8');
+        mode = 'append';
       }
+      // Detached while the read was out.
+      if (this.states.get(sessionId) !== state || !chunk) return;
 
-      dispatchSessionHistoryResult(sessionId, result, this.callbacks);
+      timeSyncWork(label, () => {
+        const result: SessionHistoryParseResult = state.parse(chunk, mode);
+        dispatchSessionHistoryResult(sessionId, result, this.callbacks);
+      });
 
       // First successful parse - notify the consumer so it can suppress
       // any fallback activity trackers now that authoritative telemetry

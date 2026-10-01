@@ -57,6 +57,11 @@ function makeUsage(totalInputTokens: number): SessionUsage {
   };
 }
 
+/** Let an asynchronous status read land (or fail) before a negative assertion. */
+async function settleReads(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
 describe('StatusFileReader', () => {
   let tempDir: string;
   let callbacks: StatusFileReaderCallbacks;
@@ -247,7 +252,7 @@ describe('StatusFileReader', () => {
   // handleStatusChange (via flushPendingEvents-adjacent + direct file manipulation)
   // ---------------------------------------------------------------------------
 
-  it('parses and dispatches a status.json update', () => {
+  it('parses and dispatches a status.json update', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     const eventsPath = path.join(tempDir, 'events.jsonl');
     const expectedUsage = makeUsage(1234);
@@ -272,10 +277,10 @@ describe('StatusFileReader', () => {
     };
     privateReader.handleStatusChange('session-1');
 
-    expect(callbacks.onUsageParsed).toHaveBeenCalledWith('session-1', expectedUsage);
+    await vi.waitFor(() => expect(callbacks.onUsageParsed).toHaveBeenCalledWith('session-1', expectedUsage));
   });
 
-  it('skips dispatch when parseStatus returns null', () => {
+  it('skips dispatch when parseStatus returns null', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     const parser = makeStubStatusFileHook({
       parseStatus: () => null,
@@ -294,11 +299,12 @@ describe('StatusFileReader', () => {
       handleStatusChange(sessionId: string): void;
     };
     privateReader.handleStatusChange('session-1');
+    await settleReads();
 
     expect(callbacks.onUsageParsed).not.toHaveBeenCalled();
   });
 
-  it('swallows fs errors from missing status.json', () => {
+  it('swallows fs errors from missing status.json', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     reader.attach({
       sessionId: 'session-1',
@@ -316,6 +322,7 @@ describe('StatusFileReader', () => {
     };
     // No file exists - should not throw.
     expect(() => privateReader.handleStatusChange('session-1')).not.toThrow();
+    await settleReads();
     expect(callbacks.onUsageParsed).not.toHaveBeenCalled();
   });
 
@@ -323,7 +330,7 @@ describe('StatusFileReader', () => {
   // onFirstStatus / hasReceivedStatus - the transcript-fallback handoff signal
   // ---------------------------------------------------------------------------
 
-  it('fires onFirstStatus exactly once across multiple status writes, after onUsageParsed', () => {
+  it('fires onFirstStatus exactly once across multiple status writes, after onUsageParsed', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     const parser = makeStubStatusFileHook({ parseStatus: () => makeUsage(1000) });
     reader.attach({
@@ -336,8 +343,10 @@ describe('StatusFileReader', () => {
 
     const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
     privateReader.handleStatusChange('session-1');
+    await vi.waitFor(() => expect(callbacks.onFirstStatus).toHaveBeenCalled());
     privateReader.handleStatusChange('session-1');
     privateReader.handleStatusChange('session-1');
+    await vi.waitFor(() => expect((callbacks.onUsageParsed as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2));
 
     // Fires once, not once-per-parse.
     expect(callbacks.onFirstStatus).toHaveBeenCalledTimes(1);
@@ -349,7 +358,7 @@ describe('StatusFileReader', () => {
     expect(usageOrder).toBeLessThan(firstStatusOrder);
   });
 
-  it('does not fire onFirstStatus when parseStatus returns null', () => {
+  it('does not fire onFirstStatus when parseStatus returns null', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     reader.attach({
       sessionId: 'session-1',
@@ -361,12 +370,13 @@ describe('StatusFileReader', () => {
 
     const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
     privateReader.handleStatusChange('session-1');
+    await settleReads();
 
     expect(callbacks.onFirstStatus).not.toHaveBeenCalled();
     expect(reader.hasReceivedStatus('session-1')).toBe(false);
   });
 
-  it('hasReceivedStatus flips true after the first parse and resets on re-attach', () => {
+  it('hasReceivedStatus flips true after the first parse and resets on re-attach', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     const parser = makeStubStatusFileHook({ parseStatus: () => makeUsage(1000) });
     reader.attach({
@@ -381,7 +391,7 @@ describe('StatusFileReader', () => {
     fs.writeFileSync(statusPath, '{"any":"content"}');
     const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
     privateReader.handleStatusChange('session-1');
-    expect(reader.hasReceivedStatus('session-1')).toBe(true);
+    await vi.waitFor(() => expect(reader.hasReceivedStatus('session-1')).toBe(true));
 
     // Detach clears state; a fresh attach starts un-delivered.
     reader.detach('session-1');
@@ -571,6 +581,37 @@ describe('StatusFileReader', () => {
   // ---------------------------------------------------------------------------
   // self-heal: recreate a vanished session directory for a live session
   // ---------------------------------------------------------------------------
+
+  it('an exit flush during an asynchronous events read dispatches each line once, in order', async () => {
+    const eventsPath = path.join(tempDir, 'events.jsonl');
+    reader.attach({
+      sessionId: 'session-1',
+      statusOutputPath: null,
+      eventsOutputPath: eventsPath,
+      statusFileHook: makeStubStatusFileHook({}),
+    });
+    const lines = ['{"ts":1,"type":"tool_start"}', '{"ts":2,"type":"tool_end"}', '{"ts":3,"type":"idle"}'];
+    fs.appendFileSync(eventsPath, `${lines[0]}\n${lines[1]}\n`);
+    const privateReader = reader as unknown as { handleEventsChange(sessionId: string): void };
+    // An asynchronous read starts, then the PTY exits before it lands, with
+    // one more line written in between.
+    privateReader.handleEventsChange('session-1');
+    fs.appendFileSync(eventsPath, `${lines[2]}\n`);
+    reader.flushPendingEvents('session-1');
+
+    // The flush dispatched everything at once, synchronously.
+    const dispatched = (callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[1] as string[]);
+    expect(dispatched).toEqual([lines]);
+    // The superseded read drops its range rather than sending it again.
+    await settleReads();
+    expect((callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+
+    // A later change still reads from where the flush stopped.
+    fs.appendFileSync(eventsPath, '{"ts":4,"type":"prompt"}\n');
+    privateReader.handleEventsChange('session-1');
+    await vi.waitFor(() => expect((callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2));
+    expect((callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls[1][1]).toEqual(['{"ts":4,"type":"prompt"}']);
+  });
 
   it('self-heals a vanished session directory so a live session\'s feed resumes (real captured event)', () => {
     // Mirror the on-disk layout <project>/.kangentic/sessions/<id>/events.jsonl

@@ -570,7 +570,7 @@ export async function handleGetSessionHistory(
   // Read the file, truncating from the beginning if too large
   let content: string;
   try {
-    const tailResult = readBoundedTail(filePath, MAX_SESSION_HISTORY_BYTES);
+    const tailResult = await readBoundedTail(filePath, MAX_SESSION_HISTORY_BYTES);
     content = tailResult.truncated
       ? `[Truncated - showing last ${Math.round(MAX_SESSION_HISTORY_BYTES / 1024)}KB of ${Math.round(tailResult.totalBytes / 1024)}KB]\n${tailResult.content}`
       : tailResult.content;

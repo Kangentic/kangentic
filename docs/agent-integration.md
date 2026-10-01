@@ -458,15 +458,15 @@ The `/model` picker probe (`model-picker-probe.ts`) is the one other Claude proc
 
 `src/main/agent/adapters/claude/trust-manager.ts`
 
-When spawning an agent in a worktree (CWD differs from project root), `ensureWorktreeTrust()` pre-populates `~/.claude.json` so Claude Code doesn't prompt for trust:
+Before every spawn, `ClaudeAdapter.ensureTrust()` calls `ensureClaudeSpawnConfig()`, which makes ONE read-modify-write of `~/.claude.json` under the lock (it used to be three passes per spawn, each parsing and rewriting a file that runs to 1.5 MB):
 
-1. Read `~/.claude.json` (or start from empty object if missing/malformed)
-2. Find the parent project's trust entry in `projects`
-3. Create a new entry for the worktree path with `hasTrustDialogAccepted: true`
-4. Copy `enabledMcpjsonServers` from the parent entry (MCP server inheritance)
-5. Write back to `~/.claude.json`
+1. Read `~/.claude.json` asynchronously (a missing file starts from an empty object; a file that exists but does not parse as a JSON object is left untouched, since it holds the user's auth and MCP state, and the session shows a trust prompt instead)
+2. Trust the working directory: a `projects` entry with `hasTrustDialogAccepted: true`, copying `enabledMcpjsonServers` from the parent project entry for a worktree (MCP server inheritance)
+3. Append `kangentic` to the entry's `enabledMcpjsonServers` (append-if-absent) so the Kangentic MCP server is enabled without a prompt
+4. Set `diffSidebarOpen: false` (see Diff Panel below)
+5. Write once, asynchronously and atomically (temp file + rename), only when something changed
 
-Idempotent - skips write if the worktree is already trusted. `ensureMcpServerTrust()` then appends `kangentic` to the project entry's `enabledMcpjsonServers` (append-if-absent) so the Kangentic MCP server is enabled without a prompt.
+`ensureWorktreeTrust()` and `ensureMcpServerTrust()` remain for callers that need one change alone (the model-picker probe trusts its scratch directory).
 
 #### Diff Panel
 
@@ -474,11 +474,11 @@ Idempotent - skips write if the worktree is already trusted. `ensureMcpServerTru
 
 Claude Code 2.1.260 opens a diff panel beside the conversation in the fullscreen renderer whenever the terminal is wide enough: the gate is `columns >= 144` when the global `diffSidebarOpen` key is unset, `>= 110` when it is `true`, and never when it is `false`. The panel takes the right `min(floor(columns * 0.45), 90, columns - 70)` columns and shares physical rows with the transcript, so every line-oriented scrollback parse reads the two panes spliced together, and it duplicates the task window's Changes tab.
 
-The key lives only in `~/.claude.json` (the same key list as `theme` and `diffTool`); it is not a settings.json key, so the per-session `--settings` file cannot carry it, and there is no CLI flag or env var. `ensureDiffPanelClosed()` therefore writes `diffSidebarOpen: false` before every spawn:
+The key lives only in `~/.claude.json` (the same key list as `theme` and `diffTool`); it is not a settings.json key, so the per-session `--settings` file cannot carry it, and there is no CLI flag or env var. The spawn's one pass (`ensureClaudeSpawnConfig()`, applying `applyDiffPanelClosed()`) therefore writes `diffSidebarOpen: false` before every spawn:
 
 - Idempotent: an already-`false` key costs one read and no write.
 - Per spawn, not once: the key is remembered-last-state in one global slot, and any session that opens the panel (`/diff`) writes `true`, which would otherwise auto-open it in every later Kangentic session.
-- Atomic (temp file + rename, no backup copy), and an unreadable file is left untouched rather than replaced, since the file holds the user's auth and MCP state. That guard covers this write only: the two trust writers run earlier in the same `ensureTrust()` and still fall back to an empty object on a parse failure, so a torn file has already lost its other keys before the diff-panel write is reached.
+- Atomic (temp file + rename, no backup copy), and an unreadable file is left untouched rather than replaced, since the file holds the user's auth and MCP state.
 - The CLI applies the value it read at startup: a session spawned with the key `false` stays closed even if another session flips the key to `true` later (verified with a completed turn at 210 columns), so the write covers the session's whole lifetime.
 - `/diff` inside a session still opens the panel for that session (that path checks only the git cwd and `columns >= 110`), so it is the per-session opt-in. Turning fullscreen off (`tui: "default"`) would also remove the panel but reintroduces the scrollback duplication fullscreen exists to fix, so it is not used.
 

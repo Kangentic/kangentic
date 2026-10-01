@@ -197,86 +197,86 @@ describe('handleGetSessionEvents', () => {
     return createContext(createDb({ sessionsById: { [sessionId]: session } }), projectRoot);
   }
 
-  it('returns empty events list when file does not exist', () => {
-    const result = handleGetSessionEvents({ sessionId }, ctx());
+  it('returns empty events list when file does not exist', async () => {
+    const result = await handleGetSessionEvents({ sessionId }, ctx());
     expect(result.success).toBe(true);
     const data = result.data as { events: unknown[]; totalLines: number };
     expect(data.events).toEqual([]);
     expect(data.totalLines).toBe(0);
   });
 
-  it('parses valid lines and skips malformed ones', () => {
+  it('parses valid lines and skips malformed ones', async () => {
     writeEventsJsonl(sessionId, [
       '{"hook_event_name":"PreToolUse","timestamp":1000}',
       'not json garbage',
       '{"hook_event_name":"Stop","timestamp":2000}',
       '',
     ]);
-    const result = handleGetSessionEvents({ sessionId }, ctx());
+    const result = await handleGetSessionEvents({ sessionId }, ctx());
     const data = result.data as { events: Array<Record<string, unknown>>; returned: number };
     expect(data.returned).toBe(2);
     expect(data.events.map((event) => event.hook_event_name)).toEqual(['PreToolUse', 'Stop']);
   });
 
-  it('filters by eventTypes (matches hook_event_name and type)', () => {
+  it('filters by eventTypes (matches hook_event_name and type)', async () => {
     writeEventsJsonl(sessionId, [
       '{"hook_event_name":"PreToolUse"}',
       '{"hook_event_name":"PostToolUse"}',
       '{"type":"Stop"}',
       '{"hook_event_name":"Notification"}',
     ]);
-    const result = handleGetSessionEvents({ sessionId, eventTypes: ['PreToolUse', 'Stop'] }, ctx());
+    const result = await handleGetSessionEvents({ sessionId, eventTypes: ['PreToolUse', 'Stop'] }, ctx());
     const data = result.data as { events: Array<Record<string, unknown>> };
     expect(data.events).toHaveLength(2);
   });
 
-  it('drops events older than since (epoch ms)', () => {
+  it('drops events older than since (epoch ms)', async () => {
     writeEventsJsonl(sessionId, [
       '{"hook_event_name":"A","timestamp":1000}',
       '{"hook_event_name":"B","timestamp":2000}',
       '{"hook_event_name":"C","timestamp":3000}',
     ]);
-    const result = handleGetSessionEvents({ sessionId, since: 2000 }, ctx());
+    const result = await handleGetSessionEvents({ sessionId, since: 2000 }, ctx());
     const data = result.data as { events: Array<Record<string, unknown>> };
     expect(data.events.map((event) => event.hook_event_name)).toEqual(['B', 'C']);
   });
 
-  it('drops events with no timestamp when since is set', () => {
+  it('drops events with no timestamp when since is set', async () => {
     writeEventsJsonl(sessionId, [
       '{"hook_event_name":"NoTs"}',
       '{"hook_event_name":"WithTs","timestamp":5000}',
     ]);
-    const result = handleGetSessionEvents({ sessionId, since: 1000 }, ctx());
+    const result = await handleGetSessionEvents({ sessionId, since: 1000 }, ctx());
     const data = result.data as { events: Array<Record<string, unknown>> };
     expect(data.events.map((event) => event.hook_event_name)).toEqual(['WithTs']);
   });
 
-  it('returns only the last N events when tail is set', () => {
+  it('returns only the last N events when tail is set', async () => {
     const lines = Array.from({ length: 10 }, (_, index) => `{"hook_event_name":"E${index}"}`);
     writeEventsJsonl(sessionId, lines);
-    const result = handleGetSessionEvents({ sessionId, tail: 3 }, ctx());
+    const result = await handleGetSessionEvents({ sessionId, tail: 3 }, ctx());
     const data = result.data as { events: Array<Record<string, unknown>>; returned: number };
     expect(data.returned).toBe(3);
     expect(data.events.map((event) => event.hook_event_name)).toEqual(['E7', 'E8', 'E9']);
   });
 
-  it('caps tail at the hard maximum', () => {
+  it('caps tail at the hard maximum', async () => {
     const lines = Array.from({ length: 5 }, (_, index) => `{"hook_event_name":"E${index}"}`);
     writeEventsJsonl(sessionId, lines);
-    const result = handleGetSessionEvents({ sessionId, tail: 99999 }, ctx());
+    const result = await handleGetSessionEvents({ sessionId, tail: 99999 }, ctx());
     const data = result.data as { returned: number };
     expect(data.returned).toBe(5);
   });
 
-  it('reports truncated=false on small files', () => {
+  it('reports truncated=false on small files', async () => {
     writeEventsJsonl(sessionId, ['{"hook_event_name":"Stop"}']);
-    const result = handleGetSessionEvents({ sessionId }, ctx());
+    const result = await handleGetSessionEvents({ sessionId }, ctx());
     const data = result.data as { truncated: boolean; totalBytes: number };
     expect(data.truncated).toBe(false);
     expect(data.totalBytes).toBeGreaterThan(0);
   });
 
-  it('tail-reads a bounded window from a file over the byte cap', () => {
+  it('tail-reads a bounded window from a file over the byte cap', async () => {
     // ~4000 lines x ~400B = ~1.6MB, over the 1MB MAX_EVENTS_READ_BYTES cap.
     const padding = 'p'.repeat(370);
     const lines = Array.from(
@@ -285,7 +285,7 @@ describe('handleGetSessionEvents', () => {
     );
     writeEventsJsonl(sessionId, lines);
 
-    const result = handleGetSessionEvents({ sessionId, tail: 50 }, ctx());
+    const result = await handleGetSessionEvents({ sessionId, tail: 50 }, ctx());
     expect(result.success).toBe(true);
     const data = result.data as {
       events: Array<Record<string, unknown>>;

@@ -20,8 +20,7 @@ import {
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
-import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
-import { ensureDiffPanelClosed } from './diff-panel';
+import { ensureClaudeSpawnConfig } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import {
@@ -319,11 +318,10 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   async ensureTrust(workingDirectory: string): Promise<void> {
-    await ensureWorktreeTrust(workingDirectory);
-    await ensureMcpServerTrust(workingDirectory);
-    // Same file, same lock: keep 2.1.260's fullscreen diff panel closed at
-    // launch. Runs per spawn on purpose - see diff-panel.ts for why.
-    await ensureDiffPanelClosed();
+    // One pass over ~/.claude.json: the directory trusted, the kangentic MCP
+    // server enabled, and 2.1.260's fullscreen diff panel kept closed at
+    // launch (per spawn on purpose - see diff-panel.ts for why).
+    await ensureClaudeSpawnConfig(workingDirectory);
   }
 
   buildCommand(options: SpawnCommandOptions): string {

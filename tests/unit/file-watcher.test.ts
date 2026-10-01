@@ -37,6 +37,14 @@ vi.mock('node:fs', () => ({
     statSync: (...args: unknown[]) => mockStatSync(...args),
     existsSync: (...args: unknown[]) => mockExistsSync(...args),
   },
+  // The poll checks the file asynchronously (stat for staleness, access
+  // before a re-arm), through the same two mocks.
+  promises: {
+    stat: async (...args: unknown[]) => mockStatSync(...args),
+    access: async (...args: unknown[]) => {
+      if (!mockExistsSync(...args)) throw new Error('ENOENT');
+    },
+  },
 }));
 
 import { FileWatcher } from '../../src/main/pty/readers/file-watcher';
@@ -103,28 +111,28 @@ describe('FileWatcher', () => {
   }
 
   describe('fs.watch fast path', () => {
-    it('fires onChange after debounce when fs.watch triggers', () => {
+    it('fires onChange after debounce when fs.watch triggers', async () => {
       const watcher = createWatcher({ debounceMs: 50 });
 
       fireWatcher();
       expect(onChange).not.toHaveBeenCalled();
 
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       watcher.close();
     });
 
-    it('debounces rapid fs.watch events into a single onChange call', () => {
+    it('debounces rapid fs.watch events into a single onChange call', async () => {
       const watcher = createWatcher({ debounceMs: 50 });
 
       fireWatcher();
-      vi.advanceTimersByTime(20);
+      await vi.advanceTimersByTimeAsync(20);
       fireWatcher();
-      vi.advanceTimersByTime(20);
+      await vi.advanceTimersByTimeAsync(20);
       fireWatcher();
 
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       watcher.close();
@@ -132,21 +140,21 @@ describe('FileWatcher', () => {
   });
 
   describe('polling fallback', () => {
-    it('detects changes via polling when fs.watch is silent', () => {
+    it('detects changes via polling when fs.watch is silent', async () => {
       const isStale = vi.fn().mockReturnValue(true);
       const watcher = createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
 
       // Advance to first poll
-      vi.advanceTimersByTime(1000);
+      await vi.advanceTimersByTimeAsync(1000);
 
       // Wait for debounce
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       watcher.close();
     });
 
-    it('does not double-fire when fs.watch already handled the change', () => {
+    it('does not double-fire when fs.watch already handled the change', async () => {
       const isStale = vi.fn().mockReturnValue(true);
       const watcher = createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
 
@@ -154,88 +162,88 @@ describe('FileWatcher', () => {
       fireWatcher();
 
       // Poll runs while debounce is pending - debounceTimer guard skips it
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       watcher.close();
     });
 
-    it('skips polling when isStale returns false', () => {
+    it('skips polling when isStale returns false', async () => {
       const isStale = vi.fn().mockReturnValue(false);
       const watcher = createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
 
-      vi.advanceTimersByTime(5000);
+      await vi.advanceTimersByTimeAsync(5000);
       expect(onChange).not.toHaveBeenCalled();
 
       watcher.close();
     });
 
-    it('uses default mtime-based staleness check', () => {
+    it('uses default mtime-based staleness check', async () => {
       // Set mtime in the future (file was modified after watcher construction)
       mockStatSync.mockReturnValue({ mtimeMs: Date.now() + 5000 });
 
       const watcher = createWatcher({ pollIntervalMs: 1000, debounceMs: 50 });
 
-      vi.advanceTimersByTime(1000);
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       watcher.close();
     });
 
-    it('respects custom isStale function', () => {
+    it('respects custom isStale function', async () => {
       let stale = false;
       const isStale = vi.fn(() => stale);
       const watcher = createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
 
       // Not stale - no trigger
-      vi.advanceTimersByTime(1050);
+      await vi.advanceTimersByTimeAsync(1050);
       expect(onChange).not.toHaveBeenCalled();
 
       // Now stale
       stale = true;
-      vi.advanceTimersByTime(1000);
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       watcher.close();
     });
 
-    it('skips the redundant poll stat while fs.watch fired within the interval', () => {
+    it('skips the redundant poll stat while fs.watch fired within the interval', async () => {
       const isStale = vi.fn().mockReturnValue(false);
       createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
 
       // Native fs.watch event at t=500 -> marks the watcher healthy.
-      vi.advanceTimersByTime(500);
+      await vi.advanceTimersByTimeAsync(500);
       fireWatcher();
-      vi.advanceTimersByTime(50); // let the debounce fire
+      await vi.advanceTimersByTimeAsync(50); // let the debounce fire
       isStale.mockClear();
 
       // First poll at t=1000: the native watcher fired 500ms ago (< 1000ms),
       // so the poll skips its stat entirely (isStale is the stat proxy here).
-      vi.advanceTimersByTime(450);
+      await vi.advanceTimersByTimeAsync(450);
       expect(isStale).not.toHaveBeenCalled();
     });
 
-    it('resumes the poll stat once fs.watch has been quiet past one interval', () => {
+    it('resumes the poll stat once fs.watch has been quiet past one interval', async () => {
       const isStale = vi.fn().mockReturnValue(true);
       createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
 
       // Native event at t=100, then fs.watch goes silent.
-      vi.advanceTimersByTime(100);
+      await vi.advanceTimersByTimeAsync(100);
       fireWatcher();
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       onChange.mockClear();
 
       // Poll at t=1000: gap 900 < 1000 -> skipped.
-      vi.advanceTimersByTime(850);
+      await vi.advanceTimersByTimeAsync(850);
       // Poll at t=2000: gap 1900 >= 1000 -> proceeds, stale -> onChange fires.
-      vi.advanceTimersByTime(1000);
-      vi.advanceTimersByTime(50); // debounce
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(50); // debounce
       expect(onChange).toHaveBeenCalledTimes(1);
     });
 
-    it('polls repeatedly when data keeps arriving', () => {
+    it('polls repeatedly when data keeps arriving', async () => {
       let staleCount = 0;
       const isStale = vi.fn(() => {
         staleCount++;
@@ -245,12 +253,12 @@ describe('FileWatcher', () => {
       const watcher = createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
 
       // First poll: stale -> trigger
-      vi.advanceTimersByTime(1050);
+      await vi.advanceTimersByTimeAsync(1050);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       // Second poll: not stale -> skip
       // Third poll: stale -> trigger
-      vi.advanceTimersByTime(2050);
+      await vi.advanceTimersByTimeAsync(2050);
       expect(onChange).toHaveBeenCalledTimes(2);
 
       watcher.close();
@@ -258,7 +266,7 @@ describe('FileWatcher', () => {
   });
 
   describe('directory fallback', () => {
-    it('falls back to directory watching when file does not exist', () => {
+    it('falls back to directory watching when file does not exist', async () => {
       watchShouldThrow = true;
 
       const watcher = createWatcher({
@@ -271,12 +279,12 @@ describe('FileWatcher', () => {
 
       // Simulate directory change for the expected file
       fireDirWatcher('change', 'status.json');
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       // Different file in same directory - should not trigger
       fireDirWatcher('change', 'other.json');
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       watcher.close();
@@ -284,7 +292,7 @@ describe('FileWatcher', () => {
   });
 
   describe('close', () => {
-    it('cleans up watcher, poll timer, and debounce timer', () => {
+    it('cleans up watcher, poll timer, and debounce timer', async () => {
       const watcher = createWatcher({ debounceMs: 50 });
 
       // Start a debounce
@@ -295,23 +303,23 @@ describe('FileWatcher', () => {
       expect(mockWatcherClose).toHaveBeenCalledTimes(1);
 
       // Advance time - nothing should fire after close
-      vi.advanceTimersByTime(5000);
+      await vi.advanceTimersByTimeAsync(5000);
       expect(onChange).not.toHaveBeenCalled();
     });
 
-    it('is idempotent', () => {
+    it('is idempotent', async () => {
       const watcher = createWatcher();
       watcher.close();
       watcher.close();
       expect(mockWatcherClose).toHaveBeenCalledTimes(1);
     });
 
-    it('ignores fs.watch events after close', () => {
+    it('ignores fs.watch events after close', async () => {
       const watcher = createWatcher({ debounceMs: 50 });
       watcher.close();
 
       fireWatcher();
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).not.toHaveBeenCalled();
     });
   });
@@ -328,7 +336,7 @@ describe('FileWatcher', () => {
       warnSpy.mockRestore();
     });
 
-    it('disarms a flooding directory watcher, and polling still delivers', () => {
+    it('disarms a flooding directory watcher, and polling still delivers', async () => {
       watchShouldThrow = true;
       const isStale = vi.fn().mockReturnValue(false);
       const watcher = createWatcher({
@@ -349,14 +357,14 @@ describe('FileWatcher', () => {
 
       // The poll fallback is untouched by the disarm.
       isStale.mockReturnValue(true);
-      vi.advanceTimersByTime(1000);
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       watcher.close();
     });
 
-    it('disarms a flooding file watcher that never settles its debounce', () => {
+    it('disarms a flooding file watcher that never settles its debounce', async () => {
       const watcher = createWatcher({ debounceMs: 50, pollIntervalMs: 100000 });
 
       // No timer advance: each event clears and re-arms the debounce, so
@@ -368,7 +376,7 @@ describe('FileWatcher', () => {
       watcher.close();
     });
 
-    it('does not disarm on slow sibling churn spread across windows', () => {
+    it('does not disarm on slow sibling churn spread across windows', async () => {
       watchShouldThrow = true;
       const isStale = vi.fn().mockReturnValue(false);
       const watcher = createWatcher({
@@ -384,7 +392,7 @@ describe('FileWatcher', () => {
       // nothing ever dispatches to reset the count.
       for (let burst = 0; burst < 5; burst++) {
         fireDirWatcherTimes(500, 'change', 'unrelated.log');
-        vi.advanceTimersByTime(1001);
+        await vi.advanceTimersByTimeAsync(1001);
       }
 
       expect(mockWatcherClose).not.toHaveBeenCalled();
@@ -392,13 +400,13 @@ describe('FileWatcher', () => {
       expect(mockWatcherClose).toHaveBeenCalledTimes(1);
     });
 
-    it('does not disarm while events keep dispatching', () => {
+    it('does not disarm while events keep dispatching', async () => {
       const watcher = createWatcher({ debounceMs: 50, pollIntervalMs: 100000 });
 
       // Twice the threshold overall, but every batch settles and dispatches.
       for (let batch = 0; batch < 10; batch++) {
         fireWatcherTimes(200);
-        vi.advanceTimersByTime(50);
+        await vi.advanceTimersByTimeAsync(50);
       }
 
       expect(onChange).toHaveBeenCalledTimes(10);
@@ -406,7 +414,7 @@ describe('FileWatcher', () => {
       watcher.close();
     });
 
-    it('re-arms a FILE watch from the poll, never the directory', () => {
+    it('re-arms a FILE watch from the poll, never the directory', async () => {
       watchShouldThrow = true;
       const isStale = vi.fn().mockReturnValue(false);
       const watcher = createWatcher({
@@ -421,18 +429,18 @@ describe('FileWatcher', () => {
       expect(mockWatcherClose).toHaveBeenCalledTimes(1);
 
       // Target still missing: no re-arm, and no fs.watch throw once per second.
-      vi.advanceTimersByTime(1000);
+      await vi.advanceTimersByTimeAsync(1000);
       expect(watchPaths).toEqual(['/test/dir']);
 
       // Target back: re-armed on the file, never back onto the directory.
       mockExistsSync.mockReturnValue(true);
-      vi.advanceTimersByTime(1000);
+      await vi.advanceTimersByTimeAsync(1000);
       expect(watchPaths).toEqual(['/test/dir', '/test/dir/status.json']);
 
       watcher.close();
     });
 
-    it('lets the very next poll run isStale after a disarm', () => {
+    it('lets the very next poll run isStale after a disarm', async () => {
       const isStale = vi.fn().mockReturnValue(false);
       const watcher = createWatcher({ debounceMs: 50, pollIntervalMs: 1000, isStale });
 
@@ -443,13 +451,13 @@ describe('FileWatcher', () => {
       expect(mockWatcherClose).toHaveBeenCalledTimes(1);
       isStale.mockClear();
 
-      vi.advanceTimersByTime(1000);
+      await vi.advanceTimersByTimeAsync(1000);
       expect(isStale).toHaveBeenCalled();
 
       watcher.close();
     });
 
-    it('does not double-close when closed after a disarm', () => {
+    it('does not double-close when closed after a disarm', async () => {
       const watcher = createWatcher({ debounceMs: 50, pollIntervalMs: 100000 });
 
       fireWatcherTimes(STORM_EVENT_THRESHOLD + 1);
@@ -461,7 +469,7 @@ describe('FileWatcher', () => {
   });
 
   describe('error handling', () => {
-    it('releases the handle on an error event and re-arms from the poll', () => {
+    it('releases the handle on an error event and re-arms from the poll', async () => {
       const isStale = vi.fn().mockReturnValue(false);
       const watcher = createWatcher({ pollIntervalMs: 1000, isStale });
       expect(watchPaths).toEqual(['/test/status.json']);
@@ -471,26 +479,26 @@ describe('FileWatcher', () => {
       expect(mockWatcherClose).toHaveBeenCalledTimes(1);
 
       mockExistsSync.mockReturnValue(true);
-      vi.advanceTimersByTime(1000);
+      await vi.advanceTimersByTimeAsync(1000);
       expect(watchPaths).toEqual(['/test/status.json', '/test/status.json']);
 
       watcher.close();
     });
 
-    it('does not re-arm after close', () => {
+    it('does not re-arm after close', async () => {
       const watcher = createWatcher({ pollIntervalMs: 1000 });
       mockExistsSync.mockReturnValue(true);
 
       watcher.close();
       const pathCountAtClose = watchPaths.length;
 
-      vi.advanceTimersByTime(5000);
+      await vi.advanceTimersByTimeAsync(5000);
       expect(watchPaths).toHaveLength(pathCountAtClose);
     });
   });
 
   describe('no stale logging', () => {
-    it('does not produce console.warn or console.debug output', () => {
+    it('does not produce console.warn or console.debug output', async () => {
       const warnSpy = vi.spyOn(console, 'warn');
       const debugSpy = vi.spyOn(console, 'debug');
 
@@ -499,7 +507,7 @@ describe('FileWatcher', () => {
 
       // Run many poll cycles
       for (let iteration = 0; iteration < 20; iteration++) {
-        vi.advanceTimersByTime(1050);
+        await vi.advanceTimersByTimeAsync(1050);
       }
 
       expect(warnSpy).not.toHaveBeenCalled();

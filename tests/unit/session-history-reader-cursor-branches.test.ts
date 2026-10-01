@@ -71,6 +71,24 @@ vi.mock('node:fs', () => ({
     closeSync: (...args: unknown[]) => mockCloseSync(...args),
     readSync: (...args: unknown[]) => mockReadSync(...args),
   },
+  // The reader's own reads, through the same queues and in the same argument
+  // order as the synchronous calls they replaced.
+  promises: {
+    stat: async (...args: unknown[]) => mockStatSync(...args),
+    access: async () => undefined,
+    open: async (...args: unknown[]) => {
+      const fileDescriptor = mockOpenSync(...args);
+      return {
+        read: async (buffer: Buffer, offset: number, length: number, position: number) => {
+          mockReadSync(fileDescriptor, buffer, offset, length, position);
+          return { bytesRead: length, buffer };
+        },
+        close: async () => {
+          mockCloseSync(fileDescriptor);
+        },
+      };
+    },
+  },
 }));
 
 import { SessionHistoryReader, type SessionHistoryReaderCallbacks } from '../../src/main/pty/readers/session-history-reader';
@@ -137,7 +155,7 @@ describe('SessionHistoryReader cursor-tracking branches (fully-mocked fs)', () =
     statQueue.push({ size: 800 });
     readQueue.push('A'.repeat(300));
     fireWatch();
-    vi.advanceTimersByTime(50); // flush FileWatcher's debounce
+    await vi.advanceTimersByTimeAsync(50); // flush FileWatcher's debounce
 
     expect(parse).toHaveBeenCalledTimes(1);
     expect(parse.mock.calls[0][0]).toBe('A'.repeat(300));
@@ -149,7 +167,7 @@ describe('SessionHistoryReader cursor-tracking branches (fully-mocked fs)', () =
     // so the cursor must reset to the NEW size (200), never to 0.
     statQueue.push({ size: 200 });
     fireWatch();
-    vi.advanceTimersByTime(50);
+    await vi.advanceTimersByTimeAsync(50);
 
     // Nothing to read yet (200 <= reset cursor 200) - parse count unchanged.
     expect(parse).toHaveBeenCalledTimes(1);
@@ -160,7 +178,7 @@ describe('SessionHistoryReader cursor-tracking branches (fully-mocked fs)', () =
     statQueue.push({ size: 250 });
     readQueue.push('B'.repeat(50));
     fireWatch();
-    vi.advanceTimersByTime(50);
+    await vi.advanceTimersByTimeAsync(50);
 
     expect(parse).toHaveBeenCalledTimes(2);
     expect(parse.mock.calls[1][0]).toBe('B'.repeat(50));
@@ -194,7 +212,7 @@ describe('SessionHistoryReader cursor-tracking branches (fully-mocked fs)', () =
     statQueue.push({ size: 30 });
     readQueue.push('Y'.repeat(30));
     fireWatch();
-    vi.advanceTimersByTime(50);
+    await vi.advanceTimersByTimeAsync(50);
 
     expect(parse).toHaveBeenCalledTimes(2);
     expect(parse.mock.calls[1][0]).toBe('Y'.repeat(30));
@@ -248,7 +266,7 @@ describe('SessionHistoryReader cursor-tracking branches (fully-mocked fs)', () =
     statQueue.push({ size: 950 });
     readQueue.push('C'.repeat(50));
     fireWatch();
-    vi.advanceTimersByTime(50);
+    await vi.advanceTimersByTimeAsync(50);
 
     expect(parse).toHaveBeenCalledTimes(1);
     expect(parse.mock.calls[0][0]).toBe('C'.repeat(50));
@@ -281,7 +299,7 @@ describe('SessionHistoryReader cursor-tracking branches (fully-mocked fs)', () =
     statQueue.push({ size: 550 });
     readQueue.push('D'.repeat(50));
     fireWatch();
-    vi.advanceTimersByTime(50);
+    await vi.advanceTimersByTimeAsync(50);
 
     expect(parse).toHaveBeenCalledTimes(1);
     expect(mockReadSync.mock.calls[0][4]).toBe(500); // position

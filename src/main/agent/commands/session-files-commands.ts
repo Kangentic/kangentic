@@ -169,10 +169,10 @@ function parseLine(line: string): ParsedEvent {
   }
 }
 
-export const handleGetSessionEvents: CommandHandler = (
+export const handleGetSessionEvents: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const database = context.getProjectDb();
   const resolved = resolveSession(database, params);
   if (resolved.error || !resolved.session) {
@@ -183,7 +183,8 @@ export const handleGetSessionEvents: CommandHandler = (
   const sessionDir = path.join(projectRoot, '.kangentic', 'sessions', session.id);
   const eventsJsonlPath = path.join(sessionDir, 'events.jsonl');
 
-  if (!fs.existsSync(eventsJsonlPath)) {
+  const eventsJsonlExists = await fs.promises.access(eventsJsonlPath).then(() => true, () => false);
+  if (!eventsJsonlExists) {
     return {
       success: true,
       message: `No events.jsonl for session ${session.id}`,
@@ -204,7 +205,7 @@ export const handleGetSessionEvents: CommandHandler = (
   // truncation, `totalLines` counts only lines inside the scanned window and
   // the since/eventTypes filters apply within that window, so a huge file may
   // return fewer than `tail` matches - acceptable, signaled by `truncated`.
-  const { content, truncated, totalBytes } = readBoundedTail(eventsJsonlPath, MAX_EVENTS_READ_BYTES);
+  const { content, truncated, totalBytes } = await readBoundedTail(eventsJsonlPath, MAX_EVENTS_READ_BYTES);
   const lines = content.split(/\r?\n/);
   const totalLines = lines.length;
 

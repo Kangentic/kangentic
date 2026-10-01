@@ -81,9 +81,8 @@ function ensureDiffPanelClosedSync(): void {
       data = parsed;
     }
 
-    if (data.diffSidebarOpen === false) return;
+    if (!applyDiffPanelClosed(data)) return;
 
-    data.diffSidebarOpen = false;
     // Temp file + rename, so the CLI never sees a torn file. No `.kangentic-backup`
     // copy: this runs after every `/diff` anywhere, the file is over a megabyte, and
     // a backup taken from the same read cannot recover anything the rename loses.
@@ -94,6 +93,14 @@ function ensureDiffPanelClosedSync(): void {
   } catch (error) {
     console.warn(`${LOG_TAG} Failed to close the diff panel preference:`, error);
   }
+}
+
+/** Set the closed diff panel in a parsed ~/.claude.json. True when it changed
+ *  anything. A spawn applies it in `ensureClaudeSpawnConfig`'s one pass. */
+export function applyDiffPanelClosed(data: Record<string, unknown>): boolean {
+  if (data.diffSidebarOpen === false) return false;
+  data.diffSidebarOpen = false;
+  return true;
 }
 
 function parseObject(raw: string): Record<string, unknown> | null {

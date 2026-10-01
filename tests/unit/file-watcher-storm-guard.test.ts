@@ -52,6 +52,14 @@ vi.mock('node:fs', () => ({
     statSync: (...args: unknown[]) => mockStatSync(...args),
     existsSync: (...args: unknown[]) => mockExistsSync(...args),
   },
+  // The poll checks the file asynchronously (stat for staleness, access
+  // before a re-arm), through the same two mocks.
+  promises: {
+    stat: async (...args: unknown[]) => mockStatSync(...args),
+    access: async (...args: unknown[]) => {
+      if (!mockExistsSync(...args)) throw new Error('ENOENT');
+    },
+  },
 }));
 
 import { FileWatcher } from '../../src/main/pty/readers/file-watcher';
@@ -116,7 +124,7 @@ describe('FileWatcher storm-disarm coverage holes', () => {
   }
 
   describe('HOLE A: storm threshold boundary (file-watcher.ts:149)', () => {
-    it('does not disarm at exactly STORM_EVENT_THRESHOLD - 1 (999) raw events', () => {
+    it('does not disarm at exactly STORM_EVENT_THRESHOLD - 1 (999) raw events', async () => {
       // Pins the lower side of the boundary. Catches a threshold check that
       // trips one event early, e.g. file-watcher.ts:149 changed to
       // `if (this.nativeEventCount < STORM_EVENT_THRESHOLD - 1) return;`: at
@@ -134,7 +142,7 @@ describe('FileWatcher storm-disarm coverage holes', () => {
       watcher.close();
     });
 
-    it('disarms at exactly STORM_EVENT_THRESHOLD (1000) raw events', () => {
+    it('disarms at exactly STORM_EVENT_THRESHOLD (1000) raw events', async () => {
       // Catches the proven mutation: changing file-watcher.ts:149's
       // `if (this.nativeEventCount < STORM_EVENT_THRESHOLD) return;` to `<=`.
       // At the 1000th event, `1000 <= 1000` is true under the mutation, so the
@@ -155,7 +163,7 @@ describe('FileWatcher storm-disarm coverage holes', () => {
   });
 
   describe('HOLE B: disarmWatcher must zero lastWatcherNativeFireTime (file-watcher.ts:245)', () => {
-    it('lets the very next poll run isStale after a directory-arm disarm with a short gap', () => {
+    it('lets the very next poll run isStale after a directory-arm disarm with a short gap', async () => {
       // Catches the proven mutation: deleting
       // `this.lastWatcherNativeFireTime = 0;` from disarmWatcher(). This test
       // deliberately uses the DIRECTORY arm (not the file arm the existing
@@ -177,12 +185,12 @@ describe('FileWatcher storm-disarm coverage holes', () => {
 
       // t=500: one event whose filename MATCHES the watched file -> runs
       // onWatcherEvent, setting lastWatcherNativeFireTime = 500.
-      vi.advanceTimersByTime(500);
+      await vi.advanceTimersByTimeAsync(500);
       fireDirWatcher('change', 'status.json');
 
       // Let the debounce settle: onChange fires once, and the dispatch resets
       // nativeEventCount to 0 (a fresh storm-count run starts after this).
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(onChange).toHaveBeenCalledTimes(1);
 
       // t=600: a burst of NON-matching events. Each runs onRawWatcherEvent
@@ -190,7 +198,7 @@ describe('FileWatcher storm-disarm coverage holes', () => {
       // mismatch), so lastWatcherNativeFireTime is untouched by this burst -
       // whatever disarmWatcher does to it from here on is the only thing that
       // can change it.
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       fireDirWatcherTimes(STORM_EVENT_THRESHOLD, 'rename', 'unrelated.log');
       expect(mockWatcherClose).toHaveBeenCalledTimes(1);
 
@@ -199,7 +207,7 @@ describe('FileWatcher storm-disarm coverage holes', () => {
       // 1000ms pollIntervalMs - discriminating only if disarmWatcher actually
       // zeroed the timestamp out from under it.
       isStale.mockClear();
-      vi.advanceTimersByTime(400);
+      await vi.advanceTimersByTimeAsync(400);
 
       // With the zeroing: lastWatcherNativeFireTime is 0, so Date.now() - 0 is
       // the full fake-timer epoch value (real wall-clock start plus the 1000ms

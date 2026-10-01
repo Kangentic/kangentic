@@ -25,6 +25,50 @@ vi.mock('node:os', async () => {
 });
 
 import { ensureWorktreeTrust, ensureMcpServerTrust } from '../../src/main/agent/adapters/claude';
+import { ensureClaudeSpawnConfig } from '../../src/main/agent/adapters/claude/trust-manager';
+
+describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
+  it('trusts the directory, enables the MCP server and closes the diff panel in one write', async () => {
+    fs.writeFileSync(claudeJsonPath(), JSON.stringify({ oauthAccount: { id: 'kept' } }));
+    const worktree = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
+    const renames = vi.spyOn(fs.promises, 'rename');
+
+    await ensureClaudeSpawnConfig(worktree);
+
+    const data = readClaudeJson();
+    expect(data.oauthAccount).toEqual({ id: 'kept' });
+    expect(data.diffSidebarOpen).toBe(false);
+    const entry = Object.values(data.projects as Record<string, Record<string, unknown>>)[0];
+    expect(entry.hasTrustDialogAccepted).toBe(true);
+    expect(entry.enabledMcpjsonServers).toEqual(['kangentic']);
+    expect(renames).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
+    renames.mockRestore();
+  });
+
+  it('does not write when everything is already set', async () => {
+    const worktree = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
+    await ensureClaudeSpawnConfig(worktree);
+    const renames = vi.spyOn(fs.promises, 'rename');
+    const writes = vi.spyOn(fs.promises, 'writeFile');
+
+    await ensureClaudeSpawnConfig(worktree);
+
+    expect(renames).not.toHaveBeenCalled();
+    expect(writes).not.toHaveBeenCalled();
+    renames.mockRestore();
+    writes.mockRestore();
+  });
+
+  it('leaves a file that does not parse untouched rather than replacing it', async () => {
+    const torn = '{"oauthAccount": {"id": "half-writ';
+    fs.writeFileSync(claudeJsonPath(), torn);
+
+    await ensureClaudeSpawnConfig('/projects/myrepo');
+
+    expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(torn);
+  });
+});
 
 function claudeJsonPath(): string {
   return path.join(tmpHome, '.claude.json');
