@@ -65,7 +65,7 @@ describeWithVec('conversation vectors move to chunk size 128', () => {
 
     expect(store.beginConversationVecCopy()).toBe(true);
     expect(database.prepare("SELECT sql FROM sqlite_master WHERE name = 'memory_vec_conversation'").get()).toMatchObject({ sql: expect.stringContaining('chunk_size=128') });
-    expect(store.copyConversationVecBatch(100).covered).toBe(100);
+    expect(store.copyConversationVecBatch(100)).toBe(100);
     // Mid-copy: a vector behind the copy changes, one ahead of it changes,
     // and one is deleted. Another store on the connection sees the copy too.
     const other = new RetrievalStore(db);
@@ -76,7 +76,7 @@ describeWithVec('conversation vectors move to chunk size 128', () => {
     other.upsertDocument(ref, Array.from({ length: 299 }, (_, index) => chunk(index)));
     // Reads still use the old table.
     expect(store.searchSemantic(vectorFor(1000), 1, ['conversation'])[0]?.chunkId).toBe(ids[10]);
-    while (store.copyConversationVecBatch(100).covered > 0) { /* copy through */ }
+    while (store.copyConversationVecBatch(100) > 0) { /* copy through */ }
     store.finishConversationVecCopy();
 
     expect(vecLayout(db)).toEqual({ conversationTable: 'memory_vec_conversation', copyTarget: null });
@@ -122,7 +122,7 @@ describeWithVec('conversation vectors move to chunk size 128', () => {
     store.resetVec(DIMENSIONS);
     expect(tableExists(database, 'memory_chunks_vec')).toBe(false);
     expect(vecLayout(db)).toEqual({ conversationTable: 'memory_vec_conversation', copyTarget: null });
-    expect(store.copyConversationVecBatch(20).covered).toBe(0);
+    expect(store.copyConversationVecBatch(20)).toBe(0);
     expect(vectorsIn(database, 'memory_vec_conversation').size).toBe(0);
   });
 });

@@ -37,8 +37,11 @@ connection.
 - **Write transactions stay short on both sides.** Main converts every project-database
   transaction to `writeTransaction` (`src/main/db/transaction.ts`, an immediate transaction), so a
   write that meets the worker's lock waits instead of failing with `SQLITE_BUSY`. Worker
-  transactions are capped (16 chunks, 64 deletes, 64 KB) so main waits a few ms at most, and bulk
-  upkeep jobs are paced to 20% lock duty.
+  transactions are capped (16 chunks, 64 deletes, 64 KB) so main waits a few ms at most, and the
+  worker's background writes (storage upkeep, record sweeps, the embedding writeback, the map's
+  sums) share one lock budget per database (`write-budget.ts`): 20% of wall time while no other
+  connection has committed for 2 s, 5% with commits at least 50 ms apart while one has. A new
+  background write loop awaits `awaitWriteTurn` between its writes.
 - **The worker owns checkpoints.** It runs `PRAGMA wal_checkpoint(PASSIVE)` every 5 s, and after
   its own commits at most once a second per connection (`worker/checkpoint-pacing.ts`, through
   `setAfterCommitHook`), bulk upkeep jobs included. Main sets `wal_autocheckpoint = 0`
@@ -65,7 +68,9 @@ connection.
   or if `new RetrievalClient(` appears outside `retrieval-client.ts`. Runs in CI via
   `npm run test:unit`.
 - **Test:** `tests/unit/transaction-helper.test.ts` pins `writeTransaction` and the two-connection
-  `SQLITE_BUSY` behavior it prevents.
+  `SQLITE_BUSY` behavior it prevents. `tests/unit/write-budget.test.ts` pins the idle and busy
+  shares, the commit gap, the return to idle, and that two jobs writing at once stay within one
+  share.
 - **Test:** `tests/unit/stderr-tail.test.ts` scans every `utilityProcess.fork` site, the retrieval
   worker's included (see [[cross-platform-parity]]), and `tests/unit/verify-unpacked-worker.test.ts`
   pins the packaging half.

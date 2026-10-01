@@ -153,6 +153,9 @@ export interface ProjectionPassDeps {
   readonly scanBatch?: number;
   /** Aborts a pass in flight (project switch, shutdown, model change). */
   readonly signal?: { readonly aborted: boolean };
+  /** Awaited before each sums write: the worker's background writes share one
+   *  turn of the lock (`write-budget.ts`). None in tests. */
+  readonly awaitWriteTurn?: () => Promise<void>;
 }
 
 /** A document's sums as a pass holds them. */
@@ -344,6 +347,7 @@ async function readDocumentSums(
   scanBatch: number,
   pace: (workedMs: number) => Promise<void>,
   aborted: () => boolean,
+  awaitWriteTurn: (() => Promise<void>) | undefined,
 ): Promise<{ sums: Map<string, DocumentSums>; embeddedChunks: number; counts: ProjectionReadCounts } | null> {
   // Both are index reads: the counts come off the covering
   // (corpus, doc_id, embedded_model) index, about 10 ms on 94k chunks.
@@ -383,6 +387,8 @@ async function readDocumentSums(
     sums.set(document.docId, read.sums);
     counts.documentsRead += 1;
     counts.vectorsRead += read.vectorsRead;
+    if (awaitWriteTurn) await awaitWriteTurn();
+    if (aborted()) return null;
     timeSyncWork('graph:write-sums', () => store.writeDocSums('conversation', [read.write]));
   }
   if (gone.length > 0) timeSyncWork('graph:delete-sums', () => store.deleteDocSums('conversation', gone));
@@ -409,7 +415,7 @@ export async function runProjectionPass(
   // The map is drawn from conversations. Task records and session changes are
   // searched, never drawn, so they stay out of the scan and out of the
   // signature: a board edit must not rebuild the map.
-  const documents = await readDocumentSums(store, modelTag, dimensions, scanBatch, pace, aborted);
+  const documents = await readDocumentSums(store, modelTag, dimensions, scanBatch, pace, aborted, deps.awaitWriteTurn);
   if (documents === null || aborted()) return null;
 
   const accumulator = createMeanPoolAccumulator(dimensions);

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import { writeTransaction } from '../db/transaction';
 import { CHUNKS_PER_TRANSACTION } from './retrieval-store';
+import { awaitWriteTurn } from './write-budget';
 
 /**
  * One item's writes, prepared outside any transaction: its reads and its CPU
@@ -97,9 +98,16 @@ export async function writeInSlices<Item>(
       console.warn(`[retrieval] a ${label} write failed:`, error);
       return false;
     }
-    await deps.yieldToEventLoop();
+    // The worker's background writes share one turn of the lock
+    // (`write-budget.ts`): the first sweep after an upgrade writes thousands of
+    // new records, and back to back they held main's own writes at launch.
+    await awaitWriteTurn(db, { now: deps.clock, sleep: sleepFor, yieldTurn: deps.yieldToEventLoop });
   }
   return true;
+}
+
+function sleepFor(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function prepareOne<Item>(prepare: (item: Item) => PreparedWrite | null, item: Item, label: string): PreparedWrite | null {

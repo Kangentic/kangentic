@@ -33,6 +33,20 @@ export function setAfterCommitHook(hook: ((db: Database.Database) => void) | nul
   afterCommit = hook;
 }
 
+/** Told each outermost transaction's hold; see `setWriteHoldObserver`. */
+let holdObserver: ((db: Database.Database, heldMs: number) => void) | null = null;
+
+/**
+ * Set what is told, after each outermost write transaction commits, how long it
+ * held the write lock (the body's start through the commit), or null for
+ * nothing. The retrieval worker keeps its background writes to one share of
+ * the lock this way (`retrieval/write-budget.ts`); main sets none. Measured in
+ * every build, unlike the dev-only spans below.
+ */
+export function setWriteHoldObserver(observer: ((db: Database.Database, heldMs: number) => void) | null): void {
+  holdObserver = observer;
+}
+
 function runAfterCommit(db: Database.Database): void {
   // A nested run (a savepoint) leaves the outer transaction open.
   if (!afterCommit || db.inTransaction) return;
@@ -64,7 +78,8 @@ export function writeTransaction<Args extends unknown[], Result>(
     return body(...args);
   }).immediate;
   return (...args: Args): Result => {
-    if (!isTimingSyncWork()) {
+    const timing = isTimingSyncWork();
+    if (!timing && !holdObserver) {
       const result = immediate(...args);
       runAfterCommit(db);
       return result;
@@ -75,15 +90,27 @@ export function writeTransaction<Args extends unknown[], Result>(
     const outerBodyStartedAt = bodyStartedAt;
     bodyStartedAt = 0;
     let result: Result;
+    let heldMs: number;
     try {
       result = immediate(...args);
     } finally {
       const endedAt = performance.now();
       const lockedAt = bodyStartedAt === 0 ? endedAt : bodyStartedAt;
       bodyStartedAt = outerBodyStartedAt;
-      const waitedMs = lockedAt - startedAt;
-      if (waitedMs >= 1) recordSyncSpan('db:lock-wait', waitedMs);
-      recordSyncSpan('db:transaction', endedAt - lockedAt);
+      heldMs = endedAt - lockedAt;
+      if (timing) {
+        const waitedMs = lockedAt - startedAt;
+        if (waitedMs >= 1) recordSyncSpan('db:lock-wait', waitedMs);
+        recordSyncSpan('db:transaction', heldMs);
+      }
+    }
+    // A savepoint's hold is part of its outer transaction's, reported once.
+    if (holdObserver && !db.inTransaction) {
+      try {
+        holdObserver(db, heldMs);
+      } catch {
+        // The transaction already committed.
+      }
     }
     runAfterCommit(db);
     return result;

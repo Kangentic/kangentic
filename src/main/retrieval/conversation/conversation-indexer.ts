@@ -13,6 +13,7 @@ import type {
 } from '../../agent/agent-adapter';
 import type { SessionRecord, TranscriptEntry } from '../../../shared/types';
 import { RetrievalStore } from '../retrieval-store';
+import { awaitWriteTurn } from '../write-budget';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { ChunkInput, IndexStateRow } from '../types';
 import { chunkTranscript, CHUNKER_VERSION } from './transcript-chunker';
@@ -680,9 +681,11 @@ export class ConversationIndexer {
     options: { fromChunks?: boolean } = {},
   ): Promise<number> {
     let removed = 0;
+    let db: Database.Database;
     let store: RetrievalStore;
     try {
-      store = new RetrievalStore(this.deps.getDb(projectId));
+      db = this.deps.getDb(projectId);
+      store = new RetrievalStore(db);
     } catch {
       return removed;
     }
@@ -705,7 +708,7 @@ export class ConversationIndexer {
           console.warn(`[retrieval] a deleted session's ${corpus} document ${docId} failed to remove:`, error);
           return removed;
         }
-        await new Promise((resolve) => setImmediate(resolve));
+        await awaitWriteTurn(db);
       }
     }
   }

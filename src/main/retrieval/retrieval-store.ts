@@ -1760,25 +1760,23 @@ export class RetrievalStore {
    * new table: read outside the transaction (vec0 reads cost about 1 ms a
    * vector), written in one short one with the copy's new position. A vector
    * written or deleted since went to both tables, so copying it again is the
-   * same delete and insert. Returns how many chunks the step covered (0 when
-   * the copy is through, or was stopped by a reset) and how long it held the
-   * write lock.
+   * same delete and insert. Returns how many chunks the step covered: 0 when
+   * the copy is through, or was stopped by a reset.
    */
-  copyConversationVecBatch(limit: number): { covered: number; heldMs: number } {
+  copyConversationVecBatch(limit: number): number {
     const layout = vecLayout(this.db);
-    if (!layout.copyTarget) return { covered: 0, heldMs: 0 };
+    if (!layout.copyTarget) return 0;
     const through = Number(this.getMeta(CONVERSATION_VEC_COPY_KEY) ?? NaN);
-    if (!Number.isFinite(through)) return { covered: 0, heldMs: 0 };
+    if (!Number.isFinite(through)) return 0;
     const ids = (this.db
       .prepare(CONVERSATION_VEC_COPY_IDS_SQL)
       .all(through, limit) as Array<{ id: number }>).map((row) => row.id);
-    if (ids.length === 0) return { covered: 0, heldMs: 0 };
+    if (ids.length === 0) return 0;
     const placeholders = ids.map(() => '?').join(',');
     const vectors = this.db
       .prepare(`SELECT rowid AS id, embedding FROM ${LEGACY_CONVERSATION_VEC_TABLE} WHERE rowid IN (${placeholders})`)
       .all(...ids) as Array<{ id: number | bigint; embedding: Buffer }>;
     const target = layout.copyTarget;
-    const writeStarted = performance.now();
     writeTransaction(this.db, () => {
       const remove = this.db.prepare(`DELETE FROM ${target} WHERE rowid = ?`);
       const insert = this.db.prepare(`INSERT INTO ${target}(rowid, embedding) VALUES (?, ?)`);
@@ -1789,7 +1787,7 @@ export class RetrievalStore {
       }
       this.db.prepare('UPDATE memory_meta SET value = ? WHERE key = ?').run(String(ids[ids.length - 1]), CONVERSATION_VEC_COPY_KEY);
     })();
-    return { covered: ids.length, heldMs: performance.now() - writeStarted };
+    return ids.length;
   }
 
   /** Switch conversation reads to the new table, in one write. */

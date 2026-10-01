@@ -33,6 +33,7 @@ import type { RetrievalEventName } from './protocol';
 import { createIndexStatusReader, type IndexStatus, type IndexStatusParams } from './index-status';
 import { createGraphService } from '../graph/graph-service';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { awaitWriteTurn } from '../write-budget';
 import { prepareAnswer, type AnswerPrepareParams, type PreparedAnswer } from './answer-prepare';
 import { indexHandlers, type IndexMethods } from './index-methods';
 import { transcriptHandlers, type TranscriptMethods } from './transcript-methods';
@@ -335,7 +336,18 @@ export const retrievalHandlers: RetrievalHandlers = {
   'embed.nextBatch': ({ projectId, dimensions, modelTag, limit }, context) => (
     embedStoreFor(context).nextBatch(projectId, { dimensions, modelTag }, limit)
   ),
-  'embed.write': ({ projectId, rows, modelTag }, context) => embedStoreFor(context).write(projectId, rows, modelTag),
+  // The writeback takes its turn of the lock with the worker's other
+  // background writes (`write-budget.ts`). When to embed stays the engine's.
+  'embed.write': async ({ projectId, rows, modelTag }, context) => {
+    let db: Database.Database | null = null;
+    try {
+      db = context.getDb(projectId);
+    } catch {
+      // The write below reports a project that is gone.
+    }
+    if (db) await awaitWriteTurn(db);
+    return embedStoreFor(context).write(projectId, rows, modelTag);
+  },
   'summary.fingerprint': ({ projectId }, context) => readSummaryFingerprint(context.getDb(projectId)),
   'summary.candidates': ({ projectId, skip }, context) => summaryStoreFor(context).candidates(projectId, skip),
   'summary.save': ({ projectId, rows }, context) => summaryStoreFor(context).save(projectId, rows),

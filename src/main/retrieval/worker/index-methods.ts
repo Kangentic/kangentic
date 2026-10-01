@@ -23,6 +23,7 @@ import { SummaryStore } from '../summary/summary-store';
 import { hasVecSupport } from '../vec-support';
 import { vecLayout } from '../vec-layout';
 import { buildMissingIndexesWhenQuiet } from '../index-builds';
+import { awaitWriteTurn } from '../write-budget';
 import { agentRegistry } from '../../agent/agent-registry';
 import { adoptRemoteTargets, type RemoteTargets } from '../remote-targets';
 import type { CodeSweepPlan } from '../../../shared/answer-agent';
@@ -146,51 +147,6 @@ function legacyPieceBounds(text: string): Array<[start: number, end: number]> {
  *  a step near 60 ms, the longest an Ask or search waits behind it. */
 const VEC_COPY_BATCH = 16;
 
-/**
- * Share of wall time a one-time bulk job (storage upkeep) may hold the write
- * lock. Unpaced, the real install's transcript conversion held it 40% of 15 s
- * (31k short transactions), so a write main made in that window met the lock
- * nearly every other time, and on Windows SQLite's busy retry then sleeps at
- * least one 15.6 ms timer tick. At 20% the job takes longer and main rarely
- * meets it.
- */
-const BULK_LOCK_DUTY = 0.2;
-
-/** Sleep once a bulk job has held the lock this long since its last pause. */
-const BULK_PACE_EVERY_MS = 4;
-
-/**
- * Times each write a bulk job makes and pauses it so its lock holds stay at
- * `BULK_LOCK_DUTY` of wall time. `write` runs the transaction; `pause` yields
- * to other calls, sleeping when the job has used its share. Its writes go
- * through `writeTransaction`, so they checkpoint as any worker commit does,
- * at most once a second (`checkpoint-pacing.ts`).
- */
-function bulkPacer(): { write<Result>(transaction: () => Result): Result; held(ms: number): void; pause(): Promise<void> } {
-  let heldSincePause = 0;
-  return {
-    write(transaction) {
-      const started = performance.now();
-      try {
-        return transaction();
-      } finally {
-        heldSincePause += performance.now() - started;
-      }
-    },
-    /** A hold measured by the caller, for a step that also reads without the lock. */
-    held(ms) {
-      heldSincePause += ms;
-    },
-    pause() {
-      if (heldSincePause < BULK_PACE_EVERY_MS) return new Promise((resolve) => setImmediate(resolve));
-      const restMs = heldSincePause * (1 / BULK_LOCK_DUTY - 1);
-      heldSincePause = 0;
-      return new Promise((resolve) => setTimeout(resolve, Math.ceil(restMs)));
-    },
-  };
-}
-
-
 /** Jobs a cancel can still reach, and those told to stop. */
 const runningJobs = new Set<string>();
 const cancelledJobs = new Set<string>();
@@ -307,7 +263,6 @@ export const indexHandlers: IndexHandlers = {
     } catch {
       return result;
     }
-    const pacer = bulkPacer();
     const nextLegacy = source.prepare('SELECT session_id AS sessionId FROM session_transcripts ORDER BY session_id LIMIT 1');
     const hasSession = (db: Database.Database, sessionId: string): boolean =>
       db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId) !== undefined;
@@ -359,9 +314,9 @@ export const indexHandlers: IndexHandlers = {
           .get(sessionId) as { lowest: number | null }).lowest;
         base = Math.min(lowest ?? 0, 0) - count;
         written = 0;
-        pacer.write(writeTransaction(target, () => {
+        writeTransaction(target, () => {
           writeProgress.run(progressKey, JSON.stringify({ base, written }));
-        }));
+        })();
       }
       const insert = target.prepare(
         'INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text) VALUES (?, ?, ?, ?, ?, ?)',
@@ -373,25 +328,25 @@ export const indexHandlers: IndexHandlers = {
         // first and last times (MIN and MAX over pieces) survive the move.
         const createdAt = written === count - 1 ? legacy.updatedAt : legacy.createdAt;
         const pieceBytes = Buffer.byteLength(piece);
-        pacer.write(writeTransaction(target, () => {
+        writeTransaction(target, () => {
           insert.run(sessionId, seq, piece.length, pieceBytes, createdAt, piece);
           writeProgress.run(progressKey, JSON.stringify({ base, written: written + 1 }));
-        }));
+        })();
         written += 1;
-        await pacer.pause();
+        await awaitWriteTurn(target);
       }
       if (written < count) break;
       // Freeing a 19 MB value's pages took 18 ms (measured); one at a time.
-      pacer.write(writeTransaction(source, () => {
+      writeTransaction(source, () => {
         source.prepare('DELETE FROM session_transcripts WHERE session_id = ?').run(sessionId);
-      }));
-      pacer.write(writeTransaction(target, () => {
+      })();
+      writeTransaction(target, () => {
         target.prepare('DELETE FROM memory_meta WHERE key = ?').run(progressKey);
-      }));
+      })();
       result.converted += 1;
       if (target !== source) result.moved += 1;
       result.bytes += Buffer.byteLength(text);
-      await pacer.pause();
+      await awaitWriteTurn(source);
     }
     return result;
   }),
@@ -405,25 +360,23 @@ export const indexHandlers: IndexHandlers = {
       return result;
     }
     if (!hasVecSupport(db)) return result;
-    const pacer = bulkPacer();
     const store = new RetrievalStore(db);
     const started = performance.now();
-    pacer.write(() => store.beginConversationVecCopy());
+    store.beginConversationVecCopy();
     for (;;) {
       if (!shouldContinue()) return result;
-      const { covered, heldMs } = store.copyConversationVecBatch(VEC_COPY_BATCH);
+      const covered = store.copyConversationVecBatch(VEC_COPY_BATCH);
       if (covered === 0) break;
-      pacer.held(heldMs);
       result.copied += covered;
-      await pacer.pause();
+      await awaitWriteTurn(db);
     }
     if (shouldContinue() && vecLayoutCopying(db)) {
-      pacer.write(() => store.finishConversationVecCopy());
+      store.finishConversationVecCopy();
       result.switched = true;
     }
-    while (shouldContinue() && pacer.write(() => store.freeLegacyConversationVecStep())) {
+    while (shouldContinue() && store.freeLegacyConversationVecStep()) {
       result.freedBlocks += 1;
-      await pacer.pause();
+      await awaitWriteTurn(db);
     }
     if (result.copied > 0 || result.freedBlocks > 0) {
       console.log(`[retrieval] conversation vectors moved to chunk size 128: ${result.copied} copied, ${result.freedBlocks} old blocks freed, ${Math.round(performance.now() - started)} ms`);

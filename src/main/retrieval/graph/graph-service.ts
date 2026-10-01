@@ -26,6 +26,7 @@ import { SummaryStore } from '../summary/summary-store';
 import { CONVERSATION_CORPUS, isEmbeddedCorpus, INDEX_CORPORA } from '../corpora';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { awaitWriteTurn } from '../write-budget';
 import { createHash } from 'node:crypto';
 import type {
   KnowledgeGraphGranularity,
@@ -490,6 +491,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
             dimensions: embedding.dimensions,
             signal,
             dutyCycle: isFirstBuild ? FIRST_BUILD_DUTY_CYCLE : undefined,
+            awaitWriteTurn: () => awaitWriteTurn(getDb(projectId)),
           });
           if (!result || signal.aborted) return;
           writeProjectionCache(store, result.projection);

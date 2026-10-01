@@ -19,6 +19,7 @@ import { setAfterCommitHook } from '../../db/transaction';
 import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
 import { loadVecExtensionFrom } from '../vec-support';
 import { createCheckpointPacer } from './checkpoint-pacing';
+import { installWriteBudget } from '../write-budget';
 import { retrievalHandlers, type WorkerContext } from './methods';
 import type {
   FromWorkerMessage,
@@ -66,6 +67,7 @@ function initialize(message: InitMessage): void {
   // and read as a lock hold it was not.
   setWalAutoCheckpoint(0);
   setAfterCommitHook(createCheckpointPacer());
+  installWriteBudget();
   vecLoadablePath = message.vecLoadablePath;
   if (!vecLoadablePath) vecLoadError = 'the sqlite-vec extension was not found';
   setProjectDbInitializer((db: Database.Database) => {
