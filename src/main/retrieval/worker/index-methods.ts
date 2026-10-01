@@ -132,10 +132,11 @@ const LEGACY_PIECE_CHARS = 64 * 1024;
 const VEC_COPY_BATCH = 16;
 
 /**
- * Bytes a bulk job writes between its own PASSIVE checkpoints. Main sets
- * `wal_autocheckpoint = 0` while the worker is up and the worker checkpoints
- * every 30 s, which a job writing hundreds of MB would outrun; every main read
- * then searches a longer WAL. PASSIVE never blocks a writer.
+ * Bytes a bulk job writes between its own PASSIVE checkpoints. No connection
+ * auto-checkpoints while the worker is up, and main's 5 s checkpoint request
+ * waits behind a running job step, so a job writing hundreds of MB checkpoints
+ * as it goes; otherwise every main read searches a longer WAL. PASSIVE never
+ * blocks a writer.
  */
 const BULK_CHECKPOINT_BYTES = 16 * 1024 * 1024;
 

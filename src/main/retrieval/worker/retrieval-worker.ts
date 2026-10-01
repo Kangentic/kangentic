@@ -14,7 +14,7 @@
 
 import { format } from 'node:util';
 import type Database from 'better-sqlite3';
-import { closeProjectDb, configureProjectDbAccess, getProjectDb, setProjectDbInitializer } from '../../db/database';
+import { closeProjectDb, configureProjectDbAccess, getProjectDb, setProjectDbInitializer, setWalAutoCheckpoint } from '../../db/database';
 import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
 import { loadVecExtensionFrom } from '../vec-support';
 import { retrievalHandlers, type WorkerContext } from './methods';
@@ -55,6 +55,12 @@ let vecLoadablePath: string | null = null;
 
 function initialize(message: InitMessage): void {
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
+  // Every checkpoint is the PASSIVE one main asks for (checkpoint-driver.ts).
+  // With SQLite's default, a commit here that found the WAL over 1000 pages
+  // also checkpointed everything the pty host wrote since the last one, inside
+  // that commit: 363 to 479 ms for 16 rows after a terminal flood, which held
+  // up every request behind it and read as a lock hold it was not.
+  setWalAutoCheckpoint(0);
   vecLoadablePath = message.vecLoadablePath;
   if (!vecLoadablePath) vecLoadError = 'the sqlite-vec extension was not found';
   setProjectDbInitializer((db: Database.Database) => {

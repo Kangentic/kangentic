@@ -32,16 +32,16 @@ describe('checkpoint driver', () => {
     vi.useRealTimers();
   });
 
-  it('turns main\'s auto-checkpoint off while the worker is up and asks it to checkpoint every open database', () => {
+  it('turns main\'s auto-checkpoint off while the worker is up and asks it to checkpoint every open database', async () => {
     const client = new FakeClient();
     const stop = attachCheckpointDriver(client as never);
     client.emit('ready');
     expect(database.setWalAutoCheckpoint).toHaveBeenLastCalledWith(0);
     expect(client.call).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(CHECKPOINT_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(CHECKPOINT_INTERVAL_MS);
     expect(client.call).toHaveBeenCalledWith('db.checkpoint', { projectIds: ['project-1', 'project-2'] }, { timeoutMs: null });
-    vi.advanceTimersByTime(CHECKPOINT_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(CHECKPOINT_INTERVAL_MS);
     expect(client.call).toHaveBeenCalledTimes(2);
     stop();
   });
@@ -54,6 +54,38 @@ describe('checkpoint driver', () => {
     expect(database.setWalAutoCheckpoint).toHaveBeenLastCalledWith(null);
     vi.advanceTimersByTime(3 * CHECKPOINT_INTERVAL_MS);
     expect(client.call).not.toHaveBeenCalled();
+  });
+
+  it('skips a tick while the last checkpoint is still running, then asks again once it settles', async () => {
+    const client = new FakeClient();
+    let settle: () => void = () => undefined;
+    client.call.mockImplementationOnce(() => new Promise<never[]>((resolve) => { settle = () => resolve([]); }));
+    const stop = attachCheckpointDriver(client as never);
+    client.emit('ready');
+
+    vi.advanceTimersByTime(CHECKPOINT_INTERVAL_MS);
+    expect(client.call).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(3 * CHECKPOINT_INTERVAL_MS);
+    expect(client.call).toHaveBeenCalledTimes(1);
+
+    settle();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.advanceTimersByTime(CHECKPOINT_INTERVAL_MS);
+    expect(client.call).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it('asks again after a checkpoint call fails', async () => {
+    const client = new FakeClient();
+    client.call.mockImplementationOnce(async () => { throw new Error('worker restarting'); });
+    const stop = attachCheckpointDriver(client as never);
+    client.emit('ready');
+
+    vi.advanceTimersByTime(CHECKPOINT_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(0);
+    vi.advanceTimersByTime(CHECKPOINT_INTERVAL_MS);
+    expect(client.call).toHaveBeenCalledTimes(2);
+    stop();
   });
 
   it('asks for nothing while no project database is open', () => {

@@ -44,12 +44,17 @@ that grew past 64 MB in a burst back to that size when a checkpoint resets it. `
 decides who checkpoints. SQLite runs an auto-checkpoint on the connection whose commit crosses the
 limit, so on main it put the copy into the database file, and its sync, on the main thread (a sums
 write that normally takes a few ms reached 19 ms). While the retrieval worker is up, main sets it to
-0 and the worker runs a PASSIVE checkpoint of every project database main has open every 30 s
-(`src/main/retrieval/checkpoint-driver.ts`, the worker's `db.checkpoint` method). PASSIVE never
-waits for or blocks a writer, which is why it is the only mode used: FULL, RESTART and TRUNCATE wait
-on writers and would make main wait. The worker's own connections keep the default of 1000 pages,
-so its bulk writes checkpoint as they go. When the worker goes down (restarting, or latched off
-after repeated crashes), main sets 1000 back at once, so no WAL grows unchecked.
+0 and the worker runs a PASSIVE checkpoint of every project database main has open every 5 s
+(`src/main/retrieval/checkpoint-driver.ts`, the worker's `db.checkpoint` method), skipping a tick
+while the last one is still running. PASSIVE never waits for or blocks a writer, which is why it is
+the only mode used: FULL, RESTART and TRUNCATE wait on writers and would make main wait. The
+worker's and the pty host's connections set 0 too, so that checkpoint is the only one. With the
+default of 1000 pages on the worker, its next commit after a terminal flood also checkpointed every
+page the pty host had written since the last checkpoint, 363 to 479 ms inside a 16-row commit, and
+every request behind it waited. At 5 s a checkpoint copies at most 5 s of writes; on a 30 s interval
+the same flood made one 476 ms step of 65,897 pages. Bulk upkeep jobs also checkpoint every 16 MB
+they write. When the worker goes down (restarting, or latched off after repeated crashes), main
+sets 1000 back at once, so no WAL grows unchecked.
 
 The order matters. `busy_timeout` is a connection setting that covers only the statements after
 it, and `journal_mode = WAL` takes a lock: it creates the `-wal` and `-shm` sidecars. Setting the
