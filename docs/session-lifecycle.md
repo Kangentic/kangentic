@@ -693,7 +693,7 @@ Sessions from non-active projects must not interfere with the active project's t
 
 PTY output is captured for two purposes: terminal display (via the scrollback buffer) and persistent transcript storage (via `TranscriptWriter`).
 
-`TranscriptWriter` (`src/main/pty/buffer/transcript-writer.ts`) receives raw PTY data, strips ANSI escape sequences, and debounces writes to the `session_transcripts` table every 30 seconds, flushing early if a session's pending buffer exceeds 256KB. This provides a clean, searchable text transcript of the session without terminal formatting noise.
+`TranscriptWriter` (`src/main/pty/buffer/transcript-writer.ts`) receives raw PTY data, strips ANSI escape sequences, and flushes every 30 seconds, early if a session's pending buffer exceeds 64KB. Each flush is one INSERT into `session_transcript_chunks` (1 to 2 ms) in the database of the session's own project, which the writer reads from the session registry on the session's first output and keeps for its final flush after removal. A project whose database is not open drops the flush rather than writing it elsewhere. This provides a clean, searchable text transcript of the session without terminal formatting noise, kept whole after the session row is gone.
 
 The transcript is used during cross-agent handoff: when a task moves to a column with a different agent, the `HandoffOrchestrator` reads the transcript from the database, combines it with git diff and session metrics, and packages it as handoff context for the new agent.
 
@@ -702,7 +702,7 @@ The transcript is used during cross-agent handoff: when a task moves to a column
 When a task moves to a column where `resolveTargetAgent()` returns a different agent than the current session:
 
 1. The current session is suspended (Priority 3a in the [Transition Engine](transition-engine.md))
-2. The `HandoffOrchestrator` packages context: session transcript (from `session_transcripts`), git diff (changed files), and session metrics (tokens, cost, duration)
+2. The `HandoffOrchestrator` packages context: session transcript (from `session_transcript_chunks`), git diff (changed files), and session metrics (tokens, cost, duration)
 3. A new session is spawned with the target agent, receiving a `handoffPromptPrefix` summarizing the previous agent's work
 4. A `handoff-context.md` file is written to the new session directory for reference
 5. A `handoffs` record is inserted in the database tracking the from/to agents, sessions, and the full context packet

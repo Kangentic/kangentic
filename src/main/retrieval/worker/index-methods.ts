@@ -11,6 +11,8 @@
  * a `jobId`, and `job.cancel` stops it between steps (a project switch).
  */
 
+import type Database from 'better-sqlite3';
+import { writeTransaction } from '../../db/transaction';
 import { ConversationIndexer, type IndexOutcome } from '../conversation/conversation-indexer';
 import { sweepTaskRecords, type TaskSweepResult } from '../task/task-indexer';
 import { sweepChangeRecords, type ChangeSweepResult } from '../change/change-indexer';
@@ -85,7 +87,22 @@ export interface IndexMethods {
     params: { jobId: string };
     result: void;
   };
+  /**
+   * Convert a project's legacy raw transcripts (one growing value per session
+   * in `session_transcripts`) into pieces in `session_transcript_chunks`, one
+   * session at a time. A transcript whose session belongs to another project
+   * (misfiled while one writer followed the focused project) moves to that
+   * project's database; one whose session is in none stays here.
+   */
+  'transcripts.convertLegacy': {
+    params: { projectId: string; otherProjectIds: string[]; jobId?: string };
+    result: { converted: number; moved: number; bytes: number };
+  };
 }
+
+/** Text per piece a conversion writes: one piece a transaction, each a few
+ *  ms (a 256 KB piece measured up to 15 ms). */
+const LEGACY_PIECE_CHARS = 64 * 1024;
 
 /** Jobs a cancel can still reach, and those told to stop. */
 const runningJobs = new Set<string>();
@@ -203,4 +220,99 @@ export const indexHandlers: IndexHandlers = {
   'job.cancel': ({ jobId }) => {
     if (runningJobs.has(jobId)) cancelledJobs.add(jobId);
   },
+
+  'transcripts.convertLegacy': ({ projectId, otherProjectIds, jobId }, context) => runJob(jobId, async (shouldContinue) => {
+    const result = { converted: 0, moved: 0, bytes: 0 };
+    let source: Database.Database;
+    try {
+      source = context.getDb(projectId);
+    } catch {
+      return result;
+    }
+    const yieldToCalls = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+    const nextLegacy = source.prepare('SELECT session_id AS sessionId FROM session_transcripts ORDER BY session_id LIMIT 1');
+    const hasSession = (db: Database.Database, sessionId: string): boolean =>
+      db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId) !== undefined;
+    while (shouldContinue()) {
+      const next = nextLegacy.get() as { sessionId: string } | undefined;
+      if (!next) break;
+      const { sessionId } = next;
+      // The project the session is in: this one, else the other project
+      // that has it, else this one (a transcript is never dropped).
+      let target = source;
+      if (!hasSession(source, sessionId)) {
+        for (const otherId of otherProjectIds) {
+          try {
+            const other = context.getDb(otherId);
+            if (hasSession(other, sessionId)) {
+              target = other;
+              break;
+            }
+          } catch {
+            // That project's database is gone; look in the next.
+          }
+        }
+      }
+      // A read takes no lock. The value can be 19 MB (28 ms to read).
+      const legacy = source.prepare('SELECT transcript, created_at AS createdAt, updated_at AS updatedAt FROM session_transcripts WHERE session_id = ?')
+        .get(sessionId) as { transcript: string; createdAt: string; updatedAt: string } | undefined;
+      if (!legacy) continue;
+      const text = legacy.transcript;
+      const count = Math.ceil(text.length / LEGACY_PIECE_CHARS);
+      // Where this row's pieces go, recorded before the first is written so
+      // a conversion cut short resumes where it stopped instead of writing
+      // them twice. They take seqs below every piece the session already has
+      // there: after the switch pieces start at 0, and a session misfiled
+      // across two projects may already have another row's pieces below 0.
+      // (That split cannot be put back in time order; it is kept whole.)
+      const progressKey = `transcript_legacy:${projectId}:${sessionId}`;
+      const readProgress = target.prepare('SELECT value FROM memory_meta WHERE key = ?');
+      const writeProgress = target.prepare(
+        'INSERT INTO memory_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      );
+      const saved = readProgress.get(progressKey) as { value: string } | undefined;
+      let base: number;
+      let written: number;
+      if (saved) {
+        ({ base, written } = JSON.parse(saved.value) as { base: number; written: number });
+      } else {
+        const lowest = (target.prepare('SELECT MIN(seq) AS lowest FROM session_transcript_chunks WHERE session_id = ?')
+          .get(sessionId) as { lowest: number | null }).lowest;
+        base = Math.min(lowest ?? 0, 0) - count;
+        written = 0;
+        writeTransaction(target, () => {
+          writeProgress.run(progressKey, JSON.stringify({ base, written }));
+        })();
+      }
+      const insert = target.prepare(
+        'INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text) VALUES (?, ?, ?, ?, ?, ?)',
+      );
+      while (written < count && shouldContinue()) {
+        const piece = text.slice(written * LEGACY_PIECE_CHARS, (written + 1) * LEGACY_PIECE_CHARS);
+        const seq = base + written;
+        // The last piece carries the row's last write, so the transcript's
+        // first and last times (MIN and MAX over pieces) survive the move.
+        const createdAt = written === count - 1 ? legacy.updatedAt : legacy.createdAt;
+        writeTransaction(target, () => {
+          insert.run(sessionId, seq, piece.length, Buffer.byteLength(piece), createdAt, piece);
+          writeProgress.run(progressKey, JSON.stringify({ base, written: written + 1 }));
+        })();
+        written += 1;
+        await yieldToCalls();
+      }
+      if (written < count) break;
+      // Freeing a 19 MB value's pages took 18 ms (measured); one at a time.
+      writeTransaction(source, () => {
+        source.prepare('DELETE FROM session_transcripts WHERE session_id = ?').run(sessionId);
+      })();
+      writeTransaction(target, () => {
+        target.prepare('DELETE FROM memory_meta WHERE key = ?').run(progressKey);
+      })();
+      result.converted += 1;
+      if (target !== source) result.moved += 1;
+      result.bytes += Buffer.byteLength(text);
+      await yieldToCalls();
+    }
+    return result;
+  }),
 };

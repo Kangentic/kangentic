@@ -191,6 +191,43 @@ function cancelActiveSweep(): void {
   activeSweepJobId = null;
 }
 
+/** The legacy transcript conversion running in the worker, if any. */
+let transcriptConversion: { projectId: string; jobId: string } | null = null;
+
+/**
+ * Convert the open project's legacy raw transcripts in the worker
+ * (`transcripts.convertLegacy`), moving any misfiled into their own
+ * project. Off the job chain: it touches only the transcript tables, and on a
+ * large install it runs for minutes the indexing should not wait behind. One
+ * at a time; a project switch stops it, and the next open carries on.
+ */
+function convertLegacyTranscripts(context: IpcContext, projectId: string): void {
+  if (transcriptConversion?.projectId === projectId) return;
+  if (transcriptConversion) retrievalClient.notifyRunning('job.cancel', { jobId: transcriptConversion.jobId });
+  sweepJobCounter += 1;
+  const conversion = { projectId, jobId: `transcripts-${sweepJobCounter}` };
+  transcriptConversion = conversion;
+  let otherProjectIds: string[] = [];
+  try {
+    otherProjectIds = context.projectRepo.list().map((project) => project.id).filter((id) => id !== projectId);
+  } catch {
+    // Converted in place, then: a misfiled transcript stays where it is.
+  }
+  void retrievalClient.call(
+    'transcripts.convertLegacy',
+    { projectId, otherProjectIds, jobId: conversion.jobId },
+    { timeoutMs: null },
+  ).then((result) => {
+    if (result.converted > 0) {
+      console.log(`[retrieval] converted ${result.converted} legacy transcripts (${Math.round(result.bytes / 1024 / 1024)} MB), ${result.moved} moved to their own project`);
+    }
+  }).catch((error) => {
+    console.warn('[retrieval] legacy transcript conversion stopped:', error instanceof Error ? error.message : error);
+  }).finally(() => {
+    if (transcriptConversion === conversion) transcriptConversion = null;
+  });
+}
+
 function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;
   // Per-session TRAILING debounce, like scheduleLiveIndex below. One suspend
@@ -746,7 +783,11 @@ export const retrievalService = {
     setImmediate(() => {
       if (disposed) return;
       if (context.currentProjectId !== project.id) return;
-      if (!isIndexingEnabled(context)) return;
+      // Transcript storage, not indexing: converted whatever the switch says.
+      if (!isIndexingEnabled(context)) {
+        convertLegacyTranscripts(context, project.id);
+        return;
+      }
 
       if (isSemanticEnabled(context)) ensureModelDownload(context);
 
@@ -773,6 +814,7 @@ export const retrievalService = {
         }, jobId);
         if (activeSweepJobId === jobId) activeSweepJobId = null;
         afterSweep(context, project.id, result);
+        if (!disposed && context.currentProjectId === project.id) convertLegacyTranscripts(context, project.id);
         // Covers project open, the startup backlog, AND crash-resume: the
         // sweep re-indexed whatever changed, and this flags it for the
         // background drain regardless of whether anything actually changed

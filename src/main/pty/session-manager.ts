@@ -14,7 +14,7 @@ import { PtyBufferManager } from './buffer/pty-buffer-manager';
 import { SessionHistoryReader } from './readers/session-history-reader';
 import { StatusFileReader } from './readers/status-file-reader';
 import { SessionTelemetry } from '../activity-engine/session-telemetry';
-import { TranscriptWriter } from './buffer/transcript-writer';
+import { TranscriptWriter, type TranscriptSink } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
 import { gracefulPtyShutdown } from './shutdown/session-suspend';
@@ -32,7 +32,6 @@ import { PromptDraftLedger, type WriteOrigin } from './prompt-draft-ledger';
 import { BackpressureController } from './buffer/backpressure-controller';
 import { traceTerminal } from './terminal-trace';
 import { isShuttingDown } from '../shutdown-state';
-import type { TranscriptRepository } from '../db/repositories/transcript-repository';
 import type {
   Session,
   SessionUsage,
@@ -662,12 +661,16 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Enable transcript capture by providing a TranscriptRepository.
-   * Called after the project DB is available. Without this, PTY output
-   * is not persisted (only kept in the in-memory ring buffer).
+   * Enable transcript capture, once at startup: `sinkFor` is where a project's
+   * transcripts are written. Each session writes to its own project's sink
+   * (see `TranscriptWriter`). Without this, PTY output is not persisted (only
+   * kept in the in-memory ring buffer).
    */
-  setTranscriptRepository(transcriptRepo: TranscriptRepository): void {
-    this.transcriptWriter = new TranscriptWriter(transcriptRepo);
+  enableTranscripts(sinkFor: (projectId: string) => TranscriptSink | null): void {
+    this.transcriptWriter = new TranscriptWriter(
+      (sessionId) => this.registry.getSessionProjectId(sessionId) ?? null,
+      sinkFor,
+    );
   }
 
   dispose(): void {

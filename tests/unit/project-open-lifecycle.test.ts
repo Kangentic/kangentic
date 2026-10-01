@@ -249,7 +249,7 @@ interface MockContext {
     create: ReturnType<typeof vi.fn>;
     updateLastOpened: ReturnType<typeof vi.fn>;
   };
-  sessionManager: { setTranscriptRepository: ReturnType<typeof vi.fn> };
+  sessionManager: Record<string, never>;
   configManager: { getEffectiveConfig: ReturnType<typeof vi.fn> };
   boardConfigManager: {
     attach: ReturnType<typeof vi.fn>;
@@ -274,7 +274,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       create: vi.fn(),
       updateLastOpened: vi.fn(),
     },
-    sessionManager: { setTranscriptRepository: vi.fn() },
+    sessionManager: {},
     configManager: { getEffectiveConfig: vi.fn(() => ({ mcpServer: { enabled: false } })) },
     boardConfigManager: {
       attach: vi.fn(),

@@ -9,7 +9,6 @@ import { resumeSuspendedSessions, autoSpawnTasks } from '../../transition-engine
 import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
-import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
@@ -558,9 +557,6 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   syncProjectMcpConfig(context, project.id, project.path);
 
   applyRuntimeConfig(context.sessionManager, context.configManager, project.path);
-
-  // Enable transcript capture for cross-agent handoffs
-  context.sessionManager.setTranscriptRepository(new TranscriptRepository(getProjectDb(project.id)));
 
   // A project seeded milliseconds ago reads as a constant (the default lanes,
   // no tasks, no profiles) and project_create already counts it, so its first

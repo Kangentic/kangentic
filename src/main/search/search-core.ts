@@ -53,7 +53,7 @@ export function toConversationSearchHit(
 //     readline. Async; we run all projects' event scans concurrently via
 //     Promise.all so cross-project I/O overlaps.
 //
-// The RAW `session_transcripts` scrollback blob (written by TranscriptWriter)
+// The RAW scrollback (`session_transcript_chunks`, written by TranscriptWriter)
 // is still NOT searched: for TUI agents like Claude Code it is mostly
 // inline-redraw frames (cursor positioning + screen clears), so it produces
 // duplicate hits and noisy snippets. Instead, the STRUCTURED transcript

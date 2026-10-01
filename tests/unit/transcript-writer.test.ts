@@ -4,7 +4,6 @@ import {
   stripAnsiEscapes,
   filterAltScreenContent,
 } from '../../src/main/pty/buffer/transcript-writer';
-import type { TranscriptRepository } from '../../src/main/db/repositories/transcript-repository';
 
 describe('stripAnsiEscapes', () => {
   it('strips SGR color codes', () => {
@@ -232,18 +231,13 @@ describe('TranscriptWriter class', () => {
   const sessionId = 'session-under-test';
   const MAX_PENDING_CHARS = TranscriptWriter.MAX_PENDING_CHARS;
 
-  let createSpy: ReturnType<typeof vi.fn>;
   let appendChunkSpy: ReturnType<typeof vi.fn>;
   let writer: TranscriptWriter;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    createSpy = vi.fn();
     appendChunkSpy = vi.fn();
-    writer = new TranscriptWriter({
-      create: createSpy,
-      appendChunk: appendChunkSpy,
-    } as unknown as TranscriptRepository);
+    writer = new TranscriptWriter(() => 'project-1', () => ({ appendChunk: appendChunkSpy }));
   });
 
   afterEach(() => {
@@ -257,9 +251,36 @@ describe('TranscriptWriter class', () => {
 
     vi.advanceTimersByTime(30_000);
 
-    expect(createSpy).toHaveBeenCalledWith(sessionId);
     expect(appendChunkSpy).toHaveBeenCalledTimes(1);
     expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'hello-world');
+  });
+
+  it('writes each session to its own project, read on its first output, including the flush after it leaves the registry', () => {
+    const sinks = new Map([['project-a', { appendChunk: vi.fn() }], ['project-b', { appendChunk: vi.fn() }]]);
+    // The registry: which project each session is in, until it is removed.
+    const registry = new Map([['session-a', 'project-a'], ['session-b', 'project-b']]);
+    const routed = new TranscriptWriter((id) => registry.get(id) ?? null, (projectId) => sinks.get(projectId) ?? null);
+
+    routed.onData('session-a', 'from a');
+    routed.onData('session-b', 'from b');
+    // A project switch changes nothing for either, and the session leaving
+    // the registry before its last flush still routes it.
+    registry.delete('session-a');
+    routed.remove('session-a');
+    routed.finalize('session-b');
+
+    expect(sinks.get('project-a')!.appendChunk).toHaveBeenCalledWith('session-a', 'from a');
+    expect(sinks.get('project-b')!.appendChunk).toHaveBeenCalledWith('session-b', 'from b');
+    expect(sinks.get('project-a')!.appendChunk).toHaveBeenCalledTimes(1);
+    expect(sinks.get('project-b')!.appendChunk).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a flush whose project database is not open, rather than writing elsewhere', () => {
+    const elsewhere = { appendChunk: vi.fn() };
+    const closed = new TranscriptWriter(() => 'deleted-project', (projectId) => (projectId === 'other' ? elsewhere : null));
+    closed.onData(sessionId, 'late output');
+    closed.remove(sessionId);
+    expect(elsewhere.appendChunk).not.toHaveBeenCalled();
   });
 
   it('flushes immediately once pending exceeds the byte cap, without a double flush at 30s', () => {

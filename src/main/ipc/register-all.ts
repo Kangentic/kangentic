@@ -56,7 +56,8 @@ import { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import { DesktopNotifier } from '../notifications/desktop-notifier';
 import { ActivityIntervalRecorder } from '../activity-engine/activity-interval-recorder';
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
-import { getProjectDb } from '../db/database';
+import { getOpenProjectDb, getProjectDb } from '../db/database';
+import { TranscriptRepository } from '../db/repositories/transcript-repository';
 import { getProjectRepos } from './helpers';
 import { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } from '../../shared/relay';
 import type { IpcContext } from './ipc-context';
@@ -95,6 +96,20 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // fresh-spawn wait, drag-burst coalesce) on top. pasteEngine remains for
   // now until Step 4 of the migration deletes it.
   const sessionManager = new SessionManager();
+  // Raw terminal transcripts, each written to its session's own project. A
+  // project whose database is not open (a deleted one) drops the flush rather
+  // than creating the file again.
+  const transcriptSinks = new WeakMap<object, TranscriptRepository>();
+  sessionManager.enableTranscripts((projectId) => {
+    const db = getOpenProjectDb(projectId);
+    if (!db) return null;
+    let sink = transcriptSinks.get(db);
+    if (!sink) {
+      sink = new TranscriptRepository(db);
+      transcriptSinks.set(db, sink);
+    }
+    return sink;
+  });
   const pasteEngine = createPasteEngine(sessionManager);
   const terminalSubmit = new TerminalSubmit(sessionManager, pasteEngine);
   const terminalSubmitScheduler = new TerminalSubmitScheduler(sessionManager, terminalSubmit);

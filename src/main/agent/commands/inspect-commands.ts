@@ -1,3 +1,4 @@
+import type Database from 'better-sqlite3';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
@@ -147,6 +148,11 @@ export async function handleGetTranscript(
     }
 
     if (!record) {
+      // A raw transcript outlives its session row (a deleted task keeps its
+      // terminal history), so a raw read by session id still reaches it.
+      if (format === 'raw' && sessionId && new TranscriptRepository(db).getSizeBytes(sessionId) > 0) {
+        return rawTranscriptResponse(db, sessionId, charBudget, false);
+      }
       return { success: true, message: 'No session found.' };
     }
 
@@ -251,48 +257,60 @@ export async function handleGetTranscript(
     }
 
     // format === 'raw' - view/tail/search do not apply, but the char budget does.
-    // Fetch only the tail via SQL so a multi-MB transcript is never fully
-    // materialized in JS just to slice off its last charBudget chars.
-    const transcriptRepo = new TranscriptRepository(db);
-    const rawTail = transcriptRepo.getTranscriptTail(targetSessionId, charBudget);
-    if (!rawTail || rawTail.fullLength === 0) {
-      return { success: true, message: `No raw transcript captured for session ${targetSessionId.slice(0, 8)}.` };
-    }
-
-    const rawTruncated = rawTail.fullLength > charBudget;
-    const rawBody = rawTail.tail;
-
-    const sizeKb = (rawTail.sizeBytes / 1024).toFixed(1);
-    let rawHeader = `Session: ${targetSessionId.slice(0, 8)}... | Format: raw | Size: ${sizeKb} KB | Updated: ${rawTail.updatedAt}`;
-    // Raw is verbatim scrollback - mostly repeated terminal redraws. When a
-    // parsed view exists for this agent, point the reader at it: structured is
-    // far smaller and noise-free. Capability check, so this stays agent-agnostic.
-    if (adapter?.parseTranscript) {
-      rawHeader +=
-        `\nNote: raw is verbatim terminal scrollback (most of it is repeated redraws). ` +
-        `A parsed "structured" view is available for this agent and is far smaller - pass format="structured" to evaluate the conversation.`;
-    }
-    if (rawTruncated) {
-      const omittedKb = ((rawTail.fullLength - rawBody.length) / 1024).toFixed(1);
-      rawHeader +=
-        `\n[Truncated to the most recent ${Math.round(charBudget / 1000)}k chars; ` +
-        `${omittedKb} KB of earlier scrollback omitted. Raise maxChars (up to ${TRANSCRIPT_CHAR_BUDGET_MAX}) for more.]`;
-    }
-    return {
-      success: true,
-      message: `${TRANSCRIPT_DATA_NOTE}\n${rawHeader}\n\n${rawBody}`,
-      data: {
-        sessionId: targetSessionId,
-        format,
-        sizeBytes: rawTail.sizeBytes,
-        truncated: rawTruncated,
-        createdAt: rawTail.createdAt,
-        updatedAt: rawTail.updatedAt,
-      },
-    };
+    return rawTranscriptResponse(db, targetSessionId, charBudget, Boolean(adapter?.parseTranscript));
   } catch (error) {
     return { success: false, error: `Failed to get transcript: ${error instanceof Error ? error.message : String(error)}` };
   }
+}
+
+/**
+ * A session's raw terminal transcript, its tail within `charBudget`. Fetches
+ * only the tail via SQL, so a multi-MB transcript is never fully materialized
+ * just to slice off its last characters.
+ */
+function rawTranscriptResponse(
+  db: Database.Database,
+  targetSessionId: string,
+  charBudget: number,
+  hasParsedView: boolean,
+): CommandResponse {
+  const transcriptRepo = new TranscriptRepository(db);
+  const rawTail = transcriptRepo.getTranscriptTail(targetSessionId, charBudget);
+  if (!rawTail || rawTail.fullLength === 0) {
+    return { success: true, message: `No raw transcript captured for session ${targetSessionId.slice(0, 8)}.` };
+  }
+
+  const rawTruncated = rawTail.fullLength > charBudget;
+  const rawBody = rawTail.tail;
+
+  const sizeKb = (rawTail.sizeBytes / 1024).toFixed(1);
+  let rawHeader = `Session: ${targetSessionId.slice(0, 8)}... | Format: raw | Size: ${sizeKb} KB | Updated: ${rawTail.updatedAt}`;
+  // Raw is verbatim scrollback - mostly repeated terminal redraws. When a
+  // parsed view exists for this agent, point the reader at it: structured is
+  // far smaller and noise-free. Capability check, so this stays agent-agnostic.
+  if (hasParsedView) {
+    rawHeader +=
+      `\nNote: raw is verbatim terminal scrollback (most of it is repeated redraws). ` +
+      `A parsed "structured" view is available for this agent and is far smaller - pass format="structured" to evaluate the conversation.`;
+  }
+  if (rawTruncated) {
+    const omittedKb = ((rawTail.fullLength - rawBody.length) / 1024).toFixed(1);
+    rawHeader +=
+      `\n[Truncated to the most recent ${Math.round(charBudget / 1000)}k chars; ` +
+      `${omittedKb} KB of earlier scrollback omitted. Raise maxChars (up to ${TRANSCRIPT_CHAR_BUDGET_MAX}) for more.]`;
+  }
+  return {
+    success: true,
+    message: `${TRANSCRIPT_DATA_NOTE}\n${rawHeader}\n\n${rawBody}`,
+    data: {
+      sessionId: targetSessionId,
+      format: 'raw',
+      sizeBytes: rawTail.sizeBytes,
+      truncated: rawTruncated,
+      createdAt: rawTail.createdAt,
+      updatedAt: rawTail.updatedAt,
+    },
+  };
 }
 
 /** Maximum rows returned by query_db to prevent accidental large result sets. */

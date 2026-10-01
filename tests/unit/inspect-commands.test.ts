@@ -105,7 +105,27 @@ function createMockDb(options: {
         };
       }
 
-      // Transcript queries
+      // Transcript queries. The fake's transcripts are legacy single-value
+      // rows; the piece table holds none.
+      if (sql.includes('FROM session_transcript_chunks')) {
+        return {
+          get: vi.fn(() => ({ pieces: 0, chars: 0, bytes: 0, firstAt: null, lastAt: null })),
+          all: vi.fn(() => []),
+          iterate: vi.fn(() => [][Symbol.iterator]()),
+        };
+      }
+      // TranscriptRepository's legacy row read: size and dates, no text.
+      if (sql.includes('FROM session_transcripts') && sql.includes('length(transcript)')) {
+        return {
+          get: vi.fn((sessionId: string) => {
+            const record = transcripts.find((transcript) => transcript.session_id === sessionId);
+            return record
+              ? { chars: (record.transcript ?? '').length, sizeBytes: record.size_bytes, createdAt: record.created_at, updatedAt: record.updated_at }
+              : undefined;
+          }),
+          all: vi.fn(() => transcripts),
+        };
+      }
       if (sql.includes('FROM session_transcripts') && sql.includes('*')) {
         return {
           get: vi.fn((sessionId: string) => transcripts.find((transcript) => transcript.session_id === sessionId) ?? undefined),
@@ -214,6 +234,27 @@ describe('handleGetTranscript', () => {
     expect(result.message).toContain('Hello world output');
     expect(result.message).toContain('session-');
     expect(result.message).toContain('Format: raw');
+  });
+
+  it('reaches a raw transcript whose session row is gone, by the session id asked for', async () => {
+    // A deleted task keeps its terminal history: the transcript outlives the row.
+    const db = createMockDb({
+      sessions: [],
+      transcripts: [{
+        session_id: 'session-deleted',
+        transcript: 'what the terminal showed',
+        size_bytes: 24,
+        created_at: '2026-04-04T15:00:00Z',
+        updated_at: '2026-04-04T15:05:00Z',
+      }],
+    });
+
+    const raw = await handleGetTranscript({ sessionId: 'session-deleted', format: 'raw' }, createMockContext(db));
+    expect(raw.success).toBe(true);
+    expect(raw.message).toContain('what the terminal showed');
+    // Structured needs the session's agent and native history, which went with it.
+    const structured = await handleGetTranscript({ sessionId: 'session-deleted' }, createMockContext(db));
+    expect(structured.message).toBe('No session found.');
   });
 
   it('returns message when no raw transcript exists', async () => {

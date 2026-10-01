@@ -1,77 +1,88 @@
 import { describe, it, expect } from 'vitest';
-import type Database from 'better-sqlite3';
+import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { TranscriptRepository } from '../../src/main/db/repositories/transcript-repository';
+import { adaptDatabase, type NodeDatabase } from './helpers/node-sqlite-database';
 
-// The native better-sqlite3 binding is built for Electron's ABI and cannot load
-// under vitest's system Node, so repository SQL is exercised at the E2E tier.
-// These tests use a fake db to lock the method's JS contract: the parameters it
-// binds (a NEGATIVE substr start so SQLite returns the tail) and how it maps and
-// null-coalesces the returned row.
-function fakeDb(rowFor: (sql: string, args: unknown[]) => unknown): {
-  db: Database.Database;
-  lastSql: () => string;
-  lastArgs: () => unknown[];
-} {
-  let capturedSql = '';
-  let capturedArgs: unknown[] = [];
-  const db = {
-    prepare(sql: string) {
-      capturedSql = sql;
-      return {
-        get: (...args: unknown[]) => {
-          capturedArgs = args;
-          return rowFor(sql, args);
-        },
-      };
-    },
-  } as unknown as Database.Database;
-  return { db, lastSql: () => capturedSql, lastArgs: () => capturedArgs };
+/**
+ * A session's raw terminal transcript, stored as ordered pieces (one row per
+ * flush), with a legacy single-value row read as its oldest part until the
+ * retrieval worker converts it. Run on the real project schema over
+ * node:sqlite (better-sqlite3 cannot load under vitest's Node).
+ */
+
+type SqliteModule = typeof import('node:sqlite');
+let sqlite: SqliteModule | null = null;
+try {
+  sqlite = await import('node:sqlite');
+} catch {
+  sqlite = null;
+}
+const describeWithSqlite = sqlite ? describe : describe.skip;
+
+function project(): { database: NodeDatabase; transcripts: TranscriptRepository } {
+  const database = new sqlite!.DatabaseSync(':memory:');
+  const db = adaptDatabase(database);
+  runProjectMigrations(db);
+  return { database, transcripts: new TranscriptRepository(db) };
 }
 
-describe('TranscriptRepository.getTranscriptTail', () => {
-  it('returns null when no row exists', () => {
-    const { db } = fakeDb(() => undefined);
-    expect(new TranscriptRepository(db).getTranscriptTail('s1', 100)).toBeNull();
+function insertLegacy(database: NodeDatabase, sessionId: string, transcript: string): void {
+  database.prepare(`INSERT INTO session_transcripts (session_id, transcript, size_bytes, created_at, updated_at)
+    VALUES (?, ?, ?, '2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z')`).run(sessionId, transcript, transcript.length);
+}
+
+describeWithSqlite('TranscriptRepository', () => {
+  it('appends each flush as the next piece, one row each, and reads them back in order', () => {
+    const { database, transcripts } = project();
+    transcripts.appendChunk('session-1', 'first ');
+    transcripts.appendChunk('session-1', 'second ');
+    transcripts.appendChunk('session-1', 'third');
+    transcripts.appendChunk('session-2', 'other');
+
+    const seqs = (database.prepare("SELECT seq FROM session_transcript_chunks WHERE session_id = 'session-1' ORDER BY seq").all() as Array<{ seq: number }>)
+      .map((row) => row.seq);
+    expect(seqs).toEqual([0, 1, 2]);
+    expect(transcripts.getTranscriptText('session-1')).toBe('first second third');
+    expect(transcripts.getSizeBytes('session-1')).toBe('first second third'.length);
+    expect(transcripts.getTranscriptText('missing')).toBeNull();
   });
 
-  it('binds a negative substr start (so SQLite returns the tail) and the session id', () => {
-    const { db, lastSql, lastArgs } = fakeDb(() => ({
-      tail: 'ghij', full_length: 10, size_bytes: 10, created_at: 'c', updated_at: 'u',
-    }));
-    new TranscriptRepository(db).getTranscriptTail('s1', 4);
-    expect(lastSql()).toContain('substr(transcript, ?)');
-    expect(lastArgs()).toEqual([-4, 's1']);
+  it('reads the tail from the newest pieces only, and reports the whole length', () => {
+    const { transcripts } = project();
+    for (const piece of ['aaaa', 'bbbb', 'cccc']) transcripts.appendChunk('session-1', piece);
+
+    const tail = transcripts.getTranscriptTail('session-1', 6);
+    expect(tail).toMatchObject({ tail: 'bbcccc', fullLength: 12, sizeBytes: 12 });
+    expect(transcripts.getTranscriptTail('session-1', 100)?.tail).toBe('aaaabbbbcccc');
+    expect(transcripts.getTranscriptTail('missing', 100)).toBeNull();
   });
 
-  it('maps the row fields and reports full length for truncation', () => {
-    const { db } = fakeDb(() => ({
-      tail: 'x'.repeat(1000), full_length: 5000, size_bytes: 5000, created_at: 'c', updated_at: 'u',
-    }));
-    const result = new TranscriptRepository(db).getTranscriptTail('s1', 1000);
-    expect(result).toEqual({
-      tail: 'x'.repeat(1000),
-      fullLength: 5000,
-      sizeBytes: 5000,
-      createdAt: 'c',
-      updatedAt: 'u',
-    });
+  it('reads a legacy row as the oldest part, and its tail only when the pieces fall short', () => {
+    const { database, transcripts } = project();
+    insertLegacy(database, 'session-1', 'legacy-start ');
+    transcripts.appendChunk('session-1', 'new-piece');
+
+    expect(transcripts.getTranscriptText('session-1')).toBe('legacy-start new-piece');
+    expect(transcripts.getTranscriptTail('session-1', 9)?.tail).toBe('new-piece');
+    const reachingBack = transcripts.getTranscriptTail('session-1', 13);
+    expect(reachingBack).toMatchObject({ tail: 'art new-piece', fullLength: 22, createdAt: '2026-09-01T00:00:00.000Z' });
+    // A legacy row alone still answers.
+    insertLegacy(database, 'session-2', 'only legacy');
+    expect(transcripts.getTranscriptTail('session-2', 6)).toMatchObject({ tail: 'legacy', fullLength: 11, sizeBytes: 11 });
   });
 
-  it('coalesces nulls from an empty transcript row', () => {
-    const { db } = fakeDb(() => ({
-      tail: null, full_length: 0, size_bytes: 0, created_at: 'c', updated_at: 'u',
-    }));
-    const result = new TranscriptRepository(db).getTranscriptTail('s1', 100);
-    expect(result?.tail).toBe('');
-    expect(result?.fullLength).toBe(0);
-  });
+  it('keeps a transcript after its session is deleted, in both tables', () => {
+    const { database, transcripts } = project();
+    database.exec(`INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, '2026-09-30T00:00:00.000Z')`);
+    database.exec(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at)
+      VALUES ('task-1', 1, 'task-1', '', 'lane-1', 0, '2026-09-30T00:00:00.000Z', '2026-09-30T00:00:00.000Z')`);
+    database.exec(`INSERT INTO sessions (id, task_id, session_type, command, cwd, status, started_at)
+      VALUES ('session-1', 'task-1', 'claude_agent', 'claude', '/mock', 'exited', '2026-09-30T00:00:00.000Z')`);
+    insertLegacy(database, 'session-1', 'old ');
+    transcripts.appendChunk('session-1', 'new');
 
-  it('clamps a negative maxChars to zero so the start is never positive', () => {
-    const { db, lastArgs } = fakeDb(() => ({
-      tail: '', full_length: 0, size_bytes: 0, created_at: 'c', updated_at: 'u',
-    }));
-    new TranscriptRepository(db).getTranscriptTail('s1', -50);
-    expect(lastArgs()[0] as number).toBeLessThanOrEqual(0);
-    expect(lastArgs()[1]).toBe('s1');
+    database.exec(`DELETE FROM sessions WHERE id = 'session-1'`);
+
+    expect(transcripts.getTranscriptText('session-1')).toBe('old new');
   });
 });

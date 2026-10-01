@@ -708,7 +708,7 @@ export function runProjectMigrations(db: Database.Database): void {
   // Migration: session_transcripts table for agent-agnostic PTY output capture.
   // No FK on session_id - the transcript row may be created before the sessions
   // row exists (PTY data arrives during spawn, before executeSpawnAgent inserts
-  // the DB record). Cleanup is handled by a DELETE trigger on sessions instead.
+  // the DB record).
   //
   // If the table already exists with a FK (from an earlier migration), drop and
   // recreate it without the FK. Safe because the table is new and has no
@@ -732,13 +732,26 @@ export function runProjectMigrations(db: Database.Database): void {
       updated_at TEXT NOT NULL
     )
   `);
+  // A raw transcript is now written as ordered pieces, one row per flush
+  // (`TranscriptRepository`). The one growing value above was rewritten whole
+  // on every flush, 127 to 164 ms at 19 MB; its rows are converted to pieces
+  // by the retrieval worker and read as the oldest part until then. `text` is
+  // the last column, so a size or count read never touches its overflow pages.
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_sessions_delete_transcript
-    AFTER DELETE ON sessions
-    BEGIN
-      DELETE FROM session_transcripts WHERE session_id = OLD.id;
-    END
+    CREATE TABLE IF NOT EXISTS session_transcript_chunks (
+      session_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      chars INTEGER NOT NULL,
+      bytes INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      text TEXT NOT NULL,
+      PRIMARY KEY (session_id, seq)
+    )
   `);
+  // A raw transcript outlives its session row: agent CLIs clean up their own
+  // session files, so it is Kangentic's durable copy of what the terminal
+  // showed. The trigger that deleted it with its session is dropped.
+  db.exec('DROP TRIGGER IF EXISTS trg_sessions_delete_transcript');
 
   // Migration: handoffs table for cross-agent context transfer provenance
   db.exec(`

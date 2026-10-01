@@ -442,9 +442,8 @@ export async function performSpawn(
     // unknown id, so it stays unguarded.
     const rowStillRegistered = context.registry.has(id);
 
-    // Transient sessions (command terminal) have no DB row - the
-    // TranscriptWriter's lazy init will fail silently on first flush
-    // (caught by try/catch in flush()), so we skip them entirely.
+    // Transient sessions (command terminal) have no DB row and keep no
+    // transcript, so they are skipped entirely.
     if (!session.transient && rowStillRegistered) {
       context.getTranscriptWriter()?.onData(id, data);
     }
