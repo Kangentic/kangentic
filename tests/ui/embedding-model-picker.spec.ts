@@ -320,7 +320,7 @@ test.describe('Index card', () => {
 
   const valueOf = (page: Page, source: string) => page.getByTestId(`index-source-${source}-value`);
 
-  test('lists every source on one line: the counts with a check, and the opt-in two on by default', async () => {
+  test('lists every source on one line: the counts with a check, and the switchable two on by default', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready', undefined, SUMMARIES, CODE, SOURCES));
     try {
       await setKnowledgeGraph(page, AGENT);
@@ -358,7 +358,7 @@ test.describe('Index card', () => {
     }
   });
 
-  test('the opt-in two wait on the Knowledge Graph, then an agent, and can be switched off while they wait', async () => {
+  test('the switchable two wait on the Knowledge Graph, then an agent, and can be switched off while they wait', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready', undefined, SUMMARIES, CODE, SOURCES));
     try {
       await openKnowledgeGraphTab(page);

@@ -464,7 +464,7 @@ function summariesEnabled(context: IpcContext): boolean {
 }
 
 /**
- * Writes task summaries in the background with the search agent and its model,
+ * Writes task summaries in the background with the Knowledge Graph's agent and its model,
  * at the adapter's recommended effort whatever the chosen one (`agentJobChoice`).
  * With no agent chosen it resolves no writer and does nothing. A summary batch
  * runs with no tool at all; it summarizes what it is handed.
@@ -519,7 +519,7 @@ const summaryScheduler = createSummaryScheduler<IpcContext>({
 });
 
 /**
- * What a summary would be written with now: the search agent, its model and the
+ * What a summary would be written with now: the Knowledge Graph's agent, its model and the
  * recommended effort main resolves for a summary, or null while summaries are off
  * or wait for a choice. Kept
  * here because a caught-up board never resolves a writer (the fingerprint skip),
@@ -577,11 +577,11 @@ function refreshSummaryChoice(context: IpcContext, options: { force?: boolean } 
 }
 
 /**
- * The open project's summaries for the Task summaries card's status row and
- * Rewrite: a few index reads (under 0.1 ms each measured) and the scheduler's
- * own state. Read on the Knowledge Graph tab's status poll while semantic search is on,
- * with the switch off too: switching summaries on starts writing at once, so the
- * card gives the backfill's size before it is on.
+ * The open project's summaries for the Index card's Task summaries line and
+ * Rebuild's plan: a few index reads (under 0.1 ms each measured) and the
+ * scheduler's own state. Read on the Knowledge Graph tab's status poll while
+ * semantic search is on, with the switch off too: switching summaries on starts
+ * writing at once, so the line gives the backfill's size before it is on.
  */
 function summaryStatusFor(context: IpcContext, index: IndexStatus['summaries']): KnowledgeGraphSummaryStatus | undefined {
   const projectId = context.currentProjectId;
@@ -636,15 +636,15 @@ function sourcesStatusFor(index: IndexStatus['sources']): KnowledgeGraphSourcesS
   return { conversations: sourceOf('conversation'), tasks: sourceOf('task'), commits: sourceOf('commit') };
 }
 
-/** Default branch sizes for the Source code card, read in the background. */
+/** Default branch sizes for the Index card's Source code line, read in the background. */
 const codeBranchSizes = createBranchSizes();
 
 /**
- * The open project's source code for the Source code card's status line. Off,
+ * The open project's source code for the Index card's Source code line. Off,
  * the size of its default branch and how long embedding it would take here;
  * on, how far the index has got. Three index counts, plus a background branch
- * reading at most once a minute while nothing is indexed. Read on the Search
- * tab's status poll, only while semantic search is on.
+ * reading at most once a minute while nothing is indexed. Read on the Knowledge
+ * Graph tab's status poll, only while semantic search is on.
  */
 function codeStatusFor(context: IpcContext, index: IndexStatus['code']): KnowledgeGraphCodeStatus | undefined {
   const projectId = context.currentProjectId;
@@ -863,7 +863,7 @@ export const retrievalService = {
    *  piggyback the gate on. */
   reconcileEmbedWorker(context: IpcContext): void {
     embedEngine.reconcile(context);
-    // The same Knowledge Graph settings decide summaries: choosing the search agent, or
+    // The same Knowledge Graph settings decide summaries: choosing the Knowledge Graph's agent, or
     // turning summaries on, starts the backfill without a re-open, and what a
     // summary is written with may have changed.
     const projectId = context.currentProjectId;

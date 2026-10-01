@@ -3410,9 +3410,9 @@ export interface AppConfig {
      *  for the agents when many run at once. */
     acceleration?: KnowledgeGraphAcceleration;
     /**
-     * The search agent: which agent answers a question from the index (the
-     * Knowledge Graph's Ask) and writes task summaries. One choice for both jobs,
-     * made in the Search agent card (`agentJobChoice`).
+     * The Knowledge Graph's agent: which agent answers a question from the index
+     * (Ask) and writes task summaries. One choice for both jobs, made in the
+     * Knowledge Graph card's Agent row (`agentJobChoice`).
      *
      * GLOBAL, and deliberately separate from the project's default agent: which
      * agent RUNS YOUR TASKS and which agent READS YOUR HISTORY are different
@@ -3429,9 +3429,9 @@ export interface AppConfig {
      */
     agent?: string | null;
     /**
-     * Which MODEL the search agent runs at, for answers and summaries alike. A new
-     * model applies to new and changed summaries; those already written stay as
-     * written until the Task summaries card's Rewrite.
+     * Which MODEL the Knowledge Graph's agent runs at, for answers and summaries
+     * alike. A new model applies to new and changed summaries; those already
+     * written stay as written until the Index card's Rebuild rewrites them.
      *
      * The reason this exists is cost. Ask is a read-only summarize over your own
      * local index, and running it at the same frontier model that writes your
@@ -3447,7 +3447,7 @@ export interface AppConfig {
      */
     model?: string | null;
     /**
-     * Which effort level the search agent ANSWERS at, from the levels its CLI
+     * Which effort level the Knowledge Graph's agent ANSWERS at, from the levels its CLI
      * reports. Optional, unlike the model: unset runs at the adapter's
      * recommended level (`AnswerCapabilities.defaultEffort`). Summaries ignore it
      * and always run at that recommended level (`agentJobChoice`). Cleared with
@@ -6668,7 +6668,7 @@ export interface ElectronAPI {
     /**
      * What Rebuild would spend: how many task summaries (summaries) in every
      * project were written with another agent or model and would be rewritten.
-     * Zero while summaries are off or the search agent is not chosen. Read when
+     * Zero while summaries are off or the Knowledge Graph's agent is not chosen. Read when
      * Rebuild is pressed, so it asks first only when it will spend calls.
      */
     rebuildPlan: () => Promise<KnowledgeGraphRebuildPlan>;
@@ -7072,7 +7072,7 @@ export interface KnowledgeGraphIndexSummary {
   corpora: KnowledgeGraphIndexCorpusSummary[];
   /**
    * Task summaries written, of the finished tasks that can have one, and how many
-   * the search agent passed over this run of the app (asked, and no summary
+   * the Knowledge Graph's agent passed over this run of the app (asked, and no summary
    * came back; tried again on the next launch).
    */
   summaries: { written: number; finishedTasks: number; skipped?: number };
@@ -7347,7 +7347,7 @@ export interface KnowledgeGraphSourceStatus {
 }
 
 /**
- * The open project's source code, as the Source code card's status line reads it.
+ * The open project's source code, as the Index card's Source code line reads it.
  *
  * - `estimate`: code is not indexed, and `files` and `passages` are what
  *   switching it on would read: the files counted on the branch, the passages
@@ -7371,12 +7371,12 @@ export interface KnowledgeGraphCodeStatus {
   minutesLeft: number | null;
 }
 
-/** Task summaries for one project, as the Task summaries card's status line reads them. */
+/** Task summaries for one project, as the Index card's Task summaries line reads them. */
 export interface KnowledgeGraphSummaryStatus {
   /** Summaries written, of the finished tasks (in a Done column) that can have one. */
   written: number;
   finishedTasks: number;
-  /** Tasks the search agent passed over this run of the app; tried again next launch. */
+  /** Tasks the agent passed over this run of the app; tried again next launch. */
   skipped: number;
   /**
    * What the scheduler is doing for this project. Waiting for an agent is not a
@@ -7393,7 +7393,7 @@ export interface KnowledgeGraphSummaryStatus {
   /** The finished tasks' summaries by what wrote them, most first. */
   writtenWith: SummaryChoiceCount[];
   /**
-   * What a summary would be written with now: the search agent, its model, and
+   * What a summary would be written with now: the Knowledge Graph's agent, its model, and
    * the recommended effort main resolves for a summary. Null while summaries are
    * off or wait for a choice. A rewrite rewrites the summaries written any other
    * way.

@@ -1,7 +1,8 @@
 /**
  * The projection pass runs its long steps (the layout, the region-count sweep)
- * in slices so no single step holds main for more than about a frame. Before,
- * those steps ran back to back and held it for 602 ms on 1,005 conversations.
+ * in slices so no single step holds the retrieval worker for more than about a
+ * frame, and an Ask or search waiting there is answered between them. Before,
+ * those steps ran back to back for 602 ms on 1,005 conversations.
  *
  * Slicing is only safe if it changes nothing about the result: the map is
  * cached, and a layout that came out differently when sliced would rearrange

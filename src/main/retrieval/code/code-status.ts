@@ -3,7 +3,7 @@ import { indexableEntries } from './code-indexer';
 import type { KnowledgeGraphCodeStatus } from '../../../shared/types';
 
 /**
- * What the Source code card's status line says: before code is indexed, how
+ * What the Index card's Source code line says: before code is indexed, how
  * much there is to read and how long it would take here; while it indexes,
  * how far along it is; then that it is caught up.
  */
@@ -11,7 +11,7 @@ import type { KnowledgeGraphCodeStatus } from '../../../shared/types';
 /**
  * Bytes of indexable file per passage, measured on this repository's default
  * branch: 15,748,851 bytes in 1,488 files, cut into 12,186 passages. The
- * estimate a branch gets before it is read, which is why the card says
+ * estimate a branch gets before it is read, which is why the line says
  * "about".
  */
 export const CODE_BYTES_PER_PASSAGE = 1_292;

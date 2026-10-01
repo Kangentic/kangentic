@@ -428,7 +428,7 @@ test.describe('knowledge graph', () => {
       await expect(commits).toContainText('Commits');
       await expect(commits).toContainText('1,422');
       await expect(commits).not.toContainText('embedded');
-      // Source code is opt-in: off and empty, it has no row, since "Not yet
+      // Source code switched off and empty has no row, since "Not yet
       // indexed" would promise a fill that never comes.
       await expect(page.locator('[data-testid="knowledge-graph-index-corpus-code"]')).toHaveCount(0);
       // Summaries are written in the background, so the row counts toward the
@@ -456,8 +456,8 @@ test.describe('knowledge graph', () => {
   });
 
   test('the Index shows task summaries while they are on or exist, and names a missing agent', async () => {
-    // Opt-in: with summaries off and none written, the row is absent. Switched
-    // on with no agent chosen, it says so rather than showing a
+    // With summaries switched off and none written, the row is absent.
+    // Switched on with no agent chosen, it says so rather than showing a
     // count that is not moving.
     const states: Array<{ summarySetting: 'off' | 'on'; answerAgentChosen: boolean; summariesWritten: number; expected: string | null }> = [
       { summarySetting: 'off', answerAgentChosen: true, summariesWritten: 0, expected: null },

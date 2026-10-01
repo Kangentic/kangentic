@@ -162,7 +162,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
 
   const semanticReady = indexingEnabled && semanticEnabled;
 
-  // What each opt-in source still waits for, nearest first. Summaries are
+  // What each switchable source still waits for, nearest first. Summaries are
   // written by the agent, so they need it and its model; code is read only by
   // its answers, so it waits for the agent too (`codeIndexOn`). Both are on
   // by default, and their switches stay usable while they wait.

@@ -233,7 +233,7 @@ Reading a native event, in order of what trips people up:
   `src/main/pty/spawn/shell-launch.ts`) start with no exception port on a packaged build. An
   unpackaged run with error reporting switched on keeps node-pty's stock helper, so its events
   (`environment: development`) are not residue. "PTY children and mach exception ports" in
-  `docs/cross-platform.md` lists what is covered. Two known paths still inherit it. The headless auto-name agent runs (`src/main/agent/shared/auto-name.ts`) run agent
+  `docs/cross-platform.md` lists what is covered. Two known paths still inherit it. The headless agent runs (started in the pty host by `src/main/pty/host/host-cli-processes.ts`, or by `src/main/agent/shared/auto-name.ts` with no host) run agent
   hooks, so a `module` that is a hook tool, or anything else an agent's hooks start, most likely
   comes from there. The shell-launch docstring says how to route an agent binary through the
   helper without losing ENOENT. Git runs repository hooks (husky, lefthook, a `post-checkout` on

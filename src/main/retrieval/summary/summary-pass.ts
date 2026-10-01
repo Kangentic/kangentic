@@ -3,7 +3,7 @@ import type { SummaryCandidate } from './summary-sources';
 import type { SummaryPassStore, SummaryRow } from './summary-pass-store';
 import { retrievalClient } from '../retrieval-client';
 
-/** Writes one batch's summaries: the search agent's read-only answer run. */
+/** Writes one batch's summaries: the Knowledge Graph's agent's read-only answer run. */
 export interface SummaryWriter {
   agent: string;
   model: string | null;

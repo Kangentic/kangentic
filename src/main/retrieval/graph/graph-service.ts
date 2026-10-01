@@ -195,8 +195,8 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
 
   /**
    * Make a project's region names and store them. One granularity per turn:
-   * all three together held main for about 63 ms on 998 conversations. Returns
-   * whether anything changed.
+   * all three together took about 63 ms on 998 conversations, which an Ask
+   * waiting in the worker would sit behind. Returns whether anything changed.
    */
   async function makeRegionNames(projectId: string): Promise<boolean> {
     const store = storeFor(projectId);

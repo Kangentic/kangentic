@@ -3,10 +3,10 @@ import { SUMMARY_BATCH_SIZE } from '../../../shared/task-summaries';
 import { defusePromptTags, promptTagPattern } from '../prompt-tags';
 
 /**
- * Task summaries: one or two sentences per finished task, written by the summary
- * agent (the Task summaries card's own choice), saying what the task set out to
- * do and what it ended up doing. A summary is searched with the task's own
- * record and shown to the answering agent beside the task, so a question finds
+ * Task summaries: one or two sentences per finished task, written by the
+ * Knowledge Graph's agent (the one that also answers questions), saying what the
+ * task set out to do and what it ended up doing. A summary is searched with the
+ * task's own record and shown to that agent beside the task, so a question finds
  * a task by what it did, not only by what its title and conversations happen
  * to say.
  *
@@ -16,7 +16,7 @@ import { defusePromptTags, promptTagPattern } from '../prompt-tags';
  * tasks share one call.
  */
 
-/** Tasks per call, shared with the Task summaries card's call estimate. */
+/** Tasks per call, shared with the settings tab's call estimates. */
 export { SUMMARY_BATCH_SIZE };
 
 /** Bump when the input or the prompt changes, so every summary is rewritten. */

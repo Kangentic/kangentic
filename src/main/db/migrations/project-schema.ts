@@ -812,16 +812,18 @@ export function runProjectMigrations(db: Database.Database): void {
   // retrieval store over the STRUCTURED transcript (TranscriptEntry-derived
   // chunks), NOT the raw session_transcripts scrollback blob.
   //
-  // `memory_chunks` is corpus-generic (a `corpus` column) so the same store can
-  // later index repo files/docs. `session_id`/`task_id` are nullable for that
-  // future reuse; the conversation corpus always sets them.
+  // `memory_chunks` is corpus-generic (a `corpus` column): conversations, task
+  // records, session changes, commits and source code share it. `session_id`
+  // and `task_id` are nullable for the corpora that have neither; the
+  // conversation corpus always sets them.
   //
-  // The vector table (`memory_chunks_vec`, USING vec0) is deliberately NOT
-  // created here: it needs the sqlite-vec extension loaded, which may be
-  // unavailable on a platform/build. It is created at runtime by
-  // RetrievalStore.ensureVecTable() only when the extension loaded. No trigger
-  // may reference it (a missing-module trigger body would break every
-  // `DELETE FROM sessions`), so vec rows are cleaned by application code.
+  // The vector tables (one vec0 table per embedded corpus) are deliberately
+  // NOT created here: they need the sqlite-vec extension, which only the
+  // retrieval worker loads. The worker creates them at runtime
+  // (RetrievalStore.ensureVecTable()) when the extension loaded. No trigger
+  // may reference them: main and the pty host never load the extension, so a
+  // trigger body naming vec0 would fail every write that fires it there. Vec
+  // rows are cleaned by the worker's own code.
   db.exec(`
     CREATE TABLE IF NOT EXISTS memory_chunks (
       id INTEGER PRIMARY KEY,
@@ -858,8 +860,7 @@ export function runProjectMigrations(db: Database.Database): void {
 
   // FTS5 external-content index over memory_chunks.text. FTS5 is compiled into
   // the shipped better-sqlite3, so this is always safe. External content (not
-  // contentless) so snippet()/highlight() can return text and the sessions
-  // DELETE cascade stays simple.
+  // contentless) so snippet()/highlight() can return text.
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts USING fts5(
       text,
@@ -959,9 +960,10 @@ export function runProjectMigrations(db: Database.Database): void {
   `);
   // A chunk deleted, or its vector lost or replaced, clears the document's
   // `full_sum`, and empties the prefix when the chunk is in it, whatever wrote
-  // it: the store's own writes, a trigger cascade from a session delete, or
-  // anything written later. Triggers rather than store code, so no path can be
-  // missed. The full sum has to go even for a chunk above the prefix: a vector
+  // it: the store's own writes, the record sweep's purge of a deleted
+  // session's conversation, or anything written later. Triggers rather than
+  // store code, so no path can be missed. The full sum has to go even for a
+  // chunk above the prefix: a vector
   // replaced under a new model of the same width moves no count and no index
   // time, so nothing else would tell the pass. The pass then reads the document
   // again from what is left of its prefix. Every right-hand side of an UPDATE
@@ -995,7 +997,7 @@ export function runProjectMigrations(db: Database.Database): void {
   `);
 
   // Task summaries: one or two sentences per finished task, written by the
-  // summary agent (`src/main/retrieval/summary/`). `input_hash` is what the
+  // Knowledge Graph's agent (`src/main/retrieval/summary/`). `input_hash` is what the
   // summary was written from, so a task whose input moved is rewritten; an
   // empty one marks a summary the user asked to rewrite. `agent`, `model` and
   // `effort` record what wrote it, so Settings can say so and a rewrite with a

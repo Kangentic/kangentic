@@ -396,7 +396,8 @@ async function readDocumentSums(
 
 /**
  * Run one projection pass. Yields to the event loop between batches so a long
- * scan never blocks the UI, and returns null if aborted.
+ * scan never holds up an Ask or a search waiting in the worker, and returns
+ * null if aborted.
  */
 export async function runProjectionPass(
   deps: ProjectionPassDeps,
@@ -406,8 +407,8 @@ export async function runProjectionPass(
   const dutyCycle = deps.dutyCycle ?? DUTY_CYCLE;
   const scanBatch = deps.scanBatch ?? SCAN_BATCH;
   const aborted = (): boolean => deps.signal?.aborted === true;
-  // No single step may hold main for more than a slice; each is followed by a
-  // sleep that keeps the pass to its share of wall time.
+  // No single step may hold the worker for more than a slice; each is followed
+  // by a sleep that keeps the pass to its share of wall time.
   const pace = (workedMs: number): Promise<void> => delay(computeProjectionSleepMs(workedMs, dutyCycle));
 
   // The map is drawn from conversations. Task records and session changes are

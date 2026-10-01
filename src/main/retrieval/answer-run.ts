@@ -26,7 +26,7 @@ export type AnswerRunResolution =
   | { ok: false; failure: { ok: false; reason: string; setup?: 'agent' | 'model' } };
 
 /**
- * Resolve the search agent for a question, a prewarm, or a summary batch,
+ * Resolve the Knowledge Graph's agent for a question, a prewarm, or a summary batch,
  * through the SHARED rule the renderer uses to decide whether a question runs
  * or goes to Settings first, so the two can never disagree. The rule is
  * explicit: the configured agent and model, with no fallback to the project's

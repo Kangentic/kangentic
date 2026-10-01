@@ -32,7 +32,7 @@ export interface SummarySchedulerDeps<Context> {
    * change sweep, no input read. Omitted, every request runs a pass.
    */
   readFingerprint?: (context: Context, projectId: string) => Promise<string | null> | string | null;
-  /** The search agent's read-only summary run, or null while none is chosen. */
+  /** The Knowledge Graph agent's read-only summary run, or null while none is chosen. */
   resolveWriter: (context: Context, projectId: string) => Promise<SummaryWriter | null>;
   /**
    * After a pass that wrote summaries: re-read the task records that carry them,
@@ -63,7 +63,7 @@ export interface SummaryScheduler<Context> {
   request: (context: Context, projectId: string) => void;
   /** How many tasks the agent passed over in this project, this run of the app. */
   skipped: (projectId: string) => number;
-  /** What the scheduler is doing for a project, for the Task summaries card. */
+  /** What the scheduler is doing for a project, for the Index card's Task summaries line. */
   status: (projectId: string) => SummarySchedulerStatus;
   /**
    * Summaries this project's current run writes a minute, on wall time from its
