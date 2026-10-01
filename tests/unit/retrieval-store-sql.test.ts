@@ -27,10 +27,9 @@ import { ConversationIndexer } from '../../src/main/retrieval/conversation/conve
  * shape / bound bounds. (The real SQL executes at the E2E tier against a live
  * DB.) Mirrors tests/unit/transcript-repository.test.ts.
  *
- * The one exception is `purgeAll`'s meta cleanup, which runs the REAL project
- * migrations and the REAL store against node:sqlite (as code-corpus.test.ts
- * does). A recording double only sees the SQL text, and what that statement
- * must get right is which rows its LIKE pattern matches, so it needs a database.
+ * The exceptions run the REAL project migrations and the REAL store against
+ * node:sqlite (as code-corpus.test.ts does), where what a statement must get
+ * right is which rows it touches, which a recording double cannot see.
  */
 
 interface RecordedCall {
@@ -824,54 +823,15 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
   });
 });
 
-describeWithSqlite('RetrievalStore.purgeAll (real database)', () => {
+describeWithSqlite('RetrievalStore.purgeCorpora (real database)', () => {
   function project() {
     const database = new sqlite!.DatabaseSync(':memory:');
     const db = adaptDatabase(database);
     runProjectMigrations(db);
     const store = new RetrievalStore(db);
     const count = (table: string): number => (database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-    const metaKeys = (): string[] => (database.prepare('SELECT key FROM memory_meta ORDER BY key').all() as Array<{ key: string }>).map((row) => row.key);
-    return { store, count, metaKeys };
+    return { store, count };
   }
-
-  it('clears every corpus and the graph\'s cached map, sums and region names, and no other meta key', () => {
-    const { store, count, metaKeys } = project();
-    store.upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
-    store.writeDocSums('conversation', [sumsWrite({ docId: ref.docId, chunkCount: 2, embeddedCount: 0 })]);
-    store.setIndexState({
-      corpus: 'conversation',
-      docId: ref.docId,
-      sessionId: 'session-1',
-      sourcePath: '/mock/transcript.jsonl',
-      sourceMtimeMs: 1,
-      sourceSize: 2,
-      entryCount: 1,
-      chunkCount: 2,
-      status: 'ok',
-      indexedAt: '2026-09-30T00:00:00.000Z',
-    });
-    // The keys the graph writes: the cached map and its region names.
-    const graphKeys = ['graph_projection_v11', 'graph_region_names'];
-    for (const key of graphKeys) store.setMeta(key, '{"titles":["Relay config"]}');
-    // Keys that are not the graph's, one of them beginning "graph" without the
-    // underscore: an unescaped `_` in the LIKE pattern is a wildcard and would take it.
-    const otherKeys = ['code_index_head', 'commit_index_head', 'chunker_version', 'graphite_cache'];
-    for (const key of otherKeys) store.setMeta(key, 'kept');
-    const survivors = metaKeys().filter((key) => !graphKeys.includes(key));
-    expect(count('memory_chunks')).toBe(2);
-    expect(count('memory_index_state')).toBe(1);
-    expect(count('memory_doc_sums')).toBe(1);
-
-    store.purgeAll();
-
-    expect(count('memory_chunks')).toBe(0);
-    expect(count('memory_index_state')).toBe(0);
-    expect(count('memory_doc_sums')).toBe(0);
-    expect(metaKeys()).toEqual(survivors);
-    for (const key of otherKeys) expect(store.getMeta(key), key).toBe('kept');
-    for (const key of graphKeys) expect(store.getMeta(key), key).toBeUndefined();
-  });
 
   it('clears the sums of the purged corpora only', () => {
     const { store, count } = project();

@@ -997,15 +997,14 @@ export function runProjectMigrations(db: Database.Database): void {
   `);
 
   // Task summaries: one or two sentences per finished task, written by the
-  // Knowledge Graph's agent (`src/main/retrieval/summary/`). `input_hash` is what the
-  // summary was written from, so a task whose input moved is rewritten; an
-  // empty one marks a summary the user asked to rewrite. `agent`, `model` and
-  // `effort` record what wrote it, so Settings can say so and a rewrite with a
-  // new choice skips the ones already written with it. Keyed by task and
-  // removed with it by the summary sweep. A summary is text an agent wrote, not
-  // something the index can re-derive, so the only other delete is the Privacy
-  // "clear index" (`RetrievalStore.purgeAll`), which clears everything the
-  // index holds on purpose.
+  // Knowledge Graph's agent (`src/main/retrieval/summary/`). `input_hash` is
+  // what the summary was written from, so a task whose input moved is
+  // rewritten; an empty one marks a summary the user asked to rewrite. `agent`,
+  // `model` and `effort` record what wrote it, so Settings can say so and a
+  // rewrite with a new choice skips the ones already written with it. Keyed by
+  // task and removed with it by the summary sweep, the only delete: a summary
+  // is text an agent wrote, not something the index can re-derive, so Rebuild
+  // marks summaries for rewriting instead of dropping them.
   db.exec(`
     CREATE TABLE IF NOT EXISTS memory_task_summaries (
       task_id TEXT PRIMARY KEY,

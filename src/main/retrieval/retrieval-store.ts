@@ -455,19 +455,6 @@ export class RetrievalStore {
     return row.chunks;
   }
 
-  /** Every corpus, and what was derived from it, gone: the Privacy "clear
-   *  index". That includes the graph's per-document sums (`purgeCorpora`), and
-   *  its cached map and region names (the `graph_` meta keys), which carry
-   *  titles, cost and task ids read from the cleared chunks. */
-  purgeAll(): void {
-    this.purgeCorpora(MEMORY_CORPORA);
-    writeTransaction(this.db, () => {
-      this.db.prepare('DELETE FROM memory_index_state').run();
-      this.db.prepare('DELETE FROM memory_task_summaries').run();
-      this.db.prepare("DELETE FROM memory_meta WHERE key LIKE 'graph\\_%' ESCAPE '\\'").run();
-    })();
-  }
-
   /**
    * Some corpora gone, the rest untouched. A chunker change invalidates the
    * conversation chunks (and what is derived from them), not the task records.
