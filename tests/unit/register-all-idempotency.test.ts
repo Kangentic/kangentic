@@ -62,6 +62,7 @@ vi.mock('../../src/main/pty/session-manager', () => {
       listSessions = vi.fn(() => []);
       spawn = vi.fn();
       kill = vi.fn();
+      enableTranscripts = vi.fn();
     },
   };
 });

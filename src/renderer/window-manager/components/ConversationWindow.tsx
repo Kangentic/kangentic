@@ -59,6 +59,9 @@ interface ConversationWindowProps {
  *  open viewer follows new turns as the agent produces them. */
 const LIVE_REFRESH_MS = 2500;
 
+/** How long to wait before asking again after the first read failed. */
+const READER_RETRY_MS = 5000;
+
 type TranscriptReply = TranscriptGetResponse | TranscriptUnchangedResponse | TranscriptDeltaResponse;
 
 function isUnchangedResponse(value: TranscriptReply): value is TranscriptUnchangedResponse {
@@ -188,21 +191,30 @@ export function ConversationWindow({
   // the handler always returns the full payload here.
   useEffect(() => {
     let cancelled = false;
-    window.electronAPI.transcripts
-      .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
-      .then((result) => {
-        if (cancelled) return;
-        // No knownRevision was sent, so the reply is whole.
-        if (!isUnchangedResponse(result)) setResponse(responseAfterReply(null, result));
-        setSettledFetchKey(fetchKey);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setResponse(null);
-        setSettledFetchKey(fetchKey);
-      });
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const fetchWhole = (): void => {
+      window.electronAPI.transcripts
+        .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
+        .then((result) => {
+          if (cancelled) return;
+          // No knownRevision was sent, so the reply is whole.
+          if (!isUnchangedResponse(result)) setResponse(responseAfterReply(null, result));
+          setSettledFetchKey(fetchKey);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setResponse(null);
+          setSettledFetchKey(fetchKey);
+          // The reader (the retrieval worker) may be restarting after a
+          // crash: try again while the window is open, so it fills in by
+          // itself once the reader is back.
+          retryTimer = setTimeout(fetchWhole, READER_RETRY_MS);
+        });
+    };
+    fetchWhole();
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [managedWindow.anchor, currentProjectId, fetchKey]);
 

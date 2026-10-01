@@ -84,6 +84,15 @@ describeWithSqlite('legacy transcript conversion', () => {
     expect((projectB.prepare("SELECT COUNT(*) AS count FROM memory_meta WHERE key LIKE 'transcript_legacy:%'").get() as { count: number }).count).toBe(0);
   });
 
+  it('writes each flush main sends as the session\'s next piece, in the order sent', async () => {
+    const projectA = project(['session-a']);
+    const context = contextFor(new Map([['a', projectA]]));
+    for (const chunk of ['first ', 'second ', 'third']) {
+      await indexHandlers['transcripts.append']({ projectId: 'a', sessionId: 'session-a', chunk }, context);
+    }
+    expect(textOf(projectA, 'session-a')).toBe('first second third');
+  });
+
   it('resumes a conversion cut short where it stopped, writing no piece twice', async () => {
     const projectA = project(['session-a']);
     // Three pieces' worth (64 KB each), one already written before a crash.

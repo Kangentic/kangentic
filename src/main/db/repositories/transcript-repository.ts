@@ -13,15 +13,24 @@ import type Database from 'better-sqlite3';
  * oldest part of the transcript until the retrieval worker converts them to
  * pieces (negative `seq`, so they sort ahead of anything written since).
  */
+/** The append statement, prepared once per connection: a heavy terminal
+ *  flushes about 30 times a second. */
+const appendStatements = new WeakMap<Database.Database, Database.Statement>();
+
 export class TranscriptRepository {
   constructor(private db: Database.Database) {}
 
   /** Append one flush of ANSI-stripped text as the session's next piece. */
   appendChunk(sessionId: string, chunk: string): void {
-    this.db.prepare(`
-      INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text)
-      VALUES (?, (SELECT COALESCE(MAX(seq), -1) + 1 FROM session_transcript_chunks WHERE session_id = ?), ?, ?, ?, ?)
-    `).run(sessionId, sessionId, chunk.length, Buffer.byteLength(chunk), new Date().toISOString(), chunk);
+    let append = appendStatements.get(this.db);
+    if (!append) {
+      append = this.db.prepare(`
+        INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text)
+        VALUES (?, (SELECT COALESCE(MAX(seq), -1) + 1 FROM session_transcript_chunks WHERE session_id = ?), ?, ?, ?, ?)
+      `);
+      appendStatements.set(this.db, append);
+    }
+    append.run(sessionId, sessionId, chunk.length, Buffer.byteLength(chunk), new Date().toISOString(), chunk);
   }
 
   /** A legacy row's size and dates, without its text. */

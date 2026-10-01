@@ -98,17 +98,21 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   const sessionManager = new SessionManager();
   // Raw terminal transcripts, each written to its session's own project. A
   // project whose database is not open (a deleted one) drops the flush rather
-  // than creating the file again.
-  const transcriptSinks = new WeakMap<object, TranscriptRepository>();
+  // than creating the file again. Main writes the pieces itself (one INSERT,
+  // 1 to 2 ms): sending each 64 KB piece to the retrieval worker instead was
+  // measured under a heavy terminal and cost main 13 times the major-GC time
+  // (48 collections against 8 in 15 s) for the structured clones, more than
+  // the lock waits it saved.
+  const transcriptRepositories = new WeakMap<object, TranscriptRepository>();
   sessionManager.enableTranscripts((projectId) => {
     const db = getOpenProjectDb(projectId);
     if (!db) return null;
-    let sink = transcriptSinks.get(db);
-    if (!sink) {
-      sink = new TranscriptRepository(db);
-      transcriptSinks.set(db, sink);
+    let repository = transcriptRepositories.get(db);
+    if (!repository) {
+      repository = new TranscriptRepository(db);
+      transcriptRepositories.set(db, repository);
     }
-    return sink;
+    return repository;
   });
   const pasteEngine = createPasteEngine(sessionManager);
   const terminalSubmit = new TerminalSubmit(sessionManager, pasteEngine);

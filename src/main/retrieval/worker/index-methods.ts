@@ -13,6 +13,7 @@
 
 import type Database from 'better-sqlite3';
 import { writeTransaction } from '../../db/transaction';
+import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { ConversationIndexer, type IndexOutcome } from '../conversation/conversation-indexer';
 import { sweepTaskRecords, type TaskSweepResult } from '../task/task-indexer';
@@ -99,6 +100,16 @@ export interface IndexMethods {
   'transcripts.convertLegacy': {
     params: { projectId: string; otherProjectIds: string[]; jobId?: string };
     result: { converted: number; moved: number; bytes: number };
+  };
+  /**
+   * Write one PTY transcript flush as its session's next piece, for a writer
+   * outside main: main writes its own (a structured clone of each 64 KB piece
+   * cost it more in garbage collection than the write). The handler is
+   * synchronous, so one session's pieces land in the order sent.
+   */
+  'transcripts.append': {
+    params: { projectId: string; sessionId: string; chunk: string };
+    result: void;
   };
   /**
    * Copy the conversation vectors older releases stored at vec0 chunk size
@@ -407,6 +418,11 @@ export const indexHandlers: IndexHandlers = {
     }
     return result;
   }),
+
+  'transcripts.append': ({ projectId, sessionId, chunk }, context) => {
+    const db = context.getDb(projectId);
+    writeTransaction(db, () => new TranscriptRepository(db).appendChunk(sessionId, chunk))();
+  },
 
   'vec.migrateLayout': ({ projectId, jobId }, context) => runJob(jobId, async (shouldContinue) => {
     const result = { copied: 0, switched: false, freedBlocks: 0 };
