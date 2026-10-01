@@ -920,7 +920,7 @@ Two things the numbers do NOT mean, both said on the tiles themselves. Cost is A
 
 Open it from the brain icon in the title bar or with `Mod+Shift+A`. It answers "what does this
 project's conversation index actually know, and how much of my history has it reached" - a question
-neither the Knowledge Graph settings tab (a toggle and a Rebuild button) nor Quick Find (a flat list of keyword matches)
+neither the Knowledge Graph settings tab (switches, counts and a Rebuild button) nor Quick Find (a flat list of keyword matches)
 can answer.
 
 **The map.** Every indexed conversation is a point in 3D space, placed by the meaning of its

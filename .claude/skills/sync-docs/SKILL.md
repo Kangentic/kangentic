@@ -231,7 +231,7 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: each automation type declares itself once here (label, icon, `status`, `needs`, fields with their per-field `escape`, `timeoutMs`, `retry`), and transition-engine.md tabulates all of it. Also holds `RETIRED_ACTION_TYPES`, `EXIT_GROUP_BUDGET_MS` and `DEFAULT_SCRIPT_TIMEOUT_MINUTES`, each of which is quoted as a number in the docs. Registry-to-manifest parity is mechanical (`tests/unit/automation-adapter-parity.test.ts`); the docs side is not, so an added type or a changed budget needs a hand pass. See .claude/rules/automation-adapters.md.
 
 - `src/main/agent/agent-adapter.ts`
-  WHY: AgentAdapter interface methods (discoverCapabilities, getInjectionSequence, getCommandInjectionVerifier, summarize, locateSessionHistoryFile, getExitSequence, detectFirstOutput) are tabulated in agent-integration.md. Catches drift that types.ts re-exports miss.
+  WHY: AgentAdapter interface methods (discoverCapabilities, getInjectionSequence, getSubmissionVerifier, summarize, answerFromContext, openAnswerSession, locateSessionHistoryFile, getExitSequence, detectFirstOutput) are tabulated in agent-integration.md. Catches drift that types.ts re-exports miss.
 
 - `src/main/agent/agent-registry.ts`
   WHY: canonical list of registered adapters; adding/removing an adapter is a docs-affecting event for agent-integration.md "Supported agents" table.
@@ -308,7 +308,7 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: MCP command implementations (column-resolver.ts, handoff-commands.ts, task-commands.ts, backlog-commands.ts, search-commands.ts, etc.) are cited in mcp-server.md component table and architecture.md board-integration section. Adding or renaming a command file is a docs-affecting event. Small directory (13 files); safe to glob.
 
 - `src/main/ipc/handlers/**`
-  WHY: handler files register IPC channels, emit event payloads, and define handler-level behavior. A new handler that registers a channel without changing ipc-channels.ts (e.g., event-only ipcMain.on) would slip through the channel-constants anchor. Currently 17 files; glob avoids list-rot.
+  WHY: handler files register IPC channels, emit event payloads, and define handler-level behavior. A new handler that registers a channel without changing ipc-channels.ts (e.g., event-only ipcMain.on) would slip through the channel-constants anchor. The glob avoids list-rot as handlers are added.
 
 - `src/main/analytics/**`
   WHY: analytics.md tabulates every event name, every property, and the closed vocabularies behind them (usage.ts's ANALYTICS_FEATURES and ONBOARDING_MILESTONES, settings-snapshot.ts's SETTINGS_SNAPSHOT_ALLOWLIST, run-uptime.ts's exit kinds and uptime buckets). An added event or a renamed property is a docs-affecting event with no other mechanical check. The allowlist in particular is a privacy control the doc enumerates for users, so drift there is worse than stale: user-guide.md and configuration.md's Privacy paragraphs describe the same collection.

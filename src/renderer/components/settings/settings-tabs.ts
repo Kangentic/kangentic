@@ -74,7 +74,7 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   // Animations lived under Board > Window despite toggling .no-motion on
   // <html>, and graphics acceleration (Sentry DESKTOP-18/DESKTOP-W) had
   // nowhere at all. Core rather than Advanced because Advanced is opt-in
-  // subsystems (Dictation, Memory, MCP Server, Agent Browser, Mobile), and
+  // subsystems (Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile), and
   // because a recovery toast sends users straight here.
   { id: 'performance', label: 'Performance', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'hotkeys', label: 'Hotkeys', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },

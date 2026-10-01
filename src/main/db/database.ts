@@ -62,9 +62,10 @@ function projectDbPath(projectId: string): string {
 
 /**
  * Optional per-project-DB initializer, run once per connection right after
- * migrations. Injected (rather than imported) so the sqlite-vec loader - which
- * pulls electron + the native extension - stays out of this module's static
- * graph, which the unit tests traverse. Registered from `src/main/index.ts`.
+ * migrations. Injected (rather than imported) so the sqlite-vec loader stays
+ * out of this module's static graph, which main, the pty host and the unit
+ * tests all share. Registered only by the retrieval worker
+ * (`retrieval/worker/retrieval-worker.ts`): main never loads sqlite-vec.
  */
 let projectDbInitializer: ((db: Database.Database) => void) | null = null;
 
