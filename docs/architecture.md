@@ -4,7 +4,7 @@
 
 Electron app with two processes:
 
-- **Main process** -- Node.js runtime. Owns the database migrations and project-data writes, PTY sessions, git operations, file I/O, and IPC handlers. Entry point: `src/main/index.ts`.
+- **Main process** -- Node.js runtime. Owns the database migrations and project-data writes, the session registry and activity engine, git operations, file I/O, and IPC handlers. Entry point: `src/main/index.ts`.
 - **Renderer process** -- Chromium window running React. Communicates exclusively through `window.electronAPI` (context bridge). Entry point: `src/renderer/index.tsx`.
 - **Preload script** -- Bridges main↔renderer via `contextBridge.exposeInMainWorld()`. Exposes typed `electronAPI` object. Entry point: `src/preload/preload.ts`.
 
@@ -13,6 +13,17 @@ Context isolation is enabled -- the renderer has no direct access to Node.js API
 Work that would block main runs in Electron `utilityProcess` workers, each its own esbuild entry
 with a crash policy and stderr capture:
 
+- **`kangentic-pty-host`** (`src/main/pty/host/pty-host-entry.ts`) -- every PTY and the work on
+  its output: node-pty, the headless xterm and scrollback ring, backpressure, the raw transcript
+  (written on the host's own database connection), and the adapters' output detectors. Main keeps
+  `SessionManager` as the facade, mirrors what it reads synchronously, and reads the rest by
+  request; output reaches main only for the sessions a renderer shows or a phone streams. The host
+  also runs main's one-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
+  (`off-main-pty.ts`) and the background-shell watcher's process table, because on Windows each
+  spawn's CreateProcess is synchronous on the calling thread. Forked once at startup, restarted on
+  a crash (the lost agent sessions resume), and replaced by the same core running in main after
+  five crashes. Measured under a 15 s terminal flood: main 40.6% busy before, 0.6 to 3.5% after.
+  See `.claude/rules/pty-host-out-of-process.md`.
 - **`kangentic-retrieval`** (`src/main/retrieval/worker/retrieval-worker.ts`) -- every read and
   write of the Knowledge Graph index (the `memory_*`, vec0 and FTS tables, the turn-usage ledger,
   spawn links, task summaries), the map pass, searches, Ask preparation, storage upkeep, and the
@@ -25,16 +36,16 @@ with a crash policy and stderr capture:
 - **`kangentic-dictation`** and **`kangentic-line-count`** -- the dictation engine and diff line
   counts.
 
-Main still writes project data (tasks, sessions, the app tables, one row per raw PTY transcript
-flush) inside `writeTransaction`, an immediate transaction that waits for a worker's write instead
-of failing with `SQLITE_BUSY`.
+Main still writes project data (tasks, sessions, the app tables) inside `writeTransaction`, an
+immediate transaction that waits for a worker's write instead of failing with `SQLITE_BUSY`. The
+pty host writes one row per raw transcript flush on its own connection.
 
 ### Renderer crash recovery
 
 A recoverable renderer death (`render-process-gone` with reason `oom` or `crashed`, never
 `clean-exit` or `killed`) reloads the main window automatically instead of leaving it dead and
-blank. PTY sessions live in main and are untouched by a renderer-only crash, so a reload costs the
-user a repaint, not their work. Reloads are bounded (`RENDERER_RELOAD_MAX` per
+blank. PTY sessions live in the pty host and are untouched by a renderer-only crash, so a reload
+costs the user a repaint, not their work. Reloads are bounded (`RENDERER_RELOAD_MAX` per
 `RENDERER_RELOAD_WINDOW_MS`, `src/main/diagnostics/renderer-recovery.ts`): a machine still starved
 of memory would kill a freshly reloaded renderer too, so past the bound a native dialog explains
 what happened instead of retrying forever. See `src/main/diagnostics/host-memory.ts` (Sentry
@@ -696,16 +707,18 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 1. Check concurrency limit → queue if full (returns placeholder with `status: 'queued'`)
 2. Drain every existing registry row for the task (kill each PTY, preserve its files, carry scrollback over from the most recently started one) so the registry holds one row per task; the full step list is in [session-lifecycle.md](session-lifecycle.md#spawn-flow)
 3. Resolve shell and arguments (platform-specific)
-4. Spawn PTY via node-pty
+4. Spawn the PTY in the pty host (a `spawn` request; node-pty runs there, and the reply carries the pid)
 5. Start two file watchers (status, events)
-6. Set up output handler (16ms batched flush)
+6. The host runs the output handler (16ms batched flush)
 7. After 100ms delay, write the CLI command to PTY stdin (agent spawns are prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient Command Terminals are not)
 
 ### Output Streaming
 
+All of it runs in the pty host; main relays what a renderer or a phone needs.
+
 - **Buffer:** PTY `onData` accumulates into per-session buffer
-- **Flush:** 16ms interval (~60fps) emits buffered data via IPC `session:data`
-- **Scrollback:** 512KB ring buffer per session, used to restore terminal content when switching views. Alt-screen sessions and sessions whose ring spans a geometry change restore from the parsed grid instead - see [session-lifecycle](session-lifecycle.md).
+- **Flush:** 16ms interval (~60fps). The host sends a flush to main as `data` only for a session a renderer shows (the focused union), and as `tap` only for a session a phone streams (`subscribeDataTap`, reference counted). Main forwards `data` via IPC `session:data`. Every other session sends only a coalesced `outputSeen` (no bytes), which the activity engine and the Monitor read.
+- **Scrollback:** 512KB ring buffer per session, used to restore terminal content when switching views. Alt-screen sessions and sessions whose ring spans a geometry change restore from the parsed grid instead - see [session-lifecycle](session-lifecycle.md). Main reads it by request.
 
 ### File Watchers
 
@@ -758,7 +771,10 @@ Shell-specific adaptations:
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills mature PTYs immediately) |
-| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children and the pty host process are gone. The host exits itself once every exit callback has run there, within the drain's deadline less 200 ms, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
+| Pty host request timeout | 15 s (an exec: its own timeout plus 5 s) | A request the host never answers rejects; an exec then runs locally |
+| Pty host heartbeat | 5 s beat, 11 s unresponsive | VS Code's intervals; an unresponsive host is logged |
+| Pty host restarts | at once, then 1, 5, 15 s; 5 crashes per 5 min | Past the cap the host core runs in main for the rest of the run |
 | KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
 | YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s boot-canary window plus margin) |
 | YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |
