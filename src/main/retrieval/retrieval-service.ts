@@ -446,8 +446,9 @@ function queueRecordSweeps(context: IpcContext, projectId: string): void {
   });
 }
 
-/** Task summaries are wanted: switched on (they are opt-in), with indexing and
- *  semantic search on, since the Knowledge Graph needs both. */
+/** Task summaries are wanted: switched on (the default, `taskSummariesOn`),
+ *  with indexing and semantic search on, since the Knowledge Graph needs both.
+ *  With no agent chosen the pass resolves no writer, so nothing is spent. */
 function summariesEnabled(context: IpcContext): boolean {
   try {
     const config = context.configManager.load().knowledgeGraph;

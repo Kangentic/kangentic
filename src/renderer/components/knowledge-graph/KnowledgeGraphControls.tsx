@@ -892,10 +892,10 @@ export function KnowledgeGraphControls({
           <dl className="divide-y divide-edge/60" data-testid="knowledge-graph-index-rows">
             {/* One row per corpus the index holds, conversations first. A
                 corpus not indexed yet says so rather than showing a zero.
-                Source code is opt-in, so its row shows the way the summaries
-                row does: while switched on, or while any is still held. Off
-                and empty, "Not yet indexed" would promise a fill that never
-                comes. */}
+                Source code has its own switch, so its row shows the way the
+                summaries row does: while switched on, or while any is still
+                held. Off and empty, "Not yet indexed" would promise a fill
+                that never comes. */}
             {index.corpora.filter((entry) => entry.corpus !== 'code' || codeOn || entry.documents > 0).map((entry) => (
               <div key={entry.corpus} data-testid={`knowledge-graph-index-corpus-${entry.corpus}`}>
                 <IndexRow
