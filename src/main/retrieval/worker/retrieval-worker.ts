@@ -57,12 +57,13 @@ let vecLoadablePath: string | null = null;
 
 function initialize(message: InitMessage): void {
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
-  // Every checkpoint is the PASSIVE one main asks for (checkpoint-driver.ts).
-  // With SQLite's default, a commit here that found the WAL over 1000 pages
-  // also checkpointed everything the pty host wrote since the last one, inside
-  // that commit: 363 to 479 ms for 16 rows after a terminal flood, which held
-  // up every request behind it and read as a lock hold it was not. The
-  // worker's own writes checkpoint as they go instead, after their commit.
+  // Checkpoints are PASSIVE and come from two places only: main's 5 s request
+  // (checkpoint-driver.ts), which covers what the pty host writes, and the
+  // pacer below, after this worker's own commits. With SQLite's default, a
+  // commit here that found the WAL over 1000 pages also checkpointed everything
+  // the pty host wrote since the last one, inside that commit: 363 to 479 ms
+  // for 16 rows after a terminal flood, which held up every request behind it
+  // and read as a lock hold it was not.
   setWalAutoCheckpoint(0);
   setAfterCommitHook(createCheckpointPacer());
   vecLoadablePath = message.vecLoadablePath;

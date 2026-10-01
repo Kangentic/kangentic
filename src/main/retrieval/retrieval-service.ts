@@ -202,8 +202,13 @@ let storageUpkeep: { projectId: string; jobId: string } | null = null;
  * only their own tables, and on a large install they run for minutes the
  * indexing should not wait behind. One project at a time; a project switch
  * stops it, and the next open carries on where it stopped.
+ *
+ * This is the permanent upgrade path, not a temporary one: an install can skip
+ * releases, and a project can stay unopened for any length of time, so a
+ * database older releases wrote can arrive at any later version. Once a
+ * project is converted both steps find nothing to do and return at once.
  */
-function convertLegacyTranscripts(context: IpcContext, projectId: string): void {
+function upgradeLegacyTranscriptsAndVectors(context: IpcContext, projectId: string): void {
   if (storageUpkeep?.projectId === projectId) return;
   if (storageUpkeep) retrievalClient.notifyRunning('job.cancel', { jobId: storageUpkeep.jobId });
   sweepJobCounter += 1;
@@ -791,9 +796,10 @@ export const retrievalService = {
     setImmediate(() => {
       if (disposed) return;
       if (context.currentProjectId !== project.id) return;
-      // Transcript storage, not indexing: converted whatever the switch says.
+      // Storage upkeep, transcripts then vectors, not indexing: it runs
+      // whatever the indexing switch says.
       if (!isIndexingEnabled(context)) {
-        convertLegacyTranscripts(context, project.id);
+        upgradeLegacyTranscriptsAndVectors(context, project.id);
         return;
       }
 
@@ -822,7 +828,7 @@ export const retrievalService = {
         }, jobId);
         if (activeSweepJobId === jobId) activeSweepJobId = null;
         afterSweep(context, project.id, result);
-        if (!disposed && context.currentProjectId === project.id) convertLegacyTranscripts(context, project.id);
+        if (!disposed && context.currentProjectId === project.id) upgradeLegacyTranscriptsAndVectors(context, project.id);
         // Covers project open, the startup backlog, AND crash-resume: the
         // sweep re-indexed whatever changed, and this flags it for the
         // background drain regardless of whether anything actually changed

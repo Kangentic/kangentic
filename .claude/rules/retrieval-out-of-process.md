@@ -27,7 +27,8 @@ connection.
   down: a caller reports that the index is restarting and returns.
 - **Main keeps scheduling and the work only it can do.** Session and board events, debounces,
   config gates, the IPC and MCP shells, the embed worker (`embed-engine.ts` stays the only
-  embedder, see [[central-embedding-engine]]), agent CLIs, and writes to project data: tasks,
+  embedder, see [[central-embedding-engine]]), scheduling agent CLI runs (each starts in the pty
+  host, [[pty-host-out-of-process]]), and writes to project data: tasks,
   sessions and the app tables. The raw PTY transcript is written by the pty host, which produces
   it, one INSERT per flush over its own connection ([[pty-host-out-of-process]]). Sending each
   64 KB flush to another process was measured at 13 times the sender's major-GC time.
@@ -38,9 +39,9 @@ connection.
   write that meets the worker's lock waits instead of failing with `SQLITE_BUSY`. Worker
   transactions are capped (16 chunks, 64 deletes, 64 KB) so main waits a few ms at most, and bulk
   upkeep jobs are paced to 20% lock duty.
-- **The worker owns checkpoints.** It runs `PRAGMA wal_checkpoint(PASSIVE)` every 5 s, after its
-  own commits at most once a second per connection (`worker/checkpoint-pacing.ts`, through
-  `setAfterCommitHook`), and every 16 MB a bulk job writes. Main sets `wal_autocheckpoint = 0`
+- **The worker owns checkpoints.** It runs `PRAGMA wal_checkpoint(PASSIVE)` every 5 s, and after
+  its own commits at most once a second per connection (`worker/checkpoint-pacing.ts`, through
+  `setAfterCommitHook`), bulk upkeep jobs included. Main sets `wal_autocheckpoint = 0`
   while the worker is up and restores 1000 when it goes down; the worker and the pty host always
   set 0, so no checkpoint hides inside a commit (one did, and billed a terminal flood's pages to a
   16-row write: 363 to 479 ms). FULL, RESTART and TRUNCATE are never used: they block writers.

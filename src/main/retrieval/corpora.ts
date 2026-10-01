@@ -6,10 +6,10 @@
  * table with a corpus column, for two measured reasons (the real index, 91,963
  * vectors at 1024 dimensions, sqlite-vec 0.1.9):
  *
- * - No migration. Reading a vector back out of the existing table costs 1.14 ms
- *   a row, so copying it into a table with a corpus column would have been about
- *   105 seconds of synchronous reads on main. The conversation table stays
- *   exactly as it was.
+ * - No corpus column to add. Reading a vector back out of a vec0 table costs
+ *   about 1 to 4 ms a row, so adding one would have meant copying every
+ *   conversation vector. (The conversation table is copied once anyway, to a
+ *   smaller vec0 chunk size, by the worker's paced `vec.migrateLayout`.)
  * - Exact per-corpus search. A KNN over a small table of its own (3.0 ms for
  *   2.9k rows) is as fast as a partition key and faster than a metadata filter
  *   (11.8 ms), and it is exact: a task search never competes with ninety

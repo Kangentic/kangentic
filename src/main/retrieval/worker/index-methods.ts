@@ -13,7 +13,6 @@
 
 import type Database from 'better-sqlite3';
 import { writeTransaction } from '../../db/transaction';
-import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { ConversationIndexer, type IndexOutcome } from '../conversation/conversation-indexer';
 import { sweepTaskRecords, type TaskSweepResult } from '../task/task-indexer';
 import { sweepChangeRecords, type ChangeSweepResult } from '../change/change-indexer';
@@ -121,16 +120,6 @@ const LEGACY_PIECE_CHARS = 64 * 1024;
 const VEC_COPY_BATCH = 16;
 
 /**
- * Bytes a bulk job writes between its own PASSIVE checkpoints. No connection
- * auto-checkpoints while the worker is up, and main's 5 s checkpoint request
- * waits behind a running job step. Commits also checkpoint at most once a
- * second (`checkpoint-pacing.ts`); this bounds a job whose single transaction
- * writes more than a second's worth. Otherwise every main read searches a
- * longer WAL. PASSIVE never blocks a writer.
- */
-const BULK_CHECKPOINT_BYTES = 16 * 1024 * 1024;
-
-/**
  * Share of wall time a one-time bulk job (storage upkeep) may hold the write
  * lock. Unpaced, the real install's transcript conversion held it 40% of 15 s
  * (31k short transactions), so a write main made in that window met the lock
@@ -146,7 +135,9 @@ const BULK_PACE_EVERY_MS = 4;
 /**
  * Times each write a bulk job makes and pauses it so its lock holds stay at
  * `BULK_LOCK_DUTY` of wall time. `write` runs the transaction; `pause` yields
- * to other calls, sleeping when the job has used its share.
+ * to other calls, sleeping when the job has used its share. Its writes go
+ * through `writeTransaction`, so they checkpoint as any worker commit does,
+ * at most once a second (`checkpoint-pacing.ts`).
  */
 function bulkPacer(): { write<Result>(transaction: () => Result): Result; held(ms: number): void; pause(): Promise<void> } {
   let heldSincePause = 0;
@@ -172,20 +163,6 @@ function bulkPacer(): { write<Result>(transaction: () => Result): Result; held(m
   };
 }
 
-/** Counts a bulk job's bytes and checkpoints each `BULK_CHECKPOINT_BYTES`. */
-function bulkCheckpointer(db: Database.Database): (bytes: number) => void {
-  let sinceCheckpoint = 0;
-  return (bytes) => {
-    sinceCheckpoint += bytes;
-    if (sinceCheckpoint < BULK_CHECKPOINT_BYTES) return;
-    sinceCheckpoint = 0;
-    try {
-      timeSyncWork('db:checkpoint', () => db.pragma('wal_checkpoint(PASSIVE)'));
-    } catch {
-      // The 30 s checkpoint covers it.
-    }
-  };
-}
 
 /** Jobs a cancel can still reach, and those told to stop. */
 const runningJobs = new Set<string>();
@@ -313,15 +290,6 @@ export const indexHandlers: IndexHandlers = {
       return result;
     }
     const pacer = bulkPacer();
-    const checkpointers = new Map<Database.Database, (bytes: number) => void>();
-    const wrote = (db: Database.Database, bytes: number): void => {
-      let checkpoint = checkpointers.get(db);
-      if (!checkpoint) {
-        checkpoint = bulkCheckpointer(db);
-        checkpointers.set(db, checkpoint);
-      }
-      checkpoint(bytes);
-    };
     const nextLegacy = source.prepare('SELECT session_id AS sessionId FROM session_transcripts ORDER BY session_id LIMIT 1');
     const hasSession = (db: Database.Database, sessionId: string): boolean =>
       db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId) !== undefined;
@@ -391,7 +359,6 @@ export const indexHandlers: IndexHandlers = {
           writeProgress.run(progressKey, JSON.stringify({ base, written: written + 1 }));
         }));
         written += 1;
-        wrote(target, pieceBytes);
         await pacer.pause();
       }
       if (written < count) break;
@@ -421,7 +388,6 @@ export const indexHandlers: IndexHandlers = {
     if (!hasVecSupport(db)) return result;
     const pacer = bulkPacer();
     const store = new RetrievalStore(db);
-    const checkpoint = bulkCheckpointer(db);
     const started = performance.now();
     pacer.write(() => store.beginConversationVecCopy());
     for (;;) {
@@ -430,7 +396,6 @@ export const indexHandlers: IndexHandlers = {
       if (covered === 0) break;
       pacer.held(heldMs);
       result.copied += covered;
-      checkpoint(covered * 4096);
       await pacer.pause();
     }
     if (shouldContinue() && vecLayoutCopying(db)) {
@@ -439,7 +404,6 @@ export const indexHandlers: IndexHandlers = {
     }
     while (shouldContinue() && pacer.write(() => store.freeLegacyConversationVecStep())) {
       result.freedBlocks += 1;
-      checkpoint(4 * 1024 * 1024);
       await pacer.pause();
     }
     if (result.copied > 0 || result.freedBlocks > 0) {
