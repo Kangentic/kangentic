@@ -144,6 +144,27 @@ describe('pty host out-of-process boundary', () => {
     ).toEqual([]);
   });
 
+  it('starts agent CLI runs in the host, which never forks or launches itself', () => {
+    const hostCli = fs.readFileSync(path.join(REPO_ROOT, 'src/main/pty/host/host-cli-processes.ts'), 'utf-8');
+    expect(hostCli).not.toMatch(/\bfork\s*\(/);
+    expect(hostCli).toMatch(/launchesOwnBinary\(\{ kind: 'exec'/);
+    expect(hostCli).toMatch(/launchesOwnBinary\(\{ kind: 'execFile'/);
+    // spawnCli asks the drop-in first and spawns locally only when it returns
+    // null (no host registered). The file's only other spawn is stopCli's
+    // taskkill for such a local child.
+    const autoName = fs.readFileSync(path.join(REPO_ROOT, 'src/main/agent/shared/auto-name.ts'), 'utf-8');
+    const spawnCliBody = autoName.slice(autoName.indexOf('export function spawnCli('));
+    const offMainAt = spawnCliBody.indexOf('spawnOffMainCli(');
+    const localAt = spawnCliBody.indexOf('?? spawn(');
+    expect(offMainAt, 'spawnCli must try spawnOffMainCli').toBeGreaterThan(-1);
+    expect(localAt, 'spawnCli spawns locally only as the fallback').toBeGreaterThan(offMainAt);
+    const spawnCalls = autoName.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /(^|[^\w.])spawn\(/.test(line));
+    expect(spawnCalls.map((line) => line.trim())).toEqual([
+      "spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })",
+      '}) ?? spawn(command, commandArgs, {',
+    ]);
+  });
+
   it('spawns every PTY in the host: session PTYs in the core, probe PTYs through off-main-pty', () => {
     // node-pty's value import is the host core's alone (plus the kill-helper
     // patch, which every process that kills PTYs installs).

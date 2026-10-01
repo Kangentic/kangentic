@@ -23,6 +23,7 @@ import { DeferredKillRegistry, KILL_GRACE_MS, isYoungSession } from './lifecycle
 import { PTY_EXIT_DRAIN_DEADLINE_MS } from './shutdown/exit-callback-drain';
 import { HostProcessTreeProbe } from './host/host-process-tree-probe';
 import type { OffMainPty, OffMainPtyOptions } from '../utility-process/off-main-pty';
+import type { CliChildProcess, OffMainCliOptions } from '../utility-process/off-main-cli';
 
 /** How long before the quit drain's deadline the pty host gives up waiting
  *  for exits and exits itself, so main never stops waiting first. */
@@ -646,7 +647,12 @@ export class SessionManager extends EventEmitter {
       case 'exit':
       case 'rawData':
       case 'rawExit':
-        // Routed per PTY by the host client, never here.
+      case 'cliSpawned':
+      case 'cliData':
+      case 'cliError':
+      case 'cliExit':
+      case 'cliClose':
+        // Routed per PTY or per CLI run by the host client, never here.
         return;
       default: {
         const unknownEvent: never = event;
@@ -693,6 +699,11 @@ export class SessionManager extends EventEmitter {
   /** Spawn a probe's raw PTY in the pty host (`off-main-pty.ts`). */
   spawnRawInPtyHost(file: string, args: string[], options: OffMainPtyOptions): Promise<OffMainPty> {
     return this.host.spawnRaw(file, args, options);
+  }
+
+  /** Start an agent CLI run in the pty host (`off-main-cli.ts`). */
+  spawnCliInPtyHost(command: string, args: string[], options: OffMainCliOptions): CliChildProcess {
+    return this.host.spawnCli(command, args, options);
   }
 
   /**

@@ -27,6 +27,7 @@ import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { createProcessTreeProbe, type ProcessTreeProbe } from '../../activity-engine/background-shell/process-tree';
 import { traceTerminal } from '../terminal-trace';
 import { runHostExec } from './host-exec';
+import { HostCliProcesses } from './host-cli-processes';
 import {
   toPtyHostError,
   type HostExecRequest,
@@ -56,6 +57,8 @@ export interface PtyHostCoreDeps {
    *  so a flood costs main a few messages a second instead of one per chunk. */
   coalesceMs: number;
   spawnPty?: typeof nodePty.spawn;
+  /** Starts the agent CLI runs; `child_process.spawn` unless a test swaps it. */
+  spawnChild?: ConstructorParameters<typeof HostCliProcesses>[1];
 }
 
 interface HostSession {
@@ -105,6 +108,8 @@ export class PtyHostCore {
   /** Raw PTYs (`spawnRaw`), by ptyId. `killed` guards a second kill, which
    *  corrupts a ConPTY's heap on Windows. */
   private readonly rawPtys = new Map<number, { pty: nodePty.IPty; killed: boolean }>();
+  /** Agent CLI runs (`cliSpawn`), with piped stdio. */
+  private readonly cliProcesses: HostCliProcesses;
   private readonly firstOutput = new FirstOutputTracker();
   private readonly resizeManager = new ResizeManager();
   private readonly coalesce = new Map<string, CoalesceState>();
@@ -115,6 +120,7 @@ export class PtyHostCore {
 
   constructor(private readonly deps: PtyHostCoreDeps) {
     this.spawnPty = deps.spawnPty ?? nodePty.spawn;
+    this.cliProcesses = new HostCliProcesses((event) => this.deps.emit(event), deps.spawnChild);
     this.bufferManager = new PtyBufferManager({
       onFlush: (sessionId, data) => {
         this.consumeFirstOutput(sessionId, data);
@@ -363,6 +369,18 @@ export class PtyHostCore {
       case 'initSession':
         this.bufferManager.initSession(command.sessionId, command.scrollback, command.cols);
         return;
+      case 'cliSpawn':
+        this.cliProcesses.start(command.params);
+        return;
+      case 'cliWrite':
+        this.cliProcesses.write(command.processId, command.data);
+        return;
+      case 'cliEndInput':
+        this.cliProcesses.endInput(command.processId, command.data);
+        return;
+      case 'cliStop':
+        this.cliProcesses.stop(command.processId);
+        return;
       case 'shutdown':
         // Main's killAll has already posted every kill, a young session's
         // after its exit-sequence grace (pty-teardown-grace), so killing here
@@ -372,6 +390,10 @@ export class PtyHostCore {
         // Raw PTYs are probes nobody waits on; end them now so the exit wait
         // covers them too.
         for (const ptyId of [...this.rawPtys.keys()]) this.killRaw(ptyId);
+        // A CLI left running would keep its run directory, and the live MCP
+        // token in it, on disk after the app is gone. Main's stopAllCliRuns
+        // has posted most of these stops already; a second is a no-op.
+        this.cliProcesses.stopAll();
         return;
       default: {
         const unknownCommand: never = command;
@@ -396,6 +418,11 @@ export class PtyHostCore {
     let count = this.rawPtys.size;
     for (const entry of this.ptys.values()) if (!entry.exited) count += 1;
     return count;
+  }
+
+  /** Everything the shutdown waits on: the live PTYs and CLI runs. */
+  get liveChildCount(): number {
+    return this.livePtyCount + this.cliProcesses.liveCount;
   }
 
   /**

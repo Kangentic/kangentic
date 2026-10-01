@@ -76,6 +76,20 @@ export type PtyHostRawSpawnResult =
   | { ok: true; pid: number }
   | { ok: false; error: PtyHostError };
 
+/** An agent CLI's headless run with piped stdio (`off-main-cli.ts`). */
+export interface PtyHostCliSpawnParams {
+  /** Main's id for this run, unique for the life of the main process. */
+  processId: number;
+  command: string;
+  args: string[];
+  cwd: string;
+  /** Run through the platform shell (a Windows `.cmd` or `.bat` shim). */
+  shell: boolean;
+  env: Record<string, string>;
+  /** Lead a process group (POSIX), so a stop signals what the CLI started. */
+  detached: boolean;
+}
+
 export type PtyHostSpawnResult =
   | { ok: true; pid: number }
   /** The spawn threw. `previousScrollback` is the carry-over the host had read,
@@ -109,6 +123,15 @@ export type PtyHostCommand =
   | { type: 'removeSession'; sessionId: string }
   /** Seed a session's ring with no PTY behind it (a failed spawn's diagnostic). */
   | { type: 'initSession'; sessionId: string; scrollback: string; cols: number }
+  /** Start an agent CLI run. A command, so main has its handle at once; a
+   *  spawn that fails comes back as `cliError`. */
+  | { type: 'cliSpawn'; params: PtyHostCliSpawnParams }
+  | { type: 'cliWrite'; processId: number; data: string }
+  /** End the run's stdin, after writing `data` when given. */
+  | { type: 'cliEndInput'; processId: number; data?: string }
+  /** Stop the run and what it started (`taskkill /T /F` on Windows, the
+   *  process group's SIGTERM then SIGKILL on POSIX). */
+  | { type: 'cliStop'; processId: number }
   /** The app is quitting: flush every transcript. Main has already posted
    *  every kill (a young session's after its grace). The utility process then
    *  waits for the exit callbacks and exits itself, so none lands after Node
@@ -235,7 +258,15 @@ export type PtyHostEvent =
   | { type: 'trace'; sessionId: string; event: string; detail?: Record<string, unknown>; ts: number }
   /** Output of a raw PTY, every chunk as it arrives. */
   | { type: 'rawData'; ptyId: number; data: string }
-  | { type: 'rawExit'; ptyId: number; exitCode: number; signal: number | null };
+  | { type: 'rawExit'; ptyId: number; exitCode: number; signal: number | null }
+  /** An agent CLI run started (its `spawn` event). */
+  | { type: 'cliSpawned'; processId: number; pid: number | null }
+  /** A chunk of its stdout or stderr, as the bytes arrived. */
+  | { type: 'cliData'; processId: number; stream: 'stdout' | 'stderr'; data: Uint8Array }
+  | { type: 'cliError'; processId: number; error: PtyHostError }
+  | { type: 'cliExit'; processId: number; code: number | null; signal: string | null }
+  /** Its stdio closed, after the last `cliData`; the run is over. */
+  | { type: 'cliClose'; processId: number; code: number | null; signal: string | null };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }

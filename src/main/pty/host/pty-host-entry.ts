@@ -132,7 +132,7 @@ function shutdown(exitWaitMs: number | undefined): void {
     : DEFAULT_SHUTDOWN_EXIT_WAIT_MS;
   const deadline = Date.now() + waitMs;
   const waitForExits = (): void => {
-    if (hostCore.livePtyCount === 0 || Date.now() >= deadline) {
+    if (hostCore.liveChildCount === 0 || Date.now() >= deadline) {
       process.exit(0);
       return;
     }

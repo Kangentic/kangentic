@@ -1,8 +1,9 @@
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { spawnOffMainCli, type CliChildProcess } from '../../utility-process/off-main-cli';
 
 const PROMPT_BUDGET = 4000; // characters of input we forward to the CLI
 const OUTPUT_BUDGET = 2048; // bytes of stdout we accept before terminating
@@ -692,7 +693,7 @@ const EXIT_WAIT_MS = 3_000;
  * (POSIX), so `stopCli` can signal the group. Only these: a child from anywhere
  * else never has its pid negated into a group signal.
  */
-const processGroupLeaders = new WeakSet<ChildProcess>();
+const processGroupLeaders = new WeakSet<CliChildProcess>();
 
 /**
  * Every CLI `spawnCli` started that has not exited yet, so the quit path can
@@ -701,7 +702,7 @@ const processGroupLeaders = new WeakSet<ChildProcess>();
  * holding its run directory, after the app was gone. The value is the chat a
  * one-shot answer run was started for, or null.
  */
-const liveCliRuns = new Map<ChildProcess, string | null>();
+const liveCliRuns = new Map<CliChildProcess, string | null>();
 
 /**
  * The chat a one-shot answer run belongs to, set around the run by the answer
@@ -752,10 +753,15 @@ export function stopCliRunsForChat(chatId: string): void {
  * as the leader of its own process group and the group gets the signal.
  * SIGTERM first, then SIGKILL if it has not exited within the grace. The check
  * reads the exit code and signal, not `child.killed`, which turns true when a
- * signal is SENT and so never let the SIGKILL fire.
+ * signal is SENT and so never let the SIGKILL fire. A run in the pty host is
+ * stopped there, the same way (`host-cli-processes.ts`).
  */
-export function stopCli(child: ChildProcess): void {
+export function stopCli(child: CliChildProcess): void {
   if (cliHasExited(child)) return;
+  if (child.stopTree) {
+    child.stopTree();
+    return;
+  }
   if (process.platform === 'win32' && child.pid) {
     spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
       .on('error', () => undefined)
@@ -769,7 +775,7 @@ export function stopCli(child: ChildProcess): void {
 }
 
 /** Signal the CLI's process group when it leads one, else the CLI itself. */
-function signalCli(child: ChildProcess, signal: NodeJS.Signals): void {
+function signalCli(child: CliChildProcess, signal: NodeJS.Signals): void {
   if (processGroupLeaders.has(child) && child.pid) {
     try {
       process.kill(-child.pid, signal);
@@ -781,7 +787,7 @@ function signalCli(child: ChildProcess, signal: NodeJS.Signals): void {
   child.kill(signal);
 }
 
-function cliHasExited(child: ChildProcess): boolean {
+function cliHasExited(child: CliChildProcess): boolean {
   return typeof child.exitCode === 'number' || typeof child.signalCode === 'string';
 }
 
@@ -795,21 +801,33 @@ function cliHasExited(child: ChildProcess): boolean {
  * On POSIX the CLI leads a process group of its own (`detached`), so `stopCli`
  * reaches whatever it started. Never on Windows, where `detached` opens a
  * console of its own and `taskkill /T` already takes the tree.
+ *
+ * The run starts in the pty host when one is registered (`off-main-cli.ts`):
+ * on Windows a spawn's CreateProcess blocks the calling thread, 13 to 67 ms a
+ * run on main during the summary backfill. With no host it starts here.
  */
-export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Record<string, string>): ChildProcessWithoutNullStreams {
+export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Record<string, string>): CliChildProcess {
   const useShell = cliRunsThroughShell(cliPath);
   const command = useShell ? `"${cliPath}" ${args.map(quoteForCmdShell).join(' ')}` : cliPath;
+  const commandArgs = useShell ? [] : args;
   const leadsGroup = process.platform !== 'win32';
-  const child = spawn(command, useShell ? [] : args, {
+  const childEnv = env ? { ...process.env, ...env } : process.env;
+  const child: CliChildProcess = spawnOffMainCli(command, commandArgs, {
+    cwd,
+    shell: useShell,
+    env: definedEntries(childEnv),
+    detached: leadsGroup,
+  }) ?? spawn(command, commandArgs, {
     cwd,
     shell: useShell,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: env ? { ...process.env, ...env } : process.env,
+    env: childEnv,
     ...(leadsGroup ? { detached: true } : {}),
   });
   if (typeof child === 'object' && child !== null) {
-    if (leadsGroup) processGroupLeaders.add(child);
+    // A run in the host is stopped there, which signals its group itself.
+    if (leadsGroup && !child.stopTree) processGroupLeaders.add(child);
     // Tracked until it exits, so the quit path can reach it. `exit` fires even
     // when stdio stays open; an `error` means it never started.
     liveCliRuns.set(child, cliRunChat.getStore() ?? null);
@@ -818,6 +836,15 @@ export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Rec
     child.once?.('error', forget);
   }
   return child;
+}
+
+/** An environment without its unset entries, as plain data for the host. */
+function definedEntries(environment: NodeJS.ProcessEnv): Record<string, string> {
+  const defined: Record<string, string> = {};
+  for (const [key, value] of Object.entries(environment)) {
+    if (value !== undefined) defined[key] = value;
+  }
+  return defined;
 }
 
 /** Longest stderr excerpt a failure message carries. */

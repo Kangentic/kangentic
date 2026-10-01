@@ -598,8 +598,11 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   resume (see Crash Recovery above). After five crashes the same core runs in main for the rest of
   the run, which is how terminals ran before the host existed.
 - **Off-main spawns.** One-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
-  (`off-main-pty.ts`) and the background-shell watcher's process table run in the host too, since a
-  Windows spawn's CreateProcess is synchronous on the calling thread.
+  (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`) and the background-shell
+  watcher's process table run in the host too, since a Windows spawn's CreateProcess is synchronous
+  on the calling thread. A CLI run is a command, so `spawnCli` gets its handle at once; a host crash
+  fails a running one (it is never rerun, which would be a second paid answer) and main stops the
+  orphaned CLI's tree. The host's shutdown stops every run still going.
 
 See `.claude/rules/pty-host-out-of-process.md`.
 

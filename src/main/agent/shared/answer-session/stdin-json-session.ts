@@ -12,8 +12,8 @@
  * answer a question the user has moved past.
  */
 
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import type { CliChildProcess } from '../../../utility-process/off-main-cli';
 import type { AnswerSession } from '../../agent-adapter';
 import {
   ANSWER_STREAM_OUTPUT_BUDGET,
@@ -61,7 +61,7 @@ export interface StdinJsonSessionOptions {
   turnTimeoutMs?: number;
   turnOutputBudget?: number;
   /** Test seam for the spawn. */
-  spawnProcess?: (cliPath: string, args: string[], cwd: string, env?: Record<string, string>) => ChildProcessWithoutNullStreams;
+  spawnProcess?: (cliPath: string, args: string[], cwd: string, env?: Record<string, string>) => CliChildProcess;
 }
 
 interface ActiveTurn {

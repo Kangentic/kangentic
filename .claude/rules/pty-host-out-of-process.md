@@ -59,6 +59,17 @@ at the Windows timer floor.
   refuses to launch its own executable, which with the RunAsNode fuse off would boot a second app.
   The background-shell watcher's process table also comes from the host (`listProcesses`), which
   keeps the probe's PowerShell child.
+- **Agent CLI runs start in the host too.** `spawnCli` (`src/main/agent/shared/auto-name.ts`)
+  starts every headless run (Ask, task summaries, auto-name, the warm answer session) through
+  `spawnOffMainCli` (`off-main-cli.ts`): a `cliSpawn` command, so the handle (`RemoteCliProcess`)
+  comes back at once and emits what a local child does, `spawn`, `data`, `exit`, `close`, in the
+  host's order. A summary backfill started the CLI 39 times in 100 s at 13 to 67 ms each on main;
+  in the host the first, cold launch measured 51 ms and later ones stayed under 16 ms. Once posted
+  a run never falls back to a local spawn, and a host crash fails it with `error`, `exit`, `close`
+  rather than rerunning it (a second paid answer); main then stops the orphaned CLI's tree, since
+  on Windows a child outlives its parent. Stops run in the host (`taskkill /T /F`, or the process
+  group's SIGTERM then SIGKILL), and the host's shutdown stops every run still going and waits for
+  them inside its exit bound. `spawnCli` spawns locally only when no host is registered.
 
 ## Enforcement (self-maintaining)
 
@@ -68,9 +79,16 @@ at the Windows timer floor.
   the one construction site of each transport and of `PtyHostCore`; fails on a value import of
   `node-pty` outside the host core, and on a lazy `import('node-pty')` outside the
   `off-main-pty.ts` fallback; fails on `promisify(exec)` / `promisify(execFile)` under
-  `src/main` outside the drop-in and its two reasoned exceptions; and pins that `host-exec.ts`
-  never forks and checks for its own executable. Runs in CI via `npm run test:unit`.
-  `tests/unit/off-main-exec.test.ts` pins the drop-in's routing, error shape and fallback.
+  `src/main` outside the drop-in and its two reasoned exceptions; pins that `host-exec.ts` and
+  `host-cli-processes.ts` never fork and check for their own executable; and pins that `spawnCli`
+  asks `spawnOffMainCli` before its local fallback, with `auto-name.ts` holding no other spawn
+  but `stopCli`'s taskkill for such a local child. Runs in CI via `npm run test:unit`.
+  `tests/unit/off-main-exec.test.ts` pins the drop-in's routing, error shape and fallback;
+  `tests/unit/host-cli-processes.test.ts` runs real children through the host's runner (pipes,
+  event order, stop, shutdown, a failed start, the own-executable refusal);
+  `tests/unit/remote-cli-process.test.ts` pins main's handle (event order, stdin, stop, host loss
+  and the orphan stop); `tests/unit/spawn-cli-off-main.test.ts` pins `spawnCli`'s routing and runs
+  a headless print end to end through the host's runner.
 - **Tests:** `tests/unit/pty-host-core.test.ts` pins the core's behavior;
   `tests/unit/utility-pty-host-transport.test.ts` pins the fork, init, request timeout, crash
   restart, fallback, heartbeat and shutdown; `tests/unit/verify-unpacked-worker.test.ts` pins the
@@ -83,7 +101,7 @@ at the Windows timer floor.
 
 Session PTYs and their output pipeline (`src/main/pty/**`), the host's fork and wiring in
 `register-all.ts`, one-shot child processes on main, the probes' raw PTYs (the Claude model
-picker, the Antigravity print runner spawn through `spawnOffMainPty`, `off-main-pty.ts`), and the
-packaging. Still on main, by measurement: git through simple-git and `runGitWithTimeout`
-(5 to 17 ms a spawn, event-driven; the library has no spawn hook and the abortable runner would
-need request cancellation); and streaming CLI runs (`auto-name.ts`).
+picker, the Antigravity print runner spawn through `spawnOffMainPty`, `off-main-pty.ts`), the
+agent CLI runs (`spawnCli`, `off-main-cli.ts`), and the packaging. Still on main, by measurement:
+git through simple-git and `runGitWithTimeout` (5 to 17 ms a spawn, event-driven; the library has
+no spawn hook and the abortable runner would need request cancellation).

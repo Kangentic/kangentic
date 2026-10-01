@@ -8,10 +8,13 @@
  * paths run the one core and the one protocol.
  */
 
+import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import type { AgentParser } from '../../../shared/types';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../../shared/pty-host';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { HostUnavailableError, type OffMainPty, type OffMainPtyOptions } from '../../utility-process/off-main-pty';
+import type { CliChildProcess, CliStdin, OffMainCliOptions } from '../../utility-process/off-main-cli';
 import { PtyHostCore } from './pty-host-core';
 import {
   fromPtyHostError,
@@ -207,10 +210,144 @@ export class RemoteRawPty implements OffMainPty {
   }
 }
 
+/** An agent CLI run's stdout or stderr. The host reads the pipe as it fills,
+ *  so `resume()` has nothing to do; it is here for callers that drain a local
+ *  child's output. */
+class RemoteCliOutput extends EventEmitter {
+  resume(): this {
+    return this;
+  }
+}
+
+class RemoteCliStdin extends EventEmitter implements CliStdin {
+  private ended = false;
+
+  constructor(
+    private readonly processId: number,
+    private readonly transport: Pick<PtyHostTransport, 'post'>,
+  ) {
+    super();
+  }
+
+  write(chunk: string): boolean {
+    if (this.ended) return false;
+    this.transport.post({ type: 'cliWrite', processId: this.processId, data: chunk });
+    return true;
+  }
+
+  end(chunk?: string): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.transport.post({ type: 'cliEndInput', processId: this.processId, ...(chunk === undefined ? {} : { data: chunk }) });
+  }
+}
+
+/**
+ * An agent CLI run in the host (`cliSpawn`): what `spawnCli` returns when a
+ * host is registered. It emits what a local child process emits, in the order
+ * the host saw it: `spawn`, `data` on `stdout` and `stderr`, `exit`, then
+ * `close`, or `error` for a run that failed to start.
+ */
+export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
+  pid: number | undefined = undefined;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  readonly stdout = new RemoteCliOutput();
+  readonly stderr = new RemoteCliOutput();
+  readonly stdin: RemoteCliStdin;
+  private closed = false;
+
+  constructor(
+    readonly processId: number,
+    private readonly transport: Pick<PtyHostTransport, 'post'>,
+  ) {
+    super();
+    this.stdin = new RemoteCliStdin(processId, transport);
+  }
+
+  get hasClosed(): boolean {
+    return this.closed;
+  }
+
+  /** Any signal stops the whole tree, which is what every caller wants. */
+  kill(): boolean {
+    this.stopTree();
+    return true;
+  }
+
+  stopTree(): void {
+    if (this.closed || this.exitCode !== null || this.signalCode !== null) return;
+    this.transport.post({ type: 'cliStop', processId: this.processId });
+  }
+
+  deliverSpawned(pid: number | null): void {
+    this.pid = pid ?? undefined;
+    this.emit('spawn');
+  }
+
+  deliverData(stream: 'stdout' | 'stderr', data: Uint8Array): void {
+    const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    (stream === 'stdout' ? this.stdout : this.stderr).emit('data', chunk);
+  }
+
+  /** With no listener an `error` event throws, here on main; such a caller
+   *  hears of the failure through `exit` and `close` instead. */
+  deliverError(error: Error): void {
+    if (this.listenerCount('error') > 0) this.emit('error', error);
+  }
+
+  deliverExit(code: number | null, signal: string | null): void {
+    this.exitCode = code;
+    this.signalCode = signal as NodeJS.Signals | null;
+    this.emit('exit', code, this.signalCode);
+  }
+
+  deliverClose(code: number | null, signal: string | null): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.emit('close', code, signal as NodeJS.Signals | null);
+  }
+
+  /** The host died with this run in it: fail it the way a killed child ends. */
+  deliverHostLost(): void {
+    if (this.closed) return;
+    if (this.pid !== undefined && this.exitCode === null && this.signalCode === null) stopOrphanedCli(this.pid);
+    this.deliverError(new Error('The pty host stopped while the agent was running'));
+    if (this.exitCode === null && this.signalCode === null) this.deliverExit(null, 'SIGKILL');
+    this.deliverClose(null, 'SIGKILL');
+  }
+}
+
+/**
+ * The host died with this CLI still running. Its pipes went with the host,
+ * but on Windows a child outlives its parent, and a CLI waiting on its model
+ * writes nothing to find out: stop its tree from here. Only this path spawns
+ * on main, and only after a host crash.
+ */
+function stopOrphanedCli(pid: number): void {
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+        .on('error', () => undefined)
+        .unref();
+      return;
+    }
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      process.kill(pid, 'SIGKILL');
+    }
+  } catch {
+    // Already gone.
+  }
+}
+
 export class PtyHostClient {
   private nextPtyId = 1;
+  private nextProcessId = 1;
   private readonly handles = new Map<number, RemotePty>();
   private readonly rawHandles = new Map<number, RemoteRawPty>();
+  private readonly cliHandles = new Map<number, RemoteCliProcess>();
   private readonly exitListeners = new Map<number, (exitCode: number) => void>();
   private eventHandler: ((event: PtyHostEvent) => void) | null = null;
   private lifecycleHandler: PtyHostLifecycleHandler | null = null;
@@ -244,6 +381,17 @@ export class PtyHostClient {
     const rawHandles = [...this.rawHandles.values()];
     this.rawHandles.clear();
     for (const rawHandle of rawHandles) rawHandle.deliverExit(PTY_HOST_LOST_EXIT_CODE, null);
+    // So did every agent CLI run. A run never restarts on the new host: a
+    // second run would be a second paid answer.
+    const cliHandles = [...this.cliHandles.values()];
+    this.cliHandles.clear();
+    for (const cliHandle of cliHandles) {
+      try {
+        cliHandle.deliverHostLost();
+      } catch (error) {
+        console.error('[pty-host] an agent run could not be failed after the host was lost:', error);
+      }
+    }
     const lostSessionIds: string[] = [];
     for (const { handle, listener } of this.takeLiveHandles()) {
       handle.markExited();
@@ -326,6 +474,19 @@ export class PtyHostClient {
     return handle;
   }
 
+  /**
+   * Start an agent CLI run in the host (`host-cli-processes.ts`). Returns at
+   * once; a spawn that fails there arrives as the handle's `error` event.
+   */
+  spawnCli(command: string, args: string[], options: OffMainCliOptions): RemoteCliProcess {
+    const processId = this.nextProcessId;
+    this.nextProcessId += 1;
+    const handle = new RemoteCliProcess(processId, this.transport);
+    this.cliHandles.set(processId, handle);
+    this.transport.post({ type: 'cliSpawn', params: { processId, command, args, ...options } });
+    return handle;
+  }
+
   /** Run a one-shot child process in the host (see `host-exec.ts`). */
   exec(request: HostExecRequest, timeoutMs: number): Promise<HostExecResult> {
     return this.transport.request('exec', request, { timeoutMs });
@@ -345,6 +506,28 @@ export class PtyHostClient {
   }
 
   private dispatch(event: PtyHostEvent): void {
+    switch (event.type) {
+      case 'cliSpawned':
+        this.cliHandles.get(event.processId)?.deliverSpawned(event.pid);
+        return;
+      case 'cliData':
+        this.cliHandles.get(event.processId)?.deliverData(event.stream, event.data);
+        return;
+      case 'cliError':
+        this.cliHandles.get(event.processId)?.deliverError(fromPtyHostError(event.error));
+        return;
+      case 'cliExit':
+        this.cliHandles.get(event.processId)?.deliverExit(event.code, event.signal);
+        return;
+      case 'cliClose': {
+        const cliHandle = this.cliHandles.get(event.processId);
+        this.cliHandles.delete(event.processId);
+        cliHandle?.deliverClose(event.code, event.signal);
+        return;
+      }
+      default:
+        break;
+    }
     if (event.type === 'rawData') {
       this.rawHandles.get(event.ptyId)?.deliverData(event.data);
       return;

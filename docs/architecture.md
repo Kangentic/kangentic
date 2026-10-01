@@ -19,8 +19,9 @@ with a crash policy and stderr capture:
   `SessionManager` as the facade, mirrors what it reads synchronously, and reads the rest by
   request; output reaches main only for the sessions a renderer shows or a phone streams. The host
   also runs main's one-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
-  (`off-main-pty.ts`) and the background-shell watcher's process table, because on Windows each
-  spawn's CreateProcess is synchronous on the calling thread. Forked once at startup, restarted on
+  (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`: Ask, task summaries,
+  auto-name, the warm answer session) and the background-shell watcher's process table, because
+  on Windows each spawn's CreateProcess is synchronous on the calling thread. Forked once at startup, restarted on
   a crash (the lost agent sessions resume), and replaced by the same core running in main after
   five crashes. Measured under a 15 s terminal flood: main 40.6% busy before, 0.6 to 3.5% after.
   See `.claude/rules/pty-host-out-of-process.md`.
