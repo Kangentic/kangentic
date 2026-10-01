@@ -9,14 +9,11 @@
  * duty-cycle sleep derived from each batch's MEASURED wall time, and no work at
  * all from an IPC handler or a lifecycle hook. Callers may only `markDirty`.
  *
- * WHY THERE IS NO UTILITY PROCESS. The plan called for one on the assumption
- * that kNN would cost ~0.5s. Measured on the real corpus (638 documents, 1024
- * dimensions) kNN is 243ms and the layout is 81ms, against a 62-SECOND scan of
- * 51,265 vectors. Moving 330ms off-thread while leaving 62s of DB I/O on it
- * optimizes the wrong end and buys a whole client/worker/crash-cap apparatus to
- * do it. So the math runs inline, chunked, in the same paced loop as the scan.
- * This mirrors `embed-engine`, where the loop is on main and only ONNX
- * inference is off-thread.
+ * WHERE IT RUNS. In the retrieval worker (`kangentic-retrieval`), like every
+ * other read of the index: see `.claude/rules/retrieval-out-of-process.md`.
+ * Main only asks for the snapshot. The pass still pages its reads and slices its
+ * math, because the worker answers Ask and search requests between steps, and
+ * a 145 ms layout run in one go would hold a question that long.
  *
  * WHY IT IS INCREMENTAL. That 62s is unavoidable per-vector cost (vec0 decodes
  * each blob; a sequential scan measured 62s against 68s for a batched one, so
@@ -83,7 +80,8 @@ const LAYOUT_COMPONENTS = 3;
  *  58 ms. */
 const SCAN_BATCH = 400;
 /** Vectors read per page. vec0 decodes each one: on the real index a page of
- *  100 took 16 to 39 ms, so a page of 40 stays under a frame on main. */
+ *  100 took 16 to 39 ms, so a page of 40 keeps a waiting question's delay under
+ *  a frame. */
 const VECTOR_PAGE = 40;
 /** Stored document sums read per page, each carrying its 8 KB sum at 1,024
  *  dimensions. */

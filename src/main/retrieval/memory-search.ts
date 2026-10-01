@@ -271,21 +271,3 @@ function relevantSemantic(store: RetrievalStore, queryVector: Float32Array, nois
     })
     .map((hit, index) => ({ ...hit, rank: index + 1 }));
 }
-
-/**
- * Expand a matched chunk into its neighboring chunks (for the MCP recall tool's
- * context window). Corpus-scoped to conversations.
- */
-export function expandChunk(
-  projectId: string,
-  chunkId: number,
-  radius: number,
-  getDb: (projectId: string) => Database.Database = getProjectDb,
-): StoredChunk[] {
-  try {
-    const store = new RetrievalStore(getDb(projectId));
-    return store.getNeighbors(chunkId, radius);
-  } catch {
-    return [];
-  }
-}

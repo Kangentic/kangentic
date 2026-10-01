@@ -843,22 +843,6 @@ export class RetrievalStore {
       .all(corpus, docId, afterSeq, limit) as ChunkTextRow[];
   }
 
-  /** Chunks within +/- radius seq of a given chunk, same document, seq order. */
-  getNeighbors(chunkId: number, radius: number): StoredChunk[] {
-    const anchor = this.db
-      .prepare('SELECT corpus, doc_id, seq FROM memory_chunks WHERE id = ?')
-      .get(chunkId) as { corpus: string; doc_id: string; seq: number } | undefined;
-    if (!anchor) return [];
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM memory_chunks
-         WHERE corpus = ? AND doc_id = ? AND seq BETWEEN ? AND ?
-         ORDER BY seq ASC`,
-      )
-      .all(anchor.corpus, anchor.doc_id, anchor.seq - radius, anchor.seq + radius) as StoredChunkRow[];
-    return rows.map(toStoredChunk);
-  }
-
   // --- Vector path (Phase 2; no-op until ensureVecTable succeeds) -----------
 
   /** True when the conversation vectors are searchable, which is what the map

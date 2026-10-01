@@ -698,30 +698,6 @@ describe('RetrievalStore.getChunks', () => {
   });
 });
 
-describe('RetrievalStore.getNeighbors', () => {
-  it('resolves the anchor then binds seq +/- radius as the BETWEEN bounds', () => {
-    const anchor = { corpus: 'conversation', doc_id: 'doc-1', seq: 5 };
-    const { db, calls } = makeRecordingDb({
-      get: (sql) => (sql.includes('SELECT corpus, doc_id, seq') ? anchor : undefined),
-      all: (sql) => (sql.includes('BETWEEN') ? [storedRow] : []),
-    });
-
-    const neighbors = new RetrievalStore(db).getNeighbors(42, 2);
-
-    const betweenCall = calls.find((call) => call.method === 'all' && call.sql.includes('BETWEEN'));
-    // corpus, doc_id, seq-radius (3), seq+radius (7).
-    expect(betweenCall?.args).toEqual(['conversation', 'doc-1', 3, 7]);
-    expect(neighbors).toHaveLength(1);
-    expect(neighbors[0].id).toBe(42);
-    expect(neighbors[0].seq).toBe(5);
-  });
-
-  it('returns [] when the anchor chunk does not exist', () => {
-    const { db } = makeRecordingDb({ get: () => undefined });
-    expect(new RetrievalStore(db).getNeighbors(999, 3)).toEqual([]);
-  });
-});
-
 describe('RetrievalStore.coverageFingerprint', () => {
   it('counts embedded conversation chunks off the covering index', () => {
     // A bare `corpus = 'conversation'` seeks (corpus) and reads every

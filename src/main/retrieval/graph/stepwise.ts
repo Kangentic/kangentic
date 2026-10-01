@@ -1,12 +1,13 @@
 /**
  * Running a long computation either in one go or in slices.
  *
- * The projection pass runs on main, so every step of it that can take more than
+ * The projection pass runs in the retrieval worker, which answers Ask and search
+ * requests between its steps. So every step of the pass that can take more than
  * a frame is written as a generator that yields between units of work (a
  * layout epoch, a region-count candidate). The pass drains it in slices and
  * pauses between them, the way the vector scan and the kNN already do; tests
- * and any caller with no event loop to protect drain it in one go. Both walk
- * the same steps in the same order, so the result is identical either way.
+ * and any caller with no requests to serve drain it in one go. Both walk the
+ * same steps in the same order, so the result is identical either way.
  */
 
 /** A computation that yields between units of work and returns `T`. */

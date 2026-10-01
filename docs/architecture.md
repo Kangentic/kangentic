@@ -4,11 +4,30 @@
 
 Electron app with two processes:
 
-- **Main process** -- Node.js runtime. Owns the database, PTY sessions, git operations, file I/O, and IPC handlers. Entry point: `src/main/index.ts`.
+- **Main process** -- Node.js runtime. Owns the database migrations and project-data writes, PTY sessions, git operations, file I/O, and IPC handlers. Entry point: `src/main/index.ts`.
 - **Renderer process** -- Chromium window running React. Communicates exclusively through `window.electronAPI` (context bridge). Entry point: `src/renderer/index.tsx`.
 - **Preload script** -- Bridges main↔renderer via `contextBridge.exposeInMainWorld()`. Exposes typed `electronAPI` object. Entry point: `src/preload/preload.ts`.
 
 Context isolation is enabled -- the renderer has no direct access to Node.js APIs.
+
+Work that would block main runs in Electron `utilityProcess` workers, each its own esbuild entry
+with a crash policy and stderr capture:
+
+- **`kangentic-retrieval`** (`src/main/retrieval/worker/retrieval-worker.ts`) -- every read and
+  write of the Knowledge Graph index (the `memory_*`, vec0 and FTS tables, the turn-usage ledger,
+  spawn links, task summaries), the map pass, searches, Ask preparation, storage upkeep, and the
+  parse and stitch of agent transcripts for the Conversation window, the phone and MCP. It opens
+  the project database on its own connection, after main has migrated it, and runs the WAL's
+  PASSIVE checkpoints. Main sends requests through `retrievalClient` and relays the JSON replies.
+  See `.claude/rules/retrieval-out-of-process.md`.
+- **`kangentic-embeddings`** (`src/main/retrieval/embedder/embed-worker.ts`) -- ONNX inference,
+  driven only by `embed-engine.ts` on main (`.claude/rules/central-embedding-engine.md`).
+- **`kangentic-dictation`** and **`kangentic-line-count`** -- the dictation engine and diff line
+  counts.
+
+Main still writes project data (tasks, sessions, the app tables, one row per raw PTY transcript
+flush) inside `writeTransaction`, an immediate transaction that waits for a worker's write instead
+of failing with `SQLITE_BUSY`.
 
 ### Renderer crash recovery
 

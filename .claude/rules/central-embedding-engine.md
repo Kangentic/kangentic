@@ -28,7 +28,8 @@ worker's own idle recycle lets a genuinely idle one go after 30 minutes.
 Everywhere else - lifecycle hooks (session finalize, live turn-boundary index, project open),
 IPC handlers (`src/main/ipc/handlers/**`), and config-change reconciliation - may only:
 
-- **Index** (a cheap diff-upsert via `ConversationIndexer`) and then call
+- **Index** (a cheap diff-upsert, run by the retrieval worker's `index.*` methods; see
+  [[retrieval-out-of-process]]) and then call
   `embedEngine.markDirty(projectId)` to flag that project has pending chunks. This must happen
   unconditionally (regardless of whether semantic search is currently enabled) - the engine's own
   gates decide whether to act on it, so a premature "semantic is off" check at the call site would

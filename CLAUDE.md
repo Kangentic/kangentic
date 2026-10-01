@@ -267,6 +267,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `mcp-tool-list-parity.md` - every registered MCP tool stays in sync with `MCP_TOOL_MANIFEST` and `docs/mcp-server.md`.
 - `mcp-column-field-parity.md` - every `Swimlane` field is a parameter of both MCP column tools, or classified unexposed with a reason.
 - `central-embedding-engine.md` - only `embed-engine.ts` embeds; call sites index and `markDirty()`, never embed inline.
+- `retrieval-out-of-process.md` - the index and agent transcript reads run in the `kangentic-retrieval` worker; main schedules and relays.
 - `dictation-out-of-process.md` - `sherpa-onnx-node` is imported only inside the `kangentic-dictation` utilityProcess worker.
 - `pop-out-surface-registry.md` - every `BrowserWindow` comes from `createWindow` or the pop-out manager, through the registries.
 - `spawn-entry-point-parity.md` - every agent spawn routes through `spawnAgent` / `prepareAgentSpawn` and `runSpawnPreamble`.
