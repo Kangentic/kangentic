@@ -37,6 +37,11 @@ at the Windows timer floor.
   own exit listener with `PTY_HOST_LOST_EXIT_CODE` (-2), the host restarts (at once, then on the
   restart policy's backoff), main replays its focus and tap sets, and
   `recoverSessionsAfterPtyHostLoss` resumes the agent sessions through the startup recovery path.
+- **macOS forks the host from inside the asar** (`ptyHostEntryPath`). node-pty finds its
+  spawn-helper with a bare `replace('app.asar', 'app.asar.unpacked')` on its own path, which from
+  the unpacked tree doubles and breaks every spawn. Windows and Linux fork from the unpacked tree,
+  where the ConPTY conout worker loads from a real directory. The afterPack probe loads node-pty
+  the same way per platform, and `spawn-helper-upstream-parity.test.ts` pins both.
 - **The host stays free of main-only modules.** No `electron` import, no IPC layer, no analytics,
   no Sentry, no retrieval code. It writes transcripts on its own database connection (migrations
   off, `wal_autocheckpoint` 0: the retrieval worker runs the checkpoints).

@@ -386,11 +386,15 @@ describe('pty host gate', () => {
     );
   });
 
-  it('fences the load probe to the unpacked root', () => {
+  it('fences the load probe to the packaged tree, and loads node-pty through the asar on macOS as the host does', () => {
     const script = buildPtyHostLoadScript(MOCK_ROOT);
-    expect(script).toContain('candidate.startsWith(root)');
+    expect(script).toContain('candidate.startsWith(fence)');
     expect(script).toContain('Module.globalPaths = [];');
     expect(script).toContain(JSON.stringify(MOCK_ROOT));
+    // node-pty's spawn-helper lookup rewrites app.asar to app.asar.unpacked,
+    // so on macOS the host forks from the asar and the probe must load there.
+    expect(script).toMatch(/process\.platform === 'darwin'.*'app\.asar\.unpacked'.*existsSync\(asarRoot\)/);
+    expect(script).toContain("require(path.join(loadThroughAsar ? asarRoot : root, 'node_modules', 'node-pty'))");
   });
 
   it('the load probe spawns a process and reads its output for real, under this checkout\'s Electron', () => {

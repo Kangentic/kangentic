@@ -11,8 +11,8 @@
  * `stderr` and `cmd`.
  *
  * With no executor registered (unit tests, the retrieval worker, the pty host
- * itself, startup before the host exists) or when the host cannot be reached,
- * the child runs here instead, exactly as before.
+ * itself, startup before the host exists) the child runs here instead, exactly
+ * as before.
  */
 
 import { exec, execFile } from 'node:child_process';
@@ -58,7 +58,7 @@ function localExecFile(file: string, args: string[], options: OffMainExecOptions
 }
 
 /** Longest a request may wait on the host when the child has no timeout of
- *  its own (a large git read), before main gives up and runs it here. */
+ *  its own (a large git read), before main gives up on it. */
 const UNBOUNDED_EXEC_BUDGET_MS = 10 * 60_000;
 /** Slack over the child's own timeout for the round trip. */
 const EXEC_BUDGET_MARGIN_MS = 5_000;
@@ -98,36 +98,31 @@ function toError(failure: HostExecFailure): Error {
   return error;
 }
 
-async function runRemote(
-  run: OffMainExecutor,
-  request: HostExecRequest,
-  runLocally: () => Promise<ExecOutput>,
-): Promise<ExecOutput> {
+/**
+ * Run the request in the host. A request the host cannot answer (it hung
+ * past the budget, or died with the request in hand) rejects like a failed
+ * child rather than running again here: the child may already have run, and
+ * some callers write (`git worktree remove --force`, `branch -D`, an `az`
+ * update). Every caller already handles a failed run. A host that is merely
+ * restarting holds the request and answers it once it is back.
+ */
+async function runRemote(run: OffMainExecutor, request: HostExecRequest): Promise<ExecOutput> {
   const budgetMs = request.options.timeout && request.options.timeout > 0
     ? request.options.timeout + EXEC_BUDGET_MARGIN_MS
     : UNBOUNDED_EXEC_BUDGET_MS;
-  let result: HostExecResult;
-  try {
-    result = await run(request, budgetMs);
-  } catch {
-    // The host is restarting or did not answer: run it here rather than
-    // fail a caller that only wanted a child process.
-    return runLocally();
-  }
+  const result = await run(request, budgetMs);
   if (result.ok) return { stdout: result.stdout, stderr: result.stderr };
   throw toError(result.error);
 }
 
 export function execAsync(command: string, options: OffMainExecOptions = {}): Promise<ExecOutput> {
-  const runLocally = (): Promise<ExecOutput> => localExec(command, options);
   const run = executor;
-  if (!run) return runLocally();
-  return runRemote(run, { kind: 'exec', command, options: toHostOptions(options) }, runLocally);
+  if (!run) return localExec(command, options);
+  return runRemote(run, { kind: 'exec', command, options: toHostOptions(options) });
 }
 
 export function execFileAsync(file: string, args: readonly string[] = [], options: OffMainExecOptions = {}): Promise<ExecOutput> {
-  const runLocally = (): Promise<ExecOutput> => localExecFile(file, [...args], options);
   const run = executor;
-  if (!run) return runLocally();
-  return runRemote(run, { kind: 'execFile', file, args: [...args], options: toHostOptions(options) }, runLocally);
+  if (!run) return localExecFile(file, [...args], options);
+  return runRemote(run, { kind: 'execFile', file, args: [...args], options: toHostOptions(options) });
 }

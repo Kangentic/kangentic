@@ -208,10 +208,14 @@ function verifyRetrievalWorkerLoads({ unpackedRoot, electronBinaryPath, spawn = 
 
 /**
  * The script the pty host load probe runs under the packaged Electron binary:
- * fenced to the unpacked root, it does what the host does for every terminal.
- * It loads node-pty from the unpacked tree and spawns a short process, reading
- * its output back, which needs the native binding and, on Windows, ConPTY's
- * conout worker thread to load from real directories.
+ * fenced to the packaged tree, it does what the host does for every terminal.
+ * It loads node-pty from where the host loads it and spawns a short process,
+ * reading its output back. On Windows and Linux that is the unpacked tree, so
+ * the native binding and ConPTY's conout worker thread load from real
+ * directories. On macOS the host is forked from inside the asar (node-pty's
+ * spawn-helper lookup rewrites `app.asar` to `app.asar.unpacked` in its own
+ * path, see `ptyHostEntryPath`), so the probe loads it through the asar too,
+ * and a spawn proves the helper was found.
  */
 function buildPtyHostLoadScript(unpackedRoot) {
   return [
@@ -219,12 +223,16 @@ function buildPtyHostLoadScript(unpackedRoot) {
     "const path = require('path');",
     "const fs = require('fs');",
     `const root = fs.realpathSync(${JSON.stringify(unpackedRoot)});`,
+    "const asarRoot = path.join(path.dirname(root), 'app.asar');",
+    "const loadThroughAsar = process.platform === 'darwin' && path.basename(root) === 'app.asar.unpacked' && fs.existsSync(asarRoot);",
+    // `app.asar.unpacked` starts with `app.asar`, so this fence admits both.
+    'const fence = loadThroughAsar ? asarRoot : root;',
     'const originalNodeModulePaths = Module._nodeModulePaths;',
     'Module._nodeModulePaths = function fencedNodeModulePaths(from) {',
-    '  return originalNodeModulePaths.call(Module, from).filter((candidate) => candidate.startsWith(root));',
+    '  return originalNodeModulePaths.call(Module, from).filter((candidate) => candidate.startsWith(fence));',
     '};',
     'Module.globalPaths = [];',
-    "const pty = require(path.join(root, 'node_modules', 'node-pty'));",
+    "const pty = require(path.join(loadThroughAsar ? asarRoot : root, 'node_modules', 'node-pty'));",
     "const isWindows = process.platform === 'win32';",
     "const marker = 'pty-host-probe';",
     "const term = pty.spawn(isWindows ? 'cmd.exe' : '/bin/sh', isWindows ? ['/c', 'echo ' + marker] : ['-c', 'echo ' + marker], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: process.env });",

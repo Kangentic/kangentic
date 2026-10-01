@@ -8,6 +8,7 @@
  * Tier: Unit.
  */
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 class FakeChild extends EventEmitter {
@@ -43,12 +44,13 @@ vi.mock('../../src/main/utility-process/stderr-tail', () => ({
   captureWorkerStderr: vi.fn(),
   summarizeStderrTail: (text: string) => text,
 }));
-vi.mock('../../src/main/utility-process/paths', () => ({ unpacked: (target: string) => target }));
+// The packaged mapping, so the entry-path test can tell the two trees apart.
+vi.mock('../../src/main/utility-process/paths', () => ({ unpacked: (target: string) => target.replace('app.asar', 'app.asar.unpacked') }));
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError: vi.fn() }));
 vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordSyncSpan: vi.fn() }));
 
-import { UtilityPtyHostTransport } from '../../src/main/pty/host/utility-pty-host-transport';
+import { UtilityPtyHostTransport, ptyHostEntryPath } from '../../src/main/pty/host/utility-pty-host-transport';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import { resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
 
@@ -203,6 +205,16 @@ describe('UtilityPtyHostTransport', () => {
     latestChild().emit('message', { type: 'ready' });
     await vi.advanceTimersByTimeAsync(5_000 + 11_000);
     expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/has not answered a heartbeat/));
+  });
+
+  it('forks from the unpacked tree on Windows and Linux, and from inside the asar on macOS', () => {
+    // macOS: node-pty rewrites app.asar to app.asar.unpacked to find its
+    // spawn-helper, which an already unpacked path would double.
+    const bundleDirectory = '/mock/Kangentic.app/Contents/Resources/app.asar/.vite/build';
+    expect(ptyHostEntryPath(bundleDirectory, 'darwin')).toBe(path.join(bundleDirectory, 'pty-host.js'));
+    for (const platform of ['win32', 'linux'] as const) {
+      expect(ptyHostEntryPath(bundleDirectory, platform)).toContain('app.asar.unpacked');
+    }
   });
 
   it('shutdown posts shutdown, and the exit that follows neither restarts nor reports a loss', async () => {

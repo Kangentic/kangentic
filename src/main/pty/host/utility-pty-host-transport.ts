@@ -52,6 +52,22 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const HEARTBEAT_UNRESPONSIVE_MS = 11_000;
 
+/**
+ * Where to fork the host from. Windows and Linux fork it from the unpacked
+ * tree, where node-pty's ConPTY conout worker thread loads from a real
+ * directory. macOS forks it from inside the asar: node-pty finds its
+ * spawn-helper by rewriting `app.asar` to `app.asar.unpacked` in its own
+ * path (lib/unixTerminal.js), which on an already unpacked path doubles to
+ * `app.asar.unpacked.unpacked` and no terminal spawns. From the asar, node-pty
+ * and better-sqlite3 load as they did in main, with Electron's asar support
+ * (asar-fs-wrapper, active in utility processes) redirecting their native
+ * binaries to the unpacked tree.
+ */
+export function ptyHostEntryPath(bundleDirectory: string, platform: NodeJS.Platform = process.platform): string {
+  const bundled = path.join(bundleDirectory, 'pty-host.js');
+  return platform === 'darwin' ? bundled : unpacked(bundled);
+}
+
 interface PendingRequest {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
@@ -177,7 +193,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     if (this.shuttingDown || this.fallback || this.restartTimer) return null;
     if (!this.restartPolicy.maySpawn()) return null;
 
-    const hostPath = unpacked(path.join(__dirname, 'pty-host.js'));
+    const hostPath = ptyHostEntryPath(__dirname);
     let child: UtilityProcess;
     try {
       child = utilityProcess.fork(hostPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });

@@ -79,7 +79,13 @@ describe('Kangentic spawn-helper matches the installed node-pty', () => {
   it('node-pty still resolves the helper beside the native module, the file afterPack replaces', () => {
     const unixTerminal = readText(path.join(NODE_PTY_ROOT, 'lib', 'unixTerminal.js'));
     expect(unixTerminal).toContain("var helperPath = native.dir + '/spawn-helper';");
+    // A bare rewrite, which is why the pty host forks from inside the asar on
+    // macOS (ptyHostEntryPath): from an already unpacked path it would double
+    // to app.asar.unpacked.unpacked. If upstream makes it idempotent, that
+    // special case can go.
     expect(unixTerminal).toContain("helperPath = helperPath.replace('app.asar', 'app.asar.unpacked');");
+    const transport = readText(path.join(REPOSITORY_ROOT, 'src', 'main', 'pty', 'host', 'utility-pty-host-transport.ts'));
+    expect(transport).toContain("return platform === 'darwin' ? bundled : unpacked(bundled);");
   });
 
   it('node-pty still passes the helper [helper, cwd, file, ...args] on macOS', () => {

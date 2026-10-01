@@ -3,8 +3,9 @@
  * host-exec.ts runs them there. Pinned: with no executor the call is the
  * plain `promisify` it replaced; with one, the request carries main's current
  * environment and a budget past the child's own timeout; a failed child comes
- * back as the Error `promisify` would have thrown; an unreachable host falls
- * back to a local spawn; and the host refuses to launch its own executable.
+ * back as the Error `promisify` would have thrown; a host that died with the
+ * request in hand rejects instead of running the child twice; and the host
+ * refuses to launch its own executable.
  *
  * Tier: Unit.
  */
@@ -64,14 +65,14 @@ describe('off-main-exec', () => {
     });
   });
 
-  it('runs the child locally when the host cannot be reached', async () => {
+  it('rejects, and never runs the child a second time here, when the host died with the request in hand', async () => {
+    // The child may already have run in the host: `git branch -D` must not
+    // run twice.
     setOffMainExecutor(async () => {
       throw new Error('The pty host exited');
     });
-    execFileMock.mockImplementation((_file: string, _args: string[], _options: object, callback: (error: Error | null, output: { stdout: string; stderr: string }) => void) => {
-      callback(null, { stdout: 'fallback', stderr: '' });
-    });
-    await expect(execFileAsync('git', ['--version'])).resolves.toEqual({ stdout: 'fallback', stderr: '' });
+    await expect(execFileAsync('git', ['branch', '-D', 'feature'])).rejects.toThrow('The pty host exited');
+    expect(execFileMock).not.toHaveBeenCalled();
   });
 });
 

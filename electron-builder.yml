@@ -56,10 +56,13 @@ files:
 
 asar: true
 asarUnpack:
-  # The pty host is forked from the unpacked tree, where Node resolves modules
-  # from real directories and never looks inside the asar, so all of node-pty
-  # unpacks, not only its prebuilt binaries. That also lets its ConPTY conout
-  # worker thread load from a real directory.
+  # The pty host is forked from the unpacked tree on Windows and Linux, where
+  # Node resolves modules from real directories and never looks inside the
+  # asar, so all of node-pty unpacks, not only its prebuilt binaries. That also
+  # lets its ConPTY conout worker thread load from a real directory. macOS
+  # forks the host from inside the asar instead (node-pty's spawn-helper
+  # lookup rewrites app.asar to app.asar.unpacked), and reads the same
+  # unpacked files through it.
   - "node_modules/node-pty/**"
   - "node_modules/sherpa-onnx-*/**"
   # font-list's macOS binary is spawned via child_process, which cannot exec a
