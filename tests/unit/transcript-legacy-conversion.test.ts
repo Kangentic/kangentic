@@ -84,6 +84,23 @@ describeWithSqlite('legacy transcript conversion', () => {
     expect((projectB.prepare("SELECT COUNT(*) AS count FROM memory_meta WHERE key LIKE 'transcript_legacy:%'").get() as { count: number }).count).toBe(0);
   });
 
+  it('never cuts a piece inside a surrogate pair, so an emoji on a piece boundary survives', async () => {
+    // The real install had one: a 64K boundary fell between the two halves of
+    // a red-circle emoji. Cut there, each half is stored as U+FFFD.
+    const projectA = project(['session-a']);
+    const piece = 64 * 1024;
+    const text = 'A'.repeat(piece - 1) + '\u{1F534}' + 'B'.repeat(10);
+    insertLegacy(projectA, 'session-a', text);
+
+    await indexHandlers['transcripts.convertLegacy']({ projectId: 'a', otherProjectIds: [] }, contextFor(new Map([['a', projectA]])));
+
+    expect(legacyCount(projectA)).toBe(0);
+    expect(textOf(projectA, 'session-a')).toBe(text);
+    const pieces = projectA.prepare("SELECT chars FROM session_transcript_chunks WHERE session_id = 'session-a' ORDER BY seq").all() as Array<{ chars: number }>;
+    // The first piece ends a unit early, before the pair.
+    expect(pieces.map((row) => row.chars)).toEqual([piece - 1, 12]);
+  });
+
   it('resumes a conversion cut short where it stopped, writing no piece twice', async () => {
     const projectA = project(['session-a']);
     // Three pieces' worth (64 KB each), one already written before a crash.

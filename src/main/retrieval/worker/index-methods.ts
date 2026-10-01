@@ -114,6 +114,26 @@ export interface IndexMethods {
  *  ms (a 256 KB piece measured up to 15 ms). */
 const LEGACY_PIECE_CHARS = 64 * 1024;
 
+/**
+ * Where a legacy transcript's pieces start and end: every `LEGACY_PIECE_CHARS`
+ * UTF-16 code units, one unit earlier where that would split a surrogate pair.
+ * A split pair is two lone surrogates, which the UTF-8 encoder stores as
+ * U+FFFD, losing the character: on the real install one of 14,638 boundaries
+ * fell inside an emoji. Depends only on the text, so a conversion that resumes
+ * cuts exactly where the first attempt did.
+ */
+function legacyPieceBounds(text: string): Array<[start: number, end: number]> {
+  const bounds: Array<[number, number]> = [];
+  for (let start = 0; start < text.length;) {
+    let end = Math.min(start + LEGACY_PIECE_CHARS, text.length);
+    const last = text.charCodeAt(end - 1);
+    if (end < text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+    bounds.push([start, end]);
+    start = end;
+  }
+  return bounds;
+}
+
 /** Vectors a copy step reads and writes in one transaction. vec0 reads cost
  *  about 3.8 ms a vector on the real install (95,791 in 6 minutes), so 16 keep
  *  a step near 60 ms, the longest an Ask or search waits behind it. */
@@ -318,7 +338,8 @@ export const indexHandlers: IndexHandlers = {
         .get(sessionId) as { transcript: string; createdAt: string; updatedAt: string } | undefined;
       if (!legacy) continue;
       const text = legacy.transcript;
-      const count = Math.ceil(text.length / LEGACY_PIECE_CHARS);
+      const bounds = legacyPieceBounds(text);
+      const count = bounds.length;
       // Where this row's pieces go, recorded before the first is written so
       // a conversion cut short resumes where it stopped instead of writing
       // them twice. They take seqs below every piece the session already has
@@ -348,7 +369,7 @@ export const indexHandlers: IndexHandlers = {
         'INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text) VALUES (?, ?, ?, ?, ?, ?)',
       );
       while (written < count && shouldContinue()) {
-        const piece = text.slice(written * LEGACY_PIECE_CHARS, (written + 1) * LEGACY_PIECE_CHARS);
+        const piece = text.slice(bounds[written][0], bounds[written][1]);
         const seq = base + written;
         // The last piece carries the row's last write, so the transcript's
         // first and last times (MIN and MAX over pieces) survive the move.
