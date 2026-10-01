@@ -19,13 +19,10 @@
  * a wrong model list is worse than an empty one, because the user acts on it.
  */
 
-import { exec, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteArg } from '../../../../shared/paths';
 import type { AgentCapabilities } from '../../../../shared/types';
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 
 const HELP_TIMEOUT_MS = 5000;
 const MODELS_TIMEOUT_MS = 10000;

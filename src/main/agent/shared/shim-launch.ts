@@ -1,9 +1,7 @@
 import fs from 'node:fs';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync } from '../../utility-process/off-main-exec';
 import { isPowerShellShell, isUnixLikeShell, sanitizeForPty } from '../../../shared/paths';
 
-const execFileAsync = promisify(execFile);
 
 /**
  * Pick the launcher for an agent CLI that resolved to a Windows `.cmd` /

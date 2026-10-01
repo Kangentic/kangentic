@@ -1,12 +1,10 @@
 import which from 'which';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync } from '../../../utility-process/off-main-exec';
 import type { ExternalIssue } from '../../../../shared/types';
 import { extractInlineImageUrls } from '../../shared';
 import { convertHtmlToMarkdown } from './html-to-markdown';
 import { AZURE_CLOSED_STATES, buildWiqlQuery, buildWorkItemIdsWiql } from './wiql';
 
-const execFileAsync = promisify(execFile);
 
 /** Raw work item shape from az boards query. */
 interface AzureDevOpsWorkItemRaw {

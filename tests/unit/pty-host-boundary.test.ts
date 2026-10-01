@@ -56,13 +56,15 @@ function collectSourceFiles(directory: string): string[] {
   return files;
 }
 
-/** Every `file:line` under src/main matching `pattern`, outside `allowed`. */
+/** Every `file:line` of code under src/main matching `pattern`, outside
+ *  `allowed`. Comment lines are skipped: prose may name what code may not do. */
 function findOutside(pattern: RegExp, allowed: ReadonlySet<string>): string[] {
   const offenders: string[] = [];
   for (const filePath of collectSourceFiles(path.join(REPO_ROOT, 'src/main'))) {
     const relativePath = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
     if (allowed.has(relativePath)) continue;
     fs.readFileSync(filePath, 'utf-8').split('\n').forEach((line, index) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
       if (pattern.test(line)) offenders.push(`${relativePath}:${index + 1}`);
     });
   }
@@ -118,6 +120,27 @@ describe('pty host out-of-process boundary', () => {
     expect(
       findOutside(/\bnew PtyHostCore\s*\(/, new Set(['src/main/pty/host/pty-host-entry.ts', 'src/main/pty/host/pty-host-client.ts'])),
       'PtyHostCore is built by the utility host entry or the in-process transport, nowhere else.',
+    ).toEqual([]);
+  });
+
+  it('runs one-shot children through the drop-in, and the host never forks or launches itself', () => {
+    // A packaged Kangentic.exe started as a child, with RunAsNode off, boots a
+    // second app. The exec service uses exec/execFile only and checks the path.
+    const hostExec = fs.readFileSync(path.join(REPO_ROOT, 'src/main/pty/host/host-exec.ts'), 'utf-8');
+    expect(hostExec).not.toMatch(/\bfork\s*\(/);
+    expect(hostExec).toMatch(/launchesOwnBinary\(request\)/);
+    // Every promisified exec on main goes through off-main-exec.ts, so its
+    // spawn runs in the host. The exceptions run where no host is reachable.
+    const allowed = new Set([
+      'src/main/utility-process/off-main-exec.ts',
+      // Captures the login shell's environment at startup, before the host exists.
+      'src/main/shell-env.ts',
+      // Runs in the retrieval worker, which spawns on its own thread.
+      'src/main/retrieval/branch-git.ts',
+    ]);
+    expect(
+      findOutside(/promisify\((exec|execFile)\)/, allowed),
+      'Import execAsync / execFileAsync from src/main/utility-process/off-main-exec.ts instead.',
     ).toEqual([]);
   });
 

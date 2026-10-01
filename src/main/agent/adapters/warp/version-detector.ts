@@ -1,9 +1,6 @@
 import fs from 'node:fs';
-import { execFile, exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 
-const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
 
 /**
  * Extract the Warp version from `oz dump-debug-info` output.

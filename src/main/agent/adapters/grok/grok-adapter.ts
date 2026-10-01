@@ -1,6 +1,5 @@
 import fs from 'node:fs';
-import { exec, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { GrokDetector } from './detector';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from './command-builder';
 import { removeHooksFile } from './hook-manager';
@@ -48,8 +47,6 @@ import type {
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 
 /**
  * Grok Build (xAI) adapter - the full Claude-class harness.

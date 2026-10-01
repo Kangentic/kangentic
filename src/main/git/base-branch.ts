@@ -1,10 +1,8 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync } from '../utility-process/off-main-exec';
 import simpleGit from 'simple-git';
 import { hasCommits } from './git-checks';
 import { fetchIfStale } from './fetch-throttle';
 
-const execFileAsync = promisify(execFile);
 
 /**
  * Cap on the branch list surfaced in an unresolvable-base error message. A

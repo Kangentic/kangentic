@@ -8,12 +8,9 @@
  * which is why the renderer falls back to a free-form text input when the
  * list is empty.
  */
-import { exec, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import type { AgentCapabilities } from '../../../../shared/types';
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 
 const LIST_TIMEOUT_MS = 5000;
 

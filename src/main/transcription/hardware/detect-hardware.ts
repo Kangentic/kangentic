@@ -1,11 +1,9 @@
 import * as os from 'os';
 import * as fs from 'fs';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { execFileAsync } from '../../utility-process/off-main-exec';
 import { app } from 'electron';
 import type { DictationHardwareProfile } from '../../../shared/types';
 
-const execFileAsync = promisify(execFile);
 
 /**
  * Best-effort hardware detection used to auto-pick a transcription engine and

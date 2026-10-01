@@ -1,8 +1,6 @@
 import which from 'which';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync } from '../utility-process/off-main-exec';
 
-const execFileAsync = promisify(execFile);
 
 /** Minimum git version required for full functionality (sparse-checkout, worktrees). */
 const MINIMUM_GIT_VERSION = '2.25.0';

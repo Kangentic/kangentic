@@ -122,6 +122,43 @@ export interface PtyHostDiagnostics {
   dimensions: PtyHostDimensionStats[];
 }
 
+/** What a one-shot child process may be given. Encoding is always utf8. */
+export interface HostExecOptions {
+  cwd?: string;
+  env?: Record<string, string>;
+  timeout?: number;
+  maxBuffer?: number;
+  windowsHide?: boolean;
+}
+
+/** A one-shot child process for the host to run: `exec` through a shell, or
+ *  `execFile` without one, as `node:child_process` names them. */
+export type HostExecRequest =
+  | { kind: 'exec'; command: string; options: HostExecOptions }
+  | { kind: 'execFile'; file: string; args: string[]; options: HostExecOptions };
+
+/** A failed run, with what `promisify(exec)` attaches to its rejection. */
+export interface HostExecFailure extends PtyHostError {
+  /** The exit status, when the process ran and exited non-zero. */
+  exitCode: number | null;
+  killed: boolean;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  cmd?: string;
+}
+
+export type HostExecResult =
+  | { ok: true; stdout: string; stderr: string }
+  | { ok: false; error: HostExecFailure };
+
+/** One row of the process table, as the process-tree probe reports it. */
+export interface HostProcessInfo {
+  pid: number;
+  ppid: number;
+  comm: string;
+}
+
 export interface PtyHostRequestMap {
   spawn: { params: PtyHostSpawnParams; result: PtyHostSpawnResult };
   /** The desktop replay. `settle` waits for a pending resize's repaint first,
@@ -137,6 +174,11 @@ export interface PtyHostRequestMap {
    *  command, so a project delete can wait for it before unlinking the file
    *  (Windows will not unlink a file another process has open). */
   closeProject: { params: { projectId: string }; result: true };
+  /** Run a one-shot child process here, so its CreateProcess (synchronous on
+   *  the calling thread on Windows) does not block main. */
+  exec: { params: HostExecRequest; result: HostExecResult };
+  /** The whole process table, from the host's persistent probe. */
+  listProcesses: { params: Record<string, never>; result: HostProcessInfo[] };
 }
 
 export type PtyHostMethod = keyof PtyHostRequestMap;

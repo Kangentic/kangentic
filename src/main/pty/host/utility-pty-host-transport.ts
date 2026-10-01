@@ -119,15 +119,19 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     this.send(command);
   }
 
-  request<M extends PtyHostMethod>(method: M, params: PtyHostRequestMap[M]['params']): Promise<PtyHostRequestMap[M]['result']> {
-    if (this.fallback) return this.fallback.request(method, params);
+  request<M extends PtyHostMethod>(
+    method: M,
+    params: PtyHostRequestMap[M]['params'],
+    options?: { timeoutMs?: number },
+  ): Promise<PtyHostRequestMap[M]['result']> {
+    if (this.fallback) return this.fallback.request(method, params, options);
     const requestId = this.nextRequestId;
     this.nextRequestId += 1;
     return new Promise<PtyHostRequestMap[M]['result']>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!this.pending.delete(requestId)) return;
         reject(new Error(`The pty host did not answer ${method} in time`));
-      }, REQUEST_TIMEOUT_MS);
+      }, options?.timeoutMs ?? REQUEST_TIMEOUT_MS);
       timer.unref();
       this.pending.set(requestId, { resolve: resolve as (result: unknown) => void, reject, timer });
       const message: PtyHostRequest<M> = { type: 'request', id: requestId, method, params };

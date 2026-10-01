@@ -45,14 +45,26 @@ at the Windows timer floor.
   the host flushes, waits for every exit callback, and exits itself. See [[synchronous-shutdown]].
 - **Project delete awaits `closeProjectInPtyHost`** before unlinking the database files, as it does
   the retrieval worker's close.
+- **One-shot child processes run in the host too.** On Windows libuv runs CreateProcess
+  synchronously on the calling thread, 15 to 30 ms a spawn; agent detection alone ran 30 of them on
+  main at startup, 17 at 16 ms or more. Use `execAsync` / `execFileAsync` from
+  `src/main/utility-process/off-main-exec.ts`, never `promisify(exec)` or `promisify(execFile)`:
+  they resolve and reject exactly as `promisify` does, run the child in the host (`host-exec.ts`),
+  and fall back to a local spawn where no host is registered or reachable. The host never forks and
+  refuses to launch its own executable, which with the RunAsNode fuse off would boot a second app.
+  The background-shell watcher's process table also comes from the host (`listProcesses`), which
+  keeps the probe's PowerShell child.
 
 ## Enforcement (self-maintaining)
 
 - **Test:** `tests/unit/pty-host-boundary.test.ts` builds the host entry with an esbuild metafile
   (dev and production) and fails on `electron`, the IPC layer, analytics, Sentry, retrieval or dev
   tooling in its graph; pins the build entry in both `scripts/build.js` and `scripts/dev.js`; pins
-  the one construction site of each transport and of `PtyHostCore`; and fails on a value import of
-  `node-pty` outside the host core. Runs in CI via `npm run test:unit`.
+  the one construction site of each transport and of `PtyHostCore`; fails on a value import of
+  `node-pty` outside the host core; fails on `promisify(exec)` / `promisify(execFile)` under
+  `src/main` outside the drop-in and its two reasoned exceptions; and pins that `host-exec.ts`
+  never forks and checks for its own executable. Runs in CI via `npm run test:unit`.
+  `tests/unit/off-main-exec.test.ts` pins the drop-in's routing, error shape and fallback.
 - **Tests:** `tests/unit/pty-host-core.test.ts` pins the core's behavior;
   `tests/unit/utility-pty-host-transport.test.ts` pins the fork, init, request timeout, crash
   restart, fallback, heartbeat and shutdown; `tests/unit/verify-unpacked-worker.test.ts` pins the
@@ -64,5 +76,8 @@ at the Windows timer floor.
 ## Scope
 
 Session PTYs and their output pipeline (`src/main/pty/**`), the host's fork and wiring in
-`register-all.ts`, and its packaging. The two probe PTYs (the Claude model picker, the Antigravity
-print runner) run short, rare processes and still load node-pty lazily in main.
+`register-all.ts`, one-shot child processes on main, and the packaging. Still on main, by
+measurement: the two probe PTYs (the Claude model picker, the Antigravity print runner), which run
+short, rare processes and load node-pty lazily; git through simple-git and `runGitWithTimeout`
+(5 to 17 ms a spawn, event-driven; the library has no spawn hook and the abortable runner would
+need request cancellation); and streaming CLI runs (`auto-name.ts`).

@@ -24,9 +24,12 @@ import { ResizeManager } from '../lifecycle/resize-manager';
 import { FirstOutputTracker } from '../lifecycle/first-output-tracker';
 import { SessionIdScanner } from '../lifecycle/session-id-manager';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { createProcessTreeProbe, type ProcessTreeProbe } from '../../activity-engine/background-shell/process-tree';
 import { traceTerminal } from '../terminal-trace';
+import { runHostExec } from './host-exec';
 import {
   toPtyHostError,
+  type HostExecRequest,
   type PtyHostCommand,
   type PtyHostDiagnostics,
   type PtyHostEvent,
@@ -94,6 +97,9 @@ export class PtyHostCore {
   private readonly ptys = new Map<number, PtyEntry>();
   private readonly focused = new Set<string>();
   private readonly tapped = new Set<string>();
+  /** The background-shell watcher's process table source, created on first
+   *  use. On Windows it keeps one PowerShell child for the host's life. */
+  private processTreeProbe: ProcessTreeProbe | null = null;
   private readonly firstOutput = new FirstOutputTracker();
   private readonly resizeManager = new ResizeManager();
   private readonly coalesce = new Map<string, CoalesceState>();
@@ -265,6 +271,11 @@ export class PtyHostCore {
       case 'closeProject':
         this.deps.closeProject?.((params as { projectId: string }).projectId);
         return true as PtyHostRequestMap[M]['result'];
+      case 'exec':
+        return runHostExec(params as HostExecRequest) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'listProcesses':
+        this.processTreeProbe ??= createProcessTreeProbe();
+        return this.processTreeProbe.listAllProcesses() as Promise<PtyHostRequestMap[M]['result']>;
       default: {
         const unknownMethod: never = method;
         throw new Error(`unknown pty host method: ${String(unknownMethod)}`);
@@ -347,12 +358,19 @@ export class PtyHostCore {
         // after its exit-sequence grace (pty-teardown-grace), so killing here
         // would cut that grace short. Nothing writes the transcripts after this.
         this.transcriptWriter.finalizeAll();
+        this.disposeProcessTreeProbe();
         return;
       default: {
         const unknownCommand: never = command;
         throw new Error(`unknown pty host command: ${JSON.stringify(unknownCommand)}`);
       }
     }
+  }
+
+  /** End the process-tree probe's persistent PowerShell child, if one runs. */
+  disposeProcessTreeProbe(): void {
+    this.processTreeProbe?.dispose();
+    this.processTreeProbe = null;
   }
 
   /** Flush every pending transcript piece (in-process quit). */

@@ -1,7 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { execFile, exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { getCachedModelPickerModels, probeModelPickerModels, type ModelPickerScan } from './model-picker-probe';
 import { buildModelCapabilityFields } from './model-display-name';
 import {
@@ -13,8 +12,6 @@ import {
 } from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
-const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
 
 const HELP_TIMEOUT_MS = 5000;
 

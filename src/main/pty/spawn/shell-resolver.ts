@@ -1,9 +1,7 @@
 import which from 'which';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync } from '../../utility-process/off-main-exec';
 import { createCachedSingleton } from '../../shared/cached-singleton';
 
-const execFileAsync = promisify(execFile);
 
 export interface ShellInfo {
   name: string;

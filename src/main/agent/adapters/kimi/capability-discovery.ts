@@ -12,8 +12,7 @@
  * Note: Research on Kimi's CLI was quota-limited. This is best-effort.
  */
 
-import { exec, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import path from 'node:path';
 import os from 'node:os';
 import {
@@ -24,8 +23,6 @@ import {
 } from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 
 const HELP_TIMEOUT_MS = 5000;
 

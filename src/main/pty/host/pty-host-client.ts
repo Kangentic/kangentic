@@ -14,6 +14,9 @@ import type { TranscriptSink } from '../buffer/transcript-writer';
 import { PtyHostCore } from './pty-host-core';
 import {
   fromPtyHostError,
+  type HostExecRequest,
+  type HostExecResult,
+  type HostProcessInfo,
   type PtyHostCommand,
   type PtyHostDiagnostics,
   type PtyHostEvent,
@@ -52,7 +55,12 @@ export interface PtyHostLifecycleListener {
 export interface PtyHostTransport {
   /** Send a command. Commands and requests keep their order. */
   post(command: PtyHostCommand): void;
-  request<M extends PtyHostMethod>(method: M, params: PtyHostRequestMap[M]['params']): Promise<PtyHostRequestMap[M]['result']>;
+  /** `timeoutMs` replaces the transport's default budget for this request. */
+  request<M extends PtyHostMethod>(
+    method: M,
+    params: PtyHostRequestMap[M]['params'],
+    options?: { timeoutMs?: number },
+  ): Promise<PtyHostRequestMap[M]['result']>;
   /** Install the one listener every host event goes to. */
   setEventListener(listener: (event: PtyHostEvent) => void): void;
   /** The host process's pid while it runs, for the quit drain; null in-process. */
@@ -237,6 +245,16 @@ export class PtyHostClient {
     return this.transport.request('getOutputPeek', { sessionId });
   }
 
+  /** Run a one-shot child process in the host (see `host-exec.ts`). */
+  exec(request: HostExecRequest, timeoutMs: number): Promise<HostExecResult> {
+    return this.transport.request('exec', request, { timeoutMs });
+  }
+
+  /** The process table, from the host's persistent probe. */
+  listProcesses(): Promise<HostProcessInfo[]> {
+    return this.transport.request('listProcesses', {});
+  }
+
   getDiagnostics(): Promise<PtyHostDiagnostics> {
     return this.transport.request('getDiagnostics', {});
   }
@@ -316,5 +334,6 @@ export class InProcessPtyHostTransport implements PtyHostTransport {
 
   shutdown(): void {
     this.core.finalizeTranscripts();
+    this.core.disposeProcessTreeProbe();
   }
 }

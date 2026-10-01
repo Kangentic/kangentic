@@ -1,5 +1,4 @@
-import { exec, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { AgentDetector } from '../../shared/agent-detector';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
@@ -28,8 +27,6 @@ import type {
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 
 /**
  * Run `<cursorPath> about --format json` and return stdout.

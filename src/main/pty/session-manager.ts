@@ -21,6 +21,7 @@ import { suspendAllSessions, killAllSessions, writeExitSequence } from './shutdo
 import type { PtyKillReport } from './shutdown/session-shutdown';
 import { DeferredKillRegistry, KILL_GRACE_MS, isYoungSession } from './lifecycle/deferred-kill';
 import { PTY_EXIT_DRAIN_DEADLINE_MS } from './shutdown/exit-callback-drain';
+import { HostProcessTreeProbe } from './host/host-process-tree-probe';
 
 /** How long before the quit drain's deadline the pty host gives up waiting
  *  for exits and exits itself, so main never stops waiting first. */
@@ -34,7 +35,7 @@ import { createWriteQueue, type WriteQueue } from './write-queue';
 import { PromptDraftLedger, type WriteOrigin } from './prompt-draft-ledger';
 import { recordTerminalTrace, traceTerminal } from './terminal-trace';
 import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
-import type { PtyHostEvent } from './host/protocol';
+import type { HostExecRequest, HostExecResult, PtyHostEvent } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import type {
   Session,
@@ -466,6 +467,9 @@ export class SessionManager extends EventEmitter {
       retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
     }, {
       activityEngineOptions: this.activityEngineOptions,
+      // The background-shell watcher's process table comes from the pty host,
+      // which keeps the probe's PowerShell child off main.
+      processTreeProbe: new HostProcessTreeProbe(() => this.host.listProcesses()),
       // Activity-engine debug snapshots land at `<projectRoot>/.kangentic/debug/<sessionId>.json`
       // when `developer.activityDebugOverlay` is on (toggled in Settings →
       // Developer). When that toggle is off, falls back to the existing
@@ -676,6 +680,11 @@ export class SessionManager extends EventEmitter {
    *  drain: the host flushes and exits after the PTYs die. */
   getPtyHostPid(): number | null {
     return this.host.hostPid;
+  }
+
+  /** Run a one-shot child process in the pty host (`off-main-exec.ts`). */
+  execInPtyHost(request: HostExecRequest, timeoutMs: number): Promise<HostExecResult> {
+    return this.host.exec(request, timeoutMs);
   }
 
   /**

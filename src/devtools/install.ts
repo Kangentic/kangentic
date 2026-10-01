@@ -3,6 +3,7 @@ import { app } from 'electron';
 import { writeLockfile, removeLockfile } from './main/lockfile';
 import { startInspectionServer, stopInspectionServer } from './main/inspection-server';
 import { attachDebugger, detachDebugger } from './main/cdp';
+import { installSpawnTracer } from './main/spawn-tracer';
 import {
   isStallProfilerRunning,
   stallProfileDirectory,
@@ -64,6 +65,8 @@ let bridgeStarting = false;
 export function installDevtools(context: DevtoolsContext): void {
   if (installedContext) return;
   installedContext = context;
+  // Count every child-process spawn on main by caller (spawn-tracer.ts).
+  installSpawnTracer();
 
   // Synchronous before-quit per .claude/rules/synchronous-shutdown.md. Removes
   // the lockfile, detaches CDP, closes the HTTP server. No async work in
