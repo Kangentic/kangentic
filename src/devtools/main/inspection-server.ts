@@ -43,7 +43,7 @@ import type { IpcContext } from '../../main/ipc/ipc-context';
 import { getProcessMetrics } from '../../main/diagnostics/process-metrics';
 import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
 import { retrievalClient } from '../../main/retrieval/retrieval-client';
-import { getStallProfiles, isStallProfilerRunning } from './stall-profiler';
+import { captureCpuProfile, getStallProfiles, isStallProfilerRunning, stallProfileDirectory } from './stall-profiler';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
 import { readTerminalTrace } from '../../main/pty/terminal-trace';
@@ -242,6 +242,16 @@ async function handleRequest(
     respondJson(response, 200, { ok: true });
     setImmediate(() => app.quit());
     return;
+  }
+
+  // A whole-window CPU profile of main, for scenarios whose cost is spread
+  // over many short spans. Body: `{ "durationMs": 15000 }`. No CDP needed.
+  if (route === 'POST /cpu-profile') {
+    const body = await readJsonBody(request);
+    const requested = typeof body === 'object' && body !== null ? (body as { durationMs?: unknown }).durationMs : undefined;
+    const durationMs = typeof requested === 'number' ? requested : 10_000;
+    const result = await captureCpuProfile(stallProfileDirectory(app.getPath('userData')), durationMs);
+    return respondJson(response, 200, result);
   }
 
   // CDP-backed endpoints from this point on need a main window AND an

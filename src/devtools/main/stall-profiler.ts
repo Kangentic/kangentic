@@ -151,6 +151,43 @@ export function stallProfileDirectory(userDataPath: string): string {
   return path.join(userDataPath, 'stall-profiles');
 }
 
+/** Longest on-demand capture, so a forgotten request cannot grow without bound. */
+const MAX_CAPTURE_MS = 120_000;
+
+/**
+ * Profile the main process for `durationMs` and save the whole profile, for a
+ * measured scenario (a terminal flood, a spawn burst) whose cost is many short
+ * spans rather than one stall the stall profiler would keep. Starting costs
+ * main the same 43 to 60 ms as a restart, inside the capture.
+ */
+export async function captureCpuProfile(
+  profileDirectory: string,
+  durationMs: number,
+): Promise<{ file: string | null; durationMs: number } & ReturnType<typeof summarizeProfile>> {
+  const boundedMs = Math.max(100, Math.min(MAX_CAPTURE_MS, Math.round(durationMs)));
+  const captureSession = new Session();
+  captureSession.connect();
+  try {
+    await captureSession.post('Profiler.enable');
+    await captureSession.post('Profiler.setSamplingInterval', { interval: SAMPLING_INTERVAL_US });
+    await captureSession.post('Profiler.start');
+    await new Promise((resolve) => setTimeout(resolve, boundedMs));
+    const { profile } = await captureSession.post('Profiler.stop');
+    let file: string | null = null;
+    try {
+      await fsPromises.mkdir(profileDirectory, { recursive: true });
+      file = path.join(profileDirectory, `capture-${new Date().toISOString().replace(/[:.]/g, '-')}.cpuprofile`);
+      await fsPromises.writeFile(file, JSON.stringify(profile), 'utf-8');
+    } catch (error) {
+      console.warn('[cpu-profile] could not save the capture:', error);
+      file = null;
+    }
+    return { file, durationMs: boundedMs, ...summarizeProfile(profile) };
+  } finally {
+    captureSession.disconnect();
+  }
+}
+
 async function check(): Promise<void> {
   const profilerSession = session;
   const histogram = delayHistogram;
