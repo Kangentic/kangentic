@@ -134,9 +134,10 @@ const VEC_COPY_BATCH = 16;
 /**
  * Bytes a bulk job writes between its own PASSIVE checkpoints. No connection
  * auto-checkpoints while the worker is up, and main's 5 s checkpoint request
- * waits behind a running job step, so a job writing hundreds of MB checkpoints
- * as it goes; otherwise every main read searches a longer WAL. PASSIVE never
- * blocks a writer.
+ * waits behind a running job step. Commits also checkpoint at most once a
+ * second (`checkpoint-pacing.ts`); this bounds a job whose single transaction
+ * writes more than a second's worth. Otherwise every main read searches a
+ * longer WAL. PASSIVE never blocks a writer.
  */
 const BULK_CHECKPOINT_BYTES = 16 * 1024 * 1024;
 

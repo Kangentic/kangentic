@@ -15,8 +15,10 @@
 import { format } from 'node:util';
 import type Database from 'better-sqlite3';
 import { closeProjectDb, configureProjectDbAccess, getProjectDb, setProjectDbInitializer, setWalAutoCheckpoint } from '../../db/database';
+import { setAfterCommitHook } from '../../db/transaction';
 import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
 import { loadVecExtensionFrom } from '../vec-support';
+import { createCheckpointPacer } from './checkpoint-pacing';
 import { retrievalHandlers, type WorkerContext } from './methods';
 import type {
   FromWorkerMessage,
@@ -59,8 +61,10 @@ function initialize(message: InitMessage): void {
   // With SQLite's default, a commit here that found the WAL over 1000 pages
   // also checkpointed everything the pty host wrote since the last one, inside
   // that commit: 363 to 479 ms for 16 rows after a terminal flood, which held
-  // up every request behind it and read as a lock hold it was not.
+  // up every request behind it and read as a lock hold it was not. The
+  // worker's own writes checkpoint as they go instead, after their commit.
   setWalAutoCheckpoint(0);
+  setAfterCommitHook(createCheckpointPacer());
   vecLoadablePath = message.vecLoadablePath;
   if (!vecLoadablePath) vecLoadError = 'the sqlite-vec extension was not found';
   setProjectDbInitializer((db: Database.Database) => {

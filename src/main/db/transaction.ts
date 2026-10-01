@@ -19,6 +19,30 @@
 import type Database from 'better-sqlite3';
 import { isTimingSyncWork, recordSyncSpan } from '../diagnostics/event-loop-lag';
 
+/** Runs after each outermost transaction commits; see `setAfterCommitHook`. */
+let afterCommit: ((db: Database.Database) => void) | null = null;
+
+/**
+ * Set what runs after each outermost write transaction commits, or null for
+ * nothing. The retrieval worker paces its checkpoints here
+ * (`worker/checkpoint-pacing.ts`); main sets none. It runs after the commit has
+ * released the write lock, so it is outside both timed parts below, and a
+ * throw from it is the hook's own problem, never the transaction's.
+ */
+export function setAfterCommitHook(hook: ((db: Database.Database) => void) | null): void {
+  afterCommit = hook;
+}
+
+function runAfterCommit(db: Database.Database): void {
+  // A nested run (a savepoint) leaves the outer transaction open.
+  if (!afterCommit || db.inTransaction) return;
+  try {
+    afterCommit(db);
+  } catch {
+    // The transaction already committed.
+  }
+}
+
 /**
  * `db.transaction(body)`, begun IMMEDIATE. Call the result to run it; nested
  * calls become savepoints, as with any better-sqlite3 transaction function.
@@ -40,14 +64,19 @@ export function writeTransaction<Args extends unknown[], Result>(
     return body(...args);
   }).immediate;
   return (...args: Args): Result => {
-    if (!isTimingSyncWork()) return immediate(...args);
+    if (!isTimingSyncWork()) {
+      const result = immediate(...args);
+      runAfterCommit(db);
+      return result;
+    }
     const startedAt = performance.now();
     // A nested run of this same function (a savepoint) restores the outer
     // run's mark when it finishes.
     const outerBodyStartedAt = bodyStartedAt;
     bodyStartedAt = 0;
+    let result: Result;
     try {
-      return immediate(...args);
+      result = immediate(...args);
     } finally {
       const endedAt = performance.now();
       const lockedAt = bodyStartedAt === 0 ? endedAt : bodyStartedAt;
@@ -56,5 +85,7 @@ export function writeTransaction<Args extends unknown[], Result>(
       if (waitedMs >= 1) recordSyncSpan('db:lock-wait', waitedMs);
       recordSyncSpan('db:transaction', endedAt - lockedAt);
     }
+    runAfterCommit(db);
+    return result;
   };
 }

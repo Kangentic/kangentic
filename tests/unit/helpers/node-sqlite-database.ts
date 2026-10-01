@@ -54,6 +54,10 @@ export function adaptDatabase(database: NodeDatabase, prepared?: string[]): Data
     },
     pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
     transaction,
+    /** True inside a transaction run through `transaction`, as better-sqlite3's is. */
+    get inTransaction() {
+      return depth > 0;
+    },
   };
   return adapter as unknown as DatabaseType.Database;
 }

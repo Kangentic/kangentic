@@ -38,11 +38,12 @@ connection.
   write that meets the worker's lock waits instead of failing with `SQLITE_BUSY`. Worker
   transactions are capped (16 chunks, 64 deletes, 64 KB) so main waits a few ms at most, and bulk
   upkeep jobs are paced to 20% lock duty.
-- **The worker owns checkpoints.** It runs `PRAGMA wal_checkpoint(PASSIVE)` every 5 s and every
-  16 MB a bulk job writes. Main sets `wal_autocheckpoint = 0` while the worker is up and restores
-  1000 when it goes down; the worker and the pty host always set 0, so no checkpoint hides inside a
-  commit (one did, and billed a terminal flood's pages to a 16-row write: 363 to 479 ms). FULL,
-  RESTART and TRUNCATE are never used: they block writers.
+- **The worker owns checkpoints.** It runs `PRAGMA wal_checkpoint(PASSIVE)` every 5 s, after its
+  own commits at most once a second per connection (`worker/checkpoint-pacing.ts`, through
+  `setAfterCommitHook`), and every 16 MB a bulk job writes. Main sets `wal_autocheckpoint = 0`
+  while the worker is up and restores 1000 when it goes down; the worker and the pty host always
+  set 0, so no checkpoint hides inside a commit (one did, and billed a terminal flood's pages to a
+  16-row write: 363 to 479 ms). FULL, RESTART and TRUNCATE are never used: they block writers.
 - **Migrations run on main, first.** The worker opens with migrations off and `fileMustExist`,
   after main has opened and migrated the file. An index over an existing large table is built by
   the worker at the project-open sweep, never as a migration on main.

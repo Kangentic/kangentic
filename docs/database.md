@@ -52,8 +52,11 @@ worker's and the pty host's connections set 0 too, so that checkpoint is the onl
 default of 1000 pages on the worker, its next commit after a terminal flood also checkpointed every
 page the pty host had written since the last checkpoint, 363 to 479 ms inside a 16-row commit, and
 every request behind it waited. At 5 s a checkpoint copies at most 5 s of writes; on a 30 s interval
-the same flood made one 476 ms step of 65,897 pages. Bulk upkeep jobs also checkpoint every 16 MB
-they write. When the worker goes down (restarting, or latched off after repeated crashes), main
+the same flood made one 476 ms step of 65,897 pages. The 5 s request waits behind a long worker
+job, so the worker also checkpoints a connection after its own commits, at most once a second
+(`src/main/retrieval/worker/checkpoint-pacing.ts`, run by `writeTransaction`'s after-commit hook):
+during the Source code fill its checkpoints stayed at 19 ms or less. Bulk upkeep jobs also
+checkpoint every 16 MB they write. When the worker goes down (restarting, or latched off after repeated crashes), main
 sets 1000 back at once, so no WAL grows unchecked.
 
 The order matters. `busy_timeout` is a connection setting that covers only the statements after

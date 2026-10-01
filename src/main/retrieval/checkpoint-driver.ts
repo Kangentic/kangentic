@@ -8,8 +8,9 @@
  * turns its own auto-checkpoint off and asks the worker for a PASSIVE
  * checkpoint of every database it has open, every 5 s. PASSIVE never waits
  * for or blocks a writer. The worker's and the pty host's connections run
- * with auto-checkpoint off too, so this is the only checkpoint while the
- * worker is up.
+ * with auto-checkpoint off too. Besides this request, the worker checkpoints
+ * a connection after its own writes, at most once a second
+ * (`worker/checkpoint-pacing.ts`), since this request waits behind a long job.
  *
  * Why 5 s: a checkpoint copies whatever was written since the last one, and
  * the pty host's transcript writes are never checkpointed by the host. After a
