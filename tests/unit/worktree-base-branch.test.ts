@@ -246,7 +246,9 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
       .rejects.toThrow(/'develop', 'main', or 'master'/);
     await expect(worktreeManager.ensureWorktree(task, baseGitConfig({ defaultBaseBranch: 'develop' })))
       .rejects.toThrow(/Branches found: trunk/);
-  });
+    // Real git, twice through the whole default chain: the same bound as the
+    // file's other real-repo cases, which the 5 s default overran under load.
+  }, 20000);
 
   it('resolves a base that exists only on origin and was never fetched (fetch retry)', async () => {
     const origin = tempRepoPath('fetch-retry-origin');
