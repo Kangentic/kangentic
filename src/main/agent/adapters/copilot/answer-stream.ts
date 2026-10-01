@@ -13,7 +13,7 @@
  *   result                   { sessionId, exitCode, usage }   the last line
  */
 
-import type { AnswerStreamEvent } from '../../shared/auto-name';
+import type { AnswerStreamEvent } from '../../shared/cli-answer';
 
 interface CopilotRecord {
   type?: unknown;

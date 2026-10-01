@@ -4,7 +4,7 @@ import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
-import { runCliPrintAnswer } from '../../shared/auto-name';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { AiderSessionHistoryParser } from './session-history-parser';
 import { createAiderCommandInjectionVerifier } from './command-injection-verifier';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions } from '../../agent-adapter';

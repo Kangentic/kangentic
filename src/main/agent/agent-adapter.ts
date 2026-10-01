@@ -1,4 +1,4 @@
-import type { AnswerStreamEvent } from './shared/auto-name';
+import type { AnswerStreamEvent } from './shared/cli-answer';
 import type {
   SessionRecord,
   AgentPermissionEntry,

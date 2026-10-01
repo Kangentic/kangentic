@@ -13,7 +13,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { runCliPrintSummarize, spawnCli, stopAllCliRuns, stopCli } from '../../src/main/agent/shared/auto-name';
+import { runCliPrintSummarize } from '../../src/main/agent/shared/auto-name';
+import { spawnCli, stopAllCliRuns, stopCli } from '../../src/main/agent/shared/cli-print';
 import { HostCliProcesses } from '../../src/main/pty/host/host-cli-processes';
 import { PtyHostClient, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostEvent } from '../../src/main/pty/host/protocol';

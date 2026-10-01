@@ -14,7 +14,7 @@
  * the text written after the last tool use.
  */
 
-import type { AnswerStreamEvent } from '../../shared/auto-name';
+import type { AnswerStreamEvent } from '../../shared/cli-answer';
 
 interface OpenCodeRecord {
   type?: unknown;

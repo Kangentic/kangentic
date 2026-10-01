@@ -23,16 +23,15 @@ import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
+import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import {
-  runCliPrintSummarize,
   runCliPrintAnswer,
-  buildSummarizePrompt,
   extractStreamedAnswer,
   createAnswerStreamReducer,
   forwardStreamLines,
   ANSWER_STREAM_OUTPUT_BUDGET,
   type AnswerStreamEvent,
-} from '../../shared/auto-name';
+} from '../../shared/cli-answer';
 import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-session';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';

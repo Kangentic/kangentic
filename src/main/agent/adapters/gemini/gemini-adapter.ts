@@ -8,8 +8,8 @@ import { migrateGeminiProjectData } from './project-relocation';
 import { GeminiStatusParser } from './status-parser';
 import { discoverGeminiCapabilities } from './capability-discovery';
 import { randomUUID } from 'node:crypto';
-import { runCliPrintSummarize,
-  runCliPrintAnswer, buildSummarizePrompt, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/auto-name';
+import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';

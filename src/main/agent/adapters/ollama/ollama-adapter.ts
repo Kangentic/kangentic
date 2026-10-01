@@ -3,7 +3,7 @@ import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { discoverOllamaCapabilities } from './capability-discovery';
-import { runCliPrintAnswer } from '../../shared/auto-name';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,

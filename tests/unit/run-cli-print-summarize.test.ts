@@ -1,5 +1,7 @@
 /**
- * Unit tests for `runCliPrintSummarize` in src/main/agent/shared/auto-name.ts.
+ * Unit tests for the headless CLI runner (src/main/agent/shared/cli-print.ts),
+ * through its title shape (`runCliPrintSummarize`) and its answer shape
+ * (`runCliPrintAnswer`).
  *
  * These tests exercise the spawn-level behavior: OUTPUT_BUDGET termination,
  * timeout path, env merge, extractRaw hook, and non-zero exit code handling.
@@ -73,14 +75,9 @@ function makeFakeChild(): FakeChild {
 // Import the function under test (after mocks are registered)
 // ---------------------------------------------------------------------------
 
-import {
-  runCliForChat,
-  runCliPrintSummarize,
-  runCliPrintAnswer,
-  spawnCli,
-  stopAllCliRuns,
-  stopCliRunsForChat,
-} from '../../src/main/agent/shared/auto-name';
+import { runCliPrintSummarize } from '../../src/main/agent/shared/auto-name';
+import { runCliForChat, spawnCli, stopAllCliRuns, stopCliRunsForChat } from '../../src/main/agent/shared/cli-print';
+import { runCliPrintAnswer } from '../../src/main/agent/shared/cli-answer';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -187,7 +184,7 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
     expect(settled).not.toHaveBeenCalled();
 
     child.emit('close', null);
-    await expect(resultPromise).rejects.toThrow('summarize timed out');
+    await expect(resultPromise).rejects.toThrow('the agent timed out');
   });
 
   it('rejects as timed out even when the child wrote output before it was stopped', async () => {
@@ -199,7 +196,7 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
     vi.advanceTimersByTime(600);
     child.emit('close', null);
 
-    await expect(resultPromise).rejects.toThrow('summarize timed out');
+    await expect(resultPromise).rejects.toThrow('the agent timed out');
   });
 
   it('rejects after the exit wait when the stopped child never closes', async () => {
@@ -209,7 +206,7 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
 
     vi.advanceTimersByTime(600 + 3_100);
 
-    await expect(resultPromise).rejects.toThrow('summarize timed out');
+    await expect(resultPromise).rejects.toThrow('the agent timed out');
   });
 
   it('sends SIGKILL a second after SIGTERM while the child is still running, although child.killed is already true', async () => {
@@ -320,7 +317,7 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
       expect(taskkill.unref).toHaveBeenCalled();
       expect(child.kill).not.toHaveBeenCalled();
       child.emit('close', null);
-      await expect(resultPromise).rejects.toThrow('summarize timed out');
+      await expect(resultPromise).rejects.toThrow('the agent timed out');
     });
   });
 
@@ -351,7 +348,7 @@ describe('runCliPrintSummarize - timeout path (#3)', () => {
       // child.kill ends the one process and leaves whatever it started running.
       expect(child.kill).not.toHaveBeenCalled();
       child.emit('close', null);
-      await expect(resultPromise).rejects.toThrow('summarize timed out');
+      await expect(resultPromise).rejects.toThrow('the agent timed out');
     });
   });
 });
@@ -564,7 +561,7 @@ describe('runCliPrintSummarize - non-zero exit code (#6)', () => {
     child.stderr.emit('data', Buffer.from('  fatal: not a git repo  '));
     child.emit('close', 2);
 
-    await expect(resultPromise).rejects.toThrow('summarize CLI exited 2: fatal: not a git repo');
+    await expect(resultPromise).rejects.toThrow('the agent exited 2: fatal: not a git repo');
   });
 
   it('rejects with only the exit code when stderr is empty', async () => {
@@ -581,7 +578,7 @@ describe('runCliPrintSummarize - non-zero exit code (#6)', () => {
 
     child.emit('close', 1);
 
-    await expect(resultPromise).rejects.toThrow('summarize CLI exited 1');
+    await expect(resultPromise).rejects.toThrow('the agent exited 1');
   });
 
   it('does not append a colon when stderr is whitespace-only', async () => {
@@ -601,7 +598,7 @@ describe('runCliPrintSummarize - non-zero exit code (#6)', () => {
 
     // trimmed stderr is empty, so no ': ' suffix
     const rejection = await resultPromise.catch((error: Error) => error);
-    expect(rejection.message).toBe('summarize CLI exited 3');
+    expect(rejection.message).toBe('the agent exited 3');
   });
 
   it('truncates very long stderr in the error message', async () => {
@@ -621,7 +618,7 @@ describe('runCliPrintSummarize - non-zero exit code (#6)', () => {
     child.emit('close', 1);
 
     const rejection = await resultPromise.catch((error: Error) => error);
-    expect(rejection.message).toBe(`summarize CLI exited 1: ${'E'.repeat(237)}...`);
+    expect(rejection.message).toBe(`the agent exited 1: ${'E'.repeat(237)}...`);
   });
 
   it('shows the line that names the error, not the banner above it', async () => {
@@ -652,7 +649,7 @@ describe('runCliPrintSummarize - non-zero exit code (#6)', () => {
 
     const rejection = await resultPromise.catch((error: Error) => error);
     expect(rejection.message).toBe(
-      'summarize CLI exited 1: ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
+      'the agent exited 1: ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
     );
   });
 });
@@ -943,7 +940,8 @@ describe('runCliPrintSummarize - a prompt delivered through a file', () => {
 
   it('words an answer failure for the answer, and keeps what the CLI said', async () => {
     // The Knowledge Graph prints this verbatim under the question the user asked.
-    // "summarize CLI exited" named a feature they had not used.
+    // The runner once named every failure "summarize CLI exited", a feature they
+    // had not used.
     const child = makeFakeChild();
     mockSpawn.mockReturnValue(child);
     const resultPromise = runCliPrintAnswer({ cliPath: '/usr/bin/fake', args: [], prompt: 'q', cwd: '/tmp' });

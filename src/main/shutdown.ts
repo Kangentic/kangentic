@@ -3,7 +3,7 @@ import { browserPaneRegistry } from './browser/browser-pane-registry';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { answerSessionPool } from './retrieval/answer-session-pool';
-import { stopAllCliRuns } from './agent/shared/auto-name';
+import { stopAllCliRuns } from './agent/shared/cli-print';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';

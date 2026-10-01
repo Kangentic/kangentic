@@ -18,7 +18,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { KnowledgeGraphAnswerContext, KnowledgeGraphAnswerResult } from '../../src/shared/types';
 import type { AnswerFromContextOptions, AnswerSession, AnswerSessionInput } from '../../src/main/agent/agent-adapter';
-import type { AnswerStreamEvent } from '../../src/main/agent/shared/auto-name';
+import type { AnswerStreamEvent } from '../../src/main/agent/shared/cli-answer';
 import type {
   ProjectRelatedWork,
   RelatedWork,
@@ -48,8 +48,8 @@ const { runCliForChatSpy, stopCliRunsForChatSpy } = vi.hoisted(() => ({
   runCliForChatSpy: vi.fn(),
   stopCliRunsForChatSpy: vi.fn(),
 }));
-vi.mock('../../src/main/agent/shared/auto-name', async (importActual) => {
-  const actual = await importActual<typeof import('../../src/main/agent/shared/auto-name')>();
+vi.mock('../../src/main/agent/shared/cli-print', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/cli-print')>();
   return {
     ...actual,
     runCliForChat: <T>(chatId: string, work: () => Promise<T>): Promise<T> => {

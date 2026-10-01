@@ -16,7 +16,7 @@
  * carries the narration of the turn that called the tool.
  */
 
-import type { AnswerStreamEvent } from '../../shared/auto-name';
+import type { AnswerStreamEvent } from '../../shared/cli-answer';
 
 interface CursorRecord {
   type?: unknown;

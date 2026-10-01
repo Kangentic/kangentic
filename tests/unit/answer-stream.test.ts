@@ -18,7 +18,7 @@ import {
   extractStreamedAnswer,
   extractLastTurnAnswer,
   createAnswerStreamReducer,
-} from '../../src/main/agent/shared/auto-name';
+} from '../../src/main/agent/shared/cli-answer';
 
 /** One `assistant` line of stream-json, as the CLI emits it. */
 function assistantLine(content: unknown[]): string {

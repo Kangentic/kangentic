@@ -59,7 +59,7 @@ at the Windows timer floor.
   refuses to launch its own executable, which with the RunAsNode fuse off would boot a second app.
   The background-shell watcher's process table also comes from the host (`listProcesses`), which
   keeps the probe's PowerShell child.
-- **Agent CLI runs start in the host too.** `spawnCli` (`src/main/agent/shared/auto-name.ts`)
+- **Agent CLI runs start in the host too.** `spawnCli` (`src/main/agent/shared/cli-print.ts`)
   starts every headless run (Ask, task summaries, auto-name, the warm answer session) through
   `spawnOffMainCli` (`off-main-cli.ts`): a `cliSpawn` command, so the handle (`RemoteCliProcess`)
   comes back at once and emits what a local child does, `spawn`, `data`, `exit`, `close`, in the
@@ -85,7 +85,7 @@ at the Windows timer floor.
   `off-main-pty.ts` fallback; fails on `promisify(exec)` / `promisify(execFile)` under
   `src/main` outside the drop-in and its two reasoned exceptions; pins that `host-exec.ts` and
   `host-cli-processes.ts` never fork and check for their own executable; pins that `spawnCli`
-  asks `spawnOffMainCli` before its local fallback, which is the only spawn in `auto-name.ts`; and
+  asks `spawnOffMainCli` before its local fallback, which is the only spawn in `cli-print.ts`; and
   pins that `child-tree-stop.ts` never forks, spawns nothing but `taskkill`, imports only `spawn`,
   and is the only place a CLI tree stop builds a `taskkill`. Runs in CI via `npm run test:unit`.
   `tests/unit/child-tree-stop.test.ts` pins each stop branch per platform.

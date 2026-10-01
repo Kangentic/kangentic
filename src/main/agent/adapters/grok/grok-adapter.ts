@@ -12,15 +12,14 @@ import { discoverGrokCapabilities } from './capability-discovery';
 import { ensureAnswerHomeTrust, ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { migrateGrokProjectData } from './project-relocation';
 import { grokSessionDir, grokUpdatesJsonlPath } from './session-paths';
+import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import {
-  runCliPrintSummarize,
   runCliPrintAnswer,
-  buildSummarizePrompt,
   createAnswerStreamReducer,
   extractLastTurnAnswer,
   forwardStreamLines,
   ANSWER_STREAM_OUTPUT_BUDGET,
-} from '../../shared/auto-name';
+} from '../../shared/cli-answer';
 
 /** The session id on a `streaming-messages-json` init line, or null. */
 export function grokInitSessionId(line: string): string | null {

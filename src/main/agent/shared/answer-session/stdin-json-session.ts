@@ -15,15 +15,13 @@
 import { StringDecoder } from 'node:string_decoder';
 import type { CliChildProcess } from '../../../utility-process/off-main-cli';
 import type { AnswerSession } from '../../agent-adapter';
+import { spawnCli, stderrExcerpt, stopCli } from '../cli-print';
 import {
   ANSWER_STREAM_OUTPUT_BUDGET,
   ANSWER_TIMEOUT_MS,
   cleanAnswerOutput,
-  spawnCli,
-  stderrExcerpt,
-  stopCli,
   type AnswerStreamEvent,
-} from '../auto-name';
+} from '../cli-answer';
 
 /**
  * Why a turn failed. Only `exited` before any text is worth a silent retry.

@@ -14,13 +14,8 @@ import {
 } from './transcript-parser';
 import { antigravityTranscriptPath } from './data-paths';
 import { runAntigravityPrint } from './print-runner';
-import {
-  buildSummarizePrompt,
-  cleanSummarizeOutput,
-  forwardStreamLines,
-  runCliPrintAnswer,
-  ANSWER_STREAM_OUTPUT_BUDGET,
-} from '../../shared/auto-name';
+import { buildSummarizePrompt, cleanSummarizeOutput } from '../../shared/auto-name';
+import { forwardStreamLines, runCliPrintAnswer, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { antigravityAnswerEvents, antigravityConversationId, removeAntigravityConversation } from './answer-stream';
 import type {
   AgentAdapter,

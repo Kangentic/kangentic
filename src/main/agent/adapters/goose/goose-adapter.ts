@@ -1,6 +1,6 @@
 import { GooseDetector } from './detector';
 import { interpolateTemplate } from '../../shared/template-utils';
-import { runCliPrintAnswer } from '../../shared/auto-name';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';

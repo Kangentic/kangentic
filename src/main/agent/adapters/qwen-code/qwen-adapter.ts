@@ -8,8 +8,8 @@ import { QwenStatusParser } from './status-parser';
 import { discoverQwenCapabilities } from './capability-discovery';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { migrateQwenProjectData } from './project-relocation';
-import { runCliPrintSummarize,
-  runCliPrintAnswer, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';

@@ -1,6 +1,6 @@
 /**
  * Stopping a child process and everything it started, for the agent CLI runs:
- * `stopCli` in `agent/shared/auto-name.ts` (a local run), the pty host's
+ * `stopCli` in `agent/shared/cli-print.ts` (a local run), the pty host's
  * `host-cli-processes.ts` (a run in the host), and main's backstop by pid when
  * the host died or the app is quitting (`stopAllCliRuns`, `pty-host-client.ts`).
  *

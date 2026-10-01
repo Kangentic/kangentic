@@ -9,7 +9,8 @@ import { graphService } from '../../retrieval/graph-facade';
 import { buildAnswerPrompt, buildFollowUpPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
 import { answerSessionPool, type PooledAnswerSession, type PrimedAnswerChat } from '../../retrieval/answer-session-pool';
 import { AnswerSessionError } from '../../agent/shared/answer-session/stdin-json-session';
-import { runCliForChat, stopCliRunsForChat, type AnswerStreamEvent } from '../../agent/shared/auto-name';
+import { runCliForChat, stopCliRunsForChat } from '../../agent/shared/cli-print';
+import type { AnswerStreamEvent } from '../../agent/shared/cli-answer';
 import {
   refPrefixFor,
   taskRef,
@@ -248,7 +249,8 @@ export function registerSearchHandlers(context: IpcContext): void {
    * Deliberately NOT routed through `spawnAgent`: this never touches
    * `executeTransition`, `resumeSuspendedSession` or `sessionManager.spawn`, so
    * it creates no PTY and no `sessions` row, and needs no spawn-parity allowlist
-   * entry. It is the auto-name spawn wearing a different output shape.
+   * entry. It is the headless runner auto-name uses (`cli-print.ts`), with the
+   * answer's output shape.
    */
   ipcMain.handle(
     IPC.KNOWLEDGE_GRAPH_ANSWER,

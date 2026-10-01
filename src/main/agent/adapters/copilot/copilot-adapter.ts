@@ -11,13 +11,8 @@ import { CopilotStreamParser } from './stream-parser';
 import { migrateCopilotProjectData } from './project-relocation';
 import { discoverCopilotCapabilities } from './capability-discovery';
 import { createCopilotCommandInjectionVerifier } from './command-injection-verifier';
-import {
-  runCliPrintSummarize,
-  runCliPrintAnswer,
-  buildSummarizePrompt,
-  forwardStreamLines,
-  ANSWER_STREAM_OUTPUT_BUDGET,
-} from '../../shared/auto-name';
+import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';

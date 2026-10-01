@@ -281,7 +281,7 @@ Always-on feature that suggests a task title from the task description, via each
 
 ### Implementation
 
-Implementations live next to each adapter and call the shared `runCliPrintSummarize` helper in `src/main/agent/shared/auto-name.ts`. Each adapter picks the right `args`, `promptVia`, and (if needed) `extractRaw`:
+Implementations live next to each adapter and call the shared `runCliPrintSummarize` helper in `src/main/agent/shared/auto-name.ts`, the title shape of the headless runner (`runCliPrint`, `src/main/agent/shared/cli-print.ts`). An answer run uses its answer shape, `runCliPrintAnswer` in `cli-answer.ts`. Each adapter picks the right `args`, `promptVia`, and (if needed) `extractRaw`:
 
 | Agent | Invocation | Prompt delivery |
 |-------|-----------|-----------------|

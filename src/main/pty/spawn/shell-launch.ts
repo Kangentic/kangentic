@@ -77,8 +77,8 @@ export function findExecutableSpawnHelper(): string | null {
  * - A target that cannot be exec'd exits 1 instead of emitting ENOENT. The
  *   target is always a shell, which exists. Do not route a launch of an agent
  *   binary through here as it stands: a missing CLI must keep surfacing as
- *   ENOENT. If one ever has to be (the headless auto-name runs in
- *   agent/shared/auto-name.ts are the likely next source of foreign crashes,
+ *   ENOENT. If one ever has to be (the headless agent runs in
+ *   agent/shared/cli-print.ts are the likely next source of foreign crashes,
  *   since agent hooks run there too), resolve the binary to an absolute path
  *   and check it with `fs.accessSync(path, X_OK)` first, so a missing CLI still
  *   fails as ENOENT before the helper is involved.

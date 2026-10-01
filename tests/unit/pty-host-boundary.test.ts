@@ -151,13 +151,13 @@ describe('pty host out-of-process boundary', () => {
     // spawnCli asks the drop-in first and spawns locally only when it returns
     // null (no host registered). That fallback is the file's only spawn: the
     // tree stops live in child-tree-stop.ts.
-    const autoName = fs.readFileSync(path.join(REPO_ROOT, 'src/main/agent/shared/auto-name.ts'), 'utf-8');
-    const spawnCliBody = autoName.slice(autoName.indexOf('export function spawnCli('));
+    const cliPrint = fs.readFileSync(path.join(REPO_ROOT, 'src/main/agent/shared/cli-print.ts'), 'utf-8');
+    const spawnCliBody = cliPrint.slice(cliPrint.indexOf('export function spawnCli('));
     const offMainAt = spawnCliBody.indexOf('spawnOffMainCli(');
     const localAt = spawnCliBody.indexOf('?? spawn(');
     expect(offMainAt, 'spawnCli must try spawnOffMainCli').toBeGreaterThan(-1);
     expect(localAt, 'spawnCli spawns locally only as the fallback').toBeGreaterThan(offMainAt);
-    const spawnCalls = autoName.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /(^|[^\w.])spawn\(/.test(line));
+    const spawnCalls = cliPrint.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /(^|[^\w.])spawn\(/.test(line));
     expect(spawnCalls.map((line) => line.trim())).toEqual([
       '}) ?? spawn(command, commandArgs, {',
     ]);
@@ -176,7 +176,7 @@ describe('pty host out-of-process boundary', () => {
     expect(imports).toEqual(["import { spawn } from 'node:child_process';"]);
     // Each former copy now goes through it.
     for (const site of [
-      'src/main/agent/shared/auto-name.ts',
+      'src/main/agent/shared/cli-print.ts',
       'src/main/pty/host/host-cli-processes.ts',
       'src/main/pty/host/pty-host-client.ts',
       'src/main/utility-process/off-main-cli.ts',

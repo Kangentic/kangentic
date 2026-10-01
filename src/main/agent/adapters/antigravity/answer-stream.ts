@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AnswerStreamEvent } from '../../shared/auto-name';
+import type { AnswerStreamEvent } from '../../shared/cli-answer';
 import { antigravityDataRoot } from './data-paths';
 
 interface AntigravityRecord {

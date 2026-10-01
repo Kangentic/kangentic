@@ -15,7 +15,7 @@ import {
   openStdinJsonSession,
   type StdinJsonSessionOptions,
 } from '../../src/main/agent/shared/answer-session/stdin-json-session';
-import { createAnswerStreamReducer, extractStreamedAnswer } from '../../src/main/agent/shared/auto-name';
+import { createAnswerStreamReducer, extractStreamedAnswer } from '../../src/main/agent/shared/cli-answer';
 
 class FakeChild extends EventEmitter {
   readonly stdin = new PassThrough();

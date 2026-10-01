@@ -25,8 +25,8 @@ import * as path from 'node:path';
 
 const { answerSpy } = vi.hoisted(() => ({ answerSpy: vi.fn(async () => 'answered') }));
 
-vi.mock('../../src/main/agent/shared/auto-name', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/main/agent/shared/auto-name')>();
+vi.mock('../../src/main/agent/shared/cli-answer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/shared/cli-answer')>();
   return { ...actual, runCliPrintAnswer: answerSpy };
 });
 
@@ -48,8 +48,8 @@ import {
 import { AiderAdapter, extractAiderAnswer } from '../../src/main/agent/adapters/aider/aider-adapter';
 import { GooseAdapter } from '../../src/main/agent/adapters/goose/goose-adapter';
 import { OllamaAdapter } from '../../src/main/agent/adapters/ollama/ollama-adapter';
-import { extractLastTurnAnswer, extractStreamedAnswer } from '../../src/main/agent/shared/auto-name';
-import type { RunCliPrintOptions } from '../../src/main/agent/shared/auto-name';
+import { extractLastTurnAnswer, extractStreamedAnswer } from '../../src/main/agent/shared/cli-answer';
+import type { RunCliPrintOptions } from '../../src/main/agent/shared/cli-print';
 
 /** The options the adapter handed the runner for one answer. */
 async function optionsFor(

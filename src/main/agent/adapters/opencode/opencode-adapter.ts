@@ -10,14 +10,9 @@ import { migrateOpenCodeProjectData } from './project-relocation';
 import { removeHooks as removeOpenCodeHooks } from './hook-manager';
 import { discoverOpenCodeCapabilities } from './capability-discovery';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages } from './remote-client';
-import {
-  runCliPrintSummarize,
-  runCliPrintAnswer,
-  buildSummarizePrompt,
-  forwardStreamLines,
-  spawnCli,
-  ANSWER_STREAM_OUTPUT_BUDGET,
-} from '../../shared/auto-name';
+import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { spawnCli } from '../../shared/cli-print';
+import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
