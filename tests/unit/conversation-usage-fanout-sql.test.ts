@@ -384,17 +384,20 @@ describeWithSqlite('getTaskFanOuts', () => {
 });
 
 describeWithSqlite('recordSpawnLinks', () => {
-  it('is idempotent across a re-walk', () => {
+  it('is idempotent across a re-walk: an unchanged link writes nothing, a changed one is rewritten', () => {
     const { store, db } = makeStore();
+    const readLinks = () => db.prepare('SELECT tool_use_id, turn_uuid, recorded_at FROM turn_spawn_links').all() as Array<{
+      tool_use_id: string; turn_uuid: string; recorded_at: string;
+    }>;
     store.recordSpawnLinks([{ toolUseId: 'toolu_1', turnUuid: 'driver-1' }], NOW);
     store.recordSpawnLinks([{ toolUseId: 'toolu_1', turnUuid: 'driver-1' }], '2026-09-16T00:00:00.000Z');
 
-    const rows = db.prepare('SELECT tool_use_id, turn_uuid, recorded_at FROM turn_spawn_links').all() as Array<{
-      tool_use_id: string; turn_uuid: string; recorded_at: string;
-    }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0].turn_uuid).toBe('driver-1');
-    expect(rows[0].recorded_at).toBe('2026-09-16T00:00:00.000Z');
+    // The same pair again leaves the row as it was: a re-walk of a long
+    // conversation must not rewrite every link it already holds.
+    expect(readLinks()).toEqual([{ tool_use_id: 'toolu_1', turn_uuid: 'driver-1', recorded_at: NOW }]);
+
+    store.recordSpawnLinks([{ toolUseId: 'toolu_1', turnUuid: 'driver-2' }], '2026-09-17T00:00:00.000Z');
+    expect(readLinks()).toEqual([{ tool_use_id: 'toolu_1', turn_uuid: 'driver-2', recorded_at: '2026-09-17T00:00:00.000Z' }]);
   });
 
   it('writes nothing on an empty batch', () => {

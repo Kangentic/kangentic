@@ -1495,7 +1495,8 @@ describe('Transcript-fallback handoff', () => {
     );
     managerInternals.statusFileReader.handleStatusChange(session.id);
 
-    expect(managerInternals.sessionHistoryReader.isAttached(session.id)).toBe(false);
+    // The status read is async; the detach follows its dispatch.
+    await vi.waitFor(() => expect(managerInternals.sessionHistoryReader.isAttached(session.id)).toBe(false));
   });
 
   // On a RESUME the transcript already holds the PRE-suspend conversation, whose
@@ -1630,8 +1631,9 @@ describe('Transcript-fallback handoff', () => {
 
     // Proves the nested onAgentSessionId capture actually fired - without
     // this, the assertion below would pass for the wrong reason (like the
-    // sibling test, purely from the unconditional detach wiring).
-    expect(capturedAgentSessionIds).toContain('handoff-session-uuid-nested');
+    // sibling test, purely from the unconditional detach wiring). The status
+    // read is async, so wait for its dispatch.
+    await vi.waitFor(() => expect(capturedAgentSessionIds).toContain('handoff-session-uuid-nested'));
     // The fallback still ends up detached: onFirstStatus's detach (fired
     // immediately after onUsageParsed, in the same synchronous call stack)
     // must win over the nested re-attach.
@@ -1696,14 +1698,15 @@ describe('Transcript-fallback handoff', () => {
     // First status write: normal capture of the launch id, fallback detaches.
     fs.writeFileSync(statusPath, statusPayload('fork-uuid-original'));
     managerInternals.statusFileReader.handleStatusChange(session.id);
-    expect(capturedAgentSessionIds).toEqual(['fork-uuid-original']);
+    // Status reads are async: wait for each dispatch before the next write.
+    await vi.waitFor(() => expect(capturedAgentSessionIds).toEqual(['fork-uuid-original']));
     expect(managerInternals.sessionHistoryReader.isAttached(session.id)).toBe(false);
 
     // The fork: status.json re-reports a DIFFERENT id.
     fs.writeFileSync(statusPath, statusPayload('fork-uuid-after-clear'));
     managerInternals.statusFileReader.handleStatusChange(session.id);
 
-    expect(capturedAgentSessionIds).toEqual(['fork-uuid-original', 'fork-uuid-after-clear']);
+    await vi.waitFor(() => expect(capturedAgentSessionIds).toEqual(['fork-uuid-original', 'fork-uuid-after-clear']));
     // The live session mutated and 'session-changed' carried the new id out.
     expect(sessionChangedAgentIds).toContain('fork-uuid-after-clear');
     // The deliberately-detached transcript fallback stays detached.
@@ -1712,6 +1715,8 @@ describe('Transcript-fallback handoff', () => {
     // Same-id churn after the fork stays quiet.
     fs.writeFileSync(statusPath, statusPayload('fork-uuid-after-clear'));
     managerInternals.statusFileReader.handleStatusChange(session.id);
+    // Let the async read land before asserting nothing new fired.
+    await new Promise((resolve) => setTimeout(resolve, 30));
     expect(capturedAgentSessionIds).toEqual(['fork-uuid-original', 'fork-uuid-after-clear']);
   });
 });

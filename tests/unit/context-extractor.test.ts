@@ -1,23 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TranscriptWriter, stripAnsiEscapes } from '../../src/main/pty/buffer/transcript-writer';
+import { TranscriptWriter } from '../../src/main/pty/buffer/transcript-writer';
 
 // --- TranscriptWriter class ---
 
 describe('TranscriptWriter', () => {
-  const mockRepo = {
-    create: vi.fn(),
-    appendChunk: vi.fn(),
-    getBySessionId: vi.fn(),
-    getTranscriptText: vi.fn(),
-    getSizeBytes: vi.fn(),
-  };
+  const sink = { appendChunk: vi.fn() };
 
   let writer: TranscriptWriter;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    writer = new TranscriptWriter(mockRepo as never);
+    // Every session belongs to one project whose database is open.
+    writer = new TranscriptWriter(() => 'project-1', () => sink);
   });
 
   afterEach(() => {
@@ -29,49 +24,34 @@ describe('TranscriptWriter', () => {
     writer.onData('session-1', ' \x1b[32mworld\x1b[0m');
 
     // Nothing flushed yet (debounced)
-    expect(mockRepo.appendChunk).not.toHaveBeenCalled();
+    expect(sink.appendChunk).not.toHaveBeenCalled();
 
     // Finalize forces flush
     writer.finalize('session-1');
-    expect(mockRepo.appendChunk).toHaveBeenCalledOnce();
-    expect(mockRepo.appendChunk).toHaveBeenCalledWith('session-1', 'hello world');
+    expect(sink.appendChunk).toHaveBeenCalledOnce();
+    expect(sink.appendChunk).toHaveBeenCalledWith('session-1', 'hello world');
   });
 
-  it('lazily creates transcript row on first flush', () => {
-    writer.onData('session-1', 'hello');
-
-    // No DB calls yet (debounced)
-    expect(mockRepo.create).not.toHaveBeenCalled();
-
-    // First flush creates the row then appends
-    writer.finalize('session-1');
-    expect(mockRepo.create).toHaveBeenCalledOnce();
-    expect(mockRepo.create).toHaveBeenCalledWith('session-1');
-    expect(mockRepo.appendChunk).toHaveBeenCalledOnce();
-  });
-
-  it('does not re-create row on subsequent flushes', () => {
+  it('writes each flush as its own piece, with no row to create first', () => {
     writer.onData('session-1', 'a');
     writer.finalize('session-1');
 
     writer.onData('session-1', 'b');
     writer.finalize('session-1');
 
-    // create called only once, appendChunk called twice
-    expect(mockRepo.create).toHaveBeenCalledOnce();
-    expect(mockRepo.appendChunk).toHaveBeenCalledTimes(2);
+    expect(sink.appendChunk.mock.calls).toEqual([['session-1', 'a'], ['session-1', 'b']]);
   });
 
   it('flushes automatically after 30 seconds', () => {
     writer.onData('session-1', 'hello');
 
-    expect(mockRepo.appendChunk).not.toHaveBeenCalled();
+    expect(sink.appendChunk).not.toHaveBeenCalled();
 
     // Advance past the 30s debounce
     vi.advanceTimersByTime(30_000);
 
-    expect(mockRepo.appendChunk).toHaveBeenCalledOnce();
-    expect(mockRepo.appendChunk).toHaveBeenCalledWith('session-1', 'hello');
+    expect(sink.appendChunk).toHaveBeenCalledOnce();
+    expect(sink.appendChunk).toHaveBeenCalledWith('session-1', 'hello');
   });
 
   it('debounces multiple onData calls into a single flush', () => {
@@ -81,8 +61,8 @@ describe('TranscriptWriter', () => {
 
     vi.advanceTimersByTime(30_000);
 
-    expect(mockRepo.appendChunk).toHaveBeenCalledOnce();
-    expect(mockRepo.appendChunk).toHaveBeenCalledWith('session-1', 'abc');
+    expect(sink.appendChunk).toHaveBeenCalledOnce();
+    expect(sink.appendChunk).toHaveBeenCalledWith('session-1', 'abc');
   });
 
   it('handles multiple sessions independently', () => {
@@ -92,9 +72,9 @@ describe('TranscriptWriter', () => {
     writer.finalize('session-1');
     writer.finalize('session-2');
 
-    expect(mockRepo.appendChunk).toHaveBeenCalledTimes(2);
-    expect(mockRepo.appendChunk).toHaveBeenCalledWith('session-1', 'hello');
-    expect(mockRepo.appendChunk).toHaveBeenCalledWith('session-2', 'world');
+    expect(sink.appendChunk).toHaveBeenCalledTimes(2);
+    expect(sink.appendChunk).toHaveBeenCalledWith('session-1', 'hello');
+    expect(sink.appendChunk).toHaveBeenCalledWith('session-2', 'world');
   });
 
   it('finalize clears the pending buffer', () => {
@@ -103,20 +83,20 @@ describe('TranscriptWriter', () => {
 
     // Second finalize should be a no-op (buffer is empty)
     writer.finalize('session-1');
-    expect(mockRepo.appendChunk).toHaveBeenCalledOnce();
+    expect(sink.appendChunk).toHaveBeenCalledOnce();
   });
 
-  it('remove flushes and cleans up initialized state', () => {
+  it('remove flushes the remainder and forgets the session', () => {
     writer.onData('session-1', 'data');
     writer.remove('session-1');
 
-    expect(mockRepo.appendChunk).toHaveBeenCalledOnce();
+    expect(sink.appendChunk).toHaveBeenCalledOnce();
 
-    // After remove, next flush re-creates the row (initialized state cleared)
+    // A later session under the same id starts clean.
     writer.onData('session-1', 'more');
     writer.finalize('session-1');
-    expect(mockRepo.create).toHaveBeenCalledTimes(2);
-    expect(mockRepo.appendChunk).toHaveBeenCalledTimes(2);
+    expect(sink.appendChunk).toHaveBeenCalledTimes(2);
+    expect(sink.appendChunk).toHaveBeenLastCalledWith('session-1', 'more');
   });
 
   it('skips empty data after ANSI stripping', () => {
@@ -125,12 +105,11 @@ describe('TranscriptWriter', () => {
 
     writer.finalize('session-1');
     // No flush should happen (nothing to write)
-    expect(mockRepo.create).not.toHaveBeenCalled();
-    expect(mockRepo.appendChunk).not.toHaveBeenCalled();
+    expect(sink.appendChunk).not.toHaveBeenCalled();
   });
 
   it('swallows DB errors without crashing', () => {
-    mockRepo.create.mockImplementationOnce(() => {
+    sink.appendChunk.mockImplementationOnce(() => {
       throw new Error('DB write failed');
     });
 
@@ -146,6 +125,6 @@ describe('TranscriptWriter', () => {
 
     writer.finalizeAll();
 
-    expect(mockRepo.appendChunk).toHaveBeenCalledTimes(2);
+    expect(sink.appendChunk).toHaveBeenCalledTimes(2);
   });
 });

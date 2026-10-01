@@ -3,6 +3,8 @@ import type Database from 'better-sqlite3';
 
 vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({
   timeSyncWork: <T>(_label: string, work: () => T): T => work(),
+  isTimingSyncWork: () => false,
+  recordSyncSpan: () => undefined,
 }));
 
 import {
