@@ -9,6 +9,7 @@ import { relaunchApp, devRestartFileFrom } from './app-relaunch';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
+import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
 import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
@@ -909,6 +910,10 @@ if (!isEphemeral && !isE2ETest) {
     });
   }
 }
+
+// Before any PTY exists: node-pty's Windows kill would otherwise fork a second
+// Kangentic.exe, which lands in the 'second-instance' handler above.
+skipConsoleListHelper();
 
 let mainWindow: BrowserWindow | null = null;
 let activateAllProjectsTimer: ReturnType<typeof setTimeout> | null = null;
