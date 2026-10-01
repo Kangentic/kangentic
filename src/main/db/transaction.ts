@@ -17,18 +17,44 @@
  */
 
 import type Database from 'better-sqlite3';
-import { timeSyncWork } from '../diagnostics/event-loop-lag';
+import { isTimingSyncWork, recordSyncSpan } from '../diagnostics/event-loop-lag';
 
 /**
  * `db.transaction(body)`, begun IMMEDIATE. Call the result to run it; nested
  * calls become savepoints, as with any better-sqlite3 transaction function.
- * Each run is timed, so a transaction that waited on the other process's write
- * shows in the slow-work log.
+ *
+ * Each run is timed in two parts, because they mean different things:
+ * `db:lock-wait` is the time BEGIN spent waiting for the other process to
+ * commit (on Windows SQLite's busy retry sleeps at least one 15.6 ms timer
+ * tick), and `db:transaction` is the time this connection held the lock, from
+ * the body's start through the commit. A long hold makes the other process
+ * wait; a long wait means this one did.
  */
 export function writeTransaction<Args extends unknown[], Result>(
   db: Database.Database,
   body: (...args: Args) => Result,
 ): (...args: Args) => Result {
-  const immediate = db.transaction(body).immediate;
-  return (...args: Args): Result => timeSyncWork('db:transaction', () => immediate(...args));
+  let bodyStartedAt = 0;
+  const immediate = db.transaction((...args: Args): Result => {
+    if (bodyStartedAt === 0) bodyStartedAt = performance.now();
+    return body(...args);
+  }).immediate;
+  return (...args: Args): Result => {
+    if (!isTimingSyncWork()) return immediate(...args);
+    const startedAt = performance.now();
+    // A nested run of this same function (a savepoint) restores the outer
+    // run's mark when it finishes.
+    const outerBodyStartedAt = bodyStartedAt;
+    bodyStartedAt = 0;
+    try {
+      return immediate(...args);
+    } finally {
+      const endedAt = performance.now();
+      const lockedAt = bodyStartedAt === 0 ? endedAt : bodyStartedAt;
+      bodyStartedAt = outerBodyStartedAt;
+      const waitedMs = lockedAt - startedAt;
+      if (waitedMs >= 1) recordSyncSpan('db:lock-wait', waitedMs);
+      recordSyncSpan('db:transaction', endedAt - lockedAt);
+    }
+  };
 }

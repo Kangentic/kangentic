@@ -2,6 +2,15 @@ import type Database from 'better-sqlite3';
 import { hasVecSupport } from './vec-support';
 import { BOARD_TASK_FACTS_SQL, type BoardTaskFactsRow } from './board-task-facts';
 import { EMBEDDED_CORPORA, isMemoryCorpus, MEMORY_CORPORA, vecTableName, type MemoryCorpus } from './corpora';
+import {
+  CONVERSATION_VEC_COPY_KEY,
+  CONVERSATION_VEC_TABLE,
+  LEGACY_CONVERSATION_VEC_BLOCKS,
+  LEGACY_CONVERSATION_VEC_TABLE,
+  legacyConversationVecPending,
+  setVecLayout,
+  vecLayout,
+} from './vec-layout';
 import type {
   ChunkInput,
   ChunkPlacement,
@@ -46,10 +55,9 @@ export const DELETES_PER_TRANSACTION = 64;
  * 128 it is 512 KB (measured on 30k real vectors: no batch of 8 at 16 ms or
  * more, against 30 of 3,750 at 1,024; a k=1000 KNN 115 ms against 122).
  *
- * Set when a table is created. A table made at the old size keeps it until its
- * next reset (a model switch that changes the width): vec0 0.1.9 has no rename,
- * so a rebuild in place would copy every vector at 1.3 ms each into a table
- * under another name, which every read and write would then have to follow.
+ * Set when a table is created, and vec0 0.1.9 has no rename: the conversation
+ * table older releases made at 1,024 is copied into one at this size by the
+ * retrieval worker (`vec-layout.ts`, `vec.migrateLayout`).
  */
 const VEC_CHUNK_SIZE = 128;
 
@@ -192,6 +200,12 @@ export class RetrievalStore {
   /** The corpora whose vec table exists on this connection. */
   private readonly vecTables = new Set<MemoryCorpus>();
 
+  /** The vec0 table `corpus` reads and writes on this connection: the
+   *  conversation one follows the layout while its old table is copied. */
+  private tableOf(corpus: MemoryCorpus): string {
+    return corpus === 'conversation' ? vecLayout(this.db).conversationTable : vecTableName(corpus);
+  }
+
   constructor(private readonly db: Database.Database) {
     // The vec tables' dimension is fixed by the selected model, which only the
     // embedding path knows, so the store does NOT create them here. It only
@@ -203,7 +217,7 @@ export class RetrievalStore {
         try {
           const exists = this.db
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-            .get(vecTableName(corpus));
+            .get(this.tableOf(corpus));
           if (exists !== undefined) this.vecTables.add(corpus);
         } catch {
           // Treated as absent: that corpus searches lexically only.
@@ -476,7 +490,9 @@ export class RetrievalStore {
       this.db.prepare(`DELETE FROM memory_index_state WHERE corpus IN (${corpusPlaceholders(corpora)})`).run(...corpora);
       // Any vector left without a chunk; the table is otherwise empty by now.
       for (const corpus of corpora) {
-        if (this.hasVecTable(corpus)) this.db.prepare(`DELETE FROM ${vecTableName(corpus)}`).run();
+        if (this.hasVecTable(corpus)) this.db.prepare(`DELETE FROM ${this.tableOf(corpus)}`).run();
+        const copyTarget = corpus === 'conversation' ? vecLayout(this.db).copyTarget : null;
+        if (copyTarget) this.db.prepare(`DELETE FROM ${copyTarget}`).run();
       }
     })();
     for (const corpus of corpora) this.clearDocSums(corpus);
@@ -858,7 +874,7 @@ export class RetrievalStore {
     if (!hasVecSupport(this.db)) return;
     for (const corpus of EMBEDDED_CORPORA) {
       try {
-        this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${vecTableName(corpus)} ${vecTableDefinition(dimensions)}`);
+        this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${this.tableOf(corpus)} ${vecTableDefinition(dimensions)}`);
         this.vecTables.add(corpus);
       } catch (error) {
         console.warn(`[retrieval] vec table create failed for ${corpus}, lexical-only:`, error);
@@ -893,11 +909,15 @@ export class RetrievalStore {
     // table's vector blocks allocated. It runs once per model switch that
     // changes the width, which the user asks for.
     writeTransaction(this.db, () => {
+      // The older conversation table too, and any copy into the new one.
+      this.db.exec(`DROP TABLE IF EXISTS ${LEGACY_CONVERSATION_VEC_TABLE}`);
+      this.db.prepare('DELETE FROM memory_meta WHERE key = ?').run(CONVERSATION_VEC_COPY_KEY);
       for (const corpus of MEMORY_CORPORA) this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
       for (const corpus of EMBEDDED_CORPORA) {
         this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} ${vecTableDefinition(dimensions)}`);
       }
     })();
+    setVecLayout(this.db, { conversationTable: CONVERSATION_VEC_TABLE, copyTarget: null });
     this.vecTables.clear();
     for (const corpus of EMBEDDED_CORPORA) this.vecTables.add(corpus);
     // Sums of vectors at the old width. The pass would replace them anyway,
@@ -943,12 +963,7 @@ export class RetrievalStore {
       const markChunk = this.db.prepare('UPDATE memory_chunks SET embedded_model = ? WHERE id = ?');
       // Prepared once per vec table a batch touches, not twice per row.
       const statementsByTable = new Map<string, { remove: Database.Statement; insert: Database.Statement }>();
-      for (const { chunkId, vector, contentHash } of rows) {
-        const current = checkHash.get(chunkId) as { content_hash: string; corpus: string } | undefined;
-        if (!current || current.content_hash !== contentHash) continue;
-        // A corpus with no table on this connection stays pending.
-        if (!isMemoryCorpus(current.corpus) || !this.vecTables.has(current.corpus)) continue;
-        const table = vecTableName(current.corpus);
+      const statementsFor = (table: string): { remove: Database.Statement; insert: Database.Statement } => {
         let statements = statementsByTable.get(table);
         if (!statements) {
           statements = {
@@ -957,12 +972,29 @@ export class RetrievalStore {
           };
           statementsByTable.set(table, statements);
         }
+        return statements;
+      };
+      const copyTarget = vecLayout(this.db).copyTarget;
+      for (const { chunkId, vector, contentHash } of rows) {
+        const current = checkHash.get(chunkId) as { content_hash: string; corpus: string } | undefined;
+        if (!current || current.content_hash !== contentHash) continue;
+        // A corpus with no table on this connection stays pending.
+        if (!isMemoryCorpus(current.corpus) || !this.vecTables.has(current.corpus)) continue;
+        // While the older conversation table is copied, the new one gets every
+        // vector too, so one written behind the copy is not lost at the switch.
+        const tables = current.corpus === 'conversation' && copyTarget
+          ? [this.tableOf(current.corpus), copyTarget]
+          : [this.tableOf(current.corpus)];
         // vec0 rejects a JS number for its rowid ("Only integers are allowed
         // for primary key values") - it must be bound as a BigInt (verified
         // against sqlite-vec 0.1.9 under Electron).
         const rowid = BigInt(chunkId);
-        statements.remove.run(rowid);
-        statements.insert.run(rowid, Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength));
+        const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
+        for (const table of tables) {
+          const statements = statementsFor(table);
+          statements.remove.run(rowid);
+          statements.insert.run(rowid, blob);
+        }
         markChunk.run(modelTag, chunkId);
       }
     });
@@ -984,7 +1016,7 @@ export class RetrievalStore {
       const rows = this.db
         .prepare(
           `SELECT rowid AS id, distance
-           FROM ${vecTableName(corpus)}
+           FROM ${this.tableOf(corpus)}
            WHERE embedding MATCH ? AND k = ?
            ORDER BY distance`,
         )
@@ -1206,7 +1238,7 @@ export class RetrievalStore {
     if (!this.vecTables.has(corpus) || chunkIds.length === 0) return vectors;
     const placeholders = chunkIds.map(() => '?').join(',');
     const rows = this.db
-      .prepare(`SELECT rowid AS id, embedding FROM ${vecTableName(corpus)} WHERE rowid IN (${placeholders})`)
+      .prepare(`SELECT rowid AS id, embedding FROM ${this.tableOf(corpus)} WHERE rowid IN (${placeholders})`)
       .all(...chunkIds) as Array<{ id: number; embedding: Buffer }>;
     for (const row of rows) {
       // Copy out of the sqlite-owned buffer: the statement's memory is reused
@@ -1681,7 +1713,7 @@ export class RetrievalStore {
     for (const corpus of this.vecTables) {
       // Found by a read, deleted in short transactions.
       const orphans = (this.db
-        .prepare(`SELECT rowid AS id FROM ${vecTableName(corpus)} WHERE rowid NOT IN (SELECT id FROM memory_chunks WHERE corpus = ?)`)
+        .prepare(`SELECT rowid AS id FROM ${this.tableOf(corpus)} WHERE rowid NOT IN (SELECT id FROM memory_chunks WHERE corpus = ?)`)
         .all(corpus) as Array<{ id: number | bigint }>).map((row) => Number(row.id));
       for (let start = 0; start < orphans.length; start += DELETES_PER_TRANSACTION) {
         const batch = orphans.slice(start, start + DELETES_PER_TRANSACTION);
@@ -1696,11 +1728,121 @@ export class RetrievalStore {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
     const tables = isMemoryCorpus(corpus) ? [corpus] : [...MEMORY_CORPORA];
+    const rowids = ids.map((id) => BigInt(id));
     for (const table of tables) {
       if (!this.hasVecTable(table)) continue;
       // vec0 rowids must be bound as BigInt (see writeEmbeddings).
-      this.db.prepare(`DELETE FROM ${vecTableName(table)} WHERE rowid IN (${placeholders})`).run(...ids.map((id) => BigInt(id)));
+      this.db.prepare(`DELETE FROM ${this.tableOf(table)} WHERE rowid IN (${placeholders})`).run(...rowids);
+      const copyTarget = table === 'conversation' ? vecLayout(this.db).copyTarget : null;
+      if (copyTarget) this.db.prepare(`DELETE FROM ${copyTarget} WHERE rowid IN (${placeholders})`).run(...rowids);
     }
+  }
+
+  // --- The conversation table's move to chunk size 128 (`vec-layout.ts`) ---
+
+  /**
+   * Start copying the older conversation table into the new one: create it at
+   * the old table's width and record where the copy stands, in one write.
+   * False when there is nothing to copy (no older table, a copy already
+   * running, or no sqlite-vec here). An older table holding no vector is
+   * dropped at once, since it frees nothing worth splitting up.
+   */
+  beginConversationVecCopy(): boolean {
+    if (!hasVecSupport(this.db)) return false;
+    const layout = vecLayout(this.db);
+    if (layout.conversationTable !== LEGACY_CONVERSATION_VEC_TABLE || layout.copyTarget) return false;
+    const sample = this.db.prepare(`SELECT embedding FROM ${LEGACY_CONVERSATION_VEC_TABLE} LIMIT 1`).get() as { embedding: Buffer } | undefined;
+    if (!sample) {
+      const dimensions = Number(this.getMeta('vec_dims')) || 0;
+      writeTransaction(this.db, () => {
+        this.db.exec(`DROP TABLE ${LEGACY_CONVERSATION_VEC_TABLE}`);
+        if (dimensions > 0) this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${CONVERSATION_VEC_TABLE} ${vecTableDefinition(dimensions)}`);
+      })();
+      setVecLayout(this.db, { conversationTable: CONVERSATION_VEC_TABLE, copyTarget: null });
+      if (dimensions > 0) this.vecTables.add('conversation');
+      else this.vecTables.delete('conversation');
+      return false;
+    }
+    const dimensions = sample.embedding.byteLength / 4;
+    writeTransaction(this.db, () => {
+      this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${CONVERSATION_VEC_TABLE} ${vecTableDefinition(dimensions)}`);
+      this.db.prepare('INSERT INTO memory_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING').run(CONVERSATION_VEC_COPY_KEY, '0');
+    })();
+    setVecLayout(this.db, { conversationTable: LEGACY_CONVERSATION_VEC_TABLE, copyTarget: CONVERSATION_VEC_TABLE });
+    return true;
+  }
+
+  /**
+   * Copy the next `limit` conversation vectors, in chunk id order, into the
+   * new table: read outside the transaction (vec0 reads cost about 1 ms a
+   * vector), written in one short one with the copy's new position. A vector
+   * written or deleted since went to both tables, so copying it again is the
+   * same delete and insert. Returns how many chunks the step covered (0 when
+   * the copy is through, or was stopped by a reset) and how long it held the
+   * write lock.
+   */
+  copyConversationVecBatch(limit: number): { covered: number; heldMs: number } {
+    const layout = vecLayout(this.db);
+    if (!layout.copyTarget) return { covered: 0, heldMs: 0 };
+    const through = Number(this.getMeta(CONVERSATION_VEC_COPY_KEY) ?? NaN);
+    if (!Number.isFinite(through)) return { covered: 0, heldMs: 0 };
+    const ids = (this.db
+      .prepare(`SELECT id FROM memory_chunks WHERE corpus = 'conversation' AND embedded_model IS NOT NULL AND id > ? ORDER BY id LIMIT ?`)
+      .all(through, limit) as Array<{ id: number }>).map((row) => row.id);
+    if (ids.length === 0) return { covered: 0, heldMs: 0 };
+    const placeholders = ids.map(() => '?').join(',');
+    const vectors = this.db
+      .prepare(`SELECT rowid AS id, embedding FROM ${LEGACY_CONVERSATION_VEC_TABLE} WHERE rowid IN (${placeholders})`)
+      .all(...ids) as Array<{ id: number | bigint; embedding: Buffer }>;
+    const target = layout.copyTarget;
+    const writeStarted = performance.now();
+    writeTransaction(this.db, () => {
+      const remove = this.db.prepare(`DELETE FROM ${target} WHERE rowid = ?`);
+      const insert = this.db.prepare(`INSERT INTO ${target}(rowid, embedding) VALUES (?, ?)`);
+      for (const vector of vectors) {
+        const rowid = BigInt(vector.id);
+        remove.run(rowid);
+        insert.run(rowid, vector.embedding);
+      }
+      this.db.prepare('UPDATE memory_meta SET value = ? WHERE key = ?').run(String(ids[ids.length - 1]), CONVERSATION_VEC_COPY_KEY);
+    })();
+    return { covered: ids.length, heldMs: performance.now() - writeStarted };
+  }
+
+  /** Switch conversation reads to the new table, in one write. */
+  finishConversationVecCopy(): void {
+    if (!vecLayout(this.db).copyTarget) return;
+    writeTransaction(this.db, () => {
+      this.db.prepare('DELETE FROM memory_meta WHERE key = ?').run(CONVERSATION_VEC_COPY_KEY);
+    })();
+    setVecLayout(this.db, { conversationTable: CONVERSATION_VEC_TABLE, copyTarget: null });
+    this.vecTables.add('conversation');
+  }
+
+  /**
+   * Free the older table once nothing reads it: one 4 MB vector block per
+   * call, each in its own transaction, then the table itself (its other
+   * shadow tables are a few MB). Dropping it whole would free about 400 MB in
+   * one transaction. Returns true while there is more to free.
+   */
+  freeLegacyConversationVecStep(): boolean {
+    if (!legacyConversationVecPending(this.db)) return false;
+    const blocks = this.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(LEGACY_CONVERSATION_VEC_BLOCKS) !== undefined
+      ? this.db.prepare(`SELECT rowid AS id FROM ${LEGACY_CONVERSATION_VEC_BLOCKS} LIMIT 1`).get() as { id: number } | undefined
+      : undefined;
+    if (blocks) {
+      writeTransaction(this.db, () => {
+        this.db.prepare(`DELETE FROM ${LEGACY_CONVERSATION_VEC_BLOCKS} WHERE rowid = ?`).run(blocks.id);
+      })();
+      return true;
+    }
+    if (!hasVecSupport(this.db)) return false;
+    writeTransaction(this.db, () => {
+      this.db.exec(`DROP TABLE IF EXISTS ${LEGACY_CONVERSATION_VEC_TABLE}`);
+    })();
+    return false;
   }
 
   /**
@@ -1719,10 +1861,10 @@ export class RetrievalStore {
     if (!EMBEDDED_CORPORA.includes(corpus)) return false;
     const exists = this.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get(vecTableName(corpus));
+      .get(this.tableOf(corpus));
     if (exists === undefined) return false;
     if (!hasVecSupport(this.db)) {
-      throw new Error(`${vecTableName(corpus)} exists but sqlite-vec is not loaded on this connection; its vectors cannot be deleted`);
+      throw new Error(`${this.tableOf(corpus)} exists but sqlite-vec is not loaded on this connection; its vectors cannot be deleted`);
     }
     this.vecTables.add(corpus);
     return true;

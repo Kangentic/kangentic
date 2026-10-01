@@ -53,15 +53,19 @@ export function isEmbeddedCorpus(corpus: MemoryCorpus): boolean {
 }
 
 /**
- * The vec0 table holding one corpus's vectors, rowid = chunk id.
+ * The vec0 table holding one corpus's vectors, rowid = chunk id, at chunk
+ * size 128.
  *
- * Conversations keep the original table name. The others are deliberately NOT
- * `memory_chunks_vec_<corpus>`: vec0 names its own shadow tables
- * `memory_chunks_vec_<suffix>`, and a corpus table in that namespace would read
- * as one of them to anyone scanning `sqlite_master`.
+ * Deliberately NOT `memory_chunks_vec_<corpus>`: vec0 names the shadow tables
+ * of the conversation table older releases made (`memory_chunks_vec`)
+ * `memory_chunks_vec_<suffix>`, and a corpus table in that namespace would
+ * read as one of them to anyone scanning `sqlite_master`. A connection whose
+ * conversation vectors are still in that older table reads it until the copy
+ * switches over (`vec-layout.ts`); a store asks `vecLayout` for the
+ * conversation table rather than this name.
  */
 export function vecTableName(corpus: MemoryCorpus): string {
-  return corpus === 'conversation' ? 'memory_chunks_vec' : `memory_vec_${corpus}`;
+  return `memory_vec_${corpus}`;
 }
 
 export function isMemoryCorpus(value: string): value is MemoryCorpus {

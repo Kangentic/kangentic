@@ -180,8 +180,9 @@ export async function seedKnowledgeGraphFromRealIndex(
       .prepare(`SELECT value FROM memory_meta WHERE key = 'vec_dims'`)
       .get() as { value: string } | undefined;
     const dimensions = dimensionsRow ? Number(dimensionsRow.value) : 0;
+    // Either name: older releases' table, or the one the copy moves it to.
     const sourceHasVec = sourceDb
-      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_chunks_vec'")
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name IN ('memory_chunks_vec', 'memory_vec_conversation')")
       .get() !== undefined;
     if (!sourceHasVec || !dimensions) {
       throw new NoRealIndexError('The real project has no embedded index to mirror (semantic search may never have run there)');

@@ -259,17 +259,18 @@ export function slowSyncWorkSince(sinceMs: number): SlowSyncWork[] {
  * loop exactly as long as a slow success.
  */
 export function timeSyncWork<T>(label: string, work: () => T): T {
-  if (timer === null && spanRelay === null) return work();
+  if (!isTimingSyncWork()) return work();
   const startedAt = performance.now();
   try {
     return work();
   } finally {
-    const elapsed = performance.now() - startedAt;
-    // A relaying process counts every span too, for its own counters
-    // (`getSyncWorkByLabel`), which show what the relay's threshold hides.
-    if (timer !== null || spanRelay !== null) recordSpan(label, elapsed);
-    if (spanRelay !== null && elapsed >= SLOW_SYNC_THRESHOLD_MS) spanRelay(label, elapsed);
+    recordSyncSpan(label, performance.now() - startedAt);
   }
+}
+
+/** True while spans are counted: the monitor runs here, or spans are relayed. */
+export function isTimingSyncWork(): boolean {
+  return timer !== null || spanRelay !== null;
 }
 
 /**

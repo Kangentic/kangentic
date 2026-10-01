@@ -2,6 +2,7 @@ import * as pty from 'node-pty';
 import * as path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { Session, SessionContext, SpawnSessionInput } from '../../../shared/types';
 import type { SessionRegistry, ManagedSession } from '../session-registry';
 import { toSession } from '../session-registry';
@@ -408,7 +409,7 @@ export async function performSpawn(
   //     self-reported session ID (ANSI-stripped for ConPTY).
   //   - Stream telemetry parser (adapter-specific, lazy init on first chunk).
   //   - PTY activity detection (yields to hook-based for 'hooks_and_pty').
-  const ptyDataDisposable = ptyProcess.onData((data: string) => {
+  const ptyDataDisposable = ptyProcess.onData((data: string) => timeSyncWork('pty:data', () => {
     context.bufferManager.onData(id, data);
 
     // Dev-only: record chunk arrival for the trace replay pipeline.
@@ -487,7 +488,7 @@ export async function performSpawn(
         }
       }
     }
-  });
+  }));
 
   // PTY exit cleanup sequence. Don't overwrite 'suspended' - suspend()
   // sets that before killing the PTY, and the new status must survive.

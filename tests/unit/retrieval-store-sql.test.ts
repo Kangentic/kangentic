@@ -275,7 +275,7 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
     const { db, calls } = makeRecordingDb({
       get: (sql) =>
         sql.includes('sqlite_master')
-          ? { name: 'memory_chunks_vec' }
+          ? { name: 'memory_vec_conversation' }
           : sql.includes('content_hash')
             ? { content_hash: 'hash-7', corpus: 'conversation' }
             : undefined,
@@ -291,8 +291,8 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
     expect(calls.some((call) => /ON CONFLICT|UPSERT/i.test(call.sql))).toBe(false);
 
     // The rowid is deleted first, then inserted fresh, both against the vec table.
-    const deleteCall = findRun(calls, 'DELETE FROM memory_chunks_vec');
-    const insertCall = findRun(calls, 'INSERT INTO memory_chunks_vec');
+    const deleteCall = findRun(calls, 'DELETE FROM memory_vec_conversation');
+    const insertCall = findRun(calls, 'INSERT INTO memory_vec_conversation');
     expect(deleteCall).toBeDefined();
     expect(insertCall).toBeDefined();
     expect(calls.indexOf(deleteCall as RecordedCall)).toBeLessThan(calls.indexOf(insertCall as RecordedCall));
@@ -323,7 +323,7 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
     );
 
     expect(findRun(calls, 'INSERT INTO memory_vec_task')?.args[0]).toBe(9n);
-    expect(findRun(calls, 'INSERT INTO memory_chunks_vec')).toBeUndefined();
+    expect(findRun(calls, 'INSERT INTO memory_vec_conversation')).toBeUndefined();
   });
 
   it('skips a chunk whose content_hash changed since it was fetched, without writing a stale vector', () => {
@@ -337,7 +337,7 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
     const { db, calls } = makeRecordingDb({
       get: (sql) =>
         sql.includes('sqlite_master')
-          ? { name: 'memory_chunks_vec' }
+          ? { name: 'memory_vec_conversation' }
           : sql.includes('content_hash')
             ? { content_hash: 'hash-NEW' } // the row changed after the fetch
             : undefined,
@@ -349,14 +349,14 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
       'bge-base@q8',
     );
 
-    expect(findRun(calls, 'DELETE FROM memory_chunks_vec')).toBeUndefined();
-    expect(findRun(calls, 'INSERT INTO memory_chunks_vec')).toBeUndefined();
+    expect(findRun(calls, 'DELETE FROM memory_vec_conversation')).toBeUndefined();
+    expect(findRun(calls, 'INSERT INTO memory_vec_conversation')).toBeUndefined();
     expect(findRun(calls, 'UPDATE memory_chunks SET embedded_model')).toBeUndefined();
   });
 
   it('skips a chunk that no longer exists (deleted concurrently)', () => {
     const { db, calls } = makeRecordingDb({
-      get: (sql) => (sql.includes('sqlite_master') ? { name: 'memory_chunks_vec' } : undefined),
+      get: (sql) => (sql.includes('sqlite_master') ? { name: 'memory_vec_conversation' } : undefined),
     });
     markVecCapable(db);
 
@@ -365,7 +365,7 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
       'bge-base@q8',
     );
 
-    expect(findRun(calls, 'INSERT INTO memory_chunks_vec')).toBeUndefined();
+    expect(findRun(calls, 'INSERT INTO memory_vec_conversation')).toBeUndefined();
     expect(findRun(calls, 'UPDATE memory_chunks SET embedded_model')).toBeUndefined();
   });
 });
@@ -373,7 +373,7 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
 describe('RetrievalStore.countChunksNeedingEmbedding', () => {
   it('counts never-embedded chunks and chunks under another tag, by corpus, as index ranges', () => {
     const { db, calls } = makeRecordingDb({
-      get: (sql) => (sql.includes('sqlite_master') ? { name: 'memory_chunks_vec' } : undefined),
+      get: (sql) => (sql.includes('sqlite_master') ? { name: 'memory_vec_conversation' } : undefined),
       all: (sql) => (sql.includes('COUNT(*)') ? [{ corpus: 'conversation', count: 3 }, { corpus: 'code', count: 40 }] : []),
     });
     markVecCapable(db);
@@ -530,7 +530,7 @@ describe('RetrievalStore corpus reads', () => {
   it('merges each corpus table by distance and re-ranks the merged list', () => {
     const { store, calls } = vecStore({
       all: (sql) => {
-        if (sql.includes('FROM memory_chunks_vec')) return [{ id: 1, distance: 0.2 }, { id: 2, distance: 0.6 }];
+        if (sql.includes('FROM memory_vec_conversation')) return [{ id: 1, distance: 0.2 }, { id: 2, distance: 0.6 }];
         if (sql.includes('FROM memory_vec_task')) return [{ id: 50, distance: 0.4 }];
         return [];
       },
@@ -603,7 +603,7 @@ describe('RetrievalStore corpus reads', () => {
     const chunkDeletes = calls.filter((call) => call.method === 'run' && call.sql.startsWith('DELETE FROM memory_chunks WHERE id IN'));
     expect(chunkDeletes.map((call) => call.args)).toEqual([[1], [2]]);
     expect(findRun(calls, 'DELETE FROM memory_index_state WHERE corpus IN')?.args).toEqual(['conversation', 'change']);
-    expect(findRun(calls, 'DELETE FROM memory_chunks_vec')).toBeDefined();
+    expect(findRun(calls, 'DELETE FROM memory_vec_conversation')).toBeDefined();
     expect(findRun(calls, 'DELETE FROM memory_vec_change')).toBeDefined();
     expect(findRun(calls, 'DELETE FROM memory_vec_task')).toBeUndefined();
   });
@@ -617,7 +617,7 @@ describe('RetrievalStore corpus reads', () => {
     store.upsertDocument({ ...ref, corpus: 'task', docId: 'task-1' }, [chunk(0, 'new')]);
 
     expect(findRun(calls, 'DELETE FROM memory_vec_task WHERE rowid IN')?.args).toEqual([70n]);
-    expect(findRun(calls, 'DELETE FROM memory_chunks_vec')).toBeUndefined();
+    expect(findRun(calls, 'DELETE FROM memory_vec_conversation')).toBeUndefined();
   });
 });
 

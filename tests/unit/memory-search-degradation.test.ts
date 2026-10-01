@@ -167,7 +167,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
             return config.lexical;
           }
           // searchSemantic never reaches here (vec is not marked capable).
-          if (sql.includes('memory_chunks_vec')) return [];
+          if (sql.includes('memory_vec_conversation')) return [];
           // getChunks: SELECT * FROM memory_chunks WHERE id IN (?, ?, ...)
           if (sql.includes('FROM memory_chunks') && sql.includes('id IN')) {
             const ids = new Set(args as number[]);

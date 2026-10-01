@@ -13,6 +13,7 @@
 import Database from 'better-sqlite3';
 import { RetrievalStore } from '../../main/retrieval/retrieval-store';
 import { loadVecExtensionFrom } from '../../main/retrieval/vec-support';
+import { vecLayout } from '../../main/retrieval/vec-layout';
 import { runProjectionPass, writeProjectionCache } from '../../main/retrieval/graph/projection-engine';
 import { ConversationUsageStore, type TurnUsageInput } from '../../main/retrieval/conversation/conversation-usage-store';
 import { getSyncWorkByLabel, type SyncWorkStats } from '../../main/diagnostics/event-loop-lag';
@@ -192,7 +193,8 @@ export const devIndexHandlers: DevIndexHandlers = {
          WHERE corpus = 'conversation' AND doc_id = ? AND embedded_model IS NOT NULL
          ORDER BY seq ASC`,
       );
-      const readVector = sourceDb.prepare('SELECT embedding FROM memory_chunks_vec WHERE rowid = ?');
+      // The source's own layout: the table the copy moved it to, if it ran.
+      const readVector = sourceDb.prepare(`SELECT embedding FROM ${vecLayout(sourceDb).conversationTable} WHERE rowid = ?`);
       const now = new Date().toISOString();
       let chunks = 0;
       let pendingChunks = 0;

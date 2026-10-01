@@ -91,7 +91,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
             const taskId = args[args.length - 2] as string;
             return config.lexicalForTask[taskId] ?? [];
           }
-          if (sql.includes('memory_chunks_vec')) return [];
+          if (sql.includes('memory_vec_conversation')) return [];
           if (sql.includes('FROM memory_chunks') && sql.includes('id IN')) {
             const ids = new Set(args as number[]);
             return config.chunks.filter((row) => ids.has(row.id));

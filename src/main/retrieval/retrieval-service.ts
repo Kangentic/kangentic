@@ -191,40 +191,47 @@ function cancelActiveSweep(): void {
   activeSweepJobId = null;
 }
 
-/** The legacy transcript conversion running in the worker, if any. */
-let transcriptConversion: { projectId: string; jobId: string } | null = null;
+/** The storage upkeep running in the worker, if any, and its current job. */
+let storageUpkeep: { projectId: string; jobId: string } | null = null;
 
 /**
- * Convert the open project's legacy raw transcripts in the worker
- * (`transcripts.convertLegacy`), moving any misfiled into their own
- * project. Off the job chain: it touches only the transcript tables, and on a
- * large install it runs for minutes the indexing should not wait behind. One
- * at a time; a project switch stops it, and the next open carries on.
+ * One-time storage moves for databases older releases wrote, in the worker:
+ * legacy raw transcripts into pieces, misfiled ones into their own project
+ * (`transcripts.convertLegacy`), then the conversation vectors into a vec0
+ * table at chunk size 128 (`vec.migrateLayout`). Off the job chain: they touch
+ * only their own tables, and on a large install they run for minutes the
+ * indexing should not wait behind. One project at a time; a project switch
+ * stops it, and the next open carries on where it stopped.
  */
 function convertLegacyTranscripts(context: IpcContext, projectId: string): void {
-  if (transcriptConversion?.projectId === projectId) return;
-  if (transcriptConversion) retrievalClient.notifyRunning('job.cancel', { jobId: transcriptConversion.jobId });
+  if (storageUpkeep?.projectId === projectId) return;
+  if (storageUpkeep) retrievalClient.notifyRunning('job.cancel', { jobId: storageUpkeep.jobId });
   sweepJobCounter += 1;
-  const conversion = { projectId, jobId: `transcripts-${sweepJobCounter}` };
-  transcriptConversion = conversion;
+  const upkeep = { projectId, jobId: `upkeep-${sweepJobCounter}` };
+  storageUpkeep = upkeep;
   let otherProjectIds: string[] = [];
   try {
     otherProjectIds = context.projectRepo.list().map((project) => project.id).filter((id) => id !== projectId);
   } catch {
     // Converted in place, then: a misfiled transcript stays where it is.
   }
-  void retrievalClient.call(
-    'transcripts.convertLegacy',
-    { projectId, otherProjectIds, jobId: conversion.jobId },
-    { timeoutMs: null },
-  ).then((result) => {
-    if (result.converted > 0) {
-      console.log(`[retrieval] converted ${result.converted} legacy transcripts (${Math.round(result.bytes / 1024 / 1024)} MB), ${result.moved} moved to their own project`);
+  void (async () => {
+    const converted = await retrievalClient.call(
+      'transcripts.convertLegacy',
+      { projectId, otherProjectIds, jobId: upkeep.jobId },
+      { timeoutMs: null },
+    );
+    if (converted.converted > 0) {
+      console.log(`[retrieval] converted ${converted.converted} legacy transcripts (${Math.round(converted.bytes / 1024 / 1024)} MB), ${converted.moved} moved to their own project`);
     }
-  }).catch((error) => {
-    console.warn('[retrieval] legacy transcript conversion stopped:', error instanceof Error ? error.message : error);
+    if (storageUpkeep !== upkeep) return;
+    sweepJobCounter += 1;
+    upkeep.jobId = `upkeep-${sweepJobCounter}`;
+    await retrievalClient.call('vec.migrateLayout', { projectId, jobId: upkeep.jobId }, { timeoutMs: null });
+  })().catch((error) => {
+    console.warn('[retrieval] storage upkeep stopped:', error instanceof Error ? error.message : error);
   }).finally(() => {
-    if (transcriptConversion === conversion) transcriptConversion = null;
+    if (storageUpkeep === upkeep) storageUpkeep = null;
   });
 }
 
