@@ -58,6 +58,24 @@ export interface PtyHostError {
   stack?: string;
 }
 
+/** A short-lived PTY with no session behind it (the Claude model picker
+ *  probe, the Antigravity print runner): its output goes back to main raw,
+ *  with none of the session pipeline. */
+export interface PtyHostRawSpawnParams {
+  ptyId: number;
+  file: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+  cols: number;
+  rows: number;
+  name: string;
+}
+
+export type PtyHostRawSpawnResult =
+  | { ok: true; pid: number }
+  | { ok: false; error: PtyHostError };
+
 export type PtyHostSpawnResult =
   | { ok: true; pid: number }
   /** The spawn threw. `previousScrollback` is the carry-over the host had read,
@@ -179,6 +197,9 @@ export interface PtyHostRequestMap {
   exec: { params: HostExecRequest; result: HostExecResult };
   /** The whole process table, from the host's persistent probe. */
   listProcesses: { params: Record<string, never>; result: HostProcessInfo[] };
+  /** Spawn a raw PTY (no session). `write`, `resizePty` and `kill` reach it
+   *  by its ptyId like any other; its output arrives as `rawData`. */
+  spawnRaw: { params: PtyHostRawSpawnParams; result: PtyHostRawSpawnResult };
 }
 
 export type PtyHostMethod = keyof PtyHostRequestMap;
@@ -211,7 +232,10 @@ export type PtyHostEvent =
   | { type: 'agentSessionId'; sessionId: string; capturedId: string }
   | { type: 'streamTelemetry'; sessionId: string; usage?: Partial<SessionUsage>; events?: SessionEvent[] }
   /** A terminal lifecycle trace entry (dev builds only). */
-  | { type: 'trace'; sessionId: string; event: string; detail?: Record<string, unknown>; ts: number };
+  | { type: 'trace'; sessionId: string; event: string; detail?: Record<string, unknown>; ts: number }
+  /** Output of a raw PTY, every chunk as it arrives. */
+  | { type: 'rawData'; ptyId: number; data: string }
+  | { type: 'rawExit'; ptyId: number; exitCode: number; signal: number | null };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }

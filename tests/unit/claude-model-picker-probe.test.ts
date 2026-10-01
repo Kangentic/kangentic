@@ -67,7 +67,9 @@ function installFakePty(
     killMock: vi.fn(),
   };
   spawnMock.mockImplementation(() => {
-    queueMicrotask(() => onSpawn?.(fake));
+    // A later turn, as node-pty delivers real output: never inside the
+    // microtasks that follow the spawn call (the probe awaits its spawn).
+    setTimeout(() => onSpawn?.(fake), 0);
     return {
       onData: (callback: (data: string) => void) => {
         dataCallback = callback;

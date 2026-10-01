@@ -31,6 +31,8 @@ import {
   toPtyHostError,
   type HostExecRequest,
   type PtyHostCommand,
+  type PtyHostRawSpawnParams,
+  type PtyHostRawSpawnResult,
   type PtyHostDiagnostics,
   type PtyHostEvent,
   type PtyHostRequestMap,
@@ -100,6 +102,9 @@ export class PtyHostCore {
   /** The background-shell watcher's process table source, created on first
    *  use. On Windows it keeps one PowerShell child for the host's life. */
   private processTreeProbe: ProcessTreeProbe | null = null;
+  /** Raw PTYs (`spawnRaw`), by ptyId. `killed` guards a second kill, which
+   *  corrupts a ConPTY's heap on Windows. */
+  private readonly rawPtys = new Map<number, { pty: nodePty.IPty; killed: boolean }>();
   private readonly firstOutput = new FirstOutputTracker();
   private readonly resizeManager = new ResizeManager();
   private readonly coalesce = new Map<string, CoalesceState>();
@@ -276,6 +281,8 @@ export class PtyHostCore {
       case 'listProcesses':
         this.processTreeProbe ??= createProcessTreeProbe();
         return this.processTreeProbe.listAllProcesses() as Promise<PtyHostRequestMap[M]['result']>;
+      case 'spawnRaw':
+        return this.spawnRaw(params as PtyHostRawSpawnParams) as PtyHostRequestMap[M]['result'];
       default: {
         const unknownMethod: never = method;
         throw new Error(`unknown pty host method: ${String(unknownMethod)}`);
@@ -288,9 +295,11 @@ export class PtyHostCore {
   handleCommand(command: PtyHostCommand): void {
     switch (command.type) {
       case 'write':
+        if (this.withRawPty(command.ptyId, (rawPty) => rawPty.write(command.data))) return;
         this.withLivePty(command.ptyId, (entry) => entry.pty.write(command.data));
         return;
       case 'resizePty': {
+        if (this.withRawPty(command.ptyId, (rawPty) => rawPty.resize(command.cols, command.rows))) return;
         const entry = this.ptys.get(command.ptyId);
         if (!entry || entry.exited) return;
         try {
@@ -315,6 +324,7 @@ export class PtyHostCore {
         this.resizeManager.notifyResize(command.sessionId);
         return;
       case 'kill':
+        if (this.killRaw(command.ptyId)) return;
         this.kill(command.ptyId);
         return;
       case 'setFocused':
@@ -359,6 +369,9 @@ export class PtyHostCore {
         // would cut that grace short. Nothing writes the transcripts after this.
         this.transcriptWriter.finalizeAll();
         this.disposeProcessTreeProbe();
+        // Raw PTYs are probes nobody waits on; end them now so the exit wait
+        // covers them too.
+        for (const ptyId of [...this.rawPtys.keys()]) this.killRaw(ptyId);
         return;
       default: {
         const unknownCommand: never = command;
@@ -378,14 +391,67 @@ export class PtyHostCore {
     this.transcriptWriter.finalizeAll();
   }
 
-  /** PTYs still waiting for their exit callback. */
+  /** PTYs still waiting for their exit callback, raw ones included. */
   get livePtyCount(): number {
-    let count = 0;
+    let count = this.rawPtys.size;
     for (const entry of this.ptys.values()) if (!entry.exited) count += 1;
     return count;
   }
 
+  /**
+   * Spawn a raw PTY: output goes back as `rawData` per chunk, with none of
+   * the session pipeline. For the short probes that drive a CLI's TUI.
+   */
+  spawnRaw(params: PtyHostRawSpawnParams): PtyHostRawSpawnResult {
+    let rawPty: nodePty.IPty;
+    try {
+      rawPty = this.spawnPty(params.file, params.args, {
+        name: params.name,
+        cols: params.cols,
+        rows: params.rows,
+        cwd: params.cwd,
+        env: params.env,
+      });
+    } catch (error) {
+      return { ok: false, error: toPtyHostError(error) };
+    }
+    const { ptyId } = params;
+    this.rawPtys.set(ptyId, { pty: rawPty, killed: false });
+    rawPty.onData((data) => this.deps.emit({ type: 'rawData', ptyId, data }));
+    rawPty.onExit(({ exitCode, signal }) => {
+      this.rawPtys.delete(ptyId);
+      this.deps.emit({ type: 'rawExit', ptyId, exitCode, signal: signal ?? null });
+    });
+    return { ok: true, pid: rawPty.pid };
+  }
+
   // --- Internals ------------------------------------------------------------
+
+  /** Run `action` on a raw PTY. False when `ptyId` is not a raw PTY. */
+  private withRawPty(ptyId: number, action: (rawPty: nodePty.IPty) => void): boolean {
+    const raw = this.rawPtys.get(ptyId);
+    if (!raw) return false;
+    try {
+      action(raw.pty);
+    } catch {
+      // Exited, its exit callback still to come.
+    }
+    return true;
+  }
+
+  /** Kill a raw PTY once. False when `ptyId` is not a raw PTY. */
+  private killRaw(ptyId: number): boolean {
+    const raw = this.rawPtys.get(ptyId);
+    if (!raw) return false;
+    if (raw.killed) return true;
+    raw.killed = true;
+    try {
+      raw.pty.kill();
+    } catch {
+      // Already gone.
+    }
+    return true;
+  }
 
   private withLivePty(ptyId: number, action: (entry: PtyEntry) => void): void {
     const entry = this.ptys.get(ptyId);

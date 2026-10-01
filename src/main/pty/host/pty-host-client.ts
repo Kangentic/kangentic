@@ -11,6 +11,7 @@
 import type { AgentParser } from '../../../shared/types';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../../shared/pty-host';
 import type { TranscriptSink } from '../buffer/transcript-writer';
+import { HostUnavailableError, type OffMainPty, type OffMainPtyOptions } from '../../utility-process/off-main-pty';
 import { PtyHostCore } from './pty-host-core';
 import {
   fromPtyHostError,
@@ -21,6 +22,7 @@ import {
   type PtyHostDiagnostics,
   type PtyHostEvent,
   type PtyHostMethod,
+  type PtyHostRawSpawnResult,
   type PtyHostRequestMap,
   type PtyHostSpawnParams,
 } from './protocol';
@@ -151,9 +153,64 @@ export type PtyHostSpawnOutcome =
   | { ok: false; error: Error; previousScrollback: string };
 
 /** Typed access to the host, and the exit routing for each PTY. */
+/**
+ * A raw PTY running in the host (`spawnRaw`): the probes' handle. Output and
+ * exit arrive as events, routed here by ptyId.
+ */
+export class RemoteRawPty implements OffMainPty {
+  private exited = false;
+  private readonly dataListeners = new Set<(data: string) => void>();
+  private readonly exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>();
+
+  constructor(
+    readonly ptyId: number,
+    readonly pid: number,
+    private readonly transport: Pick<PtyHostTransport, 'post'>,
+  ) {}
+
+  write(data: string): void {
+    if (this.exited) return;
+    this.transport.post({ type: 'write', ptyId: this.ptyId, data });
+  }
+
+  resize(cols: number, rows: number): void {
+    if (this.exited) return;
+    this.transport.post({ type: 'resizePty', ptyId: this.ptyId, cols, rows });
+  }
+
+  kill(): void {
+    if (this.exited) return;
+    this.transport.post({ type: 'kill', ptyId: this.ptyId });
+  }
+
+  onData(listener: (data: string) => void): PtyDisposable {
+    this.dataListeners.add(listener);
+    return { dispose: () => this.dataListeners.delete(listener) };
+  }
+
+  onExit(listener: (event: { exitCode: number; signal?: number }) => void): PtyDisposable {
+    this.exitListeners.add(listener);
+    return { dispose: () => this.exitListeners.delete(listener) };
+  }
+
+  deliverData(data: string): void {
+    for (const listener of this.dataListeners) listener(data);
+  }
+
+  deliverExit(exitCode: number, signal: number | null): void {
+    if (this.exited) return;
+    this.exited = true;
+    const event = signal === null ? { exitCode } : { exitCode, signal };
+    for (const listener of this.exitListeners) listener(event);
+    this.dataListeners.clear();
+    this.exitListeners.clear();
+  }
+}
+
 export class PtyHostClient {
   private nextPtyId = 1;
   private readonly handles = new Map<number, RemotePty>();
+  private readonly rawHandles = new Map<number, RemoteRawPty>();
   private readonly exitListeners = new Map<number, (exitCode: number) => void>();
   private eventHandler: ((event: PtyHostEvent) => void) | null = null;
   private lifecycleHandler: PtyHostLifecycleHandler | null = null;
@@ -183,6 +240,10 @@ export class PtyHostClient {
    * exit listener, so the sessions end exactly as a PTY exit ends them.
    */
   private reportHostLost(): void {
+    // A probe's raw PTY died with the host too.
+    const rawHandles = [...this.rawHandles.values()];
+    this.rawHandles.clear();
+    for (const rawHandle of rawHandles) rawHandle.deliverExit(PTY_HOST_LOST_EXIT_CODE, null);
     const lostSessionIds: string[] = [];
     for (const { handle, listener } of this.takeLiveHandles()) {
       handle.markExited();
@@ -245,6 +306,26 @@ export class PtyHostClient {
     return this.transport.request('getOutputPeek', { sessionId });
   }
 
+  /**
+   * Spawn a raw PTY in the host for a probe. Rejects with
+   * `HostUnavailableError` when the host cannot be asked, and with the spawn's
+   * own error when it failed there.
+   */
+  async spawnRaw(file: string, args: string[], options: OffMainPtyOptions): Promise<RemoteRawPty> {
+    const ptyId = this.nextPtyId;
+    this.nextPtyId += 1;
+    let result: PtyHostRawSpawnResult;
+    try {
+      result = await this.transport.request('spawnRaw', { ptyId, file, args, ...options });
+    } catch (error) {
+      throw new HostUnavailableError(error instanceof Error ? error.message : String(error));
+    }
+    if (!result.ok) throw fromPtyHostError(result.error);
+    const handle = new RemoteRawPty(ptyId, result.pid, this.transport);
+    this.rawHandles.set(ptyId, handle);
+    return handle;
+  }
+
   /** Run a one-shot child process in the host (see `host-exec.ts`). */
   exec(request: HostExecRequest, timeoutMs: number): Promise<HostExecResult> {
     return this.transport.request('exec', request, { timeoutMs });
@@ -264,6 +345,16 @@ export class PtyHostClient {
   }
 
   private dispatch(event: PtyHostEvent): void {
+    if (event.type === 'rawData') {
+      this.rawHandles.get(event.ptyId)?.deliverData(event.data);
+      return;
+    }
+    if (event.type === 'rawExit') {
+      const rawHandle = this.rawHandles.get(event.ptyId);
+      this.rawHandles.delete(event.ptyId);
+      rawHandle?.deliverExit(event.exitCode, event.signal);
+      return;
+    }
     if (event.type === 'exit') {
       const handle = this.handles.get(event.ptyId);
       handle?.markExited();

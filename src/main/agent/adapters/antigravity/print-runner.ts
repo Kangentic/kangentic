@@ -13,10 +13,9 @@
  * a print run in the PROJECT cwd would overwrite that workspace's
  * `last_conversations.json` entry - hijacking the user's own `agy -c` there.
  */
-// Type-only: erased at compile time so importing the adapter graph does not
-// load node-pty's native bindings; the runtime module loads lazily per run
-// (the model-picker-probe precedent).
-import type * as pty from 'node-pty';
+// The print run's PTY runs in the pty host; node-pty loads only there, or
+// lazily here when no host is registered (the model-picker-probe precedent).
+import { spawnOffMainPty, type OffMainPtyOptions } from '../../../utility-process/off-main-pty';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -79,10 +78,9 @@ export async function runAntigravityPrint(cliPath: string, prompt: string): Prom
   // undefined territory. Title generation does not need line structure.
   const flatPrompt = prompt.replace(/\s*\r?\n\s*/g, ' ').trim();
 
-  // Loaded lazily so the native bindings initialize only when a print run
-  // actually happens (model-picker-probe precedent).
-  const nodePty = await import('node-pty');
-  const spawnOptions: pty.IPtyForkOptions = {
+  // Spawned in the pty host (off-main-pty.ts, the model-picker-probe
+  // precedent): ConPTY creation is synchronous on the calling thread.
+  const spawnOptions: OffMainPtyOptions = {
     name: 'xterm-256color',
     cols: 200,
     rows: 50,
@@ -91,8 +89,8 @@ export async function runAntigravityPrint(cliPath: string, prompt: string): Prom
   };
   const args = ['-p', flatPrompt, '--output-format', 'json'];
   const printProcess = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath)
-    ? nodePty.spawn('cmd.exe', ['/c', cliPath, ...args], spawnOptions)
-    : nodePty.spawn(cliPath, args, spawnOptions);
+    ? await spawnOffMainPty('cmd.exe', ['/c', cliPath, ...args], spawnOptions)
+    : await spawnOffMainPty(cliPath, args, spawnOptions);
 
   return new Promise<string>((resolve, reject) => {
     let output = '';

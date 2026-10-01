@@ -304,4 +304,45 @@ describe('PtyHostClient and RemotePty', () => {
     remote.write('ignored');
     expect(transport.post).not.toHaveBeenCalled();
   });
+
+  it('runs a probe\'s raw PTY in the host: raw output, write and kill by ptyId, and one exit', async () => {
+    const fake = createFakePty(777);
+    const transport = new InProcessPtyHostTransport({ resolveAgent: () => undefined, transcriptSinkFor: () => null });
+    (transport.core as unknown as { spawnPty: unknown }).spawnPty = () => fake.pty;
+    const client = new PtyHostClient(transport);
+
+    const raw = await client.spawnRaw('claude', ['--safe-mode'], { name: 'xterm-256color', cols: 120, rows: 40, cwd: '/mock/scratch', env: {} });
+    expect(raw.pid).toBe(777);
+    const output: string[] = [];
+    raw.onData((data) => output.push(data));
+    const exitListener = vi.fn();
+    raw.onExit(exitListener);
+
+    // Raw: every chunk as it came, with none of the session pipeline's merging.
+    fake.feed('❯ ');
+    fake.feed('Select model');
+    expect(output).toEqual(['❯ ', 'Select model']);
+    raw.write('/model');
+    expect(fake.write).toHaveBeenCalledWith('/model');
+    raw.kill();
+    raw.kill();
+    expect(fake.kill).toHaveBeenCalledTimes(1);
+    expect(transport.core.livePtyCount).toBe(1);
+
+    fake.exit(0);
+    expect(exitListener).toHaveBeenCalledWith({ exitCode: 0 });
+    expect(transport.core.livePtyCount).toBe(0);
+  });
+
+  it('a raw spawn that throws in the host rejects with that error, not as an unreachable host', async () => {
+    const transport = new InProcessPtyHostTransport({ resolveAgent: () => undefined, transcriptSinkFor: () => null });
+    (transport.core as unknown as { spawnPty: unknown }).spawnPty = () => {
+      throw Object.assign(new Error('File not found: agy'), { code: 'ENOENT' });
+    };
+    const client = new PtyHostClient(transport);
+    const { HostUnavailableError } = await import('../../src/main/utility-process/off-main-pty');
+    const failure = client.spawnRaw('agy', [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: '/mock', env: {} });
+    await expect(failure).rejects.toMatchObject({ message: 'File not found: agy', code: 'ENOENT' });
+    await expect(failure).rejects.not.toBeInstanceOf(HostUnavailableError);
+  });
 });

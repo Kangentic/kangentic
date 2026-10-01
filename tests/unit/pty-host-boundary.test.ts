@@ -144,14 +144,19 @@ describe('pty host out-of-process boundary', () => {
     ).toEqual([]);
   });
 
-  it('spawns session PTYs only in the host core', () => {
-    // node-pty's value import is the host core's alone. The probe PTYs run
-    // short, rare processes of their own (the Claude model picker, the
-    // Antigravity print runner) and load node-pty lazily with `import()`.
+  it('spawns every PTY in the host: session PTYs in the core, probe PTYs through off-main-pty', () => {
+    // node-pty's value import is the host core's alone (plus the kill-helper
+    // patch, which every process that kills PTYs installs).
     const allowed = new Set([
       'src/main/pty/host/pty-host-core.ts',
       'src/main/pty/spawn/conpty-console-list.ts',
     ]);
     expect(findOutside(/^import\s+(?!type\b).*from\s+'node-pty/, allowed)).toEqual([]);
+    // The probes (Claude's model picker, Antigravity's print runner) spawn
+    // through spawnOffMainPty; only its no-host fallback loads node-pty lazily.
+    expect(
+      findOutside(/import\(\s*'node-pty'\s*\)/, new Set(['src/main/utility-process/off-main-pty.ts'])),
+      'Spawn a probe PTY with spawnOffMainPty (src/main/utility-process/off-main-pty.ts).',
+    ).toEqual([]);
   });
 });

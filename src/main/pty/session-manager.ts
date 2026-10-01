@@ -22,6 +22,7 @@ import type { PtyKillReport } from './shutdown/session-shutdown';
 import { DeferredKillRegistry, KILL_GRACE_MS, isYoungSession } from './lifecycle/deferred-kill';
 import { PTY_EXIT_DRAIN_DEADLINE_MS } from './shutdown/exit-callback-drain';
 import { HostProcessTreeProbe } from './host/host-process-tree-probe';
+import type { OffMainPty, OffMainPtyOptions } from '../utility-process/off-main-pty';
 
 /** How long before the quit drain's deadline the pty host gives up waiting
  *  for exits and exits itself, so main never stops waiting first. */
@@ -643,6 +644,8 @@ export class SessionManager extends EventEmitter {
         recordTerminalTrace(event.sessionId, event.event, event.detail, event.ts);
         return;
       case 'exit':
+      case 'rawData':
+      case 'rawExit':
         // Routed per PTY by the host client, never here.
         return;
       default: {
@@ -685,6 +688,11 @@ export class SessionManager extends EventEmitter {
   /** Run a one-shot child process in the pty host (`off-main-exec.ts`). */
   execInPtyHost(request: HostExecRequest, timeoutMs: number): Promise<HostExecResult> {
     return this.host.exec(request, timeoutMs);
+  }
+
+  /** Spawn a probe's raw PTY in the pty host (`off-main-pty.ts`). */
+  spawnRawInPtyHost(file: string, args: string[], options: OffMainPtyOptions): Promise<OffMainPty> {
+    return this.host.spawnRaw(file, args, options);
   }
 
   /**

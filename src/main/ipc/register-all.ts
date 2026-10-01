@@ -12,6 +12,7 @@ import { ProjectGroupRepository } from '../db/repositories/project-group-reposit
 import { SessionManager } from '../pty/session-manager';
 import { UtilityPtyHostTransport } from '../pty/host/utility-pty-host-transport';
 import { setOffMainExecutor } from '../utility-process/off-main-exec';
+import { setOffMainPtySpawner } from '../utility-process/off-main-pty';
 import { PATHS } from '../config/paths';
 import { ConfigManager } from '../config/config-manager';
 import { BoardConfigManager } from '../config/board-config-manager';
@@ -109,6 +110,8 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // checks) run in the pty host too: on Windows each spawn's CreateProcess is
   // synchronous on the calling thread.
   setOffMainExecutor((request, timeoutMs) => sessionManager.execInPtyHost(request, timeoutMs));
+  // And the probes' short-lived PTYs, so main never runs node-pty at all.
+  setOffMainPtySpawner((file, args, options) => sessionManager.spawnRawInPtyHost(file, args, options));
   // Raw terminal transcripts, each written to its session's own project. The
   // pty host writes them over its own connection; this sink is what the host
   // core uses if it ever falls back to running in this process. A project

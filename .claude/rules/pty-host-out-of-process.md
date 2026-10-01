@@ -61,7 +61,8 @@ at the Windows timer floor.
   (dev and production) and fails on `electron`, the IPC layer, analytics, Sentry, retrieval or dev
   tooling in its graph; pins the build entry in both `scripts/build.js` and `scripts/dev.js`; pins
   the one construction site of each transport and of `PtyHostCore`; fails on a value import of
-  `node-pty` outside the host core; fails on `promisify(exec)` / `promisify(execFile)` under
+  `node-pty` outside the host core, and on a lazy `import('node-pty')` outside the
+  `off-main-pty.ts` fallback; fails on `promisify(exec)` / `promisify(execFile)` under
   `src/main` outside the drop-in and its two reasoned exceptions; and pins that `host-exec.ts`
   never forks and checks for its own executable. Runs in CI via `npm run test:unit`.
   `tests/unit/off-main-exec.test.ts` pins the drop-in's routing, error shape and fallback.
@@ -76,8 +77,8 @@ at the Windows timer floor.
 ## Scope
 
 Session PTYs and their output pipeline (`src/main/pty/**`), the host's fork and wiring in
-`register-all.ts`, one-shot child processes on main, and the packaging. Still on main, by
-measurement: the two probe PTYs (the Claude model picker, the Antigravity print runner), which run
-short, rare processes and load node-pty lazily; git through simple-git and `runGitWithTimeout`
+`register-all.ts`, one-shot child processes on main, the probes' raw PTYs (the Claude model
+picker, the Antigravity print runner spawn through `spawnOffMainPty`, `off-main-pty.ts`), and the
+packaging. Still on main, by measurement: git through simple-git and `runGitWithTimeout`
 (5 to 17 ms a spawn, event-driven; the library has no spawn hook and the abortable runner would
 need request cancellation); and streaming CLI runs (`auto-name.ts`).
