@@ -1141,26 +1141,28 @@ again. Switching it off clears the open project's code index at once and another
 next time you open it; switching it back on reads the branch again. Switching the Knowledge Graph
 off, or clearing its agent, keeps the code index as it is, so turning it back on costs nothing.
 
-**The coverage strip** across the top reports what is actually indexed. Two entries are worth
-understanding:
+The **Index** card at the bottom of the left panel opens to its side into the Index card that
+Settings > Knowledge Graph shows, without its switches. Each source is a line: its count with a
+check once caught up, its share while it is still being embedded, and a tag while it waits for
+something (the Knowledge Graph, an agent, a model). The sources are **Conversations** (what the map
+draws), **Tasks** (each task's and backlog item's own text), **Commits** (the commits on the
+project's default branch, each tied to the task whose conversation wrote it), **Task summaries**
+(how many Done tasks have one) and **Source code** (the default branch's files). A source with
+nothing in it yet says **Not yet indexed**. Session changes are kept as text for the task summaries
+and never searched, so they have no line.
 
-- **searchable, transcript deleted** - the agent's transcript file is gone (a pruned worktree, a
-  cleaned CLI cache), but the indexed text and its embeddings are still here and still answer
-  queries. On a mature project this is most of the index, and it is not a problem.
-- **not yet indexed** - conversations the background sweep has not reached yet.
+Below the sources is what only the map has. **Links** counts the similarity links, computed in full
+embedding dimensionality, so they are exact; a dot's position is an approximate reduction.
+**Transcript gone** counts conversations whose agent transcript file was deleted (a pruned
+worktree, a cleaned CLI cache) while their indexed text and embeddings still answer queries. On a
+mature project that is most of the index, and it is not a problem. **Not yet indexed** counts
+conversations the background sweep has not reached, **Failed to index** any it could not read, and
+**Size on disk** covers every source. **Open Settings** opens Settings > Knowledge Graph, where the
+sources change, the index is rebuilt, and its model and agent are set.
 
-The **Index** card lists everything the index holds, one row per kind: **Conversations** (what the
-map draws), **Tasks** (each task's and backlog item's own text), **Session changes** (the files each
-session changed, kept as text for the task summaries and never searched), **Commits** (the commits
-on the project's default branch, each tied to the task whose conversation wrote it, kept as text)
-and **Source code** (the default branch's files, counted in files, while Source code is on). Each
-shows its count and, while it is still being embedded, how much of it is; a kind with nothing in it
-yet says **Not yet indexed**. **Task summaries** appears while summaries are on or any exist, as how
-many of the Done tasks have one, or **Needs an agent** while they are on with no agent chosen. A count short of the total needs no explanation there; the Settings Index card says
-why. Size on disk covers all of them. **Source file gone** counts conversations whose transcript
-file was deleted but whose indexed text is still searchable. The card's footer says when the index
-last took anything in ("Updated 3 minutes ago"), and its **Settings** button opens Settings >
-Knowledge Graph, where the index is rebuilt and its sources, model and agent are set.
+The panel opens to the side and stays inside the window whatever the left panel holds: with every
+card expanded it rises until its bottom clears the window's edge, and in a window too short for it
+the panel scrolls inside itself.
 
 The index holds what the board and its conversations recorded, plus your repository's committed
 files while Source code is on.
@@ -1170,10 +1172,12 @@ driver, some remote sessions) it says so, and the coverage numbers and Ask keep 
 
 **Building the map.** The first time a project opens the graph, Kangentic reads every embedding in
 the index to place the dots. On a large project that takes a few minutes, runs in the background,
-and only happens once - after that it updates in about a second as new conversations are indexed.
-The surface shows its progress rather than an empty map. It needs the Knowledge Graph switched on (Settings >
-Knowledge Graph); without embeddings there is no meaningful notion of "near", so it shows the coverage and
-asks you to enable it rather than drawing a map that would imply meaning it does not have.
+and only happens once; after that it updates in about a second as new conversations are indexed.
+While it builds, a card says how many conversations it is placing and how many embeddings it reads,
+and the Index panel opens beside it. It needs the Knowledge Graph switched on (Settings > Knowledge
+Graph). Without embeddings there is no meaningful notion of "near", so with it off the graph shows
+an Off card with an **Open Settings** button rather than drawing a map that would imply a meaning
+it does not have. The Index panel's counts are accurate either way.
 
 Like the Agent Monitor and Usage Stats, it detaches into its own window from the pop-out control in
 its header.

@@ -30,18 +30,14 @@ export function warmKnowledgeGraph(): void {
 
 function KnowledgeGraphSkeleton() {
   return (
-    <div className="flex-1 min-h-0 flex flex-col" data-testid="knowledge-graph-skeleton">
-      {/* Mirrors the real layout: coverage strip, then toolbar, then canvas. */}
-      <div className="flex gap-8 px-4 py-3 border-b border-edge bg-surface-raised">
+    <div className="relative flex-1 min-h-0 bg-surface" data-testid="knowledge-graph-skeleton">
+      {/* Mirrors the real layout: the left panel's cards over the map, where
+          they will be once the body loads, so nothing moves when it does. */}
+      <div className="absolute left-3 top-3 flex w-64 flex-col gap-3">
         {[0, 1, 2].map((index) => (
-          <div key={index} className="space-y-1.5">
-            <div className="h-4 w-16 bg-surface-hover rounded animate-pulse-subtle" />
-            <div className="h-3 w-24 bg-surface-hover rounded animate-pulse-subtle" />
-          </div>
+          <div key={index} className="h-9 rounded-lg border border-edge bg-surface-raised/80 animate-pulse-subtle" />
         ))}
       </div>
-      <div className="h-8 border-b border-edge bg-surface" />
-      <div className="flex-1 bg-surface" />
     </div>
   );
 }

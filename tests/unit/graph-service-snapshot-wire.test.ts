@@ -36,7 +36,6 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
     corpusTotals(): unknown[] { return []; }
     corpusTextBytes(): number { return 0; }
     summaryCounts(): { written: number; finishedTasks: number } { return { written: 0, finishedTasks: 0 }; }
-    lastIndexedAt(): null { return null; }
     getMeta(): string | undefined { return state.regionNames; }
     setMeta(): void {}
   },

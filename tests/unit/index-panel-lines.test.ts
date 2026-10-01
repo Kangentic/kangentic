@@ -1,0 +1,192 @@
+/**
+ * What each line of the Knowledge Graph's Index panel says. It reads as the
+ * Settings Index card without its switches, from the graph's own summed index
+ * summary rather than the Settings status, so these pin the mapping between
+ * the two: the same pattern, the same tags, and a source with nothing in it
+ * that says so instead of showing a checked 0.
+ */
+import { describe, expect, it } from 'vitest';
+import { indexMapLines, indexSourceLines, type IndexSourceLinesInput } from '../../src/renderer/components/knowledge-graph/index-panel-lines';
+import type {
+  KnowledgeGraphCoverageBucket,
+  KnowledgeGraphCoverageSummary,
+  KnowledgeGraphIndexCorpus,
+  KnowledgeGraphIndexSummary,
+} from '../../src/shared/types';
+
+function corpus(name: KnowledgeGraphIndexCorpus, documents: number, chunks: number, embeddedChunks: number, embeds = true) {
+  return { corpus: name, documents, chunks, embeddedChunks, embeds };
+}
+
+function indexOf(overrides: Partial<KnowledgeGraphIndexSummary> = {}): KnowledgeGraphIndexSummary {
+  return {
+    corpora: [
+      corpus('conversation', 1005, 96840, 96840),
+      corpus('task', 706, 2400, 2400),
+      corpus('change', 900, 1100, 0, false),
+      corpus('commit', 2419, 2419, 0, false),
+      corpus('code', 1488, 12186, 12186),
+    ],
+    summaries: { written: 674, finishedTasks: 674, skipped: 0 },
+    storageBytes: 412 * 1024 * 1024,
+    ...overrides,
+  };
+}
+
+const NOTHING_WAITS = { summaries: undefined, code: undefined };
+
+function input(overrides: Partial<IndexSourceLinesInput> = {}): IndexSourceLinesInput {
+  return {
+    index: indexOf(),
+    semanticAvailable: true,
+    summariesOn: true,
+    codeOn: true,
+    requirements: NOTHING_WAITS,
+    ...overrides,
+  };
+}
+
+function lineFor(lines: ReturnType<typeof indexSourceLines>, label: string) {
+  const line = lines.find((entry) => entry.label === label);
+  if (!line) throw new Error(`no line labelled ${label}`);
+  return line;
+}
+
+function bucket(documents: number): KnowledgeGraphCoverageBucket {
+  return { documents, chunks: documents * 10, tone: 'neutral' };
+}
+
+function coverageOf(overrides: Partial<KnowledgeGraphCoverageSummary> = {}): KnowledgeGraphCoverageSummary {
+  return {
+    indexed: bucket(291),
+    sourceMissingButSearchable: bucket(714),
+    empty: bucket(0),
+    failed: bucket(0),
+    notYetIndexed: bucket(0),
+    totalDocumentsWithChunks: 1005,
+    totalChunks: 96840,
+    totalEmbeddedChunks: 96840,
+    embeddedFraction: 1,
+    knownDocumentIdsMatched: 0,
+    ...overrides,
+  };
+}
+
+describe('the source lines', () => {
+  it('are the Settings card\'s five, in its order, with no line for session changes', () => {
+    expect(indexSourceLines(input()).map((line) => line.label))
+      .toEqual(['Conversations', 'Tasks', 'Commits', 'Task summaries', 'Source code']);
+  });
+
+  it('are each count with a check once caught up', () => {
+    const lines = indexSourceLines(input());
+    expect(lineFor(lines, 'Conversations')).toMatchObject({ value: '1,005', tone: 'ready' });
+    expect(lineFor(lines, 'Commits')).toMatchObject({ value: '2,419', tone: 'ready' });
+    expect(lineFor(lines, 'Task summaries')).toMatchObject({ value: '674', tone: 'ready' });
+    expect(lineFor(lines, 'Source code')).toMatchObject({ value: '1,488 files', tone: 'ready' });
+  });
+
+  it('show a share with a track and no time left while embedding, since the summary carries no rate', () => {
+    const index = indexOf({ corpora: [corpus('conversation', 1005, 1000, 405), corpus('code', 1488, 12186, 4874)] });
+    const lines = indexSourceLines(input({ index }));
+    expect(lineFor(lines, 'Conversations')).toMatchObject({ value: '40%', percent: 40 });
+    expect(lineFor(lines, 'Source code')).toMatchObject({ value: '39%', percent: 39 });
+  });
+
+  it('never read 100% while a passage still waits', () => {
+    const index = indexOf({ corpora: [corpus('conversation', 10, 1000, 999)] });
+    expect(lineFor(indexSourceLines(input({ index })), 'Conversations')).toMatchObject({ value: '99%', percent: 99 });
+  });
+
+  it('show no share with the Knowledge Graph off, only the count', () => {
+    const index = indexOf({ corpora: [corpus('conversation', 1005, 1000, 405)] });
+    expect(lineFor(indexSourceLines(input({ index, semanticAvailable: false })), 'Conversations'))
+      .toMatchObject({ value: '1,005', tone: 'ready' });
+  });
+
+  it('say Not yet indexed for a source with nothing in it, never a checked 0', () => {
+    const index = indexOf({ corpora: [corpus('conversation', 0, 0, 0), corpus('task', 0, 0, 0), corpus('commit', 0, 0, 0, false), corpus('code', 0, 0, 0)] });
+    const lines = indexSourceLines(input({ index }));
+    for (const label of ['Conversations', 'Tasks', 'Commits', 'Source code']) {
+      expect(lineFor(lines, label), label).toMatchObject({ value: 'Not yet indexed', tone: 'muted' });
+    }
+  });
+
+  it('read a corpus the summary does not list at all as not yet indexed', () => {
+    const index = indexOf({ corpora: [] });
+    expect(lineFor(indexSourceLines(input({ index })), 'Tasks')).toMatchObject({ value: 'Not yet indexed', tone: 'muted' });
+  });
+
+  it('say Off for source code switched off with nothing held', () => {
+    const index = indexOf({ corpora: [corpus('code', 0, 0, 0)] });
+    expect(lineFor(indexSourceLines(input({ index, codeOn: false })), 'Source code')).toEqual(expect.objectContaining({ value: 'Off', tone: 'muted' }));
+  });
+
+  it('put the waiting tag in place of the value, the one the Settings card shows', () => {
+    const lines = indexSourceLines(input({ requirements: { summaries: 'Needs a supported agent', code: 'Needs an agent' } }));
+    expect(lineFor(lines, 'Task summaries')).toMatchObject({ requirement: 'Needs a supported agent' });
+    expect(lineFor(lines, 'Task summaries').value).toBeUndefined();
+    expect(lineFor(lines, 'Source code')).toMatchObject({ requirement: 'Needs an agent' });
+  });
+
+  it('read the summaries share while some are still to write', () => {
+    const index = indexOf({ summaries: { written: 300, finishedTasks: 412, skipped: 0 } });
+    expect(lineFor(indexSourceLines(input({ index })), 'Task summaries')).toMatchObject({ value: '72%', percent: 72 });
+  });
+
+  it('say how many were skipped once the pass has passed over the rest', () => {
+    const index = indexOf({ summaries: { written: 410, finishedTasks: 412, skipped: 2 } });
+    expect(lineFor(indexSourceLines(input({ index })), 'Task summaries')).toMatchObject({ value: '410 of 412, 2 skipped' });
+  });
+
+  it('keep the summaries already written with a check when switched off', () => {
+    expect(lineFor(indexSourceLines(input({ summariesOn: false })), 'Task summaries')).toMatchObject({ value: '674', tone: 'ready' });
+  });
+
+  it('carry the info texts and test ids the panel spec reads', () => {
+    const lines = indexSourceLines(input());
+    expect(lineFor(lines, 'Task summaries').info).toMatch(/Done task/);
+    expect(lineFor(lines, 'Source code').info).toMatch(/default branch/);
+    expect(lines.map((line) => line.testId)).toEqual([
+      'knowledge-graph-index-source-conversations',
+      'knowledge-graph-index-source-tasks',
+      'knowledge-graph-index-source-commits',
+      'knowledge-graph-index-source-summaries',
+      'knowledge-graph-index-source-code',
+    ]);
+  });
+});
+
+describe('the map lines', () => {
+  it('count the links once a map is drawn, then what the index holds beyond the sources', () => {
+    const lines = indexMapLines({ hasMap: true, building: false, edgeCount: 3438, coverage: coverageOf(), storageBytes: 412 * 1024 * 1024 });
+    expect(lines.map((line) => [line.label, line.value])).toEqual([
+      ['Links', '3,438'],
+      ['Transcript gone', '714'],
+      ['Size on disk', '412 MB'],
+    ]);
+    expect(lines[0].info).toMatch(/exact/);
+  });
+
+  it('say the map is building in place of its links while there is none', () => {
+    const lines = indexMapLines({ hasMap: false, building: true, edgeCount: 0, coverage: coverageOf(), storageBytes: 0 });
+    expect(lines[0]).toMatchObject({ label: 'Map', value: 'Building' });
+    expect(indexMapLines({ hasMap: false, building: false, edgeCount: 0, coverage: coverageOf(), storageBytes: 0 })[0])
+      .toMatchObject({ label: 'Map', value: 'No map yet' });
+  });
+
+  it('show the not-yet-indexed and failed counts only when there are some, and a failure as a problem', () => {
+    const quiet = indexMapLines({ hasMap: true, building: false, edgeCount: 1, coverage: coverageOf({ sourceMissingButSearchable: bucket(0) }), storageBytes: 0 });
+    expect(quiet.map((line) => line.label)).toEqual(['Links']);
+
+    const lines = indexMapLines({
+      hasMap: true,
+      building: false,
+      edgeCount: 1,
+      coverage: coverageOf({ notYetIndexed: bucket(12), failed: bucket(3) }),
+      storageBytes: 0,
+    });
+    expect(lines.find((line) => line.label === 'Not yet indexed')).toMatchObject({ value: '12' });
+    expect(lines.find((line) => line.label === 'Failed to index')).toMatchObject({ tone: 'caution', problem: '3' });
+  });
+});

@@ -73,7 +73,6 @@ function indexSummary(overrides: Partial<KnowledgeGraphIndexSummary> = {}): Know
     corpora: [],
     summaries: { written: 0, finishedTasks: 0 },
     storageBytes: 0,
-    lastIndexedAt: null,
     ...overrides,
   };
 }
@@ -267,45 +266,6 @@ describe('sumIndex', () => {
     ]);
 
     expect(total.summaries.skipped).toBe(6);
-  });
-
-  it('reads Updated from the oldest project, whichever comes first', () => {
-    const older = '2026-09-01T08:00:00.000Z';
-    const newer = '2026-09-20T17:30:00.000Z';
-
-    expect(sumIndex([
-      indexSummary({ lastIndexedAt: older }),
-      indexSummary({ lastIndexedAt: newer }),
-    ]).lastIndexedAt).toBe(older);
-    expect(sumIndex([
-      indexSummary({ lastIndexedAt: newer }),
-      indexSummary({ lastIndexedAt: older }),
-    ]).lastIndexedAt).toBe(older);
-  });
-
-  it('does not let a project that never indexed anything stand in for a time', () => {
-    const only = '2026-09-10T12:00:00.000Z';
-
-    expect(sumIndex([
-      indexSummary({ lastIndexedAt: null }),
-      indexSummary({ lastIndexedAt: only }),
-    ]).lastIndexedAt).toBe(only);
-    expect(sumIndex([
-      indexSummary({ lastIndexedAt: only }),
-      indexSummary({ lastIndexedAt: null }),
-    ]).lastIndexedAt).toBe(only);
-    // The field is optional on the summary, so an absent one is the same as null.
-    expect(sumIndex([
-      indexSummary({ lastIndexedAt: undefined }),
-      indexSummary({ lastIndexedAt: only }),
-    ]).lastIndexedAt).toBe(only);
-  });
-
-  it('reads no time when no project has indexed anything', () => {
-    expect(sumIndex([
-      indexSummary({ lastIndexedAt: null }),
-      indexSummary({ lastIndexedAt: undefined }),
-    ]).lastIndexedAt).toBeNull();
   });
 
   it('does not change what it was given', () => {

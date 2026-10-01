@@ -25,7 +25,7 @@ import { Brain, Compass, CornerDownLeft, Loader2, Sparkles, X } from 'lucide-rea
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useConfigStore } from '../../stores/config-store';
 import { KnowledgeGraphChat } from './KnowledgeGraphChat';
-import { KnowledgeGraphCoverageStrip } from './KnowledgeGraphCoverageStrip';
+import { KnowledgeGraphNoMap } from './KnowledgeGraphNoMap';
 import { KnowledgeGraphCanvas, type KnowledgeGraphColorMode } from './KnowledgeGraphCanvas';
 import type { RememberedCamera } from './useKnowledgeGraphScene';
 import {
@@ -685,43 +685,20 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     );
   }
 
-  if (!snapshot.semanticAvailable) {
-    // Deliberately NOT a structural fallback graph. Without embeddings there is
-    // no meaningful notion of "near", and a structural tree would imply a
-    // meaning the data cannot support.
+  if (!snapshot.semanticAvailable || snapshot.projection === null) {
+    // With the Knowledge Graph off this is deliberately NOT a structural
+    // fallback graph: without embeddings there is no meaningful notion of
+    // "near", and a structural tree would imply a meaning the data cannot
+    // support. The Index panel's counts are accurate either way.
     return (
-      <div className="flex-1 min-h-0 flex flex-col" data-testid="knowledge-graph-body">
-        <KnowledgeGraphCoverageStrip coverage={snapshot.coverage} semanticAvailable={false} />
-        <CenteredNotice
-          icon={<Sparkles size={22} />}
-          title="The Knowledge Graph is off"
-          body="The map places conversations by meaning, which needs its local model. Turn the Knowledge Graph on in Settings > Knowledge Graph to build it. The coverage above is accurate either way."
-        />
-      </div>
-    );
-  }
-
-  if (snapshot.projection === null) {
-    return (
-      <div className="flex-1 min-h-0 flex flex-col" data-testid="knowledge-graph-body">
-        <KnowledgeGraphCoverageStrip coverage={snapshot.coverage} semanticAvailable />
-        {/* The picker stays while the map builds. It names the project, which
-            nothing else on this screen does, and a scope whose maps are all
-            still building needs it, or the only way back to a drawable map
-            would be closing the graph. */}
-        {projectsPicker ? (
-          <div className="w-72 px-4 pt-3" data-testid="knowledge-graph-pending-scope">{projectsPicker}</div>
-        ) : null}
-        <CenteredNotice
-          icon={<Loader2 size={22} className={snapshot.building ? 'animate-spin' : ''} />}
-          title={snapshot.building ? 'Building the map' : 'No map yet'}
-          body={
-            snapshot.building
-              ? 'Reading every embedding in the index. This runs in the background and only happens once per project; later updates are near-instant.'
-              : 'Nothing has been indexed for this project yet.'
-          }
-        />
-      </div>
+      <KnowledgeGraphNoMap
+        mode={snapshot.semanticAvailable ? 'pending' : 'off'}
+        building={snapshot.building}
+        coverage={snapshot.coverage}
+        index={snapshot.index}
+        projectsPicker={projectsPicker}
+        onOpenSettings={onOpenSettings}
+      />
     );
   }
 

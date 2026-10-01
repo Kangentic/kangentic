@@ -48,8 +48,8 @@ export interface PanelRowProps {
 }
 
 export function PanelRow({ label, value, tone = 'neutral', hint, numeric = false }: PanelRowProps) {
-  // The theme's attention token, as the coverage strip uses: a fixed amber
-  // shade was unreadable on a light theme.
+  // The theme's attention token: a fixed amber shade was unreadable on a
+  // light theme.
   const toneClass = tone === 'problem' ? 'text-attention' : tone === 'ok' ? 'text-active' : 'text-fg';
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">

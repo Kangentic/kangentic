@@ -37,6 +37,12 @@ interface OverlayPopoverProps {
    * trigger-relative offsets are meaningless once detached from the trigger.
    */
   portal?: boolean;
+  /**
+   * Mount already visible, with no entrance. For a popover that opens on its
+   * own as part of a screen arriving rather than on a click, which must paint
+   * flat on a project switch or restore (`restore-no-animation-replay`).
+   */
+  skipEnter?: boolean;
   onMouseDown?: React.MouseEventHandler<HTMLDivElement>;
   onMouseUp?: React.MouseEventHandler<HTMLDivElement>;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
@@ -86,11 +92,13 @@ function OverlayPopoverContent({
   style,
   transformOrigin = 'top center',
   portal = false,
+  skipEnter = false,
   children,
   ...domProps
 }: OverlayPopoverContentProps) {
   const { contentClassName, onAnimationEnd, requestClose } = useOverlayPhase(onExited, {
     variant: 'popover',
+    skipEnter,
   });
 
   useEffect(() => {

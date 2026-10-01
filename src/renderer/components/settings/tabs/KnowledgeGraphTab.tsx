@@ -14,7 +14,7 @@ import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { agentJobChoice, answerSetupGap, resolveAnswerAgent, taskSummariesOn } from '../../../../shared/answer-agent';
 import { SUMMARY_BATCH_SIZE } from '../../../../shared/task-summaries';
 import { EMBEDDING_MODELS } from '../../../../shared/embedding-models';
-import { alwaysOnLine, codeLine, summariesLine } from './index-sources';
+import { alwaysOnLine, codeLine, CODE_INFO, sourceRequirements, SUMMARIES_INFO, summariesLine } from './index-sources';
 import type {
   AgentDetectionInfo, AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
 } from '../../../../shared/types';
@@ -46,9 +46,6 @@ function semanticPlatformNote(status: KnowledgeGraphStatus | null): string | nul
   }
   return null;
 }
-
-const SUMMARIES_INFO = `A sentence or two per Done task, so questions find it. The Knowledge Graph's agent reads each Done task's title, description, changed files, commit subjects and how its sessions ended, about ${SUMMARY_BATCH_SIZE} tasks a call, in the background.`;
-const CODE_INFO = 'The project\'s code and docs, so answers can explain it. Reads the default branch as committed: source files and docs. Tests, fixtures, data files and anything over 256 KB are skipped. Kept current as the branch moves.';
 
 export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
@@ -162,27 +159,15 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
 
   const semanticReady = indexingEnabled && semanticEnabled;
 
-  // What each switchable source still waits for, nearest first. Summaries are
-  // written by the agent, so they need it and its model; code is read only by
-  // its answers, so it waits for the agent too (`codeIndexOn`). Both are on
-  // by default, and their switches stay usable while they wait.
-  const noAgentInstalled = answerCapableAgents.length === 0;
-  const summariesRequirement = !semanticEnabled
-    ? 'Needs the Knowledge Graph'
-    : noAgentInstalled
-      ? 'Needs a supported agent'
-      : agentSetup === 'agent'
-        ? 'Needs an agent'
-        : agentSetup === 'model'
-          ? 'Needs a model'
-          : undefined;
-  const codeRequirement = !semanticEnabled
-    ? 'Needs the Knowledge Graph'
-    : noAgentInstalled
-      ? 'Needs a supported agent'
-      : !agentChoice.agent
-        ? 'Needs an agent'
-        : undefined;
+  // What each switchable source still waits for, the same rule the Knowledge
+  // Graph's Index panel reads. Both are on by default, and their switches stay
+  // usable while they wait.
+  const { summaries: summariesRequirement, code: codeRequirement } = sourceRequirements({
+    semanticEnabled,
+    answerCapableAgents: answerCapableAgents.length,
+    agentSetup,
+    agentChosen: Boolean(agentChoice.agent),
+  });
 
   const summaries = settingProps('knowledgeGraph.taskSummaries');
   const code = settingProps('knowledgeGraph.sourceCode');
@@ -270,7 +255,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
                 writes the task summaries. Only the agents that can actually
                 answer; an agent with no `answerFromContext` is not a choice,
                 it is a way to turn Ask off by accident. */}
-            {noAgentInstalled ? (
+            {answerCapableAgents.length === 0 ? (
               <CardStatusRow label="Agent" value="Needs a supported agent" testId="knowledge-graph-no-agent" />
             ) : (
               <AgentRows config={globalConfig.knowledgeGraph} agents={agentList} capableAgents={answerCapableAgents} onChange={updateKnowledgeGraph} />

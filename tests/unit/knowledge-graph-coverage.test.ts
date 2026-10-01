@@ -1,10 +1,10 @@
 /**
- * Unit tests for the Knowledge Graph coverage strip
- * (`src/main/retrieval/graph/coverage-aggregate.ts`).
+ * Unit tests for the Knowledge Graph's conversation coverage
+ * (`src/main/retrieval/graph/coverage-aggregate.ts`), which the Index panel reads.
  *
  * The headline test reproduces the REAL measured corpus shape, because the bug
- * this module exists to prevent is subtle and would ship looking fine: a strip
- * built naively on `memory_index_state` reports 223 sessions / 22,483 chunks
+ * this module exists to prevent is subtle and would ship looking fine: counts
+ * built naively on `memory_index_state` report 223 sessions / 22,483 chunks
  * while the graph beside it renders 637 nodes / 51,228 chunks. The two numbers
  * come from different tables that disagree for 65% of a mature corpus.
  */

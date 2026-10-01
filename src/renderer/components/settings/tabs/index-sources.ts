@@ -14,10 +14,53 @@
  */
 
 import type { CardSourceLineProps } from '../settings-card';
-import type { SummaryChoice, KnowledgeGraphCodeStatus, KnowledgeGraphSummaryStatus, KnowledgeGraphSourceStatus } from '../../../../shared/types';
+import type { AnswerSetupGap, SummaryChoice, KnowledgeGraphCodeStatus, KnowledgeGraphSummaryStatus, KnowledgeGraphSourceStatus } from '../../../../shared/types';
+import { SUMMARY_BATCH_SIZE } from '../../../../shared/task-summaries';
 
 /** A line's text and look, without its switch. */
 export type SourceLineState = Pick<CardSourceLineProps, 'value' | 'tone' | 'problem' | 'percent' | 'progressLabel' | 'requirement'>;
+
+/** The Task summaries line's info, here and in the Knowledge Graph's Index panel. */
+export const SUMMARIES_INFO = `A sentence or two per Done task, so questions find it. The Knowledge Graph's agent reads each Done task's title, description, changed files, commit subjects and how its sessions ended, about ${SUMMARY_BATCH_SIZE} tasks a call, in the background.`;
+/** The Source code line's info. */
+export const CODE_INFO = 'The project\'s code and docs, so answers can explain it. Reads the default branch as committed: source files and docs. Tests, fixtures, data files and anything over 256 KB are skipped. Kept current as the branch moves.';
+
+export interface SourceRequirementInput {
+  semanticEnabled: boolean;
+  /** Installed agents that can answer from context. */
+  answerCapableAgents: number;
+  /** What the Knowledge Graph's agent choice still lacks (`answerSetupGap`). */
+  agentSetup: AnswerSetupGap | null;
+  agentChosen: boolean;
+}
+
+/**
+ * What the Task summaries and Source code lines still wait for, nearest first,
+ * or undefined when nothing. Summaries are written by the agent, so they need it
+ * and its model; code is read only by its answers, so it waits for the agent too.
+ * The Settings card and the Knowledge Graph's Index panel both read this, so the
+ * two never disagree about a tag.
+ */
+export function sourceRequirements(input: SourceRequirementInput): { summaries: string | undefined; code: string | undefined } {
+  const { semanticEnabled, answerCapableAgents, agentSetup, agentChosen } = input;
+  const summaries = !semanticEnabled
+    ? 'Needs the Knowledge Graph'
+    : answerCapableAgents === 0
+      ? 'Needs a supported agent'
+      : agentSetup === 'agent'
+        ? 'Needs an agent'
+        : agentSetup === 'model'
+          ? 'Needs a model'
+          : undefined;
+  const code = !semanticEnabled
+    ? 'Needs the Knowledge Graph'
+    : answerCapableAgents === 0
+      ? 'Needs a supported agent'
+      : !agentChosen
+        ? 'Needs an agent'
+        : undefined;
+  return { summaries, code };
+}
 
 /** "3 min left", the way a running line says it. */
 export function timeLeft(minutes: number): string {

@@ -63,9 +63,6 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
     summaryCounts(): { written: number; finishedTasks: number } {
       return { written: 5, finishedTasks: 6 };
     }
-    lastIndexedAt(): string {
-      return '2026-09-28T10:00:00.000Z';
-    }
   },
 }));
 
@@ -134,12 +131,11 @@ describe('graph service coverage cache', () => {
     expect(storeState.chunkTotalsCalls).toBe(1);
   });
 
-  it('says when the index last changed, and how many summaries the scheduler passed over', () => {
+  it('says how many summaries the scheduler passed over', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
     expect(service.getSnapshotWire('project-a', 'model').index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 0 });
     // Main runs the scheduler and sends its count with every read.
     const snapshot = service.getSnapshotWire('project-a', 'model', { summariesSkipped: 1 });
     expect(snapshot.index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 1 });
-    expect(snapshot.index.lastIndexedAt).toBe('2026-09-28T10:00:00.000Z');
   });
 });

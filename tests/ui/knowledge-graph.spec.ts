@@ -1,7 +1,7 @@
 /**
  * UI-tier coverage for the Knowledge Graph surface.
  *
- * Scope is deliberate: the surface opening, the coverage strip's NUMBERS and
+ * Scope is deliberate: the surface opening, the Index panel's NUMBERS and
  * TONE, and the four empty/loading states. The canvas itself is not asserted -
  * per-pixel canvas output is not reliably reproducible on CI's headless Linux
  * (font metrics and devicePixelRatio both differ), and the layout math that
@@ -102,7 +102,6 @@ function snapshotScript(options: {
           ],
           summaries: { written: ${summariesWritten}, finishedTasks: 412, skipped: 1 },
           storageBytes: 3221225472,
-          lastIndexedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
         },
       },
     };
@@ -318,25 +317,24 @@ async function openKnowledgeGraph(page: Page): Promise<void> {
   await page.locator('[data-testid="knowledge-graph-button"]').click();
   await page.locator('[data-testid="knowledge-graph-page"]').waitFor({ state: 'visible', timeout: 10000 });
   // The body is lazy; wait for real content, not the skeleton. Deliberately NOT
-  // the coverage strip: it now lives inside the left panel's Index section,
-  // which is collapsed by default, so it is absent in the common case.
+  // the Index panel: it is closed by default on the map, so it is absent in
+  // the common case.
   await page.locator('[data-testid="knowledge-graph-body"]').waitFor({ state: 'visible', timeout: 10000 });
 }
 
 test.describe('knowledge graph', () => {
-  test('opens from the title bar and shows reconciled coverage', async () => {
+  test('opens from the title bar and shows reconciled counts in the Index panel', async () => {
     const { browser, page } = await launchWithState(snapshotScript());
     try {
       await openKnowledgeGraph(page);
-      const strip = page.locator('[data-testid="knowledge-graph-coverage-strip"]');
+      await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
+      const conversations = page.locator('[data-testid="knowledge-graph-index-source-conversations-value"]');
 
       // The reconciled total, not the naive memory_index_state read (224).
-      await expect(strip).toContainText('638');
-      await expect(strip).toContainText('51,365');
-      await expect(strip).toContainText('100%');
-
-      // Labelled as conversation coverage, never repo coverage.
-      await expect(strip).toContainText('not files in the repository');
+      await expect(conversations).toHaveText('638');
+      // The full-width strip that carried its own copy of these counts is gone:
+      // the Index panel is their one home, with or without a map.
+      await expect(page.locator('[data-testid="knowledge-graph-coverage-strip"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -345,36 +343,80 @@ test.describe('knowledge graph', () => {
   test('presents a deleted transcript as searchable, not as a failure', async () => {
     // 414 of 638 real documents are in this state. Painting it as an error
     // would misrepresent the steady state of a mature index.
-    const { browser, page } = await launchWithState(snapshotScript());
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openKnowledgeGraph(page);
-      const strip = page.locator('[data-testid="knowledge-graph-coverage-strip"]');
-      await expect(strip).toContainText('414');
-      await expect(strip).toContainText('still fully searchable');
-      // No failure bucket is rendered when there are none.
-      await expect(strip).not.toContainText('failed to index');
+      await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
+      const gone = page.locator('[data-testid="knowledge-graph-index-fact-transcript-gone"]');
+      await expect(gone.locator('[data-testid="knowledge-graph-index-fact-transcript-gone-value"]')).toHaveText('414');
+      await expect(gone.locator('button[aria-label*="still searchable"]')).toHaveCount(1);
+      // No failure line is rendered when there are none.
+      await expect(page.locator('[data-testid="knowledge-graph-index-fact-failed"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
-  test('explains a missing semantic layer instead of showing an empty map', async () => {
+  test('explains a missing semantic layer with an Off card instead of an empty map', async () => {
     const { browser, page } = await launchWithState(snapshotScript({ semanticAvailable: false }));
     try {
       await openKnowledgeGraph(page);
-      await expect(page.locator('[data-testid="knowledge-graph-body"]')).toContainText('The Knowledge Graph is off');
-      // The coverage numbers are still accurate and still shown.
-      await expect(page.locator('[data-testid="knowledge-graph-coverage-strip"]')).toContainText('638');
+      const card = page.locator('[data-testid="knowledge-graph-off-card"]');
+      await expect(card).toContainText('Knowledge Graph');
+      await expect(card).toContainText('Off');
+      await expect(card).toContainText('Places conversations by meaning');
+      // The counts are still accurate and still shown, in the Index panel.
+      await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-conversations-value"]')).toHaveText('638');
+      // The waiting sources say what they wait for, as Settings does.
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-summaries"]')).toContainText('Needs the Knowledge Graph');
+      await page.keyboard.press('Escape');
+      // One button, not a paragraph, to where it is switched on.
+      await page.locator('[data-testid="knowledge-graph-off-settings"]').click();
+      await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+      await expect(page.locator('[data-testid="settings-tab-knowledgeGraph"]')).toHaveClass(/font-medium/);
     } finally {
       await browser.close();
     }
   });
 
-  test('shows a building state rather than an empty map on the first pass', async () => {
+  test('shows a building card and opens the Index beside it on the first pass', async () => {
     const { browser, page } = await launchWithState(snapshotScript({ building: true, stale: true }));
     try {
       await openKnowledgeGraph(page);
-      await expect(page.locator('[data-testid="knowledge-graph-body"]')).toContainText('Building the map');
+      const card = page.locator('[data-testid="knowledge-graph-building-card"]');
+      await expect(card).toContainText('Building the map');
+      await expect(page.locator('[data-testid="knowledge-graph-building-conversations-value"]')).toHaveText('638');
+      await expect(page.locator('[data-testid="knowledge-graph-building-embeddings-value"]')).toHaveText('51,365');
+      // While the map builds, the counts are what there is to look at, so the
+      // Index opens on its own (on the map it starts closed).
+      const panel = page.locator('[data-testid="knowledge-graph-index-panel"]');
+      await expect(panel).toBeVisible();
+      await expect(page.locator('[data-testid="knowledge-graph-index-fact-map"]')).toContainText('Building');
+      // The card sits beside the open panel rather than under it.
+      await expect.poll(async () => {
+        const panelBox = await panel.boundingBox();
+        const cardBox = await card.boundingBox();
+        return panelBox && cardBox ? cardBox.x - (panelBox.x + panelBox.width) : null;
+      }).toBeGreaterThanOrEqual(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('in a window too narrow for both, the first build leaves the Index closed and the card uncovered', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({ building: true, stale: true }));
+    try {
+      await page.setViewportSize({ width: 900, height: 600 });
+      await openKnowledgeGraph(page);
+      const card = page.locator('[data-testid="knowledge-graph-building-card"]');
+      await expect(card).toContainText('Building the map');
+      await expect(page.locator('[data-testid="knowledge-graph-index-panel"]')).toHaveCount(0);
+      // Centred beside the left panel, as the other no-map states are.
+      const panelBox = (await page.locator('[data-testid="knowledge-graph-no-map-panel"]').boundingBox())!;
+      const cardBox = (await card.boundingBox())!;
+      expect(cardBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width);
+      expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(900);
     } finally {
       await browser.close();
     }
@@ -387,93 +429,84 @@ test.describe('knowledge graph', () => {
       await expect(page.locator('[data-testid="knowledge-graph-canvas"]')).toBeVisible();
 
       // The counts and the honesty line live in the Index flyout, closed by
-      // default because they are reference rather than a control.
+      // default on the map because they are reference rather than a control.
+      await expect(page.locator('[data-testid="knowledge-graph-index-panel"]')).toHaveCount(0);
       await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
       const index = page.locator('[data-testid="knowledge-graph-index-panel"]');
       await expect(index).toContainText('Conversations');
       await expect(index).toContainText('638');
-      // Size beside the count, because a chunk total only means something to a
-      // reader who already knows what a chunk is.
-      await expect(index).toContainText('Size on disk');
-      await expect(index).toContainText('3.00 GB');
-      // Position is a ~33%-faithful reduction of 1024 dimensions; edges are exact.
-      await expect(index).toContainText('Links are exact');
+      // Size, because a chunk total only means something to a reader who
+      // already knows what a chunk is.
+      await expect(page.locator('[data-testid="knowledge-graph-index-fact-size-value"]')).toHaveText('3.00 GB');
+      // Position is a ~33%-faithful reduction of 1024 dimensions; links are exact.
+      const links = page.locator('[data-testid="knowledge-graph-index-fact-map"]');
+      await expect(links).toContainText('Links');
+      await expect(links.locator('button[aria-label*="exact"]')).toHaveCount(1);
     } finally {
       await browser.close();
     }
   });
 
-  test('the Index lists every corpus the store holds, and says which is not indexed yet', async () => {
-    // The map draws conversations, but the index holds more than that. Each
-    // corpus gets its own row, a corpus still embedding says how far along it
-    // is, and one with nothing in it says so rather than showing a zero.
+  test('the Index reads as the Settings Index card, without its switches', async () => {
+    // Same sources, same names and order, same value pattern: a check by a
+    // count once caught up, a share while embedding, muted while off.
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openKnowledgeGraph(page);
       await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
-      const conversations = page.locator('[data-testid="knowledge-graph-index-corpus-conversation"]');
-      const tasks = page.locator('[data-testid="knowledge-graph-index-corpus-task"]');
-      const changes = page.locator('[data-testid="knowledge-graph-index-corpus-change"]');
-      await expect(conversations).toContainText('Conversations');
-      await expect(conversations).toContainText('638');
-      await expect(conversations).not.toContainText('embedded');
-      // The same name the Settings Index card uses.
-      await expect(tasks).toContainText('Tasks');
-      await expect(tasks).not.toContainText('Task records');
-      await expect(tasks).toContainText('412, 50% embedded');
-      await expect(changes).toContainText('Session changes');
-      await expect(changes).toContainText('Not yet indexed');
+      const panel = page.locator('[data-testid="knowledge-graph-index-panel"]');
+      await expect(panel).toContainText('What Quick Find and the Knowledge Graph search.');
+
+      const labels = await page.locator('[data-testid="knowledge-graph-index-sources"] [data-testid^="knowledge-graph-index-source-"]:not([data-testid$="-value"])').evaluateAll(
+        (lines) => lines.map((line) => line.querySelector('span')?.textContent ?? ''),
+      );
+      expect(labels).toEqual(['Conversations', 'Tasks', 'Commits', 'Task summaries', 'Source code']);
+
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-conversations-value"]')).toHaveText('638');
+      // Task records still embedding: the share, and the Settings name.
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-tasks-value"]')).toHaveText('50%');
+      await expect(panel).not.toContainText('Task records');
       // Kept as text, so the count alone: no embedded share, ever.
-      const commits = page.locator('[data-testid="knowledge-graph-index-corpus-commit"]');
-      await expect(commits).toContainText('Commits');
-      await expect(commits).toContainText('1,422');
-      await expect(commits).not.toContainText('embedded');
-      // Source code switched off and empty has no row, since "Not yet
-      // indexed" would promise a fill that never comes.
-      await expect(page.locator('[data-testid="knowledge-graph-index-corpus-code"]')).toHaveCount(0);
-      // Summaries are written in the background, so the row counts toward the
-      // finished tasks. The count alone: why it falls short (off here, and one
-      // task skipped) is Settings' to say, not a suffix's.
-      const summaries = page.locator('[data-testid="knowledge-graph-index-summaries"]');
-      await expect(summaries).toContainText('300 of 412');
-      await expect(summaries).not.toContainText(',');
-      // No Chunks and no overall Embedded row: size on disk says the first in a
-      // unit people read, and each corpus row carries its own embedded share.
-      const rows = page.locator('[data-testid="knowledge-graph-index-rows"]');
-      await expect(rows).toContainText('Size on disk');
-      await expect(rows).not.toContainText('Chunks');
-      await expect(rows).not.toContainText('Embedded');
-      // Whether the numbers are current, and where to act on them.
-      // The fixture's clock starts at init, so a slow runner can round the
-      // three minutes up to four before this renders.
-      await expect(page.locator('[data-testid="knowledge-graph-index-updated"]')).toHaveText(/^Updated [34] minutes ago$/);
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-commits-value"]')).toHaveText('1,422');
+      // Summaries off here: what switching them on would cover, muted.
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-summaries-value"]')).toHaveText('112 tasks');
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-code-value"]')).toHaveText('Off');
+      // Session changes only feed the summaries, so they have no line.
+      await expect(panel).not.toContainText('Session changes');
+
+      // Nothing here is a control: the sources change in Settings.
+      await expect(panel.locator('[role="switch"]')).toHaveCount(0);
+      const facts = page.locator('[data-testid="knowledge-graph-index-facts"]');
+      await expect(facts).toContainText('Size on disk');
+      await expect(facts).not.toContainText('Chunks');
+      await expect(facts).not.toContainText('Embedded');
+
       await page.locator('[data-testid="knowledge-graph-index-settings"]').click();
       await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
       await expect(page.locator('[data-testid="settings-tab-knowledgeGraph"]')).toHaveClass(/font-medium/);
+      await expect(panel).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
-  test('the Index shows task summaries while they are on or exist, and names a missing agent', async () => {
-    // With summaries switched off and none written, the row is absent.
-    // Switched on with no agent chosen, it says so rather than showing a
-    // count that is not moving.
-    const states: Array<{ summarySetting: 'off' | 'on'; answerAgentChosen: boolean; summariesWritten: number; expected: string | null }> = [
-      { summarySetting: 'off', answerAgentChosen: true, summariesWritten: 0, expected: null },
+  test('the Index shows task summaries the way Settings does, and names a missing agent', async () => {
+    const states: Array<{ summarySetting: 'off' | 'on'; answerAgentChosen: boolean; summariesWritten: number; expected: string }> = [
+      // Off: what switching them on would cover.
+      { summarySetting: 'off', answerAgentChosen: true, summariesWritten: 0, expected: '412 tasks' },
+      // On with no agent: the tag, rather than a count that is not moving.
       { summarySetting: 'on', answerAgentChosen: false, summariesWritten: 0, expected: 'Needs an agent' },
-      { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 0, expected: '0 of 412' },
+      // On and writing: the share, no time left (the map's summary carries no rate).
+      { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 300, expected: '72%' },
     ];
     for (const { summarySetting, answerAgentChosen, summariesWritten, expected } of states) {
       const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20), summarySetting, answerAgentChosen, summariesWritten }));
       try {
         await openKnowledgeGraph(page);
         await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
-        await expect(page.locator('[data-testid="knowledge-graph-index-corpus-task"]')).toBeVisible();
-        const row = page.locator('[data-testid="knowledge-graph-index-summaries"]');
-        if (expected === null) await expect(row).toHaveCount(0);
-        else await expect(row).toContainText(expected);
-        if (expected !== null) await expect(row).toContainText('Task summaries');
+        const line = page.locator('[data-testid="knowledge-graph-index-source-summaries"]');
+        await expect(line).toContainText('Task summaries');
+        await expect(line).toContainText(expected);
       } finally {
         await browser.close();
       }
@@ -509,16 +542,17 @@ test.describe('knowledge graph', () => {
   });
 
   test('re-reads the snapshot when settings change, without being reopened', async () => {
-    // Turning semantic search on changes what this surface renders - the
-    // "The Knowledge Graph is off" notice comes from the snapshot - but starts no
-    // projection pass. The only push was pass COMPLETION, so the notice stayed
+    // Turning semantic search on changes what this surface renders (the
+    // Knowledge Graph's Off card comes from the snapshot) but starts no
+    // projection pass. The only push was pass COMPLETION, so the card stayed
     // over a working index until the surface was closed and reopened, which
     // reads as the setting not taking effect.
     const preConfig = `${snapshotScript({ semanticAvailable: false })}`;
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openKnowledgeGraph(page);
-      await expect(page.getByText('The Knowledge Graph is off')).toBeVisible();
+      const offCard = page.locator('[data-testid="knowledge-graph-off-card"]');
+      await expect(offCard).toBeVisible();
 
       // Re-point the mock at a snapshot reporting a working semantic layer, as
       // it would once the setting persisted, then announce the config change.
@@ -534,8 +568,8 @@ test.describe('knowledge graph', () => {
         (window as unknown as { __mockEmitConfigChanged: () => void }).__mockEmitConfigChanged();
       });
 
-      // No reopen, no reload: the notice clears on its own.
-      await expect(page.getByText('The Knowledge Graph is off')).toHaveCount(0);
+      // No reopen, no reload: the card clears on its own.
+      await expect(offCard).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -821,16 +855,17 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('the box offers code only when source code is indexed, and the Index counts its files', async () => {
+  test('the box offers code only when source code is indexed, and the Index shows how far it is', async () => {
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12), codeIndexed: true }));
     try {
       await openKnowledgeGraph(page);
       await expect(page.locator('[data-testid="knowledge-graph-search-input"]'))
         .toHaveAttribute('placeholder', 'Ask about your tasks, conversations and code');
       await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
-      const code = page.locator('[data-testid="knowledge-graph-index-corpus-code"]');
+      const code = page.locator('[data-testid="knowledge-graph-index-source-code"]');
       await expect(code).toContainText('Source code');
-      await expect(code).toContainText('1,488, 34% embedded');
+      // 4,210 of 12,186 passages embedded, rounded down, as the Settings line reads.
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-code-value"]')).toHaveText('34%');
     } finally {
       await browser.close();
     }
@@ -2996,17 +3031,13 @@ test.describe('knowledge graph', () => {
       const panel = page.locator('[data-testid="knowledge-graph-controls"]');
       await expect(panel).toContainText('Display');
       await expect(panel).toContainText('Index');
-      // Reference numbers, so the section rests collapsed. The full-width
-      // coverage strip is NOT what opens here - that shape is for the states
-      // with no map to draw; this panel renders its own aligned row list.
+      // Reference numbers, so the section rests collapsed on the map.
       const indexPanel = page.locator('[data-testid="knowledge-graph-index-panel"]');
       await expect(indexPanel).toHaveCount(0);
-      await expect(page.locator('[data-testid="knowledge-graph-coverage-strip"]')).toHaveCount(0);
 
       await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
       await expect(indexPanel).toContainText('Size on disk');
       await expect(indexPanel).toContainText('Links');
-      await expect(page.locator('[data-testid="knowledge-graph-coverage-strip"]')).toHaveCount(0);
 
       // It opens to the SIDE, and that is not cosmetic: Index is the last thing
       // in a column whose middle is a list of every region the index holds, so
@@ -3116,6 +3147,87 @@ test.describe('knowledge graph', () => {
       expect(indexBox.y + indexBox.height).toBeLessThanOrEqual(600);
     } finally {
       await browser.close();
+    }
+  });
+
+  test('with every card open and Index at the bottom, the flyout stays on screen and is reachable', async () => {
+    // The case the flyout's placement exists for: Filter, Regions and Display
+    // all expanded over forty regions push Index to the foot of the window, so
+    // the flyout opening level with its header would run off the bottom.
+    const fortyRegions = `(function () {
+      var base = ${projectionLiteral(80)};
+      var regions = [];
+      for (var r = 0; r < 40; r++) {
+        regions.push({ id: r, label: 'topic ' + r, x: 0.5, y: 0.5, z: 0.5, size: 2 });
+      }
+      base.clusterings = base.clusterings.map(function (entry) {
+        return { granularity: entry.granularity, regions: regions };
+      });
+      base.nodes.forEach(function (node, i) {
+        node.clusters = { coarse: i % 40, balanced: i % 40, fine: i % 40 };
+      });
+      return base;
+    })()`;
+    for (const size of [{ width: 1440, height: 800 }, { width: 900, height: 600 }]) {
+      const { browser, page } = await launchWithState(snapshotScript({ projection: fortyRegions, summarySetting: 'on', codeIndexed: true }));
+      try {
+        await page.setViewportSize(size);
+        await openKnowledgeGraph(page);
+        await expect(page.locator('[data-testid="knowledge-graph-region-row"]')).toHaveCount(40);
+        const toggle = page.locator('[data-testid="knowledge-graph-index-toggle"]');
+        await toggle.scrollIntoViewIfNeeded();
+        await toggle.click();
+        const flyout = page.locator('[data-testid="knowledge-graph-index-panel"]');
+        // Visible, not just present: a flyout that was never placed stays hidden.
+        await expect(flyout).toBeVisible();
+
+        // Read once the placement has settled (the content grows as it renders).
+        await expect.poll(async () => page.evaluate(() => {
+          const panel = document.querySelector('[data-testid="knowledge-graph-index-panel"]') as HTMLElement;
+          const header = document.querySelector('[data-testid="knowledge-graph-index-toggle"]') as HTMLElement;
+          // The left panel's column: the flyout never rises over the graph's
+          // header or the title bar, nor sinks under the status bar.
+          const column = document.querySelector('[data-graph-chrome="left"]')!.getBoundingClientRect();
+          const box = panel.getBoundingClientRect();
+          const headerTop = header.getBoundingClientRect().top;
+          // Level with its header unless that would run past the column's foot.
+          const expectedTop = Math.max(column.top, Math.min(headerTop, column.bottom - box.height));
+          return {
+            withinTop: box.top >= column.top - 0.5,
+            withinBottom: box.bottom <= column.bottom + 0.5,
+            placed: Math.abs(box.top - expectedTop) <= 1,
+          };
+        }), { message: `flyout placement at ${size.width}x${size.height}` }).toEqual({ withinTop: true, withinBottom: true, placed: true });
+
+        // Everything in it can be reached, even when the window is too short
+        // for all of it and it scrolls inside itself.
+        const openSettings = page.locator('[data-testid="knowledge-graph-index-settings"]');
+        await openSettings.scrollIntoViewIfNeeded();
+        await expect(openSettings).toBeInViewport();
+        await expect(flyout).toBeVisible();
+
+        if (size.height === 600) {
+          // Here the panel scrolls. A scroll that keeps the header in view
+          // leaves the flyout open beside it; one that carries the header out
+          // of the panel closes the flyout rather than leave it beside nothing.
+          const controls = page.locator('[data-testid="knowledge-graph-controls"]');
+          expect(await controls.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+          await controls.evaluate((element) => { element.scrollTop -= 4; });
+          await expect.poll(async () => page.evaluate(() => {
+            const panel = document.querySelector('[data-testid="knowledge-graph-index-panel"]');
+            const header = document.querySelector('[data-testid="knowledge-graph-index-toggle"]') as HTMLElement;
+            const column = document.querySelector('[data-graph-chrome="left"]')!.getBoundingClientRect();
+            if (!panel) return 'closed';
+            const box = panel.getBoundingClientRect();
+            const expectedTop = Math.max(column.top, Math.min(header.getBoundingClientRect().top, column.bottom - box.height));
+            return Math.abs(box.top - expectedTop) <= 1 ? 'follows' : 'stale';
+          })).toBe('follows');
+          await controls.evaluate((element) => { element.scrollTop = 0; });
+          await expect(flyout).toHaveCount(0);
+        }
+      } finally {
+        await browser.close();
+      }
     }
   });
 

@@ -31,24 +31,19 @@
  * as part of the control rather than as help.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Database, Filter, Search, Settings, Shapes, SlidersHorizontal, X } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { Filter, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
-import { OverlayPopover } from '../OverlayPopover';
 import { Select } from '../settings/shared';
 import type { KnowledgeGraphColorMode } from './KnowledgeGraphCanvas';
 import { clusterHue } from './knowledge-graph-scene';
 import type {
   KnowledgeGraphCoverageSummary,
   KnowledgeGraphGranularity,
-  KnowledgeGraphIndexCorpus,
-  KnowledgeGraphIndexCorpusSummary,
   KnowledgeGraphIndexSummary,
 } from '../../../shared/types';
-import { PanelRow, InfoHint, formatBytes } from './PanelRow';
-import { formatRelativeTime } from '../../lib/datetime';
-import { useConfigStore } from '../../stores/config-store';
-import { agentJobChoice, answerSetupGap, codeIndexOn, taskSummariesOn } from '../../../shared/answer-agent';
+import { CARD_CLASS, CARD_SURFACE_CLASS, GroupLabel, SectionHeader } from './panel-card';
+import { KnowledgeGraphIndexCard } from './KnowledgeGraphIndexCard';
 import { TASK_OUTCOME_LABELS, type KnowledgeGraphTaskOutcome } from '../../../shared/knowledge-graph-task-fields';
 
 /**
@@ -299,118 +294,6 @@ function RegionRow({
   );
 }
 
-function GroupLabel({ children, hint }: { children: React.ReactNode; hint?: string }) {
-  return (
-    <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-      <span>{children}</span>
-      {hint ? <InfoHint text={hint} /> : null}
-    </div>
-  );
-}
-
-/** The Index section's rows are all counts, so they format and align as numbers.
- *  The shape itself is shared with the detail panel (`PanelRow`). */
-function IndexRow({
-  label,
-  value,
-  tone = 'neutral',
-  hint,
-}: {
-  label: string;
-  /** A number is formatted for the reader; anything else renders as given. */
-  value: number | ReactNode;
-  tone?: 'neutral' | 'ok' | 'problem';
-  hint?: string;
-}) {
-  return (
-    <PanelRow
-      label={label}
-      value={typeof value === 'number' ? value.toLocaleString() : value}
-      tone={tone}
-      hint={hint}
-      numeric
-    />
-  );
-}
-
-/** How the Index panel names each corpus, and what its row's hint says. */
-const CORPUS_ROWS: Record<KnowledgeGraphIndexCorpus, { label: string; hint: string }> = {
-  conversation: {
-    label: 'Conversations',
-    hint: 'Agent conversations indexed for the projects on the map. These are what the map draws.',
-  },
-  task: {
-    label: 'Tasks',
-    hint: 'Each task and backlog item: its title, labels and description. Searched when you ask, never drawn.',
-  },
-  change: {
-    label: 'Session changes',
-    hint: 'The files each session changed, read from its conversation. Kept as text for the task summaries, never searched or drawn.',
-  },
-  commit: {
-    label: 'Commits',
-    hint: 'Commits on the default branch, each tied to the task whose conversation wrote it. Kept as text, never drawn.',
-  },
-  code: {
-    label: 'Source code',
-    hint: 'Source files and docs on the default branch, as committed, counted in files. Found by meaning when you ask, never drawn.',
-  },
-};
-
-/** A corpus row's value: its document count, and while it is still embedding,
- *  how much of it is. A corpus with nothing in it says so rather than 0. */
-function corpusValue(entry: KnowledgeGraphIndexCorpusSummary, semanticAvailable: boolean): string {
-  if (entry.documents === 0) return 'Not yet indexed';
-  const count = entry.documents.toLocaleString();
-  if (!entry.embeds || !semanticAvailable || entry.chunks === 0 || entry.embeddedChunks >= entry.chunks) return count;
-  return `${count}, ${Math.floor((entry.embeddedChunks / entry.chunks) * 100)}% embedded`;
-}
-
-function SectionHeader({
-  icon,
-  label,
-  collapsed,
-  onToggle,
-  testId,
-  /** Where the section's body appears. A `side` header keeps its chevron
-   *  pointing at the flyout rather than rotating down onto content that is not
-   *  underneath it. */
-  opens = 'down',
-}: {
-  icon: React.ReactNode;
-  label: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  testId: string;
-  opens?: 'down' | 'side';
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-fg-secondary hover:text-fg transition-colors cursor-pointer"
-      aria-expanded={!collapsed}
-      data-testid={testId}
-    >
-      {icon}
-      <span className="flex-1 text-left">{label}</span>
-      {opens === 'side' ? (
-        <ChevronRight size={13} aria-hidden />
-      ) : (
-        <ChevronDown
-          size={13}
-          aria-hidden
-          className={`transition-transform ${collapsed ? '-rotate-90' : ''}`}
-        />
-      )}
-    </button>
-  );
-}
-
-/** Card chrome shared by the panel's four sections. No `overflow` here:
- *  nothing inside a card may clip. */
-const CARD_SURFACE_CLASS = 'rounded-lg border border-edge bg-surface-raised/80 backdrop-blur-md shadow-xl';
-const CARD_CLASS = `flex-shrink-0 ${CARD_SURFACE_CLASS}`;
 /**
  * The Regions card over a long list. It is the one card that gives way: it
  * takes the height the others leave and its list scrolls, so the panel itself
@@ -419,10 +302,6 @@ const CARD_CLASS = `flex-shrink-0 ${CARD_SURFACE_CLASS}`;
  * lets the panel scroll.
  */
 const REGIONS_FLEX_CARD_CLASS = `flex min-h-[15rem] flex-col ${CARD_SURFACE_CLASS}`;
-
-/** Air kept between the Index flyout and the viewport's bottom edge, which
- *  clears the app's status bar showing through beneath this surface. */
-const FLYOUT_VIEWPORT_PADDING = 40;
 
 export function KnowledgeGraphControls({
   colorMode,
@@ -453,73 +332,7 @@ export function KnowledgeGraphControls({
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [regionsCollapsed, setRegionsCollapsed] = useState(false);
   const [displayCollapsed, setDisplayCollapsed] = useState(false);
-  // Closed by default: the numbers are reference, not a control.
-  const [indexCollapsed, setIndexCollapsed] = useState(true);
   const [regionQuery, setRegionQuery] = useState('');
-
-  // Whether task summaries are on and still wait for the Knowledge Graph
-  // agent, through the rule main and the Settings Index card use. Read here, not from the snapshot,
-  // so the row follows a settings change at once.
-  const summariesOn = useConfigStore((state) => taskSummariesOn(state.config.knowledgeGraph));
-  const codeOn = useConfigStore((state) => codeIndexOn(state.config.knowledgeGraph));
-  const searchAgent = useConfigStore((state) => agentJobChoice(state.config.knowledgeGraph, 'summary').agent);
-  const searchModel = useConfigStore((state) => agentJobChoice(state.config.knowledgeGraph, 'summary').model);
-  const agentList = useConfigStore((state) => state.agentList);
-  const summariesNeedAgent = useMemo(
-    () => summariesOn && answerSetupGap({ agents: agentList, configured: searchAgent, configuredModel: searchModel, requireFound: true }) !== null,
-    [summariesOn, agentList, searchAgent, searchModel],
-  );
-
-  /**
-   * Index opens to the SIDE, not downward, and outside the panel.
-   *
-   * To the side because it is the last card in a column whose middle is a list
-   * of every region the index holds, forty on a large project, so a section
-   * opening downward ran off the bottom of the window. Outside the panel because
-   * the panel scrolls as a whole in a short window, and a scrolling box clips
-   * anything positioned inside it. It is portaled to the body and placed beside
-   * its header, pushed up to stay clear of the bottom edge.
-   */
-  const indexTriggerRef = useRef<HTMLDivElement>(null);
-  const indexPopoverRef = useRef<HTMLDivElement>(null);
-  const [indexFlyoutPosition, setIndexFlyoutPosition] = useState<{ left: number; top: number } | null>(null);
-  useLayoutEffect(() => {
-    if (indexCollapsed) return;
-    const trigger = indexTriggerRef.current;
-    const popover = indexPopoverRef.current;
-    if (!trigger || !popover) return;
-    const triggerBox = trigger.getBoundingClientRect();
-    const height = popover.offsetHeight;
-    const lowest = window.innerHeight - FLYOUT_VIEWPORT_PADDING - height;
-    setIndexFlyoutPosition({
-      left: triggerBox.right + 8,
-      top: Math.max(8, Math.min(triggerBox.top, lowest)),
-    });
-  }, [indexCollapsed]);
-  useEffect(() => {
-    if (indexCollapsed) return;
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (indexPopoverRef.current?.contains(target)) return;
-      // The header is the toggle, so let its own handler close it rather than
-      // closing here and reopening on the same click.
-      if (indexTriggerRef.current?.contains(target)) return;
-      setIndexCollapsed(true);
-    };
-    // Escape closes the flyout, not the graph under it: a capture-phase
-    // listener registered only while open, as the Projects picker does.
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
-      setIndexCollapsed(true);
-    };
-    document.addEventListener('mousedown', closeOnOutsideClick, true);
-    document.addEventListener('keydown', closeOnEscape, true);
-    return () => {
-      document.removeEventListener('mousedown', closeOnOutsideClick, true);
-      document.removeEventListener('keydown', closeOnEscape, true);
-    };
-  }, [indexCollapsed]);
 
   const shownRegionCount = regions.filter((region) => !facets.hiddenRegions.has(region.id)).length;
   const regionFilterable = regions.length >= REGION_FILTER_MIN;
@@ -864,131 +677,15 @@ export function KnowledgeGraphControls({
         ) : null}
       </div>
 
-      <div ref={indexTriggerRef} className={CARD_CLASS}>
-        <SectionHeader
-          icon={<Database size={13} aria-hidden />}
-          label="Index"
-          collapsed={indexCollapsed}
-          onToggle={() => setIndexCollapsed((current) => !current)}
-          testId="knowledge-graph-index-toggle"
-          opens="side"
-        />
-      </div>
-      <OverlayPopover
-        open={!indexCollapsed}
-        popoverRef={indexPopoverRef}
-        portal
-        style={indexFlyoutPosition
-          ? { left: indexFlyoutPosition.left, top: indexFlyoutPosition.top }
-          // Measured before it is placed, so the first frame is invisible.
-          : { left: 0, top: 0, visibility: 'hidden' }}
-        transformOrigin="left top"
-        className="fixed z-[2147483646] w-64 rounded-lg border border-edge bg-surface-raised/95 backdrop-blur-md shadow-xl"
-        data-testid="knowledge-graph-index-panel"
-      >
-        <div className="px-3 py-3">
-          {/* A definition list, not the coverage STRIP: aligned label and value
-              rows are what a narrow column of reference numbers wants. */}
-          <dl className="divide-y divide-edge/60" data-testid="knowledge-graph-index-rows">
-            {/* One row per corpus the index holds, conversations first. A
-                corpus not indexed yet says so rather than showing a zero.
-                Source code has its own switch, so its row shows the way the
-                summaries row does: while switched on, or while any is still
-                held. Off and empty, "Not yet indexed" would promise a fill
-                that never comes. */}
-            {index.corpora.filter((entry) => entry.corpus !== 'code' || codeOn || entry.documents > 0).map((entry) => (
-              <div key={entry.corpus} data-testid={`knowledge-graph-index-corpus-${entry.corpus}`}>
-                <IndexRow
-                  label={CORPUS_ROWS[entry.corpus].label}
-                  value={corpusValue(entry, semanticAvailable)}
-                  hint={CORPUS_ROWS[entry.corpus].hint}
-                />
-              </div>
-            ))}
-            {/* While summaries are on, or any exist: they are written in the
-                background, so the count climbs toward the Done tasks. The
-                count alone, with no suffix: a count short of the total already
-                says summaries stopped (switched off, a failed call, a task the
-                agent passed over), and Settings > Knowledge Graph says which. */}
-            {summariesOn || index.summaries.written > 0 ? (
-              <div data-testid="knowledge-graph-index-summaries">
-                <IndexRow
-                  label="Task summaries"
-                  value={summariesNeedAgent
-                    ? <span className="text-fg-muted">Needs an agent</span>
-                    : `${index.summaries.written.toLocaleString()} of ${index.summaries.finishedTasks.toLocaleString()}`}
-                  hint={summariesNeedAgent
-                    ? 'Choose an agent in Settings > Knowledge Graph.'
-                    : 'A sentence or two per Done task, searched with its record. Settings > Knowledge Graph says why a count stops short.'}
-                />
-              </div>
-            ) : null}
-            {/* No Chunks row and no overall Embedded row: chunks are how the
-                store splits text, which size on disk says in a unit people
-                read, and each corpus row above already shows its own embedded
-                share while that is below 100%. */}
-            {index.storageBytes > 0 ? (
-              <IndexRow
-                label="Size on disk"
-                value={formatBytes(index.storageBytes)}
-                hint="The indexed text of every corpus plus its embedding vectors."
-              />
-            ) : null}
-            <IndexRow label="Links" value={edgeCount} />
-            {coverage.sourceMissingButSearchable.documents > 0 ? (
-              <IndexRow
-                label="Source file gone"
-                value={coverage.sourceMissingButSearchable.documents}
-                // Said plainly because it is NOT a problem: the text and the
-                // embeddings are still indexed and still answer queries.
-                hint="The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable"
-              />
-            ) : null}
-            {coverage.notYetIndexed.documents > 0 ? (
-              <IndexRow
-                label="Not yet indexed"
-                value={coverage.notYetIndexed.documents}
-                hint="The background sweep has not reached these conversations yet"
-              />
-            ) : null}
-            {coverage.failed.documents > 0 ? (
-              <IndexRow label="Failed to index" value={coverage.failed.documents} tone="problem" />
-            ) : null}
-            {building ? (
-              <IndexRow label="Status" value="updating" />
-            ) : null}
-          </dl>
-
-          <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-snug text-fg-faint">
-            {/* Stated rather than implied. Position is a ~33%-faithful
-                reduction of 1024 dimensions; the links are exact. */}
-            <span>Links are exact; position is approximate.</span>
-            <InfoHint text="Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee." />
-          </p>
-
-          {/* Whether the numbers are current, and where to act on them. */}
-          <div className="mt-2 flex items-center justify-between gap-2 border-t border-edge/60 pt-2">
-            {/* Only with a time to give: an empty index already says "Not yet
-                indexed" on each corpus row above. */}
-            <span className="text-[11px] text-fg-muted" data-testid="knowledge-graph-index-updated">
-              {index.lastIndexedAt ? `Updated ${formatRelativeTime(index.lastIndexedAt)}` : null}
-            </span>
-            {onOpenSettings ? (
-              <button
-                type="button"
-                onClick={onOpenSettings}
-                title="Rebuild the index, or change its sources, model and agent, in Settings > Knowledge Graph"
-                // The camera toolbar's button, so the graph's actions read alike.
-                className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
-                data-testid="knowledge-graph-index-settings"
-              >
-                <Settings size={13} aria-hidden />
-                Settings
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </OverlayPopover>
+      <KnowledgeGraphIndexCard
+        index={index}
+        coverage={coverage}
+        semanticAvailable={semanticAvailable}
+        hasMap
+        building={building}
+        edgeCount={edgeCount}
+        onOpenSettings={onOpenSettings}
+      />
     </div>
   );
 }

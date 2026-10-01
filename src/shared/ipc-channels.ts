@@ -566,8 +566,8 @@ export const IPC = {
   // One task's summary, for the Knowledge Graph's selected conversation. Null
   // while summaries are switched off or the task has none.
   KNOWLEDGE_GRAPH_TASK_SUMMARY: 'knowledgeGraph:taskSummary',
-  /** Cheap read of the cached Knowledge Graph projection plus its coverage strip.
-   *  Never runs the projection pass - see graph-service. */
+  /** Cheap read of the cached Knowledge Graph projection plus its coverage and
+   *  index counts. Never runs the projection pass - see graph-service. */
   KNOWLEDGE_GRAPH_SNAPSHOT: 'knowledgeGraph:graphSnapshot',
   /** Every project with its indexed conversation count, for the Knowledge
    *  Graph's Projects picker. An index-only count per project, so it stays in

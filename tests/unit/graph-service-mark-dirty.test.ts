@@ -61,9 +61,6 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
     summaryCounts(): { written: number; finishedTasks: number } {
       return { written: 0, finishedTasks: 0 };
     }
-    lastIndexedAt(): null {
-      return null;
-    }
   },
 }));
 

@@ -1324,8 +1324,8 @@ export class RetrievalStore {
   }
 
   /**
-   * Every conversation doc id the corpus could hold, for the coverage strip's
-   * "not yet reached by the sweep" bucket.
+   * Every conversation doc id the corpus could hold, for the coverage's
+   * "not yet reached by the sweep" bucket (the Index panel's Not yet indexed).
    *
    * These are `sessions.agent_session_id`, the agent CLI's own transcript id,
    * NOT `sessions.id`. Verified against the live corpus: joining
@@ -1484,15 +1484,6 @@ export class RetrievalStore {
       .prepare("SELECT MAX(indexed_at) AS lastIndexedAt FROM memory_index_state WHERE corpus = 'conversation'")
       .get() as { lastIndexedAt: string | null };
     return { conversations: documentsIn('conversation'), taskRecords: documentsIn('task'), lastIndexedAt: recency.lastIndexedAt };
-  }
-
-  /** When anything was last written to the index, any corpus: the Index's
-   *  "Updated" line. One row per document, so a small read. */
-  lastIndexedAt(): string | null {
-    const row = this.db
-      .prepare('SELECT MAX(indexed_at) AS lastIndexedAt FROM memory_index_state')
-      .get() as { lastIndexedAt: string | null };
-    return row.lastIndexedAt;
   }
 
   /**

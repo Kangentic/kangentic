@@ -336,7 +336,6 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       corpora,
       summaries: summaryCounts(store, summariesSkippedCount),
       storageBytes: (projection?.storageBytes ?? 0) + cached.otherTextBytes + otherEmbedded * dimensions * 4,
-      lastIndexedAt: store.lastIndexedAt(),
     };
   }
 

@@ -87,12 +87,6 @@ export function sumIndex(summaries: ReadonlyArray<KnowledgeGraphIndexSummary>): 
       skipped: summaries.reduce((total, summary) => total + (summary.summaries.skipped ?? 0), 0),
     },
     storageBytes: summaries.reduce((total, summary) => total + summary.storageBytes, 0),
-    // The least recent project's: "Updated" has to hold for everything shown.
-    lastIndexedAt: summaries.reduce<string | null>((oldest, summary) => {
-      const at = summary.lastIndexedAt ?? null;
-      if (at === null) return oldest;
-      return oldest === null || at < oldest ? at : oldest;
-    }, null),
   };
 }
 

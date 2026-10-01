@@ -136,6 +136,12 @@ interface SettingsCardProps {
    */
   requirement?: string;
   /**
+   * A state tag after the title that dims nothing ("Off"), for a card shown
+   * outside Settings that reports a feature's state rather than waiting on one:
+   * the Knowledge Graph's own off card. Same look as `requirement`'s tag.
+   */
+  tag?: string;
+  /**
    * Tiles only: `CardRow`, `CardToggleRow`, `CardTile`. Pass it only when it
    * should show.
    */
@@ -150,7 +156,7 @@ interface SettingsCardProps {
 }
 
 export function SettingsCard({
-  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, children, wideBody, testId,
+  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, tag, children, wideBody, testId,
 }: SettingsCardProps) {
   const visible = useAnySettingVisible([...(searchId ? [searchId] : []), ...(searchIds ?? [])]);
   if (!visible) return null;
@@ -201,6 +207,7 @@ export function SettingsCard({
               <h3 className={`${SETTING_LABEL_CLASS} font-semibold ${dimmed}`}>{label}</h3>
               {info ? <InfoTip label={label} text={info} /> : null}
               {requirement ? <SettingTag>{requirement}</SettingTag> : null}
+              {tag ? <SettingTag>{tag}</SettingTag> : null}
             </div>
             <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5 ${dimmed}`}>{description}</p>
           </div>
@@ -420,19 +427,28 @@ export interface CardSourceLineProps {
  * however much it has to say, and the detail lives in the Knowledge Graph's
  * Index panel.
  */
-export function CardSourceList({ lines, testId }: { lines: ReadonlyArray<CardSourceLineProps>; testId?: string }) {
+export function CardSourceList({ lines, testId, readOnly = false }: {
+  lines: ReadonlyArray<CardSourceLineProps>;
+  testId?: string;
+  /**
+   * No switch column: the list says what the index holds and Settings is where
+   * it changes. The Knowledge Graph's Index panel reads this way, so it matches
+   * the Settings card line for line without offering a control it does not own.
+   */
+  readOnly?: boolean;
+}) {
   return (
     <CardTile testId={testId}>
       {/* The lines carry their own vertical padding, so the tile's is taken
           back and a line's hairline runs the tile's full height apart. */}
       <div className="-my-3 flex flex-col divide-y divide-edge/60">
-        {lines.map((line) => <CardSourceLine key={line.label} {...line} />)}
+        {lines.map((line) => <CardSourceLine key={line.label} {...line} readOnly={readOnly} />)}
       </div>
     </CardTile>
   );
 }
 
-function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent = null, progressLabel, requirement, toggle, testId }: CardSourceLineProps) {
+function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent = null, progressLabel, requirement, toggle, testId, readOnly }: CardSourceLineProps & { readOnly: boolean }) {
   const unavailable = requirement !== undefined;
   const dimmed = unavailable ? 'opacity-50' : '';
   const valueTone = tone === 'muted' ? 'text-fg-muted' : 'text-fg-secondary';
@@ -461,7 +477,7 @@ function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent
             ) : value}
           </span>
         )}
-        {toggle ? (
+        {readOnly ? null : toggle ? (
           <ToggleSwitch
             checked={toggle.checked}
             onChange={toggle.onChange}

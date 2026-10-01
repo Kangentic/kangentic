@@ -7078,9 +7078,6 @@ export interface KnowledgeGraphIndexSummary {
   summaries: { written: number; finishedTasks: number; skipped?: number };
   /** Bytes every corpus occupies: text plus vectors. */
   storageBytes: number;
-  /** When anything was last written to the index, any corpus, ISO; null when
-   *  nothing ever has been. With several projects, the least recent of them. */
-  lastIndexedAt?: string | null;
 }
 
 /** One conversation a task window's prior work lists. */
