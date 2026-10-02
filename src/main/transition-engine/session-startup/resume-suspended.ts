@@ -104,8 +104,6 @@ export async function resumeSuspendedSessions(
     return;
   }
 
-  const now = new Date().toISOString();
-
   // Resolve tasks and lanes once: needed for isolation targeting (3b) and the
   // auto_spawn / deleted / paused filters below.
   const swimlaneRepo = new SwimlaneRepository(db);
@@ -448,8 +446,16 @@ export async function resumeSuspendedSessions(
         || !recordUnchanged
         || sessionManager.findLiveSessionByTaskId(input.task.id)
       ) {
+        // Logged and counted, so a task this pass left alone leaves a trace.
+        console.log(
+          `[SESSION_RECOVERY] Skipped session ${input.record.id} (task ${input.task.id}): it changed while its resume was prepared`,
+        );
+        skipped++;
         return null;
       }
+      // Stamped inside the lock, as the auto-spawn's is, so a record another
+      // holder wrote while this one waited never sorts after the one written here.
+      const now = new Date().toISOString();
 
       const newSession = await sessionManager.spawn({
         id: input.sessionRecordId,

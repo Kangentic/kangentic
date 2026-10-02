@@ -250,6 +250,8 @@ export async function autoSpawnTasks(
         || !fs.existsSync(input.cwd)
         || hasSession(input.task.id)
       ) {
+        // Logged, so a task this pass left without an agent leaves a trace.
+        console.log(`[AUTO_SPAWN] Skipped task ${input.task.id}: it changed while its spawn was prepared`);
         return null;
       }
       // Stamped inside the lock, so a record another holder wrote while this

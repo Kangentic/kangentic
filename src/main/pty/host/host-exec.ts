@@ -44,16 +44,17 @@ export function ownExecutables(): string[] {
 }
 
 /** The executable a shell command line starts: its leading quoted path
- *  (double quotes, or the single quotes `quoteArg` writes for a POSIX shell),
- *  or its first word. */
+ *  (double quotes, or the single quotes `quoteArg` writes for a POSIX shell,
+ *  which spells an apostrophe inside the path `'\''`), or its first word. */
 export function leadingExecutable(commandLine: string): string {
-  const quoted = /^\s*(?:"([^"]*)"|'([^']*)')/.exec(commandLine);
-  if (quoted) return quoted[1] ?? quoted[2] ?? '';
+  const quoted = /^\s*(?:"([^"]*)"|'((?:[^']|'\\'')*)')/.exec(commandLine);
+  if (quoted) return quoted[1] ?? quoted[2]?.replace(/'\\''/g, "'") ?? '';
   return commandLine.trim().split(/\s+/)[0] ?? '';
 }
 
-/** An executable's name as a shell resolves it: no directory, no case, and on
- *  Windows no `.exe`, which cmd finds through PATHEXT when it is left off. */
+/** An executable's name as a shell resolves it: no directory, no case and no
+ *  `.exe`, on every platform. cmd finds a name through PATHEXT with `.exe` left
+ *  off, and macOS's default file system ignores case. */
 function commandName(file: string): string {
   return path.basename(file).toLowerCase().replace(/\.exe$/, '');
 }

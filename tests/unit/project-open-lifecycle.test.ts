@@ -1169,21 +1169,26 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
 
   it('a project whose resume fails is logged and does not stop the next, and the recovery never rejects', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const context = createMockContext();
-    const projectA = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a') });
-    const projectB = makeProject({ id: 'project-B', name: 'Project B', path: path.join(PROJECT_PATH, 'b') });
-    registerProjects(context, [projectA, projectB]);
-    vi.mocked(resumeSuspendedSessions).mockRejectedValueOnce(new Error('resume exploded'));
+    try {
+      const context = createMockContext();
+      const projectA = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a') });
+      const projectB = makeProject({ id: 'project-B', name: 'Project B', path: path.join(PROJECT_PATH, 'b') });
+      registerProjects(context, [projectA, projectB]);
+      vi.mocked(resumeSuspendedSessions).mockRejectedValueOnce(new Error('resume exploded'));
 
-    await expect(recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([
-      ['project-A', new Set(['session-a1'])],
-      ['project-B', new Set(['session-b1'])],
-    ]))).resolves.toBeUndefined();
+      await expect(recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([
+        ['project-A', new Set(['session-a1'])],
+        ['project-B', new Set(['session-b1'])],
+      ]))).resolves.toBeUndefined();
 
-    expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-A', 'project-B']);
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-    expect(String(errorSpy.mock.calls[0][0])).toContain('Project A');
-    errorSpy.mockRestore();
+      expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-A', 'project-B']);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(String(errorSpy.mock.calls[0][0])).toContain('Project A');
+    } finally {
+      // Restored on a failed assertion too, or every later test runs with
+      // console.error silenced and hides its own failure output.
+      errorSpy.mockRestore();
+    }
   });
 
   it('stops resuming once the quit has begun, even partway through the projects', async () => {

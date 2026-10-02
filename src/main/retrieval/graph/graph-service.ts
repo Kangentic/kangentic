@@ -258,7 +258,10 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     // meanwhile throws at its open below and is never made again.
     state.running = true;
     try {
-      if (await makeRegionNames(projectId)) onChanged?.(projectId);
+      const changed = await makeRegionNames(projectId);
+      // Forgotten while naming, as the projection pass checks its signal:
+      // nobody is left to tell about the map.
+      if (changed && naming.get(projectId) === state) onChanged?.(projectId);
     } catch (error) {
       console.error('[knowledge-graph] region names failed:', error);
     } finally {

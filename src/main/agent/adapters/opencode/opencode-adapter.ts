@@ -11,7 +11,7 @@ import { removeHooks as removeOpenCodeHooks } from './hook-manager';
 import { discoverOpenCodeCapabilities } from './capability-discovery';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages } from './remote-client';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
-import { spawnCli } from '../../shared/cli-print';
+import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
@@ -556,9 +556,11 @@ export class OpenCodeAdapter implements AgentAdapter {
       // After the answer, not before it: the delete is its own process, and
       // the reader is not kept waiting on it. The id is read from the CLI's
       // output, so it goes on the command line only in the shape an id has.
-      // Its output is drained so a full pipe cannot stall it.
+      // Its output is drained so a full pipe cannot stall it. It is not the
+      // chat's run, so the chat ending right after the answer cannot stop it.
       if (sessionId && /^[\w-]+$/.test(sessionId)) {
-        const deletion = spawnCli(cliPath, ['session', 'delete', sessionId], cwd);
+        const deleteArgs = ['session', 'delete', sessionId];
+        const deletion = outsideChatRuns(() => spawnCli(cliPath, deleteArgs, cwd));
         deletion.on('error', () => undefined);
         deletion.stdout.resume();
         deletion.stderr.resume();

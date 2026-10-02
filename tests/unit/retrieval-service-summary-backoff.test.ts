@@ -127,9 +127,12 @@ function makeProject(id: string): Project {
 /** The two projects are both registered, so a switch between them is a real one. */
 const PROJECTS = [makeProject('proj-a'), makeProject('proj-b')];
 
-function makeContext(openProjectId: string): IpcContext {
+/** `summariesOn: false` is the Knowledge Graph's task summaries switch, which
+ *  `summariesEnabled` reads (`taskSummaries: false`). */
+function makeContext(openProjectId: string, options: { summariesOn?: boolean } = {}): IpcContext {
+  const { summariesOn = true } = options;
   return {
-    configManager: { load: () => ({ knowledgeGraph: { indexingEnabled: true, enabled: true, agent: 'claude' } }) },
+    configManager: { load: () => ({ knowledgeGraph: { indexingEnabled: true, enabled: true, agent: 'claude', taskSummaries: summariesOn } }) },
     currentProjectId: openProjectId,
     projectRepo: {
       list: () => PROJECTS,
@@ -139,6 +142,10 @@ function makeContext(openProjectId: string): IpcContext {
     boardEvents: new BoardEventBus(),
   } as unknown as IpcContext;
 }
+
+/** What `resolveAnswerRun` answers when no writer can be resolved (the CLI is
+ *  missing, no agent is chosen): `ok: false`, with the failure it reports. */
+const NO_WRITER = { ok: false, failure: { ok: false, reason: 'the agent CLI was not found' } };
 
 /**
  * Hold the NEXT `resolveAnswerRun` call until the returned function settles it,
@@ -301,6 +308,147 @@ describe('retrievalService.reconcileEmbedWorker and the summary failure backoff'
     // One request per reconcile and nothing after them: a wrongly ended
     // backoff asks for the pass again.
     expect(summarySchedulerMock.request.mock.calls).toEqual([[context, 'proj-a'], [context, 'proj-a']]);
+  });
+
+  // A reconcile that ends with NO writer (summaries switched off, a refresh that
+  // rejected, a resolve that returned `ok: false`) is not a new writer. Only a
+  // resolved writer is a baseline, and only a resolved writer is compared with it.
+  //
+  // Two lines in `retrieval-service.ts` carry this, and each case below fails on
+  // its own one:
+  //  - `summaryChoice === null` in the follow-up of `reconcileEmbedWorker`. Drop
+  //    it and the reconcile that ends with no writer compares the baseline
+  //    against null, sees a difference, and ends the backoff.
+  //  - `if (summaryChoice)` before `resolvedSummaryChoices.set` in
+  //    `refreshSummaryChoice`. Make the write unconditional and an `ok: false`
+  //    stores null as the project's baseline, so the NEXT reconcile, resolving
+  //    the very writer it had before, reads as a change.
+  describe('a reconcile that ends with no writer', () => {
+    // Red-green: drop `summaryChoice === null` from the follow-up. The first
+    // reconcile (summaries off, so nothing is resolved and `summaryChoice` stays
+    // null) then ends the backoff, and the first `endBackoff` assertion fails.
+    // The second half holds against the baseline being replaced while off.
+    it('ends no backoff when summaries are switched off and on again with the same writer', async () => {
+      const summariesOn = makeContext('proj-a');
+      await settleOnChoice(summariesOn);
+
+      retrievalService.reconcileEmbedWorker(makeContext('proj-a', { summariesOn: false }));
+      await untilSettled();
+      // Off, no writer is resolved at all, so the silence below is the guard on
+      // a missing writer and not a resolve that came out equal.
+      expect(answerRunMock.resolveAnswerRun).not.toHaveBeenCalled();
+      expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+
+      const release = holdNextResolution();
+      retrievalService.reconcileEmbedWorker(summariesOn);
+      release(CHOICE);
+      await untilSettled();
+
+      expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(1);
+      expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+    });
+
+    // Red-green: drop `summaryChoice === null` from the follow-up. The rejected
+    // refresh leaves `summaryChoice` null (its `catch`), which then compares
+    // against the baseline CHOICE as a change, and the first assertion fails.
+    it('ends no backoff when a refresh rejects, nor when the next one resolves the same writer', async () => {
+      const context = makeContext('proj-a');
+      await settleOnChoice(context);
+      answerRunMock.resolveAnswerRun.mockRejectedValueOnce(new Error('the settings could not be read'));
+
+      retrievalService.reconcileEmbedWorker(context);
+      await untilSettled();
+      expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(1);
+      expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+
+      // Resolves CHOICE (the suite's default): the baseline is still CHOICE.
+      retrievalService.reconcileEmbedWorker(context);
+      await untilSettled();
+      expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(2);
+      expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+    });
+
+    // Red-green, two lines. Drop `summaryChoice === null` from the follow-up and
+    // the first assertion fails (the `ok: false` reconcile ends the backoff).
+    // Make the `resolvedSummaryChoices.set` unconditional and the SECOND fails:
+    // null is stored as the baseline, and CHOICE then reads as a change.
+    it('ends no backoff when a resolve returns no writer, nor when the next one resolves the same writer', async () => {
+      const context = makeContext('proj-a');
+      await settleOnChoice(context);
+      answerRunMock.resolveAnswerRun.mockResolvedValueOnce(NO_WRITER);
+
+      retrievalService.reconcileEmbedWorker(context);
+      await untilSettled();
+      expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(1);
+      expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+
+      retrievalService.reconcileEmbedWorker(context);
+      await untilSettled();
+      expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(2);
+      expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+    });
+
+    // Control for the three above, so their silence is not a backoff that can
+    // never end after a failure. A DIFFERENT writer after an `ok: false` is a
+    // real change and ends it once, which needs the earlier baseline to have
+    // survived the failure. It fails if a failed resolve deletes the baseline
+    // (`hasBaseline` goes false). It passes against the code before the fix, so
+    // the three tests above are the ones that pin it: what the failed reconcile
+    // itself did is cleared before the reconcile this one is about.
+    it('control: still ends the backoff once for a different writer after a resolve that returned none', async () => {
+      const context = makeContext('proj-a');
+      await settleOnChoice(context);
+      answerRunMock.resolveAnswerRun.mockResolvedValueOnce(NO_WRITER);
+      retrievalService.reconcileEmbedWorker(context);
+      await untilSettled();
+      summarySchedulerMock.endBackoff.mockClear();
+
+      const release = holdNextResolution();
+      retrievalService.reconcileEmbedWorker(context);
+      release({ ...CHOICE, agent: 'codex' });
+      await vi.waitFor(() => {
+        expect(summarySchedulerMock.endBackoff).toHaveBeenCalledTimes(1);
+      });
+      await untilSettled();
+
+      expect(summarySchedulerMock.endBackoff.mock.calls).toEqual([['proj-a']]);
+    });
+  });
+
+  // Two reconciles overlap and the OLDER one's refresh lands last, with a stale
+  // writer. The newer reconcile owns the choice, so that late result must change
+  // neither `summaryChoice` nor the project's baseline.
+  //
+  // Red-green: drop `if (generation !== summaryChoiceGeneration) return;` from
+  // the `then` of `refreshSummaryChoice`. The stale codex result then lands
+  // after CHOICE and is stored as the baseline, so the third reconcile, which
+  // resolves CHOICE again, reads as a change and ends the backoff: that last
+  // `endBackoff` assertion is the one that goes red. (The guard on the follow-up
+  // does not cover this: it only stops the superseded reconcile from comparing,
+  // not the superseded refresh from writing.) The releases are in this order
+  // for that reason: the newer refresh first, so the stale one overwrites it.
+  it('does not let a stale refresh that lands late replace the writer a newer one resolved', async () => {
+    const context = makeContext('proj-a');
+    await settleOnChoice(context);
+    const releaseFirst = holdNextResolution();
+    retrievalService.reconcileEmbedWorker(context);
+    const releaseSecond = holdNextResolution();
+    retrievalService.reconcileEmbedWorker(context);
+
+    releaseSecond(CHOICE);
+    await untilSettled();
+    releaseFirst({ ...CHOICE, agent: 'codex' });
+    await untilSettled();
+    expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+
+    // A later reconcile on the same project, resolving CHOICE: the baseline it
+    // is compared with is the newer refresh's CHOICE, so nothing changed.
+    retrievalService.reconcileEmbedWorker(context);
+    await untilSettled();
+
+    expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(3);
+    expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+    expect(summarySchedulerMock.request.mock.calls).toEqual([[context, 'proj-a'], [context, 'proj-a'], [context, 'proj-a']]);
   });
 
   // These are the guard against over-correcting the tests above: a real

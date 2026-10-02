@@ -353,6 +353,15 @@ export function runCliForChat<T>(chatId: string, work: () => Promise<T>, ended: 
 }
 
 /**
+ * Run `work` with every CLI it spawns recorded as no chat's: a cleanup an
+ * answer starts after it lands (OpenCode's session delete) is not part of the
+ * answer, so ending the chat must not stop it. `stopAllCliRuns` still does.
+ */
+export function outsideChatRuns<T>(work: () => T): T {
+  return cliRunChat.exit(work);
+}
+
+/**
  * Stop every CLI still running. Synchronous, for the quit path: each stop is a
  * signal or a `taskkill` started in place (`stopCli`). A run in the pty host is
  * also stopped from here by pid: with no terminal open the quit does not wait

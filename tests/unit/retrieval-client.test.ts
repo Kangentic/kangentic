@@ -324,21 +324,25 @@ describe('RetrievalClient', () => {
         throw new Error('fork failed');
       });
       // A zero backoff, or the policy keeps the next call from forking.
-      const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+      const policy = new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] });
+      const recordCrash = vi.spyOn(policy, 'recordCrash');
+      const client = new RetrievalClient(policy);
       const respawned = vi.fn();
       client.on('respawned', respawned);
       try {
         await expect(client.call('projects.summaries', { projectIds: [] })).rejects.toBeInstanceOf(RetrievalUnavailableError);
-        // Nothing started, so nothing is announced.
+        // Nothing started, so nothing is announced, and the failed fork counts
+        // toward the crash cap: a fork that always throws must end in giving up.
         expect(mockFork).toHaveBeenCalledTimes(1);
         expect(forkedChildren).toHaveLength(0);
         expect(respawned).not.toHaveBeenCalled();
+        expect(recordCrash).toHaveBeenCalledTimes(1);
 
         const next = client.call('projects.summaries', { projectIds: [] });
         expect(mockFork).toHaveBeenCalledTimes(2);
         expect(forkedChildren).toHaveLength(1);
         lastChild().emit('message', { type: 'ready' });
-        await flush();
+        await settleMicrotasks();
 
         expect(respawned).toHaveBeenCalledTimes(1);
         const [request] = sent(lastChild(), 'request');

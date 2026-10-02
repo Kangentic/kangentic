@@ -112,12 +112,17 @@ describe('pruneStaleWorktreeProjects', () => {
     mockIsKangenticWorktree.mockReturnValue(true);
     const fs = (await import('node:fs')).default;
     vi.mocked(fs.unlinkSync).mockImplementation((target) => { steps.push(`unlink ${String(target)}`); });
+    try {
+      await pruneStaleWorktreeProjects(mockContext);
 
-    await pruneStaleWorktreeProjects(mockContext);
-
-    expect(steps.slice(0, 2)).toEqual(['worker closed proj-1', 'pty host closed proj-1']);
-    expect(steps.slice(2).every((step) => step.startsWith('unlink '))).toBe(true);
-    expect(steps).toHaveLength(5);
+      expect(steps.slice(0, 2)).toEqual(['worker closed proj-1', 'pty host closed proj-1']);
+      expect(steps.slice(2).every((step) => step.startsWith('unlink '))).toBe(true);
+      expect(steps).toHaveLength(5);
+    } finally {
+      // `clearAllMocks` in the beforeEach keeps an implementation, so without
+      // this every later test would unlink through the recorder.
+      vi.mocked(fs.unlinkSync).mockReset();
+    }
   });
 
   it('skips non-worktree projects', async () => {

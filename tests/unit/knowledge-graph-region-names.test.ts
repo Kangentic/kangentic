@@ -398,13 +398,20 @@ describe('the graph service names regions in the background', () => {
       await vi.runAllTimersAsync();
 
       expect(getDb.mock.calls.length).toBe(opensWhileRunning + 1);
+      // The run that was in flight stored its names and told the renderer once.
+      // The request behind it found them current and changed nothing.
+      expect(changed).toEqual(['project']);
     });
 
-    // Red-green: drop `&& naming.get(projectId) === state` from the finally of
-    // `runRegionNames`. `forget` deleted the project's naming state, so the
-    // finally's `scheduleRegionNames` makes a fresh one with a timer, which runs
-    // and opens the index of a project that is closed for deletion: the count
-    // below is one higher than the control's difference of zero.
+    // Red-green, two lines of `runRegionNames`. Drop `&& naming.get(projectId)
+    // === state` from the finally: `forget` deleted the project's naming state,
+    // so the finally's `scheduleRegionNames` makes a fresh one with a timer,
+    // which runs and opens the index of a project that is closed for deletion,
+    // and the count below is one higher than the control's difference of zero.
+    // Drop `naming.get(projectId) === state` from the push (`changed && ...`,
+    // leaving `if (changed) onChanged?.(projectId)`): the run finishes after
+    // the forget, returns true, and tells the renderer about a project nobody
+    // is left to tell, so `changed` is `['project']` instead of empty.
     it('makes no further run for a project forgotten while its names were being made, though one was asked for', async () => {
       const { graph, getDb, opensWhileRunning } = await runningWithAnotherAskedFor();
 
@@ -412,6 +419,39 @@ describe('the graph service names regions in the background', () => {
       await vi.runAllTimersAsync();
 
       expect(getDb.mock.calls.length).toBe(opensWhileRunning);
+      // Precondition for the silence below: the run finished and stored its
+      // names, so `changed` stays empty because of the forget and not because
+      // the run never reached its end.
+      expect(stored()?.signature).toBe('sig-1');
+      expect(changed).toEqual([]);
+    });
+
+    // The project is forgotten and then asked for again (closed and reopened)
+    // while the first run is still in flight, so the new request owns a naming
+    // state of its own. The old run belongs to the state `forget` dropped: it
+    // pushes nothing and makes no request of its own, and the one further run is
+    // the new state's. Its names are made once and pushed once.
+    //
+    // Red-green: replace `naming.get(projectId) === state` before the push in
+    // `runRegionNames` with a check that the project merely HAS a naming state
+    // (`naming.has(projectId)`), or drop it. The old run then finds the new
+    // state, pushes as well, and `changed` is `['project', 'project']`.
+    //
+    // The count of one holds on any interleaving; the single push relies on the
+    // new run starting before the old one has stored its names. Both runs yield
+    // a turn per granularity (three) and the old one has all three still ahead
+    // of it here, so the new run's timer fires between them: the setup's own
+    // `stored()` precondition is what says the old run has not finished.
+    it('lets the one run asked for after a forget and a new request push, and not the run it replaced', async () => {
+      const { graph, getDb, opensWhileRunning } = await runningWithAnotherAskedFor();
+
+      graph.forget('project');
+      graph.requestRegionNames('project', true);
+      await vi.runAllTimersAsync();
+
+      expect(getDb.mock.calls.length).toBe(opensWhileRunning + 1);
+      expect(stored()?.signature).toBe('sig-1');
+      expect(changed).toEqual(['project']);
     });
 
     describe('while a map is being rebuilt', () => {

@@ -22,6 +22,7 @@ import {
   type CommitEntry,
 } from '../../src/main/retrieval/commit/commit-record';
 import { sweepCommitRecords, RELINK_WINDOW_MS, type CommitIndexerDeps } from '../../src/main/retrieval/commit/commit-indexer';
+import { SLICE_ROWS } from '../../src/main/retrieval/timed-slices';
 import type { BranchHead } from '../../src/main/retrieval/branch-git';
 
 type SqliteModule = typeof import('node:sqlite');
@@ -257,6 +258,58 @@ describeWithSqlite('sweepCommitRecords', () => {
     expect(fixture.taskOf(sha(1))).toBe('task-second');
     // Unlinked from the deleted task, then tied to the other one.
     expect(result.relinked).toBe(2);
+  });
+
+  // A cleanup that deletes hundreds of done tasks leaves a commit for each, and
+  // the unlink is written a slice at a time (`writeInSlices`), a commit costing
+  // two rows against `SLICE_ROWS` a slice. More orphans than one slice holds
+  // must all be unlinked, and counted, across the slice boundaries and the
+  // item each slice carries into the next. The commits are old, so the relink
+  // pass after the unlink adds nothing and `relinked` is the unlink's own count.
+  //
+  // Red-green: the code before this change wrote the whole list in one
+  // transaction, so this test passes against it too and does not pin the
+  // slicing as such. What it pins is the sliced call site keeping every orphan:
+  // drop the `await` before `writeInSlices` in `unlinkCommitsOfDeletedTasks` and
+  // only the first slice (written before the first yield) is unlinked and
+  // counted, so the totals below fall short; remove `unlinked += 1` and
+  // `relinked` is 0; hand `writeInSlices` the list cut to one slice and the rest
+  // stay linked. The yield count is the precondition that the sweep really did
+  // write in more than one slice.
+  it('unlinks, and counts, every commit of a deleted task though they take several write slices', async () => {
+    const fixture = project();
+    const orphans = SLICE_ROWS * 2 + 1;
+    const landed = NOW - RELINK_WINDOW_MS - DAY;
+    const subjectOf = (number: number): string => `fix(graph): relabel case ${number} keeps its region names`;
+    const shas = Array.from({ length: orphans }, (_, index) => sha(index + 1));
+    fixture.mention(
+      'task-doomed',
+      Array.from({ length: orphans }, (_, index) => `git commit -m "${subjectOf(index + 1)}"`).join('\n'),
+      landed - 60_000,
+    );
+    // Newest first, as `git log` prints them.
+    fixture.git.commits = shas.map((_, index) => commit(index + 1, subjectOf(index + 1), landed + index)).reverse();
+    fixture.git.head = { ref: 'origin/main', sha: sha(orphans) };
+    expect(await fixture.sweep()).toEqual({ indexed: orphans, removed: 0, relinked: 0, deferred: false });
+    // Precondition: every commit found its task, so the deletion below orphans each.
+    expect(shas.map((commitSha) => fixture.taskOf(commitSha))).toEqual(shas.map(() => 'task-doomed'));
+    const linkedCount = (entryCount: number): number => (fixture.database
+      .prepare("SELECT COUNT(*) AS count FROM memory_index_state WHERE corpus = 'commit' AND entry_count = ?")
+      .get(entryCount) as { count: number }).count;
+    expect(linkedCount(1)).toBe(orphans);
+
+    // The task is deleted and its conversation leaves with it (the purge).
+    fixture.database.exec(`DELETE FROM memory_chunks WHERE corpus = 'conversation' AND task_id = 'task-doomed'`);
+    fixture.database.exec(`DELETE FROM tasks WHERE id = 'task-doomed'`);
+    const yields = vi.spyOn(fixture.deps, 'yieldToEventLoop');
+
+    const result = await fixture.sweep();
+
+    expect(yields.mock.calls.length).toBeGreaterThan(1);
+    expect(result).toEqual({ indexed: 0, removed: 0, relinked: orphans, deferred: false });
+    expect(shas.map((commitSha) => fixture.taskOf(commitSha))).toEqual(shas.map(() => null));
+    expect(linkedCount(0)).toBe(orphans);
+    expect(linkedCount(1)).toBe(0);
   });
 
   it('does not retry an unlinked commit until a conversation has been indexed since the last try', async () => {

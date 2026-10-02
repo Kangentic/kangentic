@@ -2992,6 +2992,11 @@ test.describe('knowledge graph', () => {
    * map's framing centre, so the camera stopped where the fly ended but turned
    * about a point nowhere near it.
    *
+   * This pins the `frameNodes` cancel only. The Reset view and scene rebuild
+   * cancels are defensive and not observable here: a reset re-centres on the
+   * very point the stale listener would pick, and a rebuild disposes the old
+   * controls, which never emit `sleep` again.
+   *
    * Nothing on screen shows it: `setOrbitPoint` moves no pixels. Only the
    * orbit target moves, so the test reads the controls' own target. That needs
    * React's fiber, because the controls live in a ref inside

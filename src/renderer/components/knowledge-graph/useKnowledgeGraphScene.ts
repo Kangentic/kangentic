@@ -472,6 +472,9 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
           viewWasDefault: viewIsDefaultRef.current,
         };
       }
+      // A pivot still waiting on these controls' `sleep` goes with them.
+      cancelPendingOrbitRef.current?.();
+      cancelPendingOrbitRef.current = null;
       controls.dispose();
       // `dispose` frees the GPU resources but not the context, which lives
       // until the canvas is collected. On a real unmount the canvas has already

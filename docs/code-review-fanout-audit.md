@@ -813,6 +813,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, fourth pass | 658f +76565 -7547 | 5536KB, 99303 lines | 3 (0) | 655 | 1 | 24, sharded by area and process boundary, 7 over tests | about 150 of 23 pack-carrying | about 85 / 52 applied |
 | task 529, whole branch, fifth pass | 663f +79405 -7559 | 5702KB, 102379 lines | 3 (0) | 660 | 1 | 29, one shard file each, 9 over tests | about 195 of 28 pack-carrying | about 77 / 44 applied |
 | task 529, whole branch, sixth pass | 674f +83014 -7629 | 5896KB, 105950 lines | 2 (0) | 672 | 1 | 30, one shard file each, 9 over tests | about 190 of 29 pack-carrying | 40 / 34 applied, 2 refuted |
+| task 529, whole branch, seventh pass | 675f +84956 -7640 | 5895KB, 105732 lines | 4 (0) | 671 | 2 | 30, one shard file each, 9 over tests, 8 resumed to finish their shards | about 140 of 29 pack-carrying | 38 raised, 31 distinct / 21 applied, 2 refuted |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1094,3 +1095,22 @@ race and waits the same way; against the pre-fix hook it fails at 38 units. The 
 a decision were then fixed: a PTY whose program is the app's own executable is refused like a
 one-shot run, and the startup auto-spawn skips a task whose worktree is no longer the one it was
 prepared in.
+
+The task 529 seventh pass kept the sixth pass's layout. The same script rebuilt the shard files from
+the sixth pass's lists, one new file (`tests/ui/helpers.ts`) was placed by hand, and the focus range
+ran from `59861b3d` to HEAD, the sixth pass's fix commit included. `retrieval-store.ts` was stubbed
+in the pack this time, so its finder read it from disk inside its shard. Eight finders stopped after
+their focus ranges: each prompt named a focus, and they read it as the limit of the job. Each was
+resumed with the rest of its shard, so every shard line was read, and the resumed reads raised
+nothing new. A prompt that names a focus has to say in the same line that the whole shard is read.
+The one Medium sat in the newest code. The sixth pass's fix for a Quick Find question asked while
+reopening the map on another project still lost it when a snapshot read for the old project, in
+flight across the close, landed after the reopen. Two finders found it independently. The Lows fixed
+were a summary backoff that switching summaries off ended, a naming run that announced a project
+forgotten while it ran, OpenCode's post-answer session delete recorded as the chat's run and so
+stopped when the chat ended, an unlink of deleted tasks' commits written as one uncapped transaction
+outside the write budget, and the `'\''` escape `quoteArg` writes, which cut the own-executable
+check's path short. The driver refuted two Mediums about the resume pass. A To Do bounce deletes the
+task's records, which the resume's locked re-check already catches, and its re-check and cancel log
+were pinned by tests the finder's grep missed. A third, that the crash path starts a fresh agent over
+a resume whose preparation threw, was skipped as a design question, since startup does the same.

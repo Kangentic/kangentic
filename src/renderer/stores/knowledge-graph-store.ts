@@ -438,6 +438,9 @@ function createKnowledgeGraphStore() {
         const previousProjectId = get().projectId;
         if (projectId !== null && previousProjectId !== null && projectId !== previousProjectId) {
           if (get().thread.length > 0) get().endChat();
+          // A read for the old project can outlive the close. Landing after
+          // this, it re-pointed the map at that project and ended the new chat.
+          fetchOrdinal += 1;
           set({ projectId, snapshot: null, loaded: false });
         }
         // Flip first so the shell paints before any IPC resolves.

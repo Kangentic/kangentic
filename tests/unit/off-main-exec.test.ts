@@ -19,7 +19,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { execFileAsync, setOffMainExecutor, type OffMainExecutor } from '../../src/main/utility-process/off-main-exec';
-import { launchesOwnBinary, ownExecutables, runHostExec, setMainExecutable } from '../../src/main/pty/host/host-exec';
+import { launchesOwnBinary, leadingExecutable, ownExecutables, runHostExec, setMainExecutable } from '../../src/main/pty/host/host-exec';
 import type { HostExecRequest } from '../../src/main/pty/host/protocol';
 
 afterEach(() => {
@@ -173,6 +173,43 @@ describe('host-exec', () => {
       // This one held before the branch too (the quotes made it miss); it guards
       // the branch against matching on the directory.
       expect(launchesOwnBinary(command("'/opt/kangentic/bin/codex' --version"), appBinary)).toBe(false);
+    });
+
+    // `quoteArg` (src/shared/paths.ts) writes an apostrophe inside a POSIX path as
+    // `'\''`: close the quote, an escaped apostrophe, reopen it. These are plain
+    // strings and forward-slash paths, so they run on every platform.
+    //
+    // Red-green, two lines of `leadingExecutable`. Take the escape out of the
+    // regex (`'([^']*)'`, what it was) and the leading word is `/opt/o`, the
+    // direct assertions fail, and the app's own binary is allowed through, so
+    // the `launchesOwnBinary` assertions fail with them. Keep the regex and drop
+    // the `.replace(/'\\''/g, "'")`: the word keeps its `'\''`, the path no
+    // longer reads `/opt/o'brien/Kangentic`, and the direct assertions fail. The
+    // second binary has the apostrophe in its NAME, which is the case a refusal
+    // by name cannot rescue: only the decoded path matches it.
+    it('reads the apostrophe `quoteArg` escapes inside a single-quoted leading path, so the app\'s own binary is still refused', () => {
+      const directoryBinary = "/opt/o'brien/Kangentic";
+      const nameBinary = "/opt/Kangentic/o'brien";
+
+      expect(leadingExecutable("'/opt/o'\\''brien/Kangentic' --version")).toBe(directoryBinary);
+      expect(launchesOwnBinary(command("'/opt/o'\\''brien/Kangentic' --version"), directoryBinary)).toBe(true);
+      expect(leadingExecutable("'/opt/Kangentic/o'\\''brien' --version")).toBe(nameBinary);
+      expect(launchesOwnBinary(command("'/opt/Kangentic/o'\\''brien' --version"), nameBinary)).toBe(true);
+      // Another program in the same folder is still allowed.
+      expect(launchesOwnBinary(command("'/opt/o'\\''brien/codex' --version"), directoryBinary)).toBe(false);
+    });
+
+    // Control for the test above: the escape is read, and nothing wider. Two
+    // single-quoted words are the first word and an argument, not one word with
+    // a quote in it, so a pattern that runs to the LAST quote (`'(.*)'`) fails
+    // here: it reads `/opt/a' 'b`, and a binary named in the second word would
+    // read as the first.
+    it('stops at the closing quote of the leading word when the next word is quoted too', () => {
+      const appBinary = '/opt/Kangentic/kangentic';
+
+      expect(leadingExecutable("'/opt/a' 'b'")).toBe('/opt/a');
+      expect(leadingExecutable("'/opt/a' '/opt/Kangentic/kangentic' --version")).toBe('/opt/a');
+      expect(launchesOwnBinary(command("'/opt/a' '/opt/Kangentic/kangentic' --version"), appBinary)).toBe(false);
     });
 
     it('compares names with a trailing .exe stripped, so the extensionless name cmd resolves through PATHEXT is refused', () => {

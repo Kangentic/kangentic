@@ -32,7 +32,10 @@
  *  - an open that names another project than the one last shown ends that chat
  *    first, so a question queued with the open is asked of the new project and
  *    its turn survives the new project's snapshot, while an open on the same
- *    project (or on none) keeps the chat, and
+ *    project (or on none) keeps the chat,
+ *  - a read for the old project that was still in flight across the close is
+ *    dropped when it lands after an open on another project, so it neither
+ *    points the map back at the old project nor ends the new project's chat, and
  *  - a read in flight when the graph closes asks for no rebuild when it lands.
  *
  * window.electronAPI is stubbed globally and the store is imported fresh for
@@ -677,7 +680,81 @@ describe('knowledge-graph-store loadSnapshot and the chat it lands on', () => {
     expect(endChatMock.mock.calls.slice(endChatCallsAfterClose)).toEqual([[firstChatId]]);
   });
 
-  // Control for the test above, and it passes with or without the fix: the chat
+  // Pins the `fetchOrdinal += 1` in the explicit-project branch of `open`.
+  // `close` does not cancel a snapshot read, so a read for the old project can
+  // still be in flight when the graph reopens on another one. The open's own
+  // read for the new project only queues behind it, so nothing else moves the
+  // ordinal: the old read landed as the newest, pointed the map back at the old
+  // project, and (the thread already holding the queued question's turn) ended
+  // the chat, dropping the question. A is landed first on purpose: while its
+  // first read is held `projectId` is still null, and the branch needs a
+  // project last shown to leave.
+  it('drops a read for the old project that was in flight across the close when it lands after an open on another project', async () => {
+    store.getState().open('A');
+    resolveRead('A');
+    await flush();
+    expect(store.getState().projectId).toBe('A');
+    // A completion push re-reads A. This is the read that outlives the close.
+    const lateReadOfA = store.getState().loadSnapshot('A', { fromPush: true });
+    expect(pendingReads.map((read) => read.projectId)).toEqual(['A']);
+    store.getState().close();
+    // The idle close ended A's session already. What follows is the reopen's.
+    const endChatCallsAfterClose = endChatMock.mock.calls.length;
+
+    // Quick Find from project B's board: queue the question and open on B.
+    store.getState().askInGraph('second question', 'B');
+    expect(store.getState().projectId).toBe('B');
+    expect(store.getState().snapshot).toBeNull();
+    // B's read waits behind A's, which is still held.
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+
+    // The graph body asks the queued question while both reads are outstanding,
+    // so the thread holds its turn when A's read lands.
+    const queuedQuestion = store.getState().takeQueuedQuestion();
+    expect(queuedQuestion).toBe('second question');
+    const release = holdNextAnswer();
+    const asking = store.getState().askQuestion(queuedQuestion ?? '');
+    expect(answerFromGraphMock.mock.calls[0][0]).toBe('second question');
+    expect(answerFromGraphMock.mock.calls[0][1]).toBe('B');
+    expect(store.getState().thread).toHaveLength(1);
+
+    // A's late read lands. It is for a project the map has since left.
+    takePendingRead('A').resolve(makeSnapshot('A'));
+    await lateReadOfA;
+    await flush();
+
+    // Still B, with no map of its own yet, and A's map not shown.
+    expect(store.getState().projectId).toBe('B');
+    expect(store.getState().snapshot).toBeNull();
+    expect(store.getState().loaded).toBe(false);
+    // The queued read for B ran when A's finished. Asserted before the silence
+    // from `endChat` below, so that silence is about reads that landed.
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(3);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('B', null);
+    expect(endChatMock.mock.calls.slice(endChatCallsAfterClose)).toEqual([]);
+    expect(store.getState().thread).toHaveLength(1);
+    expect(store.getState().thread[0].question).toBe('second question');
+    expect(store.getState().thread[0].status).toBe('finding');
+
+    // B's read lands: B's map, and the turn is still there.
+    const snapshotOfB = makeSnapshot('B');
+    takePendingRead('B').resolve(snapshotOfB);
+    await flush();
+    expect(store.getState().projectId).toBe('B');
+    expect(store.getState().snapshot).toBe(snapshotOfB);
+    expect(store.getState().loaded).toBe(true);
+    expect(store.getState().thread).toHaveLength(1);
+    expect(endChatMock.mock.calls.slice(endChatCallsAfterClose)).toEqual([]);
+
+    // The user-visible symptom: the answer lands in the turn that was asked.
+    release(settledAnswer);
+    await asking;
+    expect(store.getState().thread[0].status).toBe('done');
+    expect(store.getState().thread[0].text).toBe('an answer');
+    expect(endChatMock.mock.calls.slice(endChatCallsAfterClose)).toEqual([]);
+  });
+
+  // Control for the tests above, and it passes with or without the fix: the chat
   // ends at an open only when the open NAMES a project other than the one last
   // shown. Reopening on the same project, or on none (follow whatever is
   // current, as a detached window does), keeps the thread. It stops an

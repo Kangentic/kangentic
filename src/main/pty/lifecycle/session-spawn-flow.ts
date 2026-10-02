@@ -96,6 +96,8 @@ function abandonCancelledSpawn(id: string, startedPty: PtyHandle | null, context
       context.host.onPtyExit(startedPty.ptyId, () => resolve());
     });
     context.onSpawnAbandoned?.(id, ptyExited);
+    // No exit sequence and no grace, as in the quit branch below: the host
+    // started it one round trip ago, before the agent reaches its boot canary.
     safeKillPty(startedPty);
     // The host made state for the session; with its row gone, nothing else
     // will remove it. A row the teardown kept is removed with that row.

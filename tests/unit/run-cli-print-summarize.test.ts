@@ -76,7 +76,7 @@ function makeFakeChild(): FakeChild {
 // ---------------------------------------------------------------------------
 
 import { runCliPrintSummarize } from '../../src/main/agent/shared/auto-name';
-import { runCliForChat, spawnCli, stopAllCliRuns, stopCliRunsForChat } from '../../src/main/agent/shared/cli-print';
+import { outsideChatRuns, runCliForChat, spawnCli, stopAllCliRuns, stopCliRunsForChat } from '../../src/main/agent/shared/cli-print';
 import { runCliPrintAnswer } from '../../src/main/agent/shared/cli-answer';
 
 // ---------------------------------------------------------------------------
@@ -430,6 +430,42 @@ describe('stopAllCliRuns', () => {
     // The rest are still tracked, for the quit path.
     stopAllCliRuns();
     expect(processKill.mock.calls).toEqual([[-5103, 'SIGTERM'], [-5104, 'SIGTERM']]);
+  });
+
+  // A cleanup an answer starts once it has landed (OpenCode's session delete) is
+  // not part of the answer, so the chat ending must not stop it, though it runs
+  // inside `runCliForChat`. The quit path still does: it is tracked, under no chat.
+  //
+  // Red-green: make `outsideChatRuns` call `work()` directly instead of through
+  // `cliRunChat.exit`. The child it spawns is then recorded as `chat-1`'s, and
+  // `stopCliRunsForChat` signals -5202 and -5203 along with -5201, so the first
+  // list below has three groups in it instead of one.
+  it('keeps a CLI spawned through outsideChatRuns out of the chat\'s stop, but still stops it at quit', async () => {
+    const inChat = makeTrackableChild(5201);
+    const outsideSync = makeTrackableChild(5202);
+    const outsideAfterAwait = makeTrackableChild(5203);
+    mockSpawn
+      .mockReturnValueOnce(inChat)
+      .mockReturnValueOnce(outsideSync)
+      .mockReturnValueOnce(outsideAfterAwait);
+    await runCliForChat('chat-1', async () => {
+      // The control: spawned straight in the chat's context, it is the chat's.
+      spawnCli('/usr/bin/fake', [], '/tmp');
+      outsideChatRuns(() => spawnCli('/usr/bin/fake', [], '/tmp'));
+      // The cleanup is async work, which awaits before it spawns.
+      await outsideChatRuns(async () => {
+        await Promise.resolve();
+        spawnCli('/usr/bin/fake', [], '/tmp');
+      });
+    });
+
+    stopCliRunsForChat('chat-1');
+
+    expect(processKill.mock.calls).toEqual([[-5201, 'SIGTERM']]);
+    processKill.mockClear();
+    // The two outside runs are still tracked, for the quit path.
+    stopAllCliRuns();
+    expect(processKill.mock.calls).toEqual([[-5202, 'SIGTERM'], [-5203, 'SIGTERM']]);
   });
 });
 

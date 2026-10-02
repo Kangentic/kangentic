@@ -2,7 +2,6 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { writeInSlices, type PreparedWrite } from '../timed-slices';
-import { writeTransaction } from '../../db/transaction';
 import { readBranchHead, readIndexedHead, runGit, writeIndexedHead, type BranchHead } from '../branch-git';
 import {
   COMMIT_LOG_FORMAT,
@@ -229,7 +228,7 @@ export async function sweepCommitRecords(
   }
 
   // Both change which task a commit rolls up under.
-  result.relinked = unlinkCommitsOfDeletedTasks(db, store, deps) + await relinkYoungCommits(db, store, shouldContinue, deps);
+  result.relinked = await unlinkCommitsOfDeletedTasks(db, store, shouldContinue, deps) + await relinkYoungCommits(db, store, shouldContinue, deps);
   return result;
 }
 
@@ -237,31 +236,52 @@ export async function sweepCommitRecords(
  * Commits whose task was deleted, unlinked: they read as found by no task, and
  * a young one can then find another task that mentions it (`relinkYoungCommits`
  * runs next). Left linked, they rolled up under a task id nothing on the board
- * holds. Almost always nothing to do; a task delete unlinks a handful. Returns
- * how many were unlinked.
+ * holds. Almost always nothing to do; a task delete unlinks a handful, but a
+ * cleanup that deletes hundreds of done tasks leaves a commit for each, so
+ * they are written a slice at a time like every other record write. Returns
+ * how many were unlinked; one cut short finishes on the next sweep.
  */
-function unlinkCommitsOfDeletedTasks(db: Database.Database, store: RetrievalStore, deps: CommitIndexerDeps): number {
+async function unlinkCommitsOfDeletedTasks(
+  db: Database.Database,
+  store: RetrievalStore,
+  shouldContinue: () => boolean,
+  deps: CommitIndexerDeps,
+): Promise<number> {
+  let orphaned: string[];
+  let markUnlinked: Database.Statement;
   try {
-    const orphaned = store.commitsOfDeletedTasks();
+    orphaned = store.commitsOfDeletedTasks();
     if (orphaned.length === 0) return 0;
-    const markUnlinked = db.prepare("UPDATE memory_index_state SET entry_count = 0, indexed_at = ? WHERE corpus = 'commit' AND doc_id = ?");
-    // One commit is one chunk and its state row, so even a large task's
-    // commits fit one short transaction.
-    writeTransaction(db, () => {
-      const now = new Date(deps.now()).toISOString();
-      for (const docId of orphaned) {
-        store.setDocumentTask(CORPUS, docId, null);
-        markUnlinked.run(now, docId);
-      }
-    })();
-    // The relink pass reads only when a conversation was indexed since its
-    // last run; these commits are new candidates whatever the marker says.
-    store.setMeta(RELINK_MARKER_KEY, '');
-    return orphaned.length;
+    markUnlinked = db.prepare("UPDATE memory_index_state SET entry_count = 0, indexed_at = ? WHERE corpus = 'commit' AND doc_id = ?");
   } catch (error) {
     console.warn('[retrieval] commits of deleted tasks could not be unlinked:', error);
     return 0;
   }
+  let unlinked = 0;
+  const prepareUnlink = (docId: string): PreparedWrite => ({
+    // A commit is one chunk, and its state row.
+    rows: 2,
+    bytes: 0,
+    write: () => {
+      try {
+        store.setDocumentTask(CORPUS, docId, null);
+        markUnlinked.run(new Date(deps.now()).toISOString(), docId);
+        unlinked += 1;
+      } catch (error) {
+        console.warn(`[retrieval] commit ${docId} failed to unlink:`, error);
+      }
+    },
+  });
+  await writeInSlices(db, orphaned, prepareUnlink, 'records:commit-unlink', shouldContinue, deps);
+  if (unlinked === 0) return 0;
+  try {
+    // The relink pass reads only when a conversation was indexed since its
+    // last run; these commits are new candidates whatever the marker says.
+    store.setMeta(RELINK_MARKER_KEY, '');
+  } catch (error) {
+    console.warn('[retrieval] the commit relink marker could not be reset:', error);
+  }
+  return unlinked;
 }
 
 /**

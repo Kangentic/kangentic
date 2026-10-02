@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
-import { indexedConversationNodes } from '../../src/main/retrieval/related-work';
+import { forgetConversationOwners, indexedConversationNodes } from '../../src/main/retrieval/related-work';
 import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/types';
 
 type SqliteModule = typeof import('node:sqlite');
@@ -90,6 +90,33 @@ describeWithSqlite('indexedConversationNodes', () => {
     const nodes = indexedConversationNodes('project-reads', getDb);
     expect(ownerReads()).toBe(2);
     expect(nodes.map((node) => node.docKey)).toEqual(['conversation::doc-1', 'conversation::doc-2']);
+  });
+
+  // The owners are kept per project for the life of the worker, and
+  // `project.close` lets go of a deleted project's list
+  // (`forgetConversationOwners`). The index below never changes, so only that
+  // call can make the next read go back to the chunks.
+  //
+  // Red-green: make `forgetConversationOwners` do nothing (or delete another
+  // key, or key it wrongly). The second read is then served from the kept list,
+  // `ownerReads` stays 1, and the assertion after the forget fails. Make it
+  // `clear()` the whole map and the control below fails instead.
+  it('reads the chunk owners again after the project\'s owners are forgotten, though its index is unchanged', () => {
+    const { ownerReads, getDb } = project();
+    const before = indexedConversationNodes('project-forgotten', getDb);
+    indexedConversationNodes('project-forgotten', getDb);
+    expect(ownerReads()).toBe(1);
+
+    // Another project's forget leaves this one's kept list in place.
+    forgetConversationOwners('project-another');
+    indexedConversationNodes('project-forgotten', getDb);
+    expect(ownerReads()).toBe(1);
+
+    forgetConversationOwners('project-forgotten');
+    const after = indexedConversationNodes('project-forgotten', getDb);
+
+    expect(ownerReads()).toBe(2);
+    expect(after).toEqual(before);
   });
 
   it('shows a task renamed with no index change by its new title', () => {

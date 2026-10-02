@@ -79,6 +79,31 @@ describeWithSqlite('TranscriptRepository', () => {
     expect(transcripts.getTranscriptTail('missing', 100)).toBeNull();
   });
 
+  // A tail of no characters is empty, and the transcript's size is still
+  // reported. The way it goes wrong is the whole transcript coming back: a
+  // negative or zero budget fed to a `slice(-budget)` (`slice(-0)` is the whole
+  // string) or to the legacy row's `substr(transcript, ?)` (a start of 0 or
+  // below reads all of it). The clamp (`Math.max(0, maxChars)`) is one of three
+  // guards that each give an empty tail on their own, with the `budget > 0` gate
+  // on the pieces read and the final trim to the budget, so this pins the
+  // behavior and no one-line revert flips it. It goes red when a rewrite drops
+  // the gate and the trim together (or replaces them with `slice(-budget)`).
+  // One session per way a transcript is stored: pieces, legacy plus pieces,
+  // legacy alone.
+  it.each([-50, 0])('reads an empty tail and the whole length when maxChars is %i, never the transcript', (maxChars) => {
+    const { database, transcripts } = project();
+    for (const piece of ['aaaa', 'bbbb', 'cccc']) transcripts.appendChunk('pieces-only', piece);
+    insertLegacy(database, 'legacy-and-pieces', 'legacy-start ');
+    transcripts.appendChunk('legacy-and-pieces', 'new-piece');
+    insertLegacy(database, 'legacy-only', 'only legacy');
+
+    expect(transcripts.getTranscriptTail('pieces-only', maxChars)).toMatchObject({ tail: '', fullLength: 12, sizeBytes: 12 });
+    expect(transcripts.getTranscriptTail('legacy-and-pieces', maxChars)).toMatchObject({ tail: '', fullLength: 22, sizeBytes: 22 });
+    expect(transcripts.getTranscriptTail('legacy-only', maxChars)).toMatchObject({ tail: '', fullLength: 11, sizeBytes: 11 });
+    // A session with nothing captured is still null, whatever the budget.
+    expect(transcripts.getTranscriptTail('missing', maxChars)).toBeNull();
+  });
+
   it('reads a legacy row as the oldest part, and its tail only when the pieces fall short', () => {
     const { database, transcripts } = project();
     insertLegacy(database, 'session-1', 'legacy-start ');

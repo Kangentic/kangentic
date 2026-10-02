@@ -536,11 +536,12 @@ let summaryChoiceRefresh: Promise<void> | null = null;
 /** Bumped by each refresh, so one started under older settings cannot land
  *  after a newer one and leave its stale choice in place. */
 let summaryChoiceGeneration = 0;
-/** The choice a refresh last resolved, by project: what a settings change is
+/** The writer a refresh last resolved, by project: what a settings change is
  *  compared with to decide whether it may end a failure backoff. Not
  *  `summaryChoice`, which a reconcile nulls before its refresh lands, and which
- *  holds whichever project was open last. */
-const resolvedSummaryChoices = new Map<string, SummaryChoice | null>();
+ *  holds whichever project was open last. Only a writer is kept: summaries
+ *  switched off or a resolve that failed says nothing about which one runs next. */
+const resolvedSummaryChoices = new Map<string, SummaryChoice>();
 
 /**
  * What a summary would be written with now, for Rebuild and its plan, or null
@@ -582,7 +583,7 @@ function refreshSummaryChoice(context: IpcContext, options: { force?: boolean } 
     .then((resolved) => {
       if (generation !== summaryChoiceGeneration) return;
       summaryChoice = resolved.ok ? { agent: resolved.run.agentName, model: resolved.run.model, effort: resolved.run.effort } : null;
-      resolvedSummaryChoices.set(projectId, summaryChoice);
+      if (summaryChoice) resolvedSummaryChoices.set(projectId, summaryChoice);
     })
     .catch(() => {
       if (generation === summaryChoiceGeneration) summaryChoice = null;
@@ -898,7 +899,9 @@ export const retrievalService = {
         // A later reconcile superseded this refresh, whose result was dropped,
         // and makes the comparison itself.
         if (disposed || generation !== summaryChoiceGeneration) return;
-        if (!hasBaseline || sameSummaryChoice(previousChoice, summaryChoice)) return;
+        // No writer now (summaries off, or the resolve failed) is no new writer:
+        // switching summaries off and on again would otherwise end the backoff.
+        if (!hasBaseline || summaryChoice === null || sameSummaryChoice(previousChoice, summaryChoice)) return;
         summaryScheduler.endBackoff(projectId);
         summaryScheduler.request(context, projectId);
       });
