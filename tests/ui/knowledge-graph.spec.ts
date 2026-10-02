@@ -684,9 +684,16 @@ test.describe('knowledge graph', () => {
    * panels so the press reaches the map. Which conversation it lands on is read
    * back off the detail panel rather than assumed, since the layout decides
    * which titles are drawn.
+   *
+   * The camera has stopped before the title is read. An answer, a filter or a
+   * new map flies the camera, and a title read mid fly has moved on by the
+   * press, which then lands beside its node. A loaded runner draws that fly
+   * over seconds of slow frames, so it is long enough for the press to land
+   * inside it (seen on CI, and at a 20x CPU throttle here).
    */
   async function selectVisibleNode(page: Page): Promise<number> {
     await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
+    await waitForCameraAsleep(page);
     const { point, seen } = await page.evaluate(() => {
       // Aimed near the title's START, which is where its node is drawn.
       const aimAt = (rect: DOMRect) => ({ x: rect.left + Math.min(12, rect.width / 2), y: rect.top + rect.height / 2 });
@@ -4037,6 +4044,58 @@ test.describe('knowledge graph', () => {
     await expect.poll(async () => movingFramesAfterClick(page, null, 0, 12), { timeout: 10_000 }).toBe(0);
   }
 
+  /**
+   * From here on, records whether each camera move asks for a transition: the
+   * `enableTransition` argument of camera-controls' `setLookAt`. It is patched on
+   * the controls' class, read off the one instance React holds, so the controls a
+   * scene rebuild creates record as well. The moves land on
+   * `window.__cameraTransitions`.
+   */
+  async function recordCameraTransitions(page: Page): Promise<void> {
+    await page.evaluate(() => {
+      const canvas = document.querySelector('[data-testid="knowledge-graph-canvas"] canvas');
+      if (!canvas) throw new Error('the map canvas is not on the page');
+      const fiberKey = Object.keys(canvas).find((key) => key.startsWith('__reactFiber$'));
+      if (!fiberKey) throw new Error('the canvas carries no React fiber, so the camera controls cannot be reached');
+      let fiber: FiberProbe | null = (canvas as unknown as Record<string, FiberProbe>)[fiberKey];
+      while (fiber && !(typeof fiber.type === 'function' && (fiber.type as { name?: string }).name === 'KnowledgeGraphCanvas')) {
+        fiber = fiber.return;
+      }
+      if (!fiber) throw new Error('no KnowledgeGraphCanvas fiber above the canvas');
+      let controls: object | null = null;
+      for (let hook = fiber.memoizedState; hook; hook = hook.next) {
+        const state = hook.memoizedState;
+        if (typeof state === 'object' && state !== null && 'current' in state) {
+          const current = (state as { current: unknown }).current;
+          if (typeof current === 'object' && current !== null && typeof (current as { setOrbitPoint?: unknown }).setOrbitPoint === 'function') {
+            controls = current;
+          }
+        }
+      }
+      if (!controls) throw new Error('no camera controls ref in KnowledgeGraphCanvas');
+      const controlsClass = Object.getPrototypeOf(controls) as { setLookAt: (...lookAt: unknown[]) => unknown };
+      const setLookAt = controlsClass.setLookAt;
+      const transitions: boolean[] = [];
+      (window as unknown as { __cameraTransitions: boolean[] }).__cameraTransitions = transitions;
+      controlsClass.setLookAt = function recordedSetLookAt(this: unknown, ...lookAt: unknown[]) {
+        // setLookAt(positionX, positionY, positionZ, targetX, targetY, targetZ, enableTransition)
+        transitions.push(lookAt[6] === true);
+        return setLookAt.apply(this, lookAt);
+      };
+    });
+  }
+
+  // The composed map's arrival is a change to the map, so the camera flies to
+  // it. That is asked of camera-controls as a transitioned move, which is what
+  // this reads. It used to count the frames the titles moved in, but a fly runs
+  // for a fixed time, and a loaded runner drew this one, after the scene
+  // rebuild, in two frames, which read as a cut (CI, and an 8x CPU throttle).
+  //
+  // Red-green: make `newMap` false in the scene effect's camera-memory branch
+  // (useKnowledgeGraphScene.ts), so the composed map arrives as a cut, and every
+  // move records `false`. Forcing only that branch's own fit to a cut is not
+  // enough: `flyOnArrivalRef` still carries `newMap` into the resize observer's
+  // first fit and the first chrome measurement, and those fly.
   test('adding a project to the map flies there, rather than cutting', async () => {
     const { browser, page } = await launchWithState(projectsScript());
     try {
@@ -4044,10 +4103,13 @@ test.describe('knowledge graph', () => {
       await expect.poll(async () => page.locator('[data-testid="knowledge-graph-node-title"]').count()).toBeGreaterThan(0);
       await page.locator('[data-testid="knowledge-graph-projects"]').click();
       await waitForCameraToSettle(page);
-      const moving = await movingFramesAfterClick(page, '[data-testid="knowledge-graph-projects-all"]');
+      await recordCameraTransitions(page);
+
+      await page.locator('[data-testid="knowledge-graph-projects-all"]').click();
       await expect(page.locator('[data-testid="knowledge-graph-island-label"]')).toHaveCount(2);
-      // A cut moves the titles in a frame or two; the fly moves them in many.
-      expect(moving).toBeGreaterThanOrEqual(5);
+
+      const transitions = () => page.evaluate(() => (window as unknown as { __cameraTransitions: boolean[] }).__cameraTransitions);
+      await expect.poll(transitions).toContain(true);
     } finally {
       await browser.close();
     }
