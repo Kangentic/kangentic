@@ -896,14 +896,7 @@ Before every Claude spawn (task chokepoints and the Command Terminal alike), `Cl
 
 ## Session Recovery
 
-On project open (`src/main/transition-engine/session-startup/`):
-
-1. **Prune orphaned worktrees** -- delete tasks whose worktree directories were removed externally
-2. **Mark crash recovery** -- leftover `running` DB records become `orphaned`
-3. **Deduplicate** -- keep only the latest record per task_id
-4. **Filter candidates** -- skip To Do/Done, skip auto_spawn=false, skip missing CWD. A suspended record in a non-auto-spawn *custom* column still gets a placeholder registered so the renderer keeps offering Resume
-5. **Resume or respawn** -- suspended sessions use `--resume`, others get fresh `--session-id`
-6. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session
+On project open (`src/main/transition-engine/session-startup/`), leftover `running` records become `orphaned`, and the latest record of each `(task_id, isolated_swimlane_id)` session is recovered. A suspended, orphaned or OS-killed record with an `agent_session_id` resumes with `--resume`, and a task in an `auto_spawn` column with no session at all gets a fresh agent. The same pipeline, scoped to the lost sessions, runs after a [pty host](session-lifecycle.md#pty-host) crash. The full sequence, its skips and its task-lock re-checks are in [Crash Recovery](session-lifecycle.md#crash-recovery-session-recovery).
 
 ## Performance
 

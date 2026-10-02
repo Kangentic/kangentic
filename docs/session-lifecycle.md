@@ -574,8 +574,8 @@ On project open (`src/main/transition-engine/session-startup/`):
 8. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session at all (skips user-paused tasks); fresh rows are tagged with the column's `isolated_swimlane_id`
 
 The same pipeline recovers what a [pty host](#pty-host) crash takes down, mid-run, scoped to
-exactly those sessions: `recoverSessionsAfterPtyHostLoss` passes the lost session ids, so step 2's
-gather is filtered to them and step 1 orphans nothing. Without the scope, an agent that exited
+exactly those sessions: `recoverSessionsAfterPtyHostLoss` passes the lost session ids, so step 3's
+gather is filtered to them and step 2 orphans nothing. Without the scope, an agent that exited
 non-zero on its own earlier in the run, or one suspended this run, would be woken with them.
 Step 8 runs scoped too, to the lost sessions' tasks. A lost session with no `agent_session_id` yet
 has nothing to resume (the interrupted-exited gather requires one), so its task starts a fresh

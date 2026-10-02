@@ -334,7 +334,8 @@ Both name what failed and what to do about it, rather than surfacing git's raw e
 10. Copy optional files from repo root (configured via `config.git.copyFiles`)
 11. Create `node_modules` junction/symlink to root repo's `node_modules` (skipped when `config.git.linkNodeModules` is `false`, so a worktree can own its own dependencies)
 12. Run the Post-Worktree Script if `config.git.initScript` is set (see below)
-13. Pre-populate `~/.claude.json` trust entry for the worktree path
+
+Creation writes no `~/.claude.json` trust entry. The adapter's `ensureTrust` writes it before each spawn, for whatever directory the agent runs in (see [Agent Integration](agent-integration.md#trust-management)).
 
 ### Windows Long Paths
 
@@ -545,7 +546,7 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 - **Hook identification** -- two-marker pattern (`.kangentic` + bridge name) prevents touching user hooks.
 - **Backup on strip** -- `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** -- on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
-- **Trust pre-population** -- `ensureWorktreeTrust()` adds worktree paths to `~/.claude.json` so Claude Code doesn't prompt for trust on first run.
+- **Trust pre-population.** Before each spawn, `ClaudeAdapter.ensureTrust()` (`ensureClaudeSpawnConfig()`) trusts the agent's working directory in `~/.claude.json`, so Claude Code doesn't prompt for trust on first run.
 - **Synchronous shutdown** -- DB records marked suspended, mature PTYs force-killed immediately. A young session's force-kill waits out a 1500 ms exit-sequence grace on a timer inside the bounded PTY drain the quit already holds for, never as an added async phase. Files persist for recovery on next launch.
 
 ## Test Coverage
@@ -560,7 +561,7 @@ Unit tests (`tests/unit/`, run with `npm run test:unit`) cover the worktree stra
 - Copies `enabledMcpjsonServers` from parent project entry
 - Uses empty array when parent has no MCP servers
 - Preserves existing worktree entry fields while setting `hasTrustDialogAccepted`
-- Handles malformed JSON (treats as empty)
+- Leaves malformed JSON untouched rather than replacing it
 
 Uses real temp files with mocked `os.homedir()`.
 
