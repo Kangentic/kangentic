@@ -28,7 +28,14 @@ import { SummaryStore } from '../summary/summary-store';
 import { readTaskKnowledge, type TaskKnowledge } from '../task-knowledge';
 import type { BoardTaskFacts } from '../answer-tasks';
 import type { Embedder, StoredChunk } from '../types';
-import type { KnowledgeGraphQueryHit, KnowledgeGraphSnapshotWire, SessionSummary, SubagentUsageTotals, TaskFanOut } from '../../../shared/types';
+import type {
+  KnowledgeGraphBuildProgress,
+  KnowledgeGraphQueryHit,
+  KnowledgeGraphSnapshotWire,
+  SessionSummary,
+  SubagentUsageTotals,
+  TaskFanOut,
+} from '../../../shared/types';
 import { ConversationUsageStore } from '../conversation/conversation-usage-store';
 import type { RetrievalEventName } from './protocol';
 import { createIndexStatusReader, type IndexStatus, type IndexStatusParams } from './index-status';
@@ -62,7 +69,11 @@ function graphFor(context: WorkerContext, summaryNamesOn: boolean): GraphService
   let holder = graphs.get(context);
   if (!holder) {
     const created: { service: GraphService; summaryNamesOn: boolean } = {
-      service: createGraphService({ getDb: context.getDb, onChanged: (projectId) => context.emit('graph-changed', projectId) }),
+      service: createGraphService({
+        getDb: context.getDb,
+        onChanged: (projectId) => context.emit('graph-changed', projectId),
+        onBuildProgress: (projectId, progress) => context.emit('graph-progress', projectId, progress),
+      }),
       summaryNamesOn,
     };
     created.service.setSummaryNamesOn(() => created.summaryNamesOn);
@@ -101,7 +112,7 @@ export interface WorkerContext {
   /** Where sqlite-vec loads from, for a connection a dev seeder opens itself. */
   vecLoadablePath?(): string | null;
   /** Tell main something changed that it did not ask about. */
-  emit(event: RetrievalEventName, projectId: string): void;
+  emit(event: RetrievalEventName, projectId: string, progress?: KnowledgeGraphBuildProgress): void;
 }
 
 /** One project's row in the Knowledge Graph's Projects picker. */
@@ -177,11 +188,13 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, DevIn
     };
     result: KnowledgeGraphSnapshotWire;
   };
-  /** Start a background map pass unless one is running. Returns at once: a
-   *  cold pass runs for a minute, and its end arrives as `graph-changed`. */
+  /** Start a background map pass unless one is running. Returns at once, with
+   *  the first build's progress when the project has no map and one runs: a
+   *  cold pass runs for minutes, its steps arrive as `graph-progress`, and its
+   *  end as `graph-changed`. */
   'graph.refresh': {
     params: { projectId: string; modelTag: string; dimensions: number; summaryNamesOn: boolean };
-    result: void;
+    result: KnowledgeGraphBuildProgress | null;
   };
   /** Ask's reads before its agent starts (`answer-prepare.ts`). */
   'answer.prepare': {
@@ -368,9 +381,9 @@ export const retrievalHandlers: RetrievalHandlers = {
   'graph.snapshot': ({ projectId, modelTag, summaryNamesOn, summariesSkipped, knownProjectionKey }, context) => (
     graphFor(context, summaryNamesOn).getSnapshotWire(projectId, modelTag, { summariesSkipped, knownProjectionKey })
   ),
-  'graph.refresh': ({ projectId, modelTag, dimensions, summaryNamesOn }, context) => {
-    graphFor(context, summaryNamesOn).markDirty(projectId, modelTag, dimensions);
-  },
+  'graph.refresh': ({ projectId, modelTag, dimensions, summaryNamesOn }, context) => (
+    graphFor(context, summaryNamesOn).markDirty(projectId, modelTag, dimensions)
+  ),
   'answer.prepare': ({ summaryNamesOn, ...params }, context) => {
     // Each map named as the reader sees it, so an answer names a region the
     // way the map does.

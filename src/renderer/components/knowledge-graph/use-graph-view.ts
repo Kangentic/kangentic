@@ -10,6 +10,7 @@
 import { useMemo } from 'react';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import type {
+  KnowledgeGraphBuildProgress,
   KnowledgeGraphCoverageBucket,
   KnowledgeGraphCoverageSummary,
   KnowledgeGraphGranularity,
@@ -90,6 +91,22 @@ export function sumIndex(summaries: ReadonlyArray<KnowledgeGraphIndexSummary>): 
   };
 }
 
+/**
+ * A scope's first-build progress while no map in it is ready: the least
+ * advanced of the projects building, so the bar never says more than the slowest
+ * map has done. One that has not sent a figure yet counts as just begun.
+ */
+export function leastBuildProgress(snapshots: ReadonlyArray<KnowledgeGraphSnapshot>): KnowledgeGraphBuildProgress | null {
+  let least: KnowledgeGraphBuildProgress | null = null;
+  for (const entry of snapshots) {
+    if (!entry.building || entry.projection !== null) continue;
+    const progress = entry.buildProgress ?? null;
+    if (!progress) return null;
+    if (!least || progress.percent < least.percent) least = progress;
+  }
+  return least;
+}
+
 export function useGraphView(): GraphView {
   const snapshot = useKnowledgeGraphStore((state) => state.snapshot);
   const openProjectId = useKnowledgeGraphStore((state) => state.projectId);
@@ -141,6 +158,7 @@ export function useGraphView(): GraphView {
       // Surface-wide "building" only while there is nothing to draw at all; a
       // project still building beside ready ones is named on its own.
       building: ready.length === 0 && snapshots.some((entry) => entry.building),
+      buildProgress: ready.length === 0 ? leastBuildProgress(snapshots) : null,
       stale: snapshots.some((entry) => entry.stale),
       semanticAvailable: snapshots.every((entry) => entry.semanticAvailable),
     };

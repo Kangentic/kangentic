@@ -6,12 +6,14 @@
  * that says so instead of showing a checked 0.
  */
 import { describe, expect, it } from 'vitest';
-import { indexMapLines, indexSourceLines, type IndexSourceLinesInput } from '../../src/renderer/components/knowledge-graph/index-panel-lines';
+import { buildProgressRow, indexMapLines, indexSourceLines, type IndexSourceLinesInput } from '../../src/renderer/components/knowledge-graph/index-panel-lines';
+import { leastBuildProgress } from '../../src/renderer/components/knowledge-graph/use-graph-view';
 import type {
   KnowledgeGraphCoverageBucket,
   KnowledgeGraphCoverageSummary,
   KnowledgeGraphIndexCorpus,
   KnowledgeGraphIndexSummary,
+  KnowledgeGraphSnapshot,
 } from '../../src/shared/types';
 
 function corpus(name: KnowledgeGraphIndexCorpus, documents: number, chunks: number, embeddedChunks: number, embeds = true) {
@@ -169,8 +171,8 @@ describe('the source lines', () => {
 });
 
 describe('the map lines', () => {
-  it('count the links once a map is drawn, then what the index holds beyond the sources', () => {
-    const lines = indexMapLines({ hasMap: true, building: false, edgeCount: 3438, coverage: coverageOf(), storageBytes: 412 * 1024 * 1024 });
+  it('count the links, then what the index holds beyond the sources', () => {
+    const lines = indexMapLines({ edgeCount: 3438, coverage: coverageOf(), storageBytes: 412 * 1024 * 1024 });
     expect(lines.map((line) => [line.label, line.value])).toEqual([
       ['Links', counted(3438)],
       ['Transcript gone', counted(714)],
@@ -179,25 +181,58 @@ describe('the map lines', () => {
     expect(lines[0].info).toMatch(/exact/);
   });
 
-  it('say the map is building in place of its links while there is none', () => {
-    const lines = indexMapLines({ hasMap: false, building: true, edgeCount: 0, coverage: coverageOf(), storageBytes: 0 });
-    expect(lines[0]).toMatchObject({ label: 'Map', value: 'Building' });
-    expect(indexMapLines({ hasMap: false, building: false, edgeCount: 0, coverage: coverageOf(), storageBytes: 0 })[0])
-      .toMatchObject({ label: 'Map', value: 'No map yet' });
-  });
-
   it('show the not-yet-indexed and failed counts only when there are some, and a failure as a problem', () => {
-    const quiet = indexMapLines({ hasMap: true, building: false, edgeCount: 1, coverage: coverageOf({ sourceMissingButSearchable: bucket(0) }), storageBytes: 0 });
+    const quiet = indexMapLines({ edgeCount: 1, coverage: coverageOf({ sourceMissingButSearchable: bucket(0) }), storageBytes: 0 });
     expect(quiet.map((line) => line.label)).toEqual(['Links']);
 
     const lines = indexMapLines({
-      hasMap: true,
-      building: false,
       edgeCount: 1,
       coverage: coverageOf({ notYetIndexed: bucket(12), failed: bucket(3) }),
       storageBytes: 0,
     });
     expect(lines.find((line) => line.label === 'Not yet indexed')).toMatchObject({ value: counted(12) });
     expect(lines.find((line) => line.label === 'Failed to index')).toMatchObject({ tone: 'caution', problem: counted(3) });
+  });
+});
+
+describe('the building card\'s progress row', () => {
+  it('names what the first build is doing, with its percent', () => {
+    expect(buildProgressRow({ pass: 1, stage: 'reading', percent: 41 })).toEqual({ label: 'Reading conversations', value: '41%', percent: 41 });
+    expect(buildProgressRow({ pass: 1, stage: 'placing', percent: 96 })).toEqual({ label: 'Placing conversations', value: '96%', percent: 96 });
+    expect(buildProgressRow({ pass: 1, stage: 'naming', percent: 99 })).toEqual({ label: 'Naming regions', value: '99%', percent: 99 });
+  });
+
+  it('reads as just begun before the first figure arrives, and never as 100', () => {
+    expect(buildProgressRow(null)).toEqual({ label: 'Reading conversations', value: '0%', percent: 0 });
+    expect(buildProgressRow({ pass: 1, stage: 'naming', percent: 140 }).value).toBe('99%');
+  });
+});
+
+describe('a scope\'s first build progress', () => {
+  function building(percent: number | null): KnowledgeGraphSnapshot {
+    return {
+      projectId: `project-${percent}`,
+      projection: null,
+      coverage: coverageOf(),
+      index: indexOf(),
+      building: true,
+      buildProgress: percent === null ? null : { pass: 1, stage: 'reading', percent },
+      stale: false,
+      semanticAvailable: true,
+    };
+  }
+
+  it('is the least advanced project\'s, so the bar never says more than the slowest map has done', () => {
+    expect(leastBuildProgress([building(70), building(30), building(55)])?.percent).toBe(30);
+  });
+
+  it('reads as just begun while any project building has sent no figure', () => {
+    expect(leastBuildProgress([building(70), building(null)])).toBeNull();
+  });
+
+  it('ignores a project with a map or none building', () => {
+    const drawn = { ...building(10), projection: {} as never };
+    const idle = { ...building(5), building: false };
+    expect(leastBuildProgress([drawn, idle, building(80)])?.percent).toBe(80);
   });
 });

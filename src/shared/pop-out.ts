@@ -316,6 +316,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // background, so a detached window must be told rather than poll. Omitting
       // this leaves the pop-out permanently showing "building".
       IPC.KNOWLEDGE_GRAPH_CHANGED,
+      // A first build's progress, carried by the push itself. Without it a
+      // detached window's building card holds its first figure until the end.
+      IPC.KNOWLEDGE_GRAPH_BUILD_PROGRESS,
       // Progress on an answer in flight. Declared here or a detached window
       // sits on a spinner while the main window watches the answer arrive.
       IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM,

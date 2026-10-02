@@ -21,6 +21,7 @@ import { loadVecExtensionFrom } from '../vec-support';
 import { createCheckpointPacer } from './checkpoint-pacing';
 import { installWriteBudget } from '../write-budget';
 import { retrievalHandlers, type WorkerContext } from './methods';
+import type { KnowledgeGraphBuildProgress } from '../../../shared/types';
 import type {
   FromWorkerMessage,
   InitMessage,
@@ -107,7 +108,9 @@ const context: WorkerContext = {
   },
   vecLoadError: () => vecLoadError,
   vecLoadablePath: () => vecLoadablePath,
-  emit: (event: RetrievalEventName, projectId: string) => post({ type: 'event', event, projectId }),
+  emit: (event: RetrievalEventName, projectId: string, progress?: KnowledgeGraphBuildProgress) => (
+    post(progress ? { type: 'event', event, projectId, progress } : { type: 'event', event, projectId })
+  ),
 };
 
 async function dispatch(message: RequestMessage): Promise<void> {
