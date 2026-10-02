@@ -8,6 +8,7 @@ import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, SessionRecord, Task } from '../../../shared/types';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { RESUME_HIDDEN_ROLES } from '../../../shared/session-resume-eligibility';
+import { isAbortError } from '../../../shared/abort-utils';
 import { isResumeEligible } from '../spawn-intent';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
@@ -511,10 +512,20 @@ export async function resumeSuspendedSessions(
       if (result.value) recovered++;
     } else {
       const input = spawnInputs[resultIndex];
-      console.error(
-        `[SESSION_RECOVERY] Spawn failed for session ${input.record.id} (task ${input.record.task_id}):`,
-        result.reason,
-      );
+      if (isAbortError(result.reason)) {
+        // A teardown (a move, a reset, a project close) ended the session while
+        // it spawned: the canceller took the task over, not a failure. The record
+        // is retired all the same; a later resume finds it by its agent session
+        // id, which retiring keeps.
+        console.log(
+          `[SESSION_RECOVERY] Spawn cancelled for session ${input.record.id} (task ${input.record.task_id}): the session was ended while it spawned`,
+        );
+      } else {
+        console.error(
+          `[SESSION_RECOVERY] Spawn failed for session ${input.record.id} (task ${input.record.task_id}):`,
+          result.reason,
+        );
+      }
       try {
         retireRecord(sessionRepo, input.record.id);
       } catch (updateErr) {

@@ -22,7 +22,7 @@
  * resume-suspended.ts and the hard-kill cases stop resuming (no spawn).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import type { SessionRecord, Task } from '../../src/shared/types';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
 
@@ -768,6 +768,58 @@ describe('resumeSuspendedSessions: the resume re-checks its task under the task 
       // The write spies are wired: the resume records the new session on the task.
       expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: 'task-lost', session_id: 'new-task-lost' });
       expect(sessionRepoInsert).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a spawn a teardown cancelled', () => {
+    // A teardown that ends a session while it spawns (a move, a reset, a project
+    // close) rejects the spawn with an AbortError: the canceller took the task
+    // over. The pass logs that as a cancellation. "Spawn failed" read as a crash.
+    // The record is retired either way, as before.
+    //
+    // Red-green: drop the `isAbortError` branch in resume-suspended.ts and the
+    // first test sees console.error.
+    let consoleError: MockInstance<typeof console.error>;
+    let consoleLog: MockInstance<typeof console.log>;
+
+    beforeEach(() => {
+      consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      consoleError.mockRestore();
+      consoleLog.mockRestore();
+    });
+
+    it('logs a resume a teardown cancelled as cancelled, not as a failure, and still retires its record', async () => {
+      seedLostSession();
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+      sessionManager.spawn.mockImplementation(async () => {
+        throw new DOMException('The session was ended while it was being spawned', 'AbortError');
+      });
+
+      await resumeLost(sessionManager);
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(consoleLog).toHaveBeenCalledWith(expect.stringContaining('Spawn cancelled for session rec-lost'));
+      expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'rec-lost');
+      expect(sessionRepoInsert).not.toHaveBeenCalled();
+    });
+
+    it('still reports any other rejection as a failure', async () => {
+      seedLostSession();
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+      const failure = new Error('the pty host refused the spawn');
+      sessionManager.spawn.mockImplementation(async () => {
+        throw failure;
+      });
+
+      await resumeLost(sessionManager);
+
+      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Spawn failed for session rec-lost'), failure);
+      expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'rec-lost');
     });
   });
 });

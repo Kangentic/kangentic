@@ -7,6 +7,7 @@ import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, Swimlane, Task } from '../../../shared/types';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
+import { isAbortError } from '../../../shared/abort-utils';
 import { isShuttingDown } from '../../shutdown-state';
 import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
@@ -311,7 +312,13 @@ export async function autoSpawnTasks(
       if (result.value) spawned++;
     } else {
       const input = spawnInputs[resultIndex];
-      console.error(`[AUTO_SPAWN] Spawn failed for task ${input.task.id}:`, result.reason);
+      if (isAbortError(result.reason)) {
+        // A teardown (a move, a reset, a project close) ended the session while
+        // it spawned: the canceller took the task over, not a failure.
+        console.log(`[AUTO_SPAWN] Spawn cancelled for task ${input.task.id}: the session was ended while it spawned`);
+      } else {
+        console.error(`[AUTO_SPAWN] Spawn failed for task ${input.task.id}:`, result.reason);
+      }
     }
   }
 

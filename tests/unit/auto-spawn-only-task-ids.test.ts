@@ -21,7 +21,7 @@
  */
 
 import fs from 'node:fs';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 
 const mockPrepareAgentSpawn = vi.fn(async () => ({ ok: false as const, reason: 'cli-not-found' as const }));
 const mockTaskList = vi.fn();
@@ -116,6 +116,7 @@ async function runScopedAutoSpawn(
   registry: RegistryRow[],
   taskIds: ReadonlySet<string>,
   lostSessionIds: ReadonlySet<string>,
+  spawn: (input: { id: string }) => Promise<{ id: string }> = async (input) => ({ id: input.id }),
 ) {
   const lostScope: LostSessionScope = { taskIds, lostSessionIds };
   const sessionManager = {
@@ -124,7 +125,7 @@ async function runScopedAutoSpawn(
     listSessions: vi.fn(() => registry),
     getShell: vi.fn(async () => 'powershell'),
     registerSuspendedPlaceholder: vi.fn(),
-    spawn: vi.fn(async (input: { id: string }) => ({ id: input.id })),
+    spawn: vi.fn(spawn),
   };
   await autoSpawnTasks(
     'proj-1',
@@ -472,5 +473,56 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
       expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ cwd: WORKTREE }));
       expect(mockSessionInsert).toHaveBeenCalledWith(expect.objectContaining({ cwd: WORKTREE }));
     });
+  });
+});
+
+/**
+ * A teardown that ends a session while it spawns (a move, a reset, a project
+ * close) rejects the spawn with an AbortError: the canceller took the task over.
+ * The pass logs that as a cancellation. "Spawn failed" read as a crash.
+ *
+ * Red-green: drop the `isAbortError` branch in auto-spawn.ts and the first test
+ * sees console.error.
+ */
+describe('autoSpawnTasks: a spawn a teardown cancelled', () => {
+  let consoleError: MockInstance<typeof console.error>;
+  let consoleLog: MockInstance<typeof console.log>;
+  const lostRegistry = (): RegistryRow[] => [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTaskGetById.mockReset();
+    mockTaskGetById.mockImplementation(() => undefined);
+    mockSwimlaneList.mockReturnValue([activeLane()]);
+    mockTaskList.mockReturnValue([task('task-lost')]);
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-lost') as never);
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+    consoleLog.mockRestore();
+  });
+
+  it('logs a spawn a teardown cancelled as cancelled, not as a failure, and writes nothing', async () => {
+    const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']), async () => {
+      throw new DOMException('The session was ended while it was being spawned', 'AbortError');
+    });
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleLog).toHaveBeenCalledWith(expect.stringContaining('Spawn cancelled for task task-lost'));
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockSessionInsert).not.toHaveBeenCalled();
+  });
+
+  it('still reports any other rejection as a failure', async () => {
+    const failure = new Error('the pty host refused the spawn');
+    await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']), async () => {
+      throw failure;
+    });
+
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Spawn failed for task task-lost'), failure);
   });
 });
