@@ -195,21 +195,19 @@ function cancelActiveSweep(): void {
 let storageUpkeep: { projectId: string; jobId: string } | null = null;
 
 /**
- * Storage work in the worker, at every project open: legacy raw transcripts
- * into pieces, misfiled ones into their own project
- * (`transcripts.convertLegacy`), the raw transcripts of deleted sessions
- * deleted (`transcripts.purgeDeleted`), the conversation vectors into a vec0
- * table at chunk size 128 (`vec.migrateLayout`), then the index's own indexes,
- * each in a quiet moment (`index.buildWhenQuiet`). Off the job chain: they
- * touch only their own tables, and on a large install they run for minutes the
- * indexing should not wait behind. One project at a time; a project switch
- * stops it, and the next open carries on where it stopped. It runs whether or
- * not indexing is on, so a deleted task's terminal text goes either way.
+ * One-time storage work for databases older releases wrote, in the worker:
+ * legacy raw transcripts into pieces, misfiled ones into their own project
+ * (`transcripts.convertLegacy`), the conversation vectors into a vec0 table at
+ * chunk size 128 (`vec.migrateLayout`), then the index's own indexes, each in
+ * a quiet moment (`index.buildWhenQuiet`). Off the job chain: they touch only
+ * their own tables, and on a large install they run for minutes the indexing
+ * should not wait behind. One project at a time; a project switch stops it,
+ * and the next open carries on where it stopped.
  *
- * The upgrade steps are the permanent upgrade path, not a temporary one: an
- * install can skip releases, and a project can stay unopened for any length of
- * time, so a database older releases wrote can arrive at any later version.
- * Once a project is upgraded those steps find nothing to do and return at once.
+ * This is the permanent upgrade path, not a temporary one: an install can skip
+ * releases, and a project can stay unopened for any length of time, so a
+ * database older releases wrote can arrive at any later version. Once a
+ * project is upgraded every step finds nothing to do and returns at once.
  */
 function upgradeProjectStorage(context: IpcContext, projectId: string): void {
   if (storageUpkeep?.projectId === projectId) return;
@@ -231,22 +229,6 @@ function upgradeProjectStorage(context: IpcContext, projectId: string): void {
     );
     if (converted.converted > 0) {
       console.log(`[retrieval] converted ${converted.converted} legacy transcripts (${Math.round(converted.bytes / 1024 / 1024)} MB), ${converted.moved} moved to their own project`);
-    }
-    if (storageUpkeep !== upkeep) return;
-    sweepJobCounter += 1;
-    upkeep.jobId = `upkeep-${sweepJobCounter}`;
-    // A failed purge only waits for the next open; the steps after it still run.
-    try {
-      const purged = await retrievalClient.call(
-        'transcripts.purgeDeleted',
-        { projectId, otherProjectIds, jobId: upkeep.jobId },
-        { timeoutMs: null },
-      );
-      if (purged.sessions > 0) {
-        console.log(`[retrieval] deleted the transcripts of ${purged.sessions} deleted sessions (${Math.round(purged.bytes / 1024 / 1024)} MB)`);
-      }
-    } catch (error) {
-      console.warn('[retrieval] deleted sessions\' transcripts were not purged:', error instanceof Error ? error.message : error);
     }
     if (storageUpkeep !== upkeep) return;
     sweepJobCounter += 1;

@@ -136,9 +136,8 @@ export async function handleGetTranscript(
     }
 
     if (!record) {
-      // A raw transcript stays until the next storage upkeep of its project
-      // purges it (`transcripts.purgeDeleted`), so a raw read by session id
-      // still reaches one whose row went in the meantime.
+      // A raw transcript outlives its session row (a deleted task keeps its
+      // terminal history), so a raw read by session id still reaches it.
       if (format === 'raw' && sessionId && new TranscriptRepository(db).getSizeBytes(sessionId) > 0) {
         return rawTranscriptResponse(db, sessionId, charBudget, false);
       }

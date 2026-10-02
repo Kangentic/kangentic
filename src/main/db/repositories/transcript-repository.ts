@@ -2,11 +2,9 @@ import type Database from 'better-sqlite3';
 
 /**
  * A session's raw terminal transcript: the ANSI-stripped PTY output
- * `TranscriptWriter` captures, kept whole and never trimmed while its session
- * row exists (agent CLIs clean up their own session files, so this is
- * Kangentic's durable copy). Once the row is gone the retrieval worker
- * deletes it (`transcripts.purgeDeleted`); no trigger does, since one freed
- * every piece inside main's delete transaction.
+ * `TranscriptWriter` captures, kept whole and never trimmed. It outlives its
+ * session row on purpose (agent CLIs clean up their own session files, so this
+ * is Kangentic's durable copy), which is why no trigger deletes it.
  *
  * Stored as ordered pieces in `session_transcript_chunks`, one row per flush,
  * so a flush is one INSERT. It used to be one growing TEXT value in

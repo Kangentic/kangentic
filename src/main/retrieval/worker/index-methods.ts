@@ -100,18 +100,6 @@ export interface IndexMethods {
     result: { converted: number; moved: number; bytes: number };
   };
   /**
-   * Delete the raw transcript pieces of sessions that are gone: no `sessions`
-   * row in this project (nor in any other, for pieces a conversion wrote), and
-   * nothing written for `TRANSCRIPT_PURGE_GRACE_MS`. A transcript used to go
-   * with its session row by trigger, inside main's delete; this frees it a few
-   * pieces at a time. Legacy rows are left to `transcripts.convertLegacy`,
-   * which runs first.
-   */
-  'transcripts.purgeDeleted': {
-    params: { projectId: string; otherProjectIds: string[]; jobId?: string };
-    result: { sessions: number; pieces: number; bytes: number };
-  };
-  /**
    * Copy the conversation vectors older releases stored at vec0 chunk size
    * 1,024 into a table at 128, switch reads to it, then free the old table
    * (`vec-layout.ts`). Resumes where it stopped; a no-op once done.
@@ -154,19 +142,6 @@ function legacyPieceBounds(text: string): Array<[start: number, end: number]> {
   }
   return bounds;
 }
-
-/**
- * How long a session with no `sessions` row keeps its transcript after its
- * last piece. A spawn can flush a piece before its row is inserted, and the
- * host's final flush can land after a teardown deleted the row; neither is a
- * deleted session yet. A teardown deletes the row only once its session has
- * stopped, so nothing is still writing past this.
- */
-export const TRANSCRIPT_PURGE_GRACE_MS = 10 * 60_000;
-
-/** A purge's delete transaction: pieces up to this many bytes, at least one. */
-const PURGE_BYTES_PER_TRANSACTION = 64 * 1024;
-const PURGE_PIECES_PER_TRANSACTION = 64;
 
 /** Vectors a copy step reads and writes in one transaction. vec0 reads cost
  *  about 3.8 ms a vector on the real install (95,791 in 6 minutes), so 16 keep
@@ -379,73 +354,6 @@ export const indexHandlers: IndexHandlers = {
       if (target !== source) result.moved += 1;
       result.bytes += Buffer.byteLength(text);
       await awaitWriteTurn(source);
-    }
-    return result;
-  }),
-
-  'transcripts.purgeDeleted': ({ projectId, otherProjectIds, jobId }, context) => runJob(jobId, async (shouldContinue) => {
-    const result = { sessions: 0, pieces: 0, bytes: 0 };
-    let db: Database.Database;
-    try {
-      db = context.getDb(projectId);
-    } catch {
-      return result;
-    }
-    // The distinct sessions first, off the primary key's index, then one
-    // probe of `sessions` each.
-    const unowned = (db.prepare(`
-      SELECT session_id AS sessionId FROM (SELECT DISTINCT session_id FROM session_transcript_chunks) AS transcript
-       WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = transcript.session_id)
-    `).all() as Array<{ sessionId: string }>).map((row) => row.sessionId);
-    if (unowned.length === 0) return result;
-    const cutoff = new Date(Date.now() - TRANSCRIPT_PURGE_GRACE_MS).toISOString();
-    const extent = db.prepare('SELECT MIN(seq) AS lowest, MAX(created_at) AS lastAt FROM session_transcript_chunks WHERE session_id = ?');
-    const page = db.prepare(`SELECT seq, bytes FROM session_transcript_chunks WHERE session_id = ? ORDER BY seq LIMIT ${PURGE_PIECES_PER_TRANSACTION}`);
-    const remove = db.prepare('DELETE FROM session_transcript_chunks WHERE session_id = ? AND seq BETWEEN ? AND ?');
-    // Live pieces (seq 0 up) only ever go to their session's own project, so
-    // with no row here that session is gone. A conversion's pieces (below 0)
-    // can sit in another project's database than the session's row: the
-    // conversion leaves one in place when that project could not take it. So
-    // only those are looked up elsewhere, and while another project cannot be
-    // read, they stay.
-    let others: Database.Database[] | null = null;
-    let othersUnreadable = false;
-    for (const sessionId of unowned) {
-      if (!shouldContinue()) return result;
-      const { lowest, lastAt } = extent.get(sessionId) as { lowest: number | null; lastAt: string | null };
-      if (lowest === null || lastAt === null || lastAt >= cutoff) continue;
-      if (lowest < 0) {
-        if (othersUnreadable) continue;
-        let ownedElsewhere: boolean;
-        try {
-          others ??= otherProjectIds.map((otherId) => context.getDb(otherId));
-          ownedElsewhere = others.some((other) => other.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId) !== undefined);
-        } catch {
-          othersUnreadable = true;
-          continue;
-        }
-        if (ownedElsewhere) continue;
-      }
-      for (;;) {
-        if (!shouldContinue()) return result;
-        const pieces = page.all(sessionId) as Array<{ seq: number; bytes: number }>;
-        if (pieces.length === 0) break;
-        let taken = 1;
-        let bytes = pieces[0].bytes;
-        while (taken < pieces.length && bytes + pieces[taken].bytes <= PURGE_BYTES_PER_TRANSACTION) {
-          bytes += pieces[taken].bytes;
-          taken += 1;
-        }
-        // A piece appended after the read takes a seq above this range, so the
-        // delete takes exactly the pieces read.
-        writeTransaction(db, () => {
-          remove.run(sessionId, pieces[0].seq, pieces[taken - 1].seq);
-        })();
-        result.pieces += taken;
-        result.bytes += bytes;
-        await awaitWriteTurn(db);
-      }
-      result.sessions += 1;
     }
     return result;
   }),

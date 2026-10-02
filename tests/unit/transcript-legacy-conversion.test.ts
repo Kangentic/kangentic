@@ -235,58 +235,5 @@ describeWithSqlite('legacy transcript conversion', () => {
     // Nothing was written into the other project.
     expect(tableCount(unmigrated, 'session_transcript_chunks')).toBe(0);
     expect(tableCount(unmigrated, 'memory_meta')).toBe(0);
-
-    // Its session is alive in the other project, so the purge keeps it here.
-    await expect(indexHandlers['transcripts.purgeDeleted']({ projectId: 'a', otherProjectIds: ['b'] }, context))
-      .resolves.toEqual({ sessions: 0, pieces: 0, bytes: 0 });
-    expect(textOf(projectA, 'session-b')).toBe('misfiled but unmovable');
-  });
-});
-
-describeWithSqlite('deleted sessions\' transcripts', () => {
-  const longAgo = '2026-09-01T00:00:00.000Z';
-  function insertPiece(database: NodeDatabase, sessionId: string, seq: number, text: string, createdAt: string): void {
-    database.prepare('INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(sessionId, seq, text.length, Buffer.byteLength(text), createdAt, text);
-  }
-
-  it('deletes the pieces of a session with no row in any project and nothing written in the grace, and keeps every other', async () => {
-    const projectA = project(['session-live']);
-    const projectB = project(['session-in-b']);
-    const piece = 64 * 1024;
-    // Three full pieces: one transaction each.
-    for (let seq = 0; seq < 3; seq += 1) insertPiece(projectA, 'session-gone', seq, 'x'.repeat(piece), longAgo);
-    insertPiece(projectA, 'session-live', 0, 'live', longAgo);
-    // A conversion's piece (below 0) left here for a session whose row is in b.
-    insertPiece(projectA, 'session-in-b', -1, 'left here by the conversion', longAgo);
-    // A spawn's first flush before its row is inserted.
-    insertPiece(projectA, 'session-spawning', 0, 'before its row', new Date().toISOString());
-    // A final flush that landed after the teardown deleted the row.
-    insertPiece(projectA, 'session-late', 0, 'early ', longAgo);
-    insertPiece(projectA, 'session-late', 1, 'final flush', new Date().toISOString());
-    insertLegacy(projectA, 'session-unconverted', 'the conversion moves or converts it first');
-    const context = contextFor(new Map([['a', projectA], ['b', projectB]]));
-
-    const result = await indexHandlers['transcripts.purgeDeleted']({ projectId: 'a', otherProjectIds: ['b'] }, context);
-
-    expect(result).toEqual({ sessions: 1, pieces: 3, bytes: 3 * piece });
-    expect(seqsOf(projectA, 'session-gone')).toEqual([]);
-    expect(textOf(projectA, 'session-live')).toBe('live');
-    expect(textOf(projectA, 'session-in-b')).toBe('left here by the conversion');
-    expect(textOf(projectA, 'session-spawning')).toBe('before its row');
-    expect(textOf(projectA, 'session-late')).toBe('early final flush');
-    expect(legacyCount(projectA)).toBe(1);
-  });
-
-  it('keeps a conversion\'s pieces while another project cannot be read, and still deletes live pieces, which only go to their own project', async () => {
-    const projectA = project([]);
-    insertPiece(projectA, 'session-converted', -1, 'converted', longAgo);
-    insertPiece(projectA, 'session-gone', 0, 'live', longAgo);
-
-    const result = await indexHandlers['transcripts.purgeDeleted']({ projectId: 'a', otherProjectIds: ['unreadable'] }, contextFor(new Map([['a', projectA]])));
-
-    expect(result).toEqual({ sessions: 1, pieces: 1, bytes: 'live'.length });
-    expect(textOf(projectA, 'session-converted')).toBe('converted');
-    expect(textOf(projectA, 'session-gone')).toBeNull();
   });
 });
