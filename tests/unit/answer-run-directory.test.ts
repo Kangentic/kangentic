@@ -9,7 +9,7 @@
  * temp root, never the machine's real answer home.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -36,6 +36,22 @@ function modeOf(directory: string): number {
   return fs.statSync(directory).mode & 0o777;
 }
 
+/**
+ * Make `process.getuid` answer `userId` (Windows has none, so it is added and
+ * later removed). Returns what puts it back.
+ */
+function actAsUser(userId: number): () => void {
+  const original = process.getuid;
+  Object.defineProperty(process, 'getuid', { value: () => userId, configurable: true, writable: true });
+  return () => {
+    if (typeof original === 'function') {
+      Object.defineProperty(process, 'getuid', { value: original, configurable: true, writable: true });
+    } else {
+      delete (process as { getuid?: unknown }).getuid;
+    }
+  };
+}
+
 describe('the answer home', () => {
   it('carries the user id in its name where the temp folder can be shared', () => {
     const expectedName = isPosix ? `${ANSWER_HOME_DIRECTORY_NAME}-${process.getuid?.()}` : ANSWER_HOME_DIRECTORY_NAME;
@@ -48,6 +64,34 @@ describe('the answer home', () => {
     expect(first).toBe(fs.realpathSync(answerHomeDirectory(root)));
     expect(second).toBe(first);
     expect(fs.statSync(first).isDirectory()).toBe(true);
+  });
+
+  it('tries again on the next question when making its fallback home failed, and keeps the one that then succeeds', async () => {
+    // Act as a user the folder cannot belong to: whatever `ensureAnswerHomeDirectory`
+    // finds at the home path is then "owned by someone else", which sends it to
+    // the fallback home. No root and no real second user: a real `lstat` reports
+    // another owner on POSIX, and on Windows (uid 0) too.
+    const restoreUserId = actAsUser((process.getuid?.() ?? 0) + 1);
+    const makeFallback = vi.spyOn(fs.promises, 'mkdtemp').mockRejectedValueOnce(
+      Object.assign(new Error('EACCES: permission denied, mkdtemp'), { code: 'EACCES' }),
+    );
+    try {
+      await expect(ensureAnswerHomeDirectory({ root })).rejects.toThrow('EACCES');
+
+      // The failure was not kept: this one runs mkdtemp again, for real.
+      const used = await ensureAnswerHomeDirectory({ root });
+      expect(makeFallback).toHaveBeenCalledTimes(2);
+      expect(fs.statSync(used).isDirectory()).toBe(true);
+      // A sibling of the home path: its name plus mkdtemp's suffix.
+      expect(path.basename(used).startsWith(`${path.basename(answerHomeDirectory(root))}-`)).toBe(true);
+
+      // A fallback that was made is kept for the rest of the launch.
+      await expect(ensureAnswerHomeDirectory({ root })).resolves.toBe(used);
+      expect(makeFallback).toHaveBeenCalledTimes(2);
+    } finally {
+      makeFallback.mockRestore();
+      restoreUserId();
+    }
   });
 
   describe.skipIf(!isPosix)('on a shared POSIX temp folder', () => {

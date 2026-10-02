@@ -196,9 +196,12 @@ const ROLLUPS = {
   conversation: async (port) => {
     const { nodes, projectId } = await evaluate(
       port,
+      // The wire carries the map as `projectionJson`; only the renderer store
+      // parses it, so this read does the same.
       '(async () => { const s = await window.electronAPI.knowledgeGraph.graphSnapshot(null);'
+      + ' const projection = s.projectionJson ? JSON.parse(s.projectionJson) : s.projection;'
       + ' const project = await window.electronAPI.projects.getCurrent();'
-      + ' return { nodes: s.projection ? s.projection.nodes : null, projectId: project ? project.id : null }; })()',
+      + ' return { nodes: projection ? projection.nodes : null, projectId: project ? project.id : null }; })()',
     );
     if (!nodes) throw new Error('The preview has no projection yet. Let the map finish building.');
     return rollUpConversations(nodes, readBoardTasks(projectId));
@@ -281,7 +284,8 @@ async function phraseFromTranscript(port, target) {
     port,
     `(async () => {
       const snapshot = await window.electronAPI.knowledgeGraph.graphSnapshot(null);
-      const node = (snapshot?.projection?.nodes ?? []).find((entry) => entry.taskId === ${JSON.stringify(target.taskId)});
+      const projection = snapshot?.projectionJson ? JSON.parse(snapshot.projectionJson) : snapshot?.projection;
+      const node = (projection?.nodes ?? []).find((entry) => entry.taskId === ${JSON.stringify(target.taskId)});
       if (!node?.sessionId) return [];
       const response = await window.electronAPI.transcripts.get({ sessionId: node.sessionId, projectId: null });
       return (response.entries ?? []).map((entry) => {

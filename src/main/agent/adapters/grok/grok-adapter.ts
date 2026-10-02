@@ -20,19 +20,6 @@ import {
   forwardStreamLines,
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/cli-answer';
-
-/** The session id on a `streaming-messages-json` init line, or null. */
-export function grokInitSessionId(line: string): string | null {
-  if (!line.includes('"init"')) return null;
-  try {
-    const record = JSON.parse(line) as { type?: unknown; subtype?: unknown; session_id?: unknown };
-    return record.type === 'system' && record.subtype === 'init' && typeof record.session_id === 'string'
-      ? record.session_id
-      : null;
-  } catch {
-    return null;
-  }
-}
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -46,6 +33,18 @@ import type {
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
+/** The session id on a `streaming-messages-json` init line, or null. */
+export function grokInitSessionId(line: string): string | null {
+  if (!line.includes('"init"')) return null;
+  try {
+    const record = JSON.parse(line) as { type?: unknown; subtype?: unknown; session_id?: unknown };
+    return record.type === 'system' && record.subtype === 'init' && typeof record.session_id === 'string'
+      ? record.session_id
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Grok Build (xAI) adapter - the full Claude-class harness.

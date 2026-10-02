@@ -1018,7 +1018,7 @@ export function runProjectMigrations(db: Database.Database): void {
   `);
   // Migration: the effort a summary was written at, for a table made before it.
   const hasSummaryEffortColumn = (db.pragma('table_info(memory_task_summaries)') as Array<{ name: string }>)
-    .some((col) => col.name === 'effort');
+    .some((column) => column.name === 'effort');
   if (!hasSummaryEffortColumn) {
     db.exec('ALTER TABLE memory_task_summaries ADD COLUMN effort TEXT DEFAULT NULL');
   }

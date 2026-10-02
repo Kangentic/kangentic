@@ -32,18 +32,22 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
     fs.writeFileSync(claudeJsonPath(), JSON.stringify({ oauthAccount: { id: 'kept' } }));
     const worktree = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
     const renames = vi.spyOn(fs.promises, 'rename');
+    try {
+      await ensureClaudeSpawnConfig(worktree);
 
-    await ensureClaudeSpawnConfig(worktree);
-
-    const data = readClaudeJson();
-    expect(data.oauthAccount).toEqual({ id: 'kept' });
-    expect(data.diffSidebarOpen).toBe(false);
-    const entry = Object.values(data.projects as Record<string, Record<string, unknown>>)[0];
-    expect(entry.hasTrustDialogAccepted).toBe(true);
-    expect(entry.enabledMcpjsonServers).toEqual(['kangentic']);
-    expect(renames).toHaveBeenCalledTimes(1);
-    expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
-    renames.mockRestore();
+      const data = readClaudeJson();
+      expect(data.oauthAccount).toEqual({ id: 'kept' });
+      expect(data.diffSidebarOpen).toBe(false);
+      const entry = Object.values(data.projects as Record<string, Record<string, unknown>>)[0];
+      expect(entry.hasTrustDialogAccepted).toBe(true);
+      expect(entry.enabledMcpjsonServers).toEqual(['kangentic']);
+      expect(renames).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
+    } finally {
+      // Restored even when an assertion fails, or the spy stays on the shared
+      // fs.promises for the rest of the file.
+      renames.mockRestore();
+    }
   });
 
   it('does not write when everything is already set', async () => {
@@ -51,13 +55,15 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
     await ensureClaudeSpawnConfig(worktree);
     const renames = vi.spyOn(fs.promises, 'rename');
     const writes = vi.spyOn(fs.promises, 'writeFile');
+    try {
+      await ensureClaudeSpawnConfig(worktree);
 
-    await ensureClaudeSpawnConfig(worktree);
-
-    expect(renames).not.toHaveBeenCalled();
-    expect(writes).not.toHaveBeenCalled();
-    renames.mockRestore();
-    writes.mockRestore();
+      expect(renames).not.toHaveBeenCalled();
+      expect(writes).not.toHaveBeenCalled();
+    } finally {
+      renames.mockRestore();
+      writes.mockRestore();
+    }
   });
 
   it('leaves a file that does not parse untouched rather than replacing it', async () => {
@@ -67,6 +73,55 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
     await ensureClaudeSpawnConfig('/projects/myrepo');
 
     expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(torn);
+  });
+
+  // File modes and links are POSIX facts: Windows has no owner/group/other
+  // bits, and creating a link there needs a privilege. These run on the Linux
+  // CI runner and on macOS.
+  describe.skipIf(process.platform === 'win32')('on a POSIX file system', () => {
+    it('writes the file back with the mode it had, so a private file holding auth stays private', async () => {
+      // 0600 is the private mode the file carries. A write that fell back to
+      // the default mode (0666 less the umask) would also read 0600 under umask
+      // 077, so 0400 is checked too: no ordinary umask turns 0666 into a
+      // read-only file, so it fails whenever the file's own mode is not kept.
+      for (const mode of [0o600, 0o400]) {
+        fs.rmSync(claudeJsonPath(), { force: true });
+        fs.writeFileSync(claudeJsonPath(), JSON.stringify({ oauthAccount: { id: 'kept' } }));
+        fs.chmodSync(claudeJsonPath(), mode);
+
+        await ensureClaudeSpawnConfig(`/projects/myrepo-${mode.toString(8)}/.kangentic/worktrees/fix-bug-abcd1234`);
+
+        expect(fs.statSync(claudeJsonPath()).mode & 0o777).toBe(mode);
+        // A write really happened; the mode alone would also hold on an untouched file.
+        const data = readClaudeJson();
+        expect(data.oauthAccount).toEqual({ id: 'kept' });
+        expect(Object.keys(data.projects as Record<string, unknown>)).toHaveLength(1);
+        expect(fs.readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+      }
+    });
+
+    it('keeps a symlinked file a symlink, and updates the file it points at', async () => {
+      const dotfiles = path.join(tmpHome, 'dotfiles');
+      fs.mkdirSync(dotfiles);
+      const target = path.join(dotfiles, 'claude.json');
+      fs.writeFileSync(target, JSON.stringify({ oauthAccount: { id: 'kept' } }));
+      fs.chmodSync(target, 0o600);
+      fs.symlinkSync(target, claudeJsonPath());
+
+      await ensureClaudeSpawnConfig('/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234');
+
+      // The rename landed on the target, not on the link.
+      expect(fs.lstatSync(claudeJsonPath()).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(claudeJsonPath())).toBe(target);
+      const data = JSON.parse(fs.readFileSync(target, 'utf-8')) as Record<string, unknown>;
+      expect(data.oauthAccount).toEqual({ id: 'kept' });
+      const entry = Object.values(data.projects as Record<string, Record<string, unknown>>)[0];
+      expect(entry.hasTrustDialogAccepted).toBe(true);
+      expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+      // No temporary file is left beside the target or beside the link.
+      expect(fs.readdirSync(dotfiles)).toEqual(['claude.json']);
+      expect(fs.readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    });
   });
 });
 

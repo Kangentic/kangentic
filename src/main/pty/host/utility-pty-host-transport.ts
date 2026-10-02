@@ -100,6 +100,10 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   private heartbeatInFlight = false;
   private shuttingDown = false;
   private hadHost = false;
+  /** A host exited unexpectedly since the last `ready`, before or after its
+   *  own. Commands posted straight to it died with it, so the next `ready` is
+   *  a restart even when the lost host never said ready itself. */
+  private lostSinceReady = false;
 
   constructor(private readonly options: UtilityPtyHostTransportOptions) {}
 
@@ -229,8 +233,9 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
         return;
       }
       case 'ready': {
-        const restarted = this.hadHost;
+        const restarted = this.hadHost || this.lostSinceReady;
         this.hadHost = true;
+        this.lostSinceReady = false;
         this.startHeartbeat();
         this.lifecycle?.onHostUp(restarted);
         return;
@@ -258,6 +263,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
       this.pending.delete(requestId);
     }
     if (this.shuttingDown) return;
+    this.lostSinceReady = true;
     console.error(`[pty-host] exited unexpectedly (code ${exitCode}); every terminal it held has ended`);
     this.restartPolicy.recordCrash(exitCode, stderrTail);
     this.lifecycle?.onHostDown();

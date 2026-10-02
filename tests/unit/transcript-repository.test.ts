@@ -47,6 +47,27 @@ describeWithSqlite('TranscriptRepository', () => {
     expect(transcripts.getTranscriptText('missing')).toBeNull();
   });
 
+  it('starts a session whose only pieces are a legacy conversion\'s (negative seqs) at seq 0, never below it', () => {
+    const { database, transcripts } = project();
+    const insertPiece = database.prepare('INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text) VALUES (?, ?, ?, ?, ?, ?)');
+    // A conversion part-way through: its pieces sit at -3, -2, -1 and it has
+    // written only the first. MAX(seq) + 1 would give -2, the next one it writes.
+    insertPiece.run('session-1', -3, 4, 4, '2026-09-01T00:00:00.000Z', 'old ');
+    const seqsOf = (): number[] => (database.prepare("SELECT seq FROM session_transcript_chunks WHERE session_id = 'session-1' ORDER BY seq").all() as Array<{ seq: number }>)
+      .map((row) => row.seq);
+
+    transcripts.appendChunk('session-1', 'new ');
+    expect(seqsOf()).toEqual([-3, 0]);
+
+    // The rest of the conversion's pieces still insert beside it.
+    insertPiece.run('session-1', -2, 4, 4, '2026-09-01T00:00:00.000Z', 'mid ');
+    insertPiece.run('session-1', -1, 4, 4, '2026-09-01T00:00:00.000Z', 'end ');
+    // Once a piece is at 0 or above, the next is one past the highest.
+    transcripts.appendChunk('session-1', 'live');
+    expect(seqsOf()).toEqual([-3, -2, -1, 0, 1]);
+    expect(transcripts.getTranscriptText('session-1')).toBe('old mid end new live');
+  });
+
   it('reads the tail from the newest pieces only, and reports the whole length', () => {
     const { transcripts } = project();
     for (const piece of ['aaaa', 'bbbb', 'cccc']) transcripts.appendChunk('session-1', piece);

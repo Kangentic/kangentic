@@ -45,7 +45,6 @@ import {
   cleanupTempProject,
   getTestDataDir,
   cleanupTestDataDir,
-  waitForNoRunningSession,
   mockAgentPath,
 } from './helpers';
 import type { Session } from '../../src/shared/types';
@@ -76,6 +75,20 @@ function buildCanonicalConfig(): Record<string, unknown> {
 // freshProject, so after reset the board is blank.
 // ---------------------------------------------------------------------------
 
+/** Poll until none of one project's sessions reports status 'running'. */
+async function waitForProjectSessionsStopped(page: Page, projectId: string, timeoutMs: number): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const anyRunning = await page.evaluate(async (id) => {
+      const sessions: Session[] = await window.electronAPI.sessions.list();
+      return sessions.some((session) => session.projectId === id && session.status === 'running');
+    }, projectId);
+    if (!anyRunning) return;
+    await page.waitForTimeout(200);
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for project ${projectId}'s sessions to stop running`);
+}
+
 export async function resetSharedApp(page: Page): Promise<void> {
   // 1. Get current project id (may be null if no project is open yet).
   const currentProjectId = await page.evaluate(async () => {
@@ -98,9 +111,12 @@ export async function resetSharedApp(page: Page): Promise<void> {
       }, sessionId);
     }
 
-    // 3. Wait until no running session remains for this project.
+    // 3. Wait until no running session remains for this project. Scoped like
+    //    the kill above: a session another project still runs is not this
+    //    reset's to wait on, and a global wait threw on it for the rest of
+    //    the worker.
     if (sessionIds.length > 0) {
-      await waitForNoRunningSession(page, 15000);
+      await waitForProjectSessionsStopped(page, currentProjectId, 15000);
     }
   }
 

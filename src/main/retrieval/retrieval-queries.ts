@@ -31,8 +31,14 @@ export interface ConversationSearchRequest {
   embedWaitMs?: number;
 }
 
-/** Hybrid conversation search in the worker. */
-export async function searchConversations(request: ConversationSearchRequest): Promise<TranscriptSearchHit[]> {
+/**
+ * Hybrid conversation search in the worker. `onUnavailable` runs when the
+ * worker is down, for a caller that must say so rather than report no hits.
+ */
+export async function searchConversations(
+  request: ConversationSearchRequest,
+  onUnavailable?: () => void,
+): Promise<TranscriptSearchHit[]> {
   const query = request.query.trim();
   if (!query || request.projects.length === 0) return [];
   const queryVectors = await embedQueryTexts(request.embedder, [query], request.embedWaitMs);
@@ -49,16 +55,19 @@ export async function searchConversations(request: ConversationSearchRequest): P
       queryVectors,
     });
   } catch (error) {
+    if (error instanceof RetrievalUnavailableError) onUnavailable?.();
     console.warn('[retrieval] conversation search unavailable:', error instanceof Error ? error.message : error);
     return [];
   }
 }
 
-/** Commits matching a query across projects. None while the worker is down. */
+/** Commits matching a query across projects. None while the worker is down,
+ *  which `onUnavailable` reports. */
 export async function searchCommitsIn(
   projects: ReadonlyArray<ProjectRef>,
   query: string,
   taskId?: string,
+  onUnavailable?: () => void,
 ): Promise<Array<CommitHit & { projectName: string }>> {
   if (projects.length === 0) return [];
   try {
@@ -68,6 +77,7 @@ export async function searchCommitsIn(
       taskId,
     });
   } catch (error) {
+    if (error instanceof RetrievalUnavailableError) onUnavailable?.();
     console.warn('[retrieval] commit search unavailable:', error instanceof Error ? error.message : error);
     return [];
   }

@@ -28,6 +28,9 @@ import type { CliChildProcess, OffMainCliOptions } from '../utility-process/off-
 /** How long before the quit drain's deadline the pty host gives up waiting
  *  for exits and exits itself, so main never stops waiting first. */
 const HOST_EXIT_MARGIN_MS = 200;
+/** How long a suspend waits on the host for the scrollback its last-resort
+ *  agent session id scan reads. The scan is a fallback; the suspend is not. */
+const SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS = 2_000;
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
@@ -320,8 +323,17 @@ export class SessionManager extends EventEmitter {
     this.host.setEventHandler((event) => this.handleHostEvent(event));
     this.host.setLifecycleHandler({
       // The host died and its PTYs were reported exited (each through the
-      // spawn flow's own exit handling). The IPC layer resumes the sessions.
-      onHostLost: (sessionIds) => this.emit('pty-host-lost', sessionIds),
+      // spawn flow's own exit handling). The IPC layer resumes the sessions,
+      // but only those the host took down: one main was already ending (a
+      // suspend inside its exit window, a kill inside its grace) stays ended
+      // rather than being resumed against that intent.
+      onHostLost: (sessionIds) => {
+        const takenDown = sessionIds.filter((sessionId) => {
+          const session = this.registry.get(sessionId);
+          return !session || (session.status !== 'suspended' && session.intentionalExit !== true);
+        });
+        this.emit('pty-host-lost', takenDown);
+      },
       onHostRestarted: () => {
         // The new host knows nothing: replay what gates its output.
         this.host.post({ type: 'setFocused', sessionIds: [...this.focusedSessionIds] });
@@ -586,7 +598,11 @@ export class SessionManager extends EventEmitter {
         this.telemetry.activityEngine.markPtyOutput(event.sessionId);
         this.emit('output-seen', event.sessionId);
         return;
+      // These two re-create per-session state too (the first-output latch and
+      // the alt-screen mirror), so a session removed while its parked PTY
+      // still writes its exit screen is dropped here like the cases below.
       case 'firstOutput':
+        if (!this.registry.has(event.sessionId)) return;
         if (!this.firstOutputTracker.markEmitted(event.sessionId)) return;
         this.emit('first-output', event.sessionId);
         // First-output can be tripped by a SHELL preamble, not the agent (see
@@ -604,6 +620,7 @@ export class SessionManager extends EventEmitter {
         });
         return;
       case 'altScreen': {
+        if (!this.registry.has(event.sessionId)) return;
         this.inAltScreen.set(event.sessionId, event.inAltScreen);
         if (!event.inAltScreen) return;
         // The TUI's first composed frame: the one boot signal a shell
@@ -1989,9 +2006,14 @@ export class SessionManager extends EventEmitter {
     // Last-resort: scan full scrollback for agent session ID if not yet
     // captured. Handles Gemini printing session ID at shutdown, Codex
     // startup header missed by streaming handler, etc. Uses raw (pre-TUI)
-    // scrollback so startup headers remain in scope.
-    const rawScrollback = await this.host.getRawScrollback(sessionId).catch(() => '');
-    this.sessionIdManager.scanScrollback(sessionId, session.agentParser, rawScrollback);
+    // scrollback so startup headers remain in scope. Skipped once the id is
+    // known, and bounded otherwise: a host that is down or restarting would
+    // hold the caller's task lock, and the queue's freed slot, for the
+    // transport's whole request timeout.
+    if (!this.telemetry.hasAgentSessionId(sessionId)) {
+      const rawScrollback = await this.host.getRawScrollback(sessionId, SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS).catch(() => '');
+      this.sessionIdManager.scanScrollback(sessionId, session.agentParser, rawScrollback);
+    }
 
     this.emit('session-changed', sessionId, toSession(session));
 

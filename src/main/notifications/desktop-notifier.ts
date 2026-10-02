@@ -133,8 +133,11 @@ export class DesktopNotifier {
     if (exitCode === PTY_HOST_LOST_EXIT_CODE) {
       const now = Date.now();
       if (now - this.lastHostLostNoticeAt < PTY_HOST_LOST_NOTICE_WINDOW_MS) return;
-      this.lastHostLostNoticeAt = now;
+      // Stamped only when the notice goes out: an exit the focus gate holds
+      // back (the project on screen) must not swallow a background project's
+      // exit from the same crash, or the outcome would depend on exit order.
       if (!this.shouldNotify('pty-host-lost', session.projectId)) return;
+      this.lastHostLostNoticeAt = now;
       this.notify('pty-host-lost', 'Terminals restarted', 'Running agents are resuming.', session.projectId, session.taskId);
       return;
     }

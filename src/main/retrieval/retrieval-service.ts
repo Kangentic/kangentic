@@ -872,6 +872,9 @@ export const retrievalService = {
     const projectId = context.currentProjectId;
     summaryChoice = null;
     refreshSummaryChoice(context, { force: true });
+    // A new agent or model may be what fixes a failed call, so a settings
+    // change does not wait out the failure backoff.
+    if (projectId) summaryScheduler.endBackoff(projectId);
     if (projectId) summaryScheduler.request(context, projectId);
     // Switching source code on fills the code index, and off clears it.
     if (projectId) queueRecordSweeps(context, projectId);

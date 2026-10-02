@@ -566,8 +566,9 @@ export function KnowledgeGraphControls({
                       >
                         No region matches that.
                       </p>
-                    ) : regionGroups.map((group) => (
-                      <div key={group.name ?? 'regions'}>
+                    ) : regionGroups.map((group, groupIndex) => (
+                      // Keyed by position too: two projects can share a name.
+                      <div key={`${groupIndex}:${group.name ?? 'regions'}`}>
                         {grouped && group.name ? (
                           <div
                             className="px-1.5 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted"

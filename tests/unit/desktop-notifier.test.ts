@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { DesktopNotifier, type DesktopNotifierOptions } from '../../src/main/notifications/desktop-notifier';
+import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../../src/shared/pty-host';
 import type { NotificationConfig, NotificationInput, Session } from '../../src/shared/types';
 
 class FakeSessionManager extends EventEmitter {
@@ -198,6 +199,64 @@ describe('DesktopNotifier', () => {
     vi.advanceTimersByTime(10_000);
     sessionManager.emit('exit', 'sess-4', -2, false);
     expect(showNotification).toHaveBeenCalledTimes(2);
+  });
+
+  it('folds lost-session exits by the notice window itself, with no cooldown to lean on', () => {
+    // The 'pty-host-lost' cooldown bucket is shared by every session, so with
+    // the default 10 s cooldown it alone folds a burst. A zero cooldown leaves
+    // the notice window as the only thing that can.
+    config = makeConfig({ cooldownSeconds: 0 });
+    sessionManager.getSession.mockImplementation((sessionId: string) => makeSession({ id: sessionId }));
+    buildNotifier();
+
+    for (const sessionId of ['sess-1', 'sess-2', 'sess-3']) {
+      sessionManager.emit('exit', sessionId, PTY_HOST_LOST_EXIT_CODE, false);
+    }
+    expect(showNotification).toHaveBeenCalledTimes(1);
+
+    // Still inside the window one millisecond before it closes.
+    vi.advanceTimersByTime(PTY_HOST_LOST_NOTICE_WINDOW_MS - 1);
+    sessionManager.emit('exit', 'sess-4', PTY_HOST_LOST_EXIT_CODE, false);
+    expect(showNotification).toHaveBeenCalledTimes(1);
+
+    // A separate crash once the window has passed notifies again.
+    vi.advanceTimersByTime(1);
+    sessionManager.emit('exit', 'sess-5', PTY_HOST_LOST_EXIT_CODE, false);
+    expect(showNotification).toHaveBeenCalledTimes(2);
+    expect(shownInputs()[1]).toMatchObject({ title: 'Terminals restarted' });
+  });
+
+  it('a lost session in the project on screen does not swallow a background project\'s notice', () => {
+    // The project on screen exits first and the focus gate holds it back; a
+    // background project's exit from the same crash still notifies. With the
+    // window stamped before the focus gate, it depended on which exit came first.
+    config = makeConfig({ cooldownSeconds: 0 });
+    focused = true;
+    activeProjectId = 'proj-on-screen';
+    sessionManager.getSession.mockImplementation((sessionId: string) => makeSession({
+      id: sessionId,
+      projectId: sessionId === 'sess-on-screen' ? 'proj-on-screen' : 'proj-background',
+    }));
+    buildNotifier();
+
+    sessionManager.emit('exit', 'sess-on-screen', PTY_HOST_LOST_EXIT_CODE, false);
+    expect(showNotification).not.toHaveBeenCalled();
+    sessionManager.emit('exit', 'sess-background', PTY_HOST_LOST_EXIT_CODE, false);
+    expect(showNotification).toHaveBeenCalledTimes(1);
+    expect(shownInputs()[0]).toMatchObject({ title: 'Terminals restarted', projectId: 'proj-background' });
+  });
+
+  it('keeps an ordinary crash inside a host-loss window as its own notification', () => {
+    config = makeConfig({ cooldownSeconds: 0 });
+    sessionManager.getSession.mockImplementation((sessionId: string) => makeSession({ id: sessionId }));
+    buildNotifier();
+
+    sessionManager.emit('exit', 'sess-1', PTY_HOST_LOST_EXIT_CODE, false);
+    sessionManager.emit('exit', 'sess-2', 1, false);
+
+    expect(showNotification).toHaveBeenCalledTimes(2);
+    expect(shownInputs()[0].title).toBe('Terminals restarted');
+    expect(shownInputs()[1].title).toContain('Session crashed');
   });
 
   it('does not notify when desktop.onAgentCrash is disabled', () => {

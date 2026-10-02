@@ -24,12 +24,24 @@ type ChildProcessFailure = Error & {
   cmd?: string;
 };
 
+/** The executable a shell command line starts: its leading quoted path, or
+ *  its first word. */
+export function leadingExecutable(commandLine: string): string {
+  const quoted = /^\s*"([^"]*)"/.exec(commandLine);
+  if (quoted) return quoted[1];
+  return commandLine.trim().split(/\s+/)[0] ?? '';
+}
+
 /** True when the request would start this process's own executable. */
 export function launchesOwnBinary(request: HostExecRequest, ownExecutable = process.execPath): boolean {
   if (request.kind === 'execFile') return isSamePath(request.file, ownExecutable);
-  const lowerCommand = request.command.toLowerCase();
-  return lowerCommand.includes(ownExecutable.toLowerCase())
-    || lowerCommand.includes(path.basename(ownExecutable).toLowerCase());
+  // Only the executable the command line starts is compared, by path or by
+  // name. A probe's own path can contain this app's name without launching
+  // it (`/opt/kangentic/bin/codex --version` on a build whose binary is
+  // `kangentic`), and a substring match refused that probe.
+  const executable = leadingExecutable(request.command);
+  return isSamePath(executable, ownExecutable)
+    || path.basename(executable).toLowerCase() === path.basename(ownExecutable).toLowerCase();
 }
 
 function failure(error: ChildProcessFailure, stdout: string, stderr: string): HostExecFailure {

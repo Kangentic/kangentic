@@ -51,6 +51,19 @@ import type {
   ParsedSubagentUsage,
   SubagentTranscriptSignature,
 } from '../../agent-adapter';
+import type {
+  AgentPermissionEntry,
+  PermissionMode,
+  AdapterRuntimeStrategy,
+  AgentCapabilities,
+  SubmissionContextType,
+  SubmissionVerifier,
+  SubmissionContext,
+  TranscriptUsage,
+  TranscriptToolCounts,
+} from '../../../../shared/types';
+import { ActivityDetection } from '../../../../shared/types';
+import { peekModelPickerAliasIds } from './model-picker-probe';
 
 /**
  * The one tool an answering agent is allowed, by its full MCP name.
@@ -222,19 +235,6 @@ export function makeStreamForwarder(onEvent: (event: AnswerStreamEvent) => void)
     for (const event of reduce(line)) onEvent(event);
   });
 }
-import type {
-  AgentPermissionEntry,
-  PermissionMode,
-  AdapterRuntimeStrategy,
-  AgentCapabilities,
-  SubmissionContextType,
-  SubmissionVerifier,
-  SubmissionContext,
-  TranscriptUsage,
-  TranscriptToolCounts,
-} from '../../../../shared/types';
-import { ActivityDetection } from '../../../../shared/types';
-import { peekModelPickerAliasIds } from './model-picker-probe';
 
 /**
  * Claude Code adapter - wraps ClaudeDetector, CommandBuilder,

@@ -20,13 +20,18 @@ const appendStatements = new WeakMap<Database.Database, Database.Statement>();
 export class TranscriptRepository {
   constructor(private db: Database.Database) {}
 
-  /** Append one flush of ANSI-stripped text as the session's next piece. */
+  /**
+   * Append one flush of ANSI-stripped text as the session's next piece. The
+   * seq never goes below 0: a legacy row's conversion writes its pieces below
+   * 0 one at a time, and a flush that landed between two of them took the seq
+   * the conversion wrote next.
+   */
   appendChunk(sessionId: string, chunk: string): void {
     let append = appendStatements.get(this.db);
     if (!append) {
       append = this.db.prepare(`
         INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text)
-        VALUES (?, (SELECT COALESCE(MAX(seq), -1) + 1 FROM session_transcript_chunks WHERE session_id = ?), ?, ?, ?, ?)
+        VALUES (?, (SELECT MAX(COALESCE(MAX(seq), -1), -1) + 1 FROM session_transcript_chunks WHERE session_id = ?), ?, ?, ?, ?)
       `);
       appendStatements.set(this.db, append);
     }

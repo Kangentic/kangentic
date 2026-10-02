@@ -104,6 +104,8 @@ import {
   registerSearchTools,
   searchArgumentRefusal,
 } from '../../src/main/agent/mcp-http/search-tools';
+import { retrievalClient, RetrievalUnavailableError } from '../../src/main/retrieval/retrieval-client';
+import { INDEX_RESTARTING } from '../../src/main/retrieval/retrieval-queries';
 import { PASSAGES_SHOWN, type RelatedWorkTask } from '../../src/main/retrieval/related-work';
 import { ANSWER_SEARCH_BUDGET, watchAnswerSearches } from '../../src/main/agent/mcp-http/answer-search-trace';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
@@ -1220,6 +1222,91 @@ describe('kangentic_search MCP tool', () => {
         stop();
       }
       expect(seen).toEqual([{ query: 'relay', sessionIds: [], taskIds: [] }]);
+    });
+  });
+
+  describe('when the retrieval worker cannot answer', () => {
+    const NOT_SEARCHED_NOTE = `Conversations and commits were not searched. ${INDEX_RESTARTING}`;
+
+    /**
+     * The worker rejects `method` the way a restarting one does; every other
+     * method runs through its real handler, as in the rest of this file.
+     * Returns what puts the client back.
+     */
+    function workerDownFor(method: string): () => void {
+      const realCall = retrievalClient.call as unknown as (called: string, params: unknown) => Promise<unknown>;
+      const spy = vi.spyOn(retrievalClient, 'call').mockImplementation((async (called: string, params: unknown) => {
+        if (called === method) throw new RetrievalUnavailableError('The retrieval worker exited');
+        return realCall(called, params);
+      }) as never);
+      // The search layer logs each unavailable search; the log is not under test.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      return () => {
+        spy.mockRestore();
+        warn.mockRestore();
+      };
+    }
+
+    /** The core's conversation search stands in for the one the tool hands it, so the tool's own wiring of it runs. */
+    function runConversationSearchInCore(query: string): void {
+      mockRunSearchEverything.mockImplementationOnce((async (args: {
+        projects: Project[];
+        conversationSearch: { search: (request: { query: string; projects: Project[]; embedder: null }) => Promise<unknown> };
+      }) => {
+        await args.conversationSearch.search({ query, projects: args.projects, embedder: null });
+        return [];
+      }) as never);
+    }
+
+    it('answers a bare "No hits" when the worker is up and finds nothing', async () => {
+      const result = await server.getHandler('kangentic_search')({ query: 'reconnect' });
+
+      expect(result.content[0].text).toBe('No hits matching "reconnect".');
+    });
+
+    it('says the conversations and commits were not searched, when the conversation search finds the worker down', async () => {
+      runConversationSearchInCore('reconnect');
+      const restore = workerDownFor('search.conversations');
+      try {
+        const result = await server.getHandler('kangentic_search')({ query: 'reconnect' });
+
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).toBe(`No hits matching "reconnect".\n${NOT_SEARCHED_NOTE}`);
+      } finally {
+        restore();
+      }
+    });
+
+    it('says the conversations and commits were not searched, when the commit search finds the worker down', async () => {
+      const restore = workerDownFor('search.commits');
+      try {
+        const result = await server.getHandler('kangentic_search')({ query: 'reconnect' });
+
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).toBe(`No hits matching "reconnect".\n${NOT_SEARCHED_NOTE}`);
+      } finally {
+        restore();
+      }
+    });
+
+    it('ends a result that has hits with the note too, in place of the keyword-only note', async () => {
+      mockRunSearchEverything.mockResolvedValueOnce([{
+        kind: 'task', projectId: DEFAULT_PROJECT_ID, projectName: 'Default', taskId: 'task-561', displayId: 561,
+        taskTitle: 'Relay config', archived: false, snippetField: 'title', snippet: 'Relay config', matchStart: 0, matchEnd: 5,
+      }]);
+      // No model, so hybrid mode would also have said "keyword only".
+      const handler = registerServer(makeResolver({ embedder: null }));
+      const restore = workerDownFor('search.commits');
+      try {
+        const result = await handler({ query: 'relay' });
+
+        const text = result.content[0].text;
+        expect(text).toContain('## Tasks');
+        expect(text.endsWith(`\n${NOT_SEARCHED_NOTE}`)).toBe(true);
+        expect(text).not.toContain('keyword only');
+      } finally {
+        restore();
+      }
     });
   });
 

@@ -152,12 +152,24 @@ export async function sweepCommitRecords(
 
     const signatures = store.indexSignatures(CORPUS);
     const fresh = commits.filter((commit) => signatures.get(commit.sha)?.sourcePath !== RECORD_SOURCE);
+    // A commit that fails is logged and skipped, and the head is then not
+    // stored: the next sweep reads from the old head again and `fresh` keeps
+    // only what is still missing. Storing it would move the next incremental
+    // read past the failed commit for good.
+    let itemFailed = false;
     // The task lookup is a full-text read of about 2 ms a subject, so it runs
     // here, outside the write transaction.
     const prepareCommit = (commit: CommitEntry): PreparedWrite => {
-      const chunks = commitChunks(commit);
-      const phrase = commitLinkPhrase(commit.subject);
-      const taskId = phrase ? store.firstTaskMentioning(phrase, commit.committedMs + LINK_GRACE_MS) : null;
+      let chunks: ReturnType<typeof commitChunks>;
+      let taskId: string | null;
+      try {
+        chunks = commitChunks(commit);
+        const phrase = commitLinkPhrase(commit.subject);
+        taskId = phrase ? store.firstTaskMentioning(phrase, commit.committedMs + LINK_GRACE_MS) : null;
+      } catch (error) {
+        itemFailed = true;
+        throw error;
+      }
       const textBytes = chunks.reduce((total, chunk) => total + chunk.text.length, 0);
       return {
         rows: chunks.length + 1,
@@ -183,6 +195,7 @@ export async function sweepCommitRecords(
             });
             result.indexed += 1;
           } catch (error) {
+            itemFailed = true;
             console.warn(`[retrieval] commit ${commit.sha} failed to index:`, error);
           }
         },
@@ -204,13 +217,14 @@ export async function sweepCommitRecords(
             store.deleteDocument(CORPUS, docId);
             result.removed += 1;
           } catch (error) {
+            itemFailed = true;
             console.warn(`[retrieval] commit ${docId} failed to remove:`, error);
           }
         },
       });
       if (!await writeInSlices(db, gone, prepareRemoval, 'records:commit-remove', shouldContinue, deps)) return result;
     }
-    writeIndexedHead(store, HEAD_META_KEY, head, COMMIT_RECORD_VERSION);
+    if (!itemFailed) writeIndexedHead(store, HEAD_META_KEY, head, COMMIT_RECORD_VERSION);
   }
 
   // Both change which task a commit rolls up under.

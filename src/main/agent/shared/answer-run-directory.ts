@@ -80,6 +80,9 @@ export async function ensureAnswerHomeDirectory(options: { root?: string } = {})
   if (!fallback) {
     fallback = fs.promises.mkdtemp(`${directory}-`).then((created) => fs.promises.realpath(created));
     fallbackHomes.set(directory, fallback);
+    // A failed creation is not kept, or every later question would get the
+    // same rejection until the app restarts. The caller still sees this one.
+    fallback.catch(() => fallbackHomes.delete(directory));
   }
   return fallback;
 }

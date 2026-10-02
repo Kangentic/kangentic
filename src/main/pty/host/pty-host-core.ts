@@ -538,13 +538,15 @@ export class PtyHostCore {
   private onPtyData(entry: PtyEntry, data: string): void {
     const sessionId = entry.sessionId;
     this.bufferManager.onData(sessionId, data);
-    this.noteOutput(sessionId);
 
     // A session main removed while its PTY was still exiting (a young
     // session's kill waits out the exit grace) keeps feeding the ring above,
-    // as before, but nothing else: there is no row to attribute it to.
+    // as before, but nothing else: there is no row to attribute it to. That
+    // includes the output report, whose merge window would otherwise come
+    // back after `dropSession` deleted it and never be removed.
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    this.noteOutput(sessionId);
 
     if (!session.transient) this.transcriptWriter.onData(sessionId, data);
 

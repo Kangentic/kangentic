@@ -63,6 +63,8 @@ vi.mock('../../src/main/pty/session-manager', () => {
       spawn = vi.fn();
       kill = vi.fn();
       enableTranscripts = vi.fn();
+      // The pty-host-lost listener files each lost session under its project.
+      getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
     },
   };
 });
@@ -151,7 +153,6 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
     getStatus: vi.fn(),
     getEmbedder: vi.fn(),
     stop: vi.fn(),
-    purgeProjectIndex: vi.fn(),
     rebuildPlan: vi.fn(),
     rebuildEverything: vi.fn(),
     dispose: vi.fn(),
@@ -171,6 +172,7 @@ vi.mock('../../src/main/ipc/handlers/projects', () => ({
   openProjectByPath: vi.fn(),
   activateAllProjects: vi.fn(),
   getLastOpenedProject: vi.fn(),
+  recoverSessionsAfterPtyHostLoss: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/handlers/task-crud', () => ({
   registerTaskCrudHandlers: vi.fn(),
@@ -628,6 +630,82 @@ describe('registerAllIpc idempotency', () => {
 
       const featureUsedCalls = vi.mocked(trackEvent).mock.calls.filter((call) => call[0] === 'feature_used');
       expect(featureUsedCalls).toEqual([]);
+    }, 30000);
+  });
+
+  describe('pty host loss recovery wiring', () => {
+    // SessionManager emits 'pty-host-lost' with the sessions the dying host took
+    // down, then 'pty-host-restarted' once a host answers again. register-all.ts
+    // files the lost ids per project and, on the restart, hands exactly those to
+    // recoverSessionsAfterPtyHostLoss, then forgets them. Red-green: drop the
+    // `.clear()` and the second-restart test goes red (a stale resume); hand the
+    // recovery the live map instead of the copy and the grouping test goes red
+    // (the clear empties it before the size check, so recovery is never called).
+    const RECOVERY_LOST_MAP_ARGUMENT = 1;
+
+    async function startWiring(projectBySession: Record<string, string>) {
+      const { registerAllIpc, getSessionManager, getOptionalIpcContext } = await import('../../src/main/ipc/register-all');
+      const { recoverSessionsAfterPtyHostLoss } = await import('../../src/main/ipc/handlers/projects');
+      registerAllIpc(makeMockWindow(1));
+      const sessionManager = getSessionManager();
+      vi.mocked(sessionManager.getSessionProjectId).mockImplementation((sessionId) => projectBySession[sessionId]);
+      const recoveries = () => vi.mocked(recoverSessionsAfterPtyHostLoss).mock.calls;
+      return { sessionManager, recoveries, getOptionalIpcContext };
+    }
+
+    it('files lost sessions per project and resumes exactly those, only once a host is back', async () => {
+      const { sessionManager, recoveries, getOptionalIpcContext } = await startWiring({
+        'session-a': 'project-1',
+        'session-b': 'project-1',
+        'session-c': 'project-2',
+      });
+
+      // Two separate losses before any restart accumulate into the same project.
+      // 'session-gone' has no project any more, so there is nothing to resume.
+      sessionManager.emit('pty-host-lost', ['session-a', 'session-gone']);
+      sessionManager.emit('pty-host-lost', ['session-b', 'session-c']);
+      expect(recoveries()).toHaveLength(0);
+
+      sessionManager.emit('pty-host-restarted');
+
+      expect(recoveries()).toHaveLength(1);
+      expect(recoveries()[0][0] === getOptionalIpcContext()).toBe(true);
+      const lostByProject = recoveries()[0][RECOVERY_LOST_MAP_ARGUMENT];
+      expect([...lostByProject.keys()].sort()).toEqual(['project-1', 'project-2']);
+      expect([...(lostByProject.get('project-1') ?? [])].sort()).toEqual(['session-a', 'session-b']);
+      expect([...(lostByProject.get('project-2') ?? [])]).toEqual(['session-c']);
+    }, 30000);
+
+    it('hands each loss over once: a second restart resumes nothing, and the next loss starts clean', async () => {
+      const { sessionManager, recoveries } = await startWiring({
+        'session-a': 'project-1',
+        'session-d': 'project-2',
+      });
+
+      sessionManager.emit('pty-host-lost', ['session-a']);
+      sessionManager.emit('pty-host-restarted');
+      expect(recoveries()).toHaveLength(1);
+
+      // The in-process fallback or a later respawn can announce another restart
+      // with nothing lost in between.
+      sessionManager.emit('pty-host-restarted');
+      expect(recoveries()).toHaveLength(1);
+
+      // A fresh loss carries only its own sessions, not the first loss again.
+      sessionManager.emit('pty-host-lost', ['session-d']);
+      sessionManager.emit('pty-host-restarted');
+      expect(recoveries()).toHaveLength(2);
+      const secondLostByProject = recoveries()[1][RECOVERY_LOST_MAP_ARGUMENT];
+      expect([...secondLostByProject.keys()]).toEqual(['project-2']);
+      expect([...(secondLostByProject.get('project-2') ?? [])]).toEqual(['session-d']);
+    }, 30000);
+
+    it('a restart that follows no loss resumes nothing', async () => {
+      const { sessionManager, recoveries } = await startWiring({});
+
+      sessionManager.emit('pty-host-restarted');
+
+      expect(recoveries()).toHaveLength(0);
     }, 30000);
   });
 });

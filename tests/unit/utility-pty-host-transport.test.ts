@@ -161,6 +161,26 @@ describe('UtilityPtyHostTransport', () => {
     expect(transport.hostPid).toBe(1001);
   });
 
+  it('announces a restart when the first host exited before it ever said ready', async () => {
+    const { transport, lifecycle } = makeTransport();
+    transport.start();
+    const first = latestChild();
+    // Commands posted straight to it died with it; the app never saw it up.
+    first.emit('exit', 1);
+    expect(lifecycle.onHostDown).toHaveBeenCalledTimes(1);
+    expect(lifecycle.onHostUp).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(forks).toHaveLength(2);
+    latestChild().emit('message', { type: 'ready' });
+
+    // Exactly one announcement, and it is a restart. Keying "restarted" on a
+    // host having said ready once reported false here, so main never replayed
+    // its focus and tap sets and never resumed the sessions the loss ended.
+    expect(lifecycle.onHostUp).toHaveBeenCalledTimes(1);
+    expect(lifecycle.onHostUp).toHaveBeenCalledWith(true);
+  });
+
   it('ignores messages and exits from a host it has already replaced', async () => {
     const { transport, events, lifecycle } = makeTransport();
     transport.start();

@@ -5,7 +5,14 @@
  * a missing prerequisite is a tag in place of the value.
  */
 import { describe, expect, it } from 'vitest';
-import { alwaysOnLine, codeLine, summariesLine, timeLeft } from '../../src/renderer/components/settings/tabs/index-sources';
+import {
+  alwaysOnLine,
+  codeLine,
+  sourceRequirements,
+  summariesLine,
+  timeLeft,
+  type SourceRequirementInput,
+} from '../../src/renderer/components/settings/tabs/index-sources';
 import type { KnowledgeGraphCodeStatus, KnowledgeGraphSummaryStatus } from '../../src/shared/types';
 
 const sonnet = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
@@ -31,6 +38,43 @@ describe('the time left', () => {
     expect(timeLeft(3.2)).toBe('3 min left');
     expect(timeLeft(89)).toBe('89 min left');
     expect(timeLeft(150)).toBe('2.5 hr left');
+  });
+});
+
+describe('what the summaries and code lines wait for', () => {
+  /** Everything in place: the Knowledge Graph on, an agent installed and chosen, nothing missing. */
+  const READY: SourceRequirementInput = { semanticEnabled: true, answerCapableAgents: 2, agentSetup: null, agentChosen: true };
+
+  it('is nothing for either line once the Knowledge Graph, an agent and a model are all in place', () => {
+    expect(sourceRequirements(READY)).toEqual({ summaries: undefined, code: undefined });
+  });
+
+  it('puts the Knowledge Graph first, over every other gap', () => {
+    const everythingElseMissing: SourceRequirementInput = { semanticEnabled: false, answerCapableAgents: 0, agentSetup: 'agent', agentChosen: false };
+    expect(sourceRequirements(everythingElseMissing)).toEqual({ summaries: 'Needs the Knowledge Graph', code: 'Needs the Knowledge Graph' });
+    expect(sourceRequirements({ ...READY, semanticEnabled: false }))
+      .toEqual({ summaries: 'Needs the Knowledge Graph', code: 'Needs the Knowledge Graph' });
+  });
+
+  it('puts a supported agent second, over the choice of agent and model', () => {
+    expect(sourceRequirements({ ...READY, answerCapableAgents: 0 }))
+      .toEqual({ summaries: 'Needs a supported agent', code: 'Needs a supported agent' });
+    expect(sourceRequirements({ semanticEnabled: true, answerCapableAgents: 0, agentSetup: 'model', agentChosen: false }))
+      .toEqual({ summaries: 'Needs a supported agent', code: 'Needs a supported agent' });
+  });
+
+  it('asks summaries for an agent or a model by what the setup lacks, and code for an agent by whether one is chosen', () => {
+    // Summaries read the setup's gap; code reads only whether an agent is chosen.
+    expect(sourceRequirements({ ...READY, agentSetup: 'agent', agentChosen: false }))
+      .toEqual({ summaries: 'Needs an agent', code: 'Needs an agent' });
+    expect(sourceRequirements({ ...READY, agentSetup: 'agent', agentChosen: true }))
+      .toEqual({ summaries: 'Needs an agent', code: undefined });
+    // An agent is chosen and only its model is missing: code can be read, summaries cannot be written.
+    expect(sourceRequirements({ ...READY, agentSetup: 'model', agentChosen: true }))
+      .toEqual({ summaries: 'Needs a model', code: undefined });
+    // No gap in the setup, but nothing chosen: only code waits.
+    expect(sourceRequirements({ ...READY, agentSetup: null, agentChosen: false }))
+      .toEqual({ summaries: undefined, code: 'Needs an agent' });
   });
 });
 

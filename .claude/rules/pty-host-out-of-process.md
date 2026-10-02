@@ -105,8 +105,9 @@ at the Windows timer floor.
 - **Packaged smoke:** `.github/workflows/package-smoke.yml` packages on Windows, macOS and Linux
   when a pull request touches the host, its clients or the packaging, and runs
   `scripts/package-smoke.mjs`: a terminal in the finished app, a Knowledge Graph read from the
-  retrieval worker, a user's quit with the terminal running, and a fail on any log line saying a
-  forked process crashed or the host fell back to main. Not a required check.
+  retrieval worker, a quit with the terminal running (a user's quit on Windows and Linux; SIGTERM
+  on macOS, which skips the exit drain), and a fail on any log line saying a forked process
+  crashed or the host fell back to main. Not a required check.
   `tests/unit/package-smoke.test.ts` pins the script's pure parts and that every log line it
   watches for still exists in `src/main`.
 

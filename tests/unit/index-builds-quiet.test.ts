@@ -127,7 +127,7 @@ describeWithSqlite('index builds wait for a quiet database', () => {
     expect(built.every((index) => index.after === 'quiet')).toBe(true);
     // The first waits out main's writes, timed from the poll that saw the last
     // one (500 ms); each later one waits a full window again.
-    expect(script.clock()).toBe(2500 + 3 * 2000);
+    expect(script.clock()).toBe(2500 + (RETRIEVAL_INDEXES.length - 1) * 2000);
     expect(missingRetrievalIndexes(workerDb)).toEqual([]);
     expect(await buildMissingIndexesWhenQuiet(workerDb, scripted([]).deps, TIMING)).toEqual([]);
   });

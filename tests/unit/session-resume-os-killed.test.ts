@@ -24,6 +24,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SessionRecord, Task } from '../../src/shared/types';
+import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
 
 // Incident agent_session_id for task #172 ($8.82, 145 tools) - used verbatim so
 // this unit test is the empirical red-green for the recovered conversation.
@@ -505,5 +506,118 @@ describe('resumeSuspendedSessions: OS-killed (interrupted-exited) recovery', () 
     expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
     expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
     expect(sessionManager.spawn.mock.calls[0][0].agentSessionId).toBe('agent-orphan');
+  });
+});
+
+describe('resumeSuspendedSessions: scoped to the sessions a pty host crash took down (onlySessionIds)', () => {
+  // The pty host's crash path runs this mid-run. Its gather would otherwise
+  // also find sessions the host never held (an agent that exited non-zero on
+  // its own, one suspended earlier this run) and wake them, and its orphan
+  // marking would flip every OTHER live session's 'running' record.
+  //
+  // Red-green: drop the `onlySessionIds ? gathered.filter(...)` narrowing and
+  // the unlisted record is resumed too; drop the `if (onlySessionIds)` arm
+  // ahead of the orphan marking and the marking mocks fire.
+
+  /** The positional signature: ids sit behind six optional parameters. */
+  function resumeScoped(
+    sessionManager: ReturnType<typeof makeSessionManager>,
+    onlySessionIds: ReadonlySet<string> | undefined,
+  ) {
+    return resumeSuspendedSessions(
+      'proj-1',
+      '/project',
+      sessionManager as never,
+      makeConfigManager(true) as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onlySessionIds,
+    );
+  }
+
+  function interruptedByHostLoss(recordId: string, taskId: string): SessionRecord {
+    return makeExitedRecord({
+      id: recordId,
+      task_id: taskId,
+      exit_code: PTY_HOST_LOST_EXIT_CODE,
+      agent_session_id: `agent-${taskId}`,
+    });
+  }
+
+  function seedTwoInterruptedSessions(): void {
+    const lost = interruptedByHostLoss('rec-lost', 'task-lost');
+    const unrelated = interruptedByHostLoss('rec-unrelated', 'task-unrelated');
+    sessionRepoGetInterruptedExited.mockReturnValue([lost, unrelated]);
+    dbRecords = [lost, unrelated];
+    taskRepoList.mockReturnValue([
+      makeTask({ id: 'task-lost', swimlane_id: 'lane-exec' }),
+      makeTask({ id: 'task-unrelated', swimlane_id: 'lane-exec' }),
+    ]);
+    wirePrepareAgentSpawnEcho();
+  }
+
+  it('resumes only the listed record and leaves the other interrupted one untouched', async () => {
+    seedTwoInterruptedSessions();
+    const sessionManager = makeSessionManager();
+
+    await resumeScoped(sessionManager, new Set(['rec-lost']));
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    const spawnArg = sessionManager.spawn.mock.calls[0][0];
+    expect(spawnArg.taskId).toBe('task-lost');
+    expect(spawnArg.agentSessionId).toBe('agent-task-lost');
+    // The unlisted record was filtered out before every step: not retired, not
+    // upgraded to suspended, not prepared.
+    expect(retireRecordMock.mock.calls.map((call) => call[1])).not.toContain('rec-unrelated');
+    expect(markRecordSuspendedMock.mock.calls.map((call) => call[1])).not.toContain('rec-unrelated');
+    expect(vi.mocked(prepareAgentSpawn).mock.calls.map((call) => call[0].task.id)).toEqual(['task-lost']);
+  });
+
+  it('without ids the same gather resumes both, which is what makes the narrowing observable', async () => {
+    seedTwoInterruptedSessions();
+    const sessionManager = makeSessionManager();
+
+    await resumeScoped(sessionManager, undefined);
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('an empty set resumes nothing instead of falling back to everything', async () => {
+    seedTwoInterruptedSessions();
+    const sessionManager = makeSessionManager();
+
+    await resumeScoped(sessionManager, new Set<string>());
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+  });
+
+  it('never marks running records orphaned, whether or not another session is live', async () => {
+    seedTwoInterruptedSessions();
+
+    await resumeScoped(makeSessionManager(), new Set(['rec-lost']));
+    expect(sessionRepoMarkAllRunningAsOrphaned).not.toHaveBeenCalled();
+    expect(sessionRepoMarkRunningAsOrphanedExcluding).not.toHaveBeenCalled();
+
+    const sessionManagerWithLiveTask = makeSessionManager();
+    sessionManagerWithLiveTask.listSessions.mockReturnValue([{ taskId: 'task-live', status: 'running' }] as never);
+    await resumeScoped(sessionManagerWithLiveTask, new Set(['rec-lost']));
+    expect(sessionRepoMarkAllRunningAsOrphaned).not.toHaveBeenCalled();
+    expect(sessionRepoMarkRunningAsOrphanedExcluding).not.toHaveBeenCalled();
+  });
+
+  it('a startup recovery (no ids) still marks leftover running records orphaned', async () => {
+    seedTwoInterruptedSessions();
+
+    await resumeScoped(makeSessionManager(), undefined);
+    expect(sessionRepoMarkAllRunningAsOrphaned).toHaveBeenCalledTimes(1);
+
+    const sessionManagerWithLiveTask = makeSessionManager();
+    sessionManagerWithLiveTask.listSessions.mockReturnValue([{ taskId: 'task-live', status: 'running' }] as never);
+    await resumeScoped(sessionManagerWithLiveTask, undefined);
+    expect(sessionRepoMarkRunningAsOrphanedExcluding).toHaveBeenCalledTimes(1);
   });
 });

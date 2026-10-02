@@ -266,6 +266,12 @@ export const indexHandlers: IndexHandlers = {
     const nextLegacy = source.prepare('SELECT session_id AS sessionId FROM session_transcripts ORDER BY session_id LIMIT 1');
     const hasSession = (db: Database.Database, sessionId: string): boolean =>
       db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId) !== undefined;
+    // The worker opens with migrations off, so another project main has not
+    // opened since the upgrade has no pieces table yet. Writing there threw
+    // and stopped the whole upkeep at that row, on every open.
+    const canHoldPieces = (db: Database.Database): boolean =>
+      (db.prepare(`SELECT COUNT(*) AS found FROM sqlite_master WHERE type = 'table' AND name IN ('session_transcript_chunks', 'memory_meta')`)
+        .get() as { found: number }).found === 2;
     while (shouldContinue()) {
       const next = nextLegacy.get() as { sessionId: string } | undefined;
       if (!next) break;
@@ -277,7 +283,7 @@ export const indexHandlers: IndexHandlers = {
         for (const otherId of otherProjectIds) {
           try {
             const other = context.getDb(otherId);
-            if (hasSession(other, sessionId)) {
+            if (hasSession(other, sessionId) && canHoldPieces(other)) {
               target = other;
               break;
             }

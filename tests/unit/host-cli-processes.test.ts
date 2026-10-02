@@ -101,10 +101,14 @@ describe('host CLI runs', () => {
   }, 20_000);
 
   it('stops every run at shutdown', async () => {
-    const { processes, closed } = runner();
+    const { processes, events, closed } = runner();
     processes.start(nodeRun(3, 'setInterval(() => {}, 1000);'));
     processes.start(nodeRun(4, 'setInterval(() => {}, 1000);'));
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Both started, rather than a fixed pause a loaded runner can outlast.
+    await new Promise<void>((resolve) => {
+      const check = () => (events.filter((event) => event.type === 'cliSpawned').length === 2 ? resolve() : setTimeout(check, 20));
+      check();
+    });
     processes.stopAll();
     await Promise.all([closed(3), closed(4)]);
     expect(processes.liveCount).toBe(0);

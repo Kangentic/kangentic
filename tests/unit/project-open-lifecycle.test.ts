@@ -212,7 +212,9 @@ import {
   openProjectByPath,
   activateAllProjects,
   cleanupProject,
+  recoverSessionsAfterPtyHostLoss,
 } from '../../src/main/ipc/handlers/projects';
+import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup';
 import { ensureGitignore } from '../../src/main/ipc/helpers';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { IPC, PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
@@ -1011,5 +1013,103 @@ describe('ensureGitignore fire-and-forget on the open critical path', () => {
       expect(state.callOrder).toContain('autoSpawnTasks');
     }, { timeout: 2000 });
     gate.resolve();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. recoverSessionsAfterPtyHostLoss: the pty host died and a new one is up.
+// ---------------------------------------------------------------------------
+
+describe('recoverSessionsAfterPtyHostLoss', () => {
+  // resumeSuspendedSessions' tenth parameter is the scope: without it the
+  // recovery gather would also wake sessions the host never held. Red-green:
+  // drop `lostSessionIds` from the call in projects.ts and the first test goes
+  // red (the tenth argument is undefined).
+  const RESUME_ONLY_SESSION_IDS_ARGUMENT = 9;
+
+  function registerProjects(context: MockContext, projects: Project[]): void {
+    const byId = new Map(projects.map((project) => [project.id, project]));
+    context.projectRepo.getById.mockImplementation((projectId: string) => byId.get(projectId));
+    for (const project of projects) state.existingPaths.add(project.path);
+  }
+
+  afterEach(() => {
+    // The top-level beforeEach clears call history, not a custom implementation.
+    vi.mocked(isShuttingDown).mockReturnValue(false);
+  });
+
+  it('resumes each project with exactly the session ids its host loss took down', async () => {
+    const context = createMockContext();
+    const projectA = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a'), default_agent: 'claude' });
+    const projectB = makeProject({ id: 'project-B', name: 'Project B', path: path.join(PROJECT_PATH, 'b'), default_agent: 'codex' });
+    registerProjects(context, [projectA, projectB]);
+    const lostInA = new Set(['session-a1', 'session-a2']);
+    const lostInB = new Set(['session-b1']);
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([['project-A', lostInA], ['project-B', lostInB]]));
+
+    const calls = vi.mocked(resumeSuspendedSessions).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0]).toBe('project-A');
+    expect(calls[0][1]).toBe(projectA.path);
+    expect(calls[0][2]).toBe(context.sessionManager);
+    expect(calls[0][4]).toBe('claude');
+    expect(calls[0][RESUME_ONLY_SESSION_IDS_ARGUMENT]).toBe(lostInA);
+    expect(calls[1][0]).toBe('project-B');
+    expect(calls[1][4]).toBe('codex');
+    expect(calls[1][RESUME_ONLY_SESSION_IDS_ARGUMENT]).toBe(lostInB);
+  });
+
+  it('skips a project that left the index and one whose folder is gone, and still resumes the rest', async () => {
+    const context = createMockContext();
+    const projectMoved = makeProject({ id: 'project-moved', path: path.join(PROJECT_PATH, 'moved') });
+    const projectKept = makeProject({ id: 'project-kept', path: path.join(PROJECT_PATH, 'kept') });
+    registerProjects(context, [projectMoved, projectKept]);
+    // Deleted from disk after it was registered; 'project-deleted' was never in the index.
+    state.existingPaths.delete(projectMoved.path);
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([
+      ['project-deleted', new Set(['session-1'])],
+      ['project-moved', new Set(['session-2'])],
+      ['project-kept', new Set(['session-3'])],
+    ]));
+
+    const resumedProjectIds = vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0]);
+    expect(resumedProjectIds).toEqual(['project-kept']);
+  });
+
+  it('a project whose resume fails is logged and does not stop the next, and the recovery never rejects', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const context = createMockContext();
+    const projectA = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a') });
+    const projectB = makeProject({ id: 'project-B', name: 'Project B', path: path.join(PROJECT_PATH, 'b') });
+    registerProjects(context, [projectA, projectB]);
+    vi.mocked(resumeSuspendedSessions).mockRejectedValueOnce(new Error('resume exploded'));
+
+    await expect(recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([
+      ['project-A', new Set(['session-a1'])],
+      ['project-B', new Set(['session-b1'])],
+    ]))).resolves.toBeUndefined();
+
+    expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-A', 'project-B']);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(String(errorSpy.mock.calls[0][0])).toContain('Project A');
+    errorSpy.mockRestore();
+  });
+
+  it('stops resuming once the quit has begun, even partway through the projects', async () => {
+    const context = createMockContext();
+    const projectA = makeProject({ id: 'project-A', path: path.join(PROJECT_PATH, 'a') });
+    const projectB = makeProject({ id: 'project-B', path: path.join(PROJECT_PATH, 'b') });
+    registerProjects(context, [projectA, projectB]);
+    // The first project's check passes; the quit begins before the second's.
+    vi.mocked(isShuttingDown).mockReturnValueOnce(false).mockReturnValue(true);
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([
+      ['project-A', new Set(['session-a1'])],
+      ['project-B', new Set(['session-b1'])],
+    ]));
+
+    expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-A']);
   });
 });

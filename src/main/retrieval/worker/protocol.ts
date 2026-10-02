@@ -55,9 +55,7 @@ export type ReplyMessage =
 /** Something main should react to that the worker noticed on its own. */
 export type RetrievalEventName =
   /** A project's graph snapshot shows something new: a map rebuilt, records swept. */
-  | 'graph-changed'
-  /** The embedding drain finished embedding a project's task records. */
-  | 'records-embedded';
+  'graph-changed';
 
 export interface EventMessage {
   type: 'event';

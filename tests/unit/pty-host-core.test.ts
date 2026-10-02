@@ -11,8 +11,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
-import { InProcessPtyHostTransport, PtyHostClient, RemotePty } from '../../src/main/pty/host/pty-host-client';
-import type { PtyHostEvent, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
+import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
+import type { PtyHostCommand, PtyHostEvent, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
+import { HostUnavailableError } from '../../src/main/utility-process/off-main-pty';
 import type { AgentParser } from '../../src/shared/types';
 
 interface FakePty {
@@ -134,6 +135,33 @@ describe('PtyHostCore', () => {
       { type: 'outputSeen', sessionId: 'session-1', chunks: 1 },
       { type: 'outputSeen', sessionId: 'session-1', chunks: 9 },
     ]);
+  });
+
+  it('reports nothing for a session main removed while its PTY still runs, and leaves no merge window behind', async () => {
+    const coalesceEntries = (core: PtyHostCore) => (core as unknown as { coalesce: Map<string, unknown> }).coalesce;
+    const outputSeenEvents = (events: PtyHostEvent[]) => events.filter((event) => event.type === 'outputSeen');
+    const { core, events, fake } = makeCore({ coalesceMs: 250 });
+    core.spawn(spawnParams());
+
+    // Control: while main holds the session its output is reported and a merge
+    // window opens, so the silence below cannot be a dead feed.
+    fake.feed('output before the removal');
+    expect(outputSeenEvents(events)).toHaveLength(1);
+    expect(coalesceEntries(core).has('session-1')).toBe(true);
+
+    // main removed the row while a young agent's PTY waits out its kill grace.
+    core.handleCommand({ type: 'removeSession', sessionId: 'session-1' });
+    expect(coalesceEntries(core).has('session-1')).toBe(false);
+    events.length = 0;
+
+    fake.feed('exit screen painted after the removal');
+    expect(outputSeenEvents(events)).toEqual([]);
+    // A window opened here would never be closed: dropSession already ran.
+    expect(coalesceEntries(core).has('session-1')).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(outputSeenEvents(events)).toEqual([]);
+    expect(coalesceEntries(core).has('session-1')).toBe(false);
   });
 
   it('reports PTY activity on the leading edge of a window and once more if it continued', async () => {
@@ -344,5 +372,86 @@ describe('PtyHostClient and RemotePty', () => {
     const failure = client.spawnRaw('agy', [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: '/mock', env: {} });
     await expect(failure).rejects.toMatchObject({ message: 'File not found: agy', code: 'ENOENT' });
     await expect(failure).rejects.not.toBeInstanceOf(HostUnavailableError);
+  });
+
+  /** A transport whose host never answers a request: it exited, or timed out. */
+  function unansweredTransport(cause: unknown) {
+    const posted: PtyHostCommand[] = [];
+    const requestedPtyIds: number[] = [];
+    const transport: PtyHostTransport = {
+      post: (command) => { posted.push(command); },
+      request: ((_method: string, params: { ptyId: number }) => {
+        requestedPtyIds.push(params.ptyId);
+        return Promise.reject(cause);
+      }) as unknown as PtyHostTransport['request'],
+      setEventListener: () => undefined,
+      hostPid: null,
+      shutdown: () => undefined,
+    };
+    return { transport, posted, requestedPtyIds };
+  }
+
+  const spawnInput = {
+    sessionId: 'session-1',
+    projectId: 'project-1',
+    agentName: null,
+    transient: false,
+    file: 'bash',
+    args: [] as string[],
+    cwd: '/mock/project',
+    env: {},
+    cols: 100,
+    rows: 40,
+    carryoverFromSessionId: null,
+    dropSessionIds: [] as string[],
+    agentSessionIdKnown: false,
+  };
+
+  it('a spawn the host never answers resolves as a failed spawn, and kills the PTY it may still start', async () => {
+    const { transport, posted, requestedPtyIds } = unansweredTransport(new Error('The pty host exited'));
+    const client = new PtyHostClient(transport);
+
+    // Resolves, never throws: a throw skipped the session's spawn-failure path
+    // and left a promoted queue row `queued` for good.
+    const outcome = await client.spawn(spawnInput);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error('expected a failed spawn');
+    expect(outcome.error).toBeInstanceOf(Error);
+    expect(outcome.error.message).toBe('The pty host exited');
+    expect(outcome.previousScrollback).toBe('');
+    // The kill names the very ptyId the request carried, so a host that runs
+    // the request late finds that PTY and ends it.
+    expect(requestedPtyIds).toHaveLength(1);
+    expect(posted).toEqual([{ type: 'kill', ptyId: requestedPtyIds[0] }]);
+
+    // The next attempt uses a fresh id, and is killed under that one.
+    await client.spawn(spawnInput);
+    expect(requestedPtyIds[1]).not.toBe(requestedPtyIds[0]);
+    expect(posted[1]).toEqual({ type: 'kill', ptyId: requestedPtyIds[1] });
+  });
+
+  it('wraps a spawn rejection that is not an Error, so the failure path always gets one', async () => {
+    const { transport } = unansweredTransport('request timed out');
+    const client = new PtyHostClient(transport);
+
+    const outcome = await client.spawn(spawnInput);
+
+    if (outcome.ok) throw new Error('expected a failed spawn');
+    expect(outcome.error).toBeInstanceOf(Error);
+    expect(outcome.error.message).toBe('request timed out');
+  });
+
+  it('a raw spawn the host never answers rejects as an unreachable host, and kills the PTY it may still start', async () => {
+    const { transport, posted, requestedPtyIds } = unansweredTransport(new Error('The pty host did not answer spawnRaw in time'));
+    const client = new PtyHostClient(transport);
+
+    const failure = client.spawnRaw('agy', [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: '/mock', env: {} });
+
+    // HostUnavailableError is the signal for the caller to spawn locally.
+    await expect(failure).rejects.toBeInstanceOf(HostUnavailableError);
+    await expect(failure).rejects.toThrow('The pty host did not answer spawnRaw in time');
+    expect(requestedPtyIds).toHaveLength(1);
+    expect(posted).toEqual([{ type: 'kill', ptyId: requestedPtyIds[0] }]);
   });
 });

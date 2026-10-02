@@ -157,6 +157,12 @@ interface SnapshotReadOptions {
 // Pattern A: module-scope state preserved across HMR. These must round-trip as
 // a unit - an unsubscribe handle without its in-flight guard would leave a
 // duplicate listener that no longer matches the fetch it was paired with.
+// The store is also pinned (Pattern E, below), so after a Fast Refresh its
+// actions are still the first evaluation's closures and read the first
+// evaluation's variables; this stash covers only the first refresh after a
+// cold boot. Keep `attach`, `detach` and every reader of these variables
+// inside the store closure: a module-level function would read a later
+// evaluation's stale copies.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 let inFlight: Promise<void> | null = import.meta.hot?.data?.knowledgeGraphInFlight ?? null;
 // @ts-expect-error -- Vite handles import.meta.hot

@@ -9,7 +9,8 @@
  * node:sqlite, so the SQL, the full-text index and the `doc_id` range are the
  * shipped ones. node:sqlite rather than better-sqlite3 on purpose:
  * better-sqlite3 is compiled for Electron's Node ABI, so a suite gated on it
- * skips under vitest. The adapter below mirrors commit-corpus.test.ts.
+ * skips under vitest. The adapter is the shared one in
+ * `helpers/node-sqlite-database.ts`.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -33,7 +34,6 @@ try {
   sqlite = null;
 }
 const describeWithSqlite = sqlite ? describe : describe.skip;
-type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
 
 import { adaptDatabase } from './helpers/node-sqlite-database';
 

@@ -19,7 +19,7 @@
  *   database's write lock, and main's own writes would otherwise wait on it
  *   until SQLite's busy timeout. The kill counts as a crash, so a worker that
  *   keeps sticking latches off rather than looping.
- * - Worker events (`graph-changed`, `records-embedded`) and, after a crash, a
+ * - Worker events (`graph-changed`) and, after a crash, a
  *   `respawned` event, so the retrieval service can replay what a new worker
  *   has not seen.
  */
@@ -52,6 +52,10 @@ export const INTERACTIVE_TIMEOUT_MS = 15_000;
 /** How long closing one project's database may take before the worker is
  *  shut down instead. The close runs between a job's steps. */
 const CLOSE_PROJECT_TIMEOUT_MS = 3_000;
+/** How long a forked worker may take to say ready. A call's own budget starts
+ *  only after ready, so a worker stuck starting (a native module load that
+ *  never returns) would otherwise hold every call with no end. */
+export const READY_TIMEOUT_MS = 30_000;
 
 /** The worker is not available: latched off after crashes, disposed, or it
  *  died or stuck mid-call. Callers answer with their degraded result. */
@@ -93,6 +97,8 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
   /** The child an intentional teardown is killing, so its exit is not read as
    *  a crash; per child, as in `dictation-client.ts`. */
   private intentionalKill: UtilityProcess | null = null;
+  /** Children whose exit has landed, so a close never waits for one again. */
+  private readonly exitedChildren = new WeakSet<UtilityProcess>();
   private readonly restartPolicy: UtilityRestartPolicy;
 
   constructor(restartPolicy?: UtilityRestartPolicy) {
@@ -173,8 +179,18 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     // A caller awaiting readiness gets the rejection; nobody else must see it
     // as unhandled.
     this.ready.catch(() => undefined);
+    const readyTimer = setTimeout(() => {
+      if (child !== this.child) return;
+      console.warn('[retrieval] the retrieval worker did not start in time; restarting it');
+      this.restartPolicy.recordCrash(null, stderrTail);
+      this.drop(new RetrievalUnavailableError('The retrieval worker did not start in time'));
+    }, READY_TIMEOUT_MS);
+    readyTimer.unref();
+    const clearReadyTimer = (): void => clearTimeout(readyTimer);
+    this.ready.then(clearReadyTimer, clearReadyTimer);
     child.on('message', (message: unknown) => this.onWorkerMessage(child, message, markReady));
     child.on('exit', (code: number) => {
+      this.exitedChildren.add(child);
       failReady(new RetrievalUnavailableError('The retrieval worker exited before it was ready'));
       this.onWorkerExit(child, code, stderrTail);
     });
@@ -295,6 +311,9 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     } catch (error) {
       console.warn(`[retrieval] the worker did not close project ${projectId}; shutting it down:`, error instanceof Error ? error.message : error);
     }
+    // A worker that exited during the close holds no handle, and its exit
+    // event has already fired: waiting for it would cost the whole timeout.
+    if (this.exitedChildren.has(child)) return;
     const exited = new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, CLOSE_PROJECT_TIMEOUT_MS);
       timer.unref();

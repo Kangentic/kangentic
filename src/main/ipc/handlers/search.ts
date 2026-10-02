@@ -289,7 +289,10 @@ export function registerSearchHandlers(context: IpcContext): void {
         // the open project when it is in scope.
         const homeProject = scopeProjects.find((entry) => entry.id === openProjectId) ?? scopeProjects[0];
 
-        const callerChat = [answerContext.chatId, requestId].find(isCallerSegment) ?? 'oneshot';
+        // The chat id as END_CHAT will accept it: a warm session pooled under
+        // an id that check refuses could never be ended.
+        const chatId = isCallerSegment(answerContext.chatId) ? answerContext.chatId : null;
+        const callerChat = [chatId, requestId].find(isCallerSegment) ?? 'oneshot';
         const resolvedRun = await resolveAnswerRun(context, homeProject.id, callerChat);
         if (!resolvedRun.ok) return resolvedRun.failure;
         const { adapter, answerFromContext, cliPath, model: configuredModel, effort, retrieval } = resolvedRun.run;
@@ -308,12 +311,12 @@ export function registerSearchHandlers(context: IpcContext): void {
           answerContext.scopeDocKeys ?? null,
           codeIndexed,
         );
-        let pooled = answerContext.chatId ? takeAnswerSession(answerContext.chatId, resolvedRun.run) : null;
+        let pooled = chatId ? takeAnswerSession(chatId, resolvedRun.run) : null;
         // A session primed under another scope holds another table. Sending this
         // one after it would leave two in its context, so it starts over.
-        if (answerContext.chatId && pooled?.primed && pooled.primed.scopeSignature !== scopeSignature) {
+        if (chatId && pooled?.primed && pooled.primed.scopeSignature !== scopeSignature) {
           answerSessionPool.discard(pooled);
-          pooled = takeAnswerSession(answerContext.chatId, resolvedRun.run);
+          pooled = takeAnswerSession(chatId, resolvedRun.run);
         }
         let primedTable = pooled?.primed?.table ?? null;
 
@@ -436,9 +439,9 @@ export function registerSearchHandlers(context: IpcContext): void {
         // A task created since the session's first turn has no ref in the
         // table it holds, so the related work could not name it and it was
         // dropped. Start the session over on this turn's table instead.
-        if (primedTable && answerContext.chatId && related.handed.some((task) => !refByKey.has(task.key) && rowByKey.has(task.key))) {
+        if (primedTable && chatId && related.handed.some((task) => !refByKey.has(task.key) && rowByKey.has(task.key))) {
           if (pooled) answerSessionPool.discard(pooled);
-          pooled = takeAnswerSession(answerContext.chatId, resolvedRun.run);
+          pooled = takeAnswerSession(chatId, resolvedRun.run);
           primedTable = null;
           taskTable = freshTable;
           ({ refByKey, keyByRef } = indexRefs(taskTable));
@@ -548,7 +551,7 @@ export function registerSearchHandlers(context: IpcContext): void {
           answerFromContext(freshPrompt, cliPath, resolvedRun.run.answerHome, configuredModel, { retrieval, effort, onEvent, runDirectory })
         ));
         // Recorded as the chat's, so ending the chat stops it (`stopCliRunsForChat`).
-        const chatOfRun = answerContext.chatId && isCallerSegment(answerContext.chatId) ? answerContext.chatId : null;
+        const chatOfRun = chatId;
         const runFresh = (freshPrompt: string): Promise<string> => (
           chatOfRun ? runCliForChat(chatOfRun, () => runFreshInDirectory(freshPrompt)) : runFreshInDirectory(freshPrompt)
         );

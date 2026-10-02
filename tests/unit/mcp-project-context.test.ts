@@ -92,7 +92,6 @@ vi.mock('../../src/main/agent/mcp-http/project-resolver', () => {
 });
 
 import { createRequestResolver, buildCommandContextForProject } from '../../src/main/agent/mcp-project-context';
-import { getProjectDb } from '../../src/main/db/database';
 import {
   propagateStrategyToLiveSessions,
   buildColumnStrategyChanges,

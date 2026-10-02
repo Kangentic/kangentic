@@ -9,7 +9,7 @@
  * is compiled for Electron's Node ABI, so every suite gated on it skips.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import {
@@ -352,5 +352,85 @@ describeWithSqlite('sweepCommitRecords', () => {
     // A forward move is small, so it runs even while whole reads wait.
     const forward = await fixture.sweep(false);
     expect(forward).toMatchObject({ indexed: 1, deferred: false });
+  });
+
+  describe('a commit that fails to index', () => {
+    /**
+     * Fail the next attempt at the middle commit (sha 2), once, then behave as
+     * the real store does: at the write (`upsertDocument`) or while the commit
+     * is prepared (`firstTaskMentioning`, its task lookup). Returns what puts
+     * the store back.
+     */
+    function failOnce(stage: 'write' | 'prepare'): () => void {
+      let failuresLeft = 1;
+      if (stage === 'write') {
+        const realUpsert = RetrievalStore.prototype.upsertDocument;
+        const spy = vi.spyOn(RetrievalStore.prototype, 'upsertDocument').mockImplementation(function (this: RetrievalStore, ...args: Parameters<RetrievalStore['upsertDocument']>) {
+          const [ref] = args;
+          if (ref.corpus === 'commit' && ref.docId === sha(2) && failuresLeft > 0) {
+            failuresLeft -= 1;
+            throw new Error('database is locked');
+          }
+          return realUpsert.apply(this, args);
+        });
+        return () => spy.mockRestore();
+      }
+      const realLookup = RetrievalStore.prototype.firstTaskMentioning;
+      const spy = vi.spyOn(RetrievalStore.prototype, 'firstTaskMentioning').mockImplementation(function (this: RetrievalStore, ...args: Parameters<RetrievalStore['firstTaskMentioning']>) {
+        // The subject of sha 2 is "feat: second thing on the branch".
+        if (args[0].includes('second') && failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw new Error('database is locked');
+        }
+        return realLookup.apply(this, args);
+      });
+      return () => spy.mockRestore();
+    }
+
+    it.each(['write', 'prepare'] as const)('is retried from the old head by the next sweep, because the head is not stored after a failed %s', async (stage) => {
+      const fixture = project();
+      const storedHeadSha = (): string | undefined => (JSON.parse(fixture.store.getMeta('commit_index_head') ?? '{}') as { sha?: string }).sha;
+      fixture.git.commits = [commit(1, 'feat: first thing on the branch', NOW - 3 * DAY)];
+      fixture.git.head = { ref: 'origin/main', sha: sha(1) };
+      await fixture.sweep();
+      expect(storedHeadSha()).toBe(sha(1));
+      // The branch moves forward by two commits, the middle one the one that fails.
+      fixture.git.commits = [
+        commit(3, 'feat: third thing on the branch', NOW - DAY),
+        commit(2, 'feat: second thing on the branch', NOW - 2 * DAY),
+        ...fixture.git.commits,
+      ];
+      fixture.git.head = { ref: 'origin/main', sha: sha(3) };
+      fixture.git.ancestors.add(sha(1));
+      fixture.git.logCalls.length = 0;
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const restoreStore = failOnce(stage);
+      try {
+        const failed = await fixture.sweep();
+
+        // The failure was logged and skipped: the other commit was written.
+        expect(warn.mock.calls.some((call) => String(call[0]).includes('failed'))).toBe(true);
+        expect(failed.indexed).toBe(1);
+        expect(fixture.indexedShas()).toEqual([sha(1), sha(3)]);
+        // The head stays where it was, so the failed commit is not left behind the next read.
+        expect(storedHeadSha()).toBe(sha(1));
+        expect(fixture.git.logCalls).toEqual([{ head: sha(3), sinceSha: sha(1) }]);
+
+        // The failure has cleared: the next sweep reads from the old head again.
+        const retried = await fixture.sweep();
+
+        expect(fixture.git.logCalls).toEqual([
+          { head: sha(3), sinceSha: sha(1) },
+          { head: sha(3), sinceSha: sha(1) },
+        ]);
+        // Only what is still missing: sha 3 is current, so it is not written again.
+        expect(retried.indexed).toBe(1);
+        expect([...fixture.indexedShas()].sort()).toEqual([sha(1), sha(2), sha(3)].sort());
+        expect(storedHeadSha()).toBe(sha(3));
+      } finally {
+        restoreStore();
+        warn.mockRestore();
+      }
+    });
   });
 });

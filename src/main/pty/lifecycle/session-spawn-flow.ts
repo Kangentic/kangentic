@@ -244,6 +244,15 @@ export async function performSpawn(
     agentSessionIdKnown: !!input.agentSessionId,
   });
 
+  // The quit can begin during the host round trip. killAll found no row for
+  // this session, so nothing else would stop the PTY the host just started,
+  // and the host's own shutdown kills no session PTY. Started milliseconds
+  // ago, the agent has not reached its boot canary, so no grace is owed.
+  if (spawnOutcome.ok && isShuttingDown()) {
+    safeKillPty(spawnOutcome.pty);
+    throw new Error('Cannot spawn session during shutdown');
+  }
+
   // Remove the old rows from the map and caches so the task's only registry
   // row is the new session, and stale usage/activity data doesn't persist.
   // After the spawn, so the task is never without a row while it is in flight.

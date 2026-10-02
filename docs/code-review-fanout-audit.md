@@ -810,6 +810,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, pre-PR | 357f +51373 -3763 | 3508KB, 61990 lines | 4 (0) | 353 | 1 | 13, sharded by area | about 47 of 12 pack-carrying | about 94 / 38 applied |
 | task 529, whole branch, second pass | 364f +53178 -3804 | 3607KB, 63938 lines | 3 (0) | 361 | 1 | 17, sharded by area, 4 over tests | about 68 of 16 pack-carrying | about 106 / 53 applied |
 | task 529, whole branch, third pass | 367f +54593 -3815 | 3692KB, 65439 lines | 4 (0) | 363 | 1 | 17, sharded by area, 4 over tests | about 97 of 16 pack-carrying | about 85 / 55 applied |
+| task 529, whole branch, fourth pass | 658f +76565 -7547 | 5536KB, 99303 lines | 3 (0) | 655 | 1 | 24, sharded by area and process boundary, 7 over tests | about 150 of 23 pack-carrying | about 85 / 52 applied |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1015,3 +1016,24 @@ record listed its own header as a changed file. Two side effects are worth knowi
 new process-tree stop ran a real `taskkill` against a fake child's pid in an existing test (pinned
 to the POSIX path since), and a test-builder's first red run printed `process.env` through a
 matcher over spawn options, so the neighbouring assertions now read single fields.
+
+The task 529 fourth pass ran on a pack half again the third's size, because the branch had since
+moved every PTY into a `kangentic-pty-host` utility process and the index into a retrieval worker.
+Shards were cut along those two process boundaries rather than by folder, so one finder held both
+sides of each protocol, and each shard's brief named the rule files for its area, since rules do not
+auto-load in a subagent. The focus file covered `e01fbbff` onward, the third pass's own fix commit
+included, and the removed-surface list was scripted from that range's diff with removed class
+methods added (`purgeAll`, `purgeProjectIndex`), which an export-only scan missed. Two practical
+limits showed. The session allows 20 concurrent subagents, so four of the 24 finders started as
+slots freed. And the signature delta, built from the changes since the last pass rather than the
+whole pack, came to 1,515 lines instead of 139KB. Of five High findings, four were fixed and one
+was refuted by experiment: freeing the old vec0 table writes to its shadow table, which better-sqlite3's
+defensive mode was said to refuse, and a probe under Electron's better-sqlite3 with sqlite-vec
+0.1.9 deleted the block and dropped the table without error. The fixed ones were a summary pass
+whose failure backoff any board change bypassed, a rejected host spawn that left a promoted queue row
+`queued` for good, a live transcript flush that took the seq the legacy conversion wrote next, and a
+legacy row whose session lived in an unmigrated project, which stopped the whole storage upkeep.
+Two test-builders ran in parallel on disjoint files and were barred from touching `src/`, so red-green
+was argued from the code rather than toggled; one of them found the host-loss notice stamped before
+its focus gate, fixed in this pass. The two POSIX-only tests for `~/.claude.json`'s mode and symlink
+have not run on Windows and get their first run on CI.

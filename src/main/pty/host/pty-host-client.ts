@@ -28,6 +28,7 @@ import {
   type PtyHostRawSpawnResult,
   type PtyHostRequestMap,
   type PtyHostSpawnParams,
+  type PtyHostSpawnResult,
 } from './protocol';
 
 /** A listener registration that can be undone. */
@@ -155,7 +156,6 @@ export type PtyHostSpawnOutcome =
   | { ok: true; pty: RemotePty }
   | { ok: false; error: Error; previousScrollback: string };
 
-/** Typed access to the host, and the exit routing for each PTY. */
 /**
  * A raw PTY running in the host (`spawnRaw`): the probes' handle. Output and
  * exit arrive as events, routed here by ptyId.
@@ -319,6 +319,7 @@ export class RemoteCliProcess extends EventEmitter implements CliChildProcess {
   }
 }
 
+/** Typed access to the host, and the exit routing for each PTY. */
 export class PtyHostClient {
   private nextPtyId = 1;
   private nextProcessId = 1;
@@ -393,7 +394,19 @@ export class PtyHostClient {
   async spawn(params: Omit<PtyHostSpawnParams, 'ptyId'>): Promise<PtyHostSpawnOutcome> {
     const ptyId = this.nextPtyId;
     this.nextPtyId += 1;
-    const result = await this.transport.request('spawn', { ...params, ptyId });
+    let result: PtyHostSpawnResult;
+    try {
+      result = await this.transport.request('spawn', { ...params, ptyId });
+    } catch (error) {
+      // The host was lost or did not answer in time. A host that still runs
+      // the request later would start a PTY no handle holds, so a kill follows
+      // it (commands keep their order, and an unknown ptyId is a no-op). To the
+      // session this is a spawn that failed, and it is reported as one: a
+      // throw here skipped the failure path and left a promoted queue row
+      // `queued` for good.
+      this.transport.post({ type: 'kill', ptyId });
+      return { ok: false, error: error instanceof Error ? error : new Error(String(error)), previousScrollback: '' };
+    }
     if (!result.ok) {
       return { ok: false, error: fromPtyHostError(result.error), previousScrollback: result.previousScrollback };
     }
@@ -423,8 +436,8 @@ export class PtyHostClient {
     return this.transport.request('getSerializedFrame', { sessionId, settle });
   }
 
-  getRawScrollback(sessionId: string): Promise<string> {
-    return this.transport.request('getRawScrollback', { sessionId });
+  getRawScrollback(sessionId: string, timeoutMs?: number): Promise<string> {
+    return this.transport.request('getRawScrollback', { sessionId }, timeoutMs === undefined ? undefined : { timeoutMs });
   }
 
   getOutputPeek(sessionId: string): Promise<string[]> {
@@ -443,6 +456,10 @@ export class PtyHostClient {
     try {
       result = await this.transport.request('spawnRaw', { ptyId, file, args, ...options });
     } catch (error) {
+      // The caller spawns locally instead. A host that only timed out may
+      // still run the request, and the probe would then run twice, so a kill
+      // follows it (an unknown ptyId is a no-op).
+      this.transport.post({ type: 'kill', ptyId });
       throw new HostUnavailableError(error instanceof Error ? error.message : String(error));
     }
     if (!result.ok) throw fromPtyHostError(result.error);

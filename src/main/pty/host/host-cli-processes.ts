@@ -18,8 +18,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { childHasExited, stopChildTree } from '../../shared/child-tree-stop';
-import { launchesOwnBinary } from './host-exec';
+import { launchesOwnBinary, leadingExecutable } from './host-exec';
 import { toPtyHostError, type PtyHostCliSpawnParams, type PtyHostEvent } from './protocol';
+
+export { leadingExecutable };
 
 interface CliRun {
   child: ChildProcessWithoutNullStreams;
@@ -27,14 +29,6 @@ interface CliRun {
   leadsGroup: boolean;
   /** A Windows tree kill was started; a second would be a wasted spawn. */
   treeKillStarted: boolean;
-}
-
-/** The executable a shell command line starts: its leading quoted path, or
- *  its first word. Exported for the tests. */
-export function leadingExecutable(commandLine: string): string {
-  const quoted = /^\s*"([^"]*)"/.exec(commandLine);
-  if (quoted) return quoted[1];
-  return commandLine.trim().split(/\s+/)[0] ?? '';
 }
 
 export class HostCliProcesses {

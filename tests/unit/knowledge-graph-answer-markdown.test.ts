@@ -218,4 +218,16 @@ describe('stripping the protocol line', () => {
   it('strips a protocol line that is the whole answer', () => {
     expect(stripProtocolLine('SELECTED: none')).toBe('');
   });
+
+  it('strips a protocol line the answer ends a newline after, which leaves an empty last line', () => {
+    expect(stripProtocolLine('Answer.\nSELECTED: #378, #377\n')).toBe('Answer.');
+    expect(stripProtocolLine('Answer.\nSELECTED: #378, #377\n\n')).toBe('Answer.');
+    // Still being written, and already followed by a newline.
+    expect(stripProtocolLine('Answer.\nSEL\n')).toBe('Answer.');
+    expect(stripProtocolLine('SELECTED: none\n')).toBe('');
+  });
+
+  it('still leaves prose alone when the answer ends in a newline', () => {
+    expect(stripProtocolLine('One task.\nSelection happens on drop.\n')).toBe('One task.\nSelection happens on drop.');
+  });
 });

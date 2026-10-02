@@ -54,6 +54,8 @@ interface FakeVerifyUnpackedWorkerCall {
   moduleNames?: string[];
   /** Set on the retrieval load probe's call: the Electron binary it runs. */
   loadProbeBinary?: string;
+  /** Set on the pty host load probe's call: the Electron binary it runs. */
+  ptyHostProbeBinary?: string;
 }
 
 /** electron-builder's AfterPackContext, narrowed to the fields afterPack.js
@@ -259,8 +261,8 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       // Every gate runs against the same unpackedRoot: the embed worker
       // (default moduleNames), the dictation worker (DESKTOP-X), the
       // retrieval worker's resolution probe and load probe, and the pty
-      // host's, the load probes under the packaged binary the fuses are then
-      // flipped on.
+      // host's. The load probes run under the packaged binary, before its
+      // fuses are flipped.
       const binary = path.join(appOutDir, 'Kangentic.app', 'Contents', 'MacOS', 'Kangentic');
       expect(fakeVerify.calls).toEqual([
         { unpackedRoot },

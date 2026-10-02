@@ -90,6 +90,26 @@ describe('host-exec', () => {
     expect(launchesOwnBinary(unrelated, ownExecutable)).toBe(false);
   });
 
+  it('does not refuse a command whose path merely contains the app\'s name, only one that starts the app\'s own binary', () => {
+    // A build whose binary is `kangentic`, and a probe of another CLI that sits
+    // in a folder named for the app. The path contains the app's name; the
+    // command does not start the app. Forward slashes are fine on every platform.
+    const appBinary = '/opt/Kangentic/kangentic';
+    const command = (commandLine: string): HostExecRequest => ({ kind: 'exec', command: commandLine, options: {} });
+
+    expect(launchesOwnBinary(command('"/opt/kangentic/bin/codex" --version'), appBinary)).toBe(false);
+    expect(launchesOwnBinary(command('/opt/kangentic/bin/codex --version'), appBinary)).toBe(false);
+    expect(launchesOwnBinary({ kind: 'execFile', file: '/opt/kangentic/bin/codex', args: ['--version'], options: {} }, appBinary)).toBe(false);
+
+    // What stays refused: the binary by its path (quoted or not), and by its
+    // name from any folder or from the PATH.
+    expect(launchesOwnBinary(command('"/opt/Kangentic/kangentic" --version'), appBinary)).toBe(true);
+    expect(launchesOwnBinary(command('/opt/Kangentic/kangentic --version'), appBinary)).toBe(true);
+    expect(launchesOwnBinary(command('kangentic --help'), appBinary)).toBe(true);
+    expect(launchesOwnBinary(command('"/usr/local/bin/Kangentic" --help'), appBinary)).toBe(true);
+    expect(launchesOwnBinary({ kind: 'execFile', file: '/opt/Kangentic/kangentic', args: [], options: {} }, appBinary)).toBe(true);
+  });
+
   it('refuses to launch its own executable without spawning', async () => {
     const result = await runHostExec({ kind: 'execFile', file: process.execPath, args: ['--version'], options: {} });
     expect(result.ok).toBe(false);

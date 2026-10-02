@@ -307,12 +307,9 @@ describe('a summary pass', () => {
 
   it('leaves a task whose summary is current, and one the skip list holds', async () => {
     const { db } = fakeBoard({ finished: ['kept', 'skipped', 'new'] });
-    const current = await (async () => {
-      // The hash a current summary was written from, read the way the pass reads it.
-      const { readSummaryCandidates } = await import('../../src/main/retrieval/summary/summary-sources');
-      const candidates = await readSummaryCandidates(db, async () => undefined);
-      return candidates.find((candidate) => candidate.input.taskId === 'kept')?.hash ?? '';
-    })();
+    // The hash a current summary was written from, read the way the pass reads it.
+    const candidates = await readSummaryCandidates(db, async () => undefined);
+    const current = candidates.find((candidate) => candidate.input.taskId === 'kept')?.hash ?? '';
     const board = fakeBoard({ finished: ['kept', 'skipped', 'new'], summaries: [{ taskId: 'kept', inputHash: current }] });
     const write = vi.fn(async () => 'D1: New summary.');
 
@@ -518,6 +515,7 @@ describe('the summary scheduler', () => {
       const resolveWriter = vi.fn(async () => ({ agent: 'claude', model: null, write: async () => '' }));
       const beforePass = vi.fn(async () => undefined);
       const runPass = vi.fn(async () => ({ unanswered: [], failed: false, ...(results.shift() ?? { written: 0, remaining: 0 }) }));
+      const timers: Array<() => void> = [];
       const scheduler = createSummaryScheduler<string>({
         isEnabled: () => true,
         readFingerprint: () => fingerprint,
@@ -525,9 +523,20 @@ describe('the summary scheduler', () => {
         beforePass,
         onWritten: () => undefined,
         runPass: runPass as never,
-        setTimer: () => ({ cancel: () => undefined }),
+        setTimer: (fire) => {
+          timers.push(fire);
+          return { cancel: () => undefined };
+        },
       });
-      return { scheduler, resolveWriter, beforePass, runPass, move: (next: string) => { fingerprint = next; } };
+      return {
+        scheduler,
+        resolveWriter,
+        beforePass,
+        runPass,
+        move: (next: string) => { fingerprint = next; },
+        /** Fire every pending timer, as its delay running out would. */
+        fireTimers: () => { for (const fire of timers.splice(0)) fire(); },
+      };
     }
 
     it('skips the writer, the change sweep and the input read when nothing a summary reads changed', async () => {
@@ -570,7 +579,9 @@ describe('the summary scheduler', () => {
       const failed = fingerprinted([{ written: 0, remaining: 0, failed: true }]);
       failed.scheduler.request('context', 'project');
       await settle();
-      failed.scheduler.request('context', 'project');
+      // The retry once the backoff ends runs a pass: a failed call never
+      // counts as caught up, though nothing on the board moved.
+      failed.fireTimers();
       await settle();
       expect(failed.runPass).toHaveBeenCalledTimes(2);
 
@@ -580,6 +591,32 @@ describe('the summary scheduler', () => {
       remaining.scheduler.request('context', 'project');
       await settle();
       expect(remaining.runPass).toHaveBeenCalledTimes(2);
+    });
+
+    it('waits out the backoff after a failed call: a board change spawns no agent', async () => {
+      const failed = fingerprinted([{ written: 0, remaining: 0, failed: true }, { written: 0, remaining: 0 }]);
+      failed.scheduler.request('context', 'project');
+      await settle();
+      failed.scheduler.request('context', 'project');
+      await settle();
+      expect(failed.resolveWriter).toHaveBeenCalledTimes(1);
+      expect(failed.runPass).toHaveBeenCalledTimes(1);
+
+      // A settings change may be what fixes the call, so it ends the wait.
+      failed.scheduler.endBackoff('project');
+      failed.scheduler.request('context', 'project');
+      await settle();
+      expect(failed.runPass).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not rerun a failed pass for a request queued while it ran', async () => {
+      const queued = fingerprinted([{ written: 0, remaining: 0, failed: true }]);
+      queued.scheduler.request('context', 'project');
+      // Arrives while the first pass runs, so it is queued behind it.
+      queued.scheduler.request('context', 'project');
+      await settle();
+      await settle();
+      expect(queued.runPass).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -87,9 +87,24 @@ function initialize(message: InitMessage): void {
   post({ type: 'ready' });
 }
 
+/**
+ * Projects main closed here to delete or prune them (`project.close` has no
+ * other caller). A request still queued for one, a checkpoint tick or a drain
+ * step, must not reopen its database between this close and the unlink:
+ * Windows then refuses the unlink and the file is left behind. Project ids
+ * are never reused, and a restarted worker starts with none.
+ */
+const closedProjectIds = new Set<string>();
+
 const context: WorkerContext = {
-  getDb: (projectId) => getProjectDb(projectId),
-  closeDb: (projectId) => closeProjectDb(projectId),
+  getDb: (projectId) => {
+    if (closedProjectIds.has(projectId)) throw new Error(`Project ${projectId} was closed for deletion`);
+    return getProjectDb(projectId);
+  },
+  closeDb: (projectId) => {
+    closedProjectIds.add(projectId);
+    closeProjectDb(projectId);
+  },
   vecLoadError: () => vecLoadError,
   vecLoadablePath: () => vecLoadablePath,
   emit: (event: RetrievalEventName, projectId: string) => post({ type: 'event', event, projectId }),

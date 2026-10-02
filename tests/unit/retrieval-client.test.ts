@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
   utilityProcess: { fork: mockFork },
 }));
 
-import { RetrievalClient, RetrievalUnavailableError, INTERACTIVE_TIMEOUT_MS } from '../../src/main/retrieval/retrieval-client';
+import { RetrievalClient, RetrievalUnavailableError, INTERACTIVE_TIMEOUT_MS, READY_TIMEOUT_MS } from '../../src/main/retrieval/retrieval-client';
 import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
 
 interface FakeChild extends EventEmitter {
@@ -38,6 +38,11 @@ function sent(child: FakeChild, type: string): Array<Record<string, unknown>> {
 async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+/** Enough microtask turns for a chain of awaits to run to its end, with no timer advanced. */
+async function settleMicrotasks(): Promise<void> {
+  for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
 }
 
 describe('RetrievalClient', () => {
@@ -264,6 +269,96 @@ describe('RetrievalClient', () => {
     await closing;
     expect(closed).toBe(true);
     client.dispose();
+  });
+
+  it('drops a worker that never says ready, fails the call waiting on it, and forks a new worker for the next call', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // A zero backoff, or the fake clock keeps the policy from letting the next call fork.
+    const policy = new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] });
+    const recordCrash = vi.spyOn(policy, 'recordCrash');
+    const client = new RetrievalClient(policy);
+    try {
+      const waiting = client.call('projects.summaries', { projectIds: [] });
+      const stuckChild = lastChild();
+
+      // Inside the budget the worker is left alone.
+      vi.advanceTimersByTime(READY_TIMEOUT_MS - 1);
+      expect(stuckChild.kill).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+
+      await expect(waiting).rejects.toBeInstanceOf(RetrievalUnavailableError);
+      await expect(waiting).rejects.toThrow('did not start in time');
+      expect(stuckChild.kill).toHaveBeenCalledTimes(1);
+      expect(sent(stuckChild, 'shutdown')).toHaveLength(1);
+      expect(recordCrash).toHaveBeenCalledTimes(1);
+
+      // The next call forks a new worker and gets its answer.
+      const next = client.call('projects.summaries', { projectIds: [] });
+      expect(forkedChildren).toHaveLength(2);
+      const freshChild = lastChild();
+      expect(freshChild).not.toBe(stuckChild);
+      freshChild.emit('message', { type: 'ready' });
+      await flush();
+      const [request] = sent(freshChild, 'request');
+      freshChild.emit('message', { type: 'reply', id: request.id, ok: true, result: [] });
+      await expect(next).resolves.toEqual([]);
+
+      // The dropped worker's exit, whenever it lands, is not a second crash.
+      stuckChild.emit('exit', 1);
+      expect(recordCrash).toHaveBeenCalledTimes(1);
+    } finally {
+      client.dispose();
+      warn.mockRestore();
+    }
+  });
+
+  it('leaves a worker that says ready inside its budget running, however long it then lives', async () => {
+    vi.useFakeTimers();
+    const client = new RetrievalClient();
+    // No call budget of its own, so only the ready timer could kill the worker.
+    const call = client.call('projects.summaries', { projectIds: [] }, { timeoutMs: null });
+    const child = lastChild();
+
+    vi.advanceTimersByTime(READY_TIMEOUT_MS - 1);
+    child.emit('message', { type: 'ready' });
+    await flush();
+    vi.advanceTimersByTime(10 * READY_TIMEOUT_MS);
+
+    expect(child.kill).not.toHaveBeenCalled();
+    const [request] = sent(child, 'request');
+    child.emit('message', { type: 'reply', id: request.id, ok: true, result: [] });
+    await expect(call).resolves.toEqual([]);
+    client.dispose();
+  });
+
+  it('returns from closeProject at once, not after its timeout, when the worker exits while the close is pending', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+    try {
+      void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await flush();
+      let closed = false;
+      const closing = client.closeProject('project-1').then(() => { closed = true; });
+      await settleMicrotasks();
+      expect(sent(child, 'request').some((message) => message.method === 'project.close')).toBe(true);
+      expect(closed).toBe(false);
+
+      child.emit('exit', 1);
+      // No timer is advanced: a close that waited out its timeout stays pending here.
+      await settleMicrotasks();
+
+      expect(closed).toBe(true);
+      // A worker that already exited holds no handle, so there is nothing to stop.
+      expect(child.kill).not.toHaveBeenCalled();
+      await closing;
+    } finally {
+      client.dispose();
+      warn.mockRestore();
+    }
   });
 
   it('disposes synchronously: kills the worker, fails pending calls, and refuses new ones', async () => {

@@ -11,6 +11,7 @@
  * streaming, so the reader never sees it arrive and then vanish.
  */
 
+import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
@@ -20,12 +21,15 @@ const REMARK_PLUGINS = [remarkGfm];
 
 /** Remove the answer's `SELECTED:` line, finished or still being written. */
 export function stripProtocolLine(text: string): string {
-  const lastBreak = text.lastIndexOf('\n');
-  const lastLine = text.slice(lastBreak + 1).trim().toUpperCase();
+  // Trimmed first: an answer that ends in a newline has an empty last line,
+  // and the SELECTED line above it was left in the prose.
+  const trimmed = text.trimEnd();
+  const lastBreak = trimmed.lastIndexOf('\n');
+  const lastLine = trimmed.slice(lastBreak + 1).trim().toUpperCase();
   // The finished line, or any start of it while it streams in ("SEL").
   const isProtocol = lastLine.startsWith('SELECTED:')
     || (lastLine.length > 0 && 'SELECTED:'.startsWith(lastLine));
-  return (isProtocol ? text.slice(0, Math.max(lastBreak, 0)) : text).trimEnd();
+  return (isProtocol ? trimmed.slice(0, Math.max(lastBreak, 0)) : trimmed).trimEnd();
 }
 
 /** The ref an answer writes for a task: `#561`, or `mobile#88` from another project. */
@@ -201,7 +205,9 @@ export function KnowledgeGraphChatText({
    *  wrote them with their project (`kangentic#529`). */
   homeProjectId?: string | null;
 }) {
-  const components: Components = {
+  // Memoized: a new `a` renderer is a new component type to React, so every
+  // ticket mark and link remounted on each streamed delta.
+  const components = useMemo<Components>(() => ({
     a: ({ href, children, ...rest }) => {
       const match = TICKET_FRAGMENT.exec(href ?? '');
       if (match) {
@@ -256,14 +262,17 @@ export function KnowledgeGraphChatText({
         </a>
       );
     },
-  };
+  }), [tasksByTicket, onOpenTask, canOpenTask, homeProjectId]);
 
   // The project prefixes this answer's tasks carry (`mobile#88` has `mobile`).
-  const prefixes = new Set<string>();
-  for (const ref of tasksByTicket.keys()) {
-    const hash = ref.indexOf('#');
-    if (hash > 0) prefixes.add(ref.slice(0, hash));
-  }
+  const prefixes = useMemo(() => {
+    const found = new Set<string>();
+    for (const ref of tasksByTicket.keys()) {
+      const hash = ref.indexOf('#');
+      if (hash > 0) found.add(ref.slice(0, hash));
+    }
+    return found;
+  }, [tasksByTicket]);
 
   return (
     <div className="markdown-body knowledge-graph-answer-body text-[13px] leading-[1.6] text-fg" data-testid="knowledge-graph-chat-answer">

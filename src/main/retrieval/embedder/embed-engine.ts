@@ -359,6 +359,9 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
         await deps.delay(deps.transientBackoffMs);
         return 'transient';
       }
+      // Any other failure drops the project until something marks it dirty
+      // again, so it is logged rather than lost in silence.
+      console.warn(`[embed-engine] nextBatch failed for ${projectId}; leaving the project:`, error);
       return 'drained';
     }
     if (batch === null) return 'drained';

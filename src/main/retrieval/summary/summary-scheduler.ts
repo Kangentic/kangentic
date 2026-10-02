@@ -74,9 +74,15 @@ export interface SummaryScheduler<Context> {
   /**
    * Forget that a project is caught up, so its next request runs a pass even
    * though nothing on the board moved. For a change the fingerprint cannot
-   * see: summaries marked for rewriting.
+   * see: summaries marked for rewriting. Also asks again about the tasks the
+   * agent passed over, and ends a failure backoff, since the user asked for it.
    */
   invalidate: (projectId: string) => void;
+  /**
+   * End a project's failure backoff, so its next request runs at once. For a
+   * settings change, which may be what fixes the failed call.
+   */
+  endBackoff: (projectId: string) => void;
   dispose: () => void;
   /** True while a pass is running (for tests). */
   readonly busy: boolean;
@@ -118,6 +124,19 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
     } catch {
       return null;
     }
+  };
+
+  /** Waiting out a failed call: only its own retry timer runs the next pass. */
+  const backingOff = (projectId: string): boolean => {
+    const retryAt = retryAtByProject.get(projectId);
+    return retryAt !== undefined && retryAt > now();
+  };
+
+  const endBackoff = (projectId: string): void => {
+    if (!retryAtByProject.has(projectId)) return;
+    timers.get(projectId)?.cancel();
+    timers.delete(projectId);
+    retryAtByProject.delete(projectId);
   };
 
   const scheduleAgain = (context: Context, projectId: string, delayMs: number, afterFailure: boolean): void => {
@@ -179,18 +198,23 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
       runningProjectId = null;
     }
     if (disposed) return;
-    const next = pending.entries().next();
-    if (!next.done) {
-      const [nextProjectId, nextContext] = next.value;
-      pending.delete(nextProjectId);
-      void run(nextContext, nextProjectId);
-    }
+    // The backoff first, so a request this project queued while its pass ran
+    // waits it out instead of running the failed call again at once.
     if (result && result.remaining > 0) scheduleAgain(context, projectId, result.failed ? FAILURE_BACKOFF_MS : PASS_GAP_MS, result.failed);
     else if (result?.failed) scheduleAgain(context, projectId, FAILURE_BACKOFF_MS, true);
+    for (const [nextProjectId, nextContext] of pending) {
+      pending.delete(nextProjectId);
+      if (backingOff(nextProjectId)) continue;
+      void run(nextContext, nextProjectId);
+      break;
+    }
   };
 
   const request = (context: Context, projectId: string): void => {
     if (disposed || !deps.isEnabled(context)) return;
+    // A board change after a failed call must not spawn the agent again: the
+    // retry timer requests this project once the backoff ends.
+    if (backingOff(projectId)) return;
     if (running) {
       pending.set(projectId, context);
       return;
@@ -213,7 +237,10 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
     },
     invalidate: (projectId) => {
       caughtUpAt.delete(projectId);
+      skipByProject.delete(projectId);
+      endBackoff(projectId);
     },
+    endBackoff,
     dispose: () => {
       disposed = true;
       for (const timer of timers.values()) timer.cancel();

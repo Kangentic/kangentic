@@ -1581,8 +1581,6 @@ export class RetrievalStore {
     return { written, finishedTasks };
   }
 
-  /** Every board task's id, ticket and title: what a task-record match needs
-   *  to become a row when none of the task's conversations is in scope. */
   /**
    * The session and task each indexed conversation belongs to, read off its
    * chunks. Neither column is in an index, so this reads every conversation
@@ -1600,6 +1598,8 @@ export class RetrievalStore {
       .all() as Array<{ docId: string; sessionId: string | null; taskId: string | null }>;
   }
 
+  /** Every board task's id, ticket and title: what a task-record match needs
+   *  to become a row when none of the task's conversations is in scope. */
   boardTaskTitles(): Array<{ taskId: string; displayId: number | null; title: string }> {
     return this.db
       .prepare('SELECT id AS taskId, display_id AS displayId, title FROM tasks')
@@ -1621,14 +1621,13 @@ export class RetrievalStore {
     return this.db.prepare(BOARD_TASK_FACTS_SQL).all() as BoardTaskFactsRow[];
   }
 
-
   /**
-   * What is ACTUALLY stored in the vec table: its width, and the model tag the
-   * chunks were embedded under.
+   * What is ACTUALLY stored in the vec tables: their width, and the model tag
+   * the chunks were embedded under.
    *
    * The Knowledge Graph reads this rather than the configured model, because the
-   * two legitimately disagree. `memory_chunks_vec` is fixed-width and is only
-   * rebuilt by the embedding path, so between a model switch and the re-embed
+   * two legitimately disagree. Each corpus's `memory_vec_<corpus>` table is
+   * fixed-width and is only rebuilt by the embedding path, so between a model switch and the re-embed
    * finishing, config says one width and the table holds another - and a
    * projection built on the configured width would silently reject every
    * vector and produce an empty map. Reading the table is also what makes the

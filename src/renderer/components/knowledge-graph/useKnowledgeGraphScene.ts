@@ -53,7 +53,6 @@ CameraControls.install({
   THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster },
 });
 
-/** Opening camera distance, as a multiple of the world cube's half-extent. */
 /** How close the camera may get before it stops. Small enough to fly INSIDE a
  *  cluster, which is the whole point of a spatial view. */
 const MIN_DISTANCE = 1;

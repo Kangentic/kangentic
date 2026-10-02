@@ -163,6 +163,12 @@ export function registerSearchTools(
         });
       }
 
+      // A worker that is down answers with no hits, which reads as "no prior
+      // work"; the note below says it was not searched instead.
+      let indexUnavailable = false;
+      const markUnavailable = (): void => {
+        indexUnavailable = true;
+      };
       const hits = await runSearchEverything({
         query,
         projects: projectsToScan,
@@ -173,18 +179,20 @@ export function registerSearchTools(
           embedder,
           embedWaitMs: 5000,
           taskId,
-          search: searchConversations,
+          search: (request) => searchConversations(request, markUnavailable),
         },
       });
 
       // Commits, read from the index like the conversations, and skipped for a
       // "#N" ticket lookup, which asks for board tasks only.
       const commits = indexingEnabled && !TICKET_QUERY.test(query.trim())
-        ? await searchCommitsIn(projectsToScan, query, taskId)
+        ? await searchCommitsIn(projectsToScan, query, taskId, markUnavailable)
         : [];
 
       const notes: string[] = [];
-      if (!indexingEnabled) {
+      if (indexUnavailable) {
+        notes.push(`Conversations and commits were not searched. ${INDEX_RESTARTING}`);
+      } else if (!indexingEnabled) {
         notes.push('Conversations and commits were not searched: the index is off in Settings > Knowledge Graph.');
       } else if (effectiveMode === 'hybrid' && !embedder) {
         notes.push('Conversations were matched by keyword only, because the Knowledge Graph\'s local model is off or not ready.');

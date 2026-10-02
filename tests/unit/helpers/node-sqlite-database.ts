@@ -28,16 +28,32 @@ export function adaptDatabase(database: NodeDatabase, prepared?: string[]): Data
       const savepoint = `sp_${depth}`;
       database.exec(depth === 0 ? `BEGIN ${mode}` : `SAVEPOINT ${savepoint}`);
       depth += 1;
+      let result: Result;
       try {
-        const result = body(...args);
-        depth -= 1;
-        database.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
-        return result;
+        result = body(...args);
       } catch (error) {
         depth -= 1;
         database.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
         throw error;
       }
+      // Decremented once, outside the body's catch: a COMMIT that fails
+      // (SQLITE_BUSY from a second connection) took depth below 0 before.
+      depth -= 1;
+      try {
+        database.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+      } catch (error) {
+        // A failed COMMIT leaves the transaction open; close it, as
+        // better-sqlite3 does, so the next call begins a fresh one.
+        if (depth === 0) {
+          try {
+            database.exec('ROLLBACK');
+          } catch {
+            // Already closed.
+          }
+        }
+        throw error;
+      }
+      return result;
     };
     return Object.assign(run('DEFERRED'), {
       deferred: run('DEFERRED'),

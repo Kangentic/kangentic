@@ -802,7 +802,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
           >
             <Compass size={11} className="flex-shrink-0" aria-hidden />
             <span className="min-w-0 flex-1 truncate">
-              Around &ldquo;{exploredNode.title ?? 'Untitled conversation'}&rdquo;
+              Around {`"${exploredNode.title ?? 'Untitled conversation'}"`}
             </span>
             <button
               type="button"

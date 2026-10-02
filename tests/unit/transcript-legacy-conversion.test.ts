@@ -56,6 +56,11 @@ const legacyCount = (database: NodeDatabase): number =>
   (database.prepare('SELECT COUNT(*) AS count FROM session_transcripts').get() as { count: number }).count;
 const textOf = (database: NodeDatabase, sessionId: string): string | null =>
   new TranscriptRepository(adaptDatabase(database)).getTranscriptText(sessionId);
+const seqsOf = (database: NodeDatabase, sessionId: string): number[] =>
+  (database.prepare('SELECT seq FROM session_transcript_chunks WHERE session_id = ? ORDER BY seq').all(sessionId) as Array<{ seq: number }>)
+    .map((row) => row.seq);
+const tableCount = (database: NodeDatabase, tableName: string): number =>
+  (database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName) as { count: number }).count;
 
 describeWithSqlite('legacy transcript conversion', () => {
   it('converts in place, moves a misfiled transcript to its own project, and keeps one found nowhere', async () => {
@@ -122,5 +127,56 @@ describeWithSqlite('legacy transcript conversion', () => {
     // The row's first and last write times survive as the pieces' range.
     const tail = new TranscriptRepository(adaptDatabase(projectA)).getTranscriptTail('session-a', 10);
     expect(tail).toMatchObject({ createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z' });
+  });
+
+  it('takes seq 0 for a flush that lands between two conversion steps, so the rest still insert and the text reads legacy first', async () => {
+    const projectA = project(['session-a']);
+    const piece = 64 * 1024;
+    // Two pieces: the conversion writes them at seqs -2 and -1, one transaction
+    // each, and waits a write turn after every one.
+    const text = 'A'.repeat(piece) + 'B'.repeat(10);
+    insertLegacy(projectA, 'session-a', text);
+    const transcripts = new TranscriptRepository(adaptDatabase(projectA));
+
+    // Not awaited: the handler runs synchronously up to its first write turn,
+    // so exactly its first piece is written when this call returns.
+    const conversion = indexHandlers['transcripts.convertLegacy']({ projectId: 'a', otherProjectIds: [] }, contextFor(new Map([['a', projectA]])));
+    // The precondition that makes the rest mean something: were both pieces
+    // already written, the flush below would take seq 0 whichever way the next
+    // seq is worked out.
+    expect(seqsOf(projectA, 'session-a')).toEqual([-2]);
+
+    // The terminal's flush, between the conversion's two steps. A next seq of
+    // MAX(seq) + 1 would be -1 here, the seq the conversion writes next.
+    transcripts.appendChunk('session-a', 'live');
+    expect(seqsOf(projectA, 'session-a')).toEqual([-2, 0]);
+
+    await expect(conversion).resolves.toEqual({ converted: 1, moved: 0, bytes: text.length });
+    expect(seqsOf(projectA, 'session-a')).toEqual([-2, -1, 0]);
+    expect(textOf(projectA, 'session-a')).toBe(`${text}live`);
+    expect(legacyCount(projectA)).toBe(0);
+    expect((projectA.prepare("SELECT COUNT(*) AS count FROM memory_meta WHERE key LIKE 'transcript_legacy:%'").get() as { count: number }).count).toBe(0);
+  });
+
+  it('converts a transcript in this project, instead of throwing, when its session is only in another project that has no pieces table yet', async () => {
+    const projectA = project(['session-a']);
+    insertLegacy(projectA, 'session-b', 'misfiled but unmovable');
+    // A project main has not opened since the upgrade: the worker opens with
+    // migrations off, so it has its sessions but neither table a move writes to.
+    const unmigrated = new sqlite!.DatabaseSync(':memory:');
+    unmigrated.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY)');
+    unmigrated.prepare('INSERT INTO sessions (id) VALUES (?)').run('session-b');
+    expect(tableCount(unmigrated, 'session_transcript_chunks')).toBe(0);
+    expect(tableCount(unmigrated, 'memory_meta')).toBe(0);
+    const context = contextFor(new Map([['a', projectA], ['b', unmigrated]]));
+
+    const result = await indexHandlers['transcripts.convertLegacy']({ projectId: 'a', otherProjectIds: ['b'] }, context);
+
+    expect(result).toEqual({ converted: 1, moved: 0, bytes: 'misfiled but unmovable'.length });
+    expect(legacyCount(projectA)).toBe(0);
+    expect(textOf(projectA, 'session-b')).toBe('misfiled but unmovable');
+    // Nothing was written into the other project.
+    expect(tableCount(unmigrated, 'session_transcript_chunks')).toBe(0);
+    expect(tableCount(unmigrated, 'memory_meta')).toBe(0);
   });
 });

@@ -183,10 +183,20 @@ export async function ensureClaudeSpawnConfig(workingDirectory: string): Promise
         applyDiffPanelClosed(data),
       ];
       if (!changes.some(Boolean)) return;
-      // Temp file + rename, so the CLI never reads a torn file.
-      const temporaryPath = `${filePath}.kangentic-${process.pid}.tmp`;
-      await fsPromises.writeFile(temporaryPath, JSON.stringify(data, null, 2), 'utf-8');
-      await fsPromises.rename(temporaryPath, filePath);
+      // Temp file + rename, so the CLI never reads a torn file. Renamed onto
+      // the link's target, so a symlinked ~/.claude.json stays a link, and
+      // written with the file's own mode, so a 0600 file holding the user's
+      // auth does not come back with the umask's default.
+      const targetPath = await fsPromises.realpath(filePath).catch(() => filePath);
+      const mode = await fsPromises.stat(targetPath).then((stats) => stats.mode & 0o777, () => 0o600);
+      const temporaryPath = `${targetPath}.kangentic-${process.pid}.tmp`;
+      try {
+        await fsPromises.writeFile(temporaryPath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode });
+        await fsPromises.rename(temporaryPath, targetPath);
+      } catch (error) {
+        await fsPromises.rm(temporaryPath, { force: true }).catch(() => undefined);
+        throw error;
+      }
     });
   } catch (error) {
     if (!isClaudeJsonLockError(error)) throw error;

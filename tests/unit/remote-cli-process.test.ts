@@ -150,13 +150,19 @@ describe('RemoteCliProcess', () => {
     // Stand-in for the orphaned CLI: a real process this test owns.
     const orphan = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
     const orphanExited = new Promise<void>((resolve) => orphan.once('exit', () => resolve()));
-    await new Promise<void>((resolve) => orphan.once('spawn', () => resolve()));
-    host.emit({ type: 'cliSpawned', processId: child.processId, pid: orphan.pid ?? null });
-    child.on('error', () => undefined);
+    try {
+      await new Promise<void>((resolve) => orphan.once('spawn', () => resolve()));
+      host.emit({ type: 'cliSpawned', processId: child.processId, pid: orphan.pid ?? null });
+      child.on('error', () => undefined);
 
-    host.hostDown();
+      host.hostDown();
 
-    await orphanExited;
-    expect(orphan.exitCode !== null || orphan.signalCode !== null).toBe(true);
+      await orphanExited;
+      expect(orphan.exitCode !== null || orphan.signalCode !== null).toBe(true);
+    } finally {
+      // A stop path that regressed must not leave this process running past
+      // the test: it never exits on its own. A no-op once it has exited.
+      orphan.kill('SIGKILL');
+    }
   }, 20_000);
 });

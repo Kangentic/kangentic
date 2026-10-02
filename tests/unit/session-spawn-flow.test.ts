@@ -46,9 +46,12 @@ vi.mock('uuid', () => ({
   v4: () => 'test-session-uuid-0000-000000000000',
 }));
 
-// Stub shutdown guard to always allow spawning.
+// Stub shutdown guard: spawning is allowed unless a test flips the flag (the
+// "shutdown begins during the host round trip" block below). Every flip is
+// undone in that block's afterEach, so the rest of the file always spawns.
+const shutdownState = vi.hoisted(() => ({ shuttingDown: false }));
 vi.mock('../../src/main/shutdown-state', () => ({
-  isShuttingDown: () => false,
+  isShuttingDown: () => shutdownState.shuttingDown,
 }));
 
 // Stub spawn env/cwd helpers - return safe defaults, no real fs access.
@@ -102,6 +105,7 @@ import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../../src/main
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
 import { handleSpawnFailure } from '../../src/main/pty/spawn/spawn-failure-handler';
+import { safeKillPty } from '../../src/main/pty/lifecycle/pty-kill';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 import { InProcessPtyHostTransport, PtyHostClient } from '../../src/main/pty/host/pty-host-client';
@@ -1192,5 +1196,68 @@ describe('performSpawn - onExit fallback ordering: branch-pushed before pr-candi
 
     expect(emitMock.mock.calls[branchPushedIndex]).toEqual(['branch-pushed', input.id, 'feature/pending-branch']);
     expect(emitMock.mock.calls[prCandidateIndex]).toEqual(['pr-candidate', input.id, 'scrollback bytes']);
+  });
+});
+
+describe('performSpawn - shutdown begins during the host round trip', () => {
+  // The quit can start while `host.spawn` is in flight. killAll() ran before the
+  // registry had a row for this session, so nothing else would end the PTY the
+  // host just started, and the host's own shutdown kills no session PTY.
+  //
+  // Red-green: drop the `spawnOutcome.ok && isShuttingDown()` block after the
+  // await in session-spawn-flow.ts and this goes red three ways: the spawn
+  // resolves instead of rejecting, safeKillPty is never called for the new PTY,
+  // and the registry gains a row for a session nothing will ever end.
+  //
+  // Tier: Unit - the host is the in-process core over a mocked node-pty.
+
+  beforeEach(() => {
+    // Sibling blocks above also reach safeKillPty; count only this block's calls.
+    vi.mocked(safeKillPty).mockClear();
+  });
+
+  afterEach(() => {
+    shutdownState.shuttingDown = false;
+    vi.clearAllMocks();
+  });
+
+  it('kills the PTY the host just started and refuses the spawn', async () => {
+    const context = makeContext();
+    const input = makeInput();
+    const spawnThroughHost = PtyHostClient.prototype.spawn.bind(context.host);
+    vi.mocked(context.host.spawn).mockImplementationOnce(async (params) => {
+      const outcome = await spawnThroughHost(params);
+      // The quit begins while the round trip is in flight.
+      shutdownState.shuttingDown = true;
+      return outcome;
+    });
+
+    await expect(performSpawn(input, context)).rejects.toThrow('Cannot spawn session during shutdown');
+
+    // Control: the host really did start a PTY, and performSpawn went through
+    // the awaited call (a spawn refused up front would never reach it).
+    expect(context.host.spawn).toHaveBeenCalledTimes(1);
+    const startedOutcome = await vi.mocked(context.host.spawn).mock.results[0].value;
+    expect(startedOutcome.ok).toBe(true);
+
+    // The one kill is for that very PTY (identity, not structure).
+    expect(safeKillPty).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(safeKillPty).mock.calls[0][0]).toBe(startedOutcome.pty);
+
+    // No row and no announcement for a session that never lived.
+    expect(context.registry.get(input.id!)).toBeUndefined();
+    const emittedEvents = vi.mocked(context.emit).mock.calls.map((call) => call[0]);
+    expect(emittedEvents).not.toContain('session-changed');
+  });
+
+  it('does not refuse or kill when the quit has not begun by the time the host answers', async () => {
+    const context = makeContext();
+    const input = makeInput();
+
+    const session = await performSpawn(input, context);
+
+    expect(session.id).toBe(input.id);
+    expect(safeKillPty).not.toHaveBeenCalled();
+    expect(context.registry.get(input.id!)).toBeDefined();
   });
 });

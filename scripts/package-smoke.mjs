@@ -18,8 +18,10 @@
  *      from its scrollback (the PTY lives in the pty host);
  *   3. reads the Knowledge Graph snapshot, which only the retrieval worker can
  *      answer (the call rejects, with no fallback to main, when it cannot);
- *   4. quits the way a user does, with that terminal still running, and
- *      requires exit code 0 inside the bound.
+ *   4. quits with that terminal still running, and requires exit code 0 inside
+ *      the bound. On Windows and Linux that is a user's quit (the window
+ *      closes), which runs the PTY exit drain; on macOS it is SIGTERM, which
+ *      runs the synchronous shutdown but not the drain (see `quitRouteFor`).
  * Then it reads the app's persisted logs and fails on any line that says a
  * forked process crashed or fell back: the pty host falls back to running
  * terminals in main after repeated crashes, which would pass step 2 with a
@@ -118,8 +120,9 @@ export function resolveAppExecutable(outDir, platform, packageJson, fileSystem =
 
 /** How the app is quit: closing its window on Windows and Linux, which is
  *  what a user does and what runs the PTY exit drain. macOS keeps an app
- *  running with no window, so there it gets SIGTERM, which its signal handler
- *  turns into the same synchronous shutdown. */
+ *  running with no window, so there it gets SIGTERM. Its signal handler runs
+ *  the synchronous shutdown and exits 0 itself, without the drain or a wait
+ *  for the pty host, so the macOS leg does not cover those. */
 export function quitRouteFor(platform) {
   return platform === 'darwin' ? 'sigterm' : 'close-window';
 }

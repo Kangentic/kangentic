@@ -59,7 +59,7 @@ export interface DevIndexMethods {
     };
     result: { chunks: number; pendingChunks: number };
   };
-  /** Build a project's map now, at full speed (see `buildKnowledgeGraphNow`). */
+  /** Build a project's map now, at full speed (see `buildGraphNow` below). */
   'dev.buildGraphNow': {
     params: { projectId: string };
     result: { nodes: number; edges: number; elapsedMs: number } | null;

@@ -120,7 +120,7 @@ function AgentTurn({ turn, isLatest, agentName, onRetry, onOpenTask, canOpenTask
                 <Step done>Read {turn.handedCount} related {tasksWord(turn.handedCount)}</Step>
                 {turn.searches.map((search, index) => (
                   <Step key={`${index}:${search.query}`} done={index < turn.searches.length - 1}>
-                    Searching &ldquo;{search.query}&rdquo;
+                    Searching {`"${search.query}"`}
                   </Step>
                 ))}
               </>
