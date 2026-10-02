@@ -2959,6 +2959,183 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  /** A fiber hook cell, as React keeps a function component's hooks: a linked list. */
+  interface FiberHookProbe { memoizedState: unknown; next: FiberHookProbe | null }
+  interface FiberProbe { type: unknown; return: FiberProbe | null; memoizedState: FiberHookProbe | null }
+  interface PointProbe {
+    x: number;
+    y: number;
+    z: number;
+    copy(other: PointProbe): PointProbe;
+    distanceTo(other: PointProbe): number;
+  }
+  /** The slice of a camera-controls instance the race below reads and drives. */
+  interface OrbitControlsProbe {
+    active: boolean;
+    _targetEnd: PointProbe;
+    camera: { position: object };
+    getTarget(out: PointProbe): PointProbe;
+    addEventListener(type: 'sleep', listener: () => void): void;
+    removeEventListener(type: 'sleep', listener: () => void): void;
+  }
+
+  /**
+   * A fly must end on its own target even when an orbit pivot was deferred
+   * while the camera was still moving.
+   *
+   * `setOrbitAnchor` may not call camera-controls' `setOrbitPoint` mid
+   * transition (the library documents it as unsafe), so while the camera is
+   * moving it queues the pivot on a one shot `sleep` listener. A later
+   * `frameNodes` fly (or Reset view, or a scene rebuild) clears the anchor, but
+   * the listener stayed queued. When that fly went to sleep the listener ran
+   * `applyOrbitPoint` with no anchor and re-pointed the orbit at the whole
+   * map's framing centre, so the camera stopped where the fly ended but turned
+   * about a point nowhere near it.
+   *
+   * Nothing on screen shows it: `setOrbitPoint` moves no pixels. Only the
+   * orbit target moves, so the test reads the controls' own target. That needs
+   * React's fiber, because the controls live in a ref inside
+   * `useKnowledgeGraphScene` and there is no seam for a test. The hooks are
+   * found by what they hold (the controls ref, the scene ref, and the two
+   * callbacks by their source) and the test fails loudly when one is missing,
+   * so a refactor cannot leave it asserting nothing.
+   *
+   * The read waits for camera-controls' `sleep` EVENT, not for `active` to turn
+   * false. The controls report `rest` and clear `active` some frames before
+   * they emit `sleep`, and the stale listener runs on `sleep`. A read taken at
+   * rest comes before the listener and passes against the broken code.
+   */
+  test('a fly that replaces a deferred orbit pivot ends on its own target, not the map\'s centre', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await openKnowledgeGraph(page);
+      await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
+      // The camera has stopped on the whole map, so its target is the map's own
+      // default framing centre: the point a stale pivot would be re-pointed at.
+      await waitForCameraAsleep(page);
+
+      const probe = await page.evaluate(async ({ subsetSize, sleepFrameCap, framesAfterSleep }) => {
+        const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+        const nextFrames = (count: number) => new Promise<void>((resolve) => {
+          let remaining = count;
+          const tick = () => {
+            remaining -= 1;
+            if (remaining <= 0) resolve();
+            else requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        });
+
+        // Walk up from the canvas React rendered to the component that owns the
+        // scene hook, whose hooks are inlined into its own fiber.
+        const canvas = document.querySelector('[data-testid="knowledge-graph-canvas"] canvas');
+        if (!canvas) throw new Error('the map canvas is not on the page');
+        const fiberKey = Object.keys(canvas).find((key) => key.startsWith('__reactFiber$'));
+        if (!fiberKey) throw new Error('the canvas carries no React fiber, so the camera controls cannot be reached');
+        let fiber: FiberProbe | null = (canvas as unknown as Record<string, FiberProbe>)[fiberKey];
+        while (fiber && !(typeof fiber.type === 'function' && (fiber.type as { name?: string }).name === 'KnowledgeGraphCanvas')) {
+          fiber = fiber.return;
+        }
+        if (!fiber) throw new Error('no KnowledgeGraphCanvas fiber above the canvas');
+
+        const controlsRefs: Array<{ current: OrbitControlsProbe }> = [];
+        const sceneRefs: Array<{ current: { positions: PointProbe[] } }> = [];
+        const setOrbitAnchors: Array<(index: number | null) => void> = [];
+        const frameNodesCallbacks: Array<(indices: ReadonlyArray<number>) => void> = [];
+        for (let hook = fiber.memoizedState; hook; hook = hook.next) {
+          const state = hook.memoizedState;
+          if (Array.isArray(state)) {
+            // A useCallback holds [callback, deps]. A useMemo has the same shape,
+            // which is why the callbacks are told apart by their source.
+            if (typeof state[0] !== 'function') continue;
+            const source = Function.prototype.toString.call(state[0]);
+            if (/addEventListener\(["']sleep["']/.test(source)) setOrbitAnchors.push(state[0]);
+            if (source.includes('fitDefaultView(points')) frameNodesCallbacks.push(state[0]);
+          } else if (isRecord(state) && 'current' in state && isRecord(state.current)) {
+            // Keep the REF, not its contents: a scene rebuild replaces the controls.
+            if (typeof state.current.setOrbitPoint === 'function') controlsRefs.push(state as { current: OrbitControlsProbe });
+            else if (Array.isArray(state.current.positions)) sceneRefs.push(state as { current: { positions: PointProbe[] } });
+          }
+        }
+        const found = {
+          controlsRef: controlsRefs.length,
+          sceneRef: sceneRefs.length,
+          setOrbitAnchor: setOrbitAnchors.length,
+          frameNodes: frameNodesCallbacks.length,
+        };
+        if (Object.values(found).some((count) => count !== 1)) {
+          throw new Error(`expected exactly one of each hook in KnowledgeGraphCanvas, found ${JSON.stringify(found)}`);
+        }
+        const controlsRef = controlsRefs[0];
+        const sceneRef = sceneRefs[0];
+        const setOrbitAnchor = setOrbitAnchors[0];
+        const frameNodes = frameNodesCallbacks[0];
+
+        // Two disjoint subsets at opposite ends of the map, and a node between.
+        const positions = sceneRef.current.positions;
+        if (positions.length < subsetSize * 3) throw new Error(`the map has ${positions.length} nodes, too few for two disjoint subsets`);
+        const byX = positions.map((position, index) => ({ index, x: position.x })).sort((first, second) => first.x - second.x);
+        const subsetA = byX.slice(0, subsetSize).map((entry) => entry.index);
+        const subsetB = byX.slice(-subsetSize).map((entry) => entry.index);
+        const middle = byX[Math.floor(byX.length / 2)].index;
+
+        const PointClass = (controlsRef.current.camera.position as { constructor: unknown }).constructor as new () => PointProbe;
+        const mapCentre = controlsRef.current.getTarget(new PointClass());
+
+        // Fly to A, and set the pivot while that fly is still running: the
+        // pivot is deferred to the controls' `sleep`.
+        frameNodes(subsetA);
+        await nextFrames(2);
+        const activeDuringFirstFly = controlsRef.current.active;
+        setOrbitAnchor(middle);
+        await nextFrames(2);
+        const activeAfterAnchor = controlsRef.current.active;
+
+        // Fly to B before the first fly has slept. Listening starts in this same
+        // task, so no `sleep` can be missed between the call and the listener.
+        const controls = controlsRef.current;
+        let sleepSeen = false;
+        const onSleep = (): void => { sleepSeen = true; };
+        controls.addEventListener('sleep', onSleep);
+        frameNodes(subsetB);
+        const flyTarget = new PointClass().copy(controls._targetEnd);
+
+        let framesWaited = 0;
+        while (!sleepSeen && framesWaited < sleepFrameCap) {
+          await nextFrames(1);
+          framesWaited += 1;
+        }
+        controls.removeEventListener('sleep', onSleep);
+        // Let anything the `sleep` handlers queued run and be drawn.
+        await nextFrames(framesAfterSleep);
+
+        const finalTarget = controlsRef.current.getTarget(new PointClass());
+        return {
+          activeDuringFirstFly,
+          activeAfterAnchor,
+          sleepSeen,
+          framesWaited,
+          flyDistanceFromMapCentre: flyTarget.distanceTo(mapCentre),
+          targetError: finalTarget.distanceTo(flyTarget),
+        };
+      }, { subsetSize: 5, sleepFrameCap: 400, framesAfterSleep: 60 });
+
+      // The race was actually exercised: both flies were in flight when the next
+      // call landed, so the pivot was deferred rather than applied at once.
+      expect(probe.activeDuringFirstFly).toBe(true);
+      expect(probe.activeAfterAnchor).toBe(true);
+      // The read is taken after the fly's `sleep`, where the stale listener runs.
+      expect(probe.sleepSeen).toBe(true);
+      // The fly ends well away from the map's centre (the map spans 100 world
+      // units), so landing on the centre instead is not within the tolerance.
+      expect(probe.flyDistanceFromMapCentre).toBeGreaterThan(10);
+      // The orbit target is the fly's own, not a pivot re-pointed at the centre.
+      expect(probe.targetError).toBeLessThan(1e-3);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a rebuilt map retitles the chips when the same node index carries new words', async () => {
     // The title chips are a pool, reassigned every frame. They rewrote their
     // text only when the NODE INDEX assigned to a chip changed, so a rebuilt map

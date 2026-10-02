@@ -812,7 +812,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, third pass | 367f +54593 -3815 | 3692KB, 65439 lines | 4 (0) | 363 | 1 | 17, sharded by area, 4 over tests | about 97 of 16 pack-carrying | about 85 / 55 applied |
 | task 529, whole branch, fourth pass | 658f +76565 -7547 | 5536KB, 99303 lines | 3 (0) | 655 | 1 | 24, sharded by area and process boundary, 7 over tests | about 150 of 23 pack-carrying | about 85 / 52 applied |
 | task 529, whole branch, fifth pass | 663f +79405 -7559 | 5702KB, 102379 lines | 3 (0) | 660 | 1 | 29, one shard file each, 9 over tests | about 195 of 28 pack-carrying | about 77 / 44 applied |
-| task 529, whole branch, sixth pass | 674f +83014 -7629 | 5896KB, 105950 lines | 2 (0) | 672 | 1 | 30, one shard file each, 9 over tests | about 190 of 29 pack-carrying | 40 / 28 applied, 2 refuted |
+| task 529, whole branch, sixth pass | 674f +83014 -7629 | 5896KB, 105950 lines | 2 (0) | 672 | 1 | 30, one shard file each, 9 over tests | about 190 of 29 pack-carrying | 40 / 34 applied, 2 refuted |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1089,7 +1089,8 @@ fly to one subset, anchor mid-flight, fly to another before the camera rests. Wi
 hook restored the pivot came to rest 3.63 world units off the second fly's target, on the default
 view's centre; with the fix it stayed on it. The first reading said both versions passed, because
 camera-controls reports rest some frames before it emits `sleep`, which is when the stale listener
-fires; a measurement of this listener has to wait for `sleep` itself. The two Low findings left for
+fires; a measurement of this listener has to wait for `sleep` itself. A UI test now runs the same
+race and waits the same way; against the pre-fix hook it fails at 38 units. The two Low findings left for
 a decision were then fixed: a PTY whose program is the app's own executable is refused like a
 one-shot run, and the startup auto-spawn skips a task whose worktree is no longer the one it was
 prepared in.
