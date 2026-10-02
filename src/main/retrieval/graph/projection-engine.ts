@@ -26,7 +26,7 @@
 
 import type { DocSumRow, DocSumWrite, RetrievalStore } from '../retrieval-store';
 import { CONVERSATION_CORPUS } from '../corpora';
-import type { KnowledgeGraphNode, KnowledgeGraphProjection } from '../../../shared/types';
+import type { KnowledgeGraphBuildProgress, KnowledgeGraphNode, KnowledgeGraphProjection } from '../../../shared/types';
 import { KNOWLEDGE_GRAPH_GRANULARITIES } from '../../../shared/types';
 import {
   addVectorInto,
@@ -167,10 +167,19 @@ export interface ProjectionPassDeps {
  * steps after it: the neighbours, the layout, the metadata, the regions.
  */
 export interface ProjectionProgress {
-  readonly stage: 'reading' | 'placing';
+  /** The build's stages but naming, which runs after the pass. */
+  readonly stage: Exclude<KnowledgeGraphBuildProgress['stage'], 'naming'>;
   /** 0 to 1. */
   readonly fraction: number;
 }
+
+/**
+ * Where each step after reading ends, as a share of `placing`: the neighbours
+ * take the first half, then the layout and the metadata, and each
+ * granularity's regions the rest. Placing is a few seconds against the minutes
+ * reading takes, so the split is coarse.
+ */
+const PLACING_DONE_AFTER = { neighbors: 0.5, layout: 0.75, metadata: 0.85 } as const;
 
 /** A document's sums as a pass holds them. */
 interface DocumentSums {
@@ -453,14 +462,12 @@ export async function runProjectionPass(
     if (document.fullSum) setDocumentSum(accumulator, `conversation::${docId}`, document.fullSum, document.foldedCount);
   }
 
-  // Placing is a few seconds against the minutes reading takes, so its share of
-  // the row is coarse: the neighbours take the first half, then the layout, the
-  // metadata and each granularity's regions mark the rest.
+  // Placing reports at the end of each step (`PLACING_DONE_AFTER`).
   const pooled = finalizeMeanPool(accumulator);
   reportPlacing(0);
   const neighbors = await computeNeighborsChunked(
     pooled.matrix, pooled.rowCount, dimensions, delay, dutyCycle, aborted,
-    (rowsDone) => reportPlacing(0.5 * (rowsDone / pooled.rowCount)),
+    (rowsDone) => reportPlacing(PLACING_DONE_AFTER.neighbors * (rowsDone / pooled.rowCount)),
   );
   if (neighbors === null) return null;
 
@@ -481,7 +488,7 @@ export async function runProjectionPass(
   );
   if (embedded === null) return null;
   const positions = fitLayoutToPercentileBoxN(embedded, pooled.rowCount, LAYOUT_COMPONENTS);
-  reportPlacing(0.75);
+  reportPlacing(PLACING_DONE_AFTER.layout);
 
   // Metadata is what turns a point into something worth clicking: a title to
   // read, a session to open, a timestamp to colour by. Read a page of
@@ -497,7 +504,7 @@ export async function runProjectionPass(
     afterDocId = page[page.length - 1].docId;
     await pace(Date.now() - startedAt);
   }
-  reportPlacing(0.85);
+  reportPlacing(PLACING_DONE_AFTER.metadata);
 
   // Clustered in the SAME space the map is drawn in, so a label always names the
   // blob the eye sees. While a flat view existed this had to be done in 2D and
@@ -533,7 +540,8 @@ export async function runProjectionPass(
     const assignment = assignClusters(positions, pooled.rowCount, clusterCount, LAYOUT_COMPONENTS);
     const regions = labelClusters(assignment, labelSources, positions, LAYOUT_COMPONENTS);
     clusterings.push({ granularity, assignment, regions });
-    reportPlacing(0.85 + 0.15 * (clusterings.length / KNOWLEDGE_GRAPH_GRANULARITIES.length));
+    const regionsDone = clusterings.length / KNOWLEDGE_GRAPH_GRANULARITIES.length;
+    reportPlacing(PLACING_DONE_AFTER.metadata + (1 - PLACING_DONE_AFTER.metadata) * regionsDone);
     await pace(Date.now() - startedAt);
   }
 

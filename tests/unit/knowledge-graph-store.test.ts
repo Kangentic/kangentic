@@ -38,6 +38,21 @@
  *    points the map back at the old project nor ends the new project's chat, and
  *  - a read in flight when the graph closes asks for no rebuild when it lands.
  *
+ * The first build's progress figure is pinned the same way:
+ *  - a read or a refresh reply is merged against the store as it is when the
+ *    reply lands, so a push that arrived in between is never stepped back over,
+ *    for the open project and for a scoped one,
+ *  - within one pass the later stage wins at the same percent,
+ *  - a scoped project paints building from main's answer to its first build,
+ *    writes nothing once it has left the scope, and is asked to build from a
+ *    push only when this surface already asked,
+ *  - a progress push moves the open snapshot and a scoped island, and sets
+ *    nothing for an unscoped project or a figure that is not newer,
+ *  - a push may carry on a first build this surface asked for, and one that
+ *    moves a following window to another project may start it,
+ *  - a first build main cannot start leaves the plain read painted, and
+ *  - detach drops the progress subscription and the next attach takes it again.
+ *
  * window.electronAPI is stubbed globally and the store is imported fresh for
  * every test (vi.resetModules): its in-flight read, pending read, stream
  * subscription and active request id are module-scope, so a shared instance
@@ -70,6 +85,8 @@ const refreshGraphMock = vi.fn<(projectId?: string | null) => Promise<KnowledgeG
 const answerFromGraphMock = vi.fn<(...args: unknown[]) => Promise<KnowledgeGraphAnswerResult>>();
 const prewarmMock = vi.fn<(options: { chatId: string; projectId: string | null }) => void>();
 const endChatMock = vi.fn<(chatId: string) => void>();
+/** What `onGraphBuildProgress` hands back as its unsubscribe. */
+const unsubscribeProgressMock = vi.fn<() => void>();
 
 function installWindowStub(): void {
   (globalThis as Record<string, unknown>).window = {
@@ -82,7 +99,7 @@ function installWindowStub(): void {
         onGraphChanged: vi.fn(() => () => undefined),
         onGraphBuildProgress: vi.fn((callback: (projectId: string, progress: KnowledgeGraphBuildProgress) => void) => {
           progressListeners.push(callback);
-          return () => undefined;
+          return unsubscribeProgressMock;
         }),
         onAnswerStream: vi.fn((callback: (event: KnowledgeGraphAnswerStreamPush) => void) => {
           streamListeners.push(callback);
@@ -118,6 +135,7 @@ function makeSnapshot(projectId: string, overrides: Partial<KnowledgeGraphSnapsh
     },
     index: { corpora: [], summaries: { written: 0, finishedTasks: 0 }, storageBytes: 0 },
     building: false,
+    buildProgress: null,
     stale: false,
     semanticAvailable: true,
     ...overrides,
@@ -176,6 +194,36 @@ function progressAt(pass: number, percent: number): KnowledgeGraphBuildProgress 
   return { pass, stage: 'reading', percent };
 }
 
+function progressInStage(
+  pass: number,
+  stage: KnowledgeGraphBuildProgress['stage'],
+  percent: number,
+): KnowledgeGraphBuildProgress {
+  return { pass, stage, percent };
+}
+
+/** Hold the next `refreshGraph` open, so a first build stays in flight until
+ *  the test settles it. The release does nothing until the store has asked, so
+ *  a test flushes and checks the call before it releases. */
+function holdNextRefresh(): (progress: KnowledgeGraphBuildProgress | null) => void {
+  let release: (progress: KnowledgeGraphBuildProgress | null) => void = () => undefined;
+  refreshGraphMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+  return (progress) => release(progress);
+}
+
+/** Project A open and project B scoped but not open, seeded by hand: `setScope`
+ *  would start B's read itself. B has no island yet unless one is given. */
+function seedScopeOfAAndB(islandOfB: KnowledgeGraphSnapshot | null = null): void {
+  const openSnapshot = makeSnapshot('A');
+  store.setState({
+    projectId: 'A',
+    snapshot: openSnapshot,
+    scopeProjectIds: ['A', 'B'],
+    scopeSnapshots: islandOfB ? { A: openSnapshot, B: islandOfB } : { A: openSnapshot },
+  });
+  store.getState().attach();
+}
+
 let store: KnowledgeGraphStore;
 let newerProgress: StoreModule['newerProgress'];
 
@@ -188,6 +236,9 @@ beforeEach(async () => {
   graphSnapshotMock.mockImplementation((projectId) => new Promise((resolve, reject) => {
     pendingReads.push({ projectId: projectId ?? null, resolve, reject });
   }));
+  // `clearAllMocks` leaves a queued `...Once` answer in place, so one a failing
+  // test never consumed would be handed to the next test's first build.
+  refreshGraphMock.mockReset();
   refreshGraphMock.mockResolvedValue(undefined);
   installWindowStub();
   ({ useKnowledgeGraphStore: store, newerProgress } = await import('../../src/renderer/stores/knowledge-graph-store'));
@@ -255,6 +306,301 @@ describe('knowledge-graph-store first build', () => {
     expect(newerProgress(progressAt(1, 60), progressAt(2, 0))).toMatchObject({ pass: 2, percent: 0 });
     expect(newerProgress(progressAt(2, 5), progressAt(1, 90))).toMatchObject({ pass: 2, percent: 5 });
     expect(newerProgress(progressAt(1, 60), null)).toBeNull();
+  });
+});
+
+describe('knowledge-graph-store first build figure against the live store', () => {
+  // A reply is merged inside `set`, against what the store holds when it lands.
+  // Merged against what the store held when the read began, a push that arrived
+  // in between is overwritten by the reply's older figure and the bar steps back.
+  it('keeps a figure a push brought while the snapshot read was in flight', async () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A', { building: true, buildProgress: progressAt(1, 30) }) });
+    store.getState().attach();
+
+    const read = store.getState().loadSnapshot('A');
+    fireProgress('A', progressAt(1, 50));
+    resolveRead('A', makeSnapshot('A', { building: true, buildProgress: progressAt(1, 40) }));
+    await read;
+
+    expect(store.getState().snapshot?.buildProgress?.percent).toBe(50);
+  });
+
+  it('keeps a figure a push brought while the first build was being asked for', async () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A', { building: true, buildProgress: progressAt(1, 30) }) });
+    store.getState().attach();
+    const releaseRefresh = holdNextRefresh();
+
+    const read = store.getState().loadSnapshot('A');
+    resolveRead('A', makeSnapshot('A'));
+    await flush();
+    // The read found no map and is waiting on main's answer to the build.
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+
+    fireProgress('A', progressAt(1, 50));
+    releaseRefresh(progressAt(1, 40));
+    await read;
+
+    expect(store.getState().snapshot).toMatchObject({ building: true, buildProgress: { percent: 50 } });
+  });
+
+  it('keeps a figure a push brought while a scoped read was in flight', async () => {
+    seedScopeOfAAndB(makeSnapshot('B', { building: true, buildProgress: progressAt(1, 30) }));
+
+    const read = store.getState().loadScopeSnapshot('B');
+    fireProgress('B', progressAt(1, 50));
+    resolveRead('B', makeSnapshot('B', { building: true, buildProgress: progressAt(1, 40) }));
+    await read;
+
+    expect(store.getState().scopeSnapshots.B?.buildProgress?.percent).toBe(50);
+  });
+
+  it('keeps a figure a push brought while a scoped first build was being asked for', async () => {
+    seedScopeOfAAndB(makeSnapshot('B', { building: true, buildProgress: progressAt(1, 30) }));
+    const releaseRefresh = holdNextRefresh();
+
+    const read = store.getState().loadScopeSnapshot('B');
+    resolveRead('B', makeSnapshot('B'));
+    await flush();
+    expect(refreshGraphMock).toHaveBeenCalledWith('B');
+
+    fireProgress('B', progressAt(1, 50));
+    releaseRefresh(progressAt(1, 40));
+    await read;
+
+    expect(store.getState().scopeSnapshots.B).toMatchObject({ building: true, buildProgress: { percent: 50 } });
+  });
+});
+
+describe('knowledge-graph-store newerProgress stage tiebreak', () => {
+  it('takes the later stage at the same percent, whichever figure comes first', () => {
+    const reading = progressInStage(1, 'reading', 95);
+    const placing = progressInStage(1, 'placing', 95);
+    const naming = progressInStage(1, 'naming', 95);
+
+    // Reading ends at 95, where placing starts, so a late reading figure at 95
+    // must not pull the card back from placing.
+    expect(newerProgress(placing, reading)).toBe(placing);
+    expect(newerProgress(reading, placing)).toBe(placing);
+    expect(newerProgress(placing, naming)).toBe(naming);
+    expect(newerProgress(naming, placing)).toBe(naming);
+  });
+
+  it('returns the incoming figure when stage and percent both tie', () => {
+    const held = progressInStage(1, 'placing', 95);
+    const incoming = progressInStage(1, 'placing', 95);
+    expect(newerProgress(held, incoming)).toBe(incoming);
+  });
+});
+
+describe('knowledge-graph-store loadScopeSnapshot first build', () => {
+  it('paints a scoped project building from main\'s answer to its first build, and asks once', async () => {
+    const progress = progressAt(1, 0);
+    refreshGraphMock.mockResolvedValueOnce(progress);
+    seedScopeOfAAndB();
+
+    const read = store.getState().loadScopeSnapshot('B');
+    resolveRead('B', makeSnapshot('B'));
+    await read;
+
+    expect(store.getState().scopeSnapshots.B).toMatchObject({ building: true, buildProgress: progress });
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+    expect(refreshGraphMock).toHaveBeenCalledWith('B');
+  });
+
+  it('writes nothing for a project that left the scope while its first build was being asked for', async () => {
+    const releaseRefresh = holdNextRefresh();
+    seedScopeOfAAndB();
+    const scopeSnapshotsBefore = store.getState().scopeSnapshots;
+
+    const read = store.getState().loadScopeSnapshot('B');
+    resolveRead('B', makeSnapshot('B'));
+    await flush();
+    expect(refreshGraphMock).toHaveBeenCalledWith('B');
+
+    // Just the open project left in the scope is no scope, so B is out.
+    store.getState().setScope(['A']);
+    expect(store.getState().scopeProjectIds).toBeNull();
+    releaseRefresh(progressAt(1, 0));
+    await read;
+
+    expect('B' in store.getState().scopeSnapshots).toBe(false);
+    expect(store.getState().scopeSnapshots).toBe(scopeSnapshotsBefore);
+  });
+
+  it('starts no first build from a push for a scoped project this surface did not ask for', async () => {
+    seedScopeOfAAndB();
+    const noMap = makeSnapshot('B');
+
+    const read = store.getState().loadScopeSnapshot('B', { fromPush: true });
+    resolveRead('B', noMap);
+    await read;
+
+    expect(refreshGraphMock).not.toHaveBeenCalled();
+    expect(store.getState().scopeSnapshots.B).toBe(noMap);
+  });
+
+  it('lets a push carry on a scoped first build this surface asked for', async () => {
+    seedScopeOfAAndB();
+    const firstRead = store.getState().loadScopeSnapshot('B');
+    resolveRead('B', makeSnapshot('B'));
+    await firstRead;
+    // Main started no build (it answered nothing), so B is still a no-map island.
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+
+    const progress = progressAt(1, 0);
+    refreshGraphMock.mockResolvedValueOnce(progress);
+    const pushRead = store.getState().loadScopeSnapshot('B', { fromPush: true });
+    resolveRead('B', makeSnapshot('B'));
+    await pushRead;
+
+    expect(refreshGraphMock).toHaveBeenCalledTimes(2);
+    expect(store.getState().scopeSnapshots.B).toMatchObject({ building: true, buildProgress: progress });
+  });
+
+  it('keeps the plain read when main cannot start a scoped first build', async () => {
+    refreshGraphMock.mockRejectedValueOnce(new Error('main is busy'));
+    seedScopeOfAAndB();
+    const noMap = makeSnapshot('B');
+
+    const read = store.getState().loadScopeSnapshot('B');
+    resolveRead('B', noMap);
+    await read;
+
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().scopeSnapshots.B).toBe(noMap);
+  });
+});
+
+describe('knowledge-graph-store build progress pushes', () => {
+  it('moves a scoped project\'s island on a push for it, and leaves the open snapshot alone', () => {
+    seedScopeOfAAndB(makeSnapshot('B'));
+    const openSnapshot = store.getState().snapshot;
+    const openIsland = store.getState().scopeSnapshots.A;
+
+    fireProgress('B', progressAt(1, 20));
+
+    expect(store.getState().scopeSnapshots.B).toMatchObject({ building: true, buildProgress: { percent: 20 } });
+    expect(store.getState().snapshot).toBe(openSnapshot);
+    expect(store.getState().scopeSnapshots.A).toBe(openIsland);
+  });
+
+  it('moves both the open snapshot and its island on a push for the open project', () => {
+    seedScopeOfAAndB(makeSnapshot('B'));
+
+    fireProgress('A', progressAt(1, 20));
+
+    expect(store.getState().snapshot).toMatchObject({ building: true, buildProgress: { percent: 20 } });
+    expect(store.getState().scopeSnapshots.A).toMatchObject({ building: true, buildProgress: { percent: 20 } });
+  });
+
+  it('sets nothing for a push about a project that is neither open nor scoped', () => {
+    seedScopeOfAAndB(makeSnapshot('B'));
+    const stateBefore = store.getState();
+
+    fireProgress('C', progressAt(1, 20));
+
+    expect(store.getState()).toBe(stateBefore);
+  });
+
+  it('sets nothing for a figure that is not newer than the one already shown', () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A', { building: true, buildProgress: progressAt(1, 60) }) });
+    store.getState().attach();
+    const stateBefore = store.getState();
+
+    // A push that raced a newer one, landing after it.
+    fireProgress('A', progressAt(1, 40));
+
+    expect(store.getState()).toBe(stateBefore);
+  });
+
+  // Red-green: compare the figures by reference (`===`) instead of by value and
+  // the second push, a fresh object as every IPC push is, sets the store again.
+  it('sets nothing for the same figure pushed again as a fresh object', () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A') });
+    store.getState().attach();
+    fireProgress('A', progressAt(1, 40));
+    const stateAfterFirst = store.getState();
+
+    fireProgress('A', progressAt(1, 40));
+
+    expect(store.getState()).toBe(stateAfterFirst);
+  });
+});
+
+describe('knowledge-graph-store first build rebuild gate', () => {
+  it('lets a push carry on a first build this surface asked for', async () => {
+    const firstRead = store.getState().loadSnapshot('A');
+    resolveRead('A', makeSnapshot('A'));
+    await firstRead;
+    // Main answered nothing, so A is still a no-map snapshot, and asked for.
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+
+    const progress = progressAt(1, 0);
+    refreshGraphMock.mockResolvedValueOnce(progress);
+    const pushRead = store.getState().loadSnapshot('A', { fromPush: true });
+    resolveRead('A', makeSnapshot('A'));
+    await pushRead;
+
+    // Painted from main's answer, which only a first build does. A plain
+    // rebuild request for a stale map also calls `refreshGraph`, and discards
+    // the answer, so the call count alone cannot tell the two apart.
+    expect(refreshGraphMock).toHaveBeenCalledTimes(2);
+    expect(store.getState().snapshot).toMatchObject({ building: true, buildProgress: progress });
+  });
+
+  it('starts a first build when a push moves a following window to another project', async () => {
+    store.setState({ projectId: 'A', followsCurrentProject: true, snapshot: makeSnapshot('A') });
+    const progress = progressAt(1, 0);
+    refreshGraphMock.mockResolvedValueOnce(progress);
+
+    const read = store.getState().loadSnapshot(null, { fromPush: true });
+    // Main answers a following window with the project that is current now. The
+    // request itself may name the old one, so take whichever read is outstanding.
+    expect(pendingReads).toHaveLength(1);
+    pendingReads.splice(0, 1)[0].resolve(makeSnapshot('B'));
+    await read;
+
+    // The switch is the reader's act in the main window, so B may start its map
+    // although nothing here asked for it.
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+    expect(refreshGraphMock).toHaveBeenCalledWith('B');
+    expect(store.getState().projectId).toBe('B');
+    expect(store.getState().snapshot).toMatchObject({ projectId: 'B', building: true, buildProgress: progress });
+  });
+
+  it('keeps the plain read when main cannot start the first build', async () => {
+    refreshGraphMock.mockRejectedValueOnce(new Error('main is busy'));
+    const noMap = makeSnapshot('A');
+
+    const read = store.getState().loadSnapshot('A');
+    resolveRead('A', noMap);
+    await read;
+
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().snapshot).toBe(noMap);
+    expect(store.getState().loading).toBe(false);
+    expect(store.getState().loaded).toBe(true);
+  });
+});
+
+describe('knowledge-graph-store build progress subscription', () => {
+  it('unsubscribes once on detach, and subscribes again on the next attach', () => {
+    store.getState().attach();
+    store.getState().attach();
+    // Attaching again while attached subscribes nothing more.
+    expect(progressListeners).toHaveLength(1);
+    expect(unsubscribeProgressMock).not.toHaveBeenCalled();
+
+    store.getState().detach();
+    store.getState().detach();
+    expect(unsubscribeProgressMock).toHaveBeenCalledTimes(1);
+
+    store.getState().attach();
+    expect(progressListeners).toHaveLength(2);
+    expect(unsubscribeProgressMock).toHaveBeenCalledTimes(1);
+
+    store.getState().detach();
+    expect(unsubscribeProgressMock).toHaveBeenCalledTimes(2);
   });
 });
 

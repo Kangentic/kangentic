@@ -713,7 +713,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
         key={snapshot.projectId}
         mode={snapshot.semanticAvailable ? 'pending' : 'off'}
         building={snapshot.building}
-        buildProgress={snapshot.buildProgress ?? null}
+        buildProgress={snapshot.buildProgress}
         index={snapshot.index}
         projectsPicker={projectsPicker}
         onOpenSettings={onOpenSettings}
