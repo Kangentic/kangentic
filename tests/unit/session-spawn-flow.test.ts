@@ -373,7 +373,7 @@ describe('performSpawn - scrollback carry-over geometry', () => {
     vi.clearAllMocks();
   });
 
-  it('asks the host to carry the old ring over and drop the old session, in one spawn', async () => {
+  it('asks the host to carry the old ring over, and drops the old session once the spawn lands', async () => {
     const context = makeContext();
     seedRing(context, 'old-session-id', 'carried bytes');
     // An existing session for the task makes this a respawn; pty: null skips
@@ -388,11 +388,11 @@ describe('performSpawn - scrollback carry-over geometry', () => {
 
     await performSpawn(makeInput(), context);
 
-    // The host reads the old ring and its geometry before dropping it, which
-    // is what keeps the replay geometry gate accurate across a respawn.
+    // The host reads the old ring and its geometry, which is what keeps the
+    // replay geometry gate accurate across a respawn. Main drops the old
+    // session after the spawn, so a cancelled spawn would have left it intact.
     const params = lastSpawnParams(context);
     expect(params.carryoverFromSessionId).toBe('old-session-id');
-    expect(params.dropSessionIds).toEqual(['old-session-id']);
     expect(ringOf(context, makeInput().id!)).toBe('carried bytes');
     expect(ringOf(context, 'old-session-id')).toBe('');
   });
@@ -473,6 +473,7 @@ describe('performSpawn - one row per task', () => {
     const context = makeContext();
     seedRow(context, { id: 'sess-placeholder', status: 'suspended', startedAt: PLACEHOLDER_STARTED_AT });
     seedRow(context, { id: 'sess-suspended', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+    const posted = vi.spyOn(context.host, 'post');
 
     await performSpawn(makeInput({ id: 'sess-respawn' }), context);
 
@@ -484,9 +485,11 @@ describe('performSpawn - one row per task', () => {
       expect(context.sessionIdManager.removeSession).toHaveBeenCalledWith(staleId);
       expect(context.firstOutputTracker.removeSession).toHaveBeenCalledWith(staleId);
       expect(context.telemetry.removeSession).toHaveBeenCalledWith(staleId);
-      expect(lastSpawnParams(context).dropSessionIds).toContain(staleId);
+      expect(posted).toHaveBeenCalledWith({ type: 'removeSession', sessionId: staleId });
       expect(context.sessionFiles.removeSession).toHaveBeenCalledWith(staleId);
     }
+    // The new session's own id is never dropped, though a promotion reuses it.
+    expect(posted).not.toHaveBeenCalledWith({ type: 'removeSession', sessionId: 'sess-respawn' });
   });
 
   it.each([

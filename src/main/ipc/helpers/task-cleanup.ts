@@ -120,7 +120,10 @@ export async function cleanupTaskSession(
 
   // Safety net: kill any PTY session for this task that was spawned by a
   // concurrent move but not yet written to the task's session_id field.
-  context.sessionManager.removeByTaskId(task.id);
+  // Awaited: a spawn of the task still in flight is cancelled, and the PTY its
+  // host may already have started holds the worktree until it exits, which
+  // must come before the session directories and the worktree go.
+  await context.sessionManager.removeByTaskId(task.id);
 
   // Remove session DB records + directories from disk
   if (resolvedProjectId) {

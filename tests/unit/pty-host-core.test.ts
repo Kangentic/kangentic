@@ -70,7 +70,6 @@ function spawnParams(overrides: Partial<PtyHostSpawnParams> = {}): PtyHostSpawnP
     cols: 120,
     rows: 30,
     carryoverFromSessionId: null,
-    dropSessionIds: [],
     agentSessionIdKnown: false,
     ...overrides,
   };
@@ -224,13 +223,17 @@ describe('PtyHostCore', () => {
     expect(appended).toEqual([]);
   });
 
-  it('carries the previous ring over, then drops the old session', () => {
+  it('carries the previous ring over, and keeps the old session until main removes it', () => {
     const { core } = makeCore();
     core.handleCommand({ type: 'initSession', sessionId: 'old-session', scrollback: 'old bytes', cols: 120 });
 
-    core.spawn(spawnParams({ carryoverFromSessionId: 'old-session', dropSessionIds: ['old-session'] }));
+    core.spawn(spawnParams({ carryoverFromSessionId: 'old-session' }));
 
     expect(core.getRawScrollback('session-1')).toBe('old bytes');
+    // Kept: a spawn cancelled in the round trip must leave the old session as
+    // it was, so main drops it only once it knows the spawn stands.
+    expect(core.getRawScrollback('old-session')).toBe('old bytes');
+    core.handleCommand({ type: 'removeSession', sessionId: 'old-session' });
     expect(core.getRawScrollback('old-session')).toBe('');
   });
 
@@ -249,7 +252,7 @@ describe('PtyHostCore', () => {
     });
     core.handleCommand({ type: 'initSession', sessionId: 'old-session', scrollback: 'previous bytes', cols: 120 });
 
-    const result = core.spawn(spawnParams({ carryoverFromSessionId: 'old-session', dropSessionIds: ['old-session'] }));
+    const result = core.spawn(spawnParams({ carryoverFromSessionId: 'old-session' }));
 
     expect(result).toMatchObject({ ok: false, previousScrollback: 'previous bytes', error: { message: 'spawn failed', code: 'ENOENT' } });
   });
@@ -297,7 +300,6 @@ describe('PtyHostClient and RemotePty', () => {
       cols: 100,
       rows: 40,
       carryoverFromSessionId: null,
-      dropSessionIds: [],
       agentSessionIdKnown: false,
     });
     if (!outcome.ok) throw new Error('spawn failed');
@@ -403,7 +405,6 @@ describe('PtyHostClient and RemotePty', () => {
     cols: 100,
     rows: 40,
     carryoverFromSessionId: null,
-    dropSessionIds: [] as string[],
     agentSessionIdKnown: false,
   };
 

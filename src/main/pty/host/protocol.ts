@@ -40,11 +40,10 @@ export interface PtyHostSpawnParams {
   cols: number;
   rows: number;
   /** The session whose scrollback and geometry the new one inherits (a
-   *  resume or respawn), read before `dropSessionIds` are dropped. */
+   *  resume or respawn). Its state stays: main drops the task's earlier
+   *  sessions with `removeSession` once it knows the spawn was not cancelled
+   *  in the round trip, so a cancel leaves them as they were. */
   carryoverFromSessionId: string | null;
-  /** Earlier sessions of the same task, whose host state is dropped once the
-   *  carry-over is read. */
-  dropSessionIds: string[];
   /** The agent's own session id is already known (caller-owned id), so the
    *  host need not scan the output for one. */
   agentSessionIdKnown: boolean;

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
+import { isAbortError } from '../../shared/abort-utils';
 
 /**
  * Renderer key used when a caller does not identify itself (headless callers, and
@@ -28,9 +29,6 @@ import type { CliChildProcess, OffMainCliOptions } from '../utility-process/off-
 /** How long before the quit drain's deadline the pty host gives up waiting
  *  for exits and exits itself, so main never stops waiting first. */
 const HOST_EXIT_MARGIN_MS = 200;
-/** How long a suspend waits on the host for the scrollback its last-resort
- *  agent session id scan reads. The scan is a fallback; the suspend is not. */
-const SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS = 2_000;
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
@@ -55,6 +53,23 @@ import type {
 } from '../../shared/types';
 import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
 import type { CapturedSessionTree } from '../activity-engine/background-shell/process-tree';
+
+/** How long a suspend waits on the host for the scrollback its last-resort
+ *  agent session id scan reads. The scan is a fallback; the suspend is not. */
+const SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS = 2_000;
+/** How long a teardown waits for a spawn it cancelled to settle, matching
+ *  awaitExit's own safety timeout for a PTY that never reports its exit. */
+const SPAWN_SETTLE_TIMEOUT_MS = 10_000;
+
+/** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
+interface InFlightSpawn {
+  taskId: string;
+  cancelled: boolean;
+  /** The exit of the PTY a cancelled spawn's host had already started. */
+  abandonedPtyExit: Promise<void> | null;
+  /** Resolves once the spawn has finished, or been abandoned and its PTY exited. */
+  settled: Promise<void>;
+}
 
 export interface SessionManagerOptions {
   /**
@@ -310,7 +325,22 @@ export class SessionManager extends EventEmitter {
     this.restingGridDelayMs = options.restingGridDelayMs ?? RESTING_GRID_DELAY_MS;
 
     this.sessionQueue = new SessionQueue({
-      spawner: (input) => this.doSpawn(input).then(() => {}),
+      // A promotion holds a slot while it spawns, as a direct spawn does: its
+      // placeholder is 'queued', which countRunning does not count, so for the
+      // host round trip the limit would otherwise read one low and let a direct
+      // spawn past it.
+      spawner: async (input) => {
+        this.spawningCount++;
+        try {
+          await this.doSpawn(input);
+        } catch (error) {
+          // A teardown took the session over while it spawned: not a failure.
+          if (isAbortError(error)) return;
+          throw error;
+        } finally {
+          this.spawningCount--;
+        }
+      },
       getActiveCount: () => this.activeCount,
       maxConcurrent: 5,
     });
@@ -1156,6 +1186,47 @@ export class SessionManager extends EventEmitter {
     return this.spawningCount + this.registry.countRunning();
   }
 
+  /**
+   * Every spawn inside doSpawn(), by session id. A spawn waits on the shell
+   * and then on the pty host's round trip, and a teardown can land in either
+   * wait: a To Do move that kills and removes a queued task's placeholder while
+   * its promotion spawns, a suspend, a task delete. kill(), suspend() and the
+   * task-wide teardowns mark the matching spawn cancelled, and the spawn flow
+   * then stops what the host started instead of registering it
+   * (`abandonCancelledSpawn`).
+   */
+  private readonly spawnsInFlight = new Map<string, InFlightSpawn>();
+
+  /**
+   * Wait for spawns to settle, at most as long as awaitExit waits for a PTY.
+   * A teardown that removes a working directory waits here for a spawn it
+   * cancelled, whose PTY holds that directory until it exits.
+   */
+  private awaitSpawnsSettled(spawns: InFlightSpawn[]): Promise<void> {
+    if (spawns.length === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const safetyTimeout = setTimeout(() => {
+        console.warn('[SessionManager] a cancelled spawn did not settle in time; its PTY may still hold the working directory');
+        resolve();
+      }, SPAWN_SETTLE_TIMEOUT_MS);
+      void Promise.all(spawns.map((spawn) => spawn.settled)).then(() => {
+        clearTimeout(safetyTimeout);
+        resolve();
+      });
+    });
+  }
+
+  private cancelSpawnInFlight(sessionId: string): void {
+    const inFlight = this.spawnsInFlight.get(sessionId);
+    if (inFlight) inFlight.cancelled = true;
+  }
+
+  private cancelTaskSpawnsInFlight(taskId: string): void {
+    for (const inFlight of this.spawnsInFlight.values()) {
+      if (inFlight.taskId === taskId) inFlight.cancelled = true;
+    }
+  }
+
   get queuedCount(): number {
     return this.sessionQueue.length;
   }
@@ -1212,7 +1283,33 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private doSpawn(input: SpawnSessionInput): Promise<Session> {
+  private async doSpawn(input: SpawnSessionInput): Promise<Session> {
+    // The id is fixed here rather than in the spawn flow, so a teardown that
+    // lands before the host answers can find this spawn by it.
+    const id = input.id ?? uuidv4();
+    let markSettled: () => void = () => undefined;
+    const inFlight: InFlightSpawn = {
+      taskId: input.taskId,
+      cancelled: false,
+      abandonedPtyExit: null,
+      settled: new Promise<void>((resolve) => { markSettled = resolve; }),
+    };
+    this.spawnsInFlight.set(id, inFlight);
+    const settle = (): void => {
+      if (this.spawnsInFlight.get(id) === inFlight) this.spawnsInFlight.delete(id);
+      markSettled();
+    };
+    try {
+      return await this.performTrackedSpawn({ ...input, id });
+    } finally {
+      // An abandoned spawn settles once the PTY the host started has exited;
+      // until then it is still in flight for a teardown waiting on it.
+      if (inFlight.abandonedPtyExit) void inFlight.abandonedPtyExit.then(settle);
+      else settle();
+    }
+  }
+
+  private performTrackedSpawn(input: SpawnSessionInput): Promise<Session> {
     return performSpawn(input, {
       registry: this.registry,
       host: this.host,
@@ -1234,6 +1331,11 @@ export class SessionManager extends EventEmitter {
         return dims;
       },
       emit: (event, ...args) => this.emit(event, ...args),
+      isSpawnCancelled: (sessionId) => this.spawnsInFlight.get(sessionId)?.cancelled === true,
+      onSpawnAbandoned: (sessionId, ptyExited) => {
+        const inFlight = this.spawnsInFlight.get(sessionId);
+        if (inFlight) inFlight.abandonedPtyExit = ptyExited;
+      },
     });
   }
 
@@ -1637,15 +1739,26 @@ export class SessionManager extends EventEmitter {
    * queued row to be promoted into a task the caller had just torn down.
    */
   killByTaskId(taskId: string): void {
+    // A spawn for the task still in flight has no row yet; it is cancelled too.
+    this.cancelTaskSpawnsInFlight(taskId);
     for (const session of this.registry.listByTaskId(taskId)) this.kill(session.id);
   }
 
   /**
    * Fully remove every PTY session belonging to a task from all internal
    * maps. Like killByTaskId but also cleans up caches and session files.
+   *
+   * The removal itself is synchronous. The promise resolves once every spawn
+   * for the task that was still in flight has settled: one the host had
+   * started holds the working directory until its PTY exits, and it had no
+   * row for a kill-and-awaitExit to wait on. A caller about to remove that
+   * directory awaits it; one that is not can ignore it.
    */
-  removeByTaskId(taskId: string): void {
+  removeByTaskId(taskId: string): Promise<void> {
+    this.cancelTaskSpawnsInFlight(taskId);
+    const inFlightForTask = [...this.spawnsInFlight.values()].filter((inFlight) => inFlight.taskId === taskId);
     for (const session of this.registry.listByTaskId(taskId)) this.remove(session.id);
+    return this.awaitSpawnsSettled(inFlightForTask);
   }
 
   /**
@@ -1819,6 +1932,9 @@ export class SessionManager extends EventEmitter {
    * once, which would let `awaitExit` resolve before the shell dies.
    */
   kill(sessionId: string, options?: { immediate?: boolean }): void {
+    // A promotion of this session still waiting on the host must not register
+    // it afterwards (remove() comes through here too).
+    this.cancelSpawnInFlight(sessionId);
     const session = this.registry.get(sessionId);
     // Every kill() is a deliberate Kangentic-initiated teardown (user kill,
     // session reset, task delete, worktree cleanup, move-to-To-Do/Backlog,
@@ -1871,8 +1987,13 @@ export class SessionManager extends EventEmitter {
     }
     // Remove from queue if queued, and mark as exited.
     // Queued sessions have no PTY, so onExit never fires. Emit the exit
-    // event explicitly so the DB listener marks the record as exited.
-    if (this.sessionQueue.remove(sessionId) && session) {
+    // event explicitly so the DB listener marks the record as exited. A
+    // promotion still spawning has left the queue but has not started, so it
+    // is the same case; emitted here, before a remove() deletes the row the
+    // listener reads its project from, or the record would stay 'queued'.
+    const dequeued = this.sessionQueue.remove(sessionId);
+    const promotionInFlight = session?.status === 'queued' && this.spawnsInFlight.has(sessionId);
+    if ((dequeued || promotionInFlight) && session) {
       session.status = 'exited';
       session.exitCode = -1;
       // Queued sessions never spawn a PTY, so onExit (which reads
@@ -1889,8 +2010,18 @@ export class SessionManager extends EventEmitter {
    *
    * Uses the 'exit' event emitted by onExit (line 368) as the signal.
    * Safety timeout (10s) prevents hanging if onExit never fires (conpty bug).
+   *
+   * A spawn of this session still in flight (a promotion the caller's kill
+   * just cancelled) is waited for first: the PTY its host may have started
+   * holds the working directory until it exits, and has no row to wait on.
    */
   awaitExit(sessionId: string): Promise<void> {
+    const inFlight = this.spawnsInFlight.get(sessionId);
+    if (inFlight) return this.awaitSpawnsSettled([inFlight]).then(() => this.awaitRowExit(sessionId));
+    return this.awaitRowExit(sessionId);
+  }
+
+  private awaitRowExit(sessionId: string): Promise<void> {
     const session = this.registry.get(sessionId);
     // Session doesn't exist, already exited, or suspended - resolve immediately.
     // IMPORTANT: Do NOT check session.pty here. kill() sets pty=null before
@@ -1942,6 +2073,11 @@ export class SessionManager extends EventEmitter {
    * file paths are nulled before the PTY is destroyed.
    */
   async suspend(sessionId: string): Promise<void> {
+    // A promotion still waiting on the host would otherwise come back running.
+    // Its settle is waited for below, as the PTY's exit is: a Done move removes
+    // the worktree once the suspend resolves.
+    this.cancelSpawnInFlight(sessionId);
+    const inFlight = this.spawnsInFlight.get(sessionId);
     const session = this.registry.get(sessionId);
     if (!session) return;
 
@@ -2020,6 +2156,8 @@ export class SessionManager extends EventEmitter {
     // Remove from queue (queued sessions have no PTY yet) and promote
     this.sessionQueue.remove(sessionId);
     this.sessionQueue.notifySlotFreed();
+
+    if (inFlight) await this.awaitSpawnsSettled([inFlight]);
   }
 
   async getScrollback(sessionId: string): Promise<string> {

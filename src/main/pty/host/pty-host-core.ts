@@ -161,12 +161,12 @@ export class PtyHostCore {
   // --- Requests -------------------------------------------------------------
 
   spawn(params: PtyHostSpawnParams): PtyHostSpawnResult {
-    // The carry-over is read before the earlier sessions are dropped, so a
-    // resume shows unbroken history (see performSpawn).
+    // The carry-over is copied, so a resume shows unbroken history (see
+    // performSpawn). The source's own state stays until main removes it, which
+    // it does only once the spawn is known not to have been cancelled.
     const carrySource = params.carryoverFromSessionId;
     const previousScrollback = carrySource ? this.bufferManager.getRawScrollback(carrySource) : '';
     const previousGeometry = carrySource ? this.bufferManager.getCarryoverGeometry(carrySource) : null;
-    for (const droppedId of params.dropSessionIds) this.dropSession(droppedId);
 
     let pty: nodePty.IPty;
     try {

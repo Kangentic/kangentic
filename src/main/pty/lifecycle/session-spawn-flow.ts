@@ -11,7 +11,7 @@ import type { StatusFileReader } from '../readers/status-file-reader';
 import type { SessionHistoryReader } from '../readers/session-history-reader';
 import type { SessionQueue } from '../session-queue';
 import type { FirstOutputTracker } from './first-output-tracker';
-import type { PtyHostClient } from '../host/pty-host-client';
+import type { PtyHandle, PtyHostClient } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
 import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd } from '../spawn/pty-spawn';
@@ -62,6 +62,52 @@ export interface SpawnFlowContext {
    */
   takePendingResize: (sessionId: string) => { cols: number; rows: number } | undefined;
   emit: (event: string, ...args: unknown[]) => void;
+  /**
+   * True once a teardown aimed at this session or its task (a kill, remove or
+   * suspend, by id or task-wide) has landed while it spawns. SessionManager
+   * tracks every spawn it starts; a context built without this never cancels.
+   */
+  isSpawnCancelled?: (sessionId: string) => boolean;
+  /**
+   * A cancelled spawn whose PTY the host had already started: `ptyExited`
+   * settles once that PTY has exited. It holds the session's working directory
+   * until then, so a teardown that removes the directory waits on it.
+   */
+  onSpawnAbandoned?: (sessionId: string, ptyExited: Promise<void>) => void;
+}
+
+/**
+ * Give up a spawn a teardown overtook (`SpawnFlowContext.isSpawnCancelled`).
+ * The host round trip is a window in which a To Do move, a reset or a suspend
+ * can tear the session down; registering it after that would bring back a
+ * running session the teardown already ended, with a PTY nothing stops.
+ *
+ * Stops the PTY the host started, if it got that far, registers nothing, and
+ * fails as an abort: the board's spawn paths read that as "the task was taken
+ * over", not as a failed spawn, so it is not counted, reported or notified.
+ * kill() already marked a cancelled promotion's placeholder exited and emitted
+ * its intentional exit; the placeholder branch here is the fallback for a
+ * teardown that did not go through kill().
+ */
+function abandonCancelledSpawn(id: string, startedPty: PtyHandle | null, context: SpawnFlowContext): never {
+  if (startedPty) {
+    // Listened for before the kill, so the exit cannot land unheard.
+    const ptyExited = new Promise<void>((resolve) => {
+      context.host.onPtyExit(startedPty.ptyId, () => resolve());
+    });
+    context.onSpawnAbandoned?.(id, ptyExited);
+    safeKillPty(startedPty);
+    // The host made state for the session; with its row gone, nothing else
+    // will remove it. A row the teardown kept is removed with that row.
+    if (!context.registry.get(id)) context.host.post({ type: 'removeSession', sessionId: id });
+  }
+  const placeholder = context.registry.get(id);
+  if (placeholder && placeholder.status === 'queued') {
+    placeholder.status = 'exited';
+    placeholder.exitCode = -1;
+    context.emit('exit', id, -1, true);
+  }
+  throw new DOMException('The session was ended while it was being spawned', 'AbortError');
 }
 
 /**
@@ -142,6 +188,10 @@ export async function performSpawn(
   // For respawns without a caller ID, a fresh UUID forces the renderer to
   // remount (TerminalTab is keyed by session ID).
   const id = input.id ?? uuidv4();
+
+  // Torn down while the shell resolved: nothing of it or its siblings has been
+  // touched yet, and the host has started nothing.
+  if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
 
   for (const sibling of siblings) {
     // Kill any existing PTY for this task to prevent orphaned processes
@@ -240,9 +290,12 @@ export async function performSpawn(
     cols: spawnCols,
     rows: spawnRows,
     carryoverFromSessionId: carryoverSource?.id ?? null,
-    dropSessionIds: siblings.map((sibling) => sibling.id),
     agentSessionIdKnown: !!input.agentSessionId,
   });
+
+  // Torn down during the host round trip. Ahead of every outcome branch: a
+  // failed spawn's placeholder would bring back a row a remove() announced gone.
+  if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, spawnOutcome.ok ? spawnOutcome.pty : null, context);
 
   // The quit can begin during the host round trip. killAll found no row for
   // this session, so nothing else would stop the PTY the host just started,
@@ -256,10 +309,14 @@ export async function performSpawn(
   // Remove the old rows from the map and caches so the task's only registry
   // row is the new session, and stale usage/activity data doesn't persist.
   // After the spawn, so the task is never without a row while it is in flight.
+  // The host drops their rings here too, not with the spawn: a spawn cancelled
+  // in the round trip leaves its siblings, a suspended session's scrollback
+  // included, exactly as they were. The reused id is the new session's own.
   for (const sibling of siblings) {
     context.registry.delete(sibling.id);
     context.telemetry.removeSession(sibling.id);
     context.sessionFiles.removeSession(sibling.id);
+    if (sibling.id !== id) context.host.post({ type: 'removeSession', sessionId: sibling.id });
   }
 
   if (!spawnOutcome.ok) {
