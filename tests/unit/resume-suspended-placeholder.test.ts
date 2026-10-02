@@ -31,6 +31,9 @@ const sessionRepoGetInterruptedExited = vi.fn(() => [] as SessionRecord[]);
 const taskRepoList = vi.fn(() => [] as Task[]);
 const taskRepoUpdateMock = vi.fn();
 const swimlaneRepoList = vi.fn(() => [] as Swimlane[]);
+// The record a resume would continue. None by default, so a record that reaches
+// the preparation pass has no conversation to resume there.
+const latestForTaskByTypeAndIsolation = vi.fn((): SessionRecord | null => null);
 
 vi.mock('electron', () => ({ app: { isPackaged: false } }));
 vi.mock('node:fs', () => ({
@@ -54,7 +57,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     getInterruptedExited = () => sessionRepoGetInterruptedExited();
     markAllRunningAsOrphaned = vi.fn();
     markRunningAsOrphanedExcluding = vi.fn();
-    getLatestForTaskByTypeAndIsolation = vi.fn(() => null);
+    getLatestForTaskByTypeAndIsolation = () => latestForTaskByTypeAndIsolation();
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -83,7 +86,8 @@ vi.mock('../../src/main/transition-engine/session-startup/prepare-spawn', () => 
   prepareAgentSpawn: (...args: unknown[]) => prepareAgentSpawnMock(...args),
 }));
 vi.mock('../../src/main/transition-engine/spawn-intent', () => ({
-  isResumeEligible: vi.fn(() => false),
+  // The real rule's core: a record with an agent session id can be resumed.
+  isResumeEligible: (record: SessionRecord | null | undefined) => !!record?.agent_session_id,
 }));
 
 // column-strategy and session-isolation are deliberately left UNMOCKED: the
@@ -357,11 +361,34 @@ function expectNoPlaceholderBeforePreparation(sessionManager: ReturnType<typeof 
 describe('resumeSuspendedSessions: a resume whose preparation fails', () => {
   beforeEach(() => {
     swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    // There is a conversation to resume.
+    latestForTaskByTypeAndIsolation.mockReturnValue(makeRecord());
   });
 
   afterEach(() => {
     // `clearAllMocks` in the file's beforeEach keeps an implementation.
     prepareAgentSpawnMock.mockReset();
+    latestForTaskByTypeAndIsolation.mockReturnValue(null);
+  });
+
+  // Nothing to keep: a record with no agent session id yet is retired as before,
+  // so the auto-spawn pass can start the task fresh, which is all a resume of it
+  // could have done. A placeholder there would offer a Resume with nothing behind it.
+  //
+  // Red-green: keep every record resumable whatever `canResume` says and the
+  // retire and no-placeholder assertions go red.
+  it('retires a record with no conversation to keep, and registers no placeholder', async () => {
+    latestForTaskByTypeAndIsolation.mockReturnValue(null);
+    sessionRepoGetOrphaned.mockReturnValue([makeRecord({ status: 'orphaned', suspended_by: null, agent_session_id: null })]);
+    prepareAgentSpawnMock.mockResolvedValue({ ok: false, reason: 'cli-not-found' });
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'record-1');
+    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+    expect(markRecordSuspendedMock).not.toHaveBeenCalled();
   });
 
   it('keeps an orphaned record resumable when the agent cannot be found, and retires nothing', async () => {

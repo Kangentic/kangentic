@@ -570,7 +570,7 @@ On project open (`src/main/transition-engine/session-startup/`):
 7. **Resume or respawn** (isolation-scoped via `getLatestForTaskByTypeAndIsolation`):
    - Suspended/orphaned/interrupted-exited with `agent_session_id` -- use `--resume` (attempts to restore conversation; the id is first reconciled against the record's own `status.json`, see [Resume](#resume))
    - No session ID -- fresh `--session-id` with prompt from matching `spawn_agent` action
-   - A resume that cannot be prepared (an unknown agent, a missing CLI, a detection or trust write that throws) keeps its conversation: the record is CAS-upgraded to `suspended` (system) and registered as a placeholder, so the card shows Resume, step 8 skips the task, and the next launch tries the resume again. It is never retired, which used to let step 8 start a fresh agent over it.
+   - A resume that cannot be prepared (an unknown agent, a missing CLI, a detection or trust write that throws) keeps its conversation: the record is CAS-upgraded to `suspended` (system) and registered as a placeholder, so the card shows Resume, step 8 skips the task, and the next launch tries the resume again. Retiring it used to let step 8 start a fresh agent over it. A record with no conversation to resume (no agent session id yet) is still retired, so step 8 starts the task fresh, which is all a resume of it could have done.
 8. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session at all (skips user-paused tasks); fresh rows are tagged with the column's `isolated_swimlane_id`
 
 The same pipeline recovers what a [pty host](#pty-host) crash takes down, mid-run, scoped to

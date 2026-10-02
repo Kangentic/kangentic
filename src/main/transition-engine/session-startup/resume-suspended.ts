@@ -339,6 +339,19 @@ export async function resumeSuspendedSessions(
   const spawnInputs: Array<PreparedSpawn & { record: SessionRecord; task: Task }> = [];
 
   for (const { record, task } of toProcess) {
+    // Whether the record has a conversation to resume: read in the try below,
+    // and false until then, so a preparation that throws ahead of it retires.
+    let canResume = false;
+    // A resume that cannot be prepared keeps its conversation: the card shows
+    // Resume and the next launch tries again, rather than a fresh agent
+    // replacing it (`keepResumable`). A record with none (no agent session id
+    // yet) is retired as before, and the auto-spawn pass starts the task fresh,
+    // which is all a resume of it could have done.
+    const giveUpPreparation = (): void => {
+      if (canResume) keepResumable(record, task);
+      else retireRecord(sessionRepo, record.id);
+    };
+    const giveUpOutcome = (): string => (canResume ? 'keeping its session resumable' : 'retiring its record, which has no conversation to keep');
     try {
       if (!fs.existsSync(record.cwd)) {
         if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
@@ -357,7 +370,7 @@ export async function resumeSuspendedSessions(
       // structurally impossible. The adapter isn't known yet - we use the record's
       // session_type (captured at spawn, agent-specific) and its isolation.
       const typeMatch = sessionRepo.getLatestForTaskByTypeAndIsolation(record.task_id, record.session_type, record.isolated_swimlane_id);
-      const canResume = isResumeEligible(typeMatch);
+      canResume = isResumeEligible(typeMatch);
       // recordId enables prepareAgentSpawn's resume-time id reconcile against
       // the matched record's own status.json (a /clear fork right before the
       // shutdown suspend can leave agent_session_id one id behind); recordCwd
@@ -392,16 +405,10 @@ export async function resumeSuspendedSessions(
         boardProfiles,
       });
 
-      // A resume that cannot be prepared keeps its conversation: the card shows
-      // Resume and the next launch tries again, rather than a fresh agent
-      // replacing it (`keepResumable`).
       if (!prep.ok) {
-        if (prep.reason === 'unknown-agent') {
-          console.warn(`[SESSION_RECOVERY] Unknown agent for task ${task.id.slice(0, 8)}; keeping its session resumable`);
-        } else {
-          console.warn(`[SESSION_RECOVERY] CLI not found for task ${task.id.slice(0, 8)}; keeping its session resumable`);
-        }
-        keepResumable(record, task);
+        const cause = prep.reason === 'unknown-agent' ? 'Unknown agent' : 'CLI not found';
+        console.warn(`[SESSION_RECOVERY] ${cause} for task ${task.id.slice(0, 8)}; ${giveUpOutcome()}`);
+        giveUpPreparation();
         skipped++;
         continue;
       }
@@ -409,13 +416,13 @@ export async function resumeSuspendedSessions(
       spawnInputs.push({ record, task, ...prep.data });
     } catch (err) {
       console.error(
-        `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}); keeping it resumable:`,
+        `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}); ${giveUpOutcome()}:`,
         err,
       );
       try {
-        keepResumable(record, task);
+        giveUpPreparation();
       } catch (updateErr) {
-        console.error(`[SESSION_RECOVERY] Failed to keep session ${record.id} resumable:`, updateErr);
+        console.error(`[SESSION_RECOVERY] Failed to settle session ${record.id} after its preparation failed:`, updateErr);
       }
       skipped++;
     }

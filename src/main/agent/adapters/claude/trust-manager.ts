@@ -124,16 +124,25 @@ async function writeClaudeJson(filePath: string, data: Record<string, unknown>):
           throw new Error(`Could not write ${targetPath}`, { cause: error });
         }
         keepTemporary = true;
+        sweptTargets.delete(targetPath);
         throw new Error(`Could not write ${targetPath}; its complete contents are in ${temporaryPath}`, { cause: error });
       }
     }
     // Written whole: a copy an earlier failed write kept, from this run or an
     // earlier one (another pid), holds nothing the file does not.
-    await removeKeptCopies(targetPath);
+    if (!sweptTargets.has(targetPath)) {
+      await removeKeptCopies(targetPath);
+      sweptTargets.add(targetPath);
+    }
   } finally {
     if (!keepTemporary) await fsPromises.rm(temporaryPath, { force: true }).catch(() => undefined);
   }
 }
+
+/** Files whose kept copies this run has already swept, so the directory is read
+ *  on the first successful write of a run, and again only after a failed write
+ *  kept a copy, not on every spawn. */
+const sweptTargets = new Set<string>();
 
 /** Whether ~/.claude.json still reads as whole: a JSON object, or no file at
  *  all, which a failed write cannot have made from one that existed. */

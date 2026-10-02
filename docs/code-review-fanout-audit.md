@@ -813,7 +813,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, fourth pass | 658f +76565 -7547 | 5536KB, 99303 lines | 3 (0) | 655 | 1 | 24, sharded by area and process boundary, 7 over tests | about 150 of 23 pack-carrying | about 85 / 52 applied |
 | task 529, whole branch, fifth pass | 663f +79405 -7559 | 5702KB, 102379 lines | 3 (0) | 660 | 1 | 29, one shard file each, 9 over tests | about 195 of 28 pack-carrying | about 77 / 44 applied |
 | task 529, whole branch, sixth pass | 674f +83014 -7629 | 5896KB, 105950 lines | 2 (0) | 672 | 1 | 30, one shard file each, 9 over tests | about 190 of 29 pack-carrying | 40 / 34 applied, 2 refuted |
-| task 529, whole branch, seventh pass | 675f +84956 -7640 | 5895KB, 105732 lines | 4 (0) | 671 | 2 | 30, one shard file each, 9 over tests, 8 resumed to finish their shards | about 140 of 29 pack-carrying | 38 raised, 31 distinct / 21 applied, 2 refuted |
+| task 529, whole branch, seventh pass | 675f +84956 -7640 | 5895KB, 105732 lines | 4 (0) | 671 | 2 | 30, one shard file each, 9 over tests, 8 resumed to finish their shards | about 140 of 29 pack-carrying | 38 raised, 31 distinct / 29 applied, 2 refuted |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1112,5 +1112,11 @@ stopped when the chat ended, an unlink of deleted tasks' commits written as one 
 outside the write budget, and the `'\''` escape `quoteArg` writes, which cut the own-executable
 check's path short. The driver refuted two Mediums about the resume pass. A To Do bounce deletes the
 task's records, which the resume's locked re-check already catches, and its re-check and cancel log
-were pinned by tests the finder's grep missed. A third, that the crash path starts a fresh agent over
-a resume whose preparation threw, was skipped as a design question, since startup does the same.
+were pinned by tests the finder's grep missed. The pass first ended with eight findings skipped,
+three of them waiting on a decision: whether a resume that fails in its preparation may fall back to
+a fresh agent (at startup and after a host crash alike), whether a task moved mid-preparation into a
+manual column keeps its Resume, and when a kept `~/.claude.json` copy is worth keeping. The user
+decided all three, and a follow-up commit fixed all eight. A resume that cannot be prepared now keeps
+its conversation behind a paused placeholder when it has one, and the orbit test sets up its race in
+one task, red at 38 units without its fix. A review that ends on a skipped decision with the user at
+hand should ask and fix, not hand the decision back in the verdict.
