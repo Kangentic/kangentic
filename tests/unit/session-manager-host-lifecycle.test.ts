@@ -12,7 +12,8 @@
  *  - The 'pty-host-lost' payload lists only the sessions the host took down. A
  *    row main was already ending (status 'suspended', or `intentionalExit`) is
  *    left out so recovery does not resume it against that intent; a running row
- *    and an id whose row is already gone are kept.
+ *    and an id whose row is already gone are kept. A lost row stays in the
+ *    registry, exited, which is what recovery reads its task from.
  *  - A restart replays the focus and tap sets and announces itself; a first
  *    start does neither.
  *  - A `firstOutput` or `altScreen` host event for a session no longer in the
@@ -207,6 +208,22 @@ describe("SessionManager: 'pty-host-lost' lists only what the host took down", (
     expect(lostListener).toHaveBeenCalledTimes(1);
     // Spawn order, which is the order the client holds its handles in.
     expect(lostListener.mock.calls[0][0]).toEqual([running.id, removed.id]);
+  });
+
+  // Recovery maps the lost ids back to tasks through listSessions(), and the
+  // scoped auto-spawn restarts a task whose only row is exited. Both hold only
+  // while a lost row stays in the registry, exited, with its task id. Red-green:
+  // evict the row on a host-lost exit, or stamp it any status but 'exited', and
+  // this fails.
+  it('leaves a lost row in the registry, exited, with its task id, until the restart recovers it', async () => {
+    const { manager, transport } = makeManager();
+    const lost = await spawnSession(manager, 'task-lost', 105);
+
+    transport.hostDown();
+
+    const listed = manager.listSessions().find((session) => session.id === lost.id);
+    expect(listed?.status).toBe('exited');
+    expect(listed?.taskId).toBe('task-lost');
   });
 
   it('announces an empty list when the host held nothing', async () => {

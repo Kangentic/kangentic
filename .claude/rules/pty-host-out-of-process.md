@@ -39,7 +39,8 @@ at the Windows timer floor.
 - **A host crash ends its PTYs and recovery resumes them.** Each lost PTY is reported through its
   own exit listener with `PTY_HOST_LOST_EXIT_CODE` (-2), the host restarts (at once, then on the
   restart policy's backoff), main replays its focus and tap sets, and
-  `recoverSessionsAfterPtyHostLoss` resumes the agent sessions through the startup recovery path.
+  `recoverSessionsAfterPtyHostLoss` resumes the agent sessions through the startup recovery path,
+  then starts fresh the lost tasks that had no agent session id to resume, as startup does.
 - **macOS forks the host from inside the asar** (`ptyHostEntryPath`). node-pty finds its
   spawn-helper with a bare `replace('app.asar', 'app.asar.unpacked')` on its own path, which from
   the unpacked tree doubles and breaks every spawn. Windows and Linux fork from the unpacked tree,

@@ -576,6 +576,11 @@ The same pipeline recovers what a [pty host](#pty-host) crash takes down, mid-ru
 exactly those sessions: `recoverSessionsAfterPtyHostLoss` passes the lost session ids, so step 2's
 gather is filtered to them and step 1 orphans nothing. Without the scope, an agent that exited
 non-zero on its own earlier in the run, or one suspended this run, would be woken with them.
+Step 8 runs scoped too, to the lost sessions' tasks. A lost session with no `agent_session_id` yet
+has nothing to resume (the interrupted-exited gather requires one), so its task starts a fresh
+agent there, as it would at startup. Its lost row is still in the registry, exited, so in this pass
+a task counts as having a session only for a row that is not exited: a resumed session, or a paused
+placeholder that keeps its Resume.
 
 ## PTY host
 
