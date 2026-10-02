@@ -1082,3 +1082,14 @@ re-pointed a fly at the whole map. Two findings were refuted: a package-smoke en
 miss a path in another letter case (Node derives the entry URL from the same `realpathSync` of
 `argv[1]`), and a trust-manager coverage hole that the existing test file already covered. The
 fifth pass's skipped host-crash question above was resolved by the commit that followed it.
+
+The orbit fix was then checked in `/preview` on a mirrored real index (1,008 nodes), with the
+scene hook's own `frameNodes` and `setOrbitAnchor` called from its fiber so the race was exact:
+fly to one subset, anchor mid-flight, fly to another before the camera rests. With the pre-fix
+hook restored the pivot came to rest 3.63 world units off the second fly's target, on the default
+view's centre; with the fix it stayed on it. The first reading said both versions passed, because
+camera-controls reports rest some frames before it emits `sleep`, which is when the stale listener
+fires; a measurement of this listener has to wait for `sleep` itself. The two Low findings left for
+a decision were then fixed: a PTY whose program is the app's own executable is refused like a
+one-shot run, and the startup auto-spawn skips a task whose worktree is no longer the one it was
+prepared in.

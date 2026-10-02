@@ -241,6 +241,12 @@ export async function autoSpawnTasks(
         !current
         || current.swimlane_id !== input.task.swimlane_id
         || current.session_id !== input.task.session_id
+        // A move to To Do and back inside the preparation leaves the column as
+        // it was, but its cleanup removed the worktree the agent was prepared
+        // in, and the move back may still be making it again (its own spawn
+        // follows when it has).
+        || (current.worktree_path || projectPath) !== input.cwd
+        || !fs.existsSync(input.cwd)
         || hasSession(input.task.id)
       ) {
         return null;

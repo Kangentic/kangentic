@@ -5,14 +5,16 @@
  * The host owns every PTY and the per-chunk work on its output, so these pin
  * what main relies on it for: output reaches main only for a focused or tapped
  * session, the utility process merges its "output happened" events instead of
- * sending one per chunk, a spawn failure hands back the carry-over, and a
+ * sending one per chunk, a spawn failure hands back the carry-over, a PTY whose
+ * program is the app's own executable is refused as a failed spawn, and a
  * RemotePty behaves like a dead node-pty once the host reports the exit.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
+import { setMainExecutable } from '../../src/main/pty/host/host-exec';
 import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
-import type { PtyHostCommand, PtyHostEvent, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
+import type { PtyHostCommand, PtyHostEvent, PtyHostRawSpawnParams, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
 import { HostUnavailableError } from '../../src/main/utility-process/off-main-pty';
 import type { AgentParser } from '../../src/shared/types';
 
@@ -75,18 +77,33 @@ function spawnParams(overrides: Partial<PtyHostSpawnParams> = {}): PtyHostSpawnP
   };
 }
 
+function rawSpawnParams(overrides: Partial<PtyHostRawSpawnParams> = {}): PtyHostRawSpawnParams {
+  return {
+    ptyId: 9,
+    file: 'claude',
+    args: ['--safe-mode'],
+    cwd: '/mock/scratch',
+    env: {},
+    cols: 120,
+    rows: 40,
+    name: 'xterm-256color',
+    ...overrides,
+  };
+}
+
 function makeCore(options: { coalesceMs?: number; agent?: AgentParser; fake?: FakePty } = {}) {
   const events: PtyHostEvent[] = [];
   const fake = options.fake ?? createFakePty();
   const appended: Array<{ sessionId: string; chunk: string }> = [];
+  const spawnPty = vi.fn((_file: string, _args: string[], _options: object) => fake.pty);
   const core = new PtyHostCore({
     emit: (event) => events.push(event),
     resolveAgent: () => options.agent,
     transcriptSinkFor: () => ({ appendChunk: (sessionId, chunk) => appended.push({ sessionId, chunk }) }),
     coalesceMs: options.coalesceMs ?? 0,
-    spawnPty: (() => fake.pty) as unknown as typeof nodePty.spawn,
+    spawnPty: spawnPty as unknown as typeof nodePty.spawn,
   });
-  return { core, events, fake, appended };
+  return { core, events, fake, appended, spawnPty };
 }
 
 /** Let the 16ms flush run. */
@@ -255,6 +272,65 @@ describe('PtyHostCore', () => {
     const result = core.spawn(spawnParams({ carryoverFromSessionId: 'old-session' }));
 
     expect(result).toMatchObject({ ok: false, previousScrollback: 'previous bytes', error: { message: 'spawn failed', code: 'ENOENT' } });
+  });
+
+  describe('a PTY whose program is this app\'s own executable', () => {
+    // With the RunAsNode fuse off, a packaged Kangentic.exe started as a child
+    // boots a second app, so the host refuses it for a PTY as it does for a
+    // one-shot run. A user's shell setting (a session's program) or an agent
+    // CLI path override (a probe's) is the way a request gets here. The refusal
+    // is a failed spawn, never a throw out of the core, and node-pty is never
+    // asked.
+    const REFUSAL = 'The pty host does not launch its own executable';
+    const MAIN_BINARY = '/opt/Kangentic/kangentic';
+    afterEach(() => setMainExecutable(undefined));
+
+    it('refuses a session spawn of this process\'s executable as a failed spawn, with the carry-over handed back, and never calls node-pty', () => {
+      const { core, spawnPty } = makeCore();
+      core.handleCommand({ type: 'initSession', sessionId: 'old-session', scrollback: 'previous bytes', cols: 120 });
+
+      const result = core.spawn(spawnParams({ file: process.execPath, carryoverFromSessionId: 'old-session' }));
+
+      expect(result).toMatchObject({ ok: false, error: { message: REFUSAL }, previousScrollback: 'previous bytes' });
+      expect(spawnPty).not.toHaveBeenCalled();
+      expect(core.livePtyCount).toBe(0);
+    });
+
+    it('refuses a raw spawn of this process\'s executable as a failed spawn and never calls node-pty', () => {
+      const { core, spawnPty } = makeCore();
+
+      const result = core.spawnRaw(rawSpawnParams({ file: process.execPath }));
+
+      expect(result).toMatchObject({ ok: false, error: { message: REFUSAL } });
+      expect(spawnPty).not.toHaveBeenCalled();
+      expect(core.livePtyCount).toBe(0);
+    });
+
+    it('refuses main\'s executable, as main reported it in the init, for a raw spawn and a session spawn', () => {
+      const { core, spawnPty } = makeCore();
+
+      // Control: before main reports its executable nothing marks this path as
+      // the app's, so the same spawn goes through. The refusals below are the
+      // report's doing.
+      expect(core.spawnRaw(rawSpawnParams({ ptyId: 1, file: MAIN_BINARY }))).toMatchObject({ ok: true });
+      expect(spawnPty).toHaveBeenCalledTimes(1);
+
+      setMainExecutable(MAIN_BINARY);
+      expect(core.spawnRaw(rawSpawnParams({ ptyId: 2, file: MAIN_BINARY }))).toMatchObject({ ok: false, error: { message: REFUSAL } });
+      expect(core.spawn(spawnParams({ ptyId: 3, sessionId: 'session-main-binary', file: MAIN_BINARY }))).toMatchObject({ ok: false, error: { message: REFUSAL } });
+      expect(spawnPty).toHaveBeenCalledTimes(1);
+    });
+
+    it('still spawns an unrelated program, for a session and for a raw PTY, with this process\'s and main\'s executables known', () => {
+      setMainExecutable(MAIN_BINARY);
+      const { core, spawnPty } = makeCore();
+
+      expect(core.spawn(spawnParams({ file: 'bash' }))).toEqual({ ok: true, pid: 4242 });
+      expect(core.spawnRaw(rawSpawnParams({ file: 'claude' }))).toEqual({ ok: true, pid: 4242 });
+
+      expect(spawnPty).toHaveBeenCalledTimes(2);
+      expect(spawnPty.mock.calls.map((call) => call[0])).toEqual(['bash', 'claude']);
+    });
   });
 
   it('drops a second kill of the same PTY (a double ConPTY kill corrupts its heap)', () => {

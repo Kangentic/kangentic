@@ -585,7 +585,9 @@ describe('autoSpawnTasks: resolveIsolatedSwimlaneId(lane) passed into spawn', ()
         adapter: { name: 'claude', sessionType: 'claude_agent', getExitSequence: () => ['\x03'] } as never,
         agent: 'claude',
         command: 'claude --session-id new-agent-uuid',
-        cwd: '/project/cwd',
+        // The cwd the pass prepared in: the task has no worktree, so the
+        // project path. The locked re-check compares the two.
+        cwd: '/project',
         sessionRecordId: 'auto-record-main',
         agentSessionId: 'new-agent-uuid',
         permissionMode: 'default',
@@ -624,7 +626,7 @@ describe('autoSpawnTasks: resolveIsolatedSwimlaneId(lane) passed into spawn', ()
         adapter: { name: 'claude', sessionType: 'claude_agent', getExitSequence: () => ['\x03'] } as never,
         agent: 'claude',
         command: 'claude --session-id new-iso-uuid',
-        cwd: '/project/cwd',
+        cwd: '/project',
         sessionRecordId: 'auto-record-iso',
         agentSessionId: 'new-iso-uuid',
         permissionMode: 'default',

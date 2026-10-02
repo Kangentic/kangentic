@@ -20,7 +20,8 @@
  * keeps the rule from collapsing into "any row at all counts".
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockPrepareAgentSpawn = vi.fn(async () => ({ ok: false as const, reason: 'cli-not-found' as const }));
 const mockTaskList = vi.fn();
@@ -242,14 +243,18 @@ describe('autoSpawnTasks: lostScope scopes the pass to the lost tasks', () => {
   });
 });
 
-/** What a successful `prepareAgentSpawn` hands the spawn pass. */
-function preparedSpawn(taskId: string) {
+/**
+ * What a successful `prepareAgentSpawn` hands the spawn pass. Its `cwd` is the
+ * one the real preparation was given: the task's worktree, or the project path
+ * for a task with none.
+ */
+function preparedSpawn(taskId: string, cwd = '/mock/project') {
   return {
     ok: true as const,
     data: {
       sessionRecordId: `session-new-${taskId}`,
       command: 'claude',
-      cwd: '/mock/project',
+      cwd,
       extraEnv: null,
       statusOutputPath: '/mock/status.json',
       eventsOutputPath: '/mock/events.jsonl',
@@ -269,7 +274,8 @@ function preparedSpawn(taskId: string) {
  * the task under its lifecycle lock and leaves one a user action took over.
  *
  * Red-green: drop the re-check in the spawn pass and every negative test below
- * fails (a user's session, a failed spawn, a move, a cleared session_id).
+ * fails (a user's session, a failed spawn, a move, a cleared session_id, a
+ * cleared or gained worktree, a missing cwd).
  */
 describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () => {
   beforeEach(() => {
@@ -382,6 +388,89 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
       // The write spies are wired: the spawn records the new session on the task.
       expect(mockTaskUpdate).toHaveBeenCalledWith({ id: 'task-lost', session_id: 'session-new-task-lost', agent: 'claude' });
       expect(mockSessionInsert).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a move to To Do and back inside the preparation', () => {
+    // The round trip leaves the task's lane and `session_id` as they were and
+    // starts no live session, so those checks all still pass. What it changes is
+    // the worktree: To Do's cleanup removes it, and the move back makes it again
+    // (its own spawn follows when it has). The agent was prepared in the old one.
+    const WORKTREE = '/mock/project/.kangentic/worktrees/task-lost';
+    const worktreeTask = () => ({ ...task('task-lost'), worktree_path: WORKTREE });
+    const lostRegistry = (): RegistryRow[] => [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }];
+
+    // Restore the shared fs mock: a test below flips it to "missing".
+    afterEach(() => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+    });
+
+    // Red-green: drop `(current.worktree_path || projectPath) !== input.cwd` from
+    // the re-check in auto-spawn.ts and the lane, session_id, session and
+    // existsSync checks all pass, so the agent starts in the removed worktree.
+    it('does not spawn a task whose worktree_path was cleared while the agent was being prepared in it, and writes nothing', async () => {
+      mockTaskList.mockReturnValue([worktreeTask()]);
+      mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+        // To Do's cleanup: lane and session_id unchanged, worktree_path null.
+        mockTaskGetById.mockImplementation((id) => (id === 'task-lost' ? { ...worktreeTask(), worktree_path: null } : undefined));
+        return preparedSpawn('task-lost', WORKTREE) as never;
+      });
+
+      const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+      // The fixture is faithful: the preparation was handed the worktree.
+      expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
+      expect(mockPrepareAgentSpawn).toHaveBeenCalledWith(expect.objectContaining({ cwd: WORKTREE }));
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(mockTaskUpdate).not.toHaveBeenCalled();
+      expect(mockSessionInsert).not.toHaveBeenCalled();
+    });
+
+    // Red-green: same revert as above. The task had none and the move back gave it
+    // one, so the project path the agent was prepared in is no longer its cwd.
+    it('does not spawn a task into the project path when the move back gave it a worktree meanwhile, and writes nothing', async () => {
+      mockTaskList.mockReturnValue([task('task-lost')]);
+      mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+        mockTaskGetById.mockImplementation((id) => (id === 'task-lost' ? worktreeTask() : undefined));
+        return preparedSpawn('task-lost') as never;
+      });
+
+      const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+      expect(mockPrepareAgentSpawn).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/mock/project' }));
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(mockTaskUpdate).not.toHaveBeenCalled();
+      expect(mockSessionInsert).not.toHaveBeenCalled();
+    });
+
+    // Red-green: drop `!fs.existsSync(input.cwd)` from the re-check and the spawn
+    // goes ahead into a directory that is gone. The worktree_path is unchanged
+    // here, so only the existence check can refuse it.
+    it('does not spawn a task whose worktree directory is gone by the time the spawn takes its lock, and writes nothing', async () => {
+      mockTaskList.mockReturnValue([worktreeTask()]);
+      mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+        // The discovery pass already found the directory; it goes during the preparation.
+        vi.mocked(fs.existsSync).mockReturnValue(false);
+        return preparedSpawn('task-lost', WORKTREE) as never;
+      });
+
+      const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+      expect(fs.existsSync).toHaveBeenLastCalledWith(WORKTREE);
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(mockTaskUpdate).not.toHaveBeenCalled();
+      expect(mockSessionInsert).not.toHaveBeenCalled();
+    });
+
+    it('still spawns a task in its worktree when the worktree_path is unchanged and the directory is there, so the check is not just refusing every worktree task', async () => {
+      mockTaskList.mockReturnValue([worktreeTask()]);
+      mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-lost', WORKTREE) as never);
+
+      const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ cwd: WORKTREE }));
+      expect(mockSessionInsert).toHaveBeenCalledWith(expect.objectContaining({ cwd: WORKTREE }));
     });
   });
 });

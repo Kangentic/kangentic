@@ -97,6 +97,11 @@ describe('prRefreshScheduler', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    // clearAllMocks keeps an installed implementation, so a test's own
+    // `mockImplementation` would run in every test after it. Reset puts back the
+    // factory's default (and drops any unconsumed `...Once`).
+    mockLinkPR.mockReset();
+    mockSweep.mockReset();
     checkStamps.clear();
     eligibleIds = ['a', 'b', 'c'];
   });

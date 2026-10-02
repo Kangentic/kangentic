@@ -11,7 +11,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { settleFrames, waitForViteReady } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -84,22 +84,6 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   return { browser, page };
-}
-
-/**
- * Resolves once two animation frames have run: one for React to commit a state
- * change that has already landed, one more for anything that commit scheduled.
- */
-async function settleFrames(page: Page, frames = 2): Promise<void> {
-  await page.evaluate((frameCount) => new Promise<void>((resolve) => {
-    let remaining = frameCount;
-    const tick = () => {
-      remaining -= 1;
-      if (remaining <= 0) resolve();
-      else requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }), frames);
 }
 
 /** Open the first task card's detail window. A single click opens it; the

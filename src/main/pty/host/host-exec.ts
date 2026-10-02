@@ -65,7 +65,13 @@ export function launchesOwnBinary(
   ownExecutable: string | readonly string[] = ownExecutables(),
 ): boolean {
   const candidates = typeof ownExecutable === 'string' ? [ownExecutable] : ownExecutable;
-  if (request.kind === 'execFile') return candidates.some((candidate) => isSamePath(request.file, candidate));
+  if (request.kind === 'execFile') {
+    // A path is compared as a path. A bare name is found on PATH, so it is
+    // compared as a name, the way the shell branch below compares one.
+    const bareName = path.basename(request.file) === request.file;
+    return candidates.some((candidate) => isSamePath(request.file, candidate)
+      || (bareName && commandName(request.file) === commandName(candidate)));
+  }
   // Only the executable the command line starts is compared, by path or by
   // name. A probe's own path can contain this app's name without launching
   // it (`/opt/kangentic/bin/codex --version` on a build whose binary is

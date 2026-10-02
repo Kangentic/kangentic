@@ -26,7 +26,7 @@ import { SessionIdScanner } from '../lifecycle/session-id-manager';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { createProcessTreeProbe, type ProcessTreeProbe } from '../../activity-engine/background-shell/process-tree';
 import { traceTerminal } from '../terminal-trace';
-import { runHostExec } from './host-exec';
+import { launchesOwnBinary, runHostExec } from './host-exec';
 import { HostCliProcesses } from './host-cli-processes';
 import {
   toPtyHostError,
@@ -43,6 +43,18 @@ import {
 
 /** Rolling window the session-id scan keeps: twice ConPTY's 4 KB flush. */
 const SESSION_ID_SCAN_WINDOW = 8192;
+
+/**
+ * Refuse a PTY whose program is this app's own executable, or main's, as the
+ * one-shot runs refuse it (`host-exec.ts`): with the RunAsNode fuse off it
+ * boots a second app. A user's shell setting (a session's program) or an agent
+ * CLI path override (a probe's) is the way one gets here.
+ */
+function refuseOwnExecutable(file: string): void {
+  if (launchesOwnBinary({ kind: 'execFile', file, args: [], options: {} })) {
+    throw new Error('The pty host does not launch its own executable');
+  }
+}
 
 export interface PtyHostCoreDeps {
   emit(event: PtyHostEvent): void;
@@ -170,6 +182,7 @@ export class PtyHostCore {
 
     let pty: nodePty.IPty;
     try {
+      refuseOwnExecutable(params.file);
       pty = this.spawnPty(params.file, params.args, {
         name: 'xterm-256color',
         cols: params.cols,
@@ -432,6 +445,7 @@ export class PtyHostCore {
   spawnRaw(params: PtyHostRawSpawnParams): PtyHostRawSpawnResult {
     let rawPty: nodePty.IPty;
     try {
+      refuseOwnExecutable(params.file);
       rawPty = this.spawnPty(params.file, params.args, {
         name: params.name,
         cols: params.cols,

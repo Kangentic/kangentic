@@ -114,6 +114,24 @@ function makeSnapshot(projectId: string, overrides: Partial<KnowledgeGraphSnapsh
   };
 }
 
+/** Hold the next answer open, so the turn stays in flight until the test
+ *  settles it. */
+function holdNextAnswer(): (result: KnowledgeGraphAnswerResult) => void {
+  let release: (result: KnowledgeGraphAnswerResult) => void = () => undefined;
+  answerFromGraphMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+  return (result) => release(result);
+}
+
+const settledAnswer: KnowledgeGraphAnswerResult = {
+  ok: true,
+  agentName: 'Test Agent',
+  answer: 'an answer',
+  rows: [],
+  related: [],
+  handedCount: 0,
+  promptTokens: 1,
+};
+
 /** Take the oldest unanswered read for `projectId` off the bridge. Throws when
  *  there is none, so a read the store never made fails here by name instead of
  *  hanging the test on a promise nothing will settle. */
@@ -297,21 +315,12 @@ describe('knowledge-graph-store answer stream', () => {
     store.getState().attach();
     expect(streamListeners).toHaveLength(1);
 
-    answerFromGraphMock.mockResolvedValueOnce({
-      ok: true,
-      agentName: 'Test Agent',
-      answer: 'first answer',
-      rows: [],
-      related: [],
-      handedCount: 0,
-      promptTokens: 1,
-    });
+    answerFromGraphMock.mockResolvedValueOnce({ ...settledAnswer, answer: 'first answer' });
     await store.getState().askQuestion('first question');
     const firstTurn = store.getState().thread[0];
     expect(firstTurn.status).toBe('done');
 
-    let releaseSecond: (result: KnowledgeGraphAnswerResult) => void = () => undefined;
-    answerFromGraphMock.mockImplementationOnce(() => new Promise((resolve) => { releaseSecond = resolve; }));
+    const releaseSecond = holdNextAnswer();
     const secondAsk = store.getState().askQuestion('second question');
     const secondTurn = store.getState().thread[1];
 
@@ -327,15 +336,7 @@ describe('knowledge-graph-store answer stream', () => {
     expect(store.getState().thread[1].text).toBe('streaming ');
     expect(store.getState().thread[1].status).toBe('answering');
 
-    releaseSecond({
-      ok: true,
-      agentName: 'Test Agent',
-      answer: 'second answer',
-      rows: [],
-      related: [],
-      handedCount: 0,
-      promptTokens: 1,
-    });
+    releaseSecond({ ...settledAnswer, answer: 'second answer' });
     await secondAsk;
     expect(store.getState().thread[1].text).toBe('second answer');
 
@@ -454,24 +455,6 @@ describe('knowledge-graph-store setScope', () => {
 });
 
 describe('knowledge-graph-store close and open around a turn in flight', () => {
-  /** Hold the next answer open, so the turn stays in flight until the test
-   *  settles it. */
-  function holdNextAnswer(): (result: KnowledgeGraphAnswerResult) => void {
-    let release: (result: KnowledgeGraphAnswerResult) => void = () => undefined;
-    answerFromGraphMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
-    return (result) => release(result);
-  }
-
-  const settledAnswer: KnowledgeGraphAnswerResult = {
-    ok: true,
-    agentName: 'Test Agent',
-    answer: 'an answer',
-    rows: [],
-    related: [],
-    handedCount: 0,
-    promptTokens: 1,
-  };
-
   /** The chat id the store handed the answering agent for the ask at `callIndex`. */
   function chatIdOfAsk(callIndex: number): string {
     const options = answerFromGraphMock.mock.calls[callIndex][4] as { chatId: string };
@@ -565,24 +548,6 @@ describe('knowledge-graph-store close and open around a turn in flight', () => {
 });
 
 describe('knowledge-graph-store loadSnapshot and the chat it lands on', () => {
-  /** Hold the next answer open, so the turn stays in flight until the test
-   *  settles it. */
-  function holdNextAnswer(): (result: KnowledgeGraphAnswerResult) => void {
-    let release: (result: KnowledgeGraphAnswerResult) => void = () => undefined;
-    answerFromGraphMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
-    return (result) => release(result);
-  }
-
-  const settledAnswer: KnowledgeGraphAnswerResult = {
-    ok: true,
-    agentName: 'Test Agent',
-    answer: 'an answer',
-    rows: [],
-    related: [],
-    handedCount: 0,
-    promptTokens: 1,
-  };
-
   // Pins the `previousProjectId !== null` term in `projectChanged`. Without it
   // the first snapshot of a session counts as a project switch (null to the
   // resolved id), and a question asked before it lands is ended with the chat:

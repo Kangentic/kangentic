@@ -62,7 +62,8 @@ at the Windows timer floor.
   and fall back to a local spawn where no host is registered or reachable. The host never forks and
   refuses to launch its own executable or main's (the init message carries `mainExecutable`, since
   on macOS the host runs from the Helper bundle), either of which, with the RunAsNode fuse off,
-  would boot a second app.
+  would boot a second app. A session's or a probe's PTY whose program is one of them is refused
+  the same way.
   The background-shell watcher's process table also comes from the host (`listProcesses`), which
   keeps the probe's PowerShell child.
 - **Agent CLI runs start in the host too.** `spawnCli` (`src/main/agent/shared/cli-print.ts`)

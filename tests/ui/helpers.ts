@@ -299,6 +299,26 @@ export async function settleDndKitKeyboardSensor(page: Page): Promise<void> {
 }
 
 /**
+ * Resolves once `frames` animation frames have run. A state change that has
+ * already landed in a store needs one frame for React to commit it and another
+ * for anything that commit scheduled (a canvas repaint, a follow-up render), so
+ * two is the floor for "it has settled". For asserting that something is
+ * ABSENT after a result lands, where an assertion read right after the call
+ * would pass before the thing it guards against has had a chance to appear.
+ */
+export async function settleFrames(page: Page, frames = 2): Promise<void> {
+  await page.evaluate((frameCount) => new Promise<void>((resolve) => {
+    let remaining = frameCount;
+    const tick = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), frames);
+}
+
+/**
  * Launch a headless Chromium page with the electronAPI mock injected.
  * The Vite dev server must be running (started by playwright webServer config).
  */

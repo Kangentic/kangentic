@@ -17,7 +17,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { settleFrames, waitForViteReady } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -245,23 +245,6 @@ async function visibleNodeTitles(page: Page): Promise<string[]> {
       .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0)
       .map((element) => element.textContent ?? ''),
   );
-}
-
-/**
- * Resolves once `frames` animation frames have run. A state change that has
- * already landed in a store needs one frame for React to commit it and another
- * for the canvas to repaint from it, so two is the floor for "it has settled".
- */
-async function settleFrames(page: Page, frames = 2): Promise<void> {
-  await page.evaluate((frameCount) => new Promise<void>((resolve) => {
-    let remaining = frameCount;
-    const tick = () => {
-      remaining -= 1;
-      if (remaining <= 0) resolve();
-      else requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }), frames);
 }
 
 /** How many animation frames a negative assertion is watched over (about a third of a second at 60 Hz). */
@@ -1523,7 +1506,16 @@ test.describe('knowledge graph', () => {
       await page.evaluate(() => (window as unknown as {
         __zustandStores: { knowledgeGraph: { getState: () => { askInGraph: (question: string, projectId: string | null) => void } } };
       }).__zustandStores.knowledgeGraph.getState().askInGraph('second question', null));
-      // Not asked over the answer that is still running.
+      // Not asked over the answer that is still running. A non-event cannot be
+      // polled for, and a single read straight after the call above would pass
+      // for a regression that asks the queued question on the next render, so
+      // it is watched over a run of frames. `answerCalls` is the most requests
+      // the mock had logged on any frame, and the first question is already
+      // logged, so one means the queued question was not asked in the run. The
+      // selector is the open chat, only there to satisfy the helper: it is not
+      // what this watches.
+      const watched = await watchFrames(page, '[data-testid="knowledge-graph-chat"]');
+      expect(watched.answerCalls).toBe(1);
       expect((await answerCalls(page)).map((call) => call.question)).toEqual(['first question']);
 
       // The first answer lands, and the queued question follows it.

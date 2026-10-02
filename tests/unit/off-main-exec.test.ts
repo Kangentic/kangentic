@@ -110,6 +110,52 @@ describe('host-exec', () => {
     expect(launchesOwnBinary({ kind: 'execFile', file: '/opt/Kangentic/kangentic', args: [], options: {} }, appBinary)).toBe(true);
   });
 
+  describe('an execFile of a bare name', () => {
+    // A bare name has no directory, so the OS finds it on PATH: it can launch
+    // the app's own binary as surely as its path does. A path is compared only
+    // as a path, so another program that shares the app's name is not refused.
+    const appBinary = '/opt/Kangentic/kangentic';
+    const execFileOf = (file: string): HostExecRequest => ({ kind: 'execFile', file, args: ['--version'], options: {} });
+
+    it('is refused when its name is the app\'s, whatever its case or a trailing .exe', () => {
+      // Red-green: before the bare-name clause an execFile was compared by path
+      // only. `path.resolve('kangentic')` is a file in the working directory, not
+      // the app's binary, so each of these was allowed through.
+      expect(launchesOwnBinary(execFileOf('kangentic'), appBinary)).toBe(true);
+      expect(launchesOwnBinary(execFileOf('Kangentic'), appBinary)).toBe(true);
+      expect(launchesOwnBinary(execFileOf('kangentic.exe'), appBinary)).toBe(true);
+    });
+
+    it('is refused when its name is any one of the executables compared, so main\'s counts as well as the host\'s', () => {
+      // On macOS the host's own execPath is the Helper, and main's is the app.
+      const helperBinary = '/opt/Kangentic.app/Contents/Frameworks/Kangentic Helper';
+      expect(launchesOwnBinary(execFileOf('kangentic'), [helperBinary, appBinary])).toBe(true);
+      expect(launchesOwnBinary(execFileOf('kangentic'), [helperBinary])).toBe(false);
+    });
+
+    it('is allowed when its name is another program\'s', () => {
+      expect(launchesOwnBinary(execFileOf('codex'), appBinary)).toBe(false);
+      expect(launchesOwnBinary(execFileOf('git'), appBinary)).toBe(false);
+    });
+
+    it('does not reach a path with a directory by its name: a different path with the same name is another program', () => {
+      // Guards the clause from widening to every execFile whose basename matches.
+      expect(launchesOwnBinary(execFileOf('/usr/bin/kangentic'), appBinary)).toBe(false);
+      expect(launchesOwnBinary(execFileOf('/opt/kangentic/bin/kangentic'), appBinary)).toBe(false);
+      // The same path is still refused, as a path.
+      expect(launchesOwnBinary(execFileOf(appBinary), appBinary)).toBe(true);
+    });
+
+    // Node's path module on POSIX does not split a backslash path, so these
+    // Windows-form paths only mean anything on Windows.
+    it.runIf(process.platform === 'win32')('does not reach a Windows path with a directory by its name', () => {
+      const windowsBinary = 'C:\\Program Files\\Kangentic\\Kangentic.exe';
+      expect(launchesOwnBinary(execFileOf('C:\\Other\\Kangentic.exe'), windowsBinary)).toBe(false);
+      expect(launchesOwnBinary(execFileOf(windowsBinary), windowsBinary)).toBe(true);
+      expect(launchesOwnBinary(execFileOf('Kangentic'), windowsBinary)).toBe(true);
+    });
+  });
+
   describe('a POSIX shell command line and a Windows executable name', () => {
     const command = (commandLine: string): HostExecRequest => ({ kind: 'exec', command: commandLine, options: {} });
 

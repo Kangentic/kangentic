@@ -585,8 +585,9 @@ must not replace.
 
 Both passes spawn each task under its lifecycle lock (`withTaskLock`), after reading the task again,
 because their preparation awaits the shell and every agent's detection. A task is skipped when its
-column changed, its `session_id` changed (a Reset clears it), it gained a live session, or, for a
-resume, its record is gone or its status moved (a user's Resume retires it).
+column changed, its `session_id` changed (a Reset clears it), or it gained a live session. A resume
+is also skipped when its record is gone or its status moved (a user's Resume retires it), and a fresh
+agent when its worktree is no longer the one it was prepared in (a move to To Do and back removes it).
 
 ## PTY host
 
