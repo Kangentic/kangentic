@@ -7281,7 +7281,7 @@ export interface KnowledgeGraphSnapshot {
    *  refresh while the old map stays on screen. */
   building: boolean;
   /** The first build's progress while it runs; null otherwise, a refresh
-   *  included. Read `?? null`: the UI tier's fixtures predate it. */
+   *  included. */
   buildProgress: KnowledgeGraphBuildProgress | null;
   /** Stale projections are still served: a slightly old map beats a blank one. */
   stale: boolean;

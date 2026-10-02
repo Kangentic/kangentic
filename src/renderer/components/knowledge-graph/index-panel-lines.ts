@@ -173,8 +173,7 @@ const BUILD_STAGE_LABELS: Record<KnowledgeGraphBuildProgress['stage'], string> =
 
 /**
  * The building card's status row: what the first build is doing and how far it
- * has got. Before its first figure arrives it reads as just begun. Read
- * `?? null` at the call site: the UI tier's fixtures carry no figure.
+ * has got. Before its first figure arrives it reads as just begun.
  */
 export function buildProgressRow(progress: KnowledgeGraphBuildProgress | null): { label: string; value: string; percent: number } {
   const stage = progress?.stage ?? 'reading';

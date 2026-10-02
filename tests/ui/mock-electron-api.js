@@ -4721,7 +4721,7 @@
           // window.__mockFireGraphBuildProgress(id, { pass, stage, percent }).
           window.__mockFireGraphBuildProgress = function (projectId, progress) {
             var listeners = (window.__mockGraphBuildProgressListeners || []).slice();
-            for (var i = 0; i < listeners.length; i++) listeners[i](projectId, progress);
+            for (var listenerIndex = 0; listenerIndex < listeners.length; listenerIndex++) listeners[listenerIndex](projectId, progress);
           };
         }
         return function () {

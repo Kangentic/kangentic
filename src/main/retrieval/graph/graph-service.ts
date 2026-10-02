@@ -116,6 +116,54 @@ interface RunningPass {
   progressTimer: ReturnType<typeof setTimeout> | null;
 }
 
+/** Drop a pass's throttled figure: the pass ended, or was forgotten. */
+function clearProgressTimer(entry: RunningPass): void {
+  if (entry.progressTimer) clearTimeout(entry.progressTimer);
+  entry.progressTimer = null;
+}
+
+/**
+ * A first build's progress setter. It keeps the figure on the pass's entry,
+ * where a read finds it, and pushes it: a new stage at once, and within a stage
+ * at most every `BUILD_PROGRESS_INTERVAL_MS`, the last figure following a quiet
+ * spell. Nothing is pushed once the pass is aborted.
+ */
+function createProgressReporter(
+  entry: RunningPass,
+  pass: number,
+  now: () => number,
+  push: (progress: KnowledgeGraphBuildProgress) => void,
+): (stage: KnowledgeGraphBuildProgress['stage'], fraction: number) => void {
+  let lastPushAt = Number.NEGATIVE_INFINITY;
+  let pushedProgress: KnowledgeGraphBuildProgress | null = null;
+  const pushLatest = (): void => {
+    entry.progressTimer = null;
+    if (entry.signal.aborted || !entry.progress || entry.progress === pushedProgress) return;
+    pushedProgress = entry.progress;
+    lastPushAt = now();
+    push(entry.progress);
+  };
+  return (stage, fraction) => {
+    const percent = buildPercent(stage, fraction);
+    const previous = entry.progress;
+    if (previous && previous.stage === stage && previous.percent === percent) return;
+    entry.progress = { pass, stage, percent };
+    if (!previous || previous.stage !== stage) {
+      clearProgressTimer(entry);
+      pushLatest();
+      return;
+    }
+    if (entry.progressTimer) return;
+    const waitMs = Math.max(0, lastPushAt + BUILD_PROGRESS_INTERVAL_MS - now());
+    if (waitMs === 0) {
+      pushLatest();
+      return;
+    }
+    entry.progressTimer = setTimeout(pushLatest, waitMs);
+    entry.progressTimer.unref?.();
+  };
+}
+
 /** What region names read from a project's summaries. */
 interface SummarySource {
   fingerprint(): string;
@@ -517,6 +565,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
 
       let store: RetrievalStore;
       let isFirstBuild: boolean;
+      let embedding: { dimensions: number; modelTag: string };
       try {
         store = storeFor(projectId);
         if (!store.hasVec) return null;
@@ -530,6 +579,9 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
         // time, because a conversation's opening chunks are not representative
         // of the whole, so it buys speed by making the map wrong.
         isFirstBuild = readCachedProjection(store) === null;
+        // Read before the first figure is pushed, so a store that fails here
+        // has told no reader a build started.
+        embedding = resolveEmbedding(store, modelTag, dimensions);
       } catch (error) {
         console.error('[knowledge-graph] projection pass failed:', error);
         return null;
@@ -542,40 +594,13 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       const signal = { aborted: false };
       const entry: RunningPass = { signal, promise: Promise.resolve(), progress: null, progressTimer: null };
       const pass = now() * 1000 + (passCounter++ % 1000);
-      let lastPushAt = Number.NEGATIVE_INFINITY;
-      let pushedProgress: KnowledgeGraphBuildProgress | null = null;
-      const push = (): void => {
-        entry.progressTimer = null;
-        if (signal.aborted || !entry.progress || entry.progress === pushedProgress) return;
-        pushedProgress = entry.progress;
-        lastPushAt = now();
-        deps.onBuildProgress?.(projectId, entry.progress);
-      };
       // A refresh leaves the old map on screen, so only a first build reports.
-      const setProgress = (stage: KnowledgeGraphBuildProgress['stage'], fraction: number): void => {
-        if (!isFirstBuild) return;
-        const percent = buildPercent(stage, fraction);
-        const previous = entry.progress;
-        if (previous && previous.stage === stage && previous.percent === percent) return;
-        entry.progress = { pass, stage, percent };
-        if (!previous || previous.stage !== stage) {
-          if (entry.progressTimer) clearTimeout(entry.progressTimer);
-          push();
-          return;
-        }
-        if (entry.progressTimer) return;
-        const waitMs = Math.max(0, lastPushAt + BUILD_PROGRESS_INTERVAL_MS - now());
-        if (waitMs === 0) {
-          push();
-          return;
-        }
-        entry.progressTimer = setTimeout(push, waitMs);
-        entry.progressTimer.unref?.();
-      };
+      const setProgress = isFirstBuild
+        ? createProgressReporter(entry, pass, now, (progress) => deps.onBuildProgress?.(projectId, progress))
+        : (): void => undefined;
 
       // Set before the pass starts, so the answer below already carries it.
       setProgress('reading', 0);
-      const embedding = resolveEmbedding(store, modelTag, dimensions);
       const startedAt = now();
       let placingAt: number | null = null;
       entry.promise = (async () => {
@@ -626,8 +651,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
             onChanged?.(projectId);
           }
         } finally {
-          if (entry.progressTimer) clearTimeout(entry.progressTimer);
-          entry.progressTimer = null;
+          clearProgressTimer(entry);
         }
       })();
 
@@ -651,8 +675,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       const pass = running.get(projectId);
       if (pass) {
         pass.signal.aborted = true;
-        if (pass.progressTimer) clearTimeout(pass.progressTimer);
-        pass.progressTimer = null;
+        clearProgressTimer(pass);
       }
       // Let go now, not when the aborted pass unwinds: until then the project
       // read as building, and a markDirty for it was dropped. The pass's own

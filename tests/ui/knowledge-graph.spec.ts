@@ -524,6 +524,128 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  /**
+   * A project with no map whose first build runs, shaped like a snapshot main
+   * answers with. The Knowledge Graph is on (`semanticAvailable`) and the build
+   * is under way (`building`), so the surface draws the building card.
+   */
+  function buildingSnapshotLiteral(projectId: string, percent: number): string {
+    return `{
+      projectId: '${projectId}',
+      projection: null,
+      building: true,
+      buildProgress: { pass: 1, stage: 'reading', percent: ${percent} },
+      stale: true,
+      semanticAvailable: true,
+      coverage: {
+        indexed: ${bucket(0, 0, 'ok')},
+        sourceMissingButSearchable: ${bucket(0, 0, 'neutral')},
+        empty: ${bucket(0, 0, 'neutral')},
+        failed: ${bucket(0, 0, 'ok')},
+        notYetIndexed: ${bucket(0, 0, 'ok')},
+        totalDocumentsWithChunks: 0,
+        totalChunks: 0,
+        totalEmbeddedChunks: 0,
+        embeddedFraction: 0,
+        knownDocumentIdsMatched: 0,
+      },
+      index: {
+        corpora: [
+          { corpus: 'conversation', documents: 10, chunks: 900, embeddedChunks: 300, embeds: true },
+          { corpus: 'task', documents: 12, chunks: 30, embeddedChunks: 0, embeds: true },
+        ],
+        summaries: { written: 0, finishedTasks: 5, skipped: 0 },
+        storageBytes: 1048576,
+      },
+    }`;
+  }
+
+  test('the building card\'s bar carries the build\'s figure, and a progress push moves it', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({
+      building: true,
+      stale: true,
+      buildProgress: "{ pass: 1, stage: 'reading', percent: 41 }",
+    }));
+    try {
+      await openKnowledgeGraph(page);
+      // Scoped to the progress tile: the source list under it draws bars of its
+      // own, so a card-wide role selector would match several.
+      const bar = page.locator('[data-testid="knowledge-graph-building-progress"] [role="progressbar"]');
+      const fill = bar.locator(':scope > div');
+      await expect(bar).toHaveAttribute('aria-valuenow', '41');
+      // The figure is drawn as well as announced: the fill's inline width.
+      await expect(fill).toHaveAttribute('style', /width:\s*41%/);
+
+      await page.evaluate(() => {
+        (window as unknown as { __mockFireGraphBuildProgress: (id: string, progress: unknown) => void })
+          .__mockFireGraphBuildProgress('project-1', { pass: 1, stage: 'reading', percent: 63 });
+      });
+      await expect(bar).toHaveAttribute('aria-valuenow', '63');
+      await expect(fill).toHaveAttribute('style', /width:\s*63%/);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a switch between two projects that both have no map remounts the building card, so the new figure paints flat', async () => {
+    // The card is keyed on the project. Without the key, React reuses the one
+    // card for both projects and its bar animates from the first project's
+    // figure to the second's (`transition-[width]`), which a project switch
+    // must not do (restore-no-animation-replay). A remount is read off the DOM
+    // node itself: an attribute set on the card before the switch is gone from
+    // the card that is there after it. No timing and no pixels.
+    const { browser, page } = await launchWithState(`${snapshotScript({
+      building: true,
+      stale: true,
+      buildProgress: "{ pass: 1, stage: 'reading', percent: 41 }",
+    })}
+      window.__mockPreConfigure(function () {
+        return {
+          knowledgeGraphSnapshotsByProject: {
+            'project-2': ${buildingSnapshotLiteral('project-2', 63)},
+          },
+        };
+      });`);
+    try {
+      await openKnowledgeGraph(page);
+      const card = page.locator('[data-testid="knowledge-graph-building-card"]');
+      const bar = page.locator('[data-testid="knowledge-graph-building-progress"] [role="progressbar"]');
+      await expect(bar).toHaveAttribute('aria-valuenow', '41');
+      await card.evaluate((element) => element.setAttribute('data-mounted-for', 'project-1'));
+      await expect(card).toHaveAttribute('data-mounted-for', 'project-1');
+
+      // Re-point the open graph at the second project, as a window following
+      // the main window's project does. The store keeps the surface mounted
+      // and swaps the snapshot in one write: no loading notice in between, so
+      // nothing but the key can remount the card. (Closing and reopening the
+      // graph would unmount the whole page and prove nothing about the key.)
+      await page.evaluate(async () => {
+        const stores = (window as unknown as {
+          __zustandStores: { knowledgeGraph: { getState: () => { loadSnapshot: (projectId: string) => Promise<void> } } };
+        }).__zustandStores;
+        await stores.knowledgeGraph.getState().loadSnapshot('project-2');
+      });
+
+      // The second project's figure is up, and it landed on a fresh card. Both
+      // arrive in one commit, so once the figure shows the tag question is
+      // settled and a single read answers it.
+      await expect(bar).toHaveAttribute('aria-valuenow', '63');
+      expect(await card.getAttribute('data-mounted-for')).toBeNull();
+
+      // Within one project the card is kept: a push moves the bar on the same
+      // node, which is what lets it animate along a single build.
+      await card.evaluate((element) => element.setAttribute('data-mounted-for', 'project-2'));
+      await page.evaluate(() => {
+        (window as unknown as { __mockFireGraphBuildProgress: (id: string, progress: unknown) => void })
+          .__mockFireGraphBuildProgress('project-2', { pass: 1, stage: 'reading', percent: 77 });
+      });
+      await expect(bar).toHaveAttribute('aria-valuenow', '77');
+      await expect(card).toHaveAttribute('data-mounted-for', 'project-2');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('renders the canvas and states that links are exact but position is not', async () => {
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(60) }));
     try {
@@ -3931,6 +4053,7 @@ test.describe('knowledge graph', () => {
               projectId: 'project-2',
               projection: ${other},
               building: ${options.otherBuilding === true},
+              buildProgress: null,
               stale: false,
               semanticAvailable: true,
               coverage: {
