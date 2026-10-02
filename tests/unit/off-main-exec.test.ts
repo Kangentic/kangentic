@@ -290,6 +290,123 @@ describe('host-exec', () => {
     });
   });
 
+  // The link check reads real paths off this machine's file system, through the
+  // native read (`realpathSync.native`, which also expands a Windows 8.3 short
+  // name). What it reads, and how often, is its cost in the host: every one-shot
+  // exec pays these reads synchronously. The reads are observed on the native
+  // function itself, so these run on every platform and need no link privilege.
+  //
+  // A candidate's real path is kept for the run (`realExecutables`), so each test
+  // makes its own files: a path an earlier test used would not be read again.
+  describe('the real-path reads of the own-executable check', () => {
+    const execFileOf = (file: string): HostExecRequest => ({ kind: 'execFile', file, args: ['--version'], options: {} });
+    const execOf = (file: string): HostExecRequest => ({ kind: 'exec', command: `"${file}" --version`, options: {} });
+
+    /** Empty files in a fresh folder, by name, and the folder's cleanup. */
+    function filesIn(names: string[]): { paths: string[]; remove: () => void } {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'own-executable-reads-'));
+      const paths = names.map((name) => {
+        const file = path.join(directory, name);
+        fs.writeFileSync(file, '');
+        return file;
+      });
+      return { paths, remove: () => fs.rmSync(directory, { recursive: true, force: true }) };
+    }
+
+    const readsOf = (spy: { mock: { calls: unknown[][] } }, file: string): number => (
+      spy.mock.calls.filter(([argument]) => argument === file).length
+    );
+
+    // Two executables are compared (this process's and main's), and the request's
+    // real path is the same for both, so it is read once. Both candidates must
+    // exist: one that cannot be read ends its comparison before the request is
+    // read at all, which would let a count of 0 or 1 pass for the wrong reason.
+    //
+    // Red-green, two ways. Read the request inside `isSameExecutable` for each
+    // candidate (`realPathOf(file)` where it takes `realFileOf()`) and its count is
+    // 2. Read with plain `realpathSync` instead of `.native` and the counts are 0,
+    // so the 8.3 expansion is lost without this noticing otherwise.
+    it.each([
+      ['an execFile of a path', execFileOf],
+      ['an exec of a command line starting with a path', execOf],
+    ])('reads the real path of %s once, however many executables it is compared with', (_label, requestOf) => {
+      const { paths: [appBinary, mainBinary, requested], remove } = filesIn(['Kangentic', 'Kangentic-main', 'helper-tool']);
+      const reads = vi.spyOn(fs.realpathSync, 'native');
+      try {
+        expect(launchesOwnBinary(requestOf(requested), [appBinary, mainBinary])).toBe(false);
+
+        // Both candidates were compared, each read once.
+        expect(readsOf(reads, appBinary)).toBe(1);
+        expect(readsOf(reads, mainBinary)).toBe(1);
+        expect(readsOf(reads, requested)).toBe(1);
+      } finally {
+        reads.mockRestore();
+        remove();
+      }
+    });
+
+    // A bare name is found on PATH and a relative path from the CHILD's working
+    // directory, so a read here would resolve either against this process's own.
+    // Neither is read, whatever the platform, and both are compared by name. The
+    // absolute path in the same run is read, which shows the spy sees reads and the
+    // candidates' reads show the comparison got as far as the link check.
+    //
+    // Red-green: restore the old guard in `lazyRealPath` (`basename(file) === file`,
+    // a bare name only) and `./helper-tool` and `../bin/helper-tool` are read.
+    it.each([
+      ['an execFile', execFileOf],
+      // A name is written as typed, a full path in quotes.
+      ['an exec', (file: string): HostExecRequest => ({ kind: 'exec', command: `${path.isAbsolute(file) ? `"${file}"` : file} --version`, options: {} })],
+    ])('reads no real path for a bare name or a relative path in %s', (_label, requestOf) => {
+      const { paths: [appBinary, mainBinary, absolute], remove } = filesIn(['Kangentic', 'Kangentic-main', 'helper-tool']);
+      const reads = vi.spyOn(fs.realpathSync, 'native');
+      try {
+        for (const name of ['helper-tool', './helper-tool', '../bin/helper-tool']) {
+          expect(launchesOwnBinary(requestOf(name), [appBinary, mainBinary])).toBe(false);
+          expect(readsOf(reads, name), `a read of ${name}`).toBe(0);
+        }
+        expect(readsOf(reads, appBinary)).toBeGreaterThan(0);
+
+        expect(launchesOwnBinary(requestOf(absolute), [appBinary, mainBinary])).toBe(false);
+        expect(readsOf(reads, absolute)).toBe(1);
+      } finally {
+        reads.mockRestore();
+        remove();
+      }
+    });
+
+    // A read that fails is not kept: the candidate may simply not exist yet (an
+    // install link written after the host started), and a kept failure would turn
+    // the link check off for it until the host restarts. The request goes through a
+    // directory link, so only the real-path compare can match it to the candidate.
+    // A directory link (`junction`) needs no privilege on Windows, and is a plain
+    // symbolic link elsewhere.
+    //
+    // Red-green: keep a failed read again (`realExecutables.set(candidate, null)` on
+    // a null read, and treat a kept null as the answer) and the second assertion
+    // reads false.
+    it('checks a candidate that did not exist the first time it was compared', () => {
+      const targetDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'own-executable-target-'));
+      const linkParent = fs.mkdtempSync(path.join(os.tmpdir(), 'own-executable-link-'));
+      try {
+        const linkDirectory = path.join(linkParent, 'bin');
+        fs.symlinkSync(targetDirectory, linkDirectory, 'junction');
+        const candidate = path.join(targetDirectory, 'Kangentic');
+        const requested = path.join(linkDirectory, 'Kangentic');
+
+        // Nothing is there to read yet, so there is nothing to match.
+        expect(launchesOwnBinary(execFileOf(requested), candidate)).toBe(false);
+
+        fs.writeFileSync(candidate, '');
+
+        expect(launchesOwnBinary(execFileOf(requested), candidate)).toBe(true);
+      } finally {
+        fs.rmSync(linkParent, { recursive: true, force: true });
+        fs.rmSync(targetDirectory, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('a POSIX shell command line and a Windows executable name', () => {
     const command = (commandLine: string): HostExecRequest => ({ kind: 'exec', command: commandLine, options: {} });
 

@@ -106,6 +106,8 @@ vi.mock('../../src/main/transition-engine/spawn-intent', () => ({
 // column-strategy and session-isolation are deliberately left UNMOCKED: the
 // profile fold and the isolation key are part of what this branch must get right.
 import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup/resume-suspended';
+// The real lock, which the file leaves unmocked: one test holds it as a Resume does.
+import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 
 function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
@@ -571,6 +573,55 @@ describe('resumeSuspendedSessions: a failed preparation settles against what cha
     });
 
     expectNothingKept(sessionManager);
+  });
+
+  // The give-up waits for the task's lock. A Resume holds it while it retires this
+  // record and starts its agent, and what it wrote must be there when the give-up
+  // reads. Every case above changes the world INSIDE the preparation, before the
+  // give-up starts, so each would pass for a give-up that never took the lock. This
+  // one changes it from a holder the give-up has to queue behind.
+  //
+  // Red-green: call `keepResumableIfUnchanged` directly in `giveUpPreparation`
+  // (resume-suspended.ts), with no `withTaskLock`. The give-up then reads the
+  // record while the holder still owns the task and takes the keep path
+  // (markRecordSuspended is called), so the assertions before the release go red.
+  it('settles under the task lock: it waits for a holder of the task, then reads what the holder left', async () => {
+    let releaseHolder: () => void = () => undefined;
+    const holderGate = new Promise<void>((resolve) => { releaseHolder = resolve; });
+    const sessionManager = makeSessionManager();
+    prepareAgentSpawnMock.mockImplementation(async () => {
+      // A Resume takes the lock while this resume is being prepared, and before it
+      // lets go it has retired the record.
+      void withTaskLock('task-1', async () => {
+        await holderGate;
+        sessionRepoFindByAnyId.mockReturnValue(makeRecord({ status: 'exited', suspended_by: null, exited_at: '2026-07-30T12:00:00.000Z' }));
+      });
+      return { ok: false, reason: 'cli-not-found' };
+    });
+
+    try {
+      const run = runResume(sessionManager);
+      await vi.waitFor(() => expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1));
+      // Intentional fixed wait: this asserts a non-occurrence, which cannot be
+      // polled. The give-up is microtask work end to end (it makes no timer), so a
+      // give-up that was not queued behind the holder has finished by the time one
+      // macrotask has passed.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+      expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+      expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+
+      releaseHolder();
+      await run;
+
+      // It ran once the holder let go, and read the record the holder left.
+      expect(taskRepoGetById).toHaveBeenCalledWith('task-1');
+      expectNothingKept(sessionManager);
+    } finally {
+      // A failed assertion above must not leave the lock held for the next test.
+      releaseHolder();
+    }
   });
 
   // The positive control for the four above: the same give-up, moved into a
