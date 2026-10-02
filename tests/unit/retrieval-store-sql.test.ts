@@ -848,7 +848,7 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
     expect(count('SELECT COUNT(*) AS count FROM memory_vec_conversation')).toBe(2);
   });
 
-  it('leaves the reconcile, once sqlite-vec loads, to remove a vector whose chunk is gone or whose id a new chunk took', () => {
+  it('leaves the reconcile, once sqlite-vec loads, to remove a vector whose chunk is gone or whose id a new chunk took', async () => {
     const { database, db, embed, vectorIds } = projectWithVecTable();
     const store = new RetrievalStore(db);
     store.upsertDocument({ ...ref, docId: 'doc-kept' }, [chunk(0, 'hashA')]);
@@ -866,10 +866,34 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
     // The next worker loads sqlite-vec on its own connection.
     const vecConnection = adaptDatabase(database);
     markVecCapable(vecConnection);
-    new RetrievalStore(vecConnection).reconcileVecOrphans();
+    await new RetrievalStore(vecConnection).reconcileVecOrphans(async () => undefined);
 
     // Id 3 has no chunk; id 2's vector was doc-gone's, not doc-new's.
     expect(vectorIds()).toEqual([1]);
+  });
+
+  it('reconciles a transaction at a time with a turn between, and keeps a vector the writeback gave a reused id meanwhile', async () => {
+    const { database, db, vectorIds } = projectWithVecTable();
+    // A full transaction of orphans with no chunk, then a stale vector at an
+    // id a new chunk took, which is not embedded yet.
+    const insertVector = database.prepare(`INSERT INTO memory_vec_conversation (rowid, embedding) VALUES (?, x'00')`);
+    for (let id = 1; id <= 64; id += 1) insertVector.run(id);
+    new RetrievalStore(db).upsertDocument({ ...ref, docId: 'doc-new' }, [chunk(0, 'hashA')]);
+    database.exec(`UPDATE memory_chunks SET id = 100 WHERE doc_id = 'doc-new'`);
+    insertVector.run(100);
+
+    const vecConnection = adaptDatabase(database);
+    markVecCapable(vecConnection);
+    let turns = 0;
+    await new RetrievalStore(vecConnection).reconcileVecOrphans(async () => {
+      turns += 1;
+      // The embedding writeback lands during the first turn: chunk 100's
+      // vector is its own now.
+      if (turns === 1) database.exec(`UPDATE memory_chunks SET embedded_model = 'model-a' WHERE id = 100`);
+    });
+
+    expect(turns).toBe(2);
+    expect(vectorIds()).toEqual([100]);
   });
 });
 

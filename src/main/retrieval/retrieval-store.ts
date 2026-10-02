@@ -1685,17 +1685,28 @@ export class RetrievalStore {
    * a row with no chunk of its corpus, and a row whose chunk is not embedded:
    * SQLite handed the deleted chunk's id to a new one meanwhile, which has no
    * vector of its own until `writeEmbeddings` replaces this one.
+   *
+   * Found by one read, deleted `DELETES_PER_TRANSACTION` at a time with
+   * `awaitTurn` between, so it shares the worker's write budget.
    */
-  reconcileVecOrphans(): void {
-    for (const corpus of this.vecTables) {
-      // Found by a read, deleted in short transactions.
+  async reconcileVecOrphans(awaitTurn: () => Promise<void>, shouldContinue: () => boolean = () => true): Promise<void> {
+    for (const corpus of [...this.vecTables]) {
       const orphans = (this.db
         .prepare(`SELECT rowid AS id FROM ${this.tableOf(corpus)}
           WHERE rowid NOT IN (SELECT id FROM memory_chunks WHERE corpus = ? AND embedded_model IS NOT NULL)`)
         .all(corpus) as Array<{ id: number | bigint }>).map((row) => Number(row.id));
       for (let start = 0; start < orphans.length; start += DELETES_PER_TRANSACTION) {
+        if (!shouldContinue()) return;
         const batch = orphans.slice(start, start + DELETES_PER_TRANSACTION);
-        writeTransaction(this.db, () => this.deleteVecRows(batch, corpus))();
+        writeTransaction(this.db, () => {
+          // The embedding writeback can run during a turn and give a reused id
+          // its own vector, marking its chunk embedded: that one stays.
+          const embedded = new Set((this.db
+            .prepare(`SELECT id FROM memory_chunks WHERE id IN (${batch.map(() => '?').join(',')}) AND corpus = ? AND embedded_model IS NOT NULL`)
+            .all(...batch, corpus) as Array<{ id: number }>).map((row) => row.id));
+          this.deleteVecRows(batch.filter((id) => !embedded.has(id)), corpus);
+        })();
+        await awaitTurn();
       }
     }
   }

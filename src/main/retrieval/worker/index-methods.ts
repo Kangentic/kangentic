@@ -224,9 +224,9 @@ export const indexHandlers: IndexHandlers = {
     if (steps.reconcileVec) {
       try {
         const db = context.getDb(projectId);
-        if (hasVecSupport(db)) new RetrievalStore(db).reconcileVecOrphans();
+        if (hasVecSupport(db)) await new RetrievalStore(db).reconcileVecOrphans(() => awaitWriteTurn(db), shouldContinue);
       } catch {
-        // No vec table here: nothing can be orphaned in it.
+        // No vec table here, or a delete failed: the next open tries again.
       }
     }
     if (steps.purge && shouldContinue()) {
