@@ -221,6 +221,64 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
       }
     });
 
+    // The last resort fails too: the rename stays held, and the in-place write
+    // truncates the file and then fails part way, so the file may be short. The
+    // temp file is then the one complete copy, so it is KEPT and the error names
+    // it, which the spawn preamble reports and the user can recover from.
+    //
+    // Red-green: drop `keepTemporary = true` (or remove the temp file in the
+    // catch). The `finally` then deletes the temp file, so the leftover-file and
+    // the file-the-message-names assertions go red, and the complete copy is gone
+    // for good. If the message stops naming the temp path, the `toContain` and the
+    // read of the named file go red. The injected write failure leaves the target
+    // as it was, which keeps the test from reading a half-written file.
+    it('keeps the temp file, which holds the complete contents, and names it in the error, when the in-place write also fails', async () => {
+      seedClaudeJson();
+      const seeded = fs.readFileSync(claudeJsonPath(), 'utf-8');
+      const writeRefusal = new Error('disk full');
+      const realWriteFile = fs.promises.writeFile.bind(fs.promises);
+      // Decided by suffix: the target is reached through its real path, which can
+      // differ from the home's own spelling (a short Windows name, a macOS link).
+      const writes = vi.spyOn(fs.promises, 'writeFile').mockImplementation(async (...args: Parameters<typeof fs.promises.writeFile>) => {
+        const [file] = args;
+        if (!String(file).endsWith('.tmp')) throw writeRefusal;
+        return realWriteFile(...args);
+      });
+      const renames = vi.spyOn(fs.promises, 'rename').mockImplementation(async () => {
+        throw renameRefusal('EPERM');
+      });
+      try {
+        const failure = await ensureClaudeSpawnConfig(worktree).then(
+          () => null,
+          (error: unknown) => error as Error & { cause?: unknown },
+        );
+
+        expect(failure).not.toBeNull();
+        if (!failure) return;
+        expect(renames).toHaveBeenCalledTimes(5);
+        expect(failure.cause).toBe(writeRefusal);
+        const [temporaryFile] = leftoverTemporaryFiles();
+        expect(leftoverTemporaryFiles()).toEqual([`.claude.json.kangentic-${process.pid}.tmp`]);
+        expect(failure.message).toMatch(/its complete contents are in /);
+        expect(failure.message).toContain(temporaryFile);
+        // The path in the message is the file that holds the complete new JSON.
+        const lead = 'its complete contents are in ';
+        const namedPath = failure.message.slice(failure.message.indexOf(lead) + lead.length);
+        const recovered = JSON.parse(fs.readFileSync(namedPath, 'utf-8')) as Record<string, unknown>;
+        expect(recovered.oauthAccount).toEqual({ id: 'kept' });
+        expect(recovered.diffSidebarOpen).toBe(false);
+        const entry = Object.values(recovered.projects as Record<string, Record<string, unknown>>)[0];
+        expect(entry.hasTrustDialogAccepted).toBe(true);
+        expect(entry.enabledMcpjsonServers).toEqual(['kangentic']);
+        // Nothing replaced the target, and the lock was released on the way out.
+        expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(seeded);
+        expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
+      } finally {
+        writes.mockRestore();
+        renames.mockRestore();
+      }
+    });
+
     // Pins that only the held codes are retried: any other failure is a real
     // fault, so it reaches the spawn preamble (which reports it) and the file is
     // not rewritten behind it. The cleanup still removes the temp file.

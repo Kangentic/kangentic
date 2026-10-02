@@ -358,13 +358,17 @@ export function CardStatusRow({ label, value, tone = 'neutral', percent = null, 
             <TriangleAlert size={14} className={labelTone} aria-hidden="true" />
           </CardTileGutter>
         ) : null}
-        <span className={`text-sm font-medium ${labelTone}`} data-testid={testId ? `${testId}-label` : undefined}>{label}</span>
+        <span className={`flex-shrink-0 text-sm font-medium ${labelTone}`} data-testid={testId ? `${testId}-label` : undefined}>{label}</span>
+        {/* Shrinks and ends in an ellipsis past the tile's edge, with the whole
+            value on hover: a failure's value is its error, which can carry a
+            URL far wider than the tile. */}
         <span
-          className="flex items-center gap-1.5 whitespace-nowrap text-[13px] tabular-nums text-fg-secondary"
+          className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[13px] tabular-nums text-fg-secondary"
           data-testid={valueTestId ?? (testId ? `${testId}-text` : undefined)}
+          title={value}
         >
           {tone === 'ready' ? <Check size={14} className="flex-shrink-0 text-emerald-500" aria-hidden="true" /> : null}
-          {value}
+          <span className="truncate">{value}</span>
         </span>
       </div>
       {percent !== null ? <ProgressTrack percent={width} label={progressLabel} /> : null}

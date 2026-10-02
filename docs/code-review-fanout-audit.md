@@ -812,6 +812,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, third pass | 367f +54593 -3815 | 3692KB, 65439 lines | 4 (0) | 363 | 1 | 17, sharded by area, 4 over tests | about 97 of 16 pack-carrying | about 85 / 55 applied |
 | task 529, whole branch, fourth pass | 658f +76565 -7547 | 5536KB, 99303 lines | 3 (0) | 655 | 1 | 24, sharded by area and process boundary, 7 over tests | about 150 of 23 pack-carrying | about 85 / 52 applied |
 | task 529, whole branch, fifth pass | 663f +79405 -7559 | 5702KB, 102379 lines | 3 (0) | 660 | 1 | 29, one shard file each, 9 over tests | about 195 of 28 pack-carrying | about 77 / 44 applied |
+| task 529, whole branch, sixth pass | 674f +83014 -7629 | 5896KB, 105950 lines | 2 (0) | 672 | 1 | 30, one shard file each, 9 over tests | about 190 of 29 pack-carrying | 40 / 28 applied, 2 refuted |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1058,3 +1059,26 @@ found two gaps in the driver's own fixes (the mean pool still wrote a NaN row, a
 went unflagged), both fixed in this pass. The skipped Mediums are four performance claims that need
 a measurement first, a camera fix that needs a look in `/preview`, and recovery for a host crash
 that takes a session before its agent id is known, which is a design question.
+
+The task 529 sixth pass kept the fifth pass's layout. A script rebuilt each shard file from the
+fifth pass's file lists, the 11 files new since then were placed by hand, and the pty shard was
+split into its host and session halves (3,748 and 3,443 lines), since at 6,926 lines it was past
+the roughly 6,000-line ceiling. The focus range ran from `0537ddd1` to HEAD, the fifth pass's own
+fix commit included. The UI spec holding most of the range's new test code was stubbed in the pack
+for size, so its finder read the focus ranges from disk. Two finders read less than their shard and
+said so: the second cross-platform auditor stopped at 1,400 of 6,234 lines and one source shard at
+2,400 of 5,393, each after its focus ranges. The Mediums all sat in the newest code. The pty host's
+crash recovery, which the fifth pass's follow-up added, ignored every exited row when it chose the
+lost tasks to start fresh, so a resume whose spawn failed got a fresh agent over it; its locked
+re-check also missed a Reset, which deletes no record, and a Resume then a Pause. It now counts
+every row but the lost ones, and compares the task's `session_id` and the record's status. Two
+finders reported the first independently, one as Low and one as Medium. The others were a Quick
+Find question asked while reopening the map on another project, which went to the old project and
+was then dropped; an Ask one-shot run that still started when the chat ended between the last check
+and the spawn; overlapping settings reconciles that each ended the summary backoff; a request that
+timed out while the pty host was down and still ran on its replacement; a `~/.claude.json`
+fallback write that deleted the only complete copy when it failed; and a deferred orbit pivot that
+re-pointed a fly at the whole map. Two findings were refuted: a package-smoke entry check said to
+miss a path in another letter case (Node derives the entry URL from the same `realpathSync` of
+`argv[1]`), and a trust-manager coverage hole that the existing test file already covered. The
+fifth pass's skipped host-crash question above was resolved by the commit that followed it.

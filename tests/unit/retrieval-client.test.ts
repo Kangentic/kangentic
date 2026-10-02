@@ -309,6 +309,47 @@ describe('RetrievalClient', () => {
       }
     });
 
+    // A fork attempt that THROWS is a fork attempt too: `forkedBefore` is set
+    // before `utilityProcess.fork` runs, so the worker that finally starts
+    // replaces one that never could, and the service must replay what the
+    // failed ones dropped.
+    //
+    // Red-green: move `this.forkedBefore = true` below the fork's try/catch
+    // (so it is set only once a fork has succeeded). The throwing attempt then
+    // leaves the flag unset, the second fork's `replacesWorker` is false, and
+    // `respawned` is never emitted: the `toHaveBeenCalledTimes(1)` goes red.
+    it('is emitted once when the first fork attempt threw and the next one starts a worker that says ready', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      mockFork.mockImplementationOnce(() => {
+        throw new Error('fork failed');
+      });
+      // A zero backoff, or the policy keeps the next call from forking.
+      const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+      const respawned = vi.fn();
+      client.on('respawned', respawned);
+      try {
+        await expect(client.call('projects.summaries', { projectIds: [] })).rejects.toBeInstanceOf(RetrievalUnavailableError);
+        // Nothing started, so nothing is announced.
+        expect(mockFork).toHaveBeenCalledTimes(1);
+        expect(forkedChildren).toHaveLength(0);
+        expect(respawned).not.toHaveBeenCalled();
+
+        const next = client.call('projects.summaries', { projectIds: [] });
+        expect(mockFork).toHaveBeenCalledTimes(2);
+        expect(forkedChildren).toHaveLength(1);
+        lastChild().emit('message', { type: 'ready' });
+        await flush();
+
+        expect(respawned).toHaveBeenCalledTimes(1);
+        const [request] = sent(lastChild(), 'request');
+        lastChild().emit('message', { type: 'reply', id: request.id, ok: true, result: [] });
+        await expect(next).resolves.toEqual([]);
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
+
     it('is emitted once per replacement, and a worker that never says ready emits none of it', async () => {
       const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
       const respawned = vi.fn();

@@ -52,9 +52,9 @@ vi.mock('../../src/main/agent/shared/cli-print', async (importActual) => {
   const actual = await importActual<typeof import('../../src/main/agent/shared/cli-print')>();
   return {
     ...actual,
-    runCliForChat: <T>(chatId: string, work: () => Promise<T>): Promise<T> => {
+    runCliForChat: <T>(chatId: string, work: () => Promise<T>, ended?: () => boolean): Promise<T> => {
       runCliForChatSpy(chatId);
-      return actual.runCliForChat(chatId, work);
+      return actual.runCliForChat(chatId, work, ended);
     },
     stopCliRunsForChat: (chatId: string): void => {
       stopCliRunsForChatSpy(chatId);
@@ -217,6 +217,7 @@ import { registerSearchHandlers } from '../../src/main/ipc/handlers/search';
 import { answerSessionPool } from '../../src/main/retrieval/answer-session-pool';
 import { AnswerSessionError } from '../../src/main/agent/shared/answer-session/stdin-json-session';
 import { answerHomeDirectory } from '../../src/main/agent/shared/answer-run-directory';
+import { runCliPrintAnswer } from '../../src/main/agent/shared/cli-answer';
 import { broadcast } from '../../src/main/pop-out/window-broadcast';
 import { retrievalClient } from '../../src/main/retrieval/retrieval-client';
 import { buildAnswerPrompt } from '../../src/main/retrieval/answer-prompt';
@@ -1059,6 +1060,9 @@ describe('the Ask handler', () => {
       readonly prompts: string[] = [];
       constructor(readonly input: AnswerSessionInput, private readonly replies: Array<string | Error>) {}
       async ask(prompt: string, onEvent?: (event: AnswerStreamEvent) => void): Promise<string> {
+        // As the real session (`stdin-json-session.ts`): a turn asked of a
+        // session that was disposed rejects as `disposed`, before anything is sent.
+        if (this.disposed) throw new AnswerSessionError('the answering process has ended', 'disposed', true);
         this.prompts.push(prompt);
         const reply = this.replies.shift() ?? 'Answered.';
         if (reply instanceof Error) throw reply;
@@ -1423,13 +1427,17 @@ describe('the Ask handler', () => {
     //
     // Red-green: delete the `if (chatEnded()) return ...` after `answer.prepare`
     // and the handler goes on to ask the (already disposed) FakeSession, which
-    // still answers. Here the `resolves.toEqual` result (now `ok: true`), the
-    // empty `prompts` (now one) and the empty `streamPushes` go red. The
-    // `disposed`, pool size, `sessions` length and `answerSpy` assertions stay
-    // green: they pin END_CHAT itself. In the one-shot test after this one the
-    // handler runs the fresh answer instead, so `answerSpy` and
-    // `runCliForChatSpy` are called and go red too. The control after both
-    // keeps the held prepare from being the cause.
+    // rejects as the real one does, with failure 'disposed' and the message
+    // 'the answering process has ended'. That is not retried, so the result is
+    // `ok: false` with THAT reason instead of 'the chat ended': the
+    // `resolves.toEqual` goes red, and so does the empty `streamPushes` (the
+    // handler now streams the related `set` before the ask, and a `done` from
+    // its `finally` after it). `prompts` stays empty, since a
+    // disposed session sends nothing, and the `disposed`, pool size, `sessions`
+    // length and `answerSpy` assertions stay green: they pin END_CHAT itself.
+    // In the one-shot test after this one the handler runs the fresh answer
+    // instead, so `answerSpy` and `runCliForChatSpy` are called and go red. The
+    // control after both keeps the held prepare from being the cause.
     it('answers "the chat ended" without asking the session when the chat ends during the prepare', async () => {
       const answerSpy = vi.fn(async () => 'fresh run');
       mockAdapters = [sessionAdapter(answerSpy, ['Should never be asked.'])];
@@ -1476,6 +1484,57 @@ describe('the Ask handler', () => {
 
       expect(answerSpy).not.toHaveBeenCalled();
       expect(runCliForChatSpy).not.toHaveBeenCalled();
+    });
+
+    // The check after the prepare is not the last chance for the chat to end: a
+    // one-shot run still makes its run directory and runs its adapter's own
+    // setup before the CLI spawns, and END_CHAT's `stopCliRunsForChat` stops only
+    // a CLI that already exists. So `runFresh` hands `runCliForChat` the same
+    // `chatEnded`, and the runner refuses to spawn for a chat that has ended.
+    //
+    // The adapter here ends the chat on its way to the runner, as the user
+    // could at that point, and then really calls `runCliPrintAnswer`, so the
+    // refusal comes from the shared runner reading the handler's predicate. Its
+    // CLI is a path that does not exist, so no agent can start in this test.
+    //
+    // Red-green: drop `chatEnded` from the `runCliForChat` call in `runFresh`
+    // (`search.ts`), or the `ended()` check in `runResolvedCliPrint`. The run
+    // then tries to spawn the missing CLI and fails with its ENOENT, so the
+    // reason is that error's text instead of 'the chat ended'. The control
+    // below shows the same adapter does reach the spawn when the chat is open.
+    it('starts no CLI for a one-shot run when the chat ends after the prepare, before the CLI spawns', async () => {
+      runCliForChatSpy.mockClear();
+      const chatId = 'chat-ended-before-spawn';
+      const missingCli = path.join(os.tmpdir(), 'no-such-agent-cli');
+      let enteredTheAdapter = 0;
+      mockAdapters = [claudeAdapter(async (prompt) => {
+        enteredTheAdapter += 1;
+        endChat(chatId);
+        return runCliPrintAnswer({ cliPath: missingCli, args: [], prompt, cwd: os.tmpdir() });
+      })];
+      registerSearchHandlers(makeContext() as unknown as Parameters<typeof registerSearchHandlers>[0]);
+
+      const result = await ask('anything', 'req-1', { chatId });
+
+      expect(result).toEqual({ ok: false, reason: 'the chat ended' });
+      // Past the `chatEnded()` check after the prepare, which was still false.
+      expect(enteredTheAdapter).toBe(1);
+      expect(runCliForChatSpy.mock.calls).toEqual([[chatId]]);
+    });
+
+    it('control: reaches the CLI spawn from the same adapter when the chat has not ended', async () => {
+      const missingCli = path.join(os.tmpdir(), 'no-such-agent-cli');
+      mockAdapters = [claudeAdapter(async (prompt) => (
+        runCliPrintAnswer({ cliPath: missingCli, args: [], prompt, cwd: os.tmpdir() })
+      ))];
+      registerSearchHandlers(makeContext() as unknown as Parameters<typeof registerSearchHandlers>[0]);
+
+      const result = await ask('anything', 'req-1', { chatId: 'chat-open-before-spawn' });
+
+      // The missing CLI is what failed: the run got as far as starting it.
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toMatch(/ENOENT/);
     });
 
     it('answers the same question when the prepare is held but the chat does not end', async () => {

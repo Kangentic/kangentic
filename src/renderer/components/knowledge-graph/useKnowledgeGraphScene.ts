@@ -240,6 +240,10 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
    */
   const orbitAnchorRef = useRef<Vector3 | null>(null);
   const framingCenterRef = useRef<Vector3 | null>(null);
+  /** Removes the `sleep` listener an anchor set mid-flight is waiting on, or
+   *  null when none waits. A fly or a reset that re-targets the camera cancels
+   *  it: fired after that move, it re-pivoted the orbit on the whole map. */
+  const cancelPendingOrbitRef = useRef<(() => void) | null>(null);
 
   // The scene effect must not list `applyDefaultView` as a dependency - a new
   // identity would tear down the whole WebGL context and rebuild it - and it
@@ -339,6 +343,8 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
     // so the framing below must not re-apply it; the host declares it again
     // against this scene (`setOrbitAnchor`) once the scene is in its hands.
     orbitAnchorRef.current = null;
+    cancelPendingOrbitRef.current?.();
+    cancelPendingOrbitRef.current = null;
 
     const controls = new CameraControls(scene.camera, canvas);
     controls.minDistance = MIN_DISTANCE;
@@ -681,6 +687,8 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
     // scoped it to - so it drops the anchor rather than flying back to the
     // default framing and continuing to orbit one conversation.
     orbitAnchorRef.current = null;
+    cancelPendingOrbitRef.current?.();
+    cancelPendingOrbitRef.current = null;
     applyDefaultView(true);
   }, [applyDefaultView]);
 
@@ -697,12 +705,16 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
     // camera-controls documents `setOrbitPoint` as unsafe mid-transition, and a
     // new map arriving flies to its framing: the pivot lands once the camera
     // has stopped. Read from the ref then, so the latest anchor wins.
+    cancelPendingOrbitRef.current?.();
+    cancelPendingOrbitRef.current = null;
     if (controls?.active) {
       const onSleep = (): void => {
         controls.removeEventListener('sleep', onSleep);
+        cancelPendingOrbitRef.current = null;
         applyOrbitPoint();
       };
       controls.addEventListener('sleep', onSleep);
+      cancelPendingOrbitRef.current = () => controls.removeEventListener('sleep', onSleep);
       return;
     }
     applyOrbitPoint();
@@ -771,8 +783,10 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
     viewIsDefaultRef.current = false;
     // The fly re-targets the camera on the subset, and camera-controls forbids
     // `setOrbitPoint` mid-transition - so the anchor is dropped here rather
-    // than fought with.
+    // than fought with, along with a pivot still waiting for the last move.
     orbitAnchorRef.current = null;
+    cancelPendingOrbitRef.current?.();
+    cancelPendingOrbitRef.current = null;
     void controls.setLookAt(
       framing.center.x + framing.direction.x * distance,
       framing.center.y + framing.direction.y * distance,

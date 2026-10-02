@@ -471,6 +471,114 @@ describeWithSqlite('sweepCodeRecords', () => {
   });
 });
 
+describeWithSqlite('sweepCodeRecords, a file the branch lists that cannot be read or chunked', () => {
+  const storedHeadSha = (fixture: ReturnType<typeof project>): string | undefined =>
+    (JSON.parse(fixture.store.getMeta('code_index_head') ?? '{}') as { sha?: string }).sha;
+
+  /** The blob id the scripted tree lists for `path`. */
+  async function blobListedFor(fixture: ReturnType<typeof project>, path: string): Promise<string> {
+    const entry = (await fixture.deps.listTree('/mock/repo', 'sha-1')).find((candidate) => candidate.path === path);
+    if (!entry) throw new Error(`${path} is not in the scripted tree`);
+    return entry.blob;
+  }
+
+  // A partial clone can lack a blob for good. The tree lists the file and git
+  // has nothing to read, so the file is skipped; if that counted as a failure
+  // the head would never be stored and every sweep would list the whole tree
+  // again, for a file that can never arrive.
+  //
+  // Red-green: make the `if (!content)` branch in `prepareFile` set
+  // `itemFailed = true` (or throw) before it returns. The head is then not
+  // stored, so the `sha-1` assertion goes red, and the same-head sweep that
+  // follows lists the tree again (`listCalls` 1, not 0). Two files, not one:
+  // with one missing file no state row exists, so the unchanged-head check
+  // would not fire with or without the guard and the test would pass vacuously.
+  it('skips a blob git reports missing, writes the rest, and still stores the head', async () => {
+    const fixture = project();
+    fixture.files.set('src/kept.ts', 'export const kept = true;\n');
+    fixture.files.set('src/partial.ts', 'export const partial = true;\n');
+    const missingBlob = await blobListedFor(fixture, 'src/partial.ts');
+    const readFromGit = fixture.deps.readBlobs;
+    fixture.deps.readBlobs = async (projectPath, blobs) => {
+      const contents = await readFromGit(projectPath, blobs);
+      contents.delete(missingBlob);
+      return contents;
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await fixture.sweep();
+
+      expect(result).toEqual({ indexed: 1, removed: 0, deferred: false });
+      expect(fixture.paths()).toEqual(['src/kept.ts']);
+      // Skipped, not failed: nothing was logged as a failure.
+      expect(warn.mock.calls.some((call) => String(call[0]).includes('failed'))).toBe(false);
+      expect(storedHeadSha(fixture)).toBe('sha-1');
+      expect(indexedCodeBranch(fixture.store)).toBe('origin/main');
+
+      // The branch has not moved, so the next sweep stops at the head check.
+      fixture.git.listCalls = 0;
+      expect(await fixture.sweep()).toEqual({ indexed: 0, removed: 0, deferred: false });
+      expect(fixture.git.listCalls).toBe(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // A throw while preparing a file (here its contents failing to decode, which
+  // happens inside the same `try` as `codeChunks`) is logged and skipped by the
+  // slice runner, which cannot tell the sweep. `prepareFile` flags it itself, so
+  // the head is held back and the file is read again.
+  //
+  // Red-green: delete `itemFailed = true` from that catch. The sweep then
+  // stores `sha-1` although one file was skipped, the stored-head assertion
+  // goes red, and the retry stops at the unchanged-head check: it lists
+  // nothing, so `listCalls` stays 0 and `src/broken.ts` stays missing. Two
+  // files, so the kept file's state row makes the head check fire.
+  it('is read again by the next sweep of the same head, because the head is not stored after a throw while preparing', async () => {
+    const fixture = project();
+    fixture.files.set('src/kept.ts', 'export const kept = true;\n');
+    fixture.files.set('src/broken.ts', 'export const broken = true;\n');
+    const brokenBlob = await blobListedFor(fixture, 'src/broken.ts');
+    const readFromGit = fixture.deps.readBlobs;
+    fixture.deps.readBlobs = async (projectPath, blobs) => {
+      const contents = await readFromGit(projectPath, blobs);
+      const content = contents.get(brokenBlob);
+      if (content) {
+        contents.set(brokenBlob, Object.assign(Buffer.from(content), {
+          toString: (): string => { throw new Error('contents cannot be decoded'); },
+        }));
+      }
+      return contents;
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const failed = await fixture.sweep();
+
+      expect(warn.mock.calls.some((call) => String(call[0]).includes('records:code-slice item failed to prepare'))).toBe(true);
+      // The other file was written.
+      expect(failed).toEqual({ indexed: 1, removed: 0, deferred: false });
+      expect(fixture.paths()).toEqual(['src/kept.ts']);
+      expect(storedHeadSha(fixture)).toBeUndefined();
+      expect(indexedCodeBranch(fixture.store)).toBeNull();
+
+      // The fault has cleared; the branch has not moved.
+      fixture.deps.readBlobs = readFromGit;
+      fixture.git.listCalls = 0;
+      fixture.git.blobReads.length = 0;
+      const retried = await fixture.sweep();
+
+      expect(fixture.git.listCalls).toBe(1);
+      // Only what is still missing is read and written.
+      expect(fixture.git.blobReads.flat()).toEqual([brokenBlob]);
+      expect(retried).toEqual({ indexed: 1, removed: 0, deferred: false });
+      expect(fixture.paths()).toEqual(['src/broken.ts', 'src/kept.ts']);
+      expect(storedHeadSha(fixture)).toBe('sha-1');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe('the Source code status line', () => {
   const size = { branch: 'origin/main', files: 1_488, passages: 12_186 };
   const base: CodeStatusInput = {

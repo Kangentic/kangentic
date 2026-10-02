@@ -43,12 +43,19 @@ export function ownExecutables(): string[] {
     : [process.execPath];
 }
 
-/** The executable a shell command line starts: its leading quoted path, or
- *  its first word. */
+/** The executable a shell command line starts: its leading quoted path
+ *  (double quotes, or the single quotes `quoteArg` writes for a POSIX shell),
+ *  or its first word. */
 export function leadingExecutable(commandLine: string): string {
-  const quoted = /^\s*"([^"]*)"/.exec(commandLine);
-  if (quoted) return quoted[1];
+  const quoted = /^\s*(?:"([^"]*)"|'([^']*)')/.exec(commandLine);
+  if (quoted) return quoted[1] ?? quoted[2] ?? '';
   return commandLine.trim().split(/\s+/)[0] ?? '';
+}
+
+/** An executable's name as a shell resolves it: no directory, no case, and on
+ *  Windows no `.exe`, which cmd finds through PATHEXT when it is left off. */
+function commandName(file: string): string {
+  return path.basename(file).toLowerCase().replace(/\.exe$/, '');
 }
 
 /** True when the request would start this app's own executable (this
@@ -65,7 +72,7 @@ export function launchesOwnBinary(
   // `kangentic`), and a substring match refused that probe.
   const executable = leadingExecutable(request.command);
   return candidates.some((candidate) => isSamePath(executable, candidate)
-    || path.basename(executable).toLowerCase() === path.basename(candidate).toLowerCase());
+    || commandName(executable) === commandName(candidate));
 }
 
 function failure(error: ChildProcessFailure, stdout: string, stderr: string): HostExecFailure {

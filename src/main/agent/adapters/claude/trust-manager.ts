@@ -1,8 +1,7 @@
 import { promises as fsPromises } from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { toForwardSlash } from '../../../../shared/paths';
-import { isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
+import { claudeJsonPath, isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 import { applyDiffPanelClosed } from './diff-panel';
 
 // Every ~/.claude.json read-modify-write in this adapter runs under one lock:
@@ -13,10 +12,6 @@ import { applyDiffPanelClosed } from './diff-panel';
 export { withClaudeJsonLock };
 
 const LOG_TAG = '[CLAUDE_TRUST]';
-
-function claudeJsonPath(): string {
-  return path.join(os.homedir(), '.claude.json');
-}
 
 /**
  * Mark a worktree trusted in a parsed ~/.claude.json, copying MCP server
@@ -111,16 +106,24 @@ async function writeClaudeJson(filePath: string, data: Record<string, unknown>):
   const mode = await fsPromises.stat(targetPath).then((stats) => stats.mode & 0o777, () => 0o600);
   const temporaryPath = `${targetPath}.kangentic-${process.pid}.tmp`;
   const text = JSON.stringify(data, null, 2);
+  let keepTemporary = false;
   try {
     await fsPromises.writeFile(temporaryPath, text, { encoding: 'utf-8', mode });
     if (!await renameRetryingWhileHeld(temporaryPath, targetPath)) {
       // Still held after the retries: written in place, as every write of
       // this file was before the temp-file rename. That risks a torn read;
       // throwing here would block the spawn outright.
-      await fsPromises.writeFile(targetPath, text, 'utf-8');
+      try {
+        await fsPromises.writeFile(targetPath, text, 'utf-8');
+      } catch (error) {
+        // The in-place write truncates first, so a failure part way leaves
+        // the file short. The temp file is then the one complete copy.
+        keepTemporary = true;
+        throw new Error(`Could not write ${targetPath}; its complete contents are in ${temporaryPath}`, { cause: error });
+      }
     }
   } finally {
-    await fsPromises.rm(temporaryPath, { force: true }).catch(() => undefined);
+    if (!keepTemporary) await fsPromises.rm(temporaryPath, { force: true }).catch(() => undefined);
   }
 }
 

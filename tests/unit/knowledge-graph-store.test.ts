@@ -28,7 +28,11 @@
  *  - reopening the graph does not prewarm over a turn from before the close,
  *  - a question asked before the first snapshot lands (no project yet) keeps its
  *    turn when that snapshot resolves, while a snapshot for a different project
- *    than the one a turn was asked in still ends the chat, and
+ *    than the one a turn was asked in still ends the chat,
+ *  - an open that names another project than the one last shown ends that chat
+ *    first, so a question queued with the open is asked of the new project and
+ *    its turn survives the new project's snapshot, while an open on the same
+ *    project (or on none) keeps the chat, and
  *  - a read in flight when the graph closes asks for no rebuild when it lands.
  *
  * window.electronAPI is stubbed globally and the store is imported fresh for
@@ -642,6 +646,106 @@ describe('knowledge-graph-store loadSnapshot and the chat it lands on', () => {
     await asking;
     expect(store.getState().thread).toEqual([]);
     expect(endChatMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Pins the explicit-project branch of `open`. `close` keeps `projectId`, so a
+  // graph reopened on another project (Quick Find's Ask row from another board)
+  // still named the old one: `runTurn` sends `get().projectId`, so the queued
+  // question was asked of the old project, and the new project's snapshot then
+  // counted as a switch and ended the chat, dropping the question's turn.
+  it('asks a question queued with an open on another project of that project, and keeps its turn', async () => {
+    // A visit to project A that leaves a finished turn in the kept chat.
+    store.getState().open('A');
+    resolveRead('A');
+    await flush();
+    expect(store.getState().projectId).toBe('A');
+    answerFromGraphMock.mockResolvedValueOnce(settledAnswer);
+    await store.getState().askQuestion('first question');
+    expect(store.getState().thread).toHaveLength(1);
+    const firstChatId = (answerFromGraphMock.mock.calls[0][4] as { chatId: string }).chatId;
+    store.getState().close();
+    // The idle close ended A's session already. What follows is the open's own.
+    const endChatCallsAfterClose = endChatMock.mock.calls.length;
+
+    // Quick Find from project B's board: queue the question and open on B.
+    store.getState().askInGraph('second question', 'B');
+
+    // A's chat is over before anything is asked, and the store points at B with
+    // no map of its own yet.
+    expect(store.getState().projectId).toBe('B');
+    expect(store.getState().snapshot).toBeNull();
+    expect(store.getState().loaded).toBe(false);
+    expect(store.getState().thread).toEqual([]);
+    expect(endChatMock.mock.calls.slice(endChatCallsAfterClose)).toEqual([[firstChatId]]);
+
+    // The graph body asks the queued question while B's snapshot read is still
+    // held, the order that sent it to A.
+    const queuedQuestion = store.getState().takeQueuedQuestion();
+    expect(queuedQuestion).toBe('second question');
+    const release = holdNextAnswer();
+    const asking = store.getState().askQuestion(queuedQuestion ?? '');
+    const secondAsk = answerFromGraphMock.mock.calls[1];
+    expect(secondAsk[0]).toBe('second question');
+    expect(secondAsk[1]).toBe('B');
+    const secondAskOptions = secondAsk[4] as { chatId: string; history: unknown[] };
+    // A new chat, which carries nothing of A's.
+    expect(secondAskOptions.chatId).not.toBe(firstChatId);
+    expect(secondAskOptions.history).toEqual([]);
+
+    // B's snapshot lands. Landing is asserted first, so the silence from
+    // `endChat` and the surviving turn below are about this read and not a
+    // read that never arrived.
+    takePendingRead('B').resolve(makeSnapshot('B'));
+    await flush();
+    expect(store.getState().projectId).toBe('B');
+    expect(store.getState().loaded).toBe(true);
+    // Not a switch: the chat already ended at the open, so no second end.
+    expect(endChatMock.mock.calls.slice(endChatCallsAfterClose)).toEqual([[firstChatId]]);
+    expect(store.getState().thread).toHaveLength(1);
+    expect(store.getState().thread[0].question).toBe('second question');
+
+    // The user-visible symptom: the answer lands in the turn that was asked.
+    release(settledAnswer);
+    await asking;
+    expect(store.getState().thread[0].status).toBe('done');
+    expect(store.getState().thread[0].text).toBe('an answer');
+    expect(endChatMock.mock.calls.slice(endChatCallsAfterClose)).toEqual([[firstChatId]]);
+  });
+
+  // Control for the test above, and it passes with or without the fix: the chat
+  // ends at an open only when the open NAMES a project other than the one last
+  // shown. Reopening on the same project, or on none (follow whatever is
+  // current, as a detached window does), keeps the thread. It stops an
+  // over-eager open from wiping the chat on every visit.
+  it('keeps the chat when the graph is reopened on the same project, or on none', async () => {
+    store.getState().open('A');
+    resolveRead('A');
+    await flush();
+    answerFromGraphMock.mockResolvedValueOnce(settledAnswer);
+    await store.getState().askQuestion('first question');
+    store.getState().close();
+    let endChatCallsAfterClose = endChatMock.mock.calls.length;
+
+    store.getState().open('A');
+    expect(store.getState().projectId).toBe('A');
+    expect(store.getState().thread).toHaveLength(1);
+    expect(endChatMock).toHaveBeenCalledTimes(endChatCallsAfterClose);
+    resolveRead('A');
+    await flush();
+    expect(store.getState().thread).toHaveLength(1);
+
+    store.getState().close();
+    endChatCallsAfterClose = endChatMock.mock.calls.length;
+    store.getState().open(null);
+    expect(store.getState().projectId).toBe('A');
+    expect(store.getState().thread).toHaveLength(1);
+    expect(endChatMock).toHaveBeenCalledTimes(endChatCallsAfterClose);
+    // "Whatever is current" reads the project last shown, and main answers with it.
+    takePendingRead('A').resolve(makeSnapshot('A'));
+    await flush();
+    expect(store.getState().thread).toHaveLength(1);
+    expect(store.getState().thread[0].question).toBe('first question');
+    expect(endChatMock).toHaveBeenCalledTimes(endChatCallsAfterClose);
   });
 });
 

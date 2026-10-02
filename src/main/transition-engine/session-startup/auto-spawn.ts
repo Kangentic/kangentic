@@ -15,6 +15,14 @@ import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
 
+/** What the pty host's crash took down, for a scoped pass (`lostScope`). */
+export interface LostSessionScope {
+  /** The tasks of the lost sessions: only these start. */
+  taskIds: ReadonlySet<string>;
+  /** The lost sessions themselves, whose rows stay in the registry, exited. */
+  lostSessionIds: ReadonlySet<string>;
+}
+
 /**
  * Enforce the auto-spawn invariant on project open: find tasks in
  * `auto_spawn=true` columns that have no running PTY session, and
@@ -41,21 +49,23 @@ export async function autoSpawnTasks(
   /** Board Board Profiles, so a profiled task spawns on its own rung for this column. */
   boardProfiles?: ReadonlyArray<BoardProfile>,
   /**
-   * Start these tasks and nothing else: the pty host's crash path, mid-run,
-   * for the tasks whose lost session could not be resumed (it had no agent
-   * session id yet). Mirrors `resumeSuspendedSessions`' `onlySessionIds`: an
-   * unscoped pass would also wake a task whose agent exited earlier this run.
-   * The lost row is still in the registry, exited, so a task counts as having
-   * a session here only for a row that is not exited (a resumed session, or a
-   * paused placeholder that must keep its Resume). Startup omits it.
+   * Start the crash's lost tasks and nothing else: the pty host's crash path,
+   * mid-run, for the tasks whose lost session could not be resumed (it had no
+   * agent session id yet). Mirrors `resumeSuspendedSessions`' `onlySessionIds`:
+   * an unscoped pass would also wake a task whose agent exited earlier this
+   * run. Startup omits it.
    */
-  onlyTaskIds?: ReadonlySet<string>,
+  lostScope?: LostSessionScope,
 ): Promise<void> {
   if (isShuttingDown()) return;
-  if (onlyTaskIds && onlyTaskIds.size === 0) return;
-  const hasSession = onlyTaskIds
+  if (lostScope && lostScope.taskIds.size === 0) return;
+  // The lost rows stay in the registry, exited, so in a scoped pass every row
+  // but those counts as the task having a session: a resumed session, a paused
+  // placeholder that must keep its Resume, and a resume whose spawn failed (an
+  // exited row of its own), which a fresh agent must not replace.
+  const hasSession = lostScope
     ? (taskId: string): boolean => sessionManager.listSessions()
-      .some((session) => session.taskId === taskId && session.status !== 'exited')
+      .some((session) => session.taskId === taskId && !lostScope.lostSessionIds.has(session.id))
     : (taskId: string): boolean => sessionManager.hasSessionForTask(taskId);
 
   const done = startStartupTimer('autoSpawnTasks', projectId, 'spawned');
@@ -109,7 +119,7 @@ export async function autoSpawnTasks(
   const candidates: Array<{ lane: Swimlane; task: Task }> = [];
   for (const lane of lanesToScan) {
     for (const task of taskRepo.list(lane.id)) {
-      if (onlyTaskIds && !onlyTaskIds.has(task.id)) continue;
+      if (lostScope && !lostScope.taskIds.has(task.id)) continue;
       if (hasSession(task.id)) continue;
       const laneForTask = applyProfileToLane(
         lane,
@@ -219,13 +229,25 @@ export async function autoSpawnTasks(
   // re-check: the preparation above awaited the shell and every agent's
   // detection, and a move, a Resume or a reset that took the task in that time
   // owns it now. Without the lock this pass spawned into a task the user had
-  // just moved, To Do included. A skipped task leaves its prepared session
-  // directory to the startup orphan cleanup.
-  const now = new Date().toISOString();
+  // just moved, To Do included. A reset shows as a changed `session_id`, which
+  // it clears. A skipped task keeps what its preparation wrote: the session
+  // directory, which the next launch's orphan cleanup removes, and anything the
+  // adapter's command builder wrote for that run (Gemini's hooks file in the
+  // worktree), which stays until a later session of the task ends.
   const spawnResults = await Promise.allSettled(
     spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
       const current = taskRepo.getById(input.task.id);
-      if (!current || current.swimlane_id !== input.task.swimlane_id || hasSession(input.task.id)) return null;
+      if (
+        !current
+        || current.swimlane_id !== input.task.swimlane_id
+        || current.session_id !== input.task.session_id
+        || hasSession(input.task.id)
+      ) {
+        return null;
+      }
+      // Stamped inside the lock, so a record another holder wrote while this
+      // one waited never sorts after the one written here.
+      const now = new Date().toISOString();
 
       const newSession = await sessionManager.spawn({
         id: input.sessionRecordId,

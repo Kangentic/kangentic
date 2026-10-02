@@ -579,8 +579,14 @@ non-zero on its own earlier in the run, or one suspended this run, would be woke
 Step 8 runs scoped too, to the lost sessions' tasks. A lost session with no `agent_session_id` yet
 has nothing to resume (the interrupted-exited gather requires one), so its task starts a fresh
 agent there, as it would at startup. Its lost row is still in the registry, exited, so in this pass
-a task counts as having a session only for a row that is not exited: a resumed session, or a paused
-placeholder that keeps its Resume.
+every row but the lost ones counts as the task having a session: a resumed session, a paused
+placeholder that keeps its Resume, and a resume whose spawn failed, whose exited row a fresh agent
+must not replace.
+
+Both passes spawn each task under its lifecycle lock (`withTaskLock`), after reading the task again,
+because their preparation awaits the shell and every agent's detection. A task is skipped when its
+column changed, its `session_id` changed (a Reset clears it), it gained a live session, or, for a
+resume, its record is gone or its status moved (a user's Resume retires it).
 
 ## PTY host
 

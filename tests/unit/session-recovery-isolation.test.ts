@@ -88,8 +88,11 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     getUserPausedTaskIds = vi.fn(() => new Set<string>());
     insert = vi.fn();
     updateAppliedSettings = vi.fn();
-    // The resume pass confirms under the task lock that its record still exists.
-    findByAnyId = (id: string) => ({ id }) as SessionRecord;
+    // The resume pass confirms under the task lock that its record still exists
+    // in the status it was gathered in: the gathered row itself, as the
+    // database returns it.
+    findByAnyId = (id: string) => [...sessionRepoGetResumable(), ...sessionRepoGetOrphaned()]
+      .find((record: SessionRecord) => record.id === id);
   }
   return { SessionRepository: FakeSessionRepository };
 });

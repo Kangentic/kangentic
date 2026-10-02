@@ -430,14 +430,21 @@ export async function resumeSuspendedSessions(
   // detection, and a move, a Resume or a reset in that time owns the task now.
   // The check is for a LIVE session, not any row: the pty host's crash path
   // leaves the lost row registered, exited, for exactly the task it resumes.
+  // A reset deletes no record (it marks the latest exited, which an exited or
+  // suspended one already is); what it changes is the task's `session_id`,
+  // which it clears. A user's Resume retires the record, so a Resume then a
+  // Pause, which leaves no live session, still shows as the record's status.
+  // A skipped task keeps what its preparation wrote (see auto-spawn.ts).
   const spawnResults = await Promise.allSettled(
     spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
       const current = taskRepo.getById(input.task.id);
-      const recordStillThere = sessionRepo.findByAnyId(input.record.id)?.id === input.record.id;
+      const recordNow = sessionRepo.findByAnyId(input.record.id);
+      const recordUnchanged = recordNow?.id === input.record.id && recordNow.status === input.record.status;
       if (
         !current
         || current.swimlane_id !== input.task.swimlane_id
-        || !recordStillThere
+        || current.session_id !== input.task.session_id
+        || !recordUnchanged
         || sessionManager.findLiveSessionByTaskId(input.task.id)
       ) {
         return null;

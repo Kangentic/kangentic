@@ -162,16 +162,19 @@ describe('retrievalService.reconcileEmbedWorker and the summary failure backoff'
   let retrievalService: typeof import('../../src/main/retrieval/retrieval-service')['retrievalService'];
 
   /**
-   * Leaves the service holding CHOICE as the resolved summary choice, with the
-   * scheduler's counters clear. A fresh module has no choice yet, so this first
-   * reconcile is itself a change (none to some) and ends the backoff once; that
-   * is cleared here, and what the tests assert is the reconcile after it.
+   * Leaves the service holding CHOICE as the resolved summary choice for the
+   * context's project, with the scheduler's counters clear. A fresh module has
+   * no choice for the project yet, so this first reconcile is a project open,
+   * not a settings change, and leaves the backoff alone; what the tests assert
+   * is the reconcile after it.
    */
   async function settleOnChoice(context: IpcContext): Promise<void> {
     retrievalService.reconcileEmbedWorker(context);
     await vi.waitFor(() => {
-      expect(summarySchedulerMock.endBackoff).toHaveBeenCalledTimes(1);
+      expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(1);
     });
+    await untilSettled();
+    expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
     summarySchedulerMock.endBackoff.mockClear();
     summarySchedulerMock.request.mockClear();
     answerRunMock.resolveAnswerRun.mockClear();
@@ -231,7 +234,76 @@ describe('retrievalService.reconcileEmbedWorker and the summary failure backoff'
     expect(summarySchedulerMock.request.mock.calls).toEqual([[switched, 'proj-b']]);
   });
 
-  // These are the guard against over-correcting the two tests above: a real
+  // A project that has no resolved choice of its own has nothing to compare
+  // with, so what another project resolved to is not a baseline for it.
+  //
+  // Red-green: compare against ONE global previous choice (what the code did
+  // before `resolvedSummaryChoices` was keyed by project). proj-a settled on
+  // CHOICE, so proj-b's first resolve to a different choice would read as a
+  // change and call `endBackoff` for a project that never had a choice to
+  // change. With `hasBaseline` (or the per-project map) it stays uncalled.
+  it('does not end the backoff for a project whose first resolve differs from the previous project\'s choice', async () => {
+    await settleOnChoice(makeContext('proj-a'));
+    const switched = makeContext('proj-b');
+    const release = holdNextResolution();
+
+    retrievalService.reconcileEmbedWorker(switched);
+    release({ ...CHOICE, agent: 'codex' });
+    await untilSettled();
+
+    expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(1);
+    expect(answerRunMock.resolveAnswerRun.mock.calls[0][1]).toBe('proj-b');
+    expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+    expect(summarySchedulerMock.request.mock.calls).toEqual([[switched, 'proj-b']]);
+
+    // The first resolve is now proj-b's own baseline: a later change of choice
+    // for proj-b is a real change, which shows the silence above was the missing
+    // baseline and not a project that can never end its backoff.
+    const releaseSecond = holdNextResolution();
+    retrievalService.reconcileEmbedWorker(switched);
+    releaseSecond({ ...CHOICE, agent: 'gemini' });
+    await vi.waitFor(() => {
+      expect(summarySchedulerMock.endBackoff).toHaveBeenCalledTimes(1);
+    });
+    expect(summarySchedulerMock.endBackoff.mock.calls).toEqual([['proj-b']]);
+  });
+
+  // Two reconciles overlap on one project (a settings change lands while the
+  // first refresh is still reading), and both resolve to the SAME choice. The
+  // first reconcile was superseded: its refresh result is dropped and the
+  // second reconcile makes the comparison. Neither may end the backoff.
+  //
+  // Red-green: drop the `generation !== summaryChoiceGeneration` guard from the
+  // follow-up. The first reconcile's follow-up then runs after the second
+  // reconcile nulled `summaryChoice` (and before the second refresh landed),
+  // compares the baseline CHOICE against that null, sees a difference, and
+  // calls `endBackoff`. The assertion between the two releases is the one that
+  // goes red; it must come before the second release, or the second refresh
+  // writes CHOICE first and hides the bug.
+  it('ends no backoff when two overlapping reconciles on one project resolve to the same choice', async () => {
+    const context = makeContext('proj-a');
+    await settleOnChoice(context);
+    const releaseFirst = holdNextResolution();
+    retrievalService.reconcileEmbedWorker(context);
+    const releaseSecond = holdNextResolution();
+    retrievalService.reconcileEmbedWorker(context);
+
+    // The first refresh resolves while the second is still reading.
+    releaseFirst(CHOICE);
+    await untilSettled();
+    expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+
+    releaseSecond(CHOICE);
+    await untilSettled();
+
+    expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(2);
+    expect(summarySchedulerMock.endBackoff).not.toHaveBeenCalled();
+    // One request per reconcile and nothing after them: a wrongly ended
+    // backoff asks for the pass again.
+    expect(summarySchedulerMock.request.mock.calls).toEqual([[context, 'proj-a'], [context, 'proj-a']]);
+  });
+
+  // These are the guard against over-correcting the tests above: a real
   // change must still end the backoff. They fail if the backoff is never ended,
   // if `sameSummaryChoice` ignores a field (compare only the agent and the model
   // and effort rows stay uncalled), or if it ends before the refresh resolves

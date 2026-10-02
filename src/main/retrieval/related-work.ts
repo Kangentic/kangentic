@@ -779,6 +779,13 @@ const conversationOwnersByProject = new Map<string, {
   owners: ReturnType<RetrievalStore['conversationOwners']>;
 }>();
 
+/** Let go of a project's conversation owners: it was closed for deletion
+ *  (`project.close` in the worker), and the list holds one entry per indexed
+ *  conversation. */
+export function forgetConversationOwners(projectId: string): void {
+  conversationOwnersByProject.delete(projectId);
+}
+
 /**
  * Every indexed conversation in a project as a rollup node, read off the index
  * itself rather than the Knowledge Graph's projection, so a caller with no map

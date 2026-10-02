@@ -557,10 +557,11 @@ export function registerSearchHandlers(context: IpcContext): void {
         const runFreshInDirectory = (freshPrompt: string): Promise<string> => withAnswerRunDirectory((runDirectory) => (
           answerFromContext(freshPrompt, cliPath, resolvedRun.run.answerHome, configuredModel, { retrieval, effort, onEvent, runDirectory })
         ));
-        // Recorded as the chat's, so ending the chat stops it (`stopCliRunsForChat`).
+        // Recorded as the chat's, so ending the chat stops it (`stopCliRunsForChat`),
+        // or, when the end lands before the CLI has spawned, keeps it from starting.
         const chatOfRun = chatId;
         const runFresh = (freshPrompt: string): Promise<string> => (
-          chatOfRun ? runCliForChat(chatOfRun, () => runFreshInDirectory(freshPrompt)) : runFreshInDirectory(freshPrompt)
+          chatOfRun ? runCliForChat(chatOfRun, () => runFreshInDirectory(freshPrompt), chatEnded) : runFreshInDirectory(freshPrompt)
         );
         let raw: string;
         try {

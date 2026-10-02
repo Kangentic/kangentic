@@ -696,7 +696,7 @@ export async function recoverSessionsAfterPtyHostLoss(
           project.default_model,
           project.default_effort,
           boardProfiles,
-          lostTaskIds,
+          { taskIds: lostTaskIds, lostSessionIds },
         );
       });
     } catch (error) {

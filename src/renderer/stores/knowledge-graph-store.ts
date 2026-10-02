@@ -430,6 +430,16 @@ function createKnowledgeGraphStore() {
 
       open: (projectId) => {
         if (get().graphOpen) return;
+        // Opened on another project than the one last shown, which `close`
+        // keeps: the map and the chat it holds are that project's. The chat
+        // ends now, before a question queued with this open (Quick Find) is
+        // asked. Left to the snapshot read, the question ran against the old
+        // project's id and the read then ended the chat, dropping it.
+        const previousProjectId = get().projectId;
+        if (projectId !== null && previousProjectId !== null && projectId !== previousProjectId) {
+          if (get().thread.length > 0) get().endChat();
+          set({ projectId, snapshot: null, loaded: false });
+        }
         // Flip first so the shell paints before any IPC resolves.
         set({ graphOpen: true, followsCurrentProject: projectId === null });
         get().attach();

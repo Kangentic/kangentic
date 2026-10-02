@@ -729,4 +729,45 @@ describe('resumeSuspendedSessions: the resume re-checks its task under the task 
 
     expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
+
+  describe('a reset that only clears the task\'s session_id', () => {
+    // A Reset leaves the record row and the task's lane unchanged and starts no
+    // live session, so the record, lane and live-session checks all still pass.
+    // What it changes is `task.session_id`, which it clears to null.
+    //
+    // Red-green: drop `current.session_id !== input.task.session_id` from the
+    // re-check in resume-suspended.ts and the first test spawns over the reset.
+    const gatheredTask = () => makeTask({ id: 'task-lost', swimlane_id: 'lane-exec', session_id: 'rec-lost' });
+
+    it('does not resume a task whose session_id was cleared during the preparation, and writes nothing', async () => {
+      seedLostSession(() => {
+        taskRepoList.mockReturnValue([{ ...gatheredTask(), session_id: null }]);
+      });
+      // The row the gather read still points at the lost session.
+      taskRepoList.mockReturnValue([gatheredTask()]);
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+      await resumeLost(sessionManager);
+
+      expect(vi.mocked(prepareAgentSpawn)).toHaveBeenCalledTimes(1);
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+      expect(sessionRepoInsert).not.toHaveBeenCalled();
+      expect(retireRecordMock).not.toHaveBeenCalled();
+      expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    });
+
+    it('still resumes a task whose non-null session_id is unchanged, so the check is not just refusing every such task', async () => {
+      seedLostSession();
+      taskRepoList.mockReturnValue([gatheredTask()]);
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+      await resumeLost(sessionManager);
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      // The write spies are wired: the resume records the new session on the task.
+      expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: 'task-lost', session_id: 'new-task-lost' });
+      expect(sessionRepoInsert).toHaveBeenCalledTimes(1);
+    });
+  });
 });

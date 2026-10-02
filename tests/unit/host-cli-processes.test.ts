@@ -9,8 +9,11 @@
  * nothing, except the one that checks the refusal.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import path from 'node:path';
+import type { spawn } from 'node:child_process';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostCliProcesses, leadingExecutable } from '../../src/main/pty/host/host-cli-processes';
+import { setMainExecutable } from '../../src/main/pty/host/host-exec';
 import type { PtyHostCliSpawnParams, PtyHostEvent } from '../../src/main/pty/host/protocol';
 
 const NOT_THIS_PROCESS = '/nonexistent/kangentic-host-binary';
@@ -159,6 +162,66 @@ describe('host CLI runs', () => {
     expect(leadingExecutable('"C:\\npm\\agent.cmd" -p "Kangentic.exe"')).toBe('C:\\npm\\agent.cmd');
     expect(leadingExecutable('  "/usr/local/bin/agent" --flag')).toBe('/usr/local/bin/agent');
     expect(leadingExecutable('agent -p title')).toBe('agent');
+    // The single quotes `quoteArg` writes for a POSIX shell, with a space in the
+    // path: the first-word fallback would stop at `'/opt/app`.
+    expect(leadingExecutable("'/opt/app dir/kangentic' --version")).toBe('/opt/app dir/kangentic');
+  });
+
+  describe('main\'s executable, as reported in the host\'s init', () => {
+    // On macOS the host runs from the Helper bundle, so its own execPath is never
+    // the app binary a run could name. A runner built with no executable argument
+    // reads `ownExecutables()` at each start, so it sees what main reported after
+    // the runner was built.
+    const mainBinary = path.resolve('/mock/Kangentic.app/Contents/MacOS/Kangentic');
+    const REFUSAL = 'The pty host does not launch its own executable';
+    const SPAWN_REACHED = 'the spawn was reached';
+    afterEach(() => setMainExecutable(undefined));
+
+    /** A runner with the production default (no third argument) over a spawn that
+     *  fails with a distinctive error, so a refusal and a reached spawn differ. */
+    function defaultRunner() {
+      const events: PtyHostEvent[] = [];
+      const spawnChild = vi.fn(() => {
+        throw new Error(SPAWN_REACHED);
+      });
+      const processes = new HostCliProcesses((event) => events.push(event), spawnChild as unknown as typeof spawn);
+      live.push(processes);
+      return { processes, events, spawnChild };
+    }
+
+    function runOf(processId: number, command: string, shell: boolean): PtyHostCliSpawnParams {
+      return { processId, command, args: [], cwd: process.cwd(), shell, env: {}, detached: false };
+    }
+
+    it('refuses main\'s executable, as a command and as the head of a shell command line, without spawning', () => {
+      // Red-green: if the runner compared only this process's execPath (the
+      // pre-init default), both starts would reach the spawn.
+      const { processes, events, spawnChild } = defaultRunner();
+      setMainExecutable(mainBinary);
+
+      processes.start(runOf(1, mainBinary, false));
+      processes.start(runOf(2, `"${mainBinary}" --version`, true));
+
+      expect(events.map((event) => event.type)).toEqual(['cliError', 'cliClose', 'cliError', 'cliClose']);
+      for (const event of events.filter((entry) => entry.type === 'cliError')) {
+        expect(event).toMatchObject({ error: { message: REFUSAL } });
+      }
+      expect(spawnChild).not.toHaveBeenCalled();
+      expect(processes.liveCount).toBe(0);
+    });
+
+    it('reads main\'s executable at each start, so a start before it was reported is not refused', () => {
+      const { processes, events, spawnChild } = defaultRunner();
+
+      processes.start(runOf(3, mainBinary, false));
+      expect(spawnChild).toHaveBeenCalledTimes(1);
+      expect(events[0]).toMatchObject({ error: { message: SPAWN_REACHED } });
+
+      setMainExecutable(mainBinary);
+      processes.start(runOf(4, mainBinary, false));
+      expect(spawnChild).toHaveBeenCalledTimes(1);
+      expect(events[2]).toMatchObject({ error: { message: REFUSAL } });
+    });
   });
 
   it('ignores writes and stops for a run it does not know', () => {

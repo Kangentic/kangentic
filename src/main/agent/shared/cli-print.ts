@@ -169,6 +169,11 @@ function runResolvedCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
   } = resolved;
 
   return new Promise<string>((resolve, reject) => {
+    // Nobody is waiting for this answer any more (`runCliForChat`).
+    if (cliRunChat.getStore()?.ended()) {
+      reject(new Error('the chat ended'));
+      return;
+    }
     const finalArgs = promptVia === 'arg'
       ? [...args, prompt]
       : promptVia === 'file' && promptFilePath && promptFileFlag
@@ -334,11 +339,17 @@ const liveCliRuns = new Map<CliChildProcess, string | null>();
  * a chat can then stop its run without every adapter passing the chat through
  * to `runCliPrint`.
  */
-const cliRunChat = new AsyncLocalStorage<string>();
+const cliRunChat = new AsyncLocalStorage<{ chatId: string; ended: () => boolean }>();
 
-/** Run `work` with every CLI it spawns recorded as `chatId`'s. */
-export function runCliForChat<T>(chatId: string, work: () => Promise<T>): Promise<T> {
-  return cliRunChat.run(chatId, work);
+/**
+ * Run `work` with every CLI it spawns recorded as `chatId`'s. `ended` says the
+ * chat has ended since the caller last checked: a run still on its way to its
+ * spawn then never starts (`runResolvedCliPrint`), since `stopCliRunsForChat`
+ * stops only runs already spawned and the way there awaits (a run directory,
+ * an adapter's own setup).
+ */
+export function runCliForChat<T>(chatId: string, work: () => Promise<T>, ended: () => boolean = () => false): Promise<T> {
+  return cliRunChat.run({ chatId, ended }, work);
 }
 
 /**
@@ -421,7 +432,7 @@ export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Rec
     if (leadsGroup && !child.stopTree) processGroupLeaders.add(child);
     // Tracked until it exits, so the quit path can reach it. `exit` fires even
     // when stdio stays open; an `error` means it never started.
-    liveCliRuns.set(child, cliRunChat.getStore() ?? null);
+    liveCliRuns.set(child, cliRunChat.getStore()?.chatId ?? null);
     const forget = (): void => { liveCliRuns.delete(child); };
     child.once?.('exit', forget);
     child.once?.('error', forget);

@@ -901,6 +901,92 @@ describe('runCliPrintAnswer - stopping a CLI that passes its output budget', () 
   });
 });
 
+/**
+ * `runCliForChat`'s `ended` predicate: the chat can end on the way to the spawn
+ * (the run directory, an adapter's own setup), where `stopCliRunsForChat` has
+ * nothing to stop yet. The run then rejects, and starts no CLI.
+ *
+ * Each child here closes with output as soon as it is spawned, so a run that
+ * wrongly starts RESOLVES. That fails the `rejects` assertions at once instead
+ * of hanging them on a child that never closes.
+ */
+describe('runCliForChat - a chat that ended before its run spawned', () => {
+  function mockSpawnToAnswer(output: string): void {
+    mockSpawn.mockImplementation(() => {
+      const child = makeFakeChild();
+      void Promise.resolve().then(() => {
+        child.stdout.emit('data', Buffer.from(output));
+        child.emit('close', 0);
+      });
+      return child;
+    });
+  }
+
+  const runAnswer = (): Promise<string> => runCliPrintAnswer({ cliPath: '/usr/bin/fake', args: [], prompt: 'question', cwd: '/tmp' });
+
+  // Red-green: take the `cliRunChat.getStore()?.ended()` check out of
+  // `runResolvedCliPrint`, or have `runCliForChat` drop its `ended` argument.
+  // The run then spawns: `mockSpawn` is called (the first assertion, which runs
+  // before the run is awaited, because the spawn is synchronous) and the run
+  // resolves with the child's output instead of rejecting.
+  it('rejects with "the chat ended" and spawns nothing when the chat has ended', async () => {
+    mockSpawnToAnswer('should never run');
+
+    const run = runCliForChat('chat-ended-before-spawn', runAnswer, () => true);
+
+    expect(mockSpawn).not.toHaveBeenCalled();
+    await expect(run).rejects.toThrow('the chat ended');
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  // The check is made where the CLI would start, not when the work begins: a
+  // chat that ends during the work's own awaits is the case it exists for.
+  // Red-green: delete the `cliRunChat.getStore()?.ended()` check in
+  // `runResolvedCliPrint`, as for the test above. This run, whose `ended` was
+  // false when the work began, then spawns and resolves.
+  it('reads "ended" at the spawn, so a chat that ends during the work\'s own awaits starts no CLI', async () => {
+    mockSpawnToAnswer('should never run');
+    let ended = false;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+
+    const run = runCliForChat('chat-ends-late', async () => {
+      await gate;
+      return runAnswer();
+    }, () => ended);
+    expect(mockSpawn).not.toHaveBeenCalled();
+    ended = true;
+    release();
+
+    await expect(run).rejects.toThrow('the chat ended');
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  // Control for both: the same run with the chat still open spawns and answers,
+  // so their silence is `ended` and not a harness that never reaches the spawn.
+  it('runs as before when the chat has not ended', async () => {
+    mockSpawnToAnswer('the answer');
+
+    const result = await runCliForChat('chat-still-open', runAnswer, () => false);
+
+    expect(result).toBe('the answer');
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  // Pins the default of `runCliForChat`'s third parameter. Without it a caller
+  // that passes no predicate (every `runCliForChat` before `ended` existed) puts
+  // `ended: undefined` in the store, and `ended()` in `runResolvedCliPrint`
+  // throws a TypeError, so the run rejects instead of answering.
+  it('runs as before when no "ended" predicate is given', async () => {
+    mockSpawnToAnswer('the answer');
+
+    const result = await runCliForChat('chat-no-predicate', runAnswer);
+
+    expect(result).toBe('the answer');
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('runCliPrintSummarize - a prompt delivered through a file', () => {
   // For a CLI that reads its prompt from a file and not from stdin (Grok's
   // `--prompt-file`, Aider's `--message-file`). An answer prompt runs to about

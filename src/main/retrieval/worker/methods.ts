@@ -16,6 +16,7 @@ import { searchConversationMemory, type TranscriptSearchHit } from '../memory-se
 import { precomputedEmbedder, type QueryVectors } from '../query-vectors';
 import {
   boardRecordTasks,
+  forgetConversationOwners,
   indexedConversationNodes,
   readBoardTaskFacts,
   searchRelatedWork,
@@ -360,6 +361,7 @@ export const retrievalHandlers: RetrievalHandlers = {
   'project.close': ({ projectId }, context) => {
     context.closeDb(projectId);
     indexStatus.forget(projectId);
+    forgetConversationOwners(projectId);
     // Only a context that ever read a graph has one to forget; never create one here.
     graphs.get(context)?.service.forget(projectId);
   },

@@ -57,13 +57,17 @@ describe('hover card facts', () => {
   });
 
   it('keeps cost to the cent at every scale', () => {
-    // Rounding to whole dollars above ten hides whether "$41" was 41.02 or
-    // 41.98, and these are amounts someone may reconcile against a bill.
+    // Rounding to whole dollars above ten would print "$41" for both 41.01 and
+    // 41.04, and these are amounts someone may reconcile against a bill.
     expect(formatCost(41.02)).toBe(dollars(41.02));
     expect(formatCost(1206.5)).toBe(dollars(1206.5));
-    // Locale-free statement of the same rule: two amounts a cent apart from a
-    // round dollar must not render alike.
-    expect(formatCost(41.02)).not.toBe(formatCost(41.98));
+    // Locale-free statement of the same rule. The pair is chosen so whole-dollar
+    // rounding merges it (a pair like 41.02 and 41.98 still differs after
+    // rounding, so it would pass against the rounded format too), and the first
+    // line pins that the pair really does merge. Only cent precision keeps
+    // the two amounts apart.
+    expect(Math.round(41.01)).toBe(Math.round(41.04));
+    expect(formatCost(41.01)).not.toBe(formatCost(41.04));
     // Only a genuinely sub-cent amount collapses: "$0.00" reads as free.
     expect(formatCost(0.004)).toBe('<$0.01');
     expect(formatCost(0)).toBe(dollars(0));

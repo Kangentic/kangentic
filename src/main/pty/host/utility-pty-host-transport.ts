@@ -214,8 +214,14 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     child.on('message', (message: unknown) => this.onHostMessage(child, message));
     child.on('exit', (code: number) => this.onHostExit(child, code, stderrTail));
     child.postMessage({ type: 'init', projectsDir: this.options.projectsDir, mainExecutable: process.execPath } satisfies ToPtyHostMessage);
-    // Whatever was posted while the previous host was down goes after init.
-    for (const queued of this.queuedWhileDown.splice(0)) child.postMessage(queued);
+    // Whatever was posted while the previous host was down goes after init,
+    // except a request whose caller already timed out (`switchToFallback`
+    // skips it too): that caller was told it failed and may retry, and an
+    // exec that writes (`git worktree remove --force`) would then run twice.
+    for (const queued of this.queuedWhileDown.splice(0)) {
+      if (queued.type === 'request' && !this.pending.has(queued.id)) continue;
+      child.postMessage(queued);
+    }
     return child;
   }
 

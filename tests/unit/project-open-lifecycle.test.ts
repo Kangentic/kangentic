@@ -1032,7 +1032,12 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
   const RESUME_ONLY_SESSION_IDS_ARGUMENT = 9;
   // autoSpawnTasks' tenth parameter is its scope, for the same reason: an
   // unscoped pass would also restart a task whose agent exited earlier this run.
-  const AUTO_SPAWN_ONLY_TASK_IDS_ARGUMENT = 9;
+  // It is `{ taskIds, lostSessionIds }`: the lost sessions' tasks, and the lost
+  // rows themselves, so the pass can tell them from a later row of the same task
+  // (a resume whose spawn failed leaves one) that must keep a fresh agent away.
+  // Red-green: pass `lostTaskIds` bare, or leave `lostSessionIds` out of the
+  // object, in projects.ts and the two tests that read it go red.
+  const AUTO_SPAWN_LOST_SCOPE_ARGUMENT = 9;
 
   function registerProjects(context: MockContext, projects: Project[]): void {
     const byId = new Map(projects.map((project) => [project.id, project]));
@@ -1079,15 +1084,69 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
       { id: 'session-other', taskId: 'task-3', status: 'exited' },
     ]);
 
-    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([['project-A', new Set(['session-a1', 'session-a2'])]]));
+    const lostInA = new Set(['session-a1', 'session-a2']);
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([['project-A', lostInA]]));
 
     expect(state.callOrder).toEqual(['resumeSuspendedSessions', 'autoSpawnTasks']);
     const autoSpawnCalls = vi.mocked(autoSpawnTasks).mock.calls;
     expect(autoSpawnCalls).toHaveLength(1);
     expect(autoSpawnCalls[0][0]).toBe('project-A');
     expect(autoSpawnCalls[0][2]).toBe(context.sessionManager);
-    // autoSpawnTasks itself skips task-1, whose resumed row is no longer exited.
-    expect(autoSpawnCalls[0][AUTO_SPAWN_ONLY_TASK_IDS_ARGUMENT]).toEqual(new Set(['task-1', 'task-2']));
+    // Both lost tasks go in; which of them already has a session again is for
+    // autoSpawnTasks to decide from the registry. `toEqual` on the object also
+    // pins the shape: no key beyond these two.
+    expect(autoSpawnCalls[0][AUTO_SPAWN_LOST_SCOPE_ARGUMENT]).toEqual({
+      taskIds: new Set(['task-1', 'task-2']),
+      lostSessionIds: lostInA,
+    });
+    // The project's own lost set, not a copy that could drift from what the resume got.
+    expect(autoSpawnCalls[0][AUTO_SPAWN_LOST_SCOPE_ARGUMENT]?.lostSessionIds).toBe(lostInA);
+  });
+
+  it('reads the lost tasks before the resume replaces the rows it brings back, and leaves out a lost row with no task', async () => {
+    // The resume swaps a lost row for a fresh one (new id, running), so a read
+    // after it finds no lost id. Red-green: move the `lostTaskIds` read below the
+    // resume in projects.ts and the set is empty; drop its `&& session.taskId`
+    // filter and the set gains `undefined`.
+    const context = createMockContext();
+    const project = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a') });
+    registerProjects(context, [project]);
+    interface RegistryRow { id: string; taskId: string | undefined; status: string }
+    const listSessions = vi.fn((): RegistryRow[] => [
+      { id: 'session-a1', taskId: 'task-1', status: 'exited' },
+      { id: 'session-a2', taskId: 'task-2', status: 'exited' },
+      { id: 'session-a3', taskId: undefined, status: 'exited' },
+      { id: 'session-other', taskId: 'task-3', status: 'exited' },
+    ]);
+    context.sessionManager.listSessions = listSessions;
+    let resumeRan = false;
+    vi.mocked(resumeSuspendedSessions).mockImplementationOnce(async () => {
+      state.callOrder.push('resumeSuspendedSessions');
+      resumeRan = true;
+      listSessions.mockReturnValue([
+        { id: 'session-new-1', taskId: 'task-1', status: 'running' },
+        { id: 'session-new-2', taskId: 'task-2', status: 'running' },
+        { id: 'session-other', taskId: 'task-3', status: 'exited' },
+      ]);
+    });
+
+    const lostInA = new Set(['session-a1', 'session-a2', 'session-a3']);
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([['project-A', lostInA]]));
+
+    // The swap happened before autoSpawnTasks ran, so a late read would see it.
+    expect(resumeRan).toBe(true);
+    expect(state.callOrder).toEqual(['resumeSuspendedSessions', 'autoSpawnTasks']);
+    const autoSpawnCalls = vi.mocked(autoSpawnTasks).mock.calls;
+    expect(autoSpawnCalls).toHaveLength(1);
+    // The lost ids stay whole, session-a3 included: it has no task, so it is out
+    // of `taskIds`, but it is still a lost row the scoped pass must not count.
+    expect(autoSpawnCalls[0][AUTO_SPAWN_LOST_SCOPE_ARGUMENT]).toEqual({
+      taskIds: new Set(['task-1', 'task-2']),
+      lostSessionIds: lostInA,
+    });
+    expect(autoSpawnCalls[0][AUTO_SPAWN_LOST_SCOPE_ARGUMENT]?.lostSessionIds).toBe(lostInA);
   });
 
   it('skips a project that left the index and one whose folder is gone, and still resumes the rest', async () => {

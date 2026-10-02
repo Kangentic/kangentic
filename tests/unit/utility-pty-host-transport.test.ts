@@ -183,6 +183,41 @@ describe('UtilityPtyHostTransport', () => {
     expect(lifecycle.onHostUp).toHaveBeenCalledWith(true);
   });
 
+  it('does not replay to the restarted host a request whose caller already timed out while the host was down', async () => {
+    // A request the caller was told failed may be retried, and an exec that
+    // writes (`git worktree remove --force`) would then run twice. Red-green:
+    // drop the `!this.pending.has(queued.id)` skip in `ensureChild` and the new
+    // host is also handed the expired request, which is a second `request`.
+    const { transport } = makeTransport();
+    transport.start();
+    latestChild().emit('message', { type: 'ready' });
+    latestChild().emit('exit', 1);
+    // The first restart is immediate. The second crash's backoff is 1 s, and
+    // the restart timer polls the policy every 250 ms until it allows a fork:
+    // that is the window the host is down for.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(forks).toHaveLength(2);
+    latestChild().emit('exit', 1);
+
+    // Issued while the restart timer is set, so both are queued, not posted.
+    const expired = transport.request('getOutputPeek', { sessionId: 'expired' }, { timeoutMs: 100 });
+    const survivor = transport.request('getDiagnostics', {});
+    const expiredAssertion = expect(expired).rejects.toThrow(/did not answer getOutputPeek/);
+    await vi.advanceTimersByTimeAsync(100);
+    await expiredAssertion;
+    expect(forks).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(forks).toHaveLength(3);
+    const restarted = latestChild();
+    expect(restarted.postedTypes()).toEqual(['init', 'request']);
+    expect(restarted.posted[1]).toMatchObject({ type: 'request', method: 'getDiagnostics' });
+
+    // The survivor is still tracked: the replayed request is answered normally.
+    reply(restarted, lastRequestId(restarted), { sessions: [] });
+    await expect(survivor).resolves.toEqual({ sessions: [] });
+  });
+
   it('ignores messages and exits from a host it has already replaced', async () => {
     const { transport, events, lifecycle } = makeTransport();
     transport.start();

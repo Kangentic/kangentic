@@ -24,6 +24,10 @@ vi.mock('../../src/main/retrieval/graph/projection-engine', () => ({
 vi.mock('../../src/main/retrieval/retrieval-store', () => ({
   RetrievalStore: class {
     readonly hasVec = true;
+    /** No stored vectors: `resolveEmbedding` falls back to the tag it was given. */
+    storedEmbeddingSignature(): null {
+      return null;
+    }
     getMeta(key: string): string | undefined {
       return state.meta.get(key);
     }
@@ -45,6 +49,7 @@ import {
   type StoredRegionNames,
 } from '../../src/main/retrieval/graph/region-names';
 import { createGraphService } from '../../src/main/retrieval/graph/graph-service';
+import { runProjectionPass, writeProjectionCache } from '../../src/main/retrieval/graph/projection-engine';
 
 function node(index: number, title: string, cluster: number): KnowledgeGraphNode {
   return {
@@ -362,5 +367,120 @@ describe('the graph service names regions in the background', () => {
     expect(stored()?.signature).toBe('sig-2');
     expect(changed).toEqual(['project']);
     expect(regionLabel(graph)).not.toBe('build terminal');
+  });
+
+  describe('a project forgotten while its names are being made', () => {
+    /**
+     * Starts a naming run and leaves it in flight, with a second request for the
+     * same project waiting behind it (`again`). Returns the service, and how many
+     * times it had opened the project's index by then: a naming run opens it
+     * first thing (`storeFor`), so any later opening is a later run.
+     */
+    async function runningWithAnotherAskedFor() {
+      const getDb = vi.fn(() => ({}) as never);
+      const graph = createGraphService({ getDb, onChanged: (projectId) => changed.push(projectId), now: () => clock });
+      graph.getProjection('project');
+      await vi.advanceTimersByTimeAsync(0);
+      // Precondition: the run is in flight (it yields a turn per granularity and
+      // writes only after the last), so the request below lands while it runs.
+      expect(stored()).toBeNull();
+      graph.requestRegionNames('project', true);
+      return { graph, getDb, opensWhileRunning: getDb.mock.calls.length };
+    }
+
+    // Control for the test below: nobody forgets the project, so the request
+    // that arrived mid-run is made after it, which opens the index once more.
+    // It shows the harness really sets `again`, so the silence below is the
+    // forget and not a request that was never queued.
+    it('control: makes the request that arrived mid-run once the run ends, when the project is not forgotten', async () => {
+      const { getDb, opensWhileRunning } = await runningWithAnotherAskedFor();
+
+      await vi.runAllTimersAsync();
+
+      expect(getDb.mock.calls.length).toBe(opensWhileRunning + 1);
+    });
+
+    // Red-green: drop `&& naming.get(projectId) === state` from the finally of
+    // `runRegionNames`. `forget` deleted the project's naming state, so the
+    // finally's `scheduleRegionNames` makes a fresh one with a timer, which runs
+    // and opens the index of a project that is closed for deletion: the count
+    // below is one higher than the control's difference of zero.
+    it('makes no further run for a project forgotten while its names were being made, though one was asked for', async () => {
+      const { graph, getDb, opensWhileRunning } = await runningWithAnotherAskedFor();
+
+      graph.forget('project');
+      await vi.runAllTimersAsync();
+
+      expect(getDb.mock.calls.length).toBe(opensWhileRunning);
+    });
+
+    describe('while a map is being rebuilt', () => {
+      let forgetOnFingerprint = false;
+      let forgotten = false;
+
+      /** A service whose summaries are on, and which forgets the project the first
+       *  time the naming of the rebuilt map reads their fingerprint. That read is
+       *  inside `makeRegionNames`, so it is the pass's naming step. */
+      function serviceThatForgetsWhileNaming() {
+        const graph = createGraphService({
+          getDb: () => ({}) as never,
+          onChanged: (projectId) => changed.push(projectId),
+          summaries: () => ({
+            fingerprint: () => {
+              if (forgetOnFingerprint) {
+                forgetOnFingerprint = false;
+                forgotten = true;
+                graph.forget('project');
+              }
+              return fingerprint;
+            },
+            all: () => new Map([...SUMMARIES].map(([taskId, summary]) => [taskId, { summary }])),
+          }),
+          now: () => clock,
+        });
+        graph.setSummaryNamesOn(() => true);
+        return graph;
+      }
+
+      beforeEach(() => {
+        forgetOnFingerprint = false;
+        forgotten = false;
+        vi.mocked(runProjectionPass).mockReset();
+        vi.mocked(writeProjectionCache).mockClear();
+        vi.mocked(runProjectionPass).mockResolvedValueOnce({
+          projection: projection(),
+          counts: { documents: 8, documentsRead: 8, vectorsRead: 8 },
+        } as unknown as Awaited<ReturnType<typeof runProjectionPass>>);
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      });
+
+      // Control for the test below: the same pass, no forget, tells the renderer.
+      it('control: pushes the new map when the project is not forgotten', async () => {
+        const graph = serviceThatForgetsWhileNaming();
+
+        graph.markDirty('project', 'model', 4);
+        await vi.runAllTimersAsync();
+
+        expect(writeProjectionCache).toHaveBeenCalledTimes(1);
+        expect(changed).toEqual(['project']);
+      });
+
+      // Red-green: drop `if (signal.aborted) return;` after the naming in
+      // `markDirty`. The pass then goes on to `onChanged` for a project that
+      // was forgotten, telling every window about a map nobody can read, and
+      // `changed` is `['project']` instead of empty.
+      it('does not push the new map when the project is forgotten while it is being named', async () => {
+        const graph = serviceThatForgetsWhileNaming();
+        forgetOnFingerprint = true;
+
+        graph.markDirty('project', 'model', 4);
+        await vi.runAllTimersAsync();
+
+        // The pass reached its naming step, where the project was forgotten.
+        expect(writeProjectionCache).toHaveBeenCalledTimes(1);
+        expect(forgotten).toBe(true);
+        expect(changed).toEqual([]);
+      });
+    });
   });
 });

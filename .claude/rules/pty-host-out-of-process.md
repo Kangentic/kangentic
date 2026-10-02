@@ -60,7 +60,9 @@ at the Windows timer floor.
   `src/main/utility-process/off-main-exec.ts`, never `promisify(exec)` or `promisify(execFile)`:
   they resolve and reject exactly as `promisify` does, run the child in the host (`host-exec.ts`),
   and fall back to a local spawn where no host is registered or reachable. The host never forks and
-  refuses to launch its own executable, which with the RunAsNode fuse off would boot a second app.
+  refuses to launch its own executable or main's (the init message carries `mainExecutable`, since
+  on macOS the host runs from the Helper bundle), either of which, with the RunAsNode fuse off,
+  would boot a second app.
   The background-shell watcher's process table also comes from the host (`listProcesses`), which
   keeps the probe's PowerShell child.
 - **Agent CLI runs start in the host too.** `spawnCli` (`src/main/agent/shared/cli-print.ts`)

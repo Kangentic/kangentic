@@ -43,6 +43,13 @@ const sessionRepoGetOrphaned = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoGetInterruptedExited = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoMarkAllRunningAsOrphaned = vi.fn();
 const sessionRepoMarkRunningAsOrphanedExcluding = vi.fn();
+const sessionRepoInsertMock = vi.fn();
+/**
+ * The database's view of a record that changed after the gather, keyed by id:
+ * the row as it reads now, or `undefined` for a row that is gone. A record not
+ * in here reads back as it was gathered. Cleared by the describe that uses it.
+ */
+const recordsNow = new Map<string, SessionRecord | undefined>();
 
 const taskRepoList = vi.fn(() => [] as Task[]);
 const taskRepoUpdateMock = vi.fn();
@@ -93,10 +100,21 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     getLatestForTaskByTypeAndIsolation = vi.fn(() => null);
     getLatestForTask = vi.fn(() => undefined);
     getUserPausedTaskIds = vi.fn(() => new Set<string>());
-    insert = vi.fn();
+    insert = (...args: unknown[]) => sessionRepoInsertMock(...args);
     updateAppliedSettings = vi.fn();
-    // The resume pass confirms under the task lock that its record still exists.
-    findByAnyId = (id: string) => ({ id });
+    // The resume pass confirms under the task lock that its record still exists
+    // and has the status it was gathered in. Answers with the stored record, as
+    // a copy the way a database read does: never the gathered object itself, or
+    // a change to the row would show on both sides of that comparison.
+    findByAnyId = (id: string): SessionRecord | undefined => {
+      if (recordsNow.has(id)) return recordsNow.get(id);
+      const stored = [
+        ...sessionRepoGetResumable(),
+        ...sessionRepoGetOrphaned(),
+        ...sessionRepoGetInterruptedExited(),
+      ].find((record) => record.id === id);
+      return stored ? { ...stored } : undefined;
+    };
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -490,5 +508,121 @@ describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing bra
     expect(taskRepoUpdateMock).not.toHaveBeenCalled();
     expect(taskRepoSetWorktreeSkipReasonMock).not.toHaveBeenCalled();
     expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'record-1');
+  });
+});
+
+/** What a successful `prepareAgentSpawn` hands the spawn pass. */
+function preparedSpawn() {
+  return {
+    ok: true as const,
+    data: {
+      sessionRecordId: 'new-pty-session-1',
+      command: 'claude --resume agent-session-1',
+      cwd: '/project/cwd',
+      extraEnv: null,
+      statusOutputPath: '/project/status.json',
+      eventsOutputPath: '/project/events.jsonl',
+      adapter: { name: 'claude', sessionType: 'claude_agent' },
+      agentSessionId: 'agent-session-1',
+      agent: 'claude',
+      permissionMode: 'default',
+      appliedModel: null,
+      appliedEffort: null,
+    },
+  };
+}
+
+/**
+ * The spawn pass re-checks under the task lock, after the preparation awaited
+ * the shell and the agent's detection. The gathered record has to still exist
+ * AND still be in the status it was gathered in. A user's Resume retires a
+ * suspended record (its status becomes 'exited'), so a Resume then a Pause in
+ * that window leaves no live session and the lane unchanged: neither of those
+ * checks sees it, and the status is the only sign the record is spent.
+ *
+ * Red-green: drop `&& recordNow.status === input.record.status` from
+ * `recordUnchanged` in resume-suspended.ts and the retired-record test spawns
+ * over it. Remove `!recordUnchanged` from the condition altogether and the
+ * vanished-record test spawns too; the status clause rejects a missing row as a
+ * side effect, so it has no clause of its own to revert. The first test is the
+ * positive control: it keeps the check from being "refuse every record".
+ */
+describe('resumeSuspendedSessions: the locked re-check keeps the gathered record\'s status', () => {
+  beforeEach(() => {
+    markRecordSuspendedMock.mockClear();
+    markRecordSuspendedMock.mockReturnValue(true);
+    retireRecordMock.mockClear();
+    sessionRepoGetResumable.mockClear();
+    sessionRepoGetResumable.mockReturnValue([]);
+    sessionRepoGetOrphaned.mockClear();
+    sessionRepoGetOrphaned.mockReturnValue([]);
+    sessionRepoGetInterruptedExited.mockClear();
+    sessionRepoGetInterruptedExited.mockReturnValue([]);
+    sessionRepoInsertMock.mockClear();
+    recordsNow.clear();
+    taskRepoList.mockClear();
+    taskRepoList.mockReturnValue([]);
+    taskRepoUpdateMock.mockClear();
+    vi.mocked(prepareAgentSpawn).mockReset();
+    vi.mocked(prepareAgentSpawn).mockResolvedValue(preparedSpawn() as never);
+    swimlaneListMock.mockReturnValue([lane(LOUD_LANE, true)]);
+  });
+
+  afterEach(() => {
+    recordsNow.clear();
+  });
+
+  /** A suspended record the pass gathers, for a task in an auto_spawn column. */
+  function gatherSuspendedRecord(): SessionRecord {
+    const record = makeRecord({ id: 'record-gathered', isolated_swimlane_id: null, status: 'suspended' });
+    sessionRepoGetResumable.mockReturnValue([record]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: LOUD_LANE, profile_id: null })]);
+    return record;
+  }
+
+  it('resumes a gathered record that is still suspended when the lock is taken', async () => {
+    gatherSuspendedRecord();
+
+    const sessionManager = await runResume();
+
+    expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'record-gathered');
+    expect(sessionRepoInsertMock).toHaveBeenCalledTimes(1);
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: TASK_ID, session_id: 'new-pty-session-1' });
+  });
+
+  it('does not resume a record a user\'s Resume retired while the agent was being prepared, and writes nothing', async () => {
+    const record = gatherSuspendedRecord();
+    // The Resume retired this record; a Pause then left no live session and the
+    // task in the same column, so only the record's own status shows it.
+    vi.mocked(prepareAgentSpawn).mockImplementationOnce(async () => {
+      recordsNow.set(record.id, { ...record, status: 'exited' });
+      return preparedSpawn() as never;
+    });
+
+    const sessionManager = await runResume();
+
+    expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+    expect(sessionRepoInsertMock).not.toHaveBeenCalled();
+    expect(retireRecordMock).not.toHaveBeenCalled();
+  });
+
+  it('does not resume a record that was deleted while the agent was being prepared, and writes nothing', async () => {
+    const record = gatherSuspendedRecord();
+    vi.mocked(prepareAgentSpawn).mockImplementationOnce(async () => {
+      recordsNow.set(record.id, undefined);
+      return preparedSpawn() as never;
+    });
+
+    const sessionManager = await runResume();
+
+    expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+    expect(sessionRepoInsertMock).not.toHaveBeenCalled();
+    expect(retireRecordMock).not.toHaveBeenCalled();
   });
 });

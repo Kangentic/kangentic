@@ -110,6 +110,47 @@ describe('host-exec', () => {
     expect(launchesOwnBinary({ kind: 'execFile', file: '/opt/Kangentic/kangentic', args: [], options: {} }, appBinary)).toBe(true);
   });
 
+  describe('a POSIX shell command line and a Windows executable name', () => {
+    const command = (commandLine: string): HostExecRequest => ({ kind: 'exec', command: commandLine, options: {} });
+
+    it('reads a single-quoted leading path, the form `quoteArg` writes for a POSIX shell', () => {
+      const appBinary = '/opt/Kangentic/kangentic';
+
+      // Red-green: before the single-quote branch the leading word was
+      // `'/opt/Kangentic/kangentic'` with its quotes, whose name is not the app's,
+      // so the app's own binary was allowed through.
+      expect(launchesOwnBinary(command("'/opt/Kangentic/kangentic' --version"), appBinary)).toBe(true);
+      // Red-green: a space in the folder cut the leading word at `'/opt/Kangentic`,
+      // whose name is the app's, so another CLI under that folder was refused.
+      expect(launchesOwnBinary(command("'/opt/Kangentic app/bin/codex' --version"), appBinary)).toBe(false);
+      // A probe of another CLI in a folder named for the app is still allowed.
+      // This one held before the branch too (the quotes made it miss); it guards
+      // the branch against matching on the directory.
+      expect(launchesOwnBinary(command("'/opt/kangentic/bin/codex' --version"), appBinary)).toBe(false);
+    });
+
+    it('compares names with a trailing .exe stripped, so the extensionless name cmd resolves through PATHEXT is refused', () => {
+      // Red-green: before the strip, `Kangentic` never matched a candidate named
+      // `Kangentic.exe`, so the app's own binary was allowed through by that name.
+      const appBinary = '/opt/Kangentic/Kangentic.exe';
+
+      expect(launchesOwnBinary(command('"/opt/Kangentic/Kangentic" --version'), appBinary)).toBe(true);
+      expect(launchesOwnBinary(command('Kangentic --help'), appBinary)).toBe(true);
+      expect(launchesOwnBinary(command('kangentic.exe --help'), appBinary)).toBe(true);
+      expect(launchesOwnBinary(command('"/opt/Kangentic/bin/codex.exe" --version'), appBinary)).toBe(false);
+    });
+
+    // Node's path module on POSIX does not split a backslash path, so these
+    // Windows-form paths only mean anything on Windows.
+    it.runIf(process.platform === 'win32')('compares a Windows executable name with its .exe stripped', () => {
+      const appBinary = 'C:\\Program Files\\Kangentic\\Kangentic.exe';
+
+      expect(launchesOwnBinary(command('"C:\\Program Files\\Kangentic\\Kangentic" --version'), appBinary)).toBe(true);
+      expect(launchesOwnBinary(command('Kangentic --help'), appBinary)).toBe(true);
+      expect(launchesOwnBinary(command('"C:\\Program Files\\Kangentic\\bin\\codex" --version'), appBinary)).toBe(false);
+    });
+  });
+
   it('refuses to launch its own executable without spawning', async () => {
     const result = await runHostExec({ kind: 'execFile', file: process.execPath, args: ['--version'], options: {} });
     expect(result.ok).toBe(false);

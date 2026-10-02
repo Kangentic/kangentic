@@ -2,15 +2,22 @@
  * Startup auto-spawn scoped to the tasks a pty host loss took down.
  *
  * When the host dies mid-run, the recovery resumes every lost session it can
- * and then calls `autoSpawnTasks` with `onlyTaskIds` for the rest, the way a
- * startup runs resume and then auto-spawn. Two things make the scoped pass
- * different from a startup one. It must not touch a task outside the set: an
- * unscoped pass would also restart a task whose agent exited earlier this run.
- * And the lost row is still in the registry, exited, so `hasSessionForTask`
- * would report every lost task as covered and nothing would ever restart.
+ * and then calls `autoSpawnTasks` with a `lostScope` (`{ taskIds,
+ * lostSessionIds }`) for the rest, the way a startup runs resume and then
+ * auto-spawn. Three things make the scoped pass different from a startup one.
+ * It must not touch a task outside `taskIds`: an unscoped pass would also
+ * restart a task whose agent exited earlier this run. The lost rows are still
+ * in the registry, exited, so `hasSessionForTask` would report every lost task
+ * as covered and nothing would ever restart. And a task counts as having a
+ * session for ANY registry row whose id is not in `lostSessionIds`, whatever its
+ * status: a resume whose spawn failed leaves an exited row under a NEW id, which
+ * a fresh agent must not replace.
  *
- * Red-green: drop the `onlyTaskIds.has` filter and the first test fails; use
- * `hasSessionForTask` in scoped mode and the second fails.
+ * Red-green: drop the `taskIds.has` filter and the first test fails; use
+ * `hasSessionForTask` in scoped mode and the second fails; count only rows that
+ * are not `exited` (the rule before `lostSessionIds`) and the failed-resume and
+ * second-loss tests fail. The lone-lost-row test is the positive control: it
+ * keeps the rule from collapsing into "any row at all counts".
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,6 +27,9 @@ const mockTaskList = vi.fn();
 /** The task row as the database holds it now; unset, the row discovery listed. */
 const mockTaskGetById = vi.fn((_id: string): unknown => undefined);
 const mockSwimlaneList = vi.fn();
+/** The spawn pass's writes: the task's new session, and the session row. */
+const mockTaskUpdate = vi.fn();
+const mockSessionInsert = vi.fn();
 
 vi.mock('node:fs', () => ({ default: { existsSync: vi.fn(() => true) } }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
@@ -35,7 +45,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
       return rows;
     };
     getById = (id: string) => mockTaskGetById(id) ?? this.listed.get(id);
-    update = vi.fn();
+    update = (...args: unknown[]) => mockTaskUpdate(...args);
   },
 }));
 
@@ -43,7 +53,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     getLatestForTask = vi.fn(() => undefined);
     getUserPausedTaskIds = () => new Set<string>();
-    insert = vi.fn();
+    insert = (...args: unknown[]) => mockSessionInsert(...args);
     updateAppliedSettings = vi.fn();
   },
 }));
@@ -64,7 +74,7 @@ vi.mock('../../src/main/transition-engine/session-startup/prepare-spawn', () => 
   prepareAgentSpawn: (...args: unknown[]) => mockPrepareAgentSpawn(...(args as [never])),
 }));
 
-import { autoSpawnTasks } from '../../src/main/transition-engine/session-startup/auto-spawn';
+import { autoSpawnTasks, type LostSessionScope } from '../../src/main/transition-engine/session-startup/auto-spawn';
 
 const ACTIVE_LANE = 'lane-active';
 
@@ -96,7 +106,17 @@ function task(id: string) {
   return { id, swimlane_id: ACTIVE_LANE, profile_id: null, worktree_path: null };
 }
 
-async function runScopedAutoSpawn(registry: RegistryRow[], onlyTaskIds: ReadonlySet<string>) {
+/**
+ * `taskIds` are the lost sessions' tasks; `lostSessionIds` are the lost rows
+ * themselves, which stay in the registry, exited. Any other row of a task in the
+ * registry counts as the task having a session.
+ */
+async function runScopedAutoSpawn(
+  registry: RegistryRow[],
+  taskIds: ReadonlySet<string>,
+  lostSessionIds: ReadonlySet<string>,
+) {
+  const lostScope: LostSessionScope = { taskIds, lostSessionIds };
   const sessionManager = {
     // Any row counts here, exited or not, which is why scoped mode cannot use it.
     hasSessionForTask: vi.fn((taskId: string) => registry.some((row) => row.taskId === taskId)),
@@ -115,7 +135,7 @@ async function runScopedAutoSpawn(registry: RegistryRow[], onlyTaskIds: Readonly
     null,
     null,
     [],
-    onlyTaskIds,
+    lostScope,
   );
   return sessionManager;
 }
@@ -124,7 +144,7 @@ function preparedTaskIds(): string[] {
   return mockPrepareAgentSpawn.mock.calls.map((call) => (call[0] as unknown as { task: { id: string } }).task.id);
 }
 
-describe('autoSpawnTasks: onlyTaskIds scopes the pass to the lost tasks', () => {
+describe('autoSpawnTasks: lostScope scopes the pass to the lost tasks', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSwimlaneList.mockReturnValue([activeLane()]);
@@ -133,7 +153,11 @@ describe('autoSpawnTasks: onlyTaskIds scopes the pass to the lost tasks', () => 
   it('leaves a task outside the set alone, even with no session at all', async () => {
     mockTaskList.mockReturnValue([task('task-lost'), task('task-exited-earlier')]);
 
-    await runScopedAutoSpawn([{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }], new Set(['task-lost']));
+    await runScopedAutoSpawn(
+      [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+      new Set(['task-lost']),
+      new Set(['session-lost']),
+    );
 
     expect(preparedTaskIds()).toEqual(['task-lost']);
   });
@@ -144,6 +168,7 @@ describe('autoSpawnTasks: onlyTaskIds scopes the pass to the lost tasks', () => 
     const sessionManager = await runScopedAutoSpawn(
       [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
       new Set(['task-lost']),
+      new Set(['session-lost']),
     );
 
     expect(preparedTaskIds()).toEqual(['task-lost']);
@@ -160,16 +185,60 @@ describe('autoSpawnTasks: onlyTaskIds scopes the pass to the lost tasks', () => 
         { id: 'session-lost', taskId: 'task-lost', status: 'exited' },
       ],
       new Set(['task-resumed', 'task-paused', 'task-lost']),
+      new Set(['session-lost']),
     );
 
     expect(preparedTaskIds()).toEqual(['task-lost']);
   });
 
   it('does nothing for an empty set, not even a lane scan', async () => {
-    await runScopedAutoSpawn([], new Set());
+    await runScopedAutoSpawn([], new Set(), new Set());
 
     expect(mockSwimlaneList).not.toHaveBeenCalled();
     expect(mockPrepareAgentSpawn).not.toHaveBeenCalled();
+  });
+
+  // A resume whose spawn failed (handleSpawnFailure) leaves an exited row under a
+  // NEW session id, next to the lost row it replaced. The agent on that task is
+  // for the user to retry, not for a fresh start to cover.
+  //
+  // Red-green: count only rows whose status is not 'exited' (the rule before
+  // `lostSessionIds`) and the task has no session, so it is prepared.
+  it('does not start a fresh agent over a resume whose spawn failed and left an exited row of its own', async () => {
+    mockTaskList.mockReturnValue([task('task-lost')]);
+
+    await runScopedAutoSpawn(
+      [
+        { id: 'session-lost', taskId: 'task-lost', status: 'exited' },
+        { id: 'session-resume-failed', taskId: 'task-lost', status: 'exited' },
+      ],
+      new Set(['task-lost']),
+      new Set(['session-lost']),
+    );
+
+    // Discovery found a session, so nothing reached the preparation.
+    expect(preparedTaskIds()).toEqual([]);
+  });
+
+  // The row's identity decides, not its status. Task A's only row is the lost
+  // one. Task B's only row is exited too, but is not in this pass's
+  // `lostSessionIds`: it is a session the earlier recovery resumed that the host
+  // then lost a second time, which that later recovery owns.
+  //
+  // Red-green: same revert as above; both tasks are then prepared, not just A.
+  it('counts an exited row that is not in this pass\'s lost set as a session, so a second loss is not started twice', async () => {
+    mockTaskList.mockReturnValue([task('task-lost-now'), task('task-lost-again')]);
+
+    await runScopedAutoSpawn(
+      [
+        { id: 'session-lost-now', taskId: 'task-lost-now', status: 'exited' },
+        { id: 'session-resumed-then-lost-again', taskId: 'task-lost-again', status: 'exited' },
+      ],
+      new Set(['task-lost-now', 'task-lost-again']),
+      new Set(['session-lost-now']),
+    );
+
+    expect(preparedTaskIds()).toEqual(['task-lost-now']);
   });
 });
 
@@ -199,7 +268,8 @@ function preparedSpawn(taskId: string) {
  * real machine, and the user can act on the task meanwhile. The spawn re-reads
  * the task under its lifecycle lock and leaves one a user action took over.
  *
- * Red-green: drop the re-check in the spawn pass and the last two fail.
+ * Red-green: drop the re-check in the spawn pass and every negative test below
+ * fails (a user's session, a failed spawn, a move, a cleared session_id).
  */
 describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () => {
   beforeEach(() => {
@@ -216,6 +286,7 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
     const sessionManager = await runScopedAutoSpawn(
       [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
       new Set(['task-lost']),
+      new Set(['session-lost']),
     );
 
     expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
@@ -228,9 +299,30 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
       return preparedSpawn('task-lost') as never;
     });
 
-    const sessionManager = await runScopedAutoSpawn(registry, new Set(['task-lost']));
+    const sessionManager = await runScopedAutoSpawn(registry, new Set(['task-lost']), new Set(['session-lost']));
 
     expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  // The same rule as the discovery pass, at the lock: a session the user started
+  // while the agent was prepared, and whose spawn failed, is an exited row under
+  // a new id, which still means the task is no longer this pass's to start.
+  //
+  // Red-green: count only rows whose status is not 'exited' in `hasSession` and
+  // the spawn goes ahead over the failed one.
+  it('does not spawn over a session whose own spawn failed while the agent was being prepared', async () => {
+    const registry: RegistryRow[] = [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }];
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      registry.push({ id: 'session-user-failed', taskId: 'task-lost', status: 'exited' });
+      return preparedSpawn('task-lost') as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(registry, new Set(['task-lost']), new Set(['session-lost']));
+
+    expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockSessionInsert).not.toHaveBeenCalled();
   });
 
   it('does not spawn a task moved to another column while the agent was being prepared', async () => {
@@ -242,8 +334,54 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
     const sessionManager = await runScopedAutoSpawn(
       [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
       new Set(['task-lost']),
+      new Set(['session-lost']),
     );
 
     expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  describe('a reset that only clears the task\'s session_id', () => {
+    // A Reset leaves the task's lane unchanged and starts no live session (the
+    // registry still holds only the exited row), so the lane and session checks
+    // both still pass. What it changes is `task.session_id`, which it clears.
+    //
+    // Red-green: drop `current.session_id !== input.task.session_id` from the
+    // re-check in auto-spawn.ts and the first test spawns over the reset.
+    const gatheredTask = () => ({ ...task('task-lost'), session_id: 'session-lost' });
+
+    it('does not spawn a task whose session_id was cleared while the agent was being prepared, and writes nothing', async () => {
+      mockTaskList.mockReturnValue([gatheredTask()]);
+      mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+        mockTaskGetById.mockImplementation((id) => (id === 'task-lost' ? { ...gatheredTask(), session_id: null } : undefined));
+        return preparedSpawn('task-lost') as never;
+      });
+
+      const sessionManager = await runScopedAutoSpawn(
+        [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+        new Set(['task-lost']),
+        new Set(['session-lost']),
+      );
+
+      expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(mockTaskUpdate).not.toHaveBeenCalled();
+      expect(mockSessionInsert).not.toHaveBeenCalled();
+    });
+
+    it('still spawns a task whose non-null session_id is unchanged, so the check is not just refusing every such task', async () => {
+      mockTaskList.mockReturnValue([gatheredTask()]);
+      mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-lost') as never);
+
+      const sessionManager = await runScopedAutoSpawn(
+        [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+        new Set(['task-lost']),
+        new Set(['session-lost']),
+      );
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      // The write spies are wired: the spawn records the new session on the task.
+      expect(mockTaskUpdate).toHaveBeenCalledWith({ id: 'task-lost', session_id: 'session-new-task-lost', agent: 'claude' });
+      expect(mockSessionInsert).toHaveBeenCalledTimes(1);
+    });
   });
 });

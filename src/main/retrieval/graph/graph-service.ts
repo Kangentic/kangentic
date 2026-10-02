@@ -264,12 +264,13 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     } finally {
       state.running = false;
       state.lastRunAt = now();
-      if (state.again) {
-        const urgent = state.againUrgent;
-        state.again = false;
-        state.againUrgent = false;
-        scheduleRegionNames(projectId, urgent);
-      }
+      const urgent = state.againUrgent;
+      const again = state.again;
+      state.again = false;
+      state.againUrgent = false;
+      // Not for a project `forget` let go of while this ran: a run asked for
+      // then would recreate its state and a timer against a closed database.
+      if (again && naming.get(projectId) === state) scheduleRegionNames(projectId, urgent);
     }
   }
 
@@ -508,6 +509,8 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
           } catch (error) {
             console.error('[knowledge-graph] region names failed:', error);
           }
+          // Forgotten while naming: nobody is left to tell about the map.
+          if (signal.aborted) return;
           onChanged?.(projectId);
         } catch (error) {
           console.error('[knowledge-graph] projection pass failed:', error);
