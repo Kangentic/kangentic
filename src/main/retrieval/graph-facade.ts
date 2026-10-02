@@ -7,13 +7,15 @@
  * passed over), and sends them with each call.
  *
  * Nothing here runs a pass, and nothing waits for one: a refresh returns at
- * once and its end arrives as the worker's `graph-changed` event.
+ * once, a first build's steps arrive as the worker's `graph-progress` event,
+ * and its end as `graph-changed`.
  */
 
 import { retrievalClient } from './retrieval-client';
-import type { KnowledgeGraphSnapshotWire } from '../../shared/types';
+import type { KnowledgeGraphBuildProgress, KnowledgeGraphSnapshotWire } from '../../shared/types';
 
 let onChanged: ((projectId: string) => void) | undefined;
+let onBuildProgress: ((projectId: string, progress: KnowledgeGraphBuildProgress) => void) | undefined;
 let summariesSkipped: (projectId: string) => number = () => 0;
 let summaryNamesOn: () => boolean = () => false;
 let registeredProjectIds: () => string[] = () => [];
@@ -23,8 +25,9 @@ let subscribed = false;
 function subscribeToWorker(): void {
   if (subscribed) return;
   subscribed = true;
-  retrievalClient.on('event', (event, projectId) => {
+  retrievalClient.on('event', (event, projectId, progress) => {
     if (event === 'graph-changed') onChanged?.(projectId);
+    else if (event === 'graph-progress' && progress) onBuildProgress?.(projectId, progress);
   });
   // A worker that died mid-pass took the pass with it, and every open graph
   // still shows it building. Each project is read again, which shows the new
@@ -43,6 +46,12 @@ export const graphService = {
    *  across a dev-mode IPC re-registration. */
   setOnChanged(listener: (projectId: string) => void): void {
     onChanged = listener;
+    subscribeToWorker();
+  },
+
+  /** Register the push of a first build's progress. Last writer wins. */
+  setOnBuildProgress(listener: (projectId: string, progress: KnowledgeGraphBuildProgress) => void): void {
+    onBuildProgress = listener;
     subscribeToWorker();
   },
 
@@ -74,11 +83,18 @@ export const graphService = {
       .catch(warnUnavailable('a region naming request'));
   },
 
-  /** Ask for a background map pass. Returns at once. */
-  markDirty(projectId: string, modelTag: string, dimensions: number): void {
-    void retrievalClient
+  /**
+   * Ask for a background map pass. Resolves at once with the first build's
+   * progress when the project has no map and one runs, or null, the worker
+   * not answering included.
+   */
+  markDirty(projectId: string, modelTag: string, dimensions: number): Promise<KnowledgeGraphBuildProgress | null> {
+    return retrievalClient
       .call('graph.refresh', { projectId, modelTag, dimensions, summaryNamesOn: summaryNamesOn() })
-      .catch(warnUnavailable('a map refresh'));
+      .catch((error: unknown) => {
+        warnUnavailable('a map refresh')(error);
+        return null;
+      });
   },
 
   /**

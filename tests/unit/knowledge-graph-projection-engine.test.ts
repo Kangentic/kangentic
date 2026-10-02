@@ -28,6 +28,7 @@ import {
   isProjectionFresh,
   PREFIX_TAIL_MARGIN,
   type GraphProjection,
+  type ProjectionProgress,
 } from '../../src/main/retrieval/graph/projection-engine';
 import { computeCosineNeighbors } from '../../src/main/retrieval/graph/neighbor-edges';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
@@ -590,6 +591,40 @@ describeWithSqlite('projection pass', () => {
     const result = await pass(testIndex());
     expect(result!.projection.nodes).toHaveLength(0);
     expect(result!.projection.edges).toHaveLength(0);
+  });
+
+  it('reports how far it has got: reading by vectors, then placing, never backwards', async () => {
+    const index = testIndex();
+    // One long conversation and three short ones, so the long one is most of
+    // the vectors: a count of conversations would call it a quarter.
+    index.indexDocument(docIdOf(0), textsOf(docIdOf(0), 12));
+    for (let document = 1; document < 4; document += 1) index.indexDocument(docIdOf(document), textsOf(docIdOf(document), 2));
+    index.embedAll();
+    const reports: ProjectionProgress[] = [];
+    await pass(index, { onProgress: (progress) => reports.push(progress) });
+
+    const reading = reports.filter((report) => report.stage === 'reading').map((report) => report.fraction);
+    const placing = reports.filter((report) => report.stage === 'placing').map((report) => report.fraction);
+    expect(reading[0]).toBe(0);
+    expect(reading).toContain(12 / 18);
+    expect(reading.at(-1)).toBe(1);
+    expect(placing.at(-1)).toBe(1);
+    const firstPlacing = reports.findIndex((report) => report.stage === 'placing');
+    expect(reports.slice(firstPlacing).every((report) => report.stage === 'placing')).toBe(true);
+    for (const series of [reading, placing]) {
+      for (let step = 1; step < series.length; step += 1) expect(series[step]).toBeGreaterThanOrEqual(series[step - 1]);
+    }
+  });
+
+  it('starts a pass at the share its stored sums already cover', async () => {
+    // A first build cut short and started again begins where it stopped.
+    const index = corpus(4, 3, true);
+    await pass(index);
+    index.indexDocument(docIdOf(4), textsOf(docIdOf(4), 4));
+    index.embedAll();
+    const reports: ProjectionProgress[] = [];
+    await pass(index, { onProgress: (progress) => reports.push(progress) });
+    expect(reports[0]).toEqual({ stage: 'reading', fraction: 12 / 16 });
   });
 
   it('stores each document with a prefix short of its newest chunks', async () => {

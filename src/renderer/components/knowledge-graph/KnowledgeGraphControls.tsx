@@ -239,7 +239,6 @@ export interface KnowledgeGraphControlsProps {
   index: KnowledgeGraphIndexSummary;
   semanticAvailable: boolean;
   edgeCount: number;
-  building: boolean;
   /** The Projects picker, rendered at the top of Filter. Absent when fewer than
    *  two projects have an index, since a one-option scope is a dead control. */
   projectsPicker?: ReactNode;
@@ -324,7 +323,6 @@ export function KnowledgeGraphControls({
   index,
   semanticAvailable,
   edgeCount,
-  building,
   projectsPicker,
   onOpenSettings,
 }: KnowledgeGraphControlsProps) {
@@ -682,8 +680,6 @@ export function KnowledgeGraphControls({
         index={index}
         coverage={coverage}
         semanticAvailable={semanticAvailable}
-        hasMap
-        building={building}
         edgeCount={edgeCount}
         onOpenSettings={onOpenSettings}
       />

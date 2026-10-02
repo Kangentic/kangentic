@@ -29,6 +29,7 @@ import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { awaitWriteTurn } from '../write-budget';
 import { createHash } from 'node:crypto';
 import type {
+  KnowledgeGraphBuildProgress,
   KnowledgeGraphGranularity,
   KnowledgeGraphIndexSummary,
   KnowledgeGraphProjection,
@@ -79,9 +80,40 @@ const FIRST_BUILD_DUTY_CYCLE = 0.45;
  */
 const REGION_NAMES_INTERVAL_MS = 5 * 60_000;
 
+/** The most often a first build's progress is pushed while its stage holds. A
+ *  new stage is pushed at once, and the last figure follows a quiet spell. */
+const BUILD_PROGRESS_INTERVAL_MS = 250;
+
+/**
+ * How long a project whose first build failed waits before another may start.
+ * The failure is pushed so a reader drops the building card, and that reader's
+ * re-read would otherwise ask again at once: a pass that fails every time would
+ * loop push, ask, fail.
+ */
+const FIRST_BUILD_RETRY_MS = 60_000;
+
+/**
+ * A first build's progress as one percent: reading takes 0 to 95, placing 95 to
+ * 98, naming 99. Reading each conversation's vectors from the index is nearly
+ * all of a cold pass; the pass's log line prints each stage's time, which is
+ * what these weights answer to. Floored, so the row never reads 100 while work
+ * remains.
+ */
+export function buildPercent(stage: KnowledgeGraphBuildProgress['stage'], fraction: number): number {
+  const clamped = Math.max(0, Math.min(1, fraction));
+  if (stage === 'reading') return Math.floor(clamped * 95);
+  if (stage === 'placing') return 95 + Math.floor(clamped * 3);
+  return 99;
+}
+
 interface RunningPass {
   readonly signal: { aborted: boolean };
-  readonly promise: Promise<void>;
+  promise: Promise<void>;
+  /** The first build's progress; null for a refresh, which leaves the old map
+   *  on screen. */
+  progress: KnowledgeGraphBuildProgress | null;
+  /** A throttled figure waiting to be pushed. */
+  progressTimer: ReturnType<typeof setTimeout> | null;
 }
 
 /** What region names read from a project's summaries. */
@@ -93,6 +125,8 @@ interface SummarySource {
 export interface GraphServiceDeps {
   readonly getDb?: (projectId: string) => ReturnType<typeof getProjectDb>;
   readonly onChanged?: (projectId: string) => void;
+  /** A first build's progress, throttled (`BUILD_PROGRESS_INTERVAL_MS`). */
+  readonly onBuildProgress?: (projectId: string, progress: KnowledgeGraphBuildProgress) => void;
   /** A project's summaries. Injected for tests. */
   readonly summaries?: (projectId: string) => SummarySource;
   /** Epoch ms. Injected for tests. */
@@ -146,6 +180,10 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
   const naming = new Map<string, NamingState>();
   /** Each project's named map as JSON, and its key (`getSnapshotWire`). */
   const projectionJson = new Map<string, { key: string; json: string }>();
+  /** When each project's last first build failed (`FIRST_BUILD_RETRY_MS`). */
+  const firstBuildFailedAt = new Map<string, number>();
+  /** Tells passes apart within one worker; `now()` tells workers apart. */
+  let passCounter = 0;
 
   function storeFor(projectId: string): RetrievalStore {
     return new RetrievalStore(getDb(projectId));
@@ -371,6 +409,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       coverage,
       index: indexSummaryFor(projectId, store, projection, embedding.dimensions, options.summariesSkipped),
       building: running.has(projectId),
+      buildProgress: running.get(projectId)?.progress ?? null,
       stale: !isProjectionFresh(
         projection,
         embedding.modelTag,
@@ -465,29 +504,82 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       return { ...rest, projectionKey: key, projectionJson: cached.json };
     },
 
-    /** Schedule a paced background pass unless one is already running for this
-     *  project. Returns immediately. */
-    markDirty(projectId: string, modelTag: string, dimensions: number): void {
-      if (running.has(projectId)) return;
+    /**
+     * Schedule a paced background pass unless one is already running for this
+     * project. Returns at once, with the first build's progress when the
+     * project has no map and one is running, or null: the renderer paints the
+     * building card from that answer, so a first build never shows "No map yet"
+     * for the moment before its first push.
+     */
+    markDirty(projectId: string, modelTag: string, dimensions: number): KnowledgeGraphBuildProgress | null {
+      const current = running.get(projectId);
+      if (current) return current.progress;
+
+      let store: RetrievalStore;
+      let isFirstBuild: boolean;
+      try {
+        store = storeFor(projectId);
+        if (!store.hasVec) return null;
+        // The FIRST build gets a higher duty cycle than a refresh. Measured on
+        // the real corpus, a cold pass is ~68s of work: at the steady-state
+        // 20% that is 5.6 minutes staring at an empty surface, and there is no
+        // cached map to look at meanwhile. A refresh is different - the old
+        // map is still on screen, so it should stay out of the way. Sampling
+        // chunks per document was measured as the alternative and rejected:
+        // capping at 32 agrees with the full pool's neighbours only 40% of the
+        // time, because a conversation's opening chunks are not representative
+        // of the whole, so it buys speed by making the map wrong.
+        isFirstBuild = readCachedProjection(store) === null;
+      } catch (error) {
+        console.error('[knowledge-graph] projection pass failed:', error);
+        return null;
+      }
+      if (isFirstBuild) {
+        const failedAt = firstBuildFailedAt.get(projectId);
+        if (failedAt !== undefined && now() - failedAt < FIRST_BUILD_RETRY_MS) return null;
+      }
 
       const signal = { aborted: false };
-      const promise = (async () => {
-        try {
-          const store = storeFor(projectId);
-          if (!store.hasVec) return;
+      const entry: RunningPass = { signal, promise: Promise.resolve(), progress: null, progressTimer: null };
+      const pass = now() * 1000 + (passCounter++ % 1000);
+      let lastPushAt = Number.NEGATIVE_INFINITY;
+      let pushedProgress: KnowledgeGraphBuildProgress | null = null;
+      const push = (): void => {
+        entry.progressTimer = null;
+        if (signal.aborted || !entry.progress || entry.progress === pushedProgress) return;
+        pushedProgress = entry.progress;
+        lastPushAt = now();
+        deps.onBuildProgress?.(projectId, entry.progress);
+      };
+      // A refresh leaves the old map on screen, so only a first build reports.
+      const setProgress = (stage: KnowledgeGraphBuildProgress['stage'], fraction: number): void => {
+        if (!isFirstBuild) return;
+        const percent = buildPercent(stage, fraction);
+        const previous = entry.progress;
+        if (previous && previous.stage === stage && previous.percent === percent) return;
+        entry.progress = { pass, stage, percent };
+        if (!previous || previous.stage !== stage) {
+          if (entry.progressTimer) clearTimeout(entry.progressTimer);
+          push();
+          return;
+        }
+        if (entry.progressTimer) return;
+        const waitMs = Math.max(0, lastPushAt + BUILD_PROGRESS_INTERVAL_MS - now());
+        if (waitMs === 0) {
+          push();
+          return;
+        }
+        entry.progressTimer = setTimeout(push, waitMs);
+        entry.progressTimer.unref?.();
+      };
 
-          // The FIRST build gets a higher duty cycle than a refresh. Measured on
-          // the real corpus, a cold pass is ~68s of work: at the steady-state
-          // 20% that is 5.6 minutes staring at an empty surface, and there is no
-          // cached map to look at meanwhile. A refresh is different - the old
-          // map is still on screen, so it should stay out of the way. Sampling
-          // chunks per document was measured as the alternative and rejected:
-          // capping at 32 agrees with the full pool's neighbours only 40% of the
-          // time, because a conversation's opening chunks are not representative
-          // of the whole, so it buys speed by making the map wrong.
-          const isFirstBuild = readCachedProjection(store) === null;
-          const embedding = resolveEmbedding(store, modelTag, dimensions);
-          const startedAt = now();
+      // Set before the pass starts, so the answer below already carries it.
+      setProgress('reading', 0);
+      const embedding = resolveEmbedding(store, modelTag, dimensions);
+      const startedAt = now();
+      let placingAt: number | null = null;
+      entry.promise = (async () => {
+        try {
           const result = await runProjectionPass({
             store,
             modelTag: embedding.modelTag,
@@ -495,16 +587,18 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
             signal,
             dutyCycle: isFirstBuild ? FIRST_BUILD_DUTY_CYCLE : undefined,
             awaitWriteTurn: () => awaitWriteTurn(getDb(projectId)),
+            onProgress: (progress) => {
+              if (progress.stage === 'placing' && placingAt === null) placingAt = now();
+              setProgress(progress.stage, progress.fraction);
+            },
           });
           if (!result || signal.aborted) return;
           writeProjectionCache(store, result.projection);
-          const { counts } = result;
-          console.log(
-            `[knowledge-graph] map rebuilt: ${counts.documents} conversations, ${counts.documentsRead} read again `
-            + `(${counts.vectorsRead} vectors) in ${now() - startedAt} ms`,
-          );
+          firstBuildFailedAt.delete(projectId);
           // The new map's names in the same pass, so it never shows its
           // build-time names first and then renames under the reader.
+          const namingAt = now();
+          setProgress('naming', 1);
           try {
             await makeRegionNames(projectId);
             const state = naming.get(projectId);
@@ -512,22 +606,39 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
           } catch (error) {
             console.error('[knowledge-graph] region names failed:', error);
           }
+          const { counts } = result;
+          const readingMs = (placingAt ?? namingAt) - startedAt;
+          const placingMs = placingAt === null ? 0 : namingAt - placingAt;
+          console.log(
+            `[knowledge-graph] map rebuilt: ${counts.documents} conversations, ${counts.documentsRead} read again `
+            + `(${counts.vectorsRead} vectors) in ${now() - startedAt} ms `
+            + `(reading ${readingMs} ms, placing ${placingMs} ms, naming ${now() - namingAt} ms)`,
+          );
           // Forgotten while naming: nobody is left to tell about the map.
           if (signal.aborted) return;
           onChanged?.(projectId);
         } catch (error) {
           console.error('[knowledge-graph] projection pass failed:', error);
+          // A reader showing the building card is told it ended without a map.
+          // `FIRST_BUILD_RETRY_MS` keeps its re-read from starting another at once.
+          if (isFirstBuild && !signal.aborted) {
+            firstBuildFailedAt.set(projectId, now());
+            onChanged?.(projectId);
+          }
+        } finally {
+          if (entry.progressTimer) clearTimeout(entry.progressTimer);
+          entry.progressTimer = null;
         }
       })();
 
-      running.set(projectId, { signal, promise });
-      // Cleared once the pass settles, never from inside it: a pass that exits
-      // before its first await (no vec extension, a store that fails to open)
-      // would run that cleanup synchronously, BEFORE the set above, and leave
-      // the project marked as building forever, refusing every later pass.
-      void promise.finally(() => {
-        if (running.get(projectId)?.promise === promise) running.delete(projectId);
+      running.set(projectId, entry);
+      // Cleared once the pass settles, never from inside it, so the entry is
+      // always set before its cleanup can run.
+      const settled = entry.promise;
+      void settled.finally(() => {
+        if (running.get(projectId)?.promise === settled) running.delete(projectId);
       });
+      return entry.progress;
     },
 
     /**
@@ -538,11 +649,16 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
      */
     forget(projectId: string): void {
       const pass = running.get(projectId);
-      if (pass) pass.signal.aborted = true;
+      if (pass) {
+        pass.signal.aborted = true;
+        if (pass.progressTimer) clearTimeout(pass.progressTimer);
+        pass.progressTimer = null;
+      }
       // Let go now, not when the aborted pass unwinds: until then the project
       // read as building, and a markDirty for it was dropped. The pass's own
       // cleanup checks the entry is still its own before it removes one.
       running.delete(projectId);
+      firstBuildFailedAt.delete(projectId);
       const state = naming.get(projectId);
       if (state?.timer) clearTimeout(state.timer);
       naming.delete(projectId);

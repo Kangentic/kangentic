@@ -14,6 +14,7 @@
  */
 
 import type { RetrievalMethods } from './methods';
+import type { KnowledgeGraphBuildProgress } from '../../../shared/types';
 
 export type { RetrievalMethods };
 export type RetrievalMethod = keyof RetrievalMethods;
@@ -55,12 +56,16 @@ export type ReplyMessage =
 /** Something main should react to that the worker noticed on its own. */
 export type RetrievalEventName =
   /** A project's graph snapshot shows something new: a map rebuilt, records swept. */
-  'graph-changed';
+  | 'graph-changed'
+  /** A first build moved on. Carries `progress`, so nothing reads the snapshot for it. */
+  | 'graph-progress';
 
 export interface EventMessage {
   type: 'event';
   event: RetrievalEventName;
   projectId: string;
+  /** With `graph-progress` only. */
+  progress?: KnowledgeGraphBuildProgress;
 }
 
 /** A synchronous span the worker measured at 16 ms or more, relayed so main's

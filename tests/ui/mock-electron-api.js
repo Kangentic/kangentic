@@ -4650,7 +4650,11 @@
           if (!window.__mockRefreshGraphCalls) window.__mockRefreshGraphCalls = [];
           window.__mockRefreshGraphCalls.push({ projectId: projectId === undefined ? null : projectId });
         }
-        return Promise.resolve();
+        // Main answers with the first build's progress when one runs, else
+        // null. A spec sets `window.__mockRefreshGraphResult` to say a first
+        // build started; by default nothing runs, as a refresh with no worker.
+        var refreshResult = typeof window !== 'undefined' ? window.__mockRefreshGraphResult : undefined;
+        return Promise.resolve(refreshResult ? JSON.parse(JSON.stringify(refreshResult)) : null);
       },
       answerFromGraph: function (question, projectId, granularity, requestId, context) {
         if (typeof window !== 'undefined') {
@@ -4705,6 +4709,23 @@
         }
         return function () {
           var listeners = window.__mockGraphChangedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+      onGraphBuildProgress: function (callback) {
+        if (!window.__mockGraphBuildProgressListeners) window.__mockGraphBuildProgressListeners = [];
+        window.__mockGraphBuildProgressListeners.push(callback);
+        if (!window.__mockFireGraphBuildProgress) {
+          // Drives a first build's progress from a spec:
+          // window.__mockFireGraphBuildProgress(id, { pass, stage, percent }).
+          window.__mockFireGraphBuildProgress = function (projectId, progress) {
+            var listeners = (window.__mockGraphBuildProgressListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) listeners[i](projectId, progress);
+          };
+        }
+        return function () {
+          var listeners = window.__mockGraphBuildProgressListeners || [];
           var index = listeners.indexOf(callback);
           if (index >= 0) listeners.splice(index, 1);
         };

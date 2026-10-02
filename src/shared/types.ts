@@ -6695,12 +6695,17 @@ export interface ElectronAPI {
     /** Every project with its indexed conversation count and last indexing
      *  time, for the Projects picker. Cheap: an index-only count per project. */
     graphProjects: () => Promise<KnowledgeGraphProjectSummary[]>;
-    /** Ask for a background projection refresh. Resolves immediately;
-     *  completion arrives on `onGraphChanged`. */
-    refreshGraph: (projectId?: string | null) => Promise<void>;
+    /** Ask for a background projection refresh. Resolves immediately with the
+     *  first build's progress when the project has no map yet and one is
+     *  running, otherwise null; completion arrives on `onGraphChanged`. */
+    refreshGraph: (projectId?: string | null) => Promise<KnowledgeGraphBuildProgress | null>;
     /** Push subscription: fires when a projection pass finishes. Returns an
      *  unsubscribe closure. */
     onGraphChanged: (callback: (projectId: string) => void) => () => void;
+    /** Push subscription: a first build's progress, throttled. Carries the
+     *  figure itself, so a moving bar costs no snapshot read. Returns an
+     *  unsubscribe closure. */
+    onGraphBuildProgress: (callback: (projectId: string, progress: KnowledgeGraphBuildProgress) => void) => () => void;
     /**
      * Ask: the local retrieval, read by an agent that answers from it. Costs a
      * real CLI call. Every failure comes back as `{ ok: false, reason }` rather
@@ -7250,6 +7255,21 @@ export interface KnowledgeGraphProjectSummary {
   lastActivityMs: number | null;
 }
 
+/**
+ * How far a project's first map has got, for the building card's progress row.
+ * One percent across the pass: reading each conversation's vectors is most of
+ * it, then placing them and naming the regions (`buildPercent` in
+ * `graph-service.ts`). Pushed on `onGraphBuildProgress` while it runs.
+ */
+export interface KnowledgeGraphBuildProgress {
+  /** Identifies the pass, unique across retrieval worker restarts, so a reader
+   *  holding an older pass's figure takes the newer pass's even when lower. */
+  pass: number;
+  stage: 'reading' | 'placing' | 'naming';
+  /** 0 to 99: it never reads 100 while work remains. */
+  percent: number;
+}
+
 export interface KnowledgeGraphSnapshot {
   projectId: string;
   /** Null until the first projection pass completes. */
@@ -7257,7 +7277,12 @@ export interface KnowledgeGraphSnapshot {
   coverage: KnowledgeGraphCoverageSummary;
   /** Every corpus the index holds, for the Index panel. */
   index: KnowledgeGraphIndexSummary;
+  /** A projection pass is running for this project: the first build, or a
+   *  refresh while the old map stays on screen. */
   building: boolean;
+  /** The first build's progress while it runs; null otherwise, a refresh
+   *  included. Read `?? null`: the UI tier's fixtures predate it. */
+  buildProgress: KnowledgeGraphBuildProgress | null;
   /** Stale projections are still served: a slightly old map beats a blank one. */
   stale: boolean;
   semanticAvailable: boolean;

@@ -47,11 +47,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type {
   KnowledgeGraphAnswerResult,
   KnowledgeGraphAnswerStreamPush,
+  KnowledgeGraphBuildProgress,
   KnowledgeGraphCoverageBucket,
   KnowledgeGraphSnapshot,
 } from '../../src/shared/types';
 
-type KnowledgeGraphStore = typeof import('../../src/renderer/stores/knowledge-graph-store').useKnowledgeGraphStore;
+type StoreModule = typeof import('../../src/renderer/stores/knowledge-graph-store');
+type KnowledgeGraphStore = StoreModule['useKnowledgeGraphStore'];
 
 interface PendingRead {
   projectId: string | null;
@@ -61,9 +63,10 @@ interface PendingRead {
 
 let pendingReads: PendingRead[] = [];
 let streamListeners: Array<(event: KnowledgeGraphAnswerStreamPush) => void> = [];
+let progressListeners: Array<(projectId: string, progress: KnowledgeGraphBuildProgress) => void> = [];
 
 const graphSnapshotMock = vi.fn<(projectId?: string | null, knownProjectionKey?: string | null) => Promise<KnowledgeGraphSnapshot | null>>();
-const refreshGraphMock = vi.fn<(projectId?: string | null) => Promise<void>>();
+const refreshGraphMock = vi.fn<(projectId?: string | null) => Promise<KnowledgeGraphBuildProgress | null | undefined>>();
 const answerFromGraphMock = vi.fn<(...args: unknown[]) => Promise<KnowledgeGraphAnswerResult>>();
 const prewarmMock = vi.fn<(options: { chatId: string; projectId: string | null }) => void>();
 const endChatMock = vi.fn<(chatId: string) => void>();
@@ -77,6 +80,10 @@ function installWindowStub(): void {
         refreshGraph: refreshGraphMock,
         graphProjects: vi.fn(async () => []),
         onGraphChanged: vi.fn(() => () => undefined),
+        onGraphBuildProgress: vi.fn((callback: (projectId: string, progress: KnowledgeGraphBuildProgress) => void) => {
+          progressListeners.push(callback);
+          return () => undefined;
+        }),
         onAnswerStream: vi.fn((callback: (event: KnowledgeGraphAnswerStreamPush) => void) => {
           streamListeners.push(callback);
           return () => undefined;
@@ -161,19 +168,94 @@ function fireStream(event: KnowledgeGraphAnswerStreamPush): void {
   for (const listener of streamListeners.slice()) listener(event);
 }
 
+function fireProgress(projectId: string, progress: KnowledgeGraphBuildProgress): void {
+  for (const listener of progressListeners.slice()) listener(projectId, progress);
+}
+
+function progressAt(pass: number, percent: number): KnowledgeGraphBuildProgress {
+  return { pass, stage: 'reading', percent };
+}
+
 let store: KnowledgeGraphStore;
+let newerProgress: StoreModule['newerProgress'];
 
 beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
   pendingReads = [];
   streamListeners = [];
+  progressListeners = [];
   graphSnapshotMock.mockImplementation((projectId) => new Promise((resolve, reject) => {
     pendingReads.push({ projectId: projectId ?? null, resolve, reject });
   }));
   refreshGraphMock.mockResolvedValue(undefined);
   installWindowStub();
-  ({ useKnowledgeGraphStore: store } = await import('../../src/renderer/stores/knowledge-graph-store'));
+  ({ useKnowledgeGraphStore: store, newerProgress } = await import('../../src/renderer/stores/knowledge-graph-store'));
+});
+
+describe('knowledge-graph-store first build', () => {
+  // Red-green: paint the read before asking for the build (the old order) and
+  // the first painted snapshot reads `building: false`, the "No map yet" card.
+  it('paints a first build as building from main\'s answer, never the read before it', async () => {
+    const progress = progressAt(1, 0);
+    refreshGraphMock.mockResolvedValueOnce(progress);
+    const painted: Array<KnowledgeGraphSnapshot | null> = [];
+    const unsubscribe = store.subscribe((state) => painted.push(state.snapshot));
+
+    const read = store.getState().loadSnapshot('A');
+    resolveRead('A', makeSnapshot('A'));
+    await read;
+    unsubscribe();
+
+    const shown = painted.filter((snapshot): snapshot is KnowledgeGraphSnapshot => snapshot !== null);
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.every((snapshot) => snapshot.building)).toBe(true);
+    expect(store.getState().snapshot).toMatchObject({ building: true, buildProgress: progress });
+    expect(refreshGraphMock).toHaveBeenCalledWith('A');
+  });
+
+  it('paints the read as it is when main starts no build', async () => {
+    const read = store.getState().loadSnapshot('A');
+    const snapshot = makeSnapshot('A');
+    resolveRead('A', snapshot);
+    await read;
+    expect(store.getState().snapshot).toBe(snapshot);
+  });
+
+  it('starts no first build from a push this surface did not ask for', async () => {
+    store.setState({ projectId: 'A' });
+    const read = store.getState().loadSnapshot('A', { fromPush: true });
+    resolveRead('A', makeSnapshot('A'));
+    await read;
+    expect(refreshGraphMock).not.toHaveBeenCalled();
+  });
+
+  it('moves a project with no map on a progress push, and leaves one with a map alone', () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A') });
+    store.getState().attach();
+    fireProgress('A', progressAt(1, 40));
+    expect(store.getState().snapshot).toMatchObject({ building: true, buildProgress: { percent: 40 } });
+
+    const withMap = makeSnapshot('B', { projection: {} as never });
+    store.setState({ projectId: 'B', snapshot: withMap });
+    fireProgress('B', progressAt(1, 10));
+    expect(store.getState().snapshot).toBe(withMap);
+  });
+
+  it('keeps the higher figure when a read made before a push lands after it', async () => {
+    store.setState({ projectId: 'A', snapshot: makeSnapshot('A', { building: true, buildProgress: progressAt(1, 60) }) });
+    const read = store.getState().loadSnapshot('A');
+    resolveRead('A', makeSnapshot('A', { building: true, buildProgress: progressAt(1, 40) }));
+    await read;
+    expect(store.getState().snapshot?.buildProgress?.percent).toBe(60);
+  });
+
+  it('takes a newer pass even when it is lower, as after a worker restart', () => {
+    expect(newerProgress(progressAt(1, 60), progressAt(1, 40))).toMatchObject({ pass: 1, percent: 60 });
+    expect(newerProgress(progressAt(1, 60), progressAt(2, 0))).toMatchObject({ pass: 2, percent: 0 });
+    expect(newerProgress(progressAt(2, 5), progressAt(1, 90))).toMatchObject({ pass: 2, percent: 5 });
+    expect(newerProgress(progressAt(1, 60), null)).toBeNull();
+  });
 });
 
 describe('knowledge-graph-store loadSnapshot while a read is in flight', () => {

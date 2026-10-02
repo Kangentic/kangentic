@@ -1173,11 +1173,12 @@ driver, some remote sessions) it says so, and the coverage numbers and Ask keep 
 **Building the map.** The first time a project opens the graph, Kangentic reads every embedding in
 the index to place the dots. On a large project that takes a few minutes, runs in the background,
 and only happens once; after that it updates in about a second as new conversations are indexed.
-While it builds, a card says how many conversations it is placing and how many embeddings it reads,
-and the Index panel opens beside it. It needs the Knowledge Graph switched on (Settings > Knowledge
-Graph). Without embeddings there is no meaningful notion of "near", so with it off the graph shows
-an Off card with an **Open Settings** button rather than drawing a map that would imply a meaning
-it does not have. The Index panel's counts are accurate either way.
+While it builds, one card in the middle of the screen shows how far it has got (reading the
+conversations, then placing them, then naming the regions), the same source lines the Index panel
+lists, and an **Open Settings** button. The Index card joins the left panel once the map is drawn.
+It needs the Knowledge Graph switched on (Settings > Knowledge Graph). Without embeddings there is
+no meaningful notion of "near", so with it off the graph shows an Off card with an **Open Settings**
+button rather than drawing a map that would imply a meaning it does not have.
 
 Like the Agent Monitor and Usage Stats, it detaches into its own window from the pop-out control in
 its header.
