@@ -2,9 +2,11 @@ import type Database from 'better-sqlite3';
 
 /**
  * A session's raw terminal transcript: the ANSI-stripped PTY output
- * `TranscriptWriter` captures, kept whole and never trimmed. It outlives its
- * session row on purpose (agent CLIs clean up their own session files, so this
- * is Kangentic's durable copy), which is why no trigger deletes it.
+ * `TranscriptWriter` captures, kept whole and never trimmed while its session
+ * row exists (agent CLIs clean up their own session files, so this is
+ * Kangentic's durable copy). Once the row is gone the retrieval worker
+ * deletes it (`transcripts.purgeDeleted`); no trigger does, since one freed
+ * every piece inside main's delete transaction.
  *
  * Stored as ordered pieces in `session_transcript_chunks`, one row per flush,
  * so a flush is one INSERT. It used to be one growing TEXT value in
@@ -47,12 +49,28 @@ export class TranscriptRepository {
     return row ?? null;
   }
 
+  /**
+   * Which pieces a reader takes. While a legacy row is still here, its
+   * conversion may have written some of its pieces (below seq 0, each stamped
+   * with the row's first or last write time) and the row is still read whole,
+   * so those pieces are left out until the conversion deletes the row. Read
+   * the row before the pieces: if the conversion finishes in between, every
+   * piece it wrote is still left out of a read that already has the row's
+   * text. Pieces moved here from another project's row carry that row's
+   * times, and live pieces are never below 0, so both are read.
+   */
+  private pieceFilter(legacy: { createdAt: string; updatedAt: string } | null): { clause: string; params: string[] } {
+    if (!legacy) return { clause: '', params: [] };
+    return { clause: ' AND NOT (seq < 0 AND created_at IN (?, ?))', params: [legacy.createdAt, legacy.updatedAt] };
+  }
+
   /** The whole transcript, oldest first, or null when none was captured. */
   getTranscriptText(sessionId: string): string | null {
-    const legacy = this.db.prepare('SELECT transcript FROM session_transcripts WHERE session_id = ?')
-      .get(sessionId) as { transcript: string } | undefined;
-    const pieces = (this.db.prepare('SELECT text FROM session_transcript_chunks WHERE session_id = ? ORDER BY seq')
-      .all(sessionId) as Array<{ text: string }>).map((row) => row.text);
+    const legacy = this.db.prepare('SELECT transcript, created_at AS createdAt, updated_at AS updatedAt FROM session_transcripts WHERE session_id = ?')
+      .get(sessionId) as { transcript: string; createdAt: string; updatedAt: string } | undefined;
+    const filter = this.pieceFilter(legacy ?? null);
+    const pieces = (this.db.prepare(`SELECT text FROM session_transcript_chunks WHERE session_id = ?${filter.clause} ORDER BY seq`)
+      .all(sessionId, ...filter.params) as Array<{ text: string }>).map((row) => row.text);
     if (!legacy && pieces.length === 0) return null;
     return (legacy?.transcript ?? '') + pieces.join('');
   }
@@ -73,20 +91,21 @@ export class TranscriptRepository {
     updatedAt: string;
   } | null {
     const budget = Math.max(0, maxChars);
+    const legacy = this.legacyRow(sessionId);
+    const filter = this.pieceFilter(legacy);
     // `text` is the last column, so the totals read no overflow pages.
     const totals = this.db.prepare(`
       SELECT COUNT(*) AS pieces, COALESCE(SUM(chars), 0) AS chars, COALESCE(SUM(bytes), 0) AS bytes,
              MIN(created_at) AS firstAt, MAX(created_at) AS lastAt
-      FROM session_transcript_chunks WHERE session_id = ?
-    `).get(sessionId) as { pieces: number; chars: number; bytes: number; firstAt: string | null; lastAt: string | null };
-    const legacy = this.legacyRow(sessionId);
+      FROM session_transcript_chunks WHERE session_id = ?${filter.clause}
+    `).get(sessionId, ...filter.params) as { pieces: number; chars: number; bytes: number; firstAt: string | null; lastAt: string | null };
     if (totals.pieces === 0 && !legacy) return null;
 
     const newestFirst: string[] = [];
     let collected = 0;
     if (totals.pieces > 0 && budget > 0) {
-      const newest = this.db.prepare('SELECT text FROM session_transcript_chunks WHERE session_id = ? ORDER BY seq DESC');
-      for (const row of newest.iterate(sessionId) as IterableIterator<{ text: string }>) {
+      const newest = this.db.prepare(`SELECT text FROM session_transcript_chunks WHERE session_id = ?${filter.clause} ORDER BY seq DESC`);
+      for (const row of newest.iterate(sessionId, ...filter.params) as IterableIterator<{ text: string }>) {
         newestFirst.push(row.text);
         collected += row.text.length;
         if (collected >= budget) break;
@@ -111,8 +130,10 @@ export class TranscriptRepository {
 
   /** The transcript's size without its content. */
   getSizeBytes(sessionId: string): number {
-    const pieces = this.db.prepare('SELECT COALESCE(SUM(bytes), 0) AS bytes FROM session_transcript_chunks WHERE session_id = ?')
-      .get(sessionId) as { bytes: number };
-    return pieces.bytes + (this.legacyRow(sessionId)?.sizeBytes ?? 0);
+    const legacy = this.legacyRow(sessionId);
+    const filter = this.pieceFilter(legacy);
+    const pieces = this.db.prepare(`SELECT COALESCE(SUM(bytes), 0) AS bytes FROM session_transcript_chunks WHERE session_id = ?${filter.clause}`)
+      .get(sessionId, ...filter.params) as { bytes: number };
+    return pieces.bytes + (legacy?.sizeBytes ?? 0);
   }
 }

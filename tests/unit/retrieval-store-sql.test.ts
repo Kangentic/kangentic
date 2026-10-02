@@ -809,17 +809,67 @@ describeWithSqlite('a deleted session leaves the index by the sweep, not by trig
 });
 
 describeWithSqlite('a vec table this connection cannot open (real database)', () => {
-  it('refuses to delete chunks rather than leave their vectors behind', () => {
+  // The vec table exists (created by a connection that loaded sqlite-vec), and
+  // the connection under test never loaded it. A plain table stands in for it:
+  // without sqlite-vec a real vec0 table cannot be opened anyway.
+  function projectWithVecTable() {
     const database = new sqlite!.DatabaseSync(':memory:');
     const db = adaptDatabase(database);
     runProjectMigrations(db);
+    database.exec('CREATE TABLE memory_vec_conversation (rowid INTEGER PRIMARY KEY, embedding BLOB)');
+    const count = (sql: string): number => (database.prepare(sql).get() as { count: number }).count;
+    // Every chunk of `docId` embedded, with a vector at its id.
+    const embed = (docId: string): void => {
+      database.prepare(`UPDATE memory_chunks SET embedded_model = 'model-a' WHERE doc_id = ?`).run(docId);
+      database.prepare(`INSERT INTO memory_vec_conversation (rowid, embedding) SELECT id, x'00' FROM memory_chunks WHERE doc_id = ?`).run(docId);
+    };
+    const vectorIds = (): number[] => (database.prepare('SELECT rowid AS id FROM memory_vec_conversation ORDER BY rowid').all() as Array<{ id: number }>)
+      .map((row) => Number(row.id));
+    return { database, db, count, embed, vectorIds };
+  }
+
+  it('deletes chunks without their vectors, so a re-index, a delete and a purge all go through lexical-only', () => {
+    const { db, count, embed } = projectWithVecTable();
     const store = new RetrievalStore(db);
-    store.upsertDocument(ref, [chunk(0, 'hashA')]);
-    // The vec table exists (created by a connection that loaded sqlite-vec),
-    // and this one never loaded it.
-    database.exec('CREATE TABLE memory_chunks_vec (rowid INTEGER PRIMARY KEY, embedding BLOB)');
-    expect(() => store.deleteDocument(ref.corpus, ref.docId)).toThrow(/sqlite-vec is not loaded/);
-    expect((database.prepare('SELECT COUNT(*) AS count FROM memory_chunks').get() as { count: number }).count).toBe(1);
+    store.upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
+    embed(ref.docId);
+
+    // A growing conversation whose tail diverged: its old tail is deleted.
+    store.upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashC'), chunk(2, 'hashD')]);
+    expect(count('SELECT COUNT(*) AS count FROM memory_chunks')).toBe(3);
+
+    store.deleteDocument(ref.corpus, ref.docId);
+    expect(count('SELECT COUNT(*) AS count FROM memory_chunks')).toBe(0);
+
+    store.upsertDocument({ ...ref, docId: 'doc-2' }, [chunk(0, 'hashE')]);
+    store.purgeCorpora(['conversation']);
+    expect(count('SELECT COUNT(*) AS count FROM memory_chunks')).toBe(0);
+    // The vectors stay for the reconcile; nothing here could reach them.
+    expect(count('SELECT COUNT(*) AS count FROM memory_vec_conversation')).toBe(2);
+  });
+
+  it('leaves the reconcile, once sqlite-vec loads, to remove a vector whose chunk is gone or whose id a new chunk took', () => {
+    const { database, db, embed, vectorIds } = projectWithVecTable();
+    const store = new RetrievalStore(db);
+    store.upsertDocument({ ...ref, docId: 'doc-kept' }, [chunk(0, 'hashA')]);
+    store.upsertDocument({ ...ref, docId: 'doc-gone' }, [chunk(0, 'hashB'), chunk(1, 'hashC')]);
+    embed('doc-kept');
+    embed('doc-gone');
+    expect(vectorIds()).toEqual([1, 2, 3]);
+
+    // Deleted while sqlite-vec was missing, so its two vectors stayed.
+    database.exec(`DELETE FROM memory_chunks WHERE doc_id = 'doc-gone'`);
+    // SQLite hands the freed top id to the next chunk, which is not embedded.
+    const { insertedIds } = store.upsertDocument({ ...ref, docId: 'doc-new' }, [chunk(0, 'hashD')]);
+    expect(insertedIds).toEqual([2]);
+
+    // The next worker loads sqlite-vec on its own connection.
+    const vecConnection = adaptDatabase(database);
+    markVecCapable(vecConnection);
+    new RetrievalStore(vecConnection).reconcileVecOrphans();
+
+    // Id 3 has no chunk; id 2's vector was doc-gone's, not doc-new's.
+    expect(vectorIds()).toEqual([1]);
   });
 });
 

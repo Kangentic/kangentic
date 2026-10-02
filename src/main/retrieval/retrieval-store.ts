@@ -1679,14 +1679,19 @@ export class RetrievalStore {
       .all(corpus) as Array<{ corpus: string; docId: string; status: string }>;
   }
 
-  /** Startup GC: drop vec rows whose chunk was removed while the extension was
-   *  unavailable (triggers cannot touch the vec table), in every corpus. A row
-   *  that belongs to another corpus's chunk goes too. */
+  /**
+   * Startup GC: drop vec rows a delete could not reach while the extension was
+   * unavailable (triggers cannot touch the vec table), in every corpus. That is
+   * a row with no chunk of its corpus, and a row whose chunk is not embedded:
+   * SQLite handed the deleted chunk's id to a new one meanwhile, which has no
+   * vector of its own until `writeEmbeddings` replaces this one.
+   */
   reconcileVecOrphans(): void {
     for (const corpus of this.vecTables) {
       // Found by a read, deleted in short transactions.
       const orphans = (this.db
-        .prepare(`SELECT rowid AS id FROM ${this.tableOf(corpus)} WHERE rowid NOT IN (SELECT id FROM memory_chunks WHERE corpus = ?)`)
+        .prepare(`SELECT rowid AS id FROM ${this.tableOf(corpus)}
+          WHERE rowid NOT IN (SELECT id FROM memory_chunks WHERE corpus = ? AND embedded_model IS NOT NULL)`)
         .all(corpus) as Array<{ id: number | bigint }>).map((row) => Number(row.id));
       for (let start = 0; start < orphans.length; start += DELETES_PER_TRANSACTION) {
         const batch = orphans.slice(start, start + DELETES_PER_TRANSACTION);
@@ -1823,20 +1828,20 @@ export class RetrievalStore {
    * leave a vector behind for a chunk id SQLite may hand out again
    * (`memory_chunks.id` is not AUTOINCREMENT, so a deleted top id is reused).
    *
-   * Throws when the table exists but this connection cannot open it (sqlite-vec
-   * did not load here), so the delete's transaction rolls back rather than
-   * leaving that vector behind.
+   * False when sqlite-vec did not load on this connection, table or not: the
+   * delete goes ahead without its vectors, so indexing keeps working
+   * lexical-only. Throwing here rolled back every re-index of a growing
+   * conversation and every purge. `reconcileVecOrphans` removes what is left
+   * once sqlite-vec loads again, including a vector whose id went to a new
+   * chunk meanwhile.
    */
   private hasVecTable(corpus: IndexCorpus): boolean {
     if (this.vecTables.has(corpus)) return true;
-    if (!EMBEDDED_CORPORA.includes(corpus)) return false;
+    if (!EMBEDDED_CORPORA.includes(corpus) || !hasVecSupport(this.db)) return false;
     const exists = this.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
       .get(this.tableOf(corpus));
     if (exists === undefined) return false;
-    if (!hasVecSupport(this.db)) {
-      throw new Error(`${this.tableOf(corpus)} exists but sqlite-vec is not loaded on this connection; its vectors cannot be deleted`);
-    }
     this.vecTables.add(corpus);
     return true;
   }

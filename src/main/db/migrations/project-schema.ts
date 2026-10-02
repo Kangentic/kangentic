@@ -748,9 +748,10 @@ export function runProjectMigrations(db: Database.Database): void {
       PRIMARY KEY (session_id, seq)
     )
   `);
-  // A raw transcript outlives its session row: agent CLIs clean up their own
-  // session files, so it is Kangentic's durable copy of what the terminal
-  // showed. The trigger that deleted it with its session is dropped.
+  // The trigger that deleted a raw transcript with its session freed every
+  // piece inside main's own delete transaction. The retrieval worker deletes
+  // a deleted session's pieces instead, a few at a time
+  // (`transcripts.purgeDeleted`).
   db.exec('DROP TRIGGER IF EXISTS trg_sessions_delete_transcript');
 
   // Migration: handoffs table for cross-agent context transfer provenance
