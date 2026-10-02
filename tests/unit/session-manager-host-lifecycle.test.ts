@@ -18,6 +18,8 @@
  *  - A `firstOutput` or `altScreen` host event for a session no longer in the
  *    registry is dropped. Applying it would re-create the first-output latch and
  *    the alt-screen mirror that `remove()` just cleared, for a session that is gone.
+ *  - A suspend asks the host for the raw scrollback (its last-resort agent
+ *    session id scan) only while the id is unknown, and then waits at most 2 s.
  *
  * Tier: Unit. Node-pty is mocked, the host core runs in this process.
  */
@@ -56,7 +58,12 @@ import {
   InProcessPtyHostTransport,
   type PtyHostLifecycleListener,
 } from '../../src/main/pty/host/pty-host-client';
-import type { PtyHostCommand, PtyHostEvent } from '../../src/main/pty/host/protocol';
+import type {
+  PtyHostCommand,
+  PtyHostEvent,
+  PtyHostMethod,
+  PtyHostRequestMap,
+} from '../../src/main/pty/host/protocol';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
 
 /**
@@ -67,6 +74,9 @@ import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
  */
 class ControllableHostTransport extends InProcessPtyHostTransport {
   readonly posted: PtyHostCommand[] = [];
+  /** Every request main made, with the per-request options the in-process
+   *  transport itself ignores (a utility-process transport honors `timeoutMs`). */
+  readonly requested: Array<{ method: PtyHostMethod; params: unknown; options: { timeoutMs?: number } | undefined }> = [];
   private lifecycle: PtyHostLifecycleListener | null = null;
   private deliver: ((event: PtyHostEvent) => void) | null = null;
 
@@ -86,6 +96,15 @@ class ControllableHostTransport extends InProcessPtyHostTransport {
   override post(command: PtyHostCommand): void {
     this.posted.push(command);
     super.post(command);
+  }
+
+  override request<M extends PtyHostMethod>(
+    method: M,
+    params: PtyHostRequestMap[M]['params'],
+    options?: { timeoutMs?: number },
+  ): Promise<PtyHostRequestMap[M]['result']> {
+    this.requested.push({ method, params, options });
+    return super.request(method, params);
   }
 
   hostDown(): void {
@@ -275,5 +294,65 @@ describe('SessionManager: host events for a session no longer in the registry', 
     transport.emitHostEvent({ type: 'altScreen', sessionId: live.id, inAltScreen: true });
     expect(altScreenMirror(manager).get(live.id)).toBe(true);
     expect(registryRow(manager, live.id)?.altScreenEnteredAt).toBeTypeOf('number');
+  });
+});
+
+describe('SessionManager: suspend and the last-resort scrollback scan', () => {
+  // `SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS` in session-manager.ts, which is not
+  // exported. Pinned here as the contract: a suspend never waits on the host's
+  // scrollback longer than this, whatever the transport's default budget is.
+  const SCAN_TIMEOUT_MS = 2_000;
+
+  // Red-green: drop the `hasAgentSessionId` guard and the known-id case makes a
+  // `getRawScrollback` request; drop the timeout argument and the unknown-id
+  // case's request carries no options (it waits the transport's whole default
+  // budget), so `toEqual({ timeoutMs: 2000 })` fails on `undefined`.
+
+  /** Suspend a session whose mock PTY never exits, to the end of the suspend. */
+  async function suspendToCompletion(manager: SessionManager, sessionId: string): Promise<void> {
+    const suspending = manager.suspend(sessionId);
+    // The exit sequence gets 1500 ms to end the agent, then the force-kill gets
+    // 1500 ms to propagate. The mock PTY never exits, so both run out.
+    await vi.advanceTimersByTimeAsync(3_100);
+    await suspending;
+  }
+
+  function rawScrollbackRequests(transport: ControllableHostTransport) {
+    return transport.requested.filter((request) => request.method === 'getRawScrollback');
+  }
+
+  it('asks the host for the raw scrollback, waiting at most 2 s, while the agent session id is unknown', async () => {
+    const { manager, transport } = makeManager();
+    const session = await spawnSession(manager, 'task-unknown-id', 401);
+    expect(registryRow(manager, session.id)?.agentSessionId).toBeFalsy();
+    transport.requested.length = 0;
+
+    await suspendToCompletion(manager, session.id);
+
+    const requests = rawScrollbackRequests(transport);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].params).toEqual({ sessionId: session.id });
+    expect(requests[0].options).toEqual({ timeoutMs: SCAN_TIMEOUT_MS });
+    expect(registryRow(manager, session.id)?.status).toBe('suspended');
+  });
+
+  it('does not ask the host for the raw scrollback once the agent session id is known', async () => {
+    const { manager, transport } = makeManager();
+    const session = await spawnSession(manager, 'task-known-id', 402);
+    // The id arrives the way a real capture does: the host reports it.
+    transport.emitHostEvent({ type: 'agentSessionId', sessionId: session.id, capturedId: 'agent-session-402' });
+    // Control: the capture landed, so the silence below is the guard and not an
+    // id the manager never received.
+    expect(registryRow(manager, session.id)?.agentSessionId).toBe('agent-session-402');
+    transport.requested.length = 0;
+
+    await suspendToCompletion(manager, session.id);
+
+    // Any request at all, not one carrying the 2 s option: the call before the
+    // fix passed no options, so a filter on the option would stay empty, and
+    // green, against that code.
+    expect(rawScrollbackRequests(transport)).toEqual([]);
+    expect(registryRow(manager, session.id)?.status).toBe('suspended');
+    expect(registryRow(manager, session.id)?.agentSessionId).toBe('agent-session-402');
   });
 });

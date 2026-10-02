@@ -1210,6 +1210,59 @@ describe('the Ask handler', () => {
       ]);
     });
 
+    // END_CHAT only ends a chat whose id is of the URL-segment shape, so a warm
+    // session pooled under any other id could never be ended and would idle
+    // until the pool's timer dropped it.
+    //
+    // Red-green: key the pool by `answerContext.chatId` as given (the code
+    // before the fix) and `take` is called with the malformed id, which opens a
+    // session in the pool and answers from it, so the answer, the `take` spy,
+    // `sessions` and the pool's size all go red.
+    it.each([
+      ['a slash and a space', 'bad id/with slash'],
+      ['65 characters', 'c'.repeat(65)],
+      ['200 characters', 'c'.repeat(200)],
+    ])('answers a chat id with %s as a one-shot, and pools no warm session under it', async (_reason, chatId) => {
+      const answerSpy = vi.fn(async () => 'From a fresh run.');
+      mockAdapters = [sessionAdapter(answerSpy, ['Should never be asked.'])];
+      registerSearchHandlers(makeContext() as unknown as Parameters<typeof registerSearchHandlers>[0]);
+      const takeSpy = vi.spyOn(answerSessionPool, 'take');
+      try {
+        const result = await ask('anything', 'req-1', { chatId });
+
+        expect(result.ok && result.answer).toBe('From a fresh run.');
+        expect(takeSpy).not.toHaveBeenCalled();
+      } finally {
+        takeSpy.mockRestore();
+      }
+      expect(sessions).toHaveLength(0);
+      expect(answerSessionPool.size).toBe(0);
+      expect(answerSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('still pools a warm session under a chat id of the accepted shape, up to 64 characters', async () => {
+      // Control for the test above: the same flow with a well-formed id takes
+      // the pool, so the silence there is the id check and not a pool that
+      // never opens a session in this harness.
+      const chatId = 'c'.repeat(64);
+      const answerSpy = vi.fn(async () => 'From a fresh run.');
+      mockAdapters = [sessionAdapter(answerSpy, ['From the warm session.'])];
+      registerSearchHandlers(makeContext() as unknown as Parameters<typeof registerSearchHandlers>[0]);
+      const takeSpy = vi.spyOn(answerSessionPool, 'take');
+      try {
+        const result = await ask('anything', 'req-1', { chatId });
+
+        expect(result.ok && result.answer).toBe('From the warm session.');
+        expect(takeSpy).toHaveBeenCalledTimes(1);
+        expect(takeSpy.mock.calls[0][0]).toBe(chatId);
+      } finally {
+        takeSpy.mockRestore();
+      }
+      expect(sessions).toHaveLength(1);
+      expect(answerSessionPool.size).toBe(1);
+      expect(answerSpy).not.toHaveBeenCalled();
+    });
+
     it('starts a fresh session when the scope changes, carrying the chat so far', async () => {
       mockAdapters = [sessionAdapter(vi.fn(async () => 'fresh run'))];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
