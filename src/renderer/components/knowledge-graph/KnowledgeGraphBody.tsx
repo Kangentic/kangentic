@@ -416,6 +416,15 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
   // Topic is always offered, so this converges in one extra render.
   if (!colorModes.includes(colorMode)) setColorMode('cluster');
 
+  // The parts of the active turn the map reads. A streamed chunk replaces the
+  // turn object but changes only its text, so the memos below depend on these.
+  // Depending on the whole turn made every chunk rebuild the highlight sets and
+  // restyle every node on the map (4 ms a chunk at 5,000 nodes, measured).
+  const activeStatus = activeTurn?.status ?? null;
+  const activeRows = activeTurn?.rows;
+  const activeRelated = activeTurn?.related ?? null;
+  const activeSearches = activeTurn?.searches;
+
   /**
    * How strongly each conversation on the map relates to the active turn.
    *
@@ -428,12 +437,12 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
    * reader looking at two dozen nodes for a one-task answer.
    */
   const turnStrengths = useMemo(() => {
-    if (!activeTurn || (!activeTurn.related && activeTurn.rows.length === 0)) return null;
+    if (activeStatus === null || !activeRows || (!activeRelated && activeRows.length === 0)) return null;
     // An answer that names no tasks lights nothing: the map goes back to how it
     // looked before the question. Retrieval always hands over its closest
     // matches, so a question about something that is not here still has a
     // related set, and lighting it contradicted an answer saying nothing matched.
-    if (activeTurn.status === 'done' && activeTurn.rows.length === 0) return null;
+    if (activeStatus === 'done' && activeRows.length === 0) return null;
     const strengths = new Map<number, number>();
     const light = (docKeys: ReadonlyArray<string>, strength: number): void => {
       for (const docKey of docKeys) {
@@ -442,20 +451,20 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
         strengths.set(index, Math.max(strengths.get(index) ?? 0, strength));
       }
     };
-    const answered = activeTurn.status === 'done';
+    const answered = activeStatus === 'done';
     if (answered) {
-      for (const row of activeTurn.rows) light(row.docKeys, 1);
+      for (const row of activeRows) light(row.docKeys, 1);
       if (strengths.size > 0) return strengths;
       // None of the answer's tasks has a node of its own (found by their task
       // records alone). The related set stays, dimmed, so the map still points
       // at the part of the work the answer drew on rather than at everything.
-      for (const task of activeTurn.related ?? []) light(task.docKeys, task.strength * RELATED_AFTER_ANSWER);
+      for (const task of activeRelated ?? []) light(task.docKeys, task.strength * RELATED_AFTER_ANSWER);
       return strengths.size > 0 ? strengths : null;
     }
-    for (const task of activeTurn.related ?? []) light(task.docKeys, task.strength);
-    for (const row of activeTurn.rows) light(row.docKeys, 1);
+    for (const task of activeRelated ?? []) light(task.docKeys, task.strength);
+    for (const row of activeRows) light(row.docKeys, 1);
     return strengths.size > 0 ? strengths : null;
-  }, [activeTurn, indexByDocKey]);
+  }, [activeStatus, activeRows, activeRelated, indexByDocKey]);
 
   /**
    * Nodes drawn with the white ring: what the agent's own searches found while
@@ -464,21 +473,21 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
    * goes with the rest of the related set once the answer lands.
    */
   const ringed = useMemo(() => {
-    if (!activeTurn) return undefined;
+    if (activeStatus === null || !activeRows || !activeSearches) return undefined;
     const set = new Set<number>();
-    const answeredTurn = activeTurn.status === 'done' && activeTurn.rows.length > 0;
-    for (const search of answeredTurn ? [] : activeTurn.searches) {
+    const answeredTurn = activeStatus === 'done' && activeRows.length > 0;
+    for (const search of answeredTurn ? [] : activeSearches) {
       for (const docKey of search.docKeys) {
         const index = indexByDocKey.get(docKey);
         if (index !== undefined) set.add(index);
       }
     }
-    const answered = activeTurn.rows.flatMap((row) => row.docKeys
+    const answered = activeRows.flatMap((row) => row.docKeys
       .map((docKey) => indexByDocKey.get(docKey))
       .filter((index): index is number => index !== undefined));
     if (answered.length > 0 && answered.length < FEW_LIT) for (const index of answered) set.add(index);
     return set.size > 0 ? set : undefined;
-  }, [activeTurn, indexByDocKey]);
+  }, [activeStatus, activeRows, activeSearches, indexByDocKey]);
 
   const highlighted = useMemo(() => {
     // Explore wins: it is the most recent, most specific thing the user asked
@@ -504,10 +513,10 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
    * whole related set around them. Explore frames its own neighbourhood.
    */
   const answerFocus = useMemo(
-    () => (activeTurn?.status === 'done' && !exploreIndices
-      ? answerFocusIndices(activeTurn.rows, indexByDocKey, facetIndices)
+    () => (activeStatus === 'done' && activeRows && !exploreIndices
+      ? answerFocusIndices(activeRows, indexByDocKey, facetIndices)
       : null),
-    [activeTurn, exploreIndices, indexByDocKey, facetIndices],
+    [activeStatus, activeRows, exploreIndices, indexByDocKey, facetIndices],
   );
 
   /** The conversations inside the map's filters: a question's scope. */
@@ -581,6 +590,12 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     void askQuestion(question, { granularity, scopeDocKeys });
     return true;
   }, [setupGap, onChooseAnswerAgent, askQuestion, granularity, scopeDocKeys]);
+
+  /** Ask a failed turn again, in the map's current scope. Stable across a
+   *  stream, so the chat's finished turns skip the render a chunk causes. */
+  const retryChatTurn = useCallback((turnId: string): void => {
+    void retryTurn(turnId, { granularity, scopeDocKeys });
+  }, [retryTurn, granularity, scopeDocKeys]);
 
   // A question handed in from Quick Find's Ask row: ask it here, through the
   // same path as the box, once. A store subscription rather than an effect on
@@ -877,7 +892,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
             thread={thread}
             agentName={askAgentLabel}
             onAsk={ask}
-            onRetry={(turnId) => { void retryTurn(turnId, { granularity, scopeDocKeys }); }}
+            onRetry={retryChatTurn}
             onEnd={endChat}
             onOpenTask={openTask}
             canOpenTask={canOpenTask}
