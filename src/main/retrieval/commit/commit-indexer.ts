@@ -264,15 +264,28 @@ async function unlinkCommitsOfDeletedTasks(
     bytes: 0,
     write: () => {
       try {
-        store.setDocumentTask(CORPUS, docId, null);
+        // The state row first: a throw between the two then leaves the chunk
+        // on the deleted task, where the next sweep finds it again. The other
+        // way round it read as unlinked to that query and as linked to the
+        // relink pass, and neither ever retried it.
         markUnlinked.run(new Date(deps.now()).toISOString(), docId);
+        store.setDocumentTask(CORPUS, docId, null);
         unlinked += 1;
       } catch (error) {
         console.warn(`[retrieval] commit ${docId} failed to unlink:`, error);
       }
     },
   });
-  await writeInSlices(db, orphaned, prepareUnlink, 'records:commit-unlink', shouldContinue, deps);
+  if (!await writeInSlices(db, orphaned, prepareUnlink, 'records:commit-unlink', shouldContinue, deps)) {
+    // A slice whose commit failed rolled back writes already counted above, so
+    // a run that did not finish counts what the index now says instead.
+    try {
+      const remaining = new Set(store.commitsOfDeletedTasks());
+      unlinked = orphaned.filter((docId) => !remaining.has(docId)).length;
+    } catch (error) {
+      console.warn('[retrieval] commits of deleted tasks could not be counted:', error);
+    }
+  }
   if (unlinked === 0) return 0;
   try {
     // The relink pass reads only when a conversation was indexed since its

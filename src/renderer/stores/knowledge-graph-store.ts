@@ -104,6 +104,14 @@ interface KnowledgeGraphState {
   draftQuestion: string;
   setDraftQuestion: (text: string) => void;
   /**
+   * What is typed in the chat's follow-up box and not yet asked. In the store
+   * because the chat unmounts while a node's detail holds the right slot, and
+   * the text has to be there when Back returns to the chat. Cleared when the
+   * chat ends.
+   */
+  followUpDraft: string;
+  setFollowUpDraft: (text: string) => void;
+  /**
    * A question handed in from outside the graph (Quick Find's Ask row), waiting
    * for the graph body to ask it. The body asks it through its own path, so
    * the setup check (no answering agent chosen yet) and the map's current
@@ -375,6 +383,10 @@ function createKnowledgeGraphStore() {
 
       setDraftQuestion: (text) => set({ draftQuestion: text }),
 
+      followUpDraft: '',
+
+      setFollowUpDraft: (text) => set({ followUpDraft: text }),
+
       queuedQuestion: null,
 
       askInGraph: (question, projectId) => {
@@ -424,7 +436,7 @@ function createKnowledgeGraphStore() {
         // the question that follows X is as warm as the first one was.
         if (chatId) window.electronAPI.knowledgeGraph.endChat(chatId);
         chatId = crypto.randomUUID();
-        set({ thread: [], focusedTurnId: null });
+        set({ thread: [], focusedTurnId: null, followUpDraft: '' });
         if (get().graphOpen) window.electronAPI.knowledgeGraph.prewarm({ chatId, projectId: get().projectId });
       },
 

@@ -15,7 +15,7 @@
  * search the agent makes on its own as a step line naming the query.
  */
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { ArrowUp, Check, Search, Sparkles, X } from 'lucide-react';
 import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
 import type { KnowledgeGraphChatTurn } from '../../stores/knowledge-graph-store';
@@ -171,6 +171,8 @@ export function KnowledgeGraphChat({
   canOpenTask,
   onFocusTurn,
   homeProjectId = null,
+  draft,
+  onDraftChange,
 }: {
   thread: ReadonlyArray<KnowledgeGraphChatTurn>;
   agentName: string;
@@ -186,8 +188,12 @@ export function KnowledgeGraphChat({
   /** The project the graph is on. Its tickets draw bare in an answer across
    *  projects, and a bare ticket in the prose means one of them. */
   homeProjectId?: string | null;
+  /** The follow-up box's text. Held by the caller, since this panel unmounts
+   *  while a node's detail takes the right slot. */
+  draft: string;
+  onDraftChange: (text: string) => void;
 }) {
-  const [draft, setDraft] = useState('');
+  const setDraft = onDraftChange;
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const busy = thread.some((turn) => turn.status === 'finding' || turn.status === 'answering');
 

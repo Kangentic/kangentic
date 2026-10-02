@@ -66,26 +66,29 @@ function commandName(file: string, platform: NodeJS.Platform): string {
   return pathFor(platform).basename(file).toLowerCase().replace(/\.exe$/, '');
 }
 
-/** Real paths of the executables compared, read once: they do not move while
- *  this process runs. Null for one that cannot be resolved. */
-const realExecutables = new Map<string, string | null>();
+/** Real paths of the executables compared, kept once read: they do not move
+ *  while this process runs. A read that failed is not kept, so one transient
+ *  failure does not turn the link check off for the rest of the run. */
+const realExecutables = new Map<string, string>();
 
+/** The native read, which on Windows also expands an 8.3 short name
+ *  (`C:\PROGRA~1\...`) that the JavaScript `realpathSync` leaves as written. */
 function realPathOf(file: string): string | null {
   try {
-    return realpathSync(file);
+    return realpathSync.native(file);
   } catch {
     return null;
   }
 }
 
 /** The request's real path, read at most once however many executables it is
- *  compared with. Never read for a bare name: the shell finds one on PATH,
- *  where a real-path read would resolve it against the working directory, and
- *  the callers compare a name as a name. */
+ *  compared with. Read only for an absolute path: a bare name is found on PATH
+ *  and a relative path from the child's working directory, neither of which a
+ *  read here would resolve against, and the callers compare both as a name. */
 function lazyRealPath(file: string, platform: NodeJS.Platform): () => string | null {
   let resolved: { value: string | null } | undefined;
   return () => {
-    if (pathFor(platform).basename(file) === file) return null;
+    if (!pathFor(platform).isAbsolute(file)) return null;
     resolved ??= { value: realPathOf(file) };
     return resolved.value;
   };
@@ -107,14 +110,20 @@ function isSameExecutable(
   const foldsCase = platform === 'win32' || platform === 'darwin';
   const normalize = (value: string): string => {
     const resolved = platformPath.resolve(value);
-    return foldsCase ? resolved.toLowerCase() : resolved;
+    const folded = foldsCase ? resolved.toLowerCase() : resolved;
+    // Windows runs `...\Kangentic` as `...\Kangentic.exe`.
+    return platform === 'win32' ? folded.replace(/\.exe$/, '') : folded;
   };
   if (normalize(file) === normalize(candidate)) return true;
   // A link is read off this machine's file system, so only for its platform.
   if (platform !== process.platform) return false;
-  if (!realExecutables.has(candidate)) realExecutables.set(candidate, realPathOf(candidate));
-  const realCandidate = realExecutables.get(candidate);
-  if (!realCandidate) return false;
+  let realCandidate = realExecutables.get(candidate);
+  if (realCandidate === undefined) {
+    const read = realPathOf(candidate);
+    if (read === null) return false;
+    realExecutables.set(candidate, read);
+    realCandidate = read;
+  }
   const realFile = realFileOf();
   return realFile !== null && normalize(realFile) === normalize(realCandidate);
 }
@@ -129,12 +138,13 @@ export function launchesOwnBinary(
 ): boolean {
   const candidates = typeof ownExecutable === 'string' ? [ownExecutable] : ownExecutable;
   if (request.kind === 'execFile') {
-    // A path is compared as a path. A bare name is found on PATH, so it is
-    // compared as a name, the way the shell branch below compares one.
-    const bareName = pathFor(platform).basename(request.file) === request.file;
+    // An absolute path is compared as a path. A bare name is found on PATH and
+    // a relative path from the child's working directory, not this process's,
+    // so both are compared as a name, the way the shell branch below compares one.
+    const comparedAsName = !pathFor(platform).isAbsolute(request.file);
     const realFileOf = lazyRealPath(request.file, platform);
     return candidates.some((candidate) => isSameExecutable(request.file, candidate, platform, realFileOf)
-      || (bareName && commandName(request.file, platform) === commandName(candidate, platform)));
+      || (comparedAsName && commandName(request.file, platform) === commandName(candidate, platform)));
   }
   // Only the executable the command line starts is compared, by path or by
   // name. A probe's own path can contain this app's name without launching

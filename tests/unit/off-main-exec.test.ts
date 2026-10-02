@@ -159,6 +159,73 @@ describe('host-exec', () => {
     });
   });
 
+  describe('an execFile of an absolute path that leaves off the .exe', () => {
+    // Windows runs `...\Kangentic` as `...\Kangentic.exe`, so the extensionless
+    // path starts the app as surely as the full one. Anywhere else `.exe` is part
+    // of a file's name, and `kangentic` is another file than `kangentic.exe`.
+    // Both run on every platform, through the platform argument.
+    const execFileOf = (file: string): HostExecRequest => ({ kind: 'execFile', file, args: ['--version'], options: {} });
+
+    // The path branch alone decides these: an absolute path is never compared by
+    // name, so a name match cannot be what refuses the first one.
+    //
+    // Red-green: drop the `.exe` strip from `normalize` in `isSameExecutable`
+    // (host-exec.ts). The two paths then differ by their extension, the
+    // candidate does not exist to read a real path from, and the first assertion
+    // reads false.
+    it('refuses it on Windows as the same path, and still allows the same name in another folder', () => {
+      const windowsBinary = 'C:\\Program Files\\Kangentic\\Kangentic.exe';
+
+      expect(launchesOwnBinary(execFileOf('C:\\Program Files\\Kangentic\\Kangentic'), windowsBinary, 'win32')).toBe(true);
+      // The control: a different folder is another program, as an absolute path.
+      expect(launchesOwnBinary(execFileOf('C:\\Other\\Kangentic'), windowsBinary, 'win32')).toBe(false);
+    });
+
+    // Red-green: strip `.exe` on every platform and the Linux file is refused as
+    // if it were the Windows binary, so the first assertion reads true.
+    it('does not on Linux, where kangentic and kangentic.exe are two files', () => {
+      const linuxBinary = '/opt/Kangentic/kangentic.exe';
+
+      expect(launchesOwnBinary(execFileOf('/opt/Kangentic/kangentic'), linuxBinary, 'linux')).toBe(false);
+      // The control: the candidate's own path is still refused, so the check ran.
+      expect(launchesOwnBinary(execFileOf('/opt/Kangentic/kangentic.exe'), linuxBinary, 'linux')).toBe(true);
+    });
+  });
+
+  describe('an execFile of a relative path', () => {
+    // A relative path starts from the CHILD's working directory, not this
+    // process's, so resolving it here names a file the child never runs. It is
+    // compared by name, as a bare name is. Each platform's forms run on every
+    // platform, through the platform argument.
+    const execFileOf = (file: string): HostExecRequest => ({ kind: 'execFile', file, args: ['--version'], options: {} });
+
+    // Red-green: compare a relative path as a path again (`bareName`, true only
+    // when `basename(file) === file`). `./kangentic` then resolves against this
+    // process's directory, which is not `/opt/Kangentic`, and every assertion
+    // below reads false: the app's own binary starts through a relative path.
+    it('is refused when its name is the app\'s, from whatever directory it names', () => {
+      const linuxBinary = '/opt/Kangentic/kangentic';
+      expect(launchesOwnBinary(execFileOf('./kangentic'), linuxBinary, 'linux')).toBe(true);
+      expect(launchesOwnBinary(execFileOf('../bin/kangentic'), linuxBinary, 'linux')).toBe(true);
+      expect(launchesOwnBinary(execFileOf('bin/kangentic'), linuxBinary, 'linux')).toBe(true);
+
+      const windowsBinary = 'C:\\Program Files\\Kangentic\\Kangentic.exe';
+      expect(launchesOwnBinary(execFileOf('./Kangentic.exe'), windowsBinary, 'win32')).toBe(true);
+      expect(launchesOwnBinary(execFileOf('..\\Kangentic.exe'), windowsBinary, 'win32')).toBe(true);
+      expect(launchesOwnBinary(execFileOf('.\\kangentic'), windowsBinary, 'win32')).toBe(true);
+    });
+
+    it('is allowed when its name is another program\'s, even from a directory named for the app', () => {
+      const linuxBinary = '/opt/Kangentic/kangentic';
+      expect(launchesOwnBinary(execFileOf('./codex'), linuxBinary, 'linux')).toBe(false);
+      expect(launchesOwnBinary(execFileOf('./kangentic/codex'), linuxBinary, 'linux')).toBe(false);
+
+      const windowsBinary = 'C:\\Program Files\\Kangentic\\Kangentic.exe';
+      expect(launchesOwnBinary(execFileOf('.\\codex.exe'), windowsBinary, 'win32')).toBe(false);
+      expect(launchesOwnBinary(execFileOf('..\\Kangentic\\codex.exe'), windowsBinary, 'win32')).toBe(false);
+    });
+  });
+
   describe('a path that names the app\'s binary another way', () => {
     const execFileOf = (file: string): HostExecRequest => ({ kind: 'execFile', file, args: ['--version'], options: {} });
 

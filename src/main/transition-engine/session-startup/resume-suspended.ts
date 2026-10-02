@@ -148,6 +148,37 @@ export async function resumeSuspendedSessions(
     return true;
   };
 
+  /**
+   * `keepResumable` for a record whose preparation awaited the shell and agent
+   * detection, so a move, a Resume or a reset may own the task by now. Run under
+   * the task's lock, against the task and record as they are now: nothing is
+   * kept when the record's status or the task's `session_id` moved on, or a
+   * live session holds the task. A Resume retires the record, and the CAS
+   * would otherwise take it from exited back to suspended under a live agent.
+   * A task moved meanwhile is kept only in a column that starts no agent and
+   * shows Resume; a column that starts agents is the move's own to spawn into.
+   */
+  const keepResumableIfUnchanged = (record: SessionRecord, task: Task): boolean => {
+    const current = taskRepo.getById(task.id);
+    const recordNow = sessionRepo.findByAnyId(record.id);
+    if (
+      !current
+      || !recordNow
+      || recordNow.id !== record.id
+      || recordNow.status !== record.status
+      || current.session_id !== task.session_id
+      || sessionManager.findLiveSessionByTaskId(task.id)
+    ) {
+      return false;
+    }
+    if (current.swimlane_id !== task.swimlane_id) {
+      const lane = laneForTask(current);
+      const hidesResume = lane?.role != null && RESUME_HIDDEN_ROLES.has(lane.role);
+      if (!lane || lane.auto_spawn || hidesResume) return false;
+    }
+    return keepResumable(recordNow, current);
+  };
+
   // 3a. Deduplicate PER (task_id, isolated_swimlane_id): keep only the most recent
   //     record for each parallel session. Retire strictly-older SAME-session
   //     duplicates only. A task may hold multiple sessions (e.g. its main session
@@ -344,12 +375,18 @@ export async function resumeSuspendedSessions(
     let canResume = false;
     // A resume that cannot be prepared keeps its conversation: the card shows
     // Resume and the next launch tries again, rather than a fresh agent
-    // replacing it (`keepResumable`). A record with none (no agent session id
-    // yet) is retired as before, and the auto-spawn pass starts the task fresh,
-    // which is all a resume of it could have done.
-    const giveUpPreparation = (): void => {
-      if (canResume) keepResumable(record, task);
-      else retireRecord(sessionRepo, record.id);
+    // replacing it (`keepResumableIfUnchanged`). A record with none (no agent
+    // session id yet) is retired as before, and the auto-spawn pass starts the
+    // task fresh, which is all a resume of it could have done.
+    const giveUpPreparation = async (): Promise<void> => {
+      if (!canResume) {
+        retireRecord(sessionRepo, record.id);
+        return;
+      }
+      const kept = await withTaskLock(task.id, async () => keepResumableIfUnchanged(record, task));
+      if (!kept) {
+        console.log(`[SESSION_RECOVERY] Left session ${record.id} (task ${task.id}) as it is: it changed while its resume was prepared`);
+      }
     };
     // Says only what was done: a preparation that throws before the check above
     // retires without knowing whether the record had a conversation.
@@ -410,7 +447,7 @@ export async function resumeSuspendedSessions(
       if (!prep.ok) {
         const cause = prep.reason === 'unknown-agent' ? 'Unknown agent' : 'CLI not found';
         console.warn(`[SESSION_RECOVERY] ${cause} for task ${task.id.slice(0, 8)}; ${giveUpOutcome()}`);
-        giveUpPreparation();
+        await giveUpPreparation();
         skipped++;
         continue;
       }
@@ -422,7 +459,7 @@ export async function resumeSuspendedSessions(
         err,
       );
       try {
-        giveUpPreparation();
+        await giveUpPreparation();
       } catch (updateErr) {
         console.error(`[SESSION_RECOVERY] Failed to settle session ${record.id} after its preparation failed:`, updateErr);
       }
@@ -465,19 +502,8 @@ export async function resumeSuspendedSessions(
         // move had no session to suspend, so without a placeholder the card
         // would offer no Resume until the next launch. Kept resumable as the
         // gather keeps a record found in such a column; a column that starts
-        // agents is the move's own to spawn into.
-        if (
-          current
-          && recordNow
-          && recordUnchanged
-          && current.swimlane_id !== input.task.swimlane_id
-          && current.session_id === input.task.session_id
-          && !sessionManager.findLiveSessionByTaskId(input.task.id)
-        ) {
-          const lane = laneForTask(current);
-          const hidesResume = lane?.role != null && RESUME_HIDDEN_ROLES.has(lane.role);
-          if (lane && !lane.auto_spawn && !hidesResume) keepResumable(recordNow, current);
-        }
+        // agents is the move's own to spawn into. Any other change keeps nothing.
+        keepResumableIfUnchanged(input.record, input.task);
         // Logged and counted, so a task this pass left alone leaves a trace.
         console.log(
           `[SESSION_RECOVERY] Skipped session ${input.record.id} (task ${input.task.id}): it changed while its resume was prepared`,

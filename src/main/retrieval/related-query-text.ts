@@ -31,11 +31,15 @@ const QUESTION_WORDS = new Set((
   + 'costs expensive cheapest longest biggest largest used took take show list find tell give'
 ).split(' '));
 
-/** The words a question is about, lower-cased, in order, without duplicates. */
+/**
+ * The words a question is about, lower-cased, in order, without duplicates.
+ * Letters of any script are kept: the full-text index tokenizes them
+ * (`unicode61`), and an ASCII-only class cut "naïve" into "na" and "ve".
+ */
 export function contentWords(text: string): string[] {
   const words = text
     .toLowerCase()
-    .replace(/[^a-z0-9_\-\s]/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}_\-\s]/gu, ' ')
     .split(/\s+/)
     .filter((word) => word.length > 1 && !QUESTION_WORDS.has(word));
   return [...new Set(words)];

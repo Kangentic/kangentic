@@ -728,9 +728,9 @@ describe('resumeSuspendedSessions: the resume re-checks its task under the task 
     //
     // Red-green: drop the placeholder branch from the re-check in
     // resume-suspended.ts and the first test goes red.
-    const lanes = (movedTo: { id: string; auto_spawn: boolean }) => [
+    const lanes = (movedTo: { id: string; auto_spawn: boolean; role?: 'todo' | 'done' }) => [
       { id: 'lane-exec', auto_spawn: true, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-      { id: movedTo.id, auto_spawn: movedTo.auto_spawn, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+      { id: movedTo.id, auto_spawn: movedTo.auto_spawn, role: movedTo.role ?? null, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
     ];
 
     it('into a column that starts no agent keeps its record resumable, with a paused placeholder', async () => {
@@ -761,6 +761,36 @@ describe('resumeSuspendedSessions: the resume re-checks its task under the task 
       expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
       expect(markRecordSuspendedMock).not.toHaveBeenCalled();
     });
+
+    // To Do and Done start no agent (auto_spawn off) but both hide Resume
+    // (RESUME_HIDDEN_ROLES), and a To Do card relies on having no session so it
+    // opens straight into the edit form. A placeholder there is a regression, so
+    // the move into either is not kept, though `auto_spawn` alone would allow it.
+    //
+    // Red-green: drop the `hidesResume` clause from the moved-column check in
+    // keepResumableIfUnchanged (resume-suspended.ts). Both cases then take the
+    // keep path: markRecordSuspended is called with 'system' and a placeholder is
+    // registered, so the first two assertions go red.
+    it.each(['done', 'todo'] as const)(
+      'into a %s column that starts no agent keeps nothing: no record kept, no placeholder, no spawn',
+      async (role) => {
+        swimlaneListMock.mockReturnValue(lanes({ id: 'lane-hidden', auto_spawn: false, role }));
+        seedLostSession(() => {
+          taskRepoList.mockReturnValue([makeTask({ id: 'task-lost', swimlane_id: 'lane-hidden' })]);
+        });
+        const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+        await resumeLost(sessionManager);
+
+        expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+        expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+        expect(sessionManager.spawn).not.toHaveBeenCalled();
+        // The pass reached the re-check: the preparation ran, and the record was
+        // left as it is rather than retired.
+        expect(vi.mocked(prepareAgentSpawn)).toHaveBeenCalledTimes(1);
+        expect(retireRecordMock).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it('does not resume a session the user reset during the preparation', async () => {

@@ -1125,9 +1125,71 @@ describeWithSqlite('RetrievalStore document sums (real database)', () => {
     expect(last).toMatchObject({ seq: 4, embedded: false, textBytes: 5 });
   });
 
-  it('deletes the sums of documents gone from the index', () => {
+  it('deletes the sums of documents gone from the index', async () => {
     const { store } = project();
-    store.deleteDocSums('conversation', [ref.docId]);
+    await store.deleteDocSums('conversation', [ref.docId]);
     expect(store.docSumPrefix('conversation', ref.docId)).toBeNull();
+  });
+
+  // A map pass after a bulk delete leaves one stored row per document gone, and
+  // the deletes are a few rows a transaction with a turn of the worker's write
+  // budget between, instead of the lock taken back to back (the pass's
+  // `awaitWriteTurn`). Four ids to a transaction, so nine take three.
+  describe('deleting many sums', () => {
+    const goneIds = Array.from({ length: 9 }, (_, index) => `gone-${index + 1}`);
+
+    /** The doc-1 fixture plus nine more stored sums, for documents the index no
+     *  longer holds. Read straight off the table, so "removed" cannot pass on a
+     *  row that merely reads as empty. */
+    function projectWithGoneSums() {
+      const fixture = project();
+      const written = fixture.store.writeDocSums('conversation', goneIds.map((docId) => sumsWrite({ docId, chunkCount: 0, embeddedCount: 0 })));
+      expect(written).toBe(goneIds.length);
+      const goneRows = (): string[] => (fixture.database
+        .prepare("SELECT doc_id AS docId FROM memory_doc_sums WHERE corpus = 'conversation' AND doc_id LIKE 'gone-%' ORDER BY doc_id")
+        .all() as Array<{ docId: string }>).map((row) => row.docId);
+      expect(goneRows()).toEqual(goneIds);
+      return { ...fixture, goneRows };
+    }
+
+    // Red-green: the delete before this change ran every batch back to back and
+    // took no turn, so `turns` is 0 (the argument was not in its signature). A
+    // turn taken before the first batch, or after the last, makes it 3.
+    it('takes a turn between the batches and removes every sum, and nothing else', async () => {
+      const { store, goneRows } = projectWithGoneSums();
+      let turns = 0;
+
+      await store.deleteDocSums('conversation', goneIds, async () => { turns += 1; });
+
+      // Three batches (4, 4 and 1), so two gaps between them.
+      expect(turns).toBe(2);
+      expect(goneRows()).toEqual([]);
+      // A document still in the index keeps its sums.
+      expect(store.docSumPrefix('conversation', ref.docId)).not.toBeNull();
+    });
+
+    // Red-green: ignore `shouldContinue` and the last five go as well. The stop
+    // is raised from the turn between the first and second batch, which is where
+    // a pass hears about a project switch or a shutdown.
+    it('leaves the rest when it is told to stop after the first batch', async () => {
+      const { store, goneRows } = projectWithGoneSums();
+      let turns = 0;
+      let stopped = false;
+
+      await store.deleteDocSums('conversation', goneIds, async () => { turns += 1; stopped = true; }, () => !stopped);
+
+      expect(turns).toBe(1);
+      expect(goneRows()).toEqual(goneIds.slice(4));
+    });
+
+    it('deletes nothing and takes no turn when it is told to stop before the first batch', async () => {
+      const { store, goneRows } = projectWithGoneSums();
+      let turns = 0;
+
+      await store.deleteDocSums('conversation', goneIds, async () => { turns += 1; }, () => false);
+
+      expect(turns).toBe(0);
+      expect(goneRows()).toEqual(goneIds);
+    });
   });
 });

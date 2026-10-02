@@ -562,6 +562,9 @@ export class OpenCodeAdapter implements AgentAdapter {
         const deleteArgs = ['session', 'delete', sessionId];
         const deletion = outsideChatRuns(() => spawnCli(cliPath, deleteArgs, cwd));
         deletion.on('error', () => undefined);
+        // A delete that exits at once (the session already gone) can close the
+        // pipe under the `end` below, as `runResolvedCliPrint` guards its own.
+        deletion.stdin.on('error', () => undefined);
         deletion.stdout.resume();
         deletion.stderr.resume();
         deletion.stdin.end();

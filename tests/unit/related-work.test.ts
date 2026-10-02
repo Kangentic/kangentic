@@ -60,6 +60,43 @@ describe('the question words', () => {
   it('has no keyword query for a question made only of question words', () => {
     expect(relatedKeywordQuery('which tasks were the most expensive?')).toBeNull();
   });
+
+  // The full-text index tokenizes letters of any script (`unicode61`), so a word
+  // outside ASCII is one word to the question as well. The ASCII-only class the
+  // function used to clean with cut it at the first such letter.
+  //
+  // Red-green: with `/[^a-z0-9_\-\s]/g` in place of the Unicode class the first
+  // assertion reads ['na', 've', 'parser'] (the two halves of the word, each long
+  // enough to survive), and the Cyrillic and CJK words vanish entirely.
+  describe('words outside ASCII', () => {
+    it('keeps an accented word whole', () => {
+      expect(contentWords('Which tasks changed the naïve parser?')).toEqual(['naïve', 'parser']);
+    });
+
+    it('keeps a word built from a base letter and a combining mark', () => {
+      // "ï" as "i" then U+0308: the mark is not a letter, so a class of letters
+      // alone would split the word at it.
+      const decomposed = 'naïve';
+      expect(contentWords(`Which tasks changed the ${decomposed} parser?`)).toEqual([decomposed, 'parser']);
+    });
+
+    it('keeps a Cyrillic word, lower-cased', () => {
+      expect(contentWords('Which tasks touched the Терминал renderer?')).toEqual(['терминал', 'renderer']);
+    });
+
+    it('keeps a CJK word', () => {
+      expect(contentWords('Which tasks changed 解析器 parser?')).toEqual(['解析器', 'parser']);
+    });
+
+    it('still splits on punctuation and keeps digits, underscores and hyphens', () => {
+      expect(contentWords('resize_debounce, pty-host (v2) 200ms!')).toEqual(['resize_debounce', 'pty-host', 'v2', '200ms']);
+    });
+
+    it('quotes a non-ASCII word in the keyword query', () => {
+      expect(relatedKeywordQuery('Which tasks changed the naïve parser?')).toBe('"naïve" OR "parser"');
+      expect(relatedKeywordQuery('Which tasks touched the Терминал renderer?')).toBe('"терминал" OR "renderer"');
+    });
+  });
 });
 
 describe('rolling hits up to tasks', () => {

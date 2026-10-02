@@ -280,13 +280,16 @@ describe('retrievalService.reconcileEmbedWorker and the summary failure backoff'
   // first reconcile was superseded: its refresh result is dropped and the
   // second reconcile makes the comparison. Neither may end the backoff.
   //
-  // Red-green: drop the `generation !== summaryChoiceGeneration` guard from the
-  // follow-up. The first reconcile's follow-up then runs after the second
-  // reconcile nulled `summaryChoice` (and before the second refresh landed),
-  // compares the baseline CHOICE against that null, sees a difference, and
-  // calls `endBackoff`. The assertion between the two releases is the one that
-  // goes red; it must come before the second release, or the second refresh
-  // writes CHOICE first and hides the bug.
+  // Red-green: this goes red only with BOTH `generation !== summaryChoiceGeneration`
+  // and `summaryChoice === null` gone from the follow-up. The second reconcile
+  // nulls `summaryChoice` before its refresh lands, so the first reconcile's
+  // follow-up, which runs between the two releases, would compare the baseline
+  // CHOICE against that null, see a difference, and call `endBackoff`. Either
+  // line alone returns before the comparison, so neither is pinned by this test
+  // on its own. The generation guard is pinned by the test further down (the
+  // newer refresh lands first, on a new writer). The assertion between the two
+  // releases is the one that goes red; it must come before the second release,
+  // or the second refresh writes CHOICE first and hides the bug.
   it('ends no backoff when two overlapping reconciles on one project resolve to the same choice', async () => {
     const context = makeContext('proj-a');
     await settleOnChoice(context);
@@ -308,6 +311,44 @@ describe('retrievalService.reconcileEmbedWorker and the summary failure backoff'
     // One request per reconcile and nothing after them: a wrongly ended
     // backoff asks for the pass again.
     expect(summarySchedulerMock.request.mock.calls).toEqual([[context, 'proj-a'], [context, 'proj-a']]);
+  });
+
+  // Two reconciles overlap on one project and the NEWER refresh lands first, on
+  // a different writer: that reconcile's follow-up ends the backoff, once. The
+  // older refresh then lands on the baseline's writer. Its result is dropped,
+  // and its follow-up must not compare either: by then `summaryChoice` holds the
+  // newer writer, which differs from the older reconcile's baseline, so a
+  // comparison would read as a second change.
+  //
+  // Red-green: drop `generation !== summaryChoiceGeneration` from the follow-up.
+  // The older reconcile's follow-up then runs after the newer one's, finds
+  // `summaryChoice` non-null (codex) and different from its CHOICE baseline, and
+  // calls `endBackoff` a second time (and `request` a fourth). The
+  // `summaryChoice === null` line cannot save it here, because the newer refresh
+  // has already filled `summaryChoice`. The releases are in this order for that
+  // reason: newer first with the changed writer, older last.
+  it('ends the backoff once when the newer of two overlapping reconciles lands first on a new writer', async () => {
+    const context = makeContext('proj-a');
+    await settleOnChoice(context);
+    const releaseFirst = holdNextResolution();
+    retrievalService.reconcileEmbedWorker(context);
+    const releaseSecond = holdNextResolution();
+    retrievalService.reconcileEmbedWorker(context);
+
+    releaseSecond({ ...CHOICE, agent: 'codex' });
+    await vi.waitFor(() => {
+      expect(summarySchedulerMock.endBackoff).toHaveBeenCalledTimes(1);
+    });
+    await untilSettled();
+
+    releaseFirst(CHOICE);
+    await untilSettled();
+
+    expect(answerRunMock.resolveAnswerRun).toHaveBeenCalledTimes(2);
+    expect(summarySchedulerMock.endBackoff.mock.calls).toEqual([['proj-a']]);
+    // One request per reconcile, and the one the newer follow-up makes once its
+    // backoff has ended. The superseded follow-up asks for nothing.
+    expect(summarySchedulerMock.request.mock.calls).toEqual([[context, 'proj-a'], [context, 'proj-a'], [context, 'proj-a']]);
   });
 
   // A reconcile that ends with NO writer (summaries switched off, a refresh that

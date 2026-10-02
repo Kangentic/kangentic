@@ -144,6 +144,8 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
 
   const queryText = useKnowledgeGraphStore((state) => state.draftQuestion);
   const setQueryText = useKnowledgeGraphStore((state) => state.setDraftQuestion);
+  const followUpDraft = useKnowledgeGraphStore((state) => state.followUpDraft);
+  const setFollowUpDraft = useKnowledgeGraphStore((state) => state.setFollowUpDraft);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [showEdges, setShowEdges] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
@@ -898,6 +900,8 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
             canOpenTask={canOpenTask}
             onFocusTurn={focusTurn}
             homeProjectId={projectId}
+            draft={followUpDraft}
+            onDraftChange={setFollowUpDraft}
           />
         </div>
       ) : null}

@@ -814,6 +814,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, fifth pass | 663f +79405 -7559 | 5702KB, 102379 lines | 3 (0) | 660 | 1 | 29, one shard file each, 9 over tests | about 195 of 28 pack-carrying | about 77 / 44 applied |
 | task 529, whole branch, sixth pass | 674f +83014 -7629 | 5896KB, 105950 lines | 2 (0) | 672 | 1 | 30, one shard file each, 9 over tests | about 190 of 29 pack-carrying | 40 / 34 applied, 2 refuted |
 | task 529, whole branch, seventh pass | 675f +84956 -7640 | 5895KB, 105732 lines | 4 (0) | 671 | 2 | 30, one shard file each, 9 over tests, 8 resumed to finish their shards | about 140 of 29 pack-carrying | 38 raised, 31 distinct / 29 applied, 2 refuted |
+| task 529, whole branch, eighth pass | 676f +86115 -7734 | 5974KB, 107091 lines | 4 (0) | 672 | 2 | 31, one shard file each, 10 over tests, none resumed | about 110 of 30 pack-carrying | 23 raised, 22 distinct / 19 applied, 3 refuted |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1120,3 +1121,22 @@ decided all three, and a follow-up commit fixed all eight. A resume that cannot 
 its conversation behind a paused placeholder when it has one, and the orbit test sets up its race in
 one task, red at 38 units without its fix. A review that ends on a skipped decision with the user at
 hand should ask and fix, not hand the decision back in the verdict.
+
+The task 529 eighth pass kept the seventh pass's layout and changed two things. Every prompt, the
+shared context file and each shard's focus heading said in the same line that the focus is where to
+look hardest and the whole shard is the job, and every finder reported reading all of its shard, so
+none was resumed. And the 4,143-line Knowledge Graph UI spec, stubbed in the pack for the third pass
+running, got a finder of its own that read it from disk in full; `retrieval-store.ts`, also stubbed,
+went to the smallest source shard. That finder found nothing, which closes the gap the sixth and
+seventh passes left by reading only its newest ranges. The focus ran from `5f827c0d` to HEAD, about
+360 lines of source. The one source Medium sat in it: the seventh pass's own follow-up made a resume
+whose preparation failed keep its record resumable, but did so outside the task lock from the
+gather-time snapshots, so a Resume during the preparation could see its retired record CAS'd back to
+suspended and its live agent's `session_id` cleared. It now runs under the lock with the spawn pass's
+re-check, which both now share. Three findings were refuted. A coverage hole the finder's grep missed:
+a moved-task test existed, and only its To Do and Done exclusion was unpinned. A kept
+`~/.claude.json` copy swept after another writer replaced the file, which needs two independent
+failures and sits inside the user's decision to sweep kept copies once a run. And a projection pass
+said to read a closed database after the last page's pace: the loop checks its abort at the top of
+each page with no await before the read. The driver applied that last one before a test-builder,
+asked to pin it, showed no test could go red, and the checks came out again.

@@ -27,8 +27,10 @@
  * call's numbers answer the question.
  */
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import * as url from 'node:url';
 
 /** Past this, a call counts as failed and its CLI is stopped. */
@@ -77,7 +79,7 @@ function ask(prompt) {
       resolve(result);
     };
     const timer = setTimeout(() => {
-      child.kill();
+      stopTree(child);
       settle({ error: `no reply within ${CALL_TIMEOUT_MS / 1000}s` });
     }, CALL_TIMEOUT_MS);
     child.on('error', (error) => settle({ error: error.message }));
@@ -102,6 +104,32 @@ function ask(prompt) {
   });
 }
 
+/** Stop the CLI, not just its shell. On Windows `shell: true` starts cmd.exe,
+ *  and `child.kill()` ends cmd.exe while `claude` keeps running. */
+function stopTree(child) {
+  if (process.platform !== 'win32') {
+    child.kill();
+    return;
+  }
+  try {
+    execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  } catch {
+    // Already gone.
+  }
+}
+
+/** Whether node was asked to run this file. Compared by real path, as
+ *  `package-smoke.mjs` does: node resolves the entry through links, so a
+ *  checkout under a link or junction never matched by URL. */
+function isEntrypoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(url.fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
+  } catch {
+    return url.pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+  }
+}
+
 /** The same guard as `eval-ask.mjs`: a real agent call never runs unattended. */
 function refuseIfAutomated() {
   const automated = ['CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILD_NUMBER']
@@ -111,7 +139,7 @@ function refuseIfAutomated() {
   }
 }
 
-if (!process.argv[1] || url.pathToFileURL(process.argv[1]).href !== import.meta.url) {
+if (!isEntrypoint()) {
   throw new Error('Run this probe directly with node, never import it.');
 }
 refuseIfAutomated();

@@ -1175,9 +1175,20 @@ export class RetrievalStore {
     })();
   }
 
-  /** Stored sums of documents no longer in the index, a few rows per transaction. */
-  deleteDocSums(corpus: IndexCorpus, docIds: ReadonlyArray<string>): void {
+  /**
+   * Stored sums of documents no longer in the index, a few rows per
+   * transaction with `awaitTurn` between, so a map pass after a bulk delete
+   * shares the worker's write budget rather than taking the lock back to back.
+   */
+  async deleteDocSums(
+    corpus: IndexCorpus,
+    docIds: ReadonlyArray<string>,
+    awaitTurn: () => Promise<void> = () => Promise.resolve(),
+    shouldContinue: () => boolean = () => true,
+  ): Promise<void> {
     for (let start = 0; start < docIds.length; start += DOC_SUMS_DELETED_PER_TRANSACTION) {
+      if (start > 0) await awaitTurn();
+      if (!shouldContinue()) return;
       const batch = docIds.slice(start, start + DOC_SUMS_DELETED_PER_TRANSACTION);
       writeTransaction(this.db, () => {
         this.db

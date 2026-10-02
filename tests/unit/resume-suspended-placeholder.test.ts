@@ -30,6 +30,17 @@ const sessionRepoGetOrphaned = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoGetInterruptedExited = vi.fn(() => [] as SessionRecord[]);
 const taskRepoList = vi.fn(() => [] as Task[]);
 const taskRepoUpdateMock = vi.fn();
+// The task as it is stored NOW. A give-up re-reads it under the task lock, so a
+// test that changes the task during the preparation overrides this one, and the
+// file's beforeEach puts the default back.
+const storedTaskDefault = (taskId: string): Task | null => taskRepoList().find((task) => task.id === taskId) ?? null;
+const taskRepoGetById = vi.fn(storedTaskDefault);
+// The record as it is stored NOW, read the same way. Defaults to the gathered one.
+const storedRecordDefault = (recordId: string): SessionRecord | null => (
+  [...sessionRepoGetResumable(), ...sessionRepoGetOrphaned(), ...sessionRepoGetInterruptedExited()]
+    .find((record) => record.id === recordId) ?? null
+);
+const sessionRepoFindByAnyId = vi.fn(storedRecordDefault);
 const swimlaneRepoList = vi.fn(() => [] as Swimlane[]);
 // The record a resume would continue. None by default, so a record that reaches
 // the preparation pass has no conversation to resume there.
@@ -58,6 +69,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     markAllRunningAsOrphaned = vi.fn();
     markRunningAsOrphanedExcluding = vi.fn();
     getLatestForTaskByTypeAndIsolation = () => latestForTaskByTypeAndIsolation();
+    findByAnyId = (recordId: string) => sessionRepoFindByAnyId(recordId);
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -65,6 +77,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
     list = () => taskRepoList();
+    getById = (taskId: string) => taskRepoGetById(taskId);
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);
   }
   return { TaskRepository: FakeTaskRepository };
@@ -177,6 +190,8 @@ function makeSessionManager() {
     registerSuspendedPlaceholder: vi.fn(),
     spawn: vi.fn(),
     getShell: vi.fn(async () => '/bin/sh'),
+    // No live session holds the task, unless a test says one does.
+    findLiveSessionByTaskId: vi.fn((): { id: string } | undefined => undefined),
   };
 }
 
@@ -205,6 +220,8 @@ beforeEach(() => {
   sessionRepoGetOrphaned.mockReturnValue([]);
   sessionRepoGetInterruptedExited.mockReturnValue([]);
   taskRepoList.mockReturnValue([makeTask()]);
+  taskRepoGetById.mockImplementation(storedTaskDefault);
+  sessionRepoFindByAnyId.mockImplementation(storedRecordDefault);
   swimlaneRepoList.mockReturnValue([makeLane()]);
 });
 
@@ -443,6 +460,140 @@ describe('resumeSuspendedSessions: a resume whose preparation fails', () => {
     await runResume(sessionManager);
 
     expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The give-up of a resume that has a conversation awaited the shell and agent
+ * detection, so a Resume, a move or a reset may own the task by the time it
+ * settles. It settles under the task lock, against the task and record as they
+ * are then (`keepResumableIfUnchanged`), and keeps nothing that moved on. Each
+ * change below is made INSIDE the mocked preparation, the only moment it can
+ * happen, so what the give-up read before it is not what it acts on.
+ *
+ * Every "keeps nothing" case would otherwise take the keep path, which writes the
+ * CAS, the placeholder and the task's `session_id`: the task starts with a stale
+ * `session_id` so that last write would show.
+ */
+describe('resumeSuspendedSessions: a failed preparation settles against what changed meanwhile', () => {
+  const consoleSpies: Array<{ mockRestore: () => void }> = [];
+
+  beforeEach(() => {
+    swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    // There is a conversation to resume, so the give-up keeps rather than retires.
+    latestForTaskByTypeAndIsolation.mockReturnValue(makeRecord());
+    sessionRepoGetOrphaned.mockReturnValue([makeRecord({ status: 'orphaned', suspended_by: null })]);
+    taskRepoList.mockReturnValue([makeTask({ session_id: 'stale-session' })]);
+    consoleSpies.push(
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+      vi.spyOn(console, 'log').mockImplementation(() => undefined),
+    );
+  });
+
+  afterEach(() => {
+    prepareAgentSpawnMock.mockReset();
+    latestForTaskByTypeAndIsolation.mockReturnValue(null);
+    for (const spy of consoleSpies.splice(0)) spy.mockRestore();
+  });
+
+  /** A preparation that changes the world, then fails to find the agent CLI. */
+  async function runFailedPreparation(
+    duringPreparation: (sessionManager: ReturnType<typeof makeSessionManager>) => void,
+  ): Promise<ReturnType<typeof makeSessionManager>> {
+    const sessionManager = makeSessionManager();
+    prepareAgentSpawnMock.mockImplementation(async () => {
+      duringPreparation(sessionManager);
+      return { ok: false, reason: 'cli-not-found' };
+    });
+
+    await runResume(sessionManager);
+
+    // The give-up ran and re-read the task under the lock, so a "nothing kept"
+    // result below is the re-check's doing and not a path that never got there.
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    expect(taskRepoGetById).toHaveBeenCalledWith('task-1');
+    return sessionManager;
+  }
+
+  function expectNothingKept(sessionManager: ReturnType<typeof makeSessionManager>): void {
+    expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+    // Nor retired: the record is left exactly as the change left it.
+    expect(retireRecordMock).not.toHaveBeenCalled();
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  }
+
+  // Red-green: drop `recordNow.status !== record.status` from
+  // keepResumableIfUnchanged and the exited record is CAS'd back to suspended
+  // (markRecordSuspended called) and gets a placeholder under the live agent.
+  it('keeps nothing when the record changed status, as a Resume leaves it (orphaned, now exited)', async () => {
+    const sessionManager = await runFailedPreparation(() => {
+      sessionRepoFindByAnyId.mockReturnValue(makeRecord({ status: 'exited', suspended_by: null, exited_at: '2026-07-30T12:00:00.000Z' }));
+    });
+
+    expectNothingKept(sessionManager);
+  });
+
+  // Red-green: drop `current.session_id !== task.session_id` and the keep path
+  // runs: the CAS, the placeholder and a write clearing the new session's ref.
+  it('keeps nothing when the task\'s session_id changed (a Resume put a session on it)', async () => {
+    const sessionManager = await runFailedPreparation(() => {
+      taskRepoGetById.mockReturnValue(makeTask({ session_id: 'resumed-session' }));
+    });
+
+    expectNothingKept(sessionManager);
+  });
+
+  // Red-green: drop `sessionManager.findLiveSessionByTaskId(task.id)` from the
+  // re-check and the live agent's task gets a placeholder and a cleared session_id.
+  it('keeps nothing when a live session holds the task', async () => {
+    const sessionManager = await runFailedPreparation((manager) => {
+      manager.findLiveSessionByTaskId.mockReturnValue({ id: 'live-session' });
+    });
+
+    expectNothingKept(sessionManager);
+    expect(sessionManager.findLiveSessionByTaskId).toHaveBeenCalledWith('task-1');
+  });
+
+  // Done has auto_spawn off, so only the RESUME_HIDDEN_ROLES clause refuses it.
+  //
+  // Red-green: drop `hidesResume` from the moved-column check and the task is
+  // kept in Done, where a placeholder would surface a Resume button.
+  it('keeps nothing when the task moved into a Done column', async () => {
+    swimlaneRepoList.mockReturnValue([
+      makeLane({ id: 'lane-1', auto_spawn: true }),
+      makeLane({ id: 'lane-done', name: 'Done', role: 'done', auto_spawn: false }),
+    ]);
+
+    const sessionManager = await runFailedPreparation(() => {
+      taskRepoGetById.mockReturnValue(makeTask({ swimlane_id: 'lane-done', session_id: 'stale-session' }));
+    });
+
+    expectNothingKept(sessionManager);
+  });
+
+  // The positive control for the four above: the same give-up, moved into a
+  // column that starts no agent and does not hide Resume, still keeps. Without it
+  // those four would also pass against a give-up that never keeps anything.
+  //
+  // Red-green: make keepResumableIfUnchanged return false for a moved task and
+  // the CAS, placeholder and session_id assertions go red.
+  it('keeps the record resumable when the task moved into a custom column that starts no agent', async () => {
+    swimlaneRepoList.mockReturnValue([
+      makeLane({ id: 'lane-1', auto_spawn: true }),
+      makeLane({ id: 'lane-manual', name: 'Manual', role: null, auto_spawn: false }),
+    ]);
+
+    const sessionManager = await runFailedPreparation(() => {
+      taskRepoGetById.mockReturnValue(makeTask({ swimlane_id: 'lane-manual', session_id: 'stale-session' }));
+    });
+
+    expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-1', 'system');
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-1', projectId: 'proj-1', cwd: '/project/cwd' });
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: 'task-1', session_id: null });
+    expect(retireRecordMock).not.toHaveBeenCalled();
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
 });
 

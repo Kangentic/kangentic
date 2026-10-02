@@ -391,7 +391,7 @@ async function readDocumentSums(
     if (aborted()) return null;
     timeSyncWork('graph:write-sums', () => store.writeDocSums('conversation', [read.write]));
   }
-  if (gone.length > 0) timeSyncWork('graph:delete-sums', () => store.deleteDocSums('conversation', gone));
+  if (gone.length > 0) await store.deleteDocSums('conversation', gone, awaitWriteTurn, () => !aborted());
   return { sums, embeddedChunks, counts };
 }
 

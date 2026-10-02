@@ -312,6 +312,195 @@ describeWithSqlite('sweepCommitRecords', () => {
     expect(linkedCount(1)).toBe(0);
   });
 
+  describe('commits of a deleted task that do not all unlink in one run', () => {
+    /**
+     * `count` old commits tied to one task, which is then deleted along with its
+     * conversation. The commits are older than `RELINK_WINDOW_MS`, so the relink
+     * pass after the unlink has nothing to do and `relinked` is the unlink's own
+     * count. Nothing is swept after the deletion: each test makes its own run.
+     */
+    async function orphanedCommits(count: number) {
+      const fixture = project();
+      const landed = NOW - RELINK_WINDOW_MS - DAY;
+      const subjectOf = (number: number): string => `fix(graph): relabel case ${number} keeps its region names`;
+      const shas = Array.from({ length: count }, (_, index) => sha(index + 1));
+      fixture.mention(
+        'task-doomed',
+        shas.map((_, index) => `git commit -m "${subjectOf(index + 1)}"`).join('\n'),
+        landed - 60_000,
+      );
+      fixture.git.commits = shas.map((_, index) => commit(index + 1, subjectOf(index + 1), landed + index)).reverse();
+      fixture.git.head = { ref: 'origin/main', sha: sha(count) };
+      await fixture.sweep();
+      // Precondition: every commit found the task, so deleting it orphans each.
+      expect(shas.map((commitSha) => fixture.taskOf(commitSha))).toEqual(shas.map(() => 'task-doomed'));
+      fixture.database.exec(`DELETE FROM memory_chunks WHERE corpus = 'conversation' AND task_id = 'task-doomed'`);
+      fixture.database.exec(`DELETE FROM tasks WHERE id = 'task-doomed'`);
+
+      const entryCountOf = (commitSha: string): number | undefined => (fixture.database
+        .prepare("SELECT entry_count AS entryCount FROM memory_index_state WHERE corpus = 'commit' AND doc_id = ?")
+        .get(commitSha) as { entryCount: number } | undefined)?.entryCount;
+      const unlinkedStates = (): number => (fixture.database
+        .prepare("SELECT COUNT(*) AS count FROM memory_index_state WHERE corpus = 'commit' AND entry_count = 0")
+        .get() as { count: number }).count;
+      const sweepWith = (options: { shouldContinue?: () => boolean } = {}) => sweepCommitRecords(
+        'project', '/mock/repo', 'main', { allowFullRead: true, ...options }, fixture.deps,
+      );
+      return { fixture, shas, entryCountOf, unlinkedStates, sweepWith };
+    }
+
+    // A commit is unlinked by two statements: its chunk's task and its state row
+    // (`entry_count`, which the relink pass reads). `commitsOfDeletedTasks` finds
+    // a commit by its CHUNK still pointing at a deleted task, so a throw between
+    // the two statements must leave that chunk where it was, or nothing ever
+    // finds the commit again. The state row is therefore written first.
+    //
+    // Red-green, both cases. Put the chunk write first (the code before this
+    // change): a throw at the chunk write leaves the state row linked (1), so the
+    // "state row already unlinked" assertion fails for `link`; a throw at the
+    // state-row write comes AFTER the chunk was cleared, so the chunk no longer
+    // points at the deleted task and the "still on the deleted task" assertion
+    // fails for `state`, and the next sweep never finds the commit. The other two
+    // commits in the run prove a throw on one commit does not take the slice's
+    // other commits down with it.
+    it.each([
+      { failing: 'link', label: 'the chunk\'s task write', stateRowAfterFailure: 0 },
+      { failing: 'state', label: 'the state row write', stateRowAfterFailure: 1 },
+    ] as const)('leaves a commit on its deleted task when $label throws, and unlinks it on the next sweep', async ({ failing, stateRowAfterFailure }) => {
+      const { fixture, shas, entryCountOf, sweepWith } = await orphanedCommits(3);
+      const target = shas[1];
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      let failuresLeft = 1;
+      const restore = ((): (() => void) => {
+        if (failing === 'link') {
+          const realSetDocumentTask = RetrievalStore.prototype.setDocumentTask;
+          const spy = vi.spyOn(RetrievalStore.prototype, 'setDocumentTask').mockImplementation(function (this: RetrievalStore, ...args: Parameters<RetrievalStore['setDocumentTask']>) {
+            const [corpus, docId, taskId] = args;
+            if (corpus === 'commit' && taskId === null && docId === target && failuresLeft > 0) {
+              failuresLeft -= 1;
+              throw new Error('database is locked');
+            }
+            return realSetDocumentTask.apply(this, args);
+          });
+          return () => spy.mockRestore();
+        }
+        // The sweep prepares its own state-row statement, so the throw goes in at
+        // the connection: that statement's `run` fails once for the target.
+        const realPrepare = fixture.database.prepare.bind(fixture.database);
+        const spy = vi.spyOn(fixture.database, 'prepare').mockImplementation((sql: string) => {
+          const statement = realPrepare(sql);
+          if (!sql.includes('SET entry_count = 0')) return statement;
+          return new Proxy(statement, {
+            get(statementTarget, property) {
+              if (property !== 'run') {
+                const member = Reflect.get(statementTarget, property, statementTarget);
+                return typeof member === 'function' ? member.bind(statementTarget) : member;
+              }
+              return (...args: Parameters<typeof statementTarget.run>) => {
+                if (args[1] === target && failuresLeft > 0) {
+                  failuresLeft -= 1;
+                  throw new Error('database is locked');
+                }
+                return statementTarget.run(...args);
+              };
+            },
+          });
+        });
+        return () => spy.mockRestore();
+      })();
+      try {
+        const failed = await sweepWith();
+
+        expect(failuresLeft).toBe(0);
+        expect(warn.mock.calls.some((call) => String(call[0]).includes('failed to unlink'))).toBe(true);
+        // The other two are unlinked and counted; the one that threw is not.
+        expect(failed.relinked).toBe(2);
+        expect(fixture.taskOf(target)).toBe('task-doomed');
+        expect(entryCountOf(target)).toBe(stateRowAfterFailure);
+        expect([shas[0], shas[2]].map((commitSha) => fixture.taskOf(commitSha))).toEqual([null, null]);
+      } finally {
+        restore();
+        warn.mockRestore();
+      }
+
+      // The failure has cleared: the commit is still a commit of a deleted task,
+      // so this run finds it and finishes the unlink.
+      const retried = await sweepWith();
+
+      expect(retried.relinked).toBe(1);
+      expect(fixture.taskOf(target)).toBeNull();
+      expect(entryCountOf(target)).toBe(0);
+    });
+
+    // A run stopped between slices (a project switch, a shutdown) has unlinked
+    // the first slice's commits and no others, and says so. A commit costs two
+    // rows against `SLICE_ROWS` a slice, so more than one slice's worth stops
+    // part of the way. The predicate reads the index rather than counting calls,
+    // since the sweep consults it before the unlink as well.
+    //
+    // This pins that the stop path reports what the index now says. It does not
+    // fail against a counter that was already right here: nothing written is
+    // rolled back by a stop, so the counter and the index agree. The next test
+    // is the one where they differ.
+    it('reports only the commits it unlinked when a run is stopped after the first slice, and the next run finishes the rest', async () => {
+      const orphans = SLICE_ROWS + 4;
+      const { fixture, shas, unlinkedStates, sweepWith } = await orphanedCommits(orphans);
+
+      const stopped = await sweepWith({ shouldContinue: () => unlinkedStates() === 0 });
+
+      const nowUnlinked = shas.filter((commitSha) => fixture.taskOf(commitSha) === null).length;
+      // Some, not all: the stop came between slices.
+      expect(nowUnlinked).toBeGreaterThan(0);
+      expect(nowUnlinked).toBeLessThan(orphans);
+      expect(stopped.relinked).toBe(nowUnlinked);
+
+      const finished = await sweepWith();
+
+      expect(finished.relinked).toBe(orphans - nowUnlinked);
+      expect(shas.map((commitSha) => fixture.taskOf(commitSha))).toEqual(shas.map(() => null));
+    });
+
+    // The write of a slice is one transaction. When its COMMIT fails the slice
+    // rolls back, though each of its commits already counted itself as unlinked.
+    // The run must report what the index says (nothing unlinked), not that count.
+    //
+    // Red-green: drop the re-count after `writeInSlices` returns false in
+    // `unlinkCommitsOfDeletedTasks` and `relinked` is the three commits the
+    // rolled-back slice counted, with the relink marker reset for commits that
+    // are all still linked.
+    it('reports no commit unlinked when the slice that wrote them fails to commit, and the next run unlinks them', async () => {
+      const { fixture, shas, entryCountOf, sweepWith } = await orphanedCommits(3);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const realExec = fixture.database.exec.bind(fixture.database);
+      let commitsLeftToFail = 1;
+      const exec = vi.spyOn(fixture.database, 'exec').mockImplementation((sql: string) => {
+        if (sql === 'COMMIT' && commitsLeftToFail > 0) {
+          commitsLeftToFail -= 1;
+          throw new Error('disk I/O error');
+        }
+        return realExec(sql);
+      });
+      try {
+        const failed = await sweepWith();
+
+        expect(commitsLeftToFail).toBe(0);
+        expect(warn.mock.calls.some((call) => String(call[0]).includes('records:commit-unlink'))).toBe(true);
+        expect(failed.relinked).toBe(0);
+        // Rolled back: still on the deleted task, state rows still linked.
+        expect(shas.map((commitSha) => fixture.taskOf(commitSha))).toEqual(shas.map(() => 'task-doomed'));
+        expect(shas.map((commitSha) => entryCountOf(commitSha))).toEqual(shas.map(() => 1));
+      } finally {
+        exec.mockRestore();
+        warn.mockRestore();
+      }
+
+      const retried = await sweepWith();
+
+      expect(retried.relinked).toBe(shas.length);
+      expect(shas.map((commitSha) => fixture.taskOf(commitSha))).toEqual(shas.map(() => null));
+    });
+  });
+
   it('does not retry an unlinked commit until a conversation has been indexed since the last try', async () => {
     const fixture = project();
     const landed = NOW - DAY;

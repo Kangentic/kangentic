@@ -467,6 +467,8 @@ Before every spawn, `ClaudeAdapter.ensureTrust()` calls `ensureClaudeSpawnConfig
 4. Set `diffSidebarOpen: false` (see Diff Panel below)
 5. Write once, asynchronously and atomically (temp file + rename), only when something changed
 
+A rename still refused after its retries (the file held open, usually on Windows) falls back to an in-place write. When that write fails too and leaves the file short, the temp file is the one complete copy, so it is kept and named in the thrown error; when the file still parses, nothing is kept. The first whole write of a run removes copies an earlier failed write kept.
+
 `ensureWorktreeTrust()` and `ensureMcpServerTrust()` remain for callers that need one change alone (the model-picker probe trusts its scratch directory). They share the same reader and writer, so they also leave a file that does not parse untouched and write through a temp file.
 
 #### Diff Panel

@@ -697,6 +697,65 @@ describeWithSqlite('projection pass', () => {
       expect(index.storedSums().map((row) => row.docId)).toEqual(['doc-001', 'doc-002', 'doc-003', 'doc-004']);
     });
 
+    // Deleting many conversations at once leaves a stored sums row for each, and
+    // the pass drops them a few rows a transaction, taking a turn of the worker's
+    // write budget (`awaitWriteTurn`) between the batches. Nine gone documents are
+    // three batches of four, so two turns. No surviving document changed, so none
+    // is read, and the only turns taken are the ones between those batches.
+    //
+    // Red-green: the pass used to hand the whole list to a delete that took no
+    // turn (`timeSyncWork(..., () => store.deleteDocSums('conversation', gone))`),
+    // so `turns` reads 0 here.
+    it('takes a write turn between the batches that drop the sums of deleted documents', async () => {
+      const index = corpus(12, 3, true);
+      await pass(index);
+      for (let document = 0; document < 9; document += 1) index.store.deleteDocument('conversation', docIdOf(document));
+      // The rows outlive their documents until a pass drops them.
+      expect(index.storedSums()).toHaveLength(12);
+      index.resetCounts();
+      let turns = 0;
+
+      const result = await pass(index, { awaitWriteTurn: async () => { turns += 1; } });
+
+      expect(index.vectorReads()).toBe(0);
+      expect(turns).toBe(2);
+      expect(result!.projection.nodes).toHaveLength(3);
+      expect(index.storedSums().map((row) => row.docId)).toEqual(['doc-009', 'doc-010', 'doc-011']);
+    });
+
+    // A pass that is told to stop (a project switch, a shutdown, a model change)
+    // while its deletes are waiting for a turn stops deleting, and returns nothing
+    // for the map. The stop is raised from the first turn, between batch one and
+    // batch two.
+    //
+    // Red-green: do not hand `() => !aborted()` to `deleteDocSums`. The second
+    // turn is then taken (turns is 2) and every gone row is dropped, where it
+    // should stop with the first four removed and the other five still stored.
+    it('stops dropping the sums of deleted documents when aborted between batches, and returns nothing', async () => {
+      const index = corpus(12, 3, true);
+      await pass(index);
+      for (let document = 0; document < 9; document += 1) index.store.deleteDocument('conversation', docIdOf(document));
+      expect(index.storedSums()).toHaveLength(12);
+      const signal = { aborted: false };
+      let turns = 0;
+
+      const result = await pass(index, {
+        signal,
+        awaitWriteTurn: async () => {
+          turns += 1;
+          signal.aborted = true;
+        },
+      });
+
+      expect(result).toBeNull();
+      expect(turns).toBe(1);
+      // The first batch (doc-000 to doc-003) went; the five after it and the
+      // three live documents are as they were.
+      expect(index.storedSums().map((row) => row.docId)).toEqual(
+        Array.from({ length: 8 }, (_, offset) => docIdOf(offset + 4)),
+      );
+    });
+
     it('reads nothing while Rebuild index has cleared the index times, and the newest chunks once they return', async () => {
       // Rebuild deletes every index-state row, then re-indexes. A pass in
       // between finds no index time for any document, which says nothing

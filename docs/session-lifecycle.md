@@ -592,7 +592,10 @@ it). A fresh agent is also skipped when the task gained any session row (in the 
 but the lost ones), or when its worktree is no longer the one it was prepared in (a move to To Do and
 back removes it). A resume skipped because the task moved into a custom column that starts no agent
 keeps its record resumable with a placeholder, as step 6 does for a record it finds there: that move
-had no session to suspend, so the card would otherwise offer no Resume until the next launch.
+had no session to suspend, so the card would otherwise offer no Resume until the next launch. A resume
+whose preparation failed is kept resumable (step 7) under the same lock and the same re-check, since
+its preparation awaited too: a record a Resume retired meanwhile is exited, and an unlocked CAS would
+have taken it back to suspended under the live agent and cleared that agent's `session_id`.
 
 ## PTY host
 

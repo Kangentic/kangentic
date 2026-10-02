@@ -3513,6 +3513,52 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  // The detail panel takes the right slot from the chat, which unmounts. A
+  // follow-up typed and not yet asked has to survive the trip, so it lives in
+  // the store; and it belongs to the chat, so ending the chat drops it.
+  //
+  // Red-green: hold the draft in the chat's own `useState` again and the box is
+  // empty after Back (the first `toHaveValue`). Drop `followUpDraft: ''` from
+  // the store's `endChat` and the next chat opens holding the old text (the
+  // last two assertions).
+  test('keeps a typed follow-up while a conversation is open, and drops it when the chat ends', async () => {
+    const { browser, page } = await launchWithState(conversationFixture());
+    try {
+      await openKnowledgeGraph(page);
+      await askInBox(page, 'what was conversation 0?');
+      await expect(page.locator('[data-testid="knowledge-graph-chat-row"]')).toHaveCount(1);
+
+      const composer = page.locator('[data-testid="knowledge-graph-chat-input"]');
+      const typed = 'and which of those cost the most?';
+      await composer.fill(typed);
+      const storedDraft = () => page.evaluate(() => (window as unknown as {
+        __zustandStores: { knowledgeGraph: { getState: () => { followUpDraft: string } } };
+      }).__zustandStores.knowledgeGraph.getState().followUpDraft);
+      expect(await storedDraft()).toBe(typed);
+
+      // Selecting a conversation replaces the chat, so the box is not mounted at
+      // all while the detail shows: the text is held by the store, not the box.
+      await selectVisibleNode(page);
+      await expect(page.locator('[data-testid="knowledge-graph-chat"]')).toHaveCount(0);
+      await expect(composer).toHaveCount(0);
+      expect(await storedDraft()).toBe(typed);
+
+      await page.locator('[data-testid="knowledge-graph-detail-back"]').click();
+      await expect(composer).toBeVisible();
+      await expect(composer).toHaveValue(typed);
+
+      // Ending the chat ends its draft: the next chat's box starts empty.
+      await page.locator('[data-testid="knowledge-graph-chat-end"]').click();
+      await expect(page.locator('[data-testid="knowledge-graph-chat"]')).toHaveCount(0);
+      await askInBox(page, 'what was conversation 0?');
+      await expect(page.locator('[data-testid="knowledge-graph-chat-row"]')).toHaveCount(1);
+      await expect(composer).toHaveValue('');
+      expect(await storedDraft()).toBe('');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('goes back along a trail of followed neighbours', async () => {
     const { browser, page } = await launchWithState(conversationFixture());
     try {

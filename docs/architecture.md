@@ -892,7 +892,7 @@ For each session, a merged settings file is created at `.kangentic/sessions/<ses
 
 ### Global Config Writes
 
-Before every Claude spawn (task chokepoints and the Command Terminal alike), `ClaudeAdapter.ensureTrust()` read-modify-writes the global `~/.claude.json` under one lock: trust for the working directory, `kangentic` in the project's enabled MCP servers, and `diffSidebarOpen: false` so Claude Code 2.1.260's fullscreen diff panel stays closed at launch (it is a global-config key only, so `--settings` cannot carry it). One lock is all the three share: only the diff-panel write is atomic (temp file + rename) and bails on a file it cannot parse, while the two trust writers still rewrite in place and fall back to an empty object on a parse failure. Details in [Global Config Writes](agent-integration.md#global-config-writes-claudejson).
+Before every Claude spawn (task chokepoints and the Command Terminal alike), `ClaudeAdapter.ensureTrust()` read-modify-writes the global `~/.claude.json` under one lock: trust for the working directory, `kangentic` in the project's enabled MCP servers, and `diffSidebarOpen: false` so Claude Code 2.1.260's fullscreen diff panel stays closed at launch (it is a global-config key only, so `--settings` cannot carry it). It is one read-modify-write: a temp file renamed over the file, written with the file's own mode, and skipped when the file does not parse as a JSON object. Details in [Global Config Writes](agent-integration.md#global-config-writes-claudejson).
 
 ## Session Recovery
 

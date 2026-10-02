@@ -320,6 +320,52 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
       }
     });
 
+    // A file that does not exist is whole: a failed write cannot have made it
+    // short, so `isIntact` reads a missing file as intact and no copy is kept. The
+    // rename is refused through its retries and the in-place write is refused
+    // too, with nothing on disk to protect.
+    //
+    // Red-green: make `isIntact` read ENOENT as not intact (return false for it).
+    // The temp file is then kept, the error names it, and the leftover-file and
+    // message assertions go red.
+    it('removes the temp file, and names none, when the file does not exist and the in-place write is refused', async () => {
+      expect(fs.existsSync(claudeJsonPath())).toBe(false);
+      const writeRefusal = Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+      const realWriteFile = fs.promises.writeFile.bind(fs.promises);
+      const writes = vi.spyOn(fs.promises, 'writeFile').mockImplementation(async (...args: Parameters<typeof fs.promises.writeFile>) => {
+        const [file] = args;
+        if (!String(file).endsWith('.tmp')) throw writeRefusal;
+        return realWriteFile(...args);
+      });
+      let temporaryFileSeenAtRename = false;
+      const renames = vi.spyOn(fs.promises, 'rename').mockImplementation(async () => {
+        temporaryFileSeenAtRename ||= leftoverTemporaryFiles().length > 0;
+        throw renameRefusal('EPERM');
+      });
+      try {
+        const failure = await ensureClaudeSpawnConfig(worktree).then(
+          () => null,
+          (error: unknown) => error as Error & { cause?: unknown },
+        );
+
+        expect(failure).not.toBeNull();
+        if (!failure) return;
+        expect(renames).toHaveBeenCalledTimes(5);
+        expect(failure.cause).toBe(writeRefusal);
+        expect(failure.message).not.toMatch(/complete contents/);
+        expect(failure.message).not.toContain('.tmp');
+        // The temp file existed when the rename was refused, so its absence now
+        // is the cleanup and not a file that was never written.
+        expect(temporaryFileSeenAtRename).toBe(true);
+        expect(leftoverTemporaryFiles()).toEqual([]);
+        expect(fs.existsSync(claudeJsonPath())).toBe(false);
+        expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
+      } finally {
+        writes.mockRestore();
+        renames.mockRestore();
+      }
+    });
+
     // A copy an earlier failed write kept (here from another run, another pid)
     // holds nothing the file does not once a later write lands whole, so that
     // write removes it.
@@ -340,6 +386,91 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
       expect(leftoverTemporaryFiles()).toEqual([]);
       expect(fs.existsSync(keptCopy)).toBe(false);
       expect(fs.existsSync(unrelated)).toBe(true);
+    });
+
+    /** A kept copy as another process (a pid that is not this one) leaves it. */
+    function copyOfAnotherProcess(pidOffset: number): string {
+      return `${claudeJsonPath()}.kangentic-${process.pid + pidOffset}.tmp`;
+    }
+
+    // The sweep reads the directory on the first successful write of a run, then
+    // not on every spawn. Each test has its own home, so its target is new to the
+    // module's per-run record of swept files.
+    //
+    // Red-green: drop the `!sweptTargets.has(targetPath)` gate so every write
+    // sweeps and the second write removes the copy planted after the first, so
+    // the last assertion goes red. Drop the sweep and the first assertion goes red.
+    it('sweeps kept copies on the first successful write of a run, and not again on the next one', async () => {
+      seedClaudeJson();
+      const plantedBeforeFirstWrite = copyOfAnotherProcess(1);
+      fs.writeFileSync(plantedBeforeFirstWrite, '{}');
+
+      await ensureClaudeSpawnConfig(worktree);
+
+      // Proves the first write swept: the check below would also hold for a
+      // sweep that never runs.
+      expect(fs.existsSync(plantedBeforeFirstWrite)).toBe(false);
+
+      const plantedAfterFirstWrite = copyOfAnotherProcess(2);
+      fs.writeFileSync(plantedAfterFirstWrite, '{}');
+
+      // Another worktree, so the file changes and a second write really happens.
+      await ensureClaudeSpawnConfig('/projects/other-repo/.kangentic/worktrees/other-bug-ef567890');
+
+      expect(Object.keys(readClaudeJson().projects as Record<string, unknown>)).toHaveLength(2);
+      expect(fs.existsSync(plantedAfterFirstWrite)).toBe(true);
+    });
+
+    // A failed write that keeps a copy re-arms the sweep, so the next successful
+    // write sweeps again. The copy has to be swept from a target that was already
+    // swept (a first write succeeded), or there is nothing to re-arm: an unswept
+    // target sweeps on its next success anyway. This write's own kept copy shares
+    // its name with the next write's temp file, which that write overwrites and
+    // renames away, so it cannot show the sweep. A copy another process left
+    // after the first sweep can, and only a re-armed sweep removes it.
+    //
+    // Red-green: drop `sweptTargets.delete(targetPath)` from the keep path in
+    // writeClaudeJson. The target stays recorded as swept, the final write does
+    // not read the directory, and the other process's copy is still there.
+    it('sweeps again after a failed write kept a copy, once a later write succeeds', async () => {
+      seedClaudeJson();
+      await ensureClaudeSpawnConfig(worktree);
+      const plantedAfterSweep = copyOfAnotherProcess(1);
+      fs.writeFileSync(plantedAfterSweep, '{}');
+
+      // The write that fails part way and keeps its own copy (the setup of the
+      // "leaves the file short" test above), for another worktree so it writes.
+      const realWriteFile = fs.promises.writeFile.bind(fs.promises);
+      const writes = vi.spyOn(fs.promises, 'writeFile').mockImplementation(async (...args: Parameters<typeof fs.promises.writeFile>) => {
+        const [file] = args;
+        if (String(file).endsWith('.tmp')) return realWriteFile(...args);
+        await realWriteFile(file, '{"oauthAccount":', 'utf-8');
+        throw new Error('disk full');
+      });
+      const renames = vi.spyOn(fs.promises, 'rename').mockImplementation(async () => {
+        throw renameRefusal('EPERM');
+      });
+      try {
+        await expect(ensureClaudeSpawnConfig('/projects/second-repo/.kangentic/worktrees/second-bug-12345678'))
+          .rejects.toThrow(/its complete contents are in /);
+      } finally {
+        writes.mockRestore();
+        renames.mockRestore();
+      }
+
+      // The failing write kept its own copy and did not sweep the other one.
+      const keptCopy = path.join(tmpHome, `.claude.json.kangentic-${process.pid}.tmp`);
+      expect(fs.existsSync(keptCopy)).toBe(true);
+      expect(fs.existsSync(plantedAfterSweep)).toBe(true);
+
+      // Repaired as a user would: the kept copy holds the complete contents.
+      fs.copyFileSync(keptCopy, claudeJsonPath());
+
+      await ensureClaudeSpawnConfig('/projects/third-repo/.kangentic/worktrees/third-bug-90abcdef');
+
+      expect(Object.keys(readClaudeJson().projects as Record<string, unknown>)).toHaveLength(3);
+      expect(fs.existsSync(plantedAfterSweep)).toBe(false);
+      expect(leftoverTemporaryFiles()).toEqual([]);
     });
 
     // Pins that only the held codes are retried: any other failure is a real

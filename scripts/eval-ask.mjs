@@ -669,7 +669,19 @@ export const __testing = { rollUpConversations, grade, refuseIfAutomated };
 // Only when run as a command. Without this guard, importing the module for the
 // self-check test would fire the whole harness - and the self-check exists
 // precisely so the harness does not have to run to catch drift.
-if (process.argv[1] && url.pathToFileURL(process.argv[1]).href === import.meta.url) {
+/** Whether node was asked to run this file. Compared by real path, as
+ *  `package-smoke.mjs` does: node resolves the entry through links, so a
+ *  checkout under a link or junction never matched by URL and ran nothing. */
+function isEntrypoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(url.fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
+  } catch {
+    return url.pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+  }
+}
+
+if (isEntrypoint()) {
   main().catch((error) => {
     console.error(error.message);
     process.exitCode = 1;
