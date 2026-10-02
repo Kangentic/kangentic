@@ -645,17 +645,6 @@ function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
 }
 
 /**
- * Activate all projects on startup: run session recovery/reconciliation
- * for every project so agent sessions start immediately, not just when
- * the user navigates to a project board.
- *
- * Post-condition: resolves once every project's suspended sessions have
- * been resumed and auto-spawns have been dispatched. The slow resource
- * cleanup passes (backlog cleanup + orphan directory removal) run in the
- * background and may still be in flight when this resolves. Callers
- * that need cleanup-complete must not rely on this function's resolution.
- */
-/**
  * The pty host died and a new one is up: resume the agent sessions it took
  * down, and only those. Each lost PTY was reported exited with a non-zero
  * code, so its record is an interrupted one and the startup recovery path
@@ -690,6 +679,17 @@ export async function recoverSessionsAfterPtyHostLoss(
   }
 }
 
+/**
+ * Activate all projects on startup: run session recovery/reconciliation
+ * for every project so agent sessions start immediately, not just when
+ * the user navigates to a project board.
+ *
+ * Post-condition: resolves once every project's suspended sessions have
+ * been resumed and auto-spawns have been dispatched. The slow resource
+ * cleanup passes (backlog cleanup + orphan directory removal) run in the
+ * background and may still be in flight when this resolves. Callers
+ * that need cleanup-complete must not rely on this function's resolution.
+ */
 export async function activateAllProjects(context: IpcContext): Promise<void> {
   if (isShuttingDown()) return;
 

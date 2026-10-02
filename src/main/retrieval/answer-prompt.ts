@@ -149,8 +149,8 @@ function formatRules(context: AnswerPromptContext): string {
           + ' angle rather than a fragment of the last one, and answer from what you have once they are spent.',
         ...(projects
           ? [
-            `The question spans ${projects.names.length} projects: ${projects.names.join(', ')}. A search covers`
-              + ` ${projects.searchDefault} unless you pass project with another one's name, so search each project`
+            `The question spans ${projects.names.length} projects: ${defuseAnswerTags(projects.names.join(', '))}. A search covers`
+              + ` ${defuseAnswerTags(projects.searchDefault)} unless you pass project with another one's name, so search each project`
               + ' the question needs.',
           ]
           : []),

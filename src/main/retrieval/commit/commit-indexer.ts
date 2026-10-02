@@ -109,8 +109,9 @@ export async function sweepCommitRecords(
   projectPath: string | null,
   baseBranch: string,
   options: CommitSweepOptions = {},
-  deps: CommitIndexerDeps = defaultDeps,
+  overrides: Partial<CommitIndexerDeps> = {},
 ): Promise<CommitSweepResult> {
+  const deps: CommitIndexerDeps = { ...defaultDeps, ...overrides };
   const shouldContinue = options.shouldContinue ?? (() => true);
   const result: CommitSweepResult = { indexed: 0, removed: 0, relinked: 0, deferred: false };
   if (!projectPath) return result;

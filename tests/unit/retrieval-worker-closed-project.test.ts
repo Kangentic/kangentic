@@ -17,6 +17,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { FromWorkerMessage, ReplyMessage } from '../../src/main/retrieval/worker/protocol';
+import type { IndexSweepResult, IndexSweepSteps } from '../../src/main/retrieval/worker/index-methods';
 
 const { getProjectDbMock, closeProjectDbMock } = vi.hoisted(() => ({
   getProjectDbMock: vi.fn(),
@@ -40,6 +41,8 @@ const fakeDatabase = { pragma: vi.fn(() => [CHECKPOINT_ROW]) };
 let messageListener: PortListener | null = null;
 let nextRequestId = 1;
 const pendingReplies = new Map<number, (reply: ReplyMessage) => void>();
+/** What the worker's console relayed to main (its `warn` and `log` lines), in order. */
+const workerLogs: string[] = [];
 
 // The worker entry replaces these four at import to relay them to main.
 const originalConsole = { log: console.log, info: console.info, warn: console.warn, error: console.error };
@@ -54,6 +57,7 @@ beforeAll(async () => {
       },
       postMessage: (message: FromWorkerMessage) => {
         if (message.type === 'reply') pendingReplies.get(message.id)?.(message);
+        if (message.type === 'log') workerLogs.push(message.text);
       },
     },
   });
@@ -128,5 +132,87 @@ describe('retrieval worker: a project closed for deletion', () => {
       { projectId: 'project-never-closed', walFrames: 3, checkpointed: 3, busy: false },
     ]);
     expect(getProjectDbMock).toHaveBeenCalledWith('project-never-closed');
+  });
+});
+
+describe('retrieval worker: a record sweep queued behind a project close', () => {
+  // Red-green: `index.sweep` and `index.session` hand each record sweep
+  // `{ getDb: context.getDb }`. Drop that argument from one sweep (the code
+  // before the fix) and that sweep falls back to its module default, which is
+  // `getProjectDb` itself: it reopens the closed project's database, so
+  // `getProjectDb` is called with the closed id and the worker's log carries no
+  // closed-for-deletion line. Both assertions below go red for that sweep alone,
+  // which is why each sweep has its own case. Every project id is fresh because
+  // the worker remembers each id it was told to close.
+  const noneIndexed = { indexed: 0, removed: 0 };
+  const sweeps: Array<{ step: string; steps: IndexSweepSteps; slot: keyof IndexSweepResult; result: unknown }> = [
+    { step: 'tasks', steps: { tasks: true }, slot: 'tasks', result: noneIndexed },
+    { step: 'changes', steps: { changes: { projectPath: null } }, slot: 'changes', result: { indexed: 0 } },
+    {
+      step: 'commits',
+      steps: { commits: { projectPath: '/mock/repo', baseBranch: 'main', allowFullRead: true } },
+      slot: 'commits',
+      result: { ...noneIndexed, relinked: 0, deferred: false },
+    },
+    {
+      step: 'code',
+      steps: { code: { plan: 'index', projectPath: '/mock/repo', baseBranch: 'main', allowFullRead: true } },
+      slot: 'code',
+      result: { ...noneIndexed, deferred: false },
+    },
+  ];
+
+  it.each(sweeps)('index.sweep $step: reports nothing indexed and never reopens the closed database', async ({ step, steps, slot, result }) => {
+    const projectId = `project-closed-before-${step}-sweep`;
+    await callWorker('project.close', { projectId });
+    getProjectDbMock.mockClear();
+    workerLogs.length = 0;
+
+    const reply = await callWorker('index.sweep', { projectId, remoteTargets: [], ...steps });
+
+    expect(reply.ok).toBe(true);
+    // The step ran (its slot is a result, not null) and found nothing to index.
+    expect(reply.ok && (reply.result as IndexSweepResult)[slot]).toEqual(result);
+    expect(getProjectDbMock).not.toHaveBeenCalled();
+    // And it stopped at the worker's guard, not at some other failure.
+    expect(workerLogs.some((line) => line.includes(`Project ${projectId} was closed for deletion`))).toBe(true);
+  });
+
+  it('index.session: the change sweep after the close does not reopen the closed database either', async () => {
+    const projectId = 'project-closed-before-session-index';
+    await callWorker('project.close', { projectId });
+    getProjectDbMock.mockClear();
+    workerLogs.length = 0;
+
+    const reply = await callWorker('index.session', {
+      projectId,
+      sessionId: 'session-1',
+      subagents: false,
+      changes: { projectPath: null },
+      remoteTargets: [],
+    });
+
+    expect(reply.ok).toBe(true);
+    // The conversation read already refused (outcome 'error'); the change sweep after it must too.
+    expect(reply.ok && reply.result).toEqual({ outcome: 'error', changesIndexed: 0 });
+    expect(getProjectDbMock).not.toHaveBeenCalled();
+    expect(workerLogs.some((line) => line.includes(`Project ${projectId} was closed for deletion`))).toBe(true);
+  });
+
+  it('still opens the database of a project that was never closed, through the same sweeps', async () => {
+    // Control for the not-called assertions above: they would hold vacuously if
+    // a sweep never asked for a database at all.
+    getProjectDbMock.mockClear();
+
+    const reply = await callWorker('index.sweep', {
+      projectId: 'project-swept-open',
+      remoteTargets: [],
+      tasks: true,
+      changes: { projectPath: null },
+    });
+
+    expect(reply.ok).toBe(true);
+    expect(getProjectDbMock).toHaveBeenCalledWith('project-swept-open');
+    expect(getProjectDbMock.mock.calls.every(([requestedId]) => requestedId === 'project-swept-open')).toBe(true);
   });
 });

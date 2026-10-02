@@ -97,8 +97,9 @@ export async function sweepCodeRecords(
   projectPath: string | null,
   baseBranch: string,
   options: CodeSweepOptions = {},
-  deps: CodeIndexerDeps = defaultDeps,
+  overrides: Partial<CodeIndexerDeps> = {},
 ): Promise<CodeSweepResult> {
+  const deps: CodeIndexerDeps = { ...defaultDeps, ...overrides };
   const shouldContinue = options.shouldContinue ?? (() => true);
   const result: CodeSweepResult = { indexed: 0, removed: 0, deferred: false };
   if (!projectPath) return result;
@@ -138,6 +139,10 @@ export async function sweepCodeRecords(
   const onBranch = new Set(entries.map((entry) => entry.path));
   const gone = [...new Set([...signatures.keys(), ...store.documentIds(CORPUS)])].filter((docId) => !onBranch.has(docId));
 
+  // A file that fails is logged and skipped, and the head is then not stored:
+  // the next sweep would otherwise stop at the unchanged-head check above and
+  // leave that file missing or stale until the branch moves (as commit-indexer).
+  let itemFailed = false;
   // Read and written a batch at a time, so a first sweep of a large tree holds
   // one batch of file contents in main, never the whole changed set at once.
   for (const batch of batchesBySize(changed, BLOB_BATCH_BYTES)) {
@@ -152,8 +157,18 @@ export async function sweepCodeRecords(
 
     const prepareFile = (entry: TreeEntry): PreparedWrite | null => {
       const content = contents.get(entry.blob);
+      // A blob git reports missing is skipped, not failed: a partial clone can
+      // lack one for good, and a head never stored would re-list the tree on
+      // every sweep.
       if (!content) return null;
-      const chunks = codeChunks(entry.path, content.toString('utf8'));
+      let chunks: ReturnType<typeof codeChunks>;
+      try {
+        chunks = codeChunks(entry.path, content.toString('utf8'));
+      } catch (error) {
+        // Swallowed and logged by the slice runner, so flagged here.
+        itemFailed = true;
+        throw error;
+      }
       return {
         rows: chunks.length + 1,
         bytes: entry.size,
@@ -177,6 +192,7 @@ export async function sweepCodeRecords(
             });
             result.indexed += 1;
           } catch (error) {
+            itemFailed = true;
             console.warn(`[retrieval] ${entry.path} failed to index:`, error);
           }
         },
@@ -193,13 +209,14 @@ export async function sweepCodeRecords(
         store.deleteDocument(CORPUS, docId);
         result.removed += 1;
       } catch (error) {
+        itemFailed = true;
         console.warn(`[retrieval] ${docId} failed to remove:`, error);
       }
     },
   });
   if (!await writeInSlices(db, gone, prepareRemoval, 'records:code-remove', shouldContinue, deps)) return result;
 
-  writeIndexedHead(store, HEAD_META_KEY, head, CODE_RECORD_VERSION);
+  if (!itemFailed) writeIndexedHead(store, HEAD_META_KEY, head, CODE_RECORD_VERSION);
   return result;
 }
 

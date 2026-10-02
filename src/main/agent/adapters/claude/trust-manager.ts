@@ -190,17 +190,44 @@ export async function ensureClaudeSpawnConfig(workingDirectory: string): Promise
       const targetPath = await fsPromises.realpath(filePath).catch(() => filePath);
       const mode = await fsPromises.stat(targetPath).then((stats) => stats.mode & 0o777, () => 0o600);
       const temporaryPath = `${targetPath}.kangentic-${process.pid}.tmp`;
+      const text = JSON.stringify(data, null, 2);
       try {
-        await fsPromises.writeFile(temporaryPath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode });
-        await fsPromises.rename(temporaryPath, targetPath);
-      } catch (error) {
+        await fsPromises.writeFile(temporaryPath, text, { encoding: 'utf-8', mode });
+        if (!await renameRetryingWhileHeld(temporaryPath, targetPath)) {
+          // Still held after the retries: written in place, as every write of
+          // this file was before the temp-file rename. That risks a torn read;
+          // throwing here would block the spawn outright.
+          await fsPromises.writeFile(targetPath, text, 'utf-8');
+        }
+      } finally {
         await fsPromises.rm(temporaryPath, { force: true }).catch(() => undefined);
-        throw error;
       }
     });
   } catch (error) {
     if (!isClaudeJsonLockError(error)) throw error;
     console.warn(`${LOG_TAG} Skipping the spawn config write; ${error.message}`);
+  }
+}
+
+/** How Windows refuses to replace a file another process holds open: a
+ *  scanner or indexer, or a sibling Claude rewriting it. Usually for a moment. */
+const RENAME_HELD_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const RENAME_ATTEMPTS = 5;
+const RENAME_RETRY_STEP_MS = 50;
+
+/** Rename `from` onto `to`, retrying while `to` is held open. False when it is
+ *  still held after the last attempt; any other failure throws. */
+async function renameRetryingWhileHeld(from: string, to: string): Promise<boolean> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await fsPromises.rename(from, to);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === undefined || !RENAME_HELD_CODES.has(code)) throw error;
+      if (attempt >= RENAME_ATTEMPTS) return false;
+      await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_STEP_MS * attempt));
+    }
   }
 }
 

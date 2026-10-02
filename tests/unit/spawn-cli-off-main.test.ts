@@ -80,16 +80,22 @@ describe('spawnCli with a pty host registered', () => {
     const cli = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
     const cliExited = new Promise<void>((resolve) => cli.once('exit', () => resolve()));
     await new Promise<void>((resolve) => cli.once('spawn', () => resolve()));
-    const remote = Object.assign(fakeRemoteChild(), { pid: cli.pid });
-    setOffMainCliSpawner(() => remote);
-    spawnCli('/usr/local/bin/agent', [], '/work');
+    try {
+      const remote = Object.assign(fakeRemoteChild(), { pid: cli.pid });
+      setOffMainCliSpawner(() => remote);
+      spawnCli('/usr/local/bin/agent', [], '/work');
 
-    // The host never acts on its stop here: only main's own stop can end it.
-    stopAllCliRuns();
+      // The host never acts on its stop here: only main's own stop can end it.
+      stopAllCliRuns();
 
-    expect(remote.stops).toBe(1);
-    await cliExited;
-    expect(cli.exitCode !== null || cli.signalCode !== null).toBe(true);
+      expect(remote.stops).toBe(1);
+      await cliExited;
+      expect(cli.exitCode !== null || cli.signalCode !== null).toBe(true);
+    } finally {
+      // A stop that regressed would otherwise leave this process running for
+      // good: `stopAllCliRuns` forgets the run before it stops it.
+      if (cli.exitCode === null && cli.signalCode === null) cli.kill('SIGKILL');
+    }
   }, 20_000);
 
   it('forgets a host run once it exits, so quit does not stop it again', () => {

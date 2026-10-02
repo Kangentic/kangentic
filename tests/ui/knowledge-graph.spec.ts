@@ -246,6 +246,54 @@ async function visibleNodeTitles(page: Page): Promise<string[]> {
   );
 }
 
+/**
+ * Resolves once `frames` animation frames have run. A state change that has
+ * already landed in a store needs one frame for React to commit it and another
+ * for the canvas to repaint from it, so two is the floor for "it has settled".
+ */
+async function settleFrames(page: Page, frames = 2): Promise<void> {
+  await page.evaluate((frameCount) => new Promise<void>((resolve) => {
+    let remaining = frameCount;
+    const tick = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), frames);
+}
+
+/** How many animation frames a negative assertion is watched over (about a third of a second at 60 Hz). */
+const WATCHED_FRAMES = 20;
+
+/**
+ * Samples the page on each of the next `frames` animation frames. For asserting
+ * that something does NOT happen, which cannot be polled for (a poll passes on
+ * its first sample, before the thing it guards against has had a chance to
+ * occur). The budget is counted in frames rather than milliseconds, so a slow
+ * runner stretches it instead of cutting it short, and every frame is looked at
+ * rather than only the last one, so a flash that opens and closes is seen.
+ * `framesWithMatch` is how many frames found an element matching `selector`;
+ * `answerCalls` is the most answer requests the mock had logged on any frame.
+ */
+async function watchFrames(
+  page: Page,
+  selector: string,
+  frames = WATCHED_FRAMES,
+): Promise<{ frames: number; framesWithMatch: number; answerCalls: number }> {
+  return page.evaluate(async ({ watchedSelector, frameCount }) => {
+    let framesWithMatch = 0;
+    let answerCalls = 0;
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      if (document.querySelector(watchedSelector)) framesWithMatch += 1;
+      const logged = (window as unknown as { __mockGraphAnswerCalls?: unknown[] }).__mockGraphAnswerCalls;
+      answerCalls = Math.max(answerCalls, logged?.length ?? 0);
+    }
+    return { frames: frameCount, framesWithMatch, answerCalls };
+  }, { watchedSelector: selector, frameCount: frames });
+}
+
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
@@ -832,7 +880,13 @@ test.describe('knowledge graph', () => {
 
       await input.fill('sphere fit');
       await input.fill('What was the most expensive task?');
-      await page.waitForTimeout(400);
+      // Nothing fires on a keystroke, and a non-event cannot be polled for, so
+      // it is watched over a bounded run of frames instead of a timer. Each
+      // frame is sampled, so a chat that opened and shut again would be seen,
+      // and the run is long enough for the keystrokes' effects to have fired.
+      const watched = await watchFrames(page, '[data-testid="knowledge-graph-chat"]');
+      expect(watched.framesWithMatch).toBe(0);
+      expect(watched.answerCalls).toBe(0);
       await expect(page.locator('[data-testid="knowledge-graph-chat"]')).toHaveCount(0);
       expect(await answerCalls(page)).toHaveLength(0);
 
@@ -1187,8 +1241,8 @@ test.describe('knowledge graph', () => {
     // Retrieval always hands over its closest matches, so a question about
     // something that is not here still had a related set, and the map lit it
     // under an answer saying nothing matched. The mockup's Empty board draws
-    // the plain map. While a highlight is on, only lit nodes are titled, so a
-    // title outside the related set proves nothing is lit.
+    // the plain map. The canvas reports how many nodes it draws: all of them on
+    // the plain map, only the lit ones while a highlight is on.
     const answered = {
       ok: true, agentName: 'Claude Code', answer: 'Nothing here covers Kubernetes autoscaling.', rows: [],
       related: [chatRow(3), chatRow(4, 0.9), chatRow(5, 0.8)], handedCount: 3, promptTokens: 1,
@@ -1198,8 +1252,32 @@ test.describe('knowledge graph', () => {
     const { browser, page } = await launchWithState(preConfig);
     try {
       await openKnowledgeGraph(page);
+      const drawn = () => page.locator('[data-testid="knowledge-graph-canvas"]').getAttribute('data-drawn-count');
+      // The plain map, read before the question so the answer is compared with
+      // what this map draws, not with a number written down twice.
+      const plainMapCount = await drawn();
+      expect(plainMapCount).toBe('30');
+
       await askInBox(page, 'How did we set up Kubernetes autoscaling?');
+      // The barrier. The answer's text, its rows and its related set land in ONE
+      // store update, so once the answer is on screen the canvas has been handed
+      // whatever highlight it is going to get. The map was already unlit before
+      // the question, so a check that starts earlier than this proves nothing.
       await expect(page.locator('[data-testid="knowledge-graph-chat-answer"]')).toContainText('Nothing here covers');
+
+      // Settled, not first-seen: two samples a couple of frames apart must agree
+      // before the count is believed, and it must still be every node. If the
+      // related set were lit under this answer, the count would settle at 3.
+      const settledDrawnCount = async (): Promise<string | null> => {
+        const before = await drawn();
+        await settleFrames(page);
+        const after = await drawn();
+        return before === after ? after : null;
+      };
+      await expect.poll(settledDrawnCount).toBe(plainMapCount);
+
+      // The same thing as the labels read it: while a highlight is on, only lit
+      // nodes are titled, so a title outside the related set means nothing is lit.
       const related = ['Conversation 3', 'Conversation 4', 'Conversation 5'];
       await expect.poll(async () => (await visibleNodeTitles(page)).some((title) => !related.includes(title)))
         .toBe(true);
@@ -1995,9 +2073,12 @@ test.describe('knowledge graph', () => {
 
       const detail = page.locator('[data-testid="knowledge-graph-detail"]');
       await expect(detail).toBeVisible();
-      // It must still be there a moment later: the flash was an open followed by
-      // an immediate close, which an assertion on the press alone would miss.
-      await page.waitForTimeout(300);
+      // It must still be there afterwards: the flash was an open followed by an
+      // immediate close, which an assertion on the press alone would miss. The
+      // panel unmounts the moment the selection clears, so it is checked on
+      // EVERY frame of the run after the release, not just the last one.
+      const watched = await watchFrames(page, '[data-testid="knowledge-graph-detail"]');
+      expect(watched.framesWithMatch).toBe(watched.frames);
       await expect(detail).toBeVisible();
 
       // And a real drag is camera work, so it must not change the selection.

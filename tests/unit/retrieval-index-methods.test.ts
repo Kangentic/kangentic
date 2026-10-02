@@ -81,7 +81,8 @@ describe('retrieval worker index methods', () => {
     }, context);
 
     expect(order).toEqual(['purge:chunks', 'conversations', 'tasks', 'changes', 'commits', 'code']);
-    expect(sweepCommitRecords).toHaveBeenCalledWith('project-1', '/mock/project', 'main', expect.objectContaining({ allowFullRead: false }));
+    // With the worker's own `getDb`, which refuses a project closed for deletion.
+    expect(sweepCommitRecords).toHaveBeenCalledWith('project-1', '/mock/project', 'main', expect.objectContaining({ allowFullRead: false }), { getDb: context.getDb });
     expect(result).toEqual({
       purged: 2,
       tasks: { indexed: 1, removed: 0 },

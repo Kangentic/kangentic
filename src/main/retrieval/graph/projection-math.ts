@@ -50,10 +50,16 @@ export function createMeanPoolAccumulator(dimensions: number): MeanPoolAccumulat
 /** Add one chunk vector into a running sum. A vector whose width does not
  *  match is skipped rather than thrown on: a corpus can briefly hold rows from
  *  a previous model while a re-embed drains, and one stale row must not abort a
- *  whole projection pass. Float64 because a document can carry 1500+ chunks and
- *  Float32 accumulation drifts measurably at that length. */
+ *  whole projection pass. A vector holding a NaN or an infinity is skipped the
+ *  same way: folded in, it turns its document's whole row NaN, and that row
+ *  then lands in every other row's neighbour list. Float64 because a document
+ *  can carry 1500+ chunks and Float32 accumulation drifts measurably at that
+ *  length. */
 export function addVectorInto(sum: Float64Array, vector: Float32Array): boolean {
   if (vector.length !== sum.length) return false;
+  for (let index = 0; index < vector.length; index += 1) {
+    if (!Number.isFinite(vector[index])) return false;
+  }
   for (let index = 0; index < vector.length; index += 1) {
     sum[index] += vector[index];
   }
@@ -98,7 +104,13 @@ export function finalizeMeanPool(accumulator: MeanPoolAccumulator): MeanPooledDo
       squaredNorm += mean * mean;
     }
     const norm = Math.sqrt(squaredNorm);
-    if (norm <= 0) continue;
+    if (!(norm > 0) || !Number.isFinite(norm)) {
+      // A zero mean is already a zero row. A NaN or infinite one (a sum stored
+      // before `addVectorInto` refused such vectors) is zeroed too: left raw, it
+      // took a slot in every other row's neighbour list.
+      matrix.fill(0, row * dimensions, (row + 1) * dimensions);
+      continue;
+    }
     for (let index = 0; index < dimensions; index += 1) {
       matrix[row * dimensions + index] /= norm;
     }

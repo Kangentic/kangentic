@@ -1756,8 +1756,12 @@ export class SessionManager extends EventEmitter {
    */
   removeByTaskId(taskId: string): Promise<void> {
     this.cancelTaskSpawnsInFlight(taskId);
-    const inFlightForTask = [...this.spawnsInFlight.values()].filter((inFlight) => inFlight.taskId === taskId);
     for (const session of this.registry.listByTaskId(taskId)) this.remove(session.id);
+    // Read after the loop, and cancelled again: each remove frees a slot, and
+    // the queue can start a promotion of this task's next row inside it. A
+    // cancelled spawn stays tracked until it settles, so none is missed.
+    this.cancelTaskSpawnsInFlight(taskId);
+    const inFlightForTask = [...this.spawnsInFlight.values()].filter((inFlight) => inFlight.taskId === taskId);
     return this.awaitSpawnsSettled(inFlightForTask);
   }
 
@@ -2079,7 +2083,12 @@ export class SessionManager extends EventEmitter {
     this.cancelSpawnInFlight(sessionId);
     const inFlight = this.spawnsInFlight.get(sessionId);
     const session = this.registry.get(sessionId);
-    if (!session) return;
+    if (!session) {
+      // A direct spawn has no row until its host round trip returns, but the
+      // PTY the host started for it may already hold the working directory.
+      if (inFlight) await this.awaitSpawnsSettled([inFlight]);
+      return;
+    }
 
     // Strip agent hooks from the project's settings file before
     // closing down. Prevents hook accumulation across sessions. Both
@@ -2616,7 +2625,9 @@ export class SessionManager extends EventEmitter {
       + (report.deferredCount > 0 ? KILL_GRACE_MS : 0)
       - HOST_EXIT_MARGIN_MS;
     const hostPid = this.host.hostPid;
-    if (hostPid === null || report.killedCount === 0) return report;
+    // A spawn still in its host round trip counts too: the host may have
+    // started its PTY, which the spawn flow kills when its reply lands.
+    if (hostPid === null || (report.killedCount === 0 && this.spawnsInFlight.size === 0)) return report;
     return { ...report, pids: [...report.pids, hostPid], killedCount: report.killedCount + 1 };
   }
 

@@ -705,8 +705,9 @@ export function registerSessionHandlers(context: IpcContext): void {
       } catch {
         // DB may be closed during shutdown; the notice is best-effort.
       }
-    }, () => {
-      // The host is gone (a quit or a crash); there is nothing to read.
+    }).catch(() => {
+      // The host is gone (a quit or a crash) and there is nothing to read, or
+      // the adapter's parser threw on what was there: the notice is best-effort.
     });
   };
 

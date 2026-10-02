@@ -277,6 +277,10 @@ function historyOf(thread: ReadonlyArray<KnowledgeGraphChatTurn>): KnowledgeGrap
 
 function createKnowledgeGraphStore() {
   return create<KnowledgeGraphState>((set, get) => {
+    /** Bumped by each `close`, so a snapshot read can tell the graph closed
+     *  while it was in flight (closed now is not enough: a read may run with
+     *  the graph never opened). Lives with the store, which the pin keeps. */
+    let closeCount = 0;
     /**
      * Re-read every scoped project but the open one, whose island comes from
      * the graph's own snapshot read (`loadSnapshot`). Reading it twice cost a
@@ -447,6 +451,7 @@ function createKnowledgeGraphStore() {
         // kept chat would show that turn failed; `runTurn` ends it when it lands.
         set({ graphOpen: false, scopeProjectIds: null, scopeSnapshots: {} });
         // The next open reads afresh and asks for its own rebuilds.
+        closeCount += 1;
         rebuildsAsked.clear();
         get().detach();
         if (chatId && !inFlightTurn()) window.electronAPI.knowledgeGraph.endChat(chatId);
@@ -615,6 +620,7 @@ function createKnowledgeGraphStore() {
 
         fetchOrdinal += 1;
         const ordinal = fetchOrdinal;
+        const closesAtStart = closeCount;
         set({ loading: true });
 
         const request = (async () => {
@@ -633,8 +639,12 @@ function createKnowledgeGraphStore() {
             // A different project means a different chat: the tasks a thread
             // names belong to the project it was asked in.
             const nextProjectId = snapshot?.projectId ?? targetProjectId;
-            const switched = nextProjectId !== get().projectId;
-            const projectChanged = switched && get().thread.length > 0;
+            const previousProjectId = get().projectId;
+            const switched = nextProjectId !== previousProjectId;
+            // A first load is not a switch for the chat: a question queued from
+            // Quick Find is asked before the first snapshot lands, with no
+            // project yet, and ending the chat here dropped it and its answer.
+            const projectChanged = switched && previousProjectId !== null && get().thread.length > 0;
             // Trust the id main RESOLVED, not the one requested. Callers routinely
             // pass null to mean "whatever project is current", and main resolves
             // it; keeping the null would leave `projectId` null forever, so the
@@ -659,7 +669,9 @@ function createKnowledgeGraphStore() {
             // every open would re-enter the paced pass for no reason. A push
             // that moved a following window to another project is the main
             // window's switch, the reader's act, so it may start one.
-            if (nextProjectId) rebuildIfStale(nextProjectId, snapshot, options?.fromPush === true && !switched);
+            // Not when the graph closed while this read was in flight: `close`
+            // cleared what was asked so the next open asks for its own.
+            if (nextProjectId && closeCount === closesAtStart) rebuildIfStale(nextProjectId, snapshot, options?.fromPush === true && !switched);
           } catch {
             if (ordinal === fetchOrdinal) set({ loading: false, loaded: true });
           } finally {

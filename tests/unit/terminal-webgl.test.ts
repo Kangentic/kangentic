@@ -1033,11 +1033,17 @@ describe('non-terminal context reservations', () => {
 
   it('frees the slot on release, and releasing twice is a no-op', () => {
     const release = reserveWebglContext('knowledge-graph');
-    expect(getWebglReservationCount()).toBe(1);
-    release();
-    expect(getWebglReservationCount()).toBe(0);
-    release();
-    expect(getWebglReservationCount()).toBe(0);
+    try {
+      expect(getWebglReservationCount()).toBe(1);
+      release();
+      expect(getWebglReservationCount()).toBe(0);
+      release();
+      expect(getWebglReservationCount()).toBe(0);
+    } finally {
+      // Module state: a reservation left held would shrink every later
+      // test's attach budget.
+      release();
+    }
   });
 
   it('notifies attachment listeners so the coordinator re-plans immediately', () => {
@@ -1046,10 +1052,14 @@ describe('non-terminal context reservations', () => {
     const listener = vi.fn();
     const unsubscribe = onWebglAttachmentsChanged(listener);
     const release = reserveWebglContext('knowledge-graph');
-    expect(listener).toHaveBeenCalledTimes(1);
-    release();
-    expect(listener).toHaveBeenCalledTimes(2);
-    unsubscribe();
+    try {
+      expect(listener).toHaveBeenCalledTimes(1);
+      release();
+      expect(listener).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      unsubscribe();
+    }
   });
 
   it('a terminal below the reduced cap still attaches', () => {

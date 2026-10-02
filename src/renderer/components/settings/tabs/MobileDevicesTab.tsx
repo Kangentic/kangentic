@@ -111,11 +111,12 @@ function connectionStateDisplay(state: MobileDeviceConnectionState): { label: st
 export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   const enabled = globalConfig.mobileBridge?.enabled ?? false;
-  // resolveRelayMode, not inferRelayMode: the Select below only offers 'local'
-  // in a dev build, but the persisted value can still BE 'local' in production
-  // (mobileBridge.* is global config in a shared configDir). Binding the raw
-  // stored mode would give a controlled <select> a value matching no <option>,
-  // which renders blank - above a pill showing the hosted URL it resolved to.
+  // resolveRelayMode, not inferRelayMode: the relay choice below only offers
+  // 'local' in a dev build, but the persisted value can still BE 'local' in
+  // production (mobileBridge.* is global config in a shared configDir). Binding
+  // the raw stored mode would give the segmented control a value matching no
+  // option, which selects nothing - above a pill showing the hosted URL it
+  // resolved to.
   const relayMode = resolveRelayMode(globalConfig.mobileBridge);
   const resolvedRelayUrl = resolveRelayUrl(globalConfig.mobileBridge);
 
@@ -352,7 +353,11 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
       <SettingsCard
         icon={<Smartphone size={16} />}
         {...settingProps('mobileBridge.enabled')}
-        searchIds={[...RELAY_SEARCH_IDS, ...MOBILE_SEARCH_IDS]}
+        // The Relay and Phones cards' settings only while those cards are not
+        // rendered (bridge off), so a search for one of them finds this switch.
+        // With the bridge on they answer for themselves, and listing them here
+        // showed this card, empty, above the match.
+        searchIds={enabled ? [] : [...RELAY_SEARCH_IDS, ...MOBILE_SEARCH_IDS]}
         checked={enabled}
         onChange={(value) => updateGlobal({ mobileBridge: { enabled: value } })}
       >

@@ -86,6 +86,22 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   return { browser, page };
 }
 
+/**
+ * Resolves once two animation frames have run: one for React to commit a state
+ * change that has already landed, one more for anything that commit scheduled.
+ */
+async function settleFrames(page: Page, frames = 2): Promise<void> {
+  await page.evaluate((frameCount) => new Promise<void>((resolve) => {
+    let remaining = frameCount;
+    const tick = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), frames);
+}
+
 /** Open the first task card's detail window. A single click opens it; the
  *  dialog mounting is what populates the window store. */
 async function openFirstTask(page: Page): Promise<void> {
@@ -101,12 +117,18 @@ test.describe('task prior work', () => {
     const { browser, page } = await launchWithState(preConfig('[]'));
     try {
       await openFirstTask(page);
-      // Give the async recall fetch time to resolve and (correctly) do nothing.
+      // The fetch has been made once the mock has logged it. That is the earliest
+      // the panel COULD render, not the point it has decided to render nothing.
       await expect
         .poll(async () => page.evaluate(
           () => (window as unknown as { __mockRelatedToTaskCalls?: unknown[] }).__mockRelatedToTaskCalls?.length ?? 0,
         ))
         .toBeGreaterThan(0);
+      // The panel is absent before the result lands too, so a count of 0 read
+      // right after the call would pass even if an empty panel mounted a moment
+      // later. The mock resolves in a microtask, so two animation frames are
+      // enough for React to commit whatever that result makes of the panel.
+      await settleFrames(page);
       await expect(page.locator('[data-testid="task-prior-work"]')).toHaveCount(0);
     } finally {
       await browser.close();

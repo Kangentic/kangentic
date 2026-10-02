@@ -1,4 +1,5 @@
 import type React from 'react';
+import { Children } from 'react';
 import { Check, Info, TriangleAlert } from 'lucide-react';
 import { useAnySettingVisible, useSettingVisible } from './settings-search';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
@@ -224,7 +225,9 @@ export function SettingsCard({
           ) : null}
         </div>
       </div>
-      {children ? (
+      {/* Counted, not truthiness: a `.map()` over nothing is an empty array,
+          which is truthy and drew an empty padded body under the header. */}
+      {Children.toArray(children).length > 0 ? (
         <div
           className="flex flex-col"
           style={wideBody

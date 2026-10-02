@@ -92,8 +92,9 @@ export function readTaskRecordSources(db: Database.Database): TaskRecordSource[]
 export async function sweepTaskRecords(
   projectId: string,
   shouldContinue: () => boolean = () => true,
-  deps: TaskIndexerDeps = defaultDeps,
+  overrides: Partial<TaskIndexerDeps> = {},
 ): Promise<TaskSweepResult> {
+  const deps: TaskIndexerDeps = { ...defaultDeps, ...overrides };
   const result: TaskSweepResult = { indexed: 0, removed: 0 };
   let db: Database.Database;
   let sources: TaskRecordSource[];

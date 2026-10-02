@@ -203,9 +203,14 @@ export const test = base.extend<SharedAppFixtures>({
     // reload's background activation (activateAllProjects, 5 s after
     // did-finish-load) then found the project still on disk and resumed its
     // killed sessions, which piled up across tests until a later test's spawn
-    // sat queued behind maxConcurrentSessions.
-    await resetSharedApp(page);
-    cleanupTempProject(`shared-${uniqueSuffix}`);
+    // sat queued behind maxConcurrentSessions. The cleanup runs even when the
+    // reset throws (a crashed page, or sessions that outlive the wait), or
+    // the directory would survive for exactly that reason.
+    try {
+      await resetSharedApp(page);
+    } finally {
+      cleanupTempProject(`shared-${uniqueSuffix}`);
+    }
   }, { auto: true, scope: 'test' }],
 });
 

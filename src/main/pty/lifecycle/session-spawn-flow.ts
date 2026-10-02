@@ -310,8 +310,10 @@ export async function performSpawn(
   // row is the new session, and stale usage/activity data doesn't persist.
   // After the spawn, so the task is never without a row while it is in flight.
   // The host drops their rings here too, not with the spawn: a spawn cancelled
-  // in the round trip leaves its siblings, a suspended session's scrollback
-  // included, exactly as they were. The reused id is the new session's own.
+  // in the round trip leaves its siblings' host rings and registry rows, a
+  // suspended session's scrollback included, where they were (their PTYs and
+  // file watchers were already stopped above). The reused id is the new
+  // session's own.
   for (const sibling of siblings) {
     context.registry.delete(sibling.id);
     context.telemetry.removeSession(sibling.id);

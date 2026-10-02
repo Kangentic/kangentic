@@ -421,6 +421,19 @@ export function KnowledgeGraphCanvas({
   const didDragRef = useRef(false);
   /** What the press landed on, resolved at press time. Null between gestures. */
   const pressRef = useRef<{ x: number; y: number; hit: number | null } | null>(null);
+  // The hover and the press are positions in `projection.nodes` and in the
+  // regions, and a rebuild reorders both: carried over, a resting pointer showed
+  // another conversation's card until it next moved. Cleared during render, as
+  // the host remaps its selection; the next pointer move finds the new hit.
+  const [nodesSeen, setNodesSeen] = useState(projection.nodes);
+  if (projection.nodes !== nodesSeen) {
+    setNodesSeen(projection.nodes);
+    setHoveredIndex(null);
+    setHoveredRegion(null);
+  }
+  useEffect(() => {
+    pressRef.current = null;
+  }, [projection.nodes]);
 
   // Cluster label elements, positioned imperatively each frame. Refs rather than
   // state for the same reason the scene is imperative.
@@ -478,6 +491,9 @@ export function KnowledgeGraphCanvas({
 
   /** Node indices still drawn (alpha above zero), for title eligibility. */
   const visibleNodesRef = useRef<Set<number>>(new Set());
+  /** A highlight decides what is drawn, so an empty `visibleNodesRef` means
+   *  nothing is, rather than that no filter has been applied yet. */
+  const highlightFiltersRef = useRef(false);
   const showTitlesRef = useRef(showTitles);
   // The two toggles, mirrored for the frame loop, which runs on requestAnimation
   // Frame and therefore always after this layout effect has written them.
@@ -674,7 +690,7 @@ export function KnowledgeGraphCanvas({
     const candidates = titleCandidatesRef.current;
     candidates.length = 0;
     const visible = visibleNodesRef.current;
-    const hasFilter = visible.size > 0;
+    const hasFilter = visible.size > 0 || highlightFiltersRef.current;
 
     for (let index = 0; index < scene.positions.length; index += 1) {
       if (hasFilter && !visible.has(index)) continue;
@@ -1181,8 +1197,10 @@ export function KnowledgeGraphCanvas({
     visibleClustersRef.current = visible;
     labelWorldPositionsRef.current = positions;
     // Titles follow the same alpha the scene gets, so a filtered-out
-    // conversation cannot leave its name floating over the map.
+    // conversation cannot leave its name floating over the map, including a
+    // highlight whose every index is gone (it hides every node).
     visibleNodesRef.current = visibleNodes;
+    highlightFiltersRef.current = hasHighlight;
 
     // Hover and selection answer the pointer, so they snap; a change of what the
     // map emphasises (a turn, a filter, a colour mode) eases. Easing a hover made

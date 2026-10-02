@@ -24,8 +24,12 @@
  *  - the open project's island is seeded again from the live snapshot when it
  *    rejoins the scope, since its reads refreshed the snapshot while it was out,
  *  - closing the graph leaves a session that is still answering alone and ends
- *    it when that turn lands, while an idle close ends it at once, and
- *  - reopening the graph does not prewarm over a turn from before the close.
+ *    it when that turn lands, while an idle close ends it at once,
+ *  - reopening the graph does not prewarm over a turn from before the close,
+ *  - a question asked before the first snapshot lands (no project yet) keeps its
+ *    turn when that snapshot resolves, while a snapshot for a different project
+ *    than the one a turn was asked in still ends the chat, and
+ *  - a read in flight when the graph closes asks for no rebuild when it lands.
  *
  * window.electronAPI is stubbed globally and the store is imported fresh for
  * every test (vi.resetModules): its in-flight read, pending read, stream
@@ -553,6 +557,122 @@ describe('knowledge-graph-store close and open around a turn in flight', () => {
     store.getState().open('A');
 
     expect(prewarmMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('knowledge-graph-store loadSnapshot and the chat it lands on', () => {
+  /** Hold the next answer open, so the turn stays in flight until the test
+   *  settles it. */
+  function holdNextAnswer(): (result: KnowledgeGraphAnswerResult) => void {
+    let release: (result: KnowledgeGraphAnswerResult) => void = () => undefined;
+    answerFromGraphMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    return (result) => release(result);
+  }
+
+  const settledAnswer: KnowledgeGraphAnswerResult = {
+    ok: true,
+    agentName: 'Test Agent',
+    answer: 'an answer',
+    rows: [],
+    related: [],
+    handedCount: 0,
+    promptTokens: 1,
+  };
+
+  // Pins the `previousProjectId !== null` term in `projectChanged`. Without it
+  // the first snapshot of a session counts as a project switch (null to the
+  // resolved id), and a question asked before it lands is ended with the chat:
+  // the thread is wiped, `endChat` fires, and the answer has no turn to land in.
+  it('keeps a question asked before the first snapshot lands, and the answer to it', async () => {
+    // Quick Find's route: `askInGraph` queues the question and opens the graph
+    // with no project, and the Body asks it before the first read has landed.
+    store.getState().askInGraph('which tasks touched the relay?', null);
+    const queuedQuestion = store.getState().takeQueuedQuestion();
+    expect(queuedQuestion).toBe('which tasks touched the relay?');
+    expect(store.getState().projectId).toBeNull();
+    const release = holdNextAnswer();
+    const asking = store.getState().askQuestion(queuedQuestion ?? '');
+    expect(store.getState().thread).toHaveLength(1);
+
+    // Main resolves the project the store never had. Landing is asserted first,
+    // so the silence from `endChat` below is about this read and not a read that
+    // never arrived.
+    takePendingRead(null).resolve(makeSnapshot('A'));
+    await flush();
+    expect(store.getState().projectId).toBe('A');
+    expect(store.getState().loaded).toBe(true);
+
+    expect(endChatMock).not.toHaveBeenCalled();
+    expect(store.getState().thread).toHaveLength(1);
+
+    // The user-visible symptom: the answer lands in the turn that was asked.
+    release(settledAnswer);
+    await asking;
+    expect(store.getState().thread[0].status).toBe('done');
+    expect(store.getState().thread[0].text).toBe('an answer');
+    expect(endChatMock).not.toHaveBeenCalled();
+  });
+
+  // Control for the test above: the same ending of the chat is still wanted
+  // when the open project is known and the snapshot is for another one, since
+  // the tasks a thread names belong to the project it was asked in.
+  it('still ends the chat when a snapshot lands for a different project than the thread was asked in', async () => {
+    store.getState().open('A');
+    resolveRead('A');
+    await flush();
+    expect(store.getState().projectId).toBe('A');
+
+    const release = holdNextAnswer();
+    const asking = store.getState().askQuestion('which tasks touched the relay?');
+    expect(store.getState().thread).toHaveLength(1);
+    const askedChatId = (answerFromGraphMock.mock.calls[0][4] as { chatId: string }).chatId;
+    expect(endChatMock).not.toHaveBeenCalled();
+
+    const switching = store.getState().loadSnapshot('B');
+    resolveRead('B');
+    await switching;
+
+    expect(store.getState().projectId).toBe('B');
+    expect(endChatMock).toHaveBeenCalledTimes(1);
+    expect(endChatMock).toHaveBeenCalledWith(askedChatId);
+    expect(store.getState().thread).toEqual([]);
+
+    // The ended turn's late answer finds no turn and changes nothing.
+    release(settledAnswer);
+    await asking;
+    expect(store.getState().thread).toEqual([]);
+    expect(endChatMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('knowledge-graph-store loadSnapshot when the graph closes mid-read', () => {
+  // Pins the `closeCount === closesAtStart` term on the `rebuildIfStale` call.
+  // `close` clears what was asked so the next open asks for its own rebuild; a
+  // read that was already in flight and lands afterwards must not ask for one
+  // on behalf of a graph nobody has open.
+  it('asks for no rebuild when the graph closed while the read was in flight', async () => {
+    store.getState().open('A');
+    // The open's read is in flight. It is for a stale map, so a read that is
+    // allowed to ask for a rebuild would.
+    expect(pendingReads).toHaveLength(1);
+    store.getState().close();
+
+    resolveRead('A', makeSnapshot('A', { stale: true }));
+    await flush();
+
+    // It did land (the store holds its map), and asked for nothing.
+    expect(store.getState().snapshot?.stale).toBe(true);
+    expect(store.getState().loading).toBe(false);
+    expect(refreshGraphMock).not.toHaveBeenCalled();
+
+    // Control, same map and same store: a read that starts and lands with no
+    // close in between still asks for the rebuild, so the silence above is the
+    // close and not a snapshot that never needed one.
+    const reread = store.getState().loadSnapshot('A');
+    resolveRead('A', makeSnapshot('A', { stale: true }));
+    await reread;
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+    expect(refreshGraphMock).toHaveBeenCalledWith('A');
   });
 });
 

@@ -79,8 +79,9 @@ export async function sweepChangeRecords(
   projectId: string,
   projectPath: string | null,
   shouldContinue: () => boolean = () => true,
-  deps: ChangeIndexerDeps = defaultDeps,
+  overrides: Partial<ChangeIndexerDeps> = {},
 ): Promise<ChangeSweepResult> {
+  const deps: ChangeIndexerDeps = { ...defaultDeps, ...overrides };
   const result: ChangeSweepResult = { indexed: 0 };
   let db: Database.Database;
   let store: RetrievalStore;

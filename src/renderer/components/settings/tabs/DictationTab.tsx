@@ -48,9 +48,10 @@ type DictationModelState = 'ready' | 'downloading' | 'failed';
  * not on disk yet reads as Downloading, never as a separate waiting state.
  * Every state names the same models.
  */
-function DictationModelStatus({ names, state, percent }: { names: string; state: DictationModelState; percent: number }) {
+function DictationModelStatus({ names, state, percent, error }: { names: string; state: DictationModelState; percent: number; error?: string }) {
   if (state === 'failed') {
-    return <CardStatusRow label="Download failed" value={names} tone="failure" testId="dictation-model-download" />;
+    // Why it failed (no space, no network) is what the user can act on.
+    return <CardStatusRow label="Download failed" value={error ?? names} tone="failure" testId="dictation-model-download" />;
   }
   if (state === 'ready') {
     return <CardStatusRow label="Models" value={names} tone="ready" testId="dictation-model-download" valueTestId="dictation-model-ready" />;
@@ -468,6 +469,7 @@ export function DictationTab({
                   names={pickedModelNames}
                   state={modelState}
                   percent={isDownloading ? downloadPercent : 0}
+                  error={modelProgress?.error}
                 />
               ) : null}
             </>

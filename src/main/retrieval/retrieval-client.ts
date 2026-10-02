@@ -91,7 +91,11 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
   private readonly pending = new Map<number, PendingCall>();
   private nextRequestId = 1;
   private disposed = false;
-  private hadWorker = false;
+  /** A worker was forked (or a fork tried) before, so the next one to say
+   *  ready replaces it. Set at the fork, not at ready: a first worker that dies
+   *  before ready failed the calls queued on it (the open project's sweep among
+   *  them), and its replacement must still announce `respawned` to replay them. */
+  private forkedBefore = false;
   /** A worker said ready and has not gone since, so `down` fires once per up. */
   private workerUp = false;
   /** The child an intentional teardown is killing, so its exit is not read as
@@ -153,6 +157,8 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     if (this.disposed || !this.restartPolicy.maySpawn()) return null;
 
     const workerPath = unpacked(path.join(__dirname, 'retrieval-worker.js'));
+    const replacesWorker = this.forkedBefore;
+    this.forkedBefore = true;
     // The worker inherits main's environment as it is now, and its commit and
     // code sweeps run `git` from PATH. Startup extends PATH from the login
     // shell (`restoreShellEnv`, macOS and Linux) before it creates the window,
@@ -188,7 +194,7 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     readyTimer.unref();
     const clearReadyTimer = (): void => clearTimeout(readyTimer);
     this.ready.then(clearReadyTimer, clearReadyTimer);
-    child.on('message', (message: unknown) => this.onWorkerMessage(child, message, markReady));
+    child.on('message', (message: unknown) => this.onWorkerMessage(child, message, markReady, replacesWorker));
     child.on('exit', (code: number) => {
       this.exitedChildren.add(child);
       failReady(new RetrievalUnavailableError('The retrieval worker exited before it was ready'));
@@ -199,15 +205,14 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     return child;
   }
 
-  private onWorkerMessage(child: UtilityProcess, message: unknown, markReady: () => void): void {
+  private onWorkerMessage(child: UtilityProcess, message: unknown, markReady: () => void, replacesWorker: boolean): void {
     if (child !== this.child || typeof message !== 'object' || message === null) return;
     const record = message as FromWorkerMessage;
     if (record.type === 'ready') {
       markReady();
       this.workerUp = true;
       this.emit('ready');
-      if (this.hadWorker) this.emit('respawned');
-      this.hadWorker = true;
+      if (replacesWorker) this.emit('respawned');
       return;
     }
     if (record.type === 'reply') {
@@ -284,12 +289,6 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     child.kill();
   }
 
-  /**
-   * Let go of a project's database in the worker, so its files can be deleted:
-   * Windows refuses to unlink a file another process holds open. Never forks a
-   * worker to do it. A worker that does not close it in time is shut down, and
-   * this waits for its exit, which closes every handle it had.
-   */
   /** A worker process exists now (up, or starting). */
   get running(): boolean {
     return this.child !== null;
@@ -302,6 +301,12 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     void this.call(method, params).catch(() => undefined);
   }
 
+  /**
+   * Let go of a project's database in the worker, so its files can be deleted:
+   * Windows refuses to unlink a file another process holds open. Never forks a
+   * worker to do it. A worker that does not close it in time is shut down, and
+   * this waits for its exit, which closes every handle it had.
+   */
   async closeProject(projectId: string): Promise<void> {
     const child = this.child;
     if (!child) return;

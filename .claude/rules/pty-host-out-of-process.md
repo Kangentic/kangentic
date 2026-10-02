@@ -1,6 +1,9 @@
 ---
 paths:
   - "src/main/pty/**"
+  - "src/main/utility-process/**"
+  - "src/main/shared/child-tree-stop.ts"
+  - "src/main/agent/shared/cli-print.ts"
   - "src/main/ipc/register-all.ts"
   - "build/verify-unpacked-worker.js"
 ---

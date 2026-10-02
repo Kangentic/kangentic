@@ -106,9 +106,12 @@ export async function startStallProfiler(profileDirectory: string): Promise<void
     markCurrentDelayWindow(RESTART_NOTE);
   } catch (error) {
     console.warn('[stall-profiler] could not start:', error);
-    stopStallProfiler();
+    if (session === profilerSession) stopStallProfiler();
     return;
   }
+  // Stopped (or stopped and started again) while the posts above awaited: the
+  // timer below would outlive this session and run beside the next one's.
+  if (session !== profilerSession) return;
   delayHistogram = monitorEventLoopDelay({ resolution: DELAY_RESOLUTION_MS });
   delayHistogram.enable();
   profileStartedAtMs = Date.now();

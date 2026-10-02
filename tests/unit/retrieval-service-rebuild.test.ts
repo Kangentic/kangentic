@@ -330,7 +330,7 @@ describe('retrievalService.refreshRecords', () => {
     retrievalService.refreshRecords(context, 'proj-deleted');
     retrievalService.refreshRecords(context, 'proj-a');
     await vi.waitFor(() => {
-      expect(sweepers.sweepTaskRecords).toHaveBeenCalledWith('proj-a', expect.any(Function));
+      expect(sweepers.sweepTaskRecords).toHaveBeenCalledWith('proj-a', expect.any(Function), { getDb: expect.any(Function) });
     });
 
     expect(sweepers.sweepTaskRecords.mock.calls.map((call) => call[0])).toEqual(['proj-a']);
@@ -345,7 +345,7 @@ describe('retrievalService.refreshRecords', () => {
 
     retrievalService.refreshRecords(context, 'proj-a');
     await vi.waitFor(() => {
-      expect(sweepers.sweepTaskRecords).toHaveBeenCalledWith('proj-a', expect.any(Function));
+      expect(sweepers.sweepTaskRecords).toHaveBeenCalledWith('proj-a', expect.any(Function), { getDb: expect.any(Function) });
     });
   });
 });

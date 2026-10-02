@@ -33,7 +33,12 @@ export function adaptDatabase(database: NodeDatabase, prepared?: string[]): Data
         result = body(...args);
       } catch (error) {
         depth -= 1;
-        database.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+        try {
+          database.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+        } catch {
+          // SQLite already rolled it back (an ON CONFLICT ROLLBACK): the
+          // body's own error is the one to report, as better-sqlite3 does.
+        }
         throw error;
       }
       // Decremented once, outside the body's catch: a COMMIT that fails

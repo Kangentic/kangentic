@@ -222,6 +222,115 @@ describe('RetrievalClient', () => {
     expect(seen).toEqual(['ready', 'down', 'ready', 'down']);
   });
 
+  // `respawned` is what makes the service replay the calls a dead worker failed
+  // (the open project's sweep among them), so it must fire for the first worker
+  // that SAYS ready after any earlier fork attempt, not only after a worker that
+  // had itself said ready.
+  //
+  // Red-green: before the fix `respawned` followed "a worker said ready, then
+  // exited". A first worker that died (or timed out) before it ever said ready
+  // left the flag unset, so its replacement's ready emitted no `respawned` and
+  // the `toHaveBeenCalledTimes(1)` assertions in the exit-before-ready, timeout
+  // and two-failures tests below saw zero. Setting the flag at the fork
+  // (`forkedBefore`) is what makes them green. The first-worker test is the
+  // opposite guard, not a pin of the fix: it stays green before and after, and
+  // fails only if the flag is set so early that a worker replaces nothing.
+  describe('respawned', () => {
+    it('is not emitted for the very first worker\'s ready, which replaces nothing', async () => {
+      const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+      const ready = vi.fn();
+      const respawned = vi.fn();
+      client.on('ready', ready);
+      client.on('respawned', respawned);
+      void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+
+      lastChild().emit('message', { type: 'ready' });
+
+      expect(ready).toHaveBeenCalledTimes(1);
+      expect(respawned).not.toHaveBeenCalled();
+      expect(forkedChildren).toHaveLength(1);
+      client.dispose();
+    });
+
+    it('is emitted once when a first worker exited before it ever said ready and its replacement says ready', async () => {
+      const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+      const respawned = vi.fn();
+      client.on('respawned', respawned);
+      const first = client.call('projects.summaries', { projectIds: [] });
+      const firstChild = lastChild();
+
+      firstChild.emit('exit', 1);
+      await expect(first).rejects.toBeInstanceOf(RetrievalUnavailableError);
+      // The first worker never said ready, so nothing has announced anything yet.
+      expect(respawned).not.toHaveBeenCalled();
+
+      const second = client.call('projects.summaries', { projectIds: [] });
+      expect(forkedChildren).toHaveLength(2);
+      const secondChild = lastChild();
+      expect(secondChild).not.toBe(firstChild);
+      secondChild.emit('message', { type: 'ready' });
+      await flush();
+
+      expect(respawned).toHaveBeenCalledTimes(1);
+      const [request] = sent(secondChild, 'request');
+      secondChild.emit('message', { type: 'reply', id: request.id, ok: true, result: [] });
+      await expect(second).resolves.toEqual([]);
+      client.dispose();
+    });
+
+    it('is emitted once when a first worker timed out before it ever said ready and its replacement says ready', async () => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      // A zero backoff, or the fake clock keeps the policy from letting the next call fork.
+      const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+      const respawned = vi.fn();
+      client.on('respawned', respawned);
+      try {
+        const waiting = client.call('projects.summaries', { projectIds: [] });
+        const stuckChild = lastChild();
+        vi.advanceTimersByTime(READY_TIMEOUT_MS);
+        await expect(waiting).rejects.toBeInstanceOf(RetrievalUnavailableError);
+        expect(respawned).not.toHaveBeenCalled();
+
+        const next = client.call('projects.summaries', { projectIds: [] });
+        expect(forkedChildren).toHaveLength(2);
+        const freshChild = lastChild();
+        expect(freshChild).not.toBe(stuckChild);
+        freshChild.emit('message', { type: 'ready' });
+        await flush();
+
+        expect(respawned).toHaveBeenCalledTimes(1);
+        const [request] = sent(freshChild, 'request');
+        freshChild.emit('message', { type: 'reply', id: request.id, ok: true, result: [] });
+        await expect(next).resolves.toEqual([]);
+      } finally {
+        client.dispose();
+        warn.mockRestore();
+      }
+    });
+
+    it('is emitted once per replacement, and a worker that never says ready emits none of it', async () => {
+      const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5, backoffMs: [0] }));
+      const respawned = vi.fn();
+      client.on('respawned', respawned);
+      // Two workers die before ready, then a third says it. One announcement,
+      // not one per fork attempt.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const failed = client.call('projects.summaries', { projectIds: [] });
+        lastChild().emit('exit', 1);
+        await expect(failed).rejects.toBeInstanceOf(RetrievalUnavailableError);
+      }
+      expect(respawned).not.toHaveBeenCalled();
+
+      void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+      expect(forkedChildren).toHaveLength(3);
+      lastChild().emit('message', { type: 'ready' });
+
+      expect(respawned).toHaveBeenCalledTimes(1);
+      client.dispose();
+    });
+  });
+
   it('relays worker events', async () => {
     const client = new RetrievalClient();
     const events: Array<[string, string]> = [];

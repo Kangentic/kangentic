@@ -641,7 +641,6 @@ export function labelClusters(
 
   const corpusCounts = new Map<string, number>();
   const clusterCounts: Array<Map<string, number>> = [];
-  const clusterTotals = new Int32Array(clusterCount);
   const sizes = new Int32Array(clusterCount);
   const centroidSums = new Float64Array(clusterCount * components);
   for (let cluster = 0; cluster < clusterCount; cluster += 1) clusterCounts.push(new Map());
@@ -660,7 +659,6 @@ export function labelClusters(
       corpusCounts.set(term, (corpusCounts.get(term) ?? 0) + 1);
       const counts = clusterCounts[cluster];
       counts.set(term, (counts.get(term) ?? 0) + 1);
-      clusterTotals[cluster] += 1;
     }
     if (secondary) {
       for (const term of new Set(candidateTerms(secondary.texts[row] ?? ''))) {
@@ -669,7 +667,6 @@ export function labelClusters(
         corpusCounts.set(term, (corpusCounts.get(term) ?? 0) + 1);
         const counts = clusterCounts[cluster];
         counts.set(term, (counts.get(term) ?? 0) + secondary.weight);
-        clusterTotals[cluster] += 1;
       }
     }
   }

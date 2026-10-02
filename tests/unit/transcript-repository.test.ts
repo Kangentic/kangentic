@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { TranscriptRepository } from '../../src/main/db/repositories/transcript-repository';
+import { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import { adaptDatabase, type NodeDatabase } from './helpers/node-sqlite-database';
 
 /**
@@ -19,11 +20,11 @@ try {
 }
 const describeWithSqlite = sqlite ? describe : describe.skip;
 
-function project(): { database: NodeDatabase; transcripts: TranscriptRepository } {
+function project(): { database: NodeDatabase; sessions: SessionRepository; transcripts: TranscriptRepository } {
   const database = new sqlite!.DatabaseSync(':memory:');
   const db = adaptDatabase(database);
   runProjectMigrations(db);
-  return { database, transcripts: new TranscriptRepository(db) };
+  return { database, sessions: new SessionRepository(db), transcripts: new TranscriptRepository(db) };
 }
 
 function insertLegacy(database: NodeDatabase, sessionId: string, transcript: string): void {
@@ -105,5 +106,36 @@ describeWithSqlite('TranscriptRepository', () => {
     database.exec(`DELETE FROM sessions WHERE id = 'session-1'`);
 
     expect(transcripts.getTranscriptText('session-1')).toBe('old new');
+  });
+
+  // The test above runs a raw `DELETE FROM sessions` and is the pin on the
+  // schema (no foreign key, no delete trigger on either transcript table). This
+  // one deletes the way the app does, through `SessionRepository.deleteByTaskId`,
+  // so a cascade or a transcript delete added to that path cannot take the
+  // transcript with its session unnoticed. It does not cover the retrieval
+  // worker: nothing there may delete a raw transcript either.
+  it('keeps a transcript after its task\'s sessions are deleted through the repository', () => {
+    const { database, sessions, transcripts } = project();
+    database.exec(`INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, '2026-09-30T00:00:00.000Z')`);
+    database.exec(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at)
+      VALUES ('task-1', 1, 'task-1', '', 'lane-1', 0, '2026-09-30T00:00:00.000Z', '2026-09-30T00:00:00.000Z')`);
+    database.exec(`INSERT INTO sessions (id, task_id, session_type, command, cwd, status, started_at)
+      VALUES ('session-1', 'task-1', 'claude_agent', 'claude', '/mock', 'exited', '2026-09-30T00:00:00.000Z')`);
+    insertLegacy(database, 'session-1', 'old ');
+    transcripts.appendChunk('session-1', 'new');
+    const countRows = (table: string): number =>
+      (database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE session_id = 'session-1'`).get() as { count: number }).count;
+    expect(sessions.listForTaskNewestFirst('task-1')).toHaveLength(1);
+
+    sessions.deleteByTaskId('task-1');
+
+    // The delete took effect: no session record is left for the task.
+    expect(sessions.listForTaskNewestFirst('task-1')).toEqual([]);
+    expect((database.prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count).toBe(0);
+    // The transcript outlived it, in both tables.
+    expect(countRows('session_transcripts')).toBe(1);
+    expect(countRows('session_transcript_chunks')).toBe(1);
+    expect(transcripts.getTranscriptText('session-1')).toBe('old new');
+    expect(transcripts.getTranscriptTail('session-1', 100)).toMatchObject({ tail: 'old new', fullLength: 7 });
   });
 });

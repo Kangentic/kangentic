@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Embedder } from '../../src/main/retrieval/types';
 
 /**
@@ -18,7 +18,7 @@ vi.mock('../../src/main/retrieval/retrieval-client', () => ({
 }));
 vi.mock('../../src/main/analytics/usage', () => ({ trackFeatureUsed: mockTrackFeatureUsed }));
 
-import { rankRelatedWork, searchConversations } from '../../src/main/retrieval/retrieval-queries';
+import { rankRelatedWork, searchCommitsIn, searchConversations } from '../../src/main/retrieval/retrieval-queries';
 import { RetrievalUnavailableError } from '../../src/main/retrieval/retrieval-client';
 
 function embedderAnswering(answer: 'vectors' | 'timeout'): Embedder {
@@ -62,6 +62,65 @@ describe('retrieval queries on main', () => {
   it('answers a conversation search with nothing while the worker is down', async () => {
     mockCall.mockRejectedValue(new RetrievalUnavailableError('restarting'));
     await expect(searchConversations({ query: 'pty', projects: [PROJECT], embedder: null })).resolves.toEqual([]);
+  });
+
+  // The `onUnavailable` callback is for a caller that must SAY the index is
+  // restarting (the MCP search tool, the palette). A search that failed for any
+  // other reason inside the worker is not "restarting", so the callback must not
+  // fire for it, though both still answer with no hits.
+  //
+  // Red-green: the two plain-Error cases pin the guard. Before the fix the catch
+  // blocks of `searchConversations` and `searchCommitsIn` called
+  // `onUnavailable?.()` for every error, so those cases saw one call instead of
+  // none. The two called-once cases are controls: they stay green with or
+  // without the `instanceof RetrievalUnavailableError` guard, and go red only
+  // if the callback is never called.
+  describe('onUnavailable', () => {
+    beforeEach(() => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('is called once for a conversation search while the worker is down, which still answers with no hits', async () => {
+      mockCall.mockRejectedValue(new RetrievalUnavailableError('restarting'));
+      const onUnavailable = vi.fn();
+
+      await expect(searchConversations({ query: 'pty', projects: [PROJECT], embedder: null }, onUnavailable)).resolves.toEqual([]);
+
+      expect(onUnavailable).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not called for a conversation search that failed inside the worker, which still answers with no hits', async () => {
+      mockCall.mockRejectedValue(new Error('no such table: memory_chunks'));
+      const onUnavailable = vi.fn();
+
+      await expect(searchConversations({ query: 'pty', projects: [PROJECT], embedder: null }, onUnavailable)).resolves.toEqual([]);
+
+      expect(onUnavailable).not.toHaveBeenCalled();
+    });
+
+    it('is called once for a commit search while the worker is down, which still answers with no hits', async () => {
+      mockCall.mockRejectedValue(new RetrievalUnavailableError('restarting'));
+      const onUnavailable = vi.fn();
+
+      await expect(searchCommitsIn([PROJECT], 'resize', undefined, onUnavailable)).resolves.toEqual([]);
+
+      expect(mockCall).toHaveBeenCalledWith('search.commits', expect.objectContaining({ query: 'resize' }));
+      expect(onUnavailable).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not called for a commit search that failed inside the worker, which still answers with no hits', async () => {
+      mockCall.mockRejectedValue(new Error('git exploded'));
+      const onUnavailable = vi.fn();
+
+      await expect(searchCommitsIn([PROJECT], 'resize', undefined, onUnavailable)).resolves.toEqual([]);
+
+      expect(mockCall).toHaveBeenCalledTimes(1);
+      expect(onUnavailable).not.toHaveBeenCalled();
+    });
   });
 
   it('sends a ranking its vectors in the order given, and is null only while the worker is down', async () => {

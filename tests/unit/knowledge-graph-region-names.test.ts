@@ -228,6 +228,9 @@ describe('the graph service names regions in the background', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+    // A console spy whose test failed before its own restore would otherwise
+    // stay on for every later test in the file.
+    vi.restoreAllMocks();
   });
 
   it('names a map that has none at once, and pushes when the names land', async () => {

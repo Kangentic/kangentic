@@ -157,7 +157,10 @@ export function buildCommandContextForProject(
           ipcContext.sessionManager.remove(task.session_id);
         } catch { /* may already be dead */ }
       }
-      ipcContext.sessionManager.removeByTaskId(task.id);
+      // Resolves once a spawn of the task still in flight has settled: the PTY
+      // its host may already have started holds the worktree until it exits,
+      // and the task row may not name that session yet (see task-cleanup.ts).
+      const spawnsSettled = ipcContext.sessionManager.removeByTaskId(task.id);
 
       // Best-effort worktree + branch cleanup
       if (task.worktree_path) {
@@ -167,6 +170,7 @@ export function buildCommandContextForProject(
         // task's worktree work in the project (see task-cleanup.ts).
         void (async () => {
           await sessionExited;
+          await spawnsSettled;
           // Before the removal: a live process holding the worktree as its cwd
           // is what makes the delete fail on Windows.
           await reapSessionLeftovers(task.id, leftovers);

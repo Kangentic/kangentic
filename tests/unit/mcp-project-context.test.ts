@@ -941,4 +941,97 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       'withLock:exit',
     ]);
   });
+
+  // Pins the `await spawnsSettled` in onTaskDeleted. `removeByTaskId` resolves
+  // once a spawn of the task that is still in its host round trip has settled:
+  // the PTY the host may already have started holds the worktree as its cwd
+  // until it exits, and the task row does not name that session yet, so
+  // `task.session_id` (null here) has nothing for the kill and awaitExit above
+  // to wait on. Drop the await and the reap and the removal run at once, which
+  // is the Windows delete failure this ordering exists to prevent.
+  it('waits for a spawn of the task still in flight before reaping leftovers or removing the worktree', async () => {
+    const timeline: string[] = [];
+    const spawnsSettled = createDeferred();
+
+    const withLockMock = vi.fn(async (fn: () => Promise<void>) => {
+      timeline.push('withLock:enter');
+      await fn();
+      timeline.push('withLock:exit');
+    });
+    const removeWorktreeMock = vi.fn(async () => {
+      timeline.push('removeWorktree');
+      return false;
+    });
+    // A plain function expression for the same reason as above: `new` on an
+    // arrow function throws.
+    vi.mocked(WorktreeManager).mockImplementationOnce(function mockWorktreeManager() {
+      return {
+        withLock: withLockMock,
+        removeWorktree: removeWorktreeMock,
+        pruneWorktrees: vi.fn(async () => {}),
+        removeBranch: vi.fn(async () => {}),
+      };
+    } as unknown as typeof WorktreeManager);
+
+    vi.mocked(reapSessionLeftovers).mockImplementationOnce(async () => {
+      timeline.push('reapSessionLeftovers');
+    });
+
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const emitBoardChanged = vi.fn();
+    const removeByTaskId = vi.fn((taskId: string) => {
+      timeline.push(`removeByTaskId:${taskId}`);
+      return spawnsSettled.promise;
+    });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      sessionManager: {
+        kill: vi.fn(),
+        awaitExit: vi.fn(() => Promise.resolve()),
+        remove: vi.fn(),
+        removeByTaskId,
+      },
+    } as unknown as IpcContext;
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTaskDeleted({
+      id: 'task-1',
+      title: 'Task One',
+      session_id: null,
+      worktree_path: '/projects/example/.kangentic/worktrees/task-1',
+      branch_name: null,
+    } as never);
+
+    // The teardown asked for the spawns' settle, and the delete itself is not
+    // held back by the wait: the board event fires on the same tick.
+    expect(removeByTaskId).toHaveBeenCalledWith('task-1');
+    expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'task-deleted', ids: ['task-1'] });
+
+    // A whole macrotask, not a couple of microtask ticks: the reverted code (no
+    // await on the spawns) reaches the reap, the lock and the removal through
+    // several awaited steps, which a short drain would not carry it through.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(timeline).toEqual(['removeByTaskId:task-1']);
+    expect(reapSessionLeftovers).not.toHaveBeenCalled();
+    expect(withLockMock).not.toHaveBeenCalled();
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
+
+    spawnsSettled.resolve();
+    await vi.waitFor(() => {
+      expect(timeline).toContain('withLock:exit');
+    });
+
+    expect(timeline).toEqual([
+      'removeByTaskId:task-1',
+      'reapSessionLeftovers',
+      'withLock:enter',
+      'removeWorktree',
+      'withLock:exit',
+    ]);
+  });
 });

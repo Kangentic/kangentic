@@ -188,7 +188,7 @@ export const indexHandlers: IndexHandlers = {
     const indexer = indexerFor(context);
     const outcome = await indexer.indexSession(projectId, sessionId);
     if (subagents) await indexer.indexSubagentUsage(projectId, sessionId);
-    const changed = changes ? await sweepChangeRecords(projectId, changes.projectPath) : null;
+    const changed = changes ? await sweepChangeRecords(projectId, changes.projectPath, undefined, { getDb: context.getDb }) : null;
     return { outcome, changesIndexed: changed?.indexed ?? 0 };
   },
 
@@ -196,6 +196,9 @@ export const indexHandlers: IndexHandlers = {
     const result: IndexSweepResult = { purged: 0, tasks: null, changes: null, commits: null, code: null };
     if (steps.conversations) adoptRemoteTargets(agentRegistry, remoteTargets);
     const indexer = indexerFor(context);
+    // The worker's own `getDb`, which refuses a project closed for deletion, so
+    // a sweep still queued for it cannot reopen the file before the unlink.
+    const recordDeps = { getDb: context.getDb };
     if (steps.reconcileVec) {
       try {
         const db = context.getDb(projectId);
@@ -208,18 +211,18 @@ export const indexHandlers: IndexHandlers = {
       result.purged = await indexer.purgeDeletedSessions(projectId, shouldContinue, { fromChunks: steps.purge === 'chunks' });
     }
     if (steps.conversations && shouldContinue()) await indexer.sweepProject(projectId, shouldContinue);
-    if (steps.tasks && shouldContinue()) result.tasks = await sweepTaskRecords(projectId, shouldContinue);
-    if (steps.changes && shouldContinue()) result.changes = await sweepChangeRecords(projectId, steps.changes.projectPath, shouldContinue);
+    if (steps.tasks && shouldContinue()) result.tasks = await sweepTaskRecords(projectId, shouldContinue, recordDeps);
+    if (steps.changes && shouldContinue()) result.changes = await sweepChangeRecords(projectId, steps.changes.projectPath, shouldContinue, recordDeps);
     if (steps.commits && shouldContinue()) {
       const { projectPath, baseBranch, allowFullRead } = steps.commits;
-      result.commits = await sweepCommitRecords(projectId, projectPath, baseBranch, { shouldContinue, allowFullRead });
+      result.commits = await sweepCommitRecords(projectId, projectPath, baseBranch, { shouldContinue, allowFullRead }, recordDeps);
     }
     if (steps.code && shouldContinue()) {
       const { plan, projectPath, baseBranch, allowFullRead } = steps.code;
       const none: CodeSweepResult = { indexed: 0, removed: 0, deferred: false };
       if (plan === 'clear') result.code = purgeCodeRecords(projectId, context.getDb) ? { ...none, removed: 1 } : none;
       else if (plan === 'keep' || !projectPath) result.code = none;
-      else result.code = await sweepCodeRecords(projectId, projectPath, baseBranch, { shouldContinue, allowFullRead });
+      else result.code = await sweepCodeRecords(projectId, projectPath, baseBranch, { shouldContinue, allowFullRead }, recordDeps);
     }
     return result;
   }),

@@ -98,6 +98,12 @@ type TranscriptHandlers = {
 
 /** Phone subscriptions' sync state, by subscription. */
 const mobileSyncs = new Map<string, TranscriptSync>();
+/** Reads of a subscription still awaiting its transcript, by subscription. */
+const mobileReadsInFlight = new Map<string, number>();
+/** Subscriptions released while one of their reads was awaiting: that read
+ *  must not create their state again, since a sync id is never reused and no
+ *  later release would remove it. Bounded by the reads in flight. */
+const releasedMidRead = new Set<string>();
 
 /** A delta is sent only while it is smaller than this share of the whole. */
 const DELTA_MAX_SHARE = 0.5;
@@ -185,8 +191,22 @@ export const transcriptHandlers: TranscriptHandlers = {
 
   'transcript.mobileSync': async ({ syncId, projectId, sessionId, mode, remoteTargets }, context) => {
     adoptRemoteTargets(agentRegistry, remoteTargets);
-    const resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId);
-    if (!resolved) return { payloads: [], preview: null };
+    mobileReadsInFlight.set(syncId, (mobileReadsInFlight.get(syncId) ?? 0) + 1);
+    let resolved: Awaited<ReturnType<typeof resolveTaskTranscript>>;
+    let releasedDuringRead: boolean;
+    try {
+      resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId);
+    } finally {
+      const remaining = (mobileReadsInFlight.get(syncId) ?? 1) - 1;
+      releasedDuringRead = releasedMidRead.has(syncId);
+      if (remaining > 0) {
+        mobileReadsInFlight.set(syncId, remaining);
+      } else {
+        mobileReadsInFlight.delete(syncId);
+        releasedMidRead.delete(syncId);
+      }
+    }
+    if (releasedDuringRead || !resolved) return { payloads: [], preview: null };
     let sync = mobileSyncs.get(syncId);
     const known = sync !== undefined;
     if (!sync) {
@@ -209,6 +229,7 @@ export const transcriptHandlers: TranscriptHandlers = {
 
   'transcript.mobileRelease': ({ syncId }) => {
     mobileSyncs.delete(syncId);
+    if (mobileReadsInFlight.has(syncId)) releasedMidRead.add(syncId);
   },
 
   'transcript.structured': ({ request, remoteTargets }) => {

@@ -451,7 +451,20 @@ export const __testing = {
   findFailureMarkers,
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+/** Whether this module is the script node was asked to run. Compared by real
+ *  path: node resolves the entry module through symlinks, so a checkout under a
+ *  link (or a junction or `subst` drive on Windows) never matched by URL, and
+ *  the gate imported cleanly, ran nothing, and exited 0. */
+function isEntrypoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
+  } catch {
+    return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+  }
+}
+
+if (isEntrypoint()) {
   main().catch((error) => {
     console.error(`[package-smoke] FAILED: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);

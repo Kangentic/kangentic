@@ -161,7 +161,9 @@ export function registerMonitorHandlers(context: IpcContext): void {
         // it too. MONITOR_CHANGED is declared in the surface's `channels`, without
         // which the pop-out would silently never update.
         broadcast(context.mainWindow, IPC.MONITOR_CHANGED, snapshot);
-      }, (error: unknown) => {
+        // A catch, not a second argument to then: a broadcast that throws (a
+        // pop-out torn down mid-send) is caught too.
+      }).catch((error: unknown) => {
         console.error('[monitor] Failed to build snapshot for push:', error);
       });
     }, MONITOR_PUSH_DEBOUNCE_MS);

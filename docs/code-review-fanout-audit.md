@@ -811,6 +811,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, second pass | 364f +53178 -3804 | 3607KB, 63938 lines | 3 (0) | 361 | 1 | 17, sharded by area, 4 over tests | about 68 of 16 pack-carrying | about 106 / 53 applied |
 | task 529, whole branch, third pass | 367f +54593 -3815 | 3692KB, 65439 lines | 4 (0) | 363 | 1 | 17, sharded by area, 4 over tests | about 97 of 16 pack-carrying | about 85 / 55 applied |
 | task 529, whole branch, fourth pass | 658f +76565 -7547 | 5536KB, 99303 lines | 3 (0) | 655 | 1 | 24, sharded by area and process boundary, 7 over tests | about 150 of 23 pack-carrying | about 85 / 52 applied |
+| task 529, whole branch, fifth pass | 663f +79405 -7559 | 5702KB, 102379 lines | 3 (0) | 660 | 1 | 29, one shard file each, 9 over tests | about 195 of 28 pack-carrying | about 77 / 44 applied |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1037,3 +1038,23 @@ Two test-builders ran in parallel on disjoint files and were barred from touchin
 was argued from the code rather than toggled; one of them found the host-loss notice stamped before
 its focus gate, fixed in this pass. The two POSIX-only tests for `~/.claude.json`'s mode and symlink
 have not run on Windows and get their first run on CI.
+
+The task 529 fifth pass kept the fourth pass's layout and changed how a finder got its shard. A script
+copied each shard's pack sections into one file, with the focus ranges at its top, so a finder read
+one contiguous file in 600-line calls rather than a list of offsets. Each gated auditor got a file
+built from its own glob. The migration auditor's took the whole `src/main/db/migrations/` folder,
+since the skill's gate still names the single `migrations.ts` the schema has since outgrown. The
+session allows 20 concurrent subagents, so 9 of the 29 started as slots freed. The scripted
+removed-surface list caught 2 of the focus range's real removals; the driver found the rest (a
+protocol field, a worker event, five reshaped methods) in the diff's removed lines and grepped them
+itself before the fan-out. Four finders independently found the Medium the spawn-cancel commit
+missed: the MCP task delete dropped the promise `removeByTaskId` now returns, so a worktree could
+go while a cancelled spawn's PTY still held it. The other fixed Mediums were a question queued from
+Quick Find that the map's first snapshot wiped, an Ask that still ran a paid answer after its chat
+ended during the prepare, a retrieval worker that died before ready and so never announced its
+replacement, a summary backoff that any Knowledge Graph setting ended, a code index that stored its
+head over a failed file, and a closed-project guard the record sweeps bypassed. One test-builder
+found two gaps in the driver's own fixes (the mean pool still wrote a NaN row, and a prepare failure
+went unflagged), both fixed in this pass. The skipped Mediums are four performance claims that need
+a measurement first, a camera fix that needs a look in `/preview`, and recovery for a host crash
+that takes a session before its agent id is known, which is a design question.

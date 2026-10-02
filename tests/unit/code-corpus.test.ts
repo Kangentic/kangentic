@@ -10,7 +10,7 @@
  * gated on it skips.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import crypto from 'node:crypto';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
@@ -345,6 +345,129 @@ describeWithSqlite('sweepCodeRecords', () => {
     expect(fixture.paths()).toEqual([]);
     expect(fixture.store.corpusProgress('code', 'model@1').documents).toBe(0);
     expect(purgeCodeRecords('project', () => fixture.db)).toBe(false);
+  });
+
+  describe('a file that fails to index or to remove', () => {
+    /**
+     * Make the next write (`upsertDocument`) or removal (`deleteDocument`) of
+     * `path` throw, once, then behave as the real store does. Returns what puts
+     * the store back.
+     */
+    function failOnce(stage: 'write' | 'remove', path: string): () => void {
+      let failuresLeft = 1;
+      if (stage === 'write') {
+        const realUpsert = RetrievalStore.prototype.upsertDocument;
+        const spy = vi.spyOn(RetrievalStore.prototype, 'upsertDocument').mockImplementation(function (this: RetrievalStore, ...args: Parameters<RetrievalStore['upsertDocument']>) {
+          const [ref] = args;
+          if (ref.corpus === 'code' && ref.docId === path && failuresLeft > 0) {
+            failuresLeft -= 1;
+            throw new Error('database is locked');
+          }
+          return realUpsert.apply(this, args);
+        });
+        return () => spy.mockRestore();
+      }
+      const realDelete = RetrievalStore.prototype.deleteDocument;
+      const spy = vi.spyOn(RetrievalStore.prototype, 'deleteDocument').mockImplementation(function (this: RetrievalStore, ...args: Parameters<RetrievalStore['deleteDocument']>) {
+        const [corpus, docId] = args;
+        if (corpus === 'code' && docId === path && failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw new Error('database is locked');
+        }
+        return realDelete.apply(this, args);
+      });
+      return () => spy.mockRestore();
+    }
+
+    const storedHeadSha = (fixture: ReturnType<typeof project>): string | undefined =>
+      (JSON.parse(fixture.store.getMeta('code_index_head') ?? '{}') as { sha?: string }).sha;
+
+    // Red-green: this pins the `if (!itemFailed)` guard before `writeIndexedHead`
+    // in `sweepCodeRecords`. Without it the first sweep stores `sha-1` even though
+    // one file was skipped, so the second sweep on the same head returns at the
+    // unchanged-head check: it lists nothing, writes nothing, and the skipped
+    // file stays missing until the branch moves. Both the head and the file
+    // assertions below go red. Two files, not one, on purpose: with one failing
+    // file no state row exists, so the check would not fire with or without the
+    // guard and the test would pass vacuously.
+    it('is retried by the next sweep of the same head, because the head is not stored after a failed write', async () => {
+      const fixture = project();
+      fixture.files.set('src/kept.ts', 'export const kept = true;\n');
+      fixture.files.set('src/flaky.ts', 'export const flaky = true;\n');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const restoreStore = failOnce('write', 'src/flaky.ts');
+      try {
+        const failed = await fixture.sweep();
+
+        // The failure was logged and skipped: the other file was written.
+        expect(warn.mock.calls.some((call) => String(call[0]).includes('src/flaky.ts failed to index'))).toBe(true);
+        expect(failed).toEqual({ indexed: 1, removed: 0, deferred: false });
+        expect(fixture.paths()).toEqual(['src/kept.ts']);
+        // The head is not stored, so the failed file is not left behind the next read.
+        expect(storedHeadSha(fixture)).toBeUndefined();
+        expect(indexedCodeBranch(fixture.store)).toBeNull();
+
+        // The failure has cleared; the branch has not moved.
+        fixture.git.listCalls = 0;
+        fixture.git.blobReads.length = 0;
+        const retried = await fixture.sweep();
+
+        expect(fixture.git.listCalls).toBe(1);
+        // Only what is still missing is read and written.
+        expect(fixture.git.blobReads.flat()).toHaveLength(1);
+        expect(retried).toEqual({ indexed: 1, removed: 0, deferred: false });
+        expect(fixture.paths()).toEqual(['src/flaky.ts', 'src/kept.ts']);
+        expect(storedHeadSha(fixture)).toBe('sha-1');
+        expect(indexedCodeBranch(fixture.store)).toBe('origin/main');
+
+        // Everything is current now, so the head check is free again.
+        fixture.git.listCalls = 0;
+        expect(await fixture.sweep()).toEqual({ indexed: 0, removed: 0, deferred: false });
+        expect(fixture.git.listCalls).toBe(0);
+      } finally {
+        restoreStore();
+        warn.mockRestore();
+      }
+    });
+
+    // Red-green: the same `if (!itemFailed)` guard, through the removal path
+    // (`prepareRemoval`'s catch). Without `itemFailed = true` there, the failed
+    // removal still stores `sha-2`, the next sweep of `sha-2` stops at the
+    // unchanged-head check, and `src/gone.ts` stays indexed although the branch
+    // no longer holds it: the stored-head and the final paths assertions go red.
+    it('is retried by the next sweep of the same head, because the head is not stored after a failed removal', async () => {
+      const fixture = project();
+      fixture.files.set('src/kept.ts', 'export const kept = true;\n');
+      fixture.files.set('src/gone.ts', 'export const gone = true;\n');
+      await fixture.sweep();
+      expect(storedHeadSha(fixture)).toBe('sha-1');
+      // The branch moves forward and drops one file.
+      fixture.files.delete('src/gone.ts');
+      fixture.git.head = { ref: 'origin/main', sha: 'sha-2' };
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const restoreStore = failOnce('remove', 'src/gone.ts');
+      try {
+        const failed = await fixture.sweep();
+
+        expect(warn.mock.calls.some((call) => String(call[0]).includes('src/gone.ts failed to remove'))).toBe(true);
+        expect(failed).toEqual({ indexed: 0, removed: 0, deferred: false });
+        expect(fixture.paths()).toEqual(['src/gone.ts', 'src/kept.ts']);
+        // The head stays where it was, so the removal is not forgotten.
+        expect(storedHeadSha(fixture)).toBe('sha-1');
+
+        // The failure has cleared; the branch is still at sha-2.
+        fixture.git.listCalls = 0;
+        const retried = await fixture.sweep();
+
+        expect(fixture.git.listCalls).toBe(1);
+        expect(retried).toEqual({ indexed: 0, removed: 1, deferred: false });
+        expect(fixture.paths()).toEqual(['src/kept.ts']);
+        expect(storedHeadSha(fixture)).toBe('sha-2');
+      } finally {
+        restoreStore();
+        warn.mockRestore();
+      }
+    });
   });
 });
 

@@ -13,8 +13,17 @@ import { listTree, parseBatch, parseRefList, parseTree, readBlobs, readBranchHea
 
 let root = '';
 
+/** The developer's own git config stays out: a global `commit.gpgsign` or
+ *  `core.hooksPath` would fail or hang a commit here. A hung git fails the test
+ *  rather than blocking the worker. */
+const GIT_ISOLATION = [
+  '-c', 'user.name=dev', '-c', 'user.email=dev@example.com', '-c', 'core.autocrlf=false',
+  '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=',
+];
+const GIT_TIMEOUT_MS = 30_000;
+
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', ['-c', 'user.name=dev', '-c', 'user.email=dev@example.com', '-c', 'core.autocrlf=false', ...args], { cwd, encoding: 'utf8' }).trim();
+  return execFileSync('git', [...GIT_ISOLATION, ...args], { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS }).trim();
 }
 
 /** A repository whose first branch is `branch`, with one commit unless `empty`. */
@@ -47,7 +56,7 @@ describe('readBranchHead', () => {
 
   it('prefers the base on origin, then the remote\'s own default when the base is missing', async () => {
     const upstream = repository('upstream-trunk', 'trunk');
-    execFileSync('git', ['clone', '-q', upstream, path.join(root, 'clone-trunk')]);
+    execFileSync('git', [...GIT_ISOLATION, 'clone', '-q', upstream, path.join(root, 'clone-trunk')], { timeout: GIT_TIMEOUT_MS });
     const clone = path.join(root, 'clone-trunk');
 
     // No main anywhere: origin/HEAD, named by the branch it points to.

@@ -292,6 +292,11 @@ export function registerSearchHandlers(context: IpcContext): void {
         // The chat id as END_CHAT will accept it: a warm session pooled under
         // an id that check refuses could never be ended.
         const chatId = isCallerSegment(answerContext.chatId) ? answerContext.chatId : null;
+        // Read before the first await, as the prewarm does: END_CHAT stops only
+        // what exists when it lands, and the searches below can take seconds,
+        // so a chat ended meanwhile must start no session and no paid run.
+        const endGeneration = chatId ? answerSessionPool.endGeneration(chatId) : 0;
+        const chatEnded = (): boolean => chatId !== null && answerSessionPool.endGeneration(chatId) !== endGeneration;
         const callerChat = [chatId, requestId].find(isCallerSegment) ?? 'oneshot';
         const resolvedRun = await resolveAnswerRun(context, homeProject.id, callerChat);
         if (!resolvedRun.ok) return resolvedRun.failure;
@@ -311,12 +316,12 @@ export function registerSearchHandlers(context: IpcContext): void {
           answerContext.scopeDocKeys ?? null,
           codeIndexed,
         );
-        let pooled = chatId ? takeAnswerSession(chatId, resolvedRun.run) : null;
+        let pooled = chatId ? takeAnswerSession(chatId, resolvedRun.run, endGeneration) : null;
         // A session primed under another scope holds another table. Sending this
         // one after it would leave two in its context, so it starts over.
         if (chatId && pooled?.primed && pooled.primed.scopeSignature !== scopeSignature) {
           answerSessionPool.discard(pooled);
-          pooled = takeAnswerSession(chatId, resolvedRun.run);
+          pooled = takeAnswerSession(chatId, resolvedRun.run, endGeneration);
         }
         let primedTable = pooled?.primed?.table ?? null;
 
@@ -375,6 +380,8 @@ export function registerSearchHandlers(context: IpcContext): void {
           throw error;
         }
         if (prepared.status === 'map-building') return { ok: false, reason: 'the map is still building' };
+        // Nobody is waiting for this answer: the renderer cleared the turn.
+        if (chatEnded()) return { ok: false, reason: 'the chat ended' };
         // Built every turn, for the facts: a follow-up that read them from the
         // session's first table showed a running task's cost as it was then.
         const freshTable = prepared.table;
@@ -441,7 +448,7 @@ export function registerSearchHandlers(context: IpcContext): void {
         // dropped. Start the session over on this turn's table instead.
         if (primedTable && chatId && related.handed.some((task) => !refByKey.has(task.key) && rowByKey.has(task.key))) {
           if (pooled) answerSessionPool.discard(pooled);
-          pooled = takeAnswerSession(chatId, resolvedRun.run);
+          pooled = takeAnswerSession(chatId, resolvedRun.run, endGeneration);
           primedTable = null;
           taskTable = freshTable;
           ({ refByKey, keyByRef } = indexRefs(taskTable));
@@ -568,8 +575,9 @@ export function registerSearchHandlers(context: IpcContext): void {
               // A process that died before writing anything (it crashed, or
               // lost its connection at start) is retried once as a fresh run,
               // which the reader never sees. Anything else is the answer's
-              // real failure and is shown as one.
-              if (!(error instanceof AnswerSessionError && error.failure === 'exited' && error.beforeText)) throw error;
+              // real failure and is shown as one. A session the chat's end
+              // disposed is not retried: nobody is waiting for that answer.
+              if (!(error instanceof AnswerSessionError && error.failure === 'exited' && error.beforeText) || chatEnded()) throw error;
               raw = await runFresh(primedTable ? buildFullPrompt() : prompt);
             }
           } else {

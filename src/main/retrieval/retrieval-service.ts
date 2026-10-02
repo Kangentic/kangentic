@@ -553,6 +553,11 @@ async function resolveRewriteChoice(context: IpcContext): Promise<SummaryChoice 
   return choice;
 }
 
+function sameSummaryChoice(left: SummaryChoice | null, right: SummaryChoice | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.agent === right.agent && left.model === right.model && left.effort === right.effort;
+}
+
 /**
  * Re-resolve `summaryChoice` from the current settings. One at a time, except
  * after a settings change (`force`): a refresh already in flight read the old
@@ -870,12 +875,21 @@ export const retrievalService = {
     // turning summaries on, starts the backfill without a re-open, and what a
     // summary is written with may have changed.
     const projectId = context.currentProjectId;
+    const previousChoice = summaryChoice;
     summaryChoice = null;
     refreshSummaryChoice(context, { force: true });
-    // A new agent or model may be what fixes a failed call, so a settings
-    // change does not wait out the failure backoff.
-    if (projectId) summaryScheduler.endBackoff(projectId);
     if (projectId) summaryScheduler.request(context, projectId);
+    // A new agent, model or effort may be what fixes a failed call, so that
+    // change does not wait out the failure backoff. Anything else that lands
+    // here (a project open or switch, another Knowledge Graph setting) does:
+    // the same failing call would only run again.
+    if (projectId) {
+      void (summaryChoiceRefresh ?? Promise.resolve()).then(() => {
+        if (disposed || sameSummaryChoice(previousChoice, summaryChoice)) return;
+        summaryScheduler.endBackoff(projectId);
+        summaryScheduler.request(context, projectId);
+      });
+    }
     // Switching source code on fills the code index, and off clears it.
     if (projectId) queueRecordSweeps(context, projectId);
   },

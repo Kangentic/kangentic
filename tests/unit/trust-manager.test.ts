@@ -123,6 +123,128 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
       expect(fs.readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'))).toEqual([]);
     });
   });
+
+  // A rename onto a file another process holds open is refused on Windows (a
+  // scanner or indexer, or a sibling Claude rewriting it), usually for a moment.
+  // `renameRetryingWhileHeld` tries up to 5 times, 50 ms longer each wait, and
+  // `ensureClaudeSpawnConfig` writes in place when it is still refused, rather
+  // than failing the spawn. The refusal is injected on `fs.promises.rename`,
+  // which the source reaches through the same object. Real timers: the file I/O
+  // is real libuv work, which fake timers do not step through, and the waits
+  // are 50 + 100 ms at most for the retry cases and 500 ms for the exhausted one.
+  describe('a rename refused while the file is held open', () => {
+    const worktree = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
+
+    function renameRefusal(code: string | undefined): NodeJS.ErrnoException {
+      const error: NodeJS.ErrnoException = new Error(`rename refused: ${code ?? 'no code'}`);
+      if (code !== undefined) error.code = code;
+      return error;
+    }
+
+    function leftoverTemporaryFiles(): string[] {
+      return fs.readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'));
+    }
+
+    function seedClaudeJson(): void {
+      fs.writeFileSync(claudeJsonPath(), JSON.stringify({ oauthAccount: { id: 'kept' } }));
+    }
+
+    function expectSpawnConfigWritten(): void {
+      const data = readClaudeJson();
+      expect(data.oauthAccount).toEqual({ id: 'kept' });
+      expect(data.diffSidebarOpen).toBe(false);
+      const entry = Object.values(data.projects as Record<string, Record<string, unknown>>)[0];
+      expect(entry.hasTrustDialogAccepted).toBe(true);
+      expect(entry.enabledMcpjsonServers).toEqual(['kangentic']);
+    }
+
+    // Pins the retry loop. Before it, the first refusal threw out of the spawn.
+    // The third rename is the real one, so a loop that gave up early (a lower
+    // attempt cap) would write in place after two and leave the count at 2.
+    it('retries and renames once the hold is released', async () => {
+      seedClaudeJson();
+      const renames = vi.spyOn(fs.promises, 'rename')
+        .mockRejectedValueOnce(renameRefusal('EPERM'))
+        .mockRejectedValueOnce(renameRefusal('EPERM'));
+      try {
+        await ensureClaudeSpawnConfig(worktree);
+
+        expect(renames).toHaveBeenCalledTimes(3);
+        expectSpawnConfigWritten();
+        expect(leftoverTemporaryFiles()).toEqual([]);
+        expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
+      } finally {
+        renames.mockRestore();
+      }
+    });
+
+    // The three codes Windows uses for "held". One refusal each, so the retry
+    // is what lands the write; a code missing from the held set would throw.
+    it.each(['EACCES', 'EBUSY'])('treats %s as held too, and retries', async (code) => {
+      seedClaudeJson();
+      const renames = vi.spyOn(fs.promises, 'rename').mockRejectedValueOnce(renameRefusal(code));
+      try {
+        await ensureClaudeSpawnConfig(worktree);
+
+        expect(renames).toHaveBeenCalledTimes(2);
+        expectSpawnConfigWritten();
+        expect(leftoverTemporaryFiles()).toEqual([]);
+      } finally {
+        renames.mockRestore();
+      }
+    });
+
+    // Pins the in-place fallback: with every attempt refused, the file is still
+    // updated (the only way is the direct write) and the spawn does not throw.
+    // The attempt cap of 5 is pinned too: a loop that never gave up would hang
+    // here, one that gave up early would count fewer renames.
+    it('writes the file in place, and does not throw, when every attempt is refused', async () => {
+      seedClaudeJson();
+      let temporaryFileSeenAtRename = false;
+      const renames = vi.spyOn(fs.promises, 'rename').mockImplementation(async () => {
+        temporaryFileSeenAtRename ||= leftoverTemporaryFiles().length > 0;
+        throw renameRefusal('EPERM');
+      });
+      try {
+        await expect(ensureClaudeSpawnConfig(worktree)).resolves.toBeUndefined();
+
+        expect(renames).toHaveBeenCalledTimes(5);
+        expectSpawnConfigWritten();
+        // The temp file existed when the rename was refused, so its absence now
+        // is the cleanup and not a file that was never written.
+        expect(temporaryFileSeenAtRename).toBe(true);
+        expect(leftoverTemporaryFiles()).toEqual([]);
+      } finally {
+        renames.mockRestore();
+      }
+    });
+
+    // Pins that only the held codes are retried: any other failure is a real
+    // fault, so it reaches the spawn preamble (which reports it) and the file is
+    // not rewritten behind it. The cleanup still removes the temp file.
+    it.each([['EXDEV'], [undefined]])('throws on a rename error that is not a held one (code %s), without retrying, and leaves no temp file', async (code) => {
+      seedClaudeJson();
+      const seeded = fs.readFileSync(claudeJsonPath(), 'utf-8');
+      let temporaryFileSeenAtRename = false;
+      const refusal = renameRefusal(code);
+      const renames = vi.spyOn(fs.promises, 'rename').mockImplementation(async () => {
+        temporaryFileSeenAtRename ||= leftoverTemporaryFiles().length > 0;
+        throw refusal;
+      });
+      try {
+        await expect(ensureClaudeSpawnConfig(worktree)).rejects.toBe(refusal);
+
+        expect(renames).toHaveBeenCalledTimes(1);
+        expect(temporaryFileSeenAtRename).toBe(true);
+        expect(leftoverTemporaryFiles()).toEqual([]);
+        // Not written in place either: a non-held failure does not fall back.
+        expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(seeded);
+        expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
+      } finally {
+        renames.mockRestore();
+      }
+    });
+  });
 });
 
 function claudeJsonPath(): string {
